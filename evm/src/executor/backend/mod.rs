@@ -65,7 +65,8 @@ type ForkLookupIndex = usize;
 const DEFAULT_PERSISTENT_ACCOUNTS: [H160; 3] =
     [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
 
-const GLOBAL_FAILURE_SLOT: &str = "0x6661696c65640000000000000000000000000000000000000000000000000000";
+const GLOBAL_FAILURE_SLOT: &str =
+    "0x6661696c65640000000000000000000000000000000000000000000000000000";
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut, Box)]
@@ -605,14 +606,10 @@ impl Backend {
     /// in "failed"
     /// See <https://github.com/dapphub/ds-test/blob/9310e879db8ba3ea6d5c6489a579118fd264a3f5/src/test.sol#L66-L72>
     pub fn is_global_failure(&self, current_state: &JournaledState) -> bool {
-        let index: rU256 = U256::from_str_radix(GLOBAL_FAILURE_SLOT, 16).expect("This is a bug.").into();
-        if let Some(account) =  current_state.state.get(&h160_to_b160(CHEATCODE_ADDRESS)) {
-            let value = account
-                .storage
-                .get(&index)
-                .cloned()
-                .unwrap_or_default()
-                .present_value();
+        let index: rU256 =
+            U256::from_str_radix(GLOBAL_FAILURE_SLOT, 16).expect("This is a bug.").into();
+        if let Some(account) = current_state.state.get(&h160_to_b160(CHEATCODE_ADDRESS)) {
+            let value = account.storage.get(&index).cloned().unwrap_or_default().present_value();
             return value == revm::primitives::U256::from(1)
         }
 
