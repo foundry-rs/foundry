@@ -171,6 +171,7 @@ impl ScriptArgs {
                 highlevel_known_contracts.insert(id, tc.unwrap());
                 Ok(())
             },
+            project.root(),
         )?;
 
         let target = extra_info

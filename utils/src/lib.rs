@@ -14,7 +14,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     env::VarError,
     fmt::{Formatter, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
 };
@@ -137,6 +137,7 @@ pub fn link_with_nonce_or_address<T, U>(
     nonce: U256,
     extra: &mut U,
     post_link: impl Fn(PostLinkInput<T, U>) -> eyre::Result<()>,
+    root: impl AsRef<Path>,
 ) -> Result<()> {
     // create a mapping of fname => Vec<(fname, file, key)>,
     let link_tree: BTreeMap<String, ArtifactDependencies> = contracts
@@ -203,6 +204,7 @@ pub fn link_with_nonce_or_address<T, U>(
                         &deployed_library_addresses,
                         &mut nonce.clone(),
                         sender,
+                        root.as_ref(),
                     );
                 }
                 BytecodeObject::Bytecode(ref bytes) => {
@@ -253,6 +255,8 @@ fn recurse_link<'a>(
     nonce: &mut U256,
     // sender
     sender: Address,
+    // project root path
+    root: impl AsRef<Path>,
 ) {
     // check if we have dependencies
     if let Some(dependencies) = dependency_tree.get(&target) {
@@ -262,12 +266,27 @@ fn recurse_link<'a>(
         dependencies.dependencies.iter().for_each(|dep| {
             let ArtifactDependency {  file, key, .. } = dep;
             let next_target = format!("{file}:{key}");
+            let root = PathBuf::from(root.as_ref().to_str().unwrap());
             // get the dependency
             trace!(target : "forge::link", dependency = next_target, file, key, version=?dependencies.artifact_id.version,  "get dependency");
-            let  artifact = artifacts
-                .find_code(&next_target)
-                .unwrap_or_else(|| panic!("No target contract named {next_target}"))
-                ;
+            let  artifact = match artifacts
+                .find_code(&next_target) {
+                    Some(artifact) => artifact,
+                    None => {
+                        // In some project setups, like JS-style workspaces, you might not have node_modules available at the root of the foundry project.
+                        // In this case, imported dependencies from outside the root might not have their paths tripped correctly.
+                        // Therefore, we fall back to a manual path join to locate the file.
+                        let fallback_path =  dunce::canonicalize(root.join(file)).unwrap_or_else(|e| panic!("No artifact for contract \"{next_target}\". Attempted to compose fallback path but got got error {e}"));
+                        let fallback_path = fallback_path.to_str().unwrap_or("No artifact for contract \"{next_target}\". Attempted to compose fallback path but could not create valid string");
+                        let fallback_target = format!("{fallback_path}:{key}");
+
+                        trace!(target : "forge::link", fallback_dependency = fallback_target, file, key, version=?dependencies.artifact_id.version,  "get dependency with fallback path");
+
+                        match artifacts.find_code(&fallback_target) {
+                        Some(artifact) => artifact,
+                        None => panic!("No artifact for contract {next_target}"),
+                    }},
+                };
             let mut next_target_bytecode = artifact
                 .bytecode
                 .unwrap_or_else(|| panic!("No bytecode for contract {next_target}"));
@@ -293,6 +312,7 @@ fn recurse_link<'a>(
                         deployed_library_addresses,
                         nonce,
                         sender,
+                        root,
                     );
                 }
             }
@@ -485,6 +505,7 @@ mod tests {
     struct LinkerTest {
         contracts: ArtifactContracts,
         dependency_assertions: HashMap<String, Vec<(String, U256, Address)>>,
+        project: Project,
     }
 
     impl LinkerTest {
@@ -508,7 +529,7 @@ mod tests {
                 .map(|(id, c)| (id, c.into_contract_bytecode()))
                 .collect::<ArtifactContracts>();
 
-            Self { contracts, dependency_assertions: HashMap::new() }
+            Self { contracts, dependency_assertions: HashMap::new(), project }
         }
 
         fn assert_dependencies(
@@ -561,6 +582,7 @@ mod tests {
 
                     Ok(())
                 },
+                self.project.root(),
             )
             .expect("Linking failed");
 
