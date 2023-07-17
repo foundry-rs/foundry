@@ -270,11 +270,10 @@ fn recurse_link<'a>(
             let next_target = format!("{file}:{key}");
             let root = PathBuf::from(root.as_ref().to_str().unwrap());
             let path_file =  dunce::canonicalize(root.join(file)).unwrap_or_else(|_| panic!("No file named {file}"));
-            let path_file = path_file.to_str().unwrap();
+            let path_file = path_file.to_str().expect("Could not convert fallback path to string");
             let fallback_target = format!("{path_file}:{key}");
             // get the dependency
-            trace!(target: "forge::link", ?fallback_target);
-            trace!(target : "forge::link", dependency = next_target, file, key, version=?dependencies.artifact_id.version,  "get dependency");
+            trace!(target : "forge::link", dependency = next_target, fallback_dependency = fallback_target, file, key, version=?dependencies.artifact_id.version,  "get dependency");
             let  artifact = match artifacts
                 .find_code(&next_target) {
                     Some(artifact) => artifact,
