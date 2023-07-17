@@ -157,8 +157,6 @@ pub fn link_with_nonce_or_address<T, U>(
         })
         .collect();
 
-    // println!("link tree: {:#?}", link_tree);
-
     let artifacts_by_slug = AllArtifactsBySlug {
         inner: contracts
             .iter()
