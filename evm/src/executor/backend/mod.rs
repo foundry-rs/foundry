@@ -65,6 +65,7 @@ type ForkLookupIndex = usize;
 const DEFAULT_PERSISTENT_ACCOUNTS: [H160; 3] =
     [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
 
+/// Slot corresponding to "failed" in bytes on the cheatcodes (HEVM) address.
 const GLOBAL_FAILURE_SLOT: &str =
     "0x6661696c65640000000000000000000000000000000000000000000000000000";
 
