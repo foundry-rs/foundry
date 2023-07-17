@@ -2485,6 +2485,7 @@ dependencies = [
 name = "foundry-utils"
 version = "0.2.0"
 dependencies = [
+ "dunce",
  "ethers-addressbook",
  "ethers-contract",
  "ethers-core",
