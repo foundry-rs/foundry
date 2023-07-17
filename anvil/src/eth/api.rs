@@ -1993,25 +1993,33 @@ impl EthApi {
 use super::otterscan::*;
 
 impl EthApi {
+    /// Otterscan currently requires this endpoint, even though it's not part of the ots_*
+    /// https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71
+    ///
+    /// It exists only as a faster alternative to eth_getBlockByNumber (by excluding uncle block
+    /// information), which is not relevant in the context of an anvil node
     pub async fn erigon_get_header_by_number(
         &self,
         number: BlockNumber,
     ) -> Result<Option<Block<TxHash>>> {
         node_info!("ots_getApiLevel");
 
-        // this endpoint only exists to be faster than eth_getBlockByNumber by not returning uncle
-        // blocks
-        // we don't care about that in this context
         // TODO: probably only return blocks from before the fork?
         self.backend.block_by_number(number).await
     }
 
+    /// Simple API versioning scheme for the ots_* namespace
+    /// As per the latest Otterscan source code, at least version 8 is needed
+    /// https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/params.ts#L1C2-L1C2
     pub async fn ots_get_api_level(&self) -> Result<u64> {
         node_info!("ots_getApiLevel");
+
         // as required by current otterscan's source code
         Ok(8)
     }
 
+    /// Trace internal ETH transfers, contracts creation (CREATE/CREATE2) and self-destructs for a
+    /// certain transaction.
     pub async fn ots_get_internal_operations(&self, hash: H256) -> Result<()> {
         node_info!("ots_getInternalOperations");
         //Err(BlockchainError::Internal("not implemented".into()));
@@ -2024,23 +2032,28 @@ impl EthApi {
         Err(BlockchainError::BlockNotFound)
     }
 
+    /// Check if an ETH address contains code at a certain block number.
     pub async fn ots_has_code(&self, address: Address, block_number: BlockNumber) -> Result<bool> {
         node_info!("ots_hasCode");
         let block_id = Some(BlockId::Number(block_number));
         Ok(self.get_code(address, block_id).await?.len() > 0)
     }
 
-    // TODO: how much does this return type actually matches the expected one?
+    /// Trace a transaction and generate a trace call tree.
     pub async fn ots_trace_transaction(&self, tx_hash: H256) -> Result<GethTrace> {
         node_info!("ots_traceTransaction");
         self.backend.debug_trace_transaction(tx_hash, Default::default()).await
     }
 
+    /// Given a transaction hash, returns its raw revert reason.
     pub async fn ots_get_transaction_error(&self, hash: H256) -> Result<()> {
         node_info!("ots_getTransactionError");
         Err(BlockchainError::Internal("not implemented".into()))
     }
 
+    /// Given a block number, return its data. Similar to the standard eth_getBlockByNumber/Hash
+    /// method, but can be optimized by excluding unnecessary data such as transactions and logBloom
+    /// (which is not necessary in the context of an anvil node)
     pub async fn ots_get_block_details(
         &self,
         number: BlockNumber,
@@ -2057,6 +2070,8 @@ impl EthApi {
         Ok(block)
     }
 
+    /// Gets paginated transaction data for a certain block. Return data is similar to
+    /// eth_getBlockBy* + eth_getTransactionReceipt.
     pub async fn ots_get_block_transactions(
         &self,
         number: u64,
@@ -2071,6 +2086,7 @@ impl EthApi {
         }
     }
 
+    /// Address history navigation. searches backwards from certain point in time.
     pub async fn ots_search_transactions_before(
         &self,
         address: Address,
@@ -2118,6 +2134,7 @@ impl EthApi {
         OtsSearchTransactions::build(res, &self.backend, first_page, last_page).await
     }
 
+    /// Address history navigation. searches forward from certain point in time.
     pub async fn ots_search_transactions_after(
         &self,
         address: Address,
@@ -2174,6 +2191,9 @@ impl EthApi {
         OtsSearchTransactions::build(res, &self.backend, first_page, last_page).await
     }
 
+    /// Given a sender address and a nonce, returns the tx hash or null if not found. It returns
+    /// only the tx hash on success, you can use the standard eth_getTransactionByHash after that to
+    /// get the full transaction data.
     pub async fn ots_get_transaction_by_sender_and_nonce(
         &self,
         address: Address,
@@ -2197,9 +2217,8 @@ impl EthApi {
         Ok(None)
     }
 
-    /// Looks through all transactions, finding the trace where a given contract was deployed
-    /// search goes in reverse direction, because selfdestruct+create2 contracts can be-redeployed.
-    /// We want the latest one.
+    /// Given an ETH contract address, returns the tx hash and the direct address who created the
+    /// contract.
     pub async fn ots_get_contract_creator(
         &self,
         addr: Address,
@@ -2209,6 +2228,7 @@ impl EthApi {
         let from = self.get_fork().map(|f| f.block_number() + 1).unwrap_or_default();
         let to = self.backend.best_number().as_u64();
 
+        // loop in reverse, since we want the latest deploy to the address
         for n in (from..=to).rev() {
             if let Some(traces) = self.backend.mined_parity_trace_block(n) {
                 for trace in traces.into_iter().rev() {
