@@ -24,6 +24,19 @@ interface Cheats {
         string url;
     }
 
+    // Used in eth_getLogs()
+    struct EthGetLogs {
+        address emitter;
+        bytes32 blockHash;
+        uint256 blockNumber;
+        bytes data;
+        uint256 logIndex; 
+        bool removed;
+        bytes32[] topics;
+        bytes32 transactionHash; 
+        uint256 transactionIndex; 
+    }
+
     // Used in readDir
     struct DirEntry {
         string errorMessage;
@@ -201,9 +214,6 @@ interface Cheats {
 
     // Gets all the recorded logs
     function getRecordedLogs() external returns (Log[] memory);
-
-    // Gets all the logs according to specified filter
-    function getLogs(uint256, uint256, address, bytes32[] memory) external returns (Log[] memory);
 
     // Prepare an expected log with all four checks enabled.
     // Call this function, then emit an event, then call a function. Internally after the call, we check if
@@ -520,6 +530,9 @@ interface Cheats {
 
     /// Returns all rpc urls and their aliases as an array of structs
     function rpcUrlStructs() external returns (Rpc[] memory);
+
+    // Gets all the logs according to specified filter
+    function eth_getLogs(uint256, uint256, address, bytes32[] memory) external returns (EthGetLogs[] memory);
 
     function parseJson(string calldata, string calldata) external returns (bytes memory);
 

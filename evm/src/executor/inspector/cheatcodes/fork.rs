@@ -10,6 +10,7 @@ use ethers::{
     providers::Middleware,
     types::{Bytes, Filter, H256},
 };
+use foundry_abi::hevm::EthGetLogsCall;
 use foundry_common::ProviderBuilder;
 use revm::EVMData;
 
@@ -143,59 +144,7 @@ pub fn apply<DB: DatabaseExt>(
             )
             .map(empty)
             .map_err(Into::into),
-        HEVMCalls::GetLogs(inner) => {
-            // TODO: return error if active_fork_url is None
-            let url = data.db.active_fork_url()?;
-            if inner.0 > U256::from(u64::MAX) || inner.1 > U256::from(u64::MAX) {
-                return Some(Err(fmt_err!("Blocks in block range must be less than 2^64 - 1")));
-            }
-            if inner.3.len() > 4 {
-                return Some(Err(fmt_err!("Topics array must be less than 4 elements")));
-            }
-
-            // Taken from https://www.gakonst.com/ethers-rs/events/logs-and-filtering.html?highlight=logs#logs-and-filtering
-            // TODO: don't use `unwrap` below
-            let provider = ProviderBuilder::new(url).build().unwrap();
-            let mut filter = Filter::new()
-                .address(b160_to_h160(inner.2.into()))
-                .from_block(inner.0.as_u64())
-                .to_block(inner.1.as_u64());
-            for (i, item) in inner.3.iter().enumerate() {
-                match i {
-                    0 => filter = filter.topic0(U256::from(item)),
-                    1 => filter = filter.topic1(U256::from(item)),
-                    2 => filter = filter.topic2(U256::from(item)),
-                    3 => filter = filter.topic3(U256::from(item)),
-                    _ => unreachable!(),
-                };
-            }
-
-            // TODO: don't use `unwrap` below
-            // If logs is empty: return empty bytes array
-            /*
-                let empty: Bytes = abi::encode(&[Token::Array(vec![])]).into();
-                return Some(Ok(empty));
-            */
-
-            let logs = RuntimeOrHandle::new().block_on(provider.get_logs(&filter)).unwrap();
-            // println!("Logs: {:?}", logs);
-
-            let result = abi::encode(
-                &logs
-                    .iter()
-                    .map(|entry| {
-                        Token::Tuple(vec![
-                            entry.topics.clone().into_token(),
-                            Token::Bytes(entry.data.to_vec()),
-                            entry.address.into_token(),
-                        ])
-                    })
-                    .collect::<Vec<Token>>()
-                    .into_tokens(),
-            )
-            .into();
-            Ok(result)
-        }
+        HEVMCalls::EthGetLogs(inner) => eth_getlogs(data, inner),
         _ => return None,
     };
     Some(result)
@@ -208,7 +157,7 @@ fn select_fork<DB: DatabaseExt>(
     fork_id: U256,
 ) -> Result {
     if state.broadcast.is_some() {
-        return Err(Error::SelectForkDuringBroadcast);
+        return Err(Error::SelectForkDuringBroadcast)
     }
 
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
@@ -226,7 +175,7 @@ fn create_select_fork<DB: DatabaseExt>(
     block: Option<u64>,
 ) -> Result {
     if state.broadcast.is_some() {
-        return Err(Error::SelectForkDuringBroadcast);
+        return Err(Error::SelectForkDuringBroadcast)
     }
 
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
@@ -256,7 +205,7 @@ fn create_select_fork_at_transaction<DB: DatabaseExt>(
     transaction: H256,
 ) -> Result {
     if state.broadcast.is_some() {
-        return Err(Error::SelectForkDuringBroadcast);
+        return Err(Error::SelectForkDuringBroadcast)
     }
 
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
@@ -301,4 +250,53 @@ fn create_fork_request<DB: DatabaseExt>(
         evm_opts,
     };
     Ok(fork)
+}
+
+fn eth_getlogs<DB: DatabaseExt>(data: &mut EVMData<DB>, inner: &EthGetLogsCall) -> Result {
+    let url = data.db.active_fork_url().ok_or(fmt_err!("No active fork url found"))?;
+    if inner.0 > U256::from(u64::MAX) || inner.1 > U256::from(u64::MAX) {
+        return Err(fmt_err!("Blocks in block range must be less than 2^64 - 1"))
+    }
+    if inner.3.len() > 4 {
+        return Err(fmt_err!("Topics array must be less than 4 elements"))
+    }
+
+    let provider = ProviderBuilder::new(url).build()?;
+    let mut filter = Filter::new()
+        .address(b160_to_h160(inner.2.into()))
+        .from_block(inner.0.as_u64())
+        .to_block(inner.1.as_u64());
+    for (i, item) in inner.3.iter().enumerate() {
+        match i {
+            0 => filter = filter.topic0(U256::from(item)),
+            1 => filter = filter.topic1(U256::from(item)),
+            2 => filter = filter.topic2(U256::from(item)),
+            3 => filter = filter.topic3(U256::from(item)),
+            _ => unreachable!(),
+        };
+    }
+
+    // TODO: don't use `unwrap` below
+    let logs = RuntimeOrHandle::new().block_on(provider.get_logs(&filter)).unwrap();
+    println!("Logs: {:?}", logs);
+    if logs.len() == 0 {
+        let empty: Bytes = abi::encode(&[Token::Array(vec![])]).into();
+        return Ok(empty)
+    }
+
+    let result = abi::encode(
+        &logs
+            .iter()
+            .map(|entry| {
+                Token::Tuple(vec![
+                    entry.topics.clone().into_token(),
+                    Token::Bytes(entry.data.to_vec()),
+                    entry.address.into_token(),
+                ])
+            })
+            .collect::<Vec<Token>>()
+            .into_tokens(),
+    )
+    .into();
+    Ok(result)
 }

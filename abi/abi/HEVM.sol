@@ -1,5 +1,6 @@
 struct Log { bytes32[] topics; bytes data; }
 struct Rpc { string name; string url; }
+struct EthGetLogs { address emitter; bytes32[] topics; bytes data; uint256 blockNumber; bytes32 transactionHash; uint256 transactionIndex; bytes32 blockHash; uint256 logIndex; bool removed; }
 struct DirEntry { string errorMessage; string path; uint64 depth; bool isDir; bool isSymlink; }
 struct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created; }
 
@@ -75,7 +76,6 @@ skip(bool)
 
 recordLogs()
 getRecordedLogs()(Log[])
-getLogs(uint256,uint256,address,bytes32[])(Log[])
 
 expectEmit()
 expectEmit(address)
@@ -176,6 +176,9 @@ rollFork(uint256,bytes32)
 rpcUrl(string)(string)
 rpcUrls()(string[2][])
 rpcUrlStructs()(Rpc[])
+eth_getLogs(uint256,uint256,address,bytes32[])(EthGetLogs[])
+rpc(string,bytes)(bytes)
+
 
 writeJson(string, string)
 writeJson(string, string, string)
