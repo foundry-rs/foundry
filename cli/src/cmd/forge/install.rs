@@ -44,15 +44,15 @@ pub struct InstallArgs {
     /// The dependency will installed to `lib/<alias>`.
     dependencies: Vec<Dependency>,
 
-    #[clap(flatten)]
-    opts: DependencyInstallOpts,
-
     /// The project's root path.
     ///
     /// By default root of the Git repository, if in one,
     /// or the current working directory.
     #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     pub root: Option<PathBuf>,
+
+    #[clap(flatten)]
+    opts: DependencyInstallOpts,
 }
 
 impl_figment_convert_basic!(InstallArgs);
