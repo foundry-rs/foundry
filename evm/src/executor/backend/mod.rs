@@ -65,6 +65,8 @@ type ForkLookupIndex = usize;
 const DEFAULT_PERSISTENT_ACCOUNTS: [H160; 3] =
     [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
 
+const GLOBAL_FAILURE_SLOT: &str = "0x6661696c65640000000000000000000000000000000000000000000000000000";
+
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut, Box)]
 pub trait DatabaseExt: Database<Error = DatabaseError> {
@@ -602,11 +604,19 @@ impl Backend {
     /// In addition to the `_failed` variable, `DSTest::fail()` stores a failure
     /// in "failed"
     /// See <https://github.com/dapphub/ds-test/blob/9310e879db8ba3ea6d5c6489a579118fd264a3f5/src/test.sol#L66-L72>
-    pub fn is_global_failure(&self) -> bool {
-        let index = U256::from(&b"failed"[..]);
-        self.storage(h160_to_b160(CHEATCODE_ADDRESS), index.into())
-            .map(|value| value == revm::primitives::U256::from(1))
-            .unwrap_or_default()
+    pub fn is_global_failure(&self, current_state: &JournaledState) -> bool {
+        let index: rU256 = U256::from_str_radix(GLOBAL_FAILURE_SLOT, 16).expect("This is a bug.").into();
+        if let Some(account) =  current_state.state.get(&h160_to_b160(CHEATCODE_ADDRESS)) {
+            let value = account
+                .storage
+                .get(&index)
+                .cloned()
+                .unwrap_or_default()
+                .present_value();
+            return value == revm::primitives::U256::from(1)
+        }
+
+        false
     }
 
     /// When creating or switching forks, we update the AccountInfo of the contract
@@ -875,7 +885,7 @@ impl DatabaseExt for Backend {
         if let Some(mut snapshot) = self.inner.snapshots.remove(id) {
             // need to check whether there's a global failure which means an error occurred either
             // during the snapshot or even before
-            if self.is_global_failure() {
+            if self.is_global_failure(current_state) {
                 self.inner.has_snapshot_failure.store(true, Ordering::Relaxed);
             }
 
