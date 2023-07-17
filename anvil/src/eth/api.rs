@@ -2046,9 +2046,17 @@ impl EthApi {
     }
 
     /// Given a transaction hash, returns its raw revert reason.
-    pub async fn ots_get_transaction_error(&self, hash: H256) -> Result<()> {
+    pub async fn ots_get_transaction_error(&self, hash: H256) -> Result<Option<Bytes>> {
         node_info!("ots_getTransactionError");
-        Err(BlockchainError::Internal("not implemented".into()))
+
+        // TODO: I'm not sure this one is right, need input
+        if let Some(receipt) = self.backend.mined_transaction_receipt(hash) {
+            if receipt.inner.status == Some(U64::zero()) {
+                return Ok(receipt.out)
+            }
+        }
+
+        Ok(Default::default())
     }
 
     /// Given a block number, return its data. Similar to the standard eth_getBlockByNumber/Hash
