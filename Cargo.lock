@@ -2291,7 +2291,6 @@ dependencies = [
  "clap_complete_fig",
  "color-eyre",
  "comfy-table",
- "console",
  "criterion",
  "dialoguer",
  "dotenvy",

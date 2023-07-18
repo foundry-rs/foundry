@@ -5,7 +5,7 @@ use crate::{
 use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
 use itertools::Itertools;
 use solang_parser::{diagnostics::Diagnostic, pt::*};
-use std::{fmt::Write, path::PathBuf};
+use std::{fmt::Write, path::Path};
 
 /// Result of parsing the source code
 #[derive(Debug)]
@@ -75,7 +75,7 @@ pub fn offset_to_line_column(content: &str, start: usize) -> (usize, usize) {
 /// Print the report of parser's diagnostics
 pub fn print_diagnostics_report(
     content: &str,
-    path: Option<&PathBuf>,
+    path: Option<&Path>,
     diagnostics: Vec<Diagnostic>,
 ) -> std::io::Result<()> {
     let filename =
