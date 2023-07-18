@@ -53,8 +53,8 @@ use ethers::{
         },
         Action, Address, Block, BlockId, BlockNumber, Bytes, Call, Create, CreateResult,
         FeeHistory, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, Res, Reward,
-        Trace, Transaction, TransactionReceipt, TxHash, TxpoolContent, TxpoolInspectSummary,
-        TxpoolStatus, H256, U256, U64,
+        Suicide, Trace, Transaction, TransactionReceipt, TxHash, TxpoolContent,
+        TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
     },
     utils::rlp,
 };
@@ -2022,12 +2022,11 @@ impl EthApi {
     /// certain transaction.
     pub async fn ots_get_internal_operations(&self, hash: H256) -> Result<()> {
         node_info!("ots_getInternalOperations");
-        //Err(BlockchainError::Internal("not implemented".into()));
 
         // TODO:
-        // if let Some(traces) = self.backend.mined_parity_trace_transaction(hash) {
-        //     let actions: Vec<_> = traces.into_iter().map(|t| t.action).collect();
-        // }
+        self.backend.mined_parity_trace_transaction(hash).map(|traces| {
+            traces.into_iter().map(OtsInternalOperation::try_build);
+        });
 
         Err(BlockchainError::BlockNotFound)
     }
@@ -2040,9 +2039,11 @@ impl EthApi {
     }
 
     /// Trace a transaction and generate a trace call tree.
-    pub async fn ots_trace_transaction(&self, tx_hash: H256) -> Result<GethTrace> {
+    pub async fn ots_trace_transaction(&self, hash: H256) -> Result<Vec<Trace>> {
         node_info!("ots_traceTransaction");
-        self.backend.debug_trace_transaction(tx_hash, Default::default()).await
+        // TODO: is this right?
+        // Maybe needs to be a tree
+        self.backend.trace_transaction(hash).await
     }
 
     /// Given a transaction hash, returns its raw revert reason.

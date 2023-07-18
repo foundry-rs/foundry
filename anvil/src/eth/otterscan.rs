@@ -1,4 +1,7 @@
-use ethers::types::{Address, Block, Transaction, TransactionReceipt, H256, U256, U64};
+use ethers::types::{
+    Action, Address, Block, Call, Create, CreateResult, Res, Suicide, Trace, Transaction,
+    TransactionReceipt, H256, U256,
+};
 use futures::future::join_all;
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -140,4 +143,23 @@ impl OtsSearchTransactions {
     }
 }
 
-impl OtsInternalOperation {}
+impl OtsInternalOperation {
+    pub async fn try_build(trace: Trace) -> Option<OtsInternalOperation> {
+        match (trace.action, trace.result) {
+            (Action::Call(Call { from, to, value, .. }), _) if !value.is_zero() => {
+                Some(Self { r#type: OtsInternalOperationType::Transfer, from, to, value })
+            }
+            (
+                Action::Create(Create { from, to, value, .. }),
+                Some(Res::Create(CreateResult { address, .. })),
+            ) => Some(Self { r#type: OtsInternalOperationType::Create, from, to, value }),
+            (Action::Suicide(Suicide { address, .. }), _) => Some(Self {
+                r#type: OtsInternalOperationType::SelfDestruct,
+                from: Address::zero(),
+                to: address,
+                value: Default::default(), // TODO
+            }),
+            _ => None,
+        }
+    }
+}
