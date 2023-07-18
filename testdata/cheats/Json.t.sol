@@ -5,7 +5,7 @@ import "ds-test/test.sol";
 import "./Vm.sol";
 import "../logs/console.sol";
 
-contract ParseJson is DSTest {
+contract ParseJsonTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     string json;
 
@@ -150,7 +150,7 @@ contract ParseJson is DSTest {
     }
 }
 
-contract WriteJson is DSTest {
+contract WriteJsonTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     string json1;
