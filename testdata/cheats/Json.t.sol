@@ -238,6 +238,16 @@ contract WriteJson is DSTest {
         notSimpleJson memory decodedData = abi.decode(data, (notSimpleJson));
     }
 
+    function test_writeJson2() public {
+        string memory path = "../testdata/fixtures/Json/write_complex_test.json";
+        string memory json = vm.readFile(path);
+        bytes memory data = vm.parseJson(json, ".");
+        notSimpleJson memory decodedData = abi.decode(data, (notSimpleJson));
+        console.log(decodedData.a);
+        assertEq(decodedData.a, 12345);
+        assertEq(true, false);
+    }
+
     function test_writeJson() public {
         string memory json3 = "json3";
         string memory path = "../testdata/fixtures/Json/write_test.json";
