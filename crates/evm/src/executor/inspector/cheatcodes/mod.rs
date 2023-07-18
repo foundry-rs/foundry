@@ -17,7 +17,7 @@ use ethers::{
     signers::LocalWallet,
     types::{
         transaction::eip2718::TypedTransaction, Address, Bytes, NameOrAddress, TransactionRequest,
-        U256,
+        H160, U256,
     },
 };
 use foundry_common::evm::Breakpoints;
@@ -30,7 +30,7 @@ use revm::{
 };
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     fs::File,
     io::BufReader,
     ops::Range,
@@ -126,6 +126,9 @@ pub struct Cheatcodes {
 
     /// Expected revert information
     pub expected_revert: Option<ExpectedRevert>,
+
+    /// Tracks the reverts that happen during evm execution if a there is an expected revert
+    pub revert_per_address: BTreeMap<H160, HashSet<Bytes>>,
 
     /// Additional diagnostic for reverts
     pub fork_revert_diagnostic: Option<RevertDiagnostic>,
@@ -779,14 +782,27 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
+        // If we are expecting a revert and we are currently reverting, we store the revert data and
+        // the address where it originated to inspect it later while matching the expected revert.
+        if self.expected_revert.is_some() && status == InstructionResult::Revert {
+            self.revert_per_address
+                .entry(b160_to_h160(call.contract))
+                .or_insert_with(HashSet::new)
+                .insert(retdata.clone().into());
+        }
+
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
             if data.journaled_state.depth() <= expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                let reverts_by_address = std::mem::take(&mut self.revert_per_address);
+
                 return match handle_expect_revert(
                     false,
                     expected_revert.reason.as_ref(),
+                    expected_revert.address,
                     status,
+                    reverts_by_address,
                     retdata.into(),
                 ) {
                     Err(error) => {
@@ -1064,14 +1080,29 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
+        // If we are expecting a revert and we are currently reverting, we store the revert data and
+        // the address where it originated to inspect it later while matching the expected revert.
+        if self.expected_revert.is_some() && status == InstructionResult::Revert {
+            if let Some(address) = address {
+                self.revert_per_address
+                    .entry(b160_to_h160(address))
+                    .or_insert_with(HashSet::new)
+                    .insert(retdata.clone().into());
+            }
+        }
+
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
             if data.journaled_state.depth() <= expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                let reverts_by_address = std::mem::take(&mut self.revert_per_address);
+
                 return match handle_expect_revert(
                     true,
                     expected_revert.reason.as_ref(),
+                    expected_revert.address,
                     status,
+                    reverts_by_address,
                     retdata.into(),
                 ) {
                     Ok((address, retdata)) => (

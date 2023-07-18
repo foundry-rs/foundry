@@ -11,7 +11,10 @@ use revm::{
     primitives::Bytecode,
     EVMData,
 };
-use std::cmp::Ordering;
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, HashSet},
+};
 
 /// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
 /// Solidity will see a successful call and attempt to decode the return data. Therefore, we need
@@ -27,47 +30,133 @@ static DUMMY_CREATE_ADDRESS: Address =
 
 #[derive(Clone, Debug, Default)]
 pub struct ExpectedRevert {
+    /// The address from which the revert is expected to be thrown, None being any address
+    /// is valid.
+    pub address: Option<H160>,
     /// The expected data returned by the revert, None being any
     pub reason: Option<Bytes>,
     /// The depth at which the revert is expected
     pub depth: u64,
 }
 
-fn expect_revert(state: &mut Cheatcodes, reason: Option<Bytes>, depth: u64) -> Result {
+fn expect_revert(
+    state: &mut Cheatcodes,
+    reason: Option<Bytes>,
+    depth: u64,
+    address: Option<H160>,
+) -> Result {
     ensure!(
         state.expected_revert.is_none(),
         "You must call another function prior to expecting a second revert."
     );
-    state.expected_revert = Some(ExpectedRevert { reason, depth });
+    state.expected_revert = Some(ExpectedRevert { reason, depth, address });
     Ok(Bytes::new())
+}
+
+fn expect_emit(
+    state: &mut Cheatcodes,
+    address: Option<H160>,
+    depth: u64,
+    checks: [bool; 4],
+) -> Result {
+    state.expected_emits.push_back(ExpectedEmit { depth, address, checks, ..Default::default() });
+    Ok(Bytes::new())
+}
+
+macro_rules! success_return {
+    ($is_create:expr) => {
+        Ok(if $is_create {
+            (Some(DUMMY_CREATE_ADDRESS), Bytes::new())
+        } else {
+            trace!("successfully handled expected revert");
+            (None, DUMMY_CALL_OUTPUT.to_vec().into())
+        })
+    };
+}
+
+fn stringify(data: &[u8]) -> String {
+    String::decode(data)
+        .ok()
+        .or_else(|| std::str::from_utf8(data).ok().map(ToOwned::to_owned))
+        .unwrap_or_else(|| format!("0x{}", hex::encode(data)))
 }
 
 #[instrument(skip_all, fields(expected_revert, status, retdata = hex::encode(&retdata)))]
 pub fn handle_expect_revert(
     is_create: bool,
     expected_revert: Option<&Bytes>,
+    expected_revert_address: Option<H160>,
     status: InstructionResult,
+    reverts_by_address: BTreeMap<H160, HashSet<Bytes>>,
     retdata: Bytes,
 ) -> Result<(Option<Address>, Bytes)> {
     trace!("handle expect revert");
 
-    ensure!(!matches!(status, return_ok!()), "Call did not revert as expected");
-
-    macro_rules! success_return {
-        () => {
-            Ok(if is_create {
-                (Some(DUMMY_CREATE_ADDRESS), Bytes::new())
-            } else {
-                trace!("successfully handled expected revert");
-                (None, DUMMY_CALL_OUTPUT.clone())
-            })
-        };
+    if expected_revert_address.is_none() {
+        return handle_expect_revert_with_data(is_create, expected_revert, status, retdata);
     }
+
+    let expected_revert_address = expected_revert_address.unwrap();
+    let address_reverts = reverts_by_address.get(&expected_revert_address);
+
+    if address_reverts.is_none() {
+        return Err(fmt_err!(
+            "The expected revert address {} did not revert",
+            expected_revert_address,
+        ));
+    }
+
+    let address_reverts = address_reverts.unwrap();
 
     // If None, accept any revert
     let expected_revert = match expected_revert {
         Some(x) => x,
-        None => return success_return!(),
+        None => return success_return!(is_create),
+    };
+
+    let address_reverts = address_reverts
+        .iter()
+        .map(|el| {
+            let mut actual_revert = el.clone();
+            if actual_revert.len() >= 4
+                && matches!(actual_revert[..4].try_into(), Ok(ERROR_PREFIX | REVERT_PREFIX))
+            {
+                if let Ok(bytes) = Bytes::decode(&actual_revert[4..]) {
+                    actual_revert = bytes;
+                }
+            }
+            actual_revert.to_string()
+        })
+        .collect::<HashSet<_>>();
+
+    if address_reverts.contains(&expected_revert.to_string()) {
+        success_return!(is_create)
+    } else if address_reverts.contains("") {
+        bail!(
+            "The expected revert address {} reverted as expected, but without data",
+            expected_revert_address
+        );
+    } else {
+        Err(fmt_err!(
+            "Expected revert address {} did not revert with the expected revert data: {}",
+            expected_revert_address,
+            stringify(expected_revert),
+        ))
+    }
+}
+
+fn handle_expect_revert_with_data(
+    is_create: bool,
+    expected_revert: Option<&Bytes>,
+    status: InstructionResult,
+    retdata: Bytes,
+) -> Result<(Option<Address>, Bytes)> {
+    ensure!(!matches!(status, return_ok!()), "Call did not revert as expected");
+
+    // If None, accept any revert
+    let expected_revert = match expected_revert {
+        Some(x) => x,
+        None => return success_return!(is_create),
     };
 
     if !expected_revert.is_empty() && retdata.is_empty() {
@@ -75,8 +164,8 @@ pub fn handle_expect_revert(
     }
 
     let mut actual_revert = retdata;
-    if actual_revert.len() >= 4 &&
-        matches!(actual_revert[..4].try_into(), Ok(ERROR_PREFIX | REVERT_PREFIX))
+    if actual_revert.len() >= 4
+        && matches!(actual_revert[..4].try_into(), Ok(ERROR_PREFIX | REVERT_PREFIX))
     {
         if let Ok(bytes) = Bytes::decode(&actual_revert[4..]) {
             actual_revert = bytes;
@@ -84,14 +173,8 @@ pub fn handle_expect_revert(
     }
 
     if actual_revert == *expected_revert {
-        success_return!()
+        success_return!(is_create)
     } else {
-        let stringify = |data: &[u8]| {
-            String::decode(data)
-                .ok()
-                .or_else(|| std::str::from_utf8(data).ok().map(ToOwned::to_owned))
-                .unwrap_or_else(|| format!("0x{}", hex::encode(data)))
-        };
         Err(fmt_err!(
             "Error != expected error: {} != {}",
             stringify(&actual_revert),
@@ -130,7 +213,7 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address
     // This allows a contract to arbitrarily emit more events than expected (additive behavior),
     // as long as all the previous events were matched in the order they were expected to be.
     if state.expected_emits.iter().all(|expected| expected.found) {
-        return
+        return;
     }
 
     // if there's anything to fill, we need to pop back.
@@ -332,12 +415,23 @@ pub fn apply<DB: DatabaseExt>(
     call: &HEVMCalls,
 ) -> Option<Result> {
     let result = match call {
-        HEVMCalls::ExpectRevert0(_) => expect_revert(state, None, data.journaled_state.depth()),
+        HEVMCalls::ExpectRevert0(_) => {
+            expect_revert(state, None, data.journaled_state.depth(), None)
+        }
         HEVMCalls::ExpectRevert1(inner) => {
-            expect_revert(state, Some(inner.0.clone()), data.journaled_state.depth())
+            expect_revert(state, Some(inner.0.clone()), data.journaled_state.depth(), None)
         }
         HEVMCalls::ExpectRevert2(inner) => {
-            expect_revert(state, Some(inner.0.into()), data.journaled_state.depth())
+            expect_revert(state, Some(inner.0.into()), data.journaled_state.depth(), None)
+        }
+        HEVMCalls::ExpectRevert3(inner) => {
+            expect_revert(state, None, data.journaled_state.depth(), Some(inner.0))
+        }
+        HEVMCalls::ExpectRevert4(inner) => {
+            expect_revert(state, Some(inner.0.clone()), data.journaled_state.depth(), Some(inner.1))
+        }
+        HEVMCalls::ExpectRevert5(inner) => {
+            expect_revert(state, Some(inner.0.into()), data.journaled_state.depth(), Some(inner.1))
         }
         HEVMCalls::ExpectEmit0(_) => {
             state.expected_emits.push_back(ExpectedEmit {
@@ -484,7 +578,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::MockCall0(inner) => {
             // TODO: Does this increase gas usage?
             if let Err(err) = data.journaled_state.load_account(h160_to_b160(inner.0), data.db) {
-                return Some(Err(err.into()))
+                return Some(Err(err.into()));
             }
 
             // Etches a single byte onto the account if it is empty to circumvent the `extcodesize`
@@ -508,7 +602,7 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::MockCall1(inner) => {
             if let Err(err) = data.journaled_state.load_account(h160_to_b160(inner.0), data.db) {
-                return Some(Err(err.into()))
+                return Some(Err(err.into()));
             }
 
             state.mocked_calls.entry(inner.0).or_default().insert(
