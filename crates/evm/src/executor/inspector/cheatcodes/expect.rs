@@ -126,7 +126,7 @@ fn handle_expect_revert_with_address(
 
     if address_reverts.is_none() {
         return Err(fmt_err!(
-            "The expected revert address {} did not revert",
+            "The expected revert address {:#?} did not revert",
             expected_revert_address,
         ));
     }
@@ -147,14 +147,16 @@ fn handle_expect_revert_with_address(
 
     if address_reverts.contains(&expected_revert.to_string()) {
         success_return!(is_create)
-    } else if address_reverts.contains("") {
+    }
+    // Empty revert data
+    else if address_reverts.contains("0x") {
         bail!(
-            "The expected revert address {} reverted as expected, but without data",
+            "The expected revert address {:#?} reverted as expected, but without data",
             expected_revert_address
         );
     } else {
         Err(fmt_err!(
-            "Expected revert address {} did not revert with the expected revert data: {}",
+            "The expected revert address {:#?} did not revert with the expected revert data: {}",
             expected_revert_address,
             stringify(expected_revert),
         ))
