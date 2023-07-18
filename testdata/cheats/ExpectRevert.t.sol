@@ -33,10 +33,6 @@ contract Reverter is IReverter {
         return uint256(100) - uint256(101);
     }
 
-    function nestedRevert(Reverter inner, string memory message) public pure {
-        inner.revertWithMessage(message);
-    }
-
     function callThenRevert(Dummy dummy, string memory message) public pure {
         dummy.callMe();
         require(false, message);
@@ -122,18 +118,26 @@ contract Dummy {
 contract ExpectRevertTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
+    Reverter reverter;
+    ReverterWrapper nestedReverter;
+    Dummy dummy;
+
+    function setUp() public {
+        reverter = new Reverter();
+        nestedReverter = new ReverterWrapper(reverter);
+        dummy = new Dummy();
+    }
+
     function shouldRevert() internal {
         revert();
     }
 
     function testExpectRevertString() public {
-        Reverter reverter = new Reverter();
         vm.expectRevert("revert");
         reverter.revertWithMessage("revert");
     }
 
     function testFailRevertNotOnImmediateNextCall() public {
-        Reverter reverter = new Reverter();
         // expectRevert should only work for the next call. However,
         // we do not inmediately revert, so,
         // we fail.
@@ -153,51 +157,41 @@ contract ExpectRevertTest is DSTest {
     }
 
     function testExpectRevertBuiltin() public {
-        Reverter reverter = new Reverter();
         vm.expectRevert(abi.encodeWithSignature("Panic(uint256)", 0x11));
         reverter.panic();
     }
 
     function testExpectRevertCustomError() public {
-        Reverter reverter = new Reverter();
         vm.expectRevert(abi.encodePacked(Reverter.CustomError.selector));
         reverter.revertWithCustomError();
     }
 
     function testExpectRevertNested() public {
-        Reverter reverter = new Reverter();
-        Reverter inner = new Reverter();
         vm.expectRevert("nested revert");
-        reverter.nestedRevert(inner, "nested revert");
+        nestedReverter.revertWithMessage("nested revert");
     }
 
     function testExpectRevertCallsThenReverts() public {
-        Reverter reverter = new Reverter();
-        Dummy dummy = new Dummy();
         vm.expectRevert("called a function and then reverted");
         reverter.callThenRevert(dummy, "called a function and then reverted");
     }
 
     function testDummyReturnDataForBigType() public {
-        Dummy dummy = new Dummy();
         vm.expectRevert("reverted with large return type");
         dummy.largeReturnType();
     }
 
     function testFailExpectRevertErrorDoesNotMatch() public {
-        Reverter reverter = new Reverter();
         vm.expectRevert("should revert with this message");
         reverter.revertWithMessage("but reverts with this message");
     }
 
     function testFailExpectRevertDidNotRevert() public {
-        Reverter reverter = new Reverter();
         vm.expectRevert("does not revert, but we think it should");
         reverter.doNotRevert();
     }
 
     function testExpectRevertNoReason() public {
-        Reverter reverter = new Reverter();
         vm.expectRevert(bytes(""));
         reverter.revertWithoutReason();
     }
@@ -206,7 +200,6 @@ contract ExpectRevertTest is DSTest {
         vm.expectRevert();
         new ConstructorReverter("hello this is a revert message");
 
-        Reverter reverter = new Reverter();
         vm.expectRevert();
         reverter.revertWithMessage("this is also a revert message");
 
@@ -216,11 +209,9 @@ contract ExpectRevertTest is DSTest {
         vm.expectRevert();
         reverter.revertWithCustomError();
 
-        Reverter reverter2 = new Reverter();
         vm.expectRevert();
-        reverter.nestedRevert(reverter2, "this too is a revert message");
+        nestedReverter.revertWithMessage("this too is a revert message");
 
-        Dummy dummy = new Dummy();
         vm.expectRevert();
         reverter.callThenRevert(dummy, "revert message 4 i ran out of synonims for also");
 
@@ -229,7 +220,6 @@ contract ExpectRevertTest is DSTest {
     }
 
     function testFailExpectRevertAnyRevertDidNotRevert() public {
-        Reverter reverter = new Reverter();
         vm.expectRevert();
         reverter.doNotRevert();
     }
