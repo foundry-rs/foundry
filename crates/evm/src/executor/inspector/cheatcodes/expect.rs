@@ -133,6 +133,8 @@ fn handle_expect_revert_with_address(
         ));
     }
 
+    // TODO: fix this
+    #[allow(clippy::mutable_key_type)]
     let address_reverts = address_reverts.unwrap();
 
     // If None, accept any revert

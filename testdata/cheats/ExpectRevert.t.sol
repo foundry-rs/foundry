@@ -261,6 +261,12 @@ contract ExpectRevertWithAddressTest is DSTest {
     }
 
     // Simple revert tests
+    function testFailExpectRevertWithAddressNotOnImmediateNextCall(string memory data) public {
+        vm.expectRevert(bytes(data), reverterAddress);
+        reverter.doNotRevert();
+        reverter.revertWithMessage(data);
+    }
+
     function testFailExpectRevertWithNoDataAndWrongAddress(address wrongAddress) external {
         vm.assume(wrongAddress != reverterAddress);
 
