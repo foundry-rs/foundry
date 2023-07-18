@@ -790,7 +790,7 @@ pub fn fetch(
 }
 
 fn fetch_with_cli(
-    repo: &mut git2::Repository,
+    repo: &git2::Repository,
     url: &str,
     refspecs: &[String],
     tags: bool,

@@ -386,7 +386,7 @@ fn array_eval_to_str<T: UIfmt>(array: &Vec<T>) -> String {
 /// Write an object to a new file OR replace the value of an existing JSON file with the supplied
 /// object.
 fn write_json(
-    state: &mut Cheatcodes,
+    state: &Cheatcodes,
     object: &str,
     path: impl AsRef<Path>,
     json_path_or_none: Option<&str>,
