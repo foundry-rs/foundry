@@ -45,15 +45,6 @@ pub struct CreateArgs {
     )]
     constructor_args_path: Option<PathBuf>,
 
-    #[clap(flatten)]
-    opts: CoreBuildArgs,
-
-    #[clap(flatten)]
-    tx: TransactionOpts,
-
-    #[clap(flatten)]
-    eth: EthereumOpts,
-
     /// Print the deployment information as JSON.
     #[clap(long, help_heading = "Display options")]
     json: bool,
@@ -65,6 +56,15 @@ pub struct CreateArgs {
     /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
     #[clap(long, requires = "from")]
     unlocked: bool,
+
+    #[clap(flatten)]
+    opts: CoreBuildArgs,
+
+    #[clap(flatten)]
+    tx: TransactionOpts,
+
+    #[clap(flatten)]
+    eth: EthereumOpts,
 
     #[clap(flatten)]
     pub verifier: verify::VerifierArgs,
