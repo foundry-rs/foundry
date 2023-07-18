@@ -81,16 +81,14 @@ fn stringify(data: &[u8]) -> String {
         .unwrap_or_else(|| format!("0x{}", hex::encode(data)))
 }
 
-fn actual_error_from_bytes(data: &Bytes) -> Bytes {
-    let mut actual_revert = data.clone();
-    if actual_revert.len() >= 4
-        && matches!(actual_revert[..4].try_into(), Ok(ERROR_PREFIX | REVERT_PREFIX))
-    {
-        if let Ok(bytes) = Bytes::decode(&actual_revert[4..]) {
-            actual_revert = bytes;
+fn actual_error_from_bytes(data: Bytes) -> Bytes {
+    if data.len() >= 4 && matches!(data[..4].try_into(), Ok(ERROR_PREFIX | REVERT_PREFIX)) {
+        if let Ok(bytes) = Bytes::decode(&data[4..]) {
+            return bytes;
         }
     }
-    actual_revert
+
+    data
 }
 
 #[instrument(skip_all, fields(expected_revert, status, retdata = hex::encode(&retdata)))]
@@ -133,7 +131,6 @@ fn handle_expect_revert_with_address(
         ));
     }
 
-    // TODO: fix this
     #[allow(clippy::mutable_key_type)]
     let address_reverts = address_reverts.unwrap();
 
@@ -145,8 +142,7 @@ fn handle_expect_revert_with_address(
 
     let address_reverts = address_reverts
         .iter()
-        .map(actual_error_from_bytes)
-        .map(|revert_data| revert_data.to_string())
+        .map(|revert_data| actual_error_from_bytes(revert_data.clone()).to_string())
         .collect::<HashSet<_>>();
 
     if address_reverts.contains(&expected_revert.to_string()) {
@@ -184,7 +180,7 @@ fn handle_expect_revert_with_data(
         bail!("Call reverted as expected, but without data");
     }
 
-    let actual_revert = actual_error_from_bytes(&retdata);
+    let actual_revert = actual_error_from_bytes(retdata);
     if actual_revert == *expected_revert {
         success_return!(is_create)
     } else {
