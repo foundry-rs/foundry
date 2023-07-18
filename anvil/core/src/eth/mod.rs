@@ -106,11 +106,14 @@ pub enum EthRequest {
     )]
     EthGetTransactionCountByHash(H256),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getBlockTransactionCountByNumber",))]
-    EthGetTransactionCountByNumber(
-        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number"))]
-        BlockNumber,
-    ),
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            rename = "eth_getBlockTransactionCountByNumber",
+            deserialize_with = "lenient_block_number_seq"
+        )
+    )]
+    EthGetTransactionCountByNumber(BlockNumber),
 
     #[cfg_attr(
         feature = "serde",
@@ -118,11 +121,14 @@ pub enum EthRequest {
     )]
     EthGetUnclesCountByHash(H256),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getUncleCountByBlockNumber",))]
-    EthGetUnclesCountByNumber(
-        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number"))]
-        BlockNumber,
-    ),
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            rename = "eth_getUncleCountByBlockNumber",
+            deserialize_with = "lenient_block_number_seq"
+        )
+    )]
+    EthGetUnclesCountByNumber(BlockNumber),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getCode"))]
     EthGetCodeAt(Address, Option<BlockId>),
@@ -273,11 +279,11 @@ pub enum EthRequest {
     TraceTransaction(H256),
 
     /// Trace transaction endpoint for parity's `trace_block`
-    #[cfg_attr(feature = "serde", serde(rename = "trace_block"))]
-    TraceBlock(
-        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number"))]
-        BlockNumber,
-    ),
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "trace_block", deserialize_with = "lenient_block_number_seq")
+    )]
+    TraceBlock(BlockNumber),
 
     // Custom endpoints, they're not extracted to a separate type out of serde convenience
     /// send transactions impersonating specific account and contract addresses.
