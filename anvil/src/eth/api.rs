@@ -53,8 +53,8 @@ use ethers::{
         },
         Action, Address, Block, BlockId, BlockNumber, Bytes, Call, Create, CreateResult,
         FeeHistory, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, Res, Reward,
-        Suicide, Trace, Transaction, TransactionReceipt, TxHash, TxpoolContent,
-        TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
+        Trace, Transaction, TransactionReceipt, TxHash, TxpoolContent, TxpoolInspectSummary,
+        TxpoolStatus, H256, U256, U64,
     },
     utils::rlp,
 };
@@ -2020,15 +2020,16 @@ impl EthApi {
 
     /// Trace internal ETH transfers, contracts creation (CREATE/CREATE2) and self-destructs for a
     /// certain transaction.
-    pub async fn ots_get_internal_operations(&self, hash: H256) -> Result<()> {
+    pub async fn ots_get_internal_operations(
+        &self,
+        hash: H256,
+    ) -> Result<Vec<OtsInternalOperation>> {
         node_info!("ots_getInternalOperations");
 
-        // TODO:
-        self.backend.mined_parity_trace_transaction(hash).map(|traces| {
-            traces.into_iter().map(OtsInternalOperation::try_build);
-        });
-
-        Err(BlockchainError::BlockNotFound)
+        self.backend
+            .mined_parity_trace_transaction(hash)
+            .map(OtsInternalOperation::batch_build)
+            .ok_or_else(|| BlockchainError::DataUnavailable)
     }
 
     /// Check if an ETH address contains code at a certain block number.

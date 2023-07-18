@@ -144,22 +144,59 @@ impl OtsSearchTransactions {
 }
 
 impl OtsInternalOperation {
-    pub async fn try_build(trace: Trace) -> Option<OtsInternalOperation> {
-        match (trace.action, trace.result) {
-            (Action::Call(Call { from, to, value, .. }), _) if !value.is_zero() => {
-                Some(Self { r#type: OtsInternalOperationType::Transfer, from, to, value })
-            }
-            (
-                Action::Create(Create { from, to, value, .. }),
-                Some(Res::Create(CreateResult { address, .. })),
-            ) => Some(Self { r#type: OtsInternalOperationType::Create, from, to, value }),
-            (Action::Suicide(Suicide { address, .. }), _) => Some(Self {
-                r#type: OtsInternalOperationType::SelfDestruct,
-                from: Address::zero(),
-                to: address,
-                value: Default::default(), // TODO
-            }),
-            _ => None,
-        }
+    pub fn batch_build(traces: Vec<Trace>) -> Vec<OtsInternalOperation> {
+        traces
+            .iter()
+            .map(|trace| {
+                match (trace.action.clone(), trace.result.clone()) {
+                    (Action::Call(Call { from, to, value, .. }), _) if !value.is_zero() => {
+                        Some(Self { r#type: OtsInternalOperationType::Transfer, from, to, value })
+                    }
+                    (
+                        Action::Create(Create { from, value, .. }),
+                        Some(Res::Create(CreateResult { address, .. })),
+                    ) => Some(Self {
+                        r#type: OtsInternalOperationType::Create,
+                        from,
+                        to: address,
+                        value,
+                    }),
+                    (Action::Suicide(Suicide { address, .. }), _) => {
+                        // can we correctly assume that any suicide has a parent trace?
+                        let (from, value) =
+                            Self::find_suicide_caller(&traces, &trace.trace_address).unwrap();
+
+                        Some(Self {
+                            r#type: OtsInternalOperationType::SelfDestruct,
+                            from,
+                            to: address,
+                            value,
+                        })
+                    }
+                    _ => None,
+                }
+            })
+            .flatten()
+            .collect()
+    }
+
+    // finds the trace that parents a given trace_address
+    fn find_suicide_caller(
+        traces: &Vec<Trace>,
+        suicide_address: &Vec<usize>,
+    ) -> Option<(Address, U256)> {
+        traces
+            .iter()
+            .find(|t| t.trace_address == &suicide_address[..suicide_address.len() - 1])
+            .map(|t| match t.action {
+                Action::Call(Call { from, value, .. }) => (from, value),
+
+                Action::Create(Create { from, value, .. }) => (from, value),
+
+                // TODO can a suicide trace be parented by another suicide?
+                Action::Suicide(_) => Self::find_suicide_caller(traces, &t.trace_address).unwrap(),
+
+                Action::Reward(_) => unreachable!(),
+            })
     }
 }
