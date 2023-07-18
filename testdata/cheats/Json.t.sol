@@ -245,7 +245,13 @@ contract WriteJson is DSTest {
         notSimpleJson memory decodedData = abi.decode(data, (notSimpleJson));
         console.log(decodedData.a);
         assertEq(decodedData.a, 12345);
-        assertEq(true, false);
+    }
+
+    function test_checkKeyExists() public {
+        string memory path = "../testdata/fixtures/Json/write_complex_test.json";
+        string memory json = vm.readFile(path);
+        bool exists = vm.keyExists(json, "a");
+        assert(exists);
     }
 
     function test_writeJson() public {

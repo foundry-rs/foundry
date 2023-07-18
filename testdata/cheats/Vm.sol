@@ -582,6 +582,9 @@ interface Vm {
 
     function writeJson(string calldata, string calldata, string calldata) external;
 
+    // Checks if a key exists in the given json string
+    function keyExists(string calldata, string calldata) external returns (bool);
+
     // Pauses gas metering (gas usage will not be counted)
     function pauseGasMetering() external;
 
