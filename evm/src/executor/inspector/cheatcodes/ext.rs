@@ -340,7 +340,7 @@ fn serialize_json_object(
     state: &mut Cheatcodes,
     object_key: &str,
     value_key: &str,
-    value: &str
+    value: &str,
 ) -> Result {
     let parsed_value = serde_json::from_str(value).wrap_err("Failed to parse JSON object")?;
     serialize_json_value(state, object_key, value_key, parsed_value)
