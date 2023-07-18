@@ -81,6 +81,18 @@ fn stringify(data: &[u8]) -> String {
         .unwrap_or_else(|| format!("0x{}", hex::encode(data)))
 }
 
+fn actual_error_from_bytes(data: &Bytes) -> Bytes {
+    let mut actual_revert = data.clone();
+    if actual_revert.len() >= 4
+        && matches!(actual_revert[..4].try_into(), Ok(ERROR_PREFIX | REVERT_PREFIX))
+    {
+        if let Ok(bytes) = Bytes::decode(&actual_revert[4..]) {
+            actual_revert = bytes;
+        }
+    }
+    actual_revert
+}
+
 #[instrument(skip_all, fields(expected_revert, status, retdata = hex::encode(&retdata)))]
 pub fn handle_expect_revert(
     is_create: bool,
@@ -92,11 +104,26 @@ pub fn handle_expect_revert(
 ) -> Result<(Option<Address>, Bytes)> {
     trace!("handle expect revert");
 
-    if expected_revert_address.is_none() {
-        return handle_expect_revert_with_data(is_create, expected_revert, status, retdata);
+    if let Some(expected_revert_address) = expected_revert_address {
+        return handle_expect_revert_with_address(
+            is_create,
+            expected_revert,
+            expected_revert_address,
+            reverts_by_address,
+        );
     }
 
-    let expected_revert_address = expected_revert_address.unwrap();
+    handle_expect_revert_with_data(is_create, expected_revert, status, retdata)
+}
+
+/// Verifies that `expected_revert_address` reverted with `expected_reverted` anywhere in the call
+/// stack during EVM execution.
+fn handle_expect_revert_with_address(
+    is_create: bool,
+    expected_revert: Option<&Bytes>,
+    expected_revert_address: H160,
+    reverts_by_address: BTreeMap<H160, HashSet<Bytes>>,
+) -> Result<(Option<Address>, Bytes)> {
     let address_reverts = reverts_by_address.get(&expected_revert_address);
 
     if address_reverts.is_none() {
@@ -116,17 +143,8 @@ pub fn handle_expect_revert(
 
     let address_reverts = address_reverts
         .iter()
-        .map(|el| {
-            let mut actual_revert = el.clone();
-            if actual_revert.len() >= 4
-                && matches!(actual_revert[..4].try_into(), Ok(ERROR_PREFIX | REVERT_PREFIX))
-            {
-                if let Ok(bytes) = Bytes::decode(&actual_revert[4..]) {
-                    actual_revert = bytes;
-                }
-            }
-            actual_revert.to_string()
-        })
+        .map(actual_error_from_bytes)
+        .map(|revert_data| revert_data.to_string())
         .collect::<HashSet<_>>();
 
     if address_reverts.contains(&expected_revert.to_string()) {
@@ -145,6 +163,7 @@ pub fn handle_expect_revert(
     }
 }
 
+/// Verifies that the current call is reverting and that it reverted with `expected_revert`
 fn handle_expect_revert_with_data(
     is_create: bool,
     expected_revert: Option<&Bytes>,
@@ -163,15 +182,7 @@ fn handle_expect_revert_with_data(
         bail!("Call reverted as expected, but without data");
     }
 
-    let mut actual_revert = retdata;
-    if actual_revert.len() >= 4
-        && matches!(actual_revert[..4].try_into(), Ok(ERROR_PREFIX | REVERT_PREFIX))
-    {
-        if let Ok(bytes) = Bytes::decode(&actual_revert[4..]) {
-            actual_revert = bytes;
-        }
-    }
-
+    let actual_revert = actual_error_from_bytes(&retdata);
     if actual_revert == *expected_revert {
         success_return!(is_create)
     } else {
