@@ -5,6 +5,7 @@ use ethers::{
     prelude::artifacts::CompactContractBytecode,
     types::*,
 };
+use eyre::Context;
 use foundry_common::{fmt::*, fs, get_artifact_path};
 use foundry_config::fs_permissions::FsAccessKind;
 use hex::FromHex;
@@ -333,12 +334,24 @@ fn serialize_json(
     serialize_json_value(state, object_key, value_key, parsed_value)
 }
 
+/// Serializes a key:value pair to a specific object. Unlike serialize_json,
+/// it will strictly try to serialize the value into a JSON object, and will fail if it can't.
+fn serialize_json_object(
+    state: &mut Cheatcodes,
+    object_key: &str,
+    value_key: &str,
+    value: &str
+) -> Result {
+    let parsed_value = serde_json::from_str(value).wrap_err("Failed to parse JSON object")?;
+    serialize_json_value(state, object_key, value_key, parsed_value)
+}
+
 fn serialize_json_value(
     state: &mut Cheatcodes,
     object_key: &str,
     value_key: &str,
     parsed_value: Value,
-) -> Result<Bytes, Bytes> {
+) -> Result {
     let json = if let Some(serialization) = state.serialized_jsons.get_mut(object_key) {
         serialization.insert(value_key.to_string(), parsed_value);
         serialization.clone()
@@ -597,6 +610,9 @@ pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
         }
         HEVMCalls::SerializeBytes1(inner) => {
             serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
+        }
+        HEVMCalls::SerializeJson(inner) => {
+            serialize_json_object(state, &inner.0, &inner.1, &inner.2)
         }
         HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
         HEVMCalls::WriteJson1(inner) => write_json(state, &inner.0, &inner.1, Some(&inner.2)),
