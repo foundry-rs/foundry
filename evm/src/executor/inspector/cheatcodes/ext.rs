@@ -274,7 +274,6 @@ fn parse_json(json_str: &str, key: &str, coerce: Option<ParamType>) -> Result {
         // in this case.
         "." => {
             let values = jsonpath_lib::select(&json, "$")?;
-            println!("values: {:?} {:?}", values, values.len());
             let res = parse_json_values(values, key)?;
 
             // encode the bytes as the 'bytes' solidity type
