@@ -90,7 +90,7 @@ impl Cmd for FmtArgs {
         let format = |source: String, path: Option<&Path>| -> eyre::Result<_> {
             let name = match path {
                 Some(path) => {
-                    path.strip_prefix(&config.__root.0).unwrap_or(&path).display().to_string()
+                    path.strip_prefix(&config.__root.0).unwrap_or(path).display().to_string()
                 }
                 None => "stdin".to_string(),
             };
