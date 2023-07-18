@@ -274,6 +274,7 @@ fn parse_json(json_str: &str, key: &str, coerce: Option<ParamType>) -> Result {
         // in this case.
         "." => {
             let values = jsonpath_lib::select(&json, "$")?;
+            println!("values: {:?} {:?}", values, values.len());
             let res = parse_json_values(values, key)?;
 
             // encode the bytes as the 'bytes' solidity type
@@ -404,6 +405,15 @@ fn write_json(
     })?;
     super::fs::write_file(state, path, json_string)?;
     Ok(Bytes::new())
+}
+
+/// Checks if a key exists in a JSON object.
+fn key_exists(json_str: &str, key: &str) -> Result {
+    let json: Value =
+        serde_json::from_str(json_str).map_err(|e| format!("Could not convert to JSON: {e}"))?;
+    let values = jsonpath_lib::select(&json, &canonicalize_json_key(key))?;
+    let exists = util::parse(&(!values.is_empty()).to_string(), &ParamType::Bool)?;
+    Ok(exists)
 }
 
 #[instrument(level = "error", name = "ext", target = "evm::cheatcodes", skip_all)]
@@ -582,6 +592,7 @@ pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
         }
         HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
         HEVMCalls::WriteJson1(inner) => write_json(state, &inner.0, &inner.1, Some(&inner.2)),
+        HEVMCalls::KeyExists(inner) => key_exists(&inner.0, &inner.1),
         _ => return None,
     })
 }
