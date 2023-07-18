@@ -4,8 +4,24 @@ pragma solidity 0.8.18;
 import "ds-test/test.sol";
 import "./Vm.sol";
 
-contract Reverter {
+interface IReverter {
+    function revertWithoutReason() external view;
+
+    function revertWithMessage(string memory data) external view;
+
+    function revertWithCustomError() external view;
+}
+
+contract Reverter is IReverter {
     error CustomError();
+
+    function revertWithoutReason() external pure {
+        revert();
+    }
+
+    function revertWithCustomError() external pure {
+        revert CustomError();
+    }
 
     function revertWithMessage(string memory message) public pure {
         require(false, message);
@@ -17,10 +33,6 @@ contract Reverter {
         return uint256(100) - uint256(101);
     }
 
-    function revertWithCustomError() public pure {
-        revert CustomError();
-    }
-
     function nestedRevert(Reverter inner, string memory message) public pure {
         inner.revertWithMessage(message);
     }
@@ -29,9 +41,49 @@ contract Reverter {
         dummy.callMe();
         require(false, message);
     }
+}
 
-    function revertWithoutReason() public pure {
-        revert();
+contract ReverterWrapper is IReverter {
+    IReverter inner;
+
+    constructor(IReverter _inner) {
+        inner = _inner;
+    }
+
+    function nestedRevertOnContractCreation(bytes32 salt, string memory message) external {
+        new ConstructorReverter{salt: salt}(message);
+    }
+
+    function revertWithoutReason() external view override {
+        inner.revertWithoutReason();
+    }
+
+    function revertWithMessage(string memory data) external view override {
+        inner.revertWithMessage(data);
+    }
+
+    function revertWithCustomError() external view override {
+        inner.revertWithCustomError();
+    }
+}
+
+contract RevertCatcher is IReverter {
+    IReverter inner;
+
+    constructor(IReverter _inner) {
+        inner = _inner;
+    }
+
+    function revertWithoutReason() external view override {
+        try inner.revertWithoutReason() {} catch {}
+    }
+
+    function revertWithMessage(string memory data) external view override {
+        try inner.revertWithMessage(data) {} catch {}
+    }
+
+    function revertWithCustomError() external view override {
+        try inner.revertWithCustomError() {} catch {}
     }
 }
 
@@ -184,5 +236,292 @@ contract ExpectRevertTest is DSTest {
 
     function testFailExpectRevertDangling() public {
         vm.expectRevert("dangling");
+    }
+}
+
+function getCreate2Address(bytes32 salt, address deployerAddress, bytes memory creationCode) pure returns (address) {
+    return address(
+        uint160(
+            uint256(
+                keccak256(
+                    abi.encodePacked(
+                        bytes1(0xff), deployerAddress, salt, keccak256(abi.encodePacked(creationCode, abi.encode()))
+                    )
+                )
+            )
+        )
+    );
+}
+
+contract ExpectRevertWithAddressTest is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+    Reverter reverter;
+    ReverterWrapper nestedReverter;
+    address reverterAddress;
+    address nestedReverterAddress;
+
+    error CustomError();
+
+    function setUp() public {
+        reverter = new Reverter();
+        nestedReverter = new ReverterWrapper(reverter);
+
+        reverterAddress = address(reverter);
+        nestedReverterAddress = address(nestedReverter);
+    }
+
+    // Simple revert tests
+    function testFailExpectRevertWithNoDataAndWrongAddress(address wrongAddress) external {
+        vm.assume(wrongAddress != reverterAddress);
+
+        vm.expectRevert(wrongAddress);
+        reverter.revertWithoutReason();
+    }
+
+    function testFailExpectRevertWithCorrectCustomErrorAndWrongAddress(address wrongAddress) external {
+        vm.assume(wrongAddress != reverterAddress);
+
+        vm.expectRevert(CustomError.selector, wrongAddress);
+        reverter.revertWithCustomError();
+    }
+
+    function testFailExpectRevertWithWrongCustomErrorAndCorrectAddress() external {
+        vm.expectRevert("definetely the wrong selector", reverterAddress);
+        reverter.revertWithCustomError();
+    }
+
+    function testFailExpectRevertWithCorrectDataAndWrongAddress(address wrongAddress, string calldata data) external {
+        vm.assume(wrongAddress != reverterAddress);
+
+        vm.expectRevert(bytes(data), wrongAddress);
+        reverter.revertWithMessage(data);
+    }
+
+    function testFailExpectRevertWithWrongDataAndCorrectAddress(string calldata data) external {
+        vm.expectRevert(bytes(data), reverterAddress);
+        reverter.revertWithMessage("Some random data the the fuzzer will never match");
+    }
+
+    function testExpectAnyRevertWithCorrectAddress(string calldata randomData) external {
+        vm.expectRevert(reverterAddress);
+        reverter.revertWithoutReason();
+
+        vm.expectRevert(reverterAddress);
+        reverter.revertWithMessage(randomData);
+
+        vm.expectRevert(reverterAddress);
+        reverter.revertWithCustomError();
+    }
+
+    function testExpectRevertWithCorrectDataAndAddress(string calldata randomData) external {
+        vm.expectRevert(bytes(randomData), reverterAddress);
+        reverter.revertWithMessage(randomData);
+
+        vm.expectRevert(CustomError.selector, reverterAddress);
+        reverter.revertWithCustomError();
+    }
+
+    function testExpectRevertOnContractCreation(bytes32 salt, string memory message) external {
+        address predictedAddress = getCreate2Address(salt, address(this), type(ConstructorReverter).creationCode);
+
+        vm.expectRevert(predictedAddress);
+        new ConstructorReverter{salt: salt}(message);
+    }
+
+    // 1 level Nesting revert
+    function testFailExpectNestedRevertWithWrongAddress(address wrongAddress) external {
+        vm.assume(wrongAddress != reverterAddress && wrongAddress != nestedReverterAddress);
+
+        vm.expectRevert(wrongAddress);
+        nestedReverter.revertWithoutReason();
+    }
+
+    function testExpectNestedRevertWithCorrectAddress() external {
+        vm.expectRevert(reverterAddress);
+        nestedReverter.revertWithoutReason();
+    }
+
+    function testFailExpectNestedRevertOnContractCreation(bytes32 salt, address wrongAddress, string memory message)
+        external
+    {
+        address predictedAddress =
+            getCreate2Address(salt, nestedReverterAddress, type(ConstructorReverter).creationCode);
+        vm.assume(wrongAddress != predictedAddress && wrongAddress != nestedReverterAddress);
+
+        vm.expectRevert(wrongAddress);
+        nestedReverter.nestedRevertOnContractCreation(salt, message);
+    }
+
+    function testExpectNestedRevertOnContractCreationWithCorrectAddress(bytes32 salt, string memory message) external {
+        address predictedAddress =
+            getCreate2Address(salt, nestedReverterAddress, type(ConstructorReverter).creationCode);
+
+        vm.expectRevert(predictedAddress);
+        nestedReverter.nestedRevertOnContractCreation(salt, message);
+    }
+
+    function testFailExpectNestedRevertWithCorrectDataAndWrongAddress(address wrongAddress, string memory data)
+        external
+    {
+        vm.assume(wrongAddress != reverterAddress && wrongAddress != nestedReverterAddress);
+
+        vm.expectRevert(bytes(data), wrongAddress);
+        nestedReverter.revertWithMessage(data);
+    }
+
+    function testFailExpectNestedRevertWithWrongDataAndCorrectAddress(string memory data) external {
+        vm.expectRevert("Another random data that the fuzzer will never match", reverterAddress);
+        nestedReverter.revertWithMessage(data);
+    }
+
+    function testExpectNestedRevertWithCorrectDataAndAddress(string memory data) external {
+        vm.expectRevert(bytes(data), reverterAddress);
+        nestedReverter.revertWithMessage(data);
+    }
+
+    // Deep nesting
+    function testFailExpectRevertAtTheMiddleLevel() external {
+        RevertCatcher middleWrapper = new RevertCatcher(reverter);
+        ReverterWrapper outerWrapper = new ReverterWrapper(middleWrapper);
+
+        vm.expectRevert(address(middleWrapper));
+        outerWrapper.revertWithoutReason();
+    }
+
+    function testFailExpectRevertAtTheOuterLevel() external {
+        RevertCatcher middleWrapper = new RevertCatcher(reverter);
+        ReverterWrapper outerWrapper = new ReverterWrapper(middleWrapper);
+
+        vm.expectRevert(address(outerWrapper));
+        outerWrapper.revertWithoutReason();
+    }
+
+    function testExpectAnyRevertAtMultipleNestingLevels(string memory data) external {
+        ReverterWrapper middleWrapper = new ReverterWrapper(reverter);
+        ReverterWrapper outerWrapper = new ReverterWrapper(middleWrapper);
+
+        vm.expectRevert(address(outerWrapper));
+        outerWrapper.revertWithoutReason();
+
+        vm.expectRevert(address(middleWrapper));
+        outerWrapper.revertWithoutReason();
+
+        vm.expectRevert(reverterAddress);
+        outerWrapper.revertWithoutReason();
+
+        vm.expectRevert(address(outerWrapper));
+        outerWrapper.revertWithCustomError();
+
+        vm.expectRevert(address(middleWrapper));
+        outerWrapper.revertWithCustomError();
+
+        vm.expectRevert(reverterAddress);
+        outerWrapper.revertWithCustomError();
+
+        vm.expectRevert(address(outerWrapper));
+        outerWrapper.revertWithMessage(data);
+
+        vm.expectRevert(address(middleWrapper));
+        outerWrapper.revertWithMessage(data);
+
+        vm.expectRevert(reverterAddress);
+        outerWrapper.revertWithMessage(data);
+    }
+
+    function testExpectRevertWithDataAtMultipleNestingLevels(string memory data) external {
+        ReverterWrapper middleWrapper = new ReverterWrapper(reverter);
+        ReverterWrapper outerWrapper = new ReverterWrapper(middleWrapper);
+
+        vm.expectRevert(address(outerWrapper));
+        outerWrapper.revertWithoutReason();
+
+        vm.expectRevert(address(middleWrapper));
+        outerWrapper.revertWithoutReason();
+
+        vm.expectRevert(reverterAddress);
+        outerWrapper.revertWithoutReason();
+
+        vm.expectRevert(CustomError.selector, address(outerWrapper));
+        outerWrapper.revertWithCustomError();
+
+        vm.expectRevert(CustomError.selector, address(middleWrapper));
+        outerWrapper.revertWithCustomError();
+
+        vm.expectRevert(CustomError.selector, reverterAddress);
+        outerWrapper.revertWithCustomError();
+
+        vm.expectRevert(bytes(data), address(outerWrapper));
+        outerWrapper.revertWithMessage(data);
+
+        vm.expectRevert(bytes(data), address(middleWrapper));
+        outerWrapper.revertWithMessage(data);
+
+        vm.expectRevert(bytes(data), reverterAddress);
+        outerWrapper.revertWithMessage(data);
+    }
+
+    function testExpectAnyRevertOnlyAtTheDeepestLevel(string memory data) external {
+        RevertCatcher middleWrapper = new RevertCatcher(reverter);
+        ReverterWrapper outerWrapper = new ReverterWrapper(middleWrapper);
+
+        vm.expectRevert(reverterAddress);
+        outerWrapper.revertWithoutReason();
+
+        vm.expectRevert(reverterAddress);
+        outerWrapper.revertWithCustomError();
+
+        vm.expectRevert(reverterAddress);
+        outerWrapper.revertWithMessage(data);
+    }
+
+    function testExpectRevertWithDataOnlyAtTheDeepestLevel(string memory data) external {
+        RevertCatcher middleWrapper = new RevertCatcher(reverter);
+        ReverterWrapper outerWrapper = new ReverterWrapper(middleWrapper);
+
+        vm.expectRevert(bytes(data), reverterAddress);
+        outerWrapper.revertWithMessage(data);
+
+        vm.expectRevert(CustomError.selector, reverterAddress);
+        outerWrapper.revertWithCustomError();
+    }
+
+    function testExpectAnyRevertOnlyAtThe2LowestLevels(string memory data) external {
+        ReverterWrapper middleWrapper = new ReverterWrapper(reverter);
+        RevertCatcher outerWrapper = new RevertCatcher(middleWrapper);
+
+        vm.expectRevert(reverterAddress);
+        outerWrapper.revertWithoutReason();
+
+        vm.expectRevert(address(middleWrapper));
+        outerWrapper.revertWithoutReason();
+
+        vm.expectRevert(reverterAddress);
+        outerWrapper.revertWithCustomError();
+
+        vm.expectRevert(address(middleWrapper));
+        outerWrapper.revertWithCustomError();
+
+        vm.expectRevert(bytes(data), reverterAddress);
+        outerWrapper.revertWithMessage(data);
+
+        vm.expectRevert(bytes(data), address(middleWrapper));
+        outerWrapper.revertWithMessage(data);
+    }
+
+    function testExpectRevertWithDataOnlyAtThe2LowestLevels(string memory data) external {
+        ReverterWrapper middleWrapper = new ReverterWrapper(reverter);
+        RevertCatcher outerWrapper = new RevertCatcher(middleWrapper);
+
+        vm.expectRevert(bytes(data), reverterAddress);
+        outerWrapper.revertWithMessage(data);
+
+        vm.expectRevert(bytes(data), address(middleWrapper));
+        outerWrapper.revertWithMessage(data);
+
+        vm.expectRevert(CustomError.selector, reverterAddress);
+        outerWrapper.revertWithCustomError();
+
+        vm.expectRevert(CustomError.selector, address(middleWrapper));
+        outerWrapper.revertWithCustomError();
     }
 }

@@ -238,6 +238,12 @@ interface Vm {
 
     function expectRevert(bytes4) external;
 
+    function expectRevert(bytes calldata, address) external;
+
+    function expectRevert(bytes4, address) external;
+
+    function expectRevert(address) external;
+
     // Record all storage reads and writes
     function record() external;
 
