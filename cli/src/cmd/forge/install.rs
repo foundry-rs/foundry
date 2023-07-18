@@ -13,6 +13,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use semver::Version;
 use std::{
+    io::IsTerminal,
     path::{Path, PathBuf},
     str,
 };
@@ -316,7 +317,7 @@ impl Installer<'_> {
 
         let mut is_branch = false;
         // only try to match tag if current terminal is a tty
-        if is_terminal::is_terminal(std::io::stdout()) {
+        if std::io::stdout().is_terminal() {
             if tag.is_empty() {
                 tag = self.match_tag(&tag, path)?;
             } else if let Some(branch) = self.match_branch(&tag, path)? {
