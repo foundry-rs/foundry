@@ -255,12 +255,12 @@ fn encode_abi_values(values: Vec<Token>) -> Vec<u8> {
 
 /// Parses a vector of [`Value`]s into a vector of [`Token`]s.
 fn parse_json_values(values: Vec<&Value>, key: &str) -> Result<Vec<Token>> {
-    Ok(values
+    values
         .iter()
         .map(|inner| {
             value_to_token(inner).map_err(|err| fmt_err!("Failed to parse key \"{key}\": {err}"))
         })
-        .collect::<Result<Vec<Token>>>()?)
+        .collect::<Result<Vec<Token>>>()
 }
 
 /// Parses a JSON and returns a single value, an array or an entire JSON object encoded as tuple.

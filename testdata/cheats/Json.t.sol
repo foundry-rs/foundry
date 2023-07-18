@@ -238,7 +238,7 @@ contract WriteJson is DSTest {
         notSimpleJson memory decodedData = abi.decode(data, (notSimpleJson));
     }
 
-    function test_writeJson2() public {
+    function test_retrieveEntireJson() public {
         string memory path = "../testdata/fixtures/Json/write_complex_test.json";
         string memory json = vm.readFile(path);
         bytes memory data = vm.parseJson(json, ".");
