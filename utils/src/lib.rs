@@ -23,6 +23,7 @@ use tracing::trace;
 pub mod abi;
 pub mod error;
 pub mod glob;
+pub mod path;
 pub mod rpc;
 
 /// Data passed to the post link handler of the linker for each linked artifact.
