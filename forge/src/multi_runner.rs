@@ -14,10 +14,14 @@ use foundry_evm::{
     },
     revm,
 };
-use foundry_utils::PostLinkInput;
+use foundry_utils::{PostLinkInput, ResolvedDependency};
 use rayon::prelude::*;
 use revm::primitives::SpecId;
-use std::{collections::BTreeMap, path::Path, sync::mpsc::Sender};
+use std::{
+    collections::{BTreeMap, HashSet},
+    path::Path,
+    sync::mpsc::Sender,
+};
 
 pub type DeployableContracts = BTreeMap<ArtifactId, (Abi, Bytes, Vec<Bytes>)>;
 
@@ -115,16 +119,17 @@ impl MultiContractRunner {
     /// before executing all contracts and their tests in _parallel_.
     ///
     /// Each Executor gets its own instance of the `Backend`.
-    pub fn test(
+    pub async fn test(
         &mut self,
-        filter: &impl TestFilter,
+        filter: impl TestFilter,
         stream_result: Option<Sender<(String, SuiteResult)>>,
         test_options: TestOptions,
     ) -> BTreeMap<String, SuiteResult> {
         trace!("running all tests");
 
         // the db backend that serves all the data, each contract gets its own instance
-        let db = Backend::spawn(self.fork.take());
+        let db = Backend::spawn(self.fork.take()).await;
+        let filter = &filter;
 
         self.contracts
             .par_iter()
@@ -143,7 +148,7 @@ impl MultiContractRunner {
                     .set_coverage(self.coverage)
                     .build(db.clone());
                 let identifier = id.identifier();
-                trace!(contract= ?identifier, "start executing all tests in contract");
+                trace!(contract=%identifier, "start executing all tests in contract");
 
                 let result = self.run_tests(
                     &identifier,
@@ -174,7 +179,7 @@ impl MultiContractRunner {
         executor: Executor,
         deploy_code: Bytes,
         libs: &[Bytes],
-        filter: &impl TestFilter,
+        filter: impl TestFilter,
         test_options: TestOptions,
     ) -> SuiteResult {
         let runner = ContractRunner::new(
@@ -237,9 +242,21 @@ impl MultiContractRunnerBuilder {
             .iter()
             .map(|(i, _)| (i.identifier(), root.as_ref().join(&i.source).to_string_lossy().into()))
             .collect::<BTreeMap<String, String>>();
-
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
+
+        fn unique_deps(deps: Vec<ResolvedDependency>) -> Vec<ResolvedDependency> {
+            let mut filtered = Vec::new();
+            let mut seen = HashSet::new();
+            for dep in deps {
+                if !seen.insert(dep.id.clone()) {
+                    continue
+                }
+                filtered.push(dep);
+            }
+
+            filtered
+        }
 
         foundry_utils::link_with_nonce_or_address(
             ArtifactContracts::from_iter(contracts),
@@ -248,7 +265,6 @@ impl MultiContractRunnerBuilder {
             evm_opts.sender,
             U256::one(),
             &mut deployable_contracts,
-            |file, key| (format!("{key}.json:{key}"), file, key),
             |post_link_input| {
                 let PostLinkInput {
                     contract,
@@ -257,6 +273,7 @@ impl MultiContractRunnerBuilder {
                     extra: deployable_contracts,
                     dependencies,
                 } = post_link_input;
+                let dependencies = unique_deps(dependencies);
 
                 // get bytes
                 let bytecode =
@@ -277,10 +294,7 @@ impl MultiContractRunnerBuilder {
                         (
                             abi.clone(),
                             bytecode,
-                            dependencies
-                                .into_iter()
-                                .map(|(_, bytecode)| bytecode)
-                                .collect::<Vec<_>>(),
+                            dependencies.into_iter().map(|dep| dep.bytecode).collect::<Vec<_>>(),
                         ),
                     );
                 }
@@ -292,6 +306,7 @@ impl MultiContractRunnerBuilder {
                     .and_then(|bytes| known_contracts.insert(id.clone(), (abi, bytes.to_vec())));
                 Ok(())
             },
+            root,
         )?;
 
         let execution_info = known_contracts.flatten();

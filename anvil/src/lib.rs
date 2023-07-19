@@ -27,7 +27,7 @@ use parking_lot::Mutex;
 use std::{
     future::Future,
     io,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -96,6 +96,10 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
 
     let backend = Arc::new(config.setup().await);
 
+    if config.enable_auto_impersonate {
+        backend.auto_impersonate_account(true).await;
+    }
+
     let fork = backend.get_fork().cloned();
 
     let NodeConfig {
@@ -162,15 +166,19 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     let node_service =
         tokio::task::spawn(NodeService::new(pool, backend, miner, fee_history_service, filters));
 
-    let host = config.host.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
-    let mut addr = SocketAddr::new(host, port);
+    let mut servers = Vec::new();
+    let mut addresses = Vec::new();
 
-    // configure the rpc server and use its actual local address
-    let server = server::serve(addr, api.clone(), server_config);
-    addr = server.local_addr();
+    for addr in config.host.iter() {
+        let sock_addr = SocketAddr::new(addr.to_owned(), port);
+        let srv = server::serve(sock_addr, api.clone(), server_config.clone());
 
-    // spawn the server on a new task
-    let serve = tokio::task::spawn(server.map_err(NodeError::from));
+        addresses.push(srv.local_addr());
+
+        // spawn the server on a new task
+        let srv = tokio::task::spawn(srv.map_err(NodeError::from));
+        servers.push(srv);
+    }
 
     let tokio_handle = Handle::current();
     let (signal, on_shutdown) = shutdown::signal();
@@ -181,9 +189,9 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     let handle = NodeHandle {
         config,
         node_service,
-        server: serve,
+        servers,
         ipc_task,
-        address: addr,
+        addresses,
         _signal: Some(signal),
         task_manager,
     };
@@ -201,11 +209,11 @@ type IpcTask = JoinHandle<io::Result<()>>;
 pub struct NodeHandle {
     config: NodeConfig,
     /// The address of the running rpc server
-    address: SocketAddr,
+    addresses: Vec<SocketAddr>,
     /// Join handle for the Node Service
     pub node_service: JoinHandle<Result<(), NodeError>>,
-    /// Join handle for the Anvil server
-    pub server: JoinHandle<Result<(), NodeError>>,
+    /// Join handles (one per socket) for the Anvil server.
+    pub servers: Vec<JoinHandle<Result<(), NodeError>>>,
     // The future that joins the ipc server, if any
     ipc_task: Option<IpcTask>,
     /// A signal that fires the shutdown, fired on drop.
@@ -224,7 +232,14 @@ impl NodeHandle {
     pub(crate) fn print(&self, fork: Option<&ClientFork>) {
         self.config.print(fork);
         if !self.config.silent {
-            println!("Listening on {}", self.socket_address())
+            println!(
+                "Listening on {}",
+                self.addresses
+                    .iter()
+                    .map(|addr| { addr.to_string() })
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            )
         }
     }
 
@@ -233,7 +248,7 @@ impl NodeHandle {
     /// **N.B.** this may not necessarily be the same `host + port` as configured in the
     /// `NodeConfig`, if port was set to 0, then the OS auto picks an available port
     pub fn socket_address(&self) -> &SocketAddr {
-        &self.address
+        &self.addresses[0]
     }
 
     /// Returns the http endpoint
@@ -352,7 +367,14 @@ impl Future for NodeHandle {
             return Poll::Ready(res)
         }
 
-        pin.server.poll_unpin(cx)
+        // poll the axum server handles
+        for server in pin.servers.iter_mut() {
+            if let Poll::Ready(res) = server.poll_unpin(cx) {
+                return Poll::Ready(res)
+            }
+        }
+
+        Poll::Pending
     }
 }
 

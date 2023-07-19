@@ -14,7 +14,7 @@ use ethers::{
 };
 use eyre::{Context, ContextCompat};
 use foundry_common::compile;
-use foundry_utils::PostLinkInput;
+use foundry_utils::{PostLinkInput, ResolvedDependency};
 use std::{collections::BTreeMap, fs, str::FromStr};
 use tracing::{trace, warn};
 
@@ -29,6 +29,7 @@ impl ScriptArgs {
     /// Compiles the file with auto-detection and compiler params.
     pub fn build(&mut self, script_config: &mut ScriptConfig) -> eyre::Result<BuildOutput> {
         let (project, output) = self.get_project_and_output(script_config)?;
+        let output = output.with_stripped_file_prefixes(project.root());
 
         let mut sources: BTreeMap<u32, String> = BTreeMap::new();
 
@@ -80,6 +81,8 @@ impl ScriptArgs {
 
         let mut target_fname = dunce::canonicalize(&self.path)
             .wrap_err("Couldn't convert contract path to absolute path.")?
+            .strip_prefix(project.root())
+            .wrap_err("Couldn't strip project root from contract path.")?
             .to_str()
             .wrap_err("Bad path to string.")?
             .to_string();
@@ -117,7 +120,6 @@ impl ScriptArgs {
             sender,
             nonce,
             &mut extra_info,
-            |file, key| (format!("{key}.json:{key}"), file, key),
             |post_link_input| {
                 let PostLinkInput {
                     contract,
@@ -127,13 +129,26 @@ impl ScriptArgs {
                     dependencies,
                 } = post_link_input;
 
+                fn unique_deps(deps: Vec<ResolvedDependency>) -> Vec<(String, Bytes)> {
+                    let mut filtered = Vec::new();
+                    let mut seen = HashSet::new();
+                    for dep in deps {
+                        if !seen.insert(dep.id.clone()) {
+                            continue
+                        }
+                        filtered.push((dep.id, dep.bytecode));
+                    }
+
+                    filtered
+                }
+
                 // if it's the target contract, grab the info
                 if extra.no_target_name {
                     if id.source == std::path::PathBuf::from(&extra.target_fname) {
                         if extra.matched {
                             eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
                         }
-                        *extra.dependencies = dependencies;
+                        *extra.dependencies = unique_deps(dependencies);
                         *extra.contract = contract.clone();
                         extra.matched = true;
                         extra.target_id = Some(id.clone());
@@ -145,7 +160,7 @@ impl ScriptArgs {
                         .expect("The target specifier is malformed.");
                     let path = std::path::Path::new(path);
                     if path == id.source && name == id.name {
-                        *extra.dependencies = dependencies;
+                        *extra.dependencies = unique_deps(dependencies);
                         *extra.contract = contract.clone();
                         extra.matched = true;
                         extra.target_id = Some(id.clone());
@@ -156,6 +171,7 @@ impl ScriptArgs {
                 highlevel_known_contracts.insert(id, tc.unwrap());
                 Ok(())
             },
+            project.root(),
         )?;
 
         let target = extra_info
@@ -168,7 +184,7 @@ impl ScriptArgs {
         // Merge with user provided libraries
         let mut new_libraries = Libraries::parse(&new_libraries)?;
         for (file, libraries) in libraries_addresses.libs.into_iter() {
-            new_libraries.libs.entry(file).or_default().extend(libraries.into_iter())
+            new_libraries.libs.entry(file).or_default().extend(libraries)
         }
 
         Ok(BuildOutput {
@@ -277,7 +293,7 @@ pub fn filter_sources_and_artifacts(
         .filter_map(|(id, path)| {
             let mut resolved = project
                 .paths
-                .resolve_library_import(&PathBuf::from(&path))
+                .resolve_library_import(project.root(), &PathBuf::from(&path))
                 .unwrap_or_else(|| PathBuf::from(&path));
 
             if !resolved.is_absolute() {

@@ -66,6 +66,7 @@ test = 'test'
 script = 'script'
 out = 'out'
 libs = ['lib']
+auto_detect_remappings = true # recursive auto-detection of remappings
 remappings = []
 # list of libraries to link in the form of `<path to lib>:<lib name>:<address>`: `"src/MyLib.sol:MyLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"`
 # the <path to lib> supports remappings
@@ -143,6 +144,8 @@ via_ir = false
 rpc_storage_caching = { chains = "all", endpoints = "all" }
 # this overrides `rpc_storage_caching` entirely
 no_storage_caching = false
+# Whether to store the referenced sources in the metadata as literal data.
+use_literal_content = false
 # use ipfs method to generate the metadata hash, solc's default.
 # To not include the metadata hash, to allow for deterministic code: https://docs.soliditylang.org/en/latest/metadata.html, use "none"
 bytecode_hash = "ipfs"

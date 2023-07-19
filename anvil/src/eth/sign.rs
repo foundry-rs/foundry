@@ -42,7 +42,7 @@ pub trait Signer: Send + Sync {
         &self,
         request: TypedTransactionRequest,
         address: &Address,
-    ) -> Result<TypedTransaction, BlockchainError>;
+    ) -> Result<Signature, BlockchainError>;
 }
 
 /// Maintains developer keys
@@ -54,7 +54,7 @@ pub struct DevSigner {
 impl DevSigner {
     pub fn new(accounts: Vec<Wallet<SigningKey>>) -> Self {
         let addresses = accounts.iter().map(|wallet| wallet.address()).collect::<Vec<_>>();
-        let accounts = addresses.iter().cloned().zip(accounts.into_iter()).collect();
+        let accounts = addresses.iter().cloned().zip(accounts).collect();
         Self { addresses, accounts }
     }
 }
@@ -88,13 +88,11 @@ impl Signer for DevSigner {
         &self,
         request: TypedTransactionRequest,
         address: &Address,
-    ) -> Result<TypedTransaction, BlockchainError> {
+    ) -> Result<Signature, BlockchainError> {
         let signer = self.accounts.get(address).ok_or(BlockchainError::NoSignerAvailable)?;
-        let ethers_tx: EthersTypedTransactionRequest = request.clone().into();
+        let ethers_tx: EthersTypedTransactionRequest = request.into();
 
-        let signature = signer.sign_transaction_sync(&ethers_tx)?;
-
-        build_typed_transaction(request, signature)
+        Ok(signer.sign_transaction_sync(&ethers_tx)?)
     }
 }
 

@@ -8,7 +8,10 @@ use chisel::{
     prelude::{ChiselCommand, ChiselDispatcher, DispatchResult, SolidityHelper},
 };
 use clap::Parser;
-use foundry_cli::cmd::{forge::build::BuildArgs, LoadConfig};
+use foundry_cli::{
+    cmd::{forge::build::BuildArgs, LoadConfig},
+    utils,
+};
 use foundry_common::evm::EvmArgs;
 use foundry_config::{
     figment::{
@@ -37,14 +40,14 @@ pub(crate) const VERSION_MESSAGE: &str = concat!(
 #[derive(Debug, Parser)]
 #[clap(name = "chisel", version = VERSION_MESSAGE)]
 pub struct ChiselParser {
+    #[command(subcommand)]
+    pub sub: Option<ChiselParserSub>,
+
     #[clap(flatten)]
     pub opts: BuildArgs,
 
     #[clap(flatten)]
     pub evm_opts: EvmArgs,
-
-    #[command(subcommand)]
-    pub sub: Option<ChiselParserSub>,
 }
 
 /// Chisel binary subcommands
@@ -75,6 +78,8 @@ async fn main() -> eyre::Result<()> {
     if !Paint::enable_windows_ascii() {
         Paint::disable()
     }
+
+    utils::load_dotenv();
 
     // Parse command args
     let args = ChiselParser::parse();

@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 pub type SingleSignaturesIdentifier = Arc<RwLock<SignaturesIdentifier>>;
 
 /// An identifier that tries to identify functions and events using signatures found at
-/// `sig.eth.samczsun.com`.
+/// `https://openchain.xyz`.
 #[derive(Debug)]
 pub struct SignaturesIdentifier {
     /// Cached selectors for functions and events
@@ -132,13 +132,13 @@ impl SignaturesIdentifier {
         }
     }
 
-    /// Identifies `Function` from its cache or `sig.eth.samczsun.com`
+    /// Identifies `Function` from its cache or `https://api.openchain.xyz`
     pub async fn identify_function(&mut self, identifier: &[u8]) -> Option<Function> {
         self.ensure_not_offline()?;
         self.identify(SelectorType::Function, identifier, get_func).await
     }
 
-    /// Identifies `Event` from its cache or `sig.eth.samczsun.com`
+    /// Identifies `Event` from its cache or `https://api.openchain.xyz`
     pub async fn identify_event(&mut self, identifier: &[u8]) -> Option<Event> {
         self.ensure_not_offline()?;
         self.identify(SelectorType::Event, identifier, get_event).await
@@ -161,7 +161,7 @@ pub struct CachedSignatures {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn can_query_signatures() {
         let tmp = tempfile::tempdir().unwrap();
         {

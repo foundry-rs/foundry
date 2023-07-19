@@ -16,7 +16,7 @@ const LATEST_SOLC: Version = Version::new(0, 8, 20);
 macro_rules! ensure_svm_releases {
     ($($test:ident => $platform:ident),*) => {
         $(
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread")]
         async fn $test() {
             ensure_latest_release(Platform::$platform).await
         }

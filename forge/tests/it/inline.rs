@@ -10,16 +10,16 @@ mod tests {
     };
     use foundry_config::{FuzzConfig, InvariantConfig};
 
-    #[test]
-    fn inline_config_run_fuzz() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn inline_config_run_fuzz() {
         let opts = test_options();
 
         let filter = Filter::new(".*", ".*", ".*inline/FuzzInlineConf.t.sol");
 
-        let mut runner = runner();
+        let mut runner = runner().await;
         runner.test_options = opts.clone();
 
-        let result = runner.test(&filter, None, opts);
+        let result = runner.test(&filter, None, opts).await;
         let suite_result: &SuiteResult =
             result.get("inline/FuzzInlineConf.t.sol:FuzzInlineConf").unwrap();
         let test_result: &TestResult =
@@ -34,16 +34,16 @@ mod tests {
         }
     }
 
-    #[test]
-    fn inline_config_run_invariant() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn inline_config_run_invariant() {
         const ROOT: &str = "inline/InvariantInlineConf.t.sol";
 
         let opts = test_options();
         let filter = Filter::new(".*", ".*", ".*inline/InvariantInlineConf.t.sol");
-        let mut runner = runner();
+        let mut runner = runner().await;
         runner.test_options = opts.clone();
 
-        let result = runner.test(&filter, None, opts);
+        let result = runner.test(&filter, None, opts).await;
 
         let suite_result_1 =
             result.get(&format!("{ROOT}:InvariantInlineConf")).expect("Result exists");

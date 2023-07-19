@@ -56,10 +56,6 @@ foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 #[derive(Debug, Clone, Parser, Serialize, Default)]
 #[clap(next_help_heading = "Build options", about = None, long_about = None)] // override doc
 pub struct BuildArgs {
-    #[clap(flatten)]
-    #[serde(flatten)]
-    pub args: CoreBuildArgs,
-
     /// Print compiled contract names.
     #[clap(long)]
     #[serde(skip)]
@@ -78,6 +74,10 @@ pub struct BuildArgs {
     pub skip: Option<Vec<SkipBuildFilter>>,
 
     #[clap(flatten)]
+    #[serde(flatten)]
+    pub args: CoreBuildArgs,
+
+    #[clap(flatten)]
     #[serde(skip)]
     pub watch: WatchArgs,
 }
@@ -89,7 +89,7 @@ impl Cmd for BuildArgs {
         let mut config = self.try_load_config_emit_warnings()?;
         let mut project = config.project()?;
 
-        if install::install_missing_dependencies(&mut config, &project, self.args.silent) &&
+        if install::install_missing_dependencies(&mut config, self.args.silent) &&
             config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings

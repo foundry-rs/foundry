@@ -176,16 +176,38 @@ fn value_to_token(value: &Value) -> Result<Token> {
         }
         Value::Number(number) => {
             if let Some(f) = number.as_f64() {
+                // Check if the number has decimal digits because the EVM does not support floating
+                // point math
                 if f.fract() == 0.0 {
+                    // Use the string representation of the `serde_json` Number type instead of
+                    // calling f.to_string(), because some numbers are wrongly rounded up after
+                    // being convented to f64.
+                    // Example: 18446744073709551615 becomes 18446744073709552000 after parsing it
+                    // to f64.
                     let s = number.to_string();
+
+                    // Calling Number::to_string with powers of ten formats the number using
+                    // scientific notation and causes from_dec_str to fail. Using format! with f64
+                    // keeps the full number representation.
+                    // Example: 100000000000000000000 becomes 1e20 when Number::to_string is
+                    // used.
+                    let fallback_s = format!("{f}");
+
                     if let Ok(n) = U256::from_dec_str(&s) {
                         return Ok(Token::Uint(n))
                     }
                     if let Ok(n) = I256::from_dec_str(&s) {
                         return Ok(Token::Int(n.into_raw()))
                     }
+                    if let Ok(n) = U256::from_dec_str(&fallback_s) {
+                        return Ok(Token::Uint(n))
+                    }
+                    if let Ok(n) = I256::from_dec_str(&fallback_s) {
+                        return Ok(Token::Int(n.into_raw()))
+                    }
                 }
             }
+
             Err(fmt_err!("Unsupported value: {number:?}"))
         }
         Value::String(string) => {
@@ -222,51 +244,76 @@ fn canonicalize_json_key(key: &str) -> String {
     }
 }
 
+/// Encodes a vector of [`Token`] into a vector of bytes.
+fn encode_abi_values(values: Vec<Token>) -> Vec<u8> {
+    if values.len() == 1 {
+        abi::encode(&[Token::Bytes(abi::encode(&values))])
+    } else {
+        abi::encode(&[Token::Bytes(abi::encode(&[Token::Array(values)]))])
+    }
+}
+
+/// Parses a vector of [`Value`]s into a vector of [`Token`]s.
+fn parse_json_values(values: Vec<&Value>, key: &str) -> Result<Vec<Token>> {
+    values
+        .iter()
+        .map(|inner| {
+            value_to_token(inner).map_err(|err| fmt_err!("Failed to parse key \"{key}\": {err}"))
+        })
+        .collect::<Result<Vec<Token>>>()
+}
+
 /// Parses a JSON and returns a single value, an array or an entire JSON object encoded as tuple.
 /// As the JSON object is parsed serially, with the keys ordered alphabetically, they must be
 /// deserialized in the same order. That means that the solidity `struct` should order it's fields
 /// alphabetically and not by efficient packing or some other taxonomy.
 fn parse_json(json_str: &str, key: &str, coerce: Option<ParamType>) -> Result {
     let json = serde_json::from_str(json_str)?;
-    let values = jsonpath_lib::select(&json, &canonicalize_json_key(key))?;
+    match key {
+        // Handle the special case of the root key. We want to return the entire JSON object
+        // in this case.
+        "." => {
+            let values = jsonpath_lib::select(&json, "$")?;
+            let res = parse_json_values(values, key)?;
 
-    // values is an array of items. Depending on the JsonPath key, they
-    // can be many or a single item. An item can be a single value or
-    // an entire JSON object.
-    if let Some(coercion_type) = coerce {
-        ensure!(
+            // encode the bytes as the 'bytes' solidity type
+            let abi_encoded = encode_abi_values(res);
+            Ok(abi_encoded.into())
+        }
+        _ => {
+            let values = jsonpath_lib::select(&json, &canonicalize_json_key(key))?;
+
+            // values is an array of items. Depending on the JsonPath key, they
+            // can be many or a single item. An item can be a single value or
+            // an entire JSON object.
+            if let Some(coercion_type) = coerce {
+                ensure!(
             values.iter().all(|value| !value.is_object()),
             "You can only coerce values or arrays, not JSON objects. The key '{key}' returns an object",
         );
 
-        ensure!(!values.is_empty(), "No matching value or array found for key {key}");
+                ensure!(!values.is_empty(), "No matching value or array found for key {key}");
 
-        let to_string = |v: &Value| {
-            let mut s = v.to_string();
-            s.retain(|c: char| c != '"');
-            s
-        };
-        return if let Some(array) = values[0].as_array() {
-            util::parse_array(array.iter().map(to_string), &coercion_type)
-        } else {
-            util::parse(&to_string(values[0]), &coercion_type)
+                let to_string = |v: &Value| {
+                    let mut s = v.to_string();
+                    s.retain(|c: char| c != '"');
+                    s
+                };
+                trace!(target : "forge::evm", ?values, "parsign values");
+                return if let Some(array) = values[0].as_array() {
+                    util::parse_array(array.iter().map(to_string), &coercion_type)
+                } else {
+                    util::parse(&to_string(values[0]), &coercion_type)
+                }
+            }
+
+            let res = parse_json_values(values, key)?;
+
+            // encode the bytes as the 'bytes' solidity type
+            let abi_encoded = encode_abi_values(res);
+            Ok(abi_encoded.into())
         }
     }
-
-    let res = values
-        .iter()
-        .map(|inner| {
-            value_to_token(inner).map_err(|err| fmt_err!("Failed to parse key \"{key}\": {err}"))
-        })
-        .collect::<Result<Vec<Token>>>()?;
-
-    // encode the bytes as the 'bytes' solidity type
-    let abi_encoded = if res.len() == 1 {
-        abi::encode(&[Token::Bytes(abi::encode(&res))])
-    } else {
-        abi::encode(&[Token::Bytes(abi::encode(&[Token::Array(res)]))])
-    };
-    Ok(abi_encoded.into())
 }
 
 /// Serializes a key:value pair to a specific object. By calling this function multiple times,
@@ -339,7 +386,7 @@ fn array_eval_to_str<T: UIfmt>(array: &Vec<T>) -> String {
 /// Write an object to a new file OR replace the value of an existing JSON file with the supplied
 /// object.
 fn write_json(
-    state: &mut Cheatcodes,
+    state: &Cheatcodes,
     object: &str,
     path: impl AsRef<Path>,
     json_path_or_none: Option<&str>,
@@ -357,6 +404,15 @@ fn write_json(
     })?;
     super::fs::write_file(state, path, json_string)?;
     Ok(Bytes::new())
+}
+
+/// Checks if a key exists in a JSON object.
+fn key_exists(json_str: &str, key: &str) -> Result {
+    let json: Value =
+        serde_json::from_str(json_str).map_err(|e| format!("Could not convert to JSON: {e}"))?;
+    let values = jsonpath_lib::select(&json, &canonicalize_json_key(key))?;
+    let exists = util::parse(&(!values.is_empty()).to_string(), &ParamType::Bool)?;
+    Ok(exists)
 }
 
 #[instrument(level = "error", name = "ext", target = "evm::cheatcodes", skip_all)]
@@ -535,6 +591,7 @@ pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
         }
         HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
         HEVMCalls::WriteJson1(inner) => write_json(state, &inner.0, &inner.1, Some(&inner.2)),
+        HEVMCalls::KeyExists(inner) => key_exists(&inner.0, &inner.1),
         _ => return None,
     })
 }

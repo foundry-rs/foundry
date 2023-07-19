@@ -7,7 +7,7 @@ use ethers::{
     types::{transaction::eip2718::TypedTransaction, U256, U64},
 };
 use eyre::{ContextCompat, WrapErr};
-use foundry_common::{abi::format_token, RpcUrl, SELECTOR_LEN};
+use foundry_common::{abi::format_token_raw, RpcUrl, SELECTOR_LEN};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tracing::error;
@@ -153,7 +153,7 @@ impl TransactionWithMetadata {
                     self.arguments = Some(
                         function
                             .decode_input(&data.0[SELECTOR_LEN..])
-                            .map(|tokens| tokens.iter().map(format_token).collect())
+                            .map(|tokens| tokens.iter().map(format_token_raw).collect())
                             .map_err(|_| eyre::eyre!("Failed to decode CREATE2 call arguments"))?,
                     );
                 }
@@ -186,7 +186,8 @@ impl TransactionWithMetadata {
                             let constructor_args = &data.0[info.code.len()..];
 
                             if let Ok(arguments) = abi::decode(&params, constructor_args) {
-                                self.arguments = Some(arguments.iter().map(format_token).collect());
+                                self.arguments =
+                                    Some(arguments.iter().map(format_token_raw).collect());
                             } else {
                                 let (signature, bytecode) = on_err();
                                 error!(constructor=?signature, contract=?self.contract_name, bytecode, "Failed to decode constructor arguments")
@@ -223,7 +224,7 @@ impl TransactionWithMetadata {
                         self.arguments = Some(
                             function
                                 .decode_input(&data.0[SELECTOR_LEN..])
-                                .map(|tokens| tokens.iter().map(format_token).collect())?,
+                                .map(|tokens| tokens.iter().map(format_token_raw).collect())?,
                         );
                     }
                 } else {
@@ -241,7 +242,7 @@ impl TransactionWithMetadata {
                         self.arguments = Some(
                             function
                                 .decode_input(&data.0[SELECTOR_LEN..])
-                                .map(|tokens| tokens.iter().map(format_token).collect())?,
+                                .map(|tokens| tokens.iter().map(format_token_raw).collect())?,
                         );
                     }
                 }

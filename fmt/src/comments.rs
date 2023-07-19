@@ -38,7 +38,7 @@ pub struct CommentWithMetadata {
 
 impl PartialOrd for CommentWithMetadata {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.loc.partial_cmp(&other.loc)
+        Some(self.cmp(other))
     }
 }
 
@@ -86,74 +86,63 @@ impl CommentWithMetadata {
         let this_line =
             if src_before.ends_with('\n') { "" } else { lines_before.next().unwrap_or_default() };
         let indent_len = this_line.chars().take_while(|c| c.is_whitespace()).count();
-        let last_line = lines_before.next();
+        let last_line = lines_before.next().map(str::trim_start);
 
         if matches!(comment, Comment::DocLine(..) | Comment::DocBlock(..)) {
             return Self::new(
                 comment,
                 CommentPosition::Prefix,
-                last_line.unwrap_or_default().trim_start().is_empty(),
+                last_line.map_or(true, str::is_empty),
                 indent_len,
             )
         }
 
-        let code_end = src_before
-            .comment_state_char_indices()
-            .filter_map(|(state, idx, ch)| {
-                if matches!(state, CommentState::None) && !ch.is_whitespace() {
-                    Some(idx)
-                } else {
-                    None
-                }
-            })
-            .last()
-            .unwrap_or_default();
+        // TODO: this loop takes almost the entirety of the time spent in parsing, which is up to
+        // 80% of `crate::fmt`
+        let mut code_end = 0;
+        for (state, idx, ch) in src_before.comment_state_char_indices() {
+            if matches!(state, CommentState::None) && !ch.is_whitespace() {
+                code_end = idx;
+            }
+        }
 
-        let (position, has_newline_before) = {
-            if src_before[code_end..].contains('\n') {
-                // comment sits on a line without code
-                if let Some(last_line) = last_line {
-                    if last_line.trim_start().is_empty() {
-                        // line before is empty
-                        (CommentPosition::Prefix, true)
-                    } else {
-                        // line has something
-                        // check if the last comment after code was a postfix comment
-                        if last_comment
-                            .filter(|last_comment| {
-                                last_comment.loc.end() > code_end && !last_comment.is_prefix()
-                            })
-                            .is_some()
-                        {
-                            // get the indent size of the next item of code
-                            let next_indent_len = src[comment.loc().end()..]
-                                .non_comment_chars()
-                                .take_while(|ch| ch.is_whitespace())
-                                .fold(
-                                    indent_len,
-                                    |indent, ch| if ch == '\n' { 0 } else { indent + 1 },
-                                );
-                            if indent_len > next_indent_len {
-                                // the comment indent is bigger than the next code indent
-                                (CommentPosition::Postfix, false)
-                            } else {
-                                // the comment indent is equal to or less than the next code
-                                // indent
-                                (CommentPosition::Prefix, false)
-                            }
+        let (position, has_newline_before) = if src_before[code_end..].contains('\n') {
+            // comment sits on a line without code
+            if let Some(last_line) = last_line {
+                if last_line.is_empty() {
+                    // line before is empty
+                    (CommentPosition::Prefix, true)
+                } else {
+                    // line has something
+                    // check if the last comment after code was a postfix comment
+                    if last_comment
+                        .map_or(false, |last| last.loc.end() > code_end && !last.is_prefix())
+                    {
+                        // get the indent size of the next item of code
+                        let next_indent_len = src[comment.loc().end()..]
+                            .non_comment_chars()
+                            .take_while(|ch| ch.is_whitespace())
+                            .fold(indent_len, |indent, ch| if ch == '\n' { 0 } else { indent + 1 });
+                        if indent_len > next_indent_len {
+                            // the comment indent is bigger than the next code indent
+                            (CommentPosition::Postfix, false)
                         } else {
-                            // if there is no postfix comment after the piece of code
+                            // the comment indent is equal to or less than the next code
+                            // indent
                             (CommentPosition::Prefix, false)
                         }
+                    } else {
+                        // if there is no postfix comment after the piece of code
+                        (CommentPosition::Prefix, false)
                     }
-                } else {
-                    // beginning of file
-                    (CommentPosition::Prefix, false)
                 }
             } else {
-                // comment is after some code
-                (CommentPosition::Postfix, false)
+                // beginning of file
+                (CommentPosition::Prefix, false)
             }
+        } else {
+            // comment is after some code
+            (CommentPosition::Postfix, false)
         };
 
         Self::new(comment, position, has_newline_before, indent_len)
@@ -171,15 +160,23 @@ impl CommentWithMetadata {
         self.loc.start() < byte
     }
 
+    /// Returns the contents of the comment without the start and end tokens
     pub fn contents(&self) -> &str {
-        self.comment
-            .strip_prefix(self.start_token())
-            .map(|c| self.end_token().and_then(|end| c.strip_suffix(end)).unwrap_or(c))
-            .unwrap_or(&self.comment)
+        let mut s = self.comment.as_str();
+        if let Some(stripped) = s.strip_prefix(self.start_token()) {
+            s = stripped;
+        }
+        if let Some(end_token) = self.end_token() {
+            if let Some(stripped) = s.strip_suffix(end_token) {
+                s = stripped;
+            }
+        }
+        s
     }
 
     /// The start token of the comment
-    pub fn start_token(&self) -> &str {
+    #[inline]
+    pub const fn start_token(&self) -> &'static str {
         match self.ty {
             CommentType::Line => "//",
             CommentType::Block => "/*",
@@ -190,7 +187,8 @@ impl CommentWithMetadata {
 
     /// The token that gets written on the newline when the
     /// comment is wrapped
-    pub fn wrap_token(&self) -> &str {
+    #[inline]
+    pub const fn wrap_token(&self) -> &'static str {
         match self.ty {
             CommentType::Line => "// ",
             CommentType::DocLine => "/// ",
@@ -200,7 +198,8 @@ impl CommentWithMetadata {
     }
 
     /// The end token of the comment
-    pub fn end_token(&self) -> Option<&str> {
+    #[inline]
+    pub const fn end_token(&self) -> Option<&'static str> {
         match self.ty {
             CommentType::Line | CommentType::DocLine => None,
             CommentType::Block | CommentType::DocBlock => Some("*/"),
@@ -217,20 +216,16 @@ pub struct Comments {
 
 impl Comments {
     pub fn new(mut comments: Vec<Comment>, src: &str) -> Self {
-        let mut prefixes = VecDeque::new();
-        let mut postfixes = VecDeque::new();
+        let mut prefixes = VecDeque::with_capacity(comments.len());
+        let mut postfixes = VecDeque::with_capacity(comments.len());
         let mut last_comment = None;
 
         comments.sort_by_key(|comment| comment.loc());
         for comment in comments {
-            let comment =
-                CommentWithMetadata::from_comment_and_src(comment, src, last_comment.as_ref());
-            last_comment = Some(comment.clone());
-            if comment.is_prefix() {
-                prefixes.push_back(comment)
-            } else {
-                postfixes.push_back(comment)
-            }
+            let comment = CommentWithMetadata::from_comment_and_src(comment, src, last_comment);
+            let vec = if comment.is_prefix() { &mut prefixes } else { &mut postfixes };
+            vec.push_back(comment);
+            last_comment = Some(vec.back().unwrap());
         }
         Self { prefixes, postfixes }
     }
@@ -266,7 +261,7 @@ impl Comments {
     pub(crate) fn remove_all_comments_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
         self.remove_prefixes_before(byte)
             .into_iter()
-            .merge(self.remove_postfixes_before(byte).into_iter())
+            .merge(self.remove_postfixes_before(byte))
             .collect()
     }
 
@@ -326,36 +321,42 @@ pub enum CommentState {
 /// An Iterator over characters and indices in a string slice with information about the state of
 /// comments
 pub struct CommentStateCharIndices<'a> {
-    iter: std::iter::Peekable<std::str::CharIndices<'a>>,
+    iter: std::str::CharIndices<'a>,
     state: CommentState,
 }
 
 impl<'a> CommentStateCharIndices<'a> {
+    #[inline]
     fn new(string: &'a str) -> Self {
-        Self { iter: string.char_indices().peekable(), state: CommentState::None }
+        Self { iter: string.char_indices(), state: CommentState::None }
     }
+
+    #[inline]
     pub fn with_state(mut self, state: CommentState) -> Self {
         self.state = state;
         self
     }
+
+    #[inline]
+    pub fn peek(&mut self) -> Option<(usize, char)> {
+        self.iter.clone().next()
+    }
 }
 
-impl<'a> Iterator for CommentStateCharIndices<'a> {
+impl Iterator for CommentStateCharIndices<'_> {
     type Item = (CommentState, usize, char);
+
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         let (idx, ch) = self.iter.next()?;
         match self.state {
             CommentState::None => {
                 if ch == '/' {
-                    match self.iter.peek() {
-                        Some((_, '/')) => {
-                            self.state = CommentState::LineStart1;
-                        }
-                        Some((_, '*')) => {
-                            self.state = CommentState::BlockStart1;
-                        }
-                        _ => {}
-                    }
+                    self.state = match self.peek() {
+                        Some((_, '/')) => CommentState::LineStart1,
+                        Some((_, '*')) => CommentState::BlockStart1,
+                        _ => CommentState::None,
+                    };
                 }
             }
             CommentState::LineStart1 => {
@@ -377,7 +378,7 @@ impl<'a> Iterator for CommentStateCharIndices<'a> {
             }
             CommentState::Block => {
                 if ch == '*' {
-                    if let Some((_, '/')) = self.iter.peek() {
+                    if let Some((_, '/')) = self.peek() {
                         self.state = CommentState::BlockEnd1;
                     }
                 }
@@ -391,13 +392,27 @@ impl<'a> Iterator for CommentStateCharIndices<'a> {
         }
         Some((self.state, idx, ch))
     }
+
+    #[inline]
+    fn count(self) -> usize {
+        self.iter.count()
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
+    }
 }
+
+impl std::iter::FusedIterator for CommentStateCharIndices<'_> {}
 
 /// An Iterator over characters in a string slice which are not a apart of comments
 pub struct NonCommentChars<'a>(CommentStateCharIndices<'a>);
 
 impl<'a> Iterator for NonCommentChars<'a> {
     type Item = char;
+
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         for (state, _, ch) in self.0.by_ref() {
             if state == CommentState::None {
@@ -411,9 +426,13 @@ impl<'a> Iterator for NonCommentChars<'a> {
 /// Helpers for iterating over comment containing strings
 pub trait CommentStringExt {
     fn comment_state_char_indices(&self) -> CommentStateCharIndices;
+
+    #[inline]
     fn non_comment_chars(&self) -> NonCommentChars {
         NonCommentChars(self.comment_state_char_indices())
     }
+
+    #[inline]
     fn trim_comments(&self) -> String {
         self.non_comment_chars().collect()
     }
@@ -423,12 +442,14 @@ impl<T> CommentStringExt for T
 where
     T: AsRef<str>,
 {
+    #[inline]
     fn comment_state_char_indices(&self) -> CommentStateCharIndices {
         CommentStateCharIndices::new(self.as_ref())
     }
 }
 
 impl CommentStringExt for str {
+    #[inline]
     fn comment_state_char_indices(&self) -> CommentStateCharIndices {
         CommentStateCharIndices::new(self)
     }

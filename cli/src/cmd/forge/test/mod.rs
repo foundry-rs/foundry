@@ -2,18 +2,18 @@
 use crate::{
     cmd::{
         forge::{build::CoreBuildArgs, debug::DebugArgs, install, watch::WatchArgs},
-        Cmd, LoadConfig,
+        LoadConfig,
     },
     suggestions, utils,
 };
 use cast::fuzz::CounterExample;
 use clap::Parser;
-use ethers::{solc::utils::RuntimeOrHandle, types::U256};
+use ethers::types::U256;
 use forge::{
     decode::decode_console_logs,
     executor::inspector::CheatsConfig,
     gas_report::GasReport,
-    result::{SuiteResult, TestKind, TestResult},
+    result::{SuiteResult, TestKind, TestResult, TestStatus},
     trace::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
         CallTraceDecoderBuilder, TraceKind,
@@ -27,7 +27,7 @@ use foundry_common::{
 };
 use foundry_config::{figment, get_available_profiles, Config};
 use regex::Regex;
-use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, thread, time::Duration};
+use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, time::Duration};
 use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
@@ -48,9 +48,6 @@ foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 #[derive(Debug, Clone, Parser)]
 #[clap(next_help_heading = "Test options")]
 pub struct TestArgs {
-    #[clap(flatten)]
-    filter: FilterArgs,
-
     /// Run a test in the debugger.
     ///
     /// The argument passed to this flag is the name of the test function you want to run, and it
@@ -85,18 +82,9 @@ pub struct TestArgs {
     #[clap(long)]
     pub fail_fast: bool,
 
-    #[clap(flatten)]
-    evm_opts: EvmArgs,
-
     /// The Etherscan (or equivalent) API key
     #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     etherscan_api_key: Option<String>,
-
-    #[clap(flatten)]
-    opts: CoreBuildArgs,
-
-    #[clap(flatten)]
-    pub watch: WatchArgs,
 
     /// List tests instead of running them
     #[clap(long, short, help_heading = "Display options")]
@@ -105,6 +93,21 @@ pub struct TestArgs {
     /// Set seed used to generate randomness during your fuzz runs.
     #[clap(long, value_parser = utils::parse_u256)]
     pub fuzz_seed: Option<U256>,
+
+    #[clap(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
+    pub fuzz_runs: Option<u64>,
+
+    #[clap(flatten)]
+    filter: FilterArgs,
+
+    #[clap(flatten)]
+    evm_opts: EvmArgs,
+
+    #[clap(flatten)]
+    opts: CoreBuildArgs,
+
+    #[clap(flatten)]
+    pub watch: WatchArgs,
 }
 
 impl TestArgs {
@@ -113,13 +116,19 @@ impl TestArgs {
         &self.opts
     }
 
+    pub async fn run(self) -> eyre::Result<TestOutcome> {
+        trace!(target: "forge::test", "executing test command");
+        shell::set_shell(shell::Shell::from_args(self.opts.silent, self.json))?;
+        self.execute_tests().await
+    }
+
     /// Executes all the tests in the project.
     ///
     /// This will trigger the build process first. On success all test contracts that match the
     /// configured filter will be executed
     ///
     /// Returns the test results for all matching tests.
-    pub fn execute_tests(self) -> eyre::Result<TestOutcome> {
+    pub async fn execute_tests(self) -> eyre::Result<TestOutcome> {
         // Merge all configs
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
@@ -131,7 +140,7 @@ impl TestArgs {
         let mut project = config.project()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config, &project, self.build_args().silent) &&
+        if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
             config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
@@ -167,7 +176,7 @@ impl TestArgs {
             evm_opts.verbosity = 3;
         }
 
-        let env = evm_opts.evm_env_blocking()?;
+        let env = evm_opts.evm_env().await;
 
         // Prepare the test builder
         let evm_spec = evm_spec(&config.evm_version);
@@ -187,7 +196,7 @@ impl TestArgs {
             match runner.count_filtered_tests(&filter) {
                 1 => {
                     // Run the test
-                    let results = runner.test(&filter, None, test_options);
+                    let results = runner.test(&filter, None, test_options).await;
 
                     // Get the result of the single test
                     let (id, sig, test_kind, counterexample, breakpoints) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
@@ -220,7 +229,7 @@ impl TestArgs {
                         opts,
                         evm_opts: self.evm_opts,
                     };
-                    utils::block_on(debugger.debug(breakpoints))?;
+                    debugger.debug(breakpoints).await?;
 
                     Ok(TestOutcome::new(results, self.allow_failure))
                 }
@@ -244,6 +253,7 @@ impl TestArgs {
                 self.gas_report,
                 self.fail_fast,
             )
+            .await
         }
     }
 
@@ -279,6 +289,9 @@ impl Provider for TestArgs {
         if let Some(fuzz_seed) = self.fuzz_seed {
             fuzz_dict.insert("seed".to_string(), fuzz_seed.to_string().into());
         }
+        if let Some(fuzz_runs) = self.fuzz_runs {
+            fuzz_dict.insert("runs".to_string(), fuzz_runs.into());
+        }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
         if let Some(ref etherscan_api_key) = self.etherscan_api_key {
@@ -286,16 +299,6 @@ impl Provider for TestArgs {
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
-    }
-}
-
-impl Cmd for TestArgs {
-    type Output = TestOutcome;
-
-    fn run(self) -> eyre::Result<Self::Output> {
-        trace!(target: "forge::test", "executing test command");
-        shell::set_shell(shell::Shell::from_args(self.opts.silent, self.json))?;
-        self.execute_tests()
     }
 }
 
@@ -342,12 +345,16 @@ impl TestOutcome {
 
     /// Iterator over all succeeding tests and their names
     pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.success)
+        self.tests().filter(|(_, t)| t.status == TestStatus::Success)
     }
 
     /// Iterator over all failing tests and their names
     pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| !t.success)
+        self.tests().filter(|(_, t)| t.status == TestStatus::Failure)
+    }
+
+    pub fn skips(&self) -> impl Iterator<Item = (&String, &TestResult)> {
+        self.tests().filter(|(_, t)| t.status == TestStatus::Skipped)
     }
 
     /// Iterator over all tests and their names
@@ -412,18 +419,21 @@ impl TestOutcome {
         let failed = self.failures().count();
         let result = if failed == 0 { Paint::green("ok") } else { Paint::red("FAILED") };
         format!(
-            "Test result: {}. {} passed; {} failed; finished in {:.2?}",
+            "Test result: {}. {} passed; {} failed; {} skipped; finished in {:.2?}",
             result,
             self.successes().count(),
             failed,
+            self.skips().count(),
             self.duration()
         )
     }
 }
 
 fn short_test_result(name: &str, result: &TestResult) {
-    let status = if result.success {
+    let status = if result.status == TestStatus::Success {
         Paint::green("[PASS]".to_string())
+    } else if result.status == TestStatus::Skipped {
+        Paint::yellow("[SKIP]".to_string())
     } else {
         let reason = result
             .reason
@@ -453,6 +463,22 @@ fn short_test_result(name: &str, result: &TestResult) {
     println!("{status} {name} {}", result.kind.report());
 }
 
+/**
+ * Formats the aggregated summary of all test suites into a string (for printing)
+ */
+fn format_aggregated_summary(
+    num_test_suites: usize,
+    total_passed: usize,
+    total_failed: usize,
+    total_skipped: usize,
+) -> String {
+    let total_tests = total_passed + total_failed + total_skipped;
+    format!(
+        "Ran {} test suites: {} tests passed, {} failed, {} skipped ({} total tests)",
+        num_test_suites, total_passed, total_failed, total_skipped, total_tests
+    )
+}
+
 /// Lists all matching tests
 fn list(
     runner: MultiContractRunner,
@@ -477,7 +503,7 @@ fn list(
 
 /// Runs all the tests
 #[allow(clippy::too_many_arguments)]
-fn test(
+async fn test(
     config: Config,
     mut runner: MultiContractRunner,
     verbosity: u8,
@@ -510,7 +536,7 @@ fn test(
     }
 
     if json {
-        let results = runner.test(&filter, None, test_options);
+        let results = runner.test(filter, None, test_options).await;
         println!("{}", serde_json::to_string(&results)?);
         Ok(TestOutcome::new(results, allow_failure))
     } else {
@@ -524,14 +550,21 @@ fn test(
         let (tx, rx) = channel::<(String, SuiteResult)>();
 
         // Run tests
-        let handle = thread::spawn(move || runner.test(&filter, Some(tx), test_options));
+        let handle =
+            tokio::task::spawn(async move { runner.test(filter, Some(tx), test_options).await });
 
         let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
         let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
         let sig_identifier =
             SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
 
+        let mut total_passed = 0;
+        let mut total_failed = 0;
+        let mut total_skipped = 0;
+
         'outer: for (contract_name, suite_result) in rx {
+            results.insert(contract_name.clone(), suite_result.clone());
+
             let mut tests = suite_result.test_results.clone();
             println!();
             for warning in suite_result.warnings.iter() {
@@ -545,7 +578,7 @@ fn test(
                 short_test_result(name, result);
 
                 // If the test failed, we want to stop processing the rest of the tests
-                if fail_fast && !result.success {
+                if fail_fast && result.status == TestStatus::Failure {
                     break 'outer
                 }
 
@@ -577,7 +610,6 @@ fn test(
 
                     // Decode the traces
                     let mut decoded_traces = Vec::new();
-                    let rt = RuntimeOrHandle::new();
                     for (kind, trace) in &mut result.traces {
                         decoder.identify(trace, &mut local_identifier);
                         decoder.identify(trace, &mut etherscan_identifier);
@@ -588,10 +620,12 @@ fn test(
                             // tests At verbosity level 5, we display
                             // all traces for all tests
                             TraceKind::Setup => {
-                                (verbosity >= 5) || (verbosity == 4 && !result.success)
+                                (verbosity >= 5) ||
+                                    (verbosity == 4 && result.status == TestStatus::Failure)
                             }
                             TraceKind::Execution => {
-                                verbosity > 3 || (verbosity == 3 && !result.success)
+                                verbosity > 3 ||
+                                    (verbosity == 3 && result.status == TestStatus::Failure)
                             }
                             _ => false,
                         };
@@ -599,7 +633,7 @@ fn test(
                         // We decode the trace if we either need to build a gas report or we need
                         // to print it
                         if should_include || gas_reporting {
-                            rt.block_on(decoder.decode(trace));
+                            decoder.decode(trace).await;
                         }
 
                         if should_include {
@@ -617,20 +651,36 @@ fn test(
                     }
                 }
             }
-            let block_outcome = TestOutcome::new(
-                [(contract_name.clone(), suite_result.clone())].into(),
-                allow_failure,
-            );
+            let block_outcome =
+                TestOutcome::new([(contract_name, suite_result)].into(), allow_failure);
+
+            total_passed += block_outcome.successes().count();
+            total_failed += block_outcome.failures().count();
+            total_skipped += block_outcome.skips().count();
+
             println!("{}", block_outcome.summary());
-            results.insert(contract_name, suite_result);
         }
 
         if gas_reporting {
             println!("{}", gas_report.finalize());
         }
 
+        let num_test_suites = results.len();
+
+        if num_test_suites > 0 {
+            println!(
+                "{}",
+                format_aggregated_summary(
+                    num_test_suites,
+                    total_passed,
+                    total_failed,
+                    total_skipped
+                )
+            );
+        }
+
         // reattach the thread
-        let _ = handle.join();
+        let _results = handle.await?;
 
         trace!(target: "forge::test", "received {} results", results.len());
         Ok(TestOutcome::new(results, allow_failure))

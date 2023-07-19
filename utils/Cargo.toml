@@ -10,7 +10,7 @@ repository = "https://github.com/foundry-rs/foundry"
 forge-fmt = { path = "../fmt" }
 
 ethers-core = { workspace = true }
-ethers-contract = { workspace = true }
+ethers-contract = { workspace = true, features = ["abigen"] }
 ethers-etherscan = { workspace = true }
 ethers-addressbook = { workspace = true }
 ethers-providers = { workspace = true }
@@ -29,8 +29,8 @@ serde = "1"
 serde_json = { version = "1", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"
+dunce = "1"
 
 [dev-dependencies]
 foundry-common = { path = "./../common" }
-ethers = { workspace = true, features = ["solc-full"] }
 pretty_assertions = "1.3.0"

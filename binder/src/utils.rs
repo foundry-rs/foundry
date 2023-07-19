@@ -607,10 +607,9 @@ where
             // If we made two attempts then that means:
             //
             // 1. A username was requested, we returned `s`.
-            // 2. An ssh key was requested, we returned to look up `s` in the
-            //    ssh agent.
-            // 3. For whatever reason that lookup failed, so we were asked again
-            //    for another mode of authentication.
+            // 2. An ssh key was requested, we returned to look up `s` in the ssh agent.
+            // 3. For whatever reason that lookup failed, so we were asked again for another mode of
+            //    authentication.
             //
             // Essentially, if `attempts == 2` then in theory the only error was
             // that this username failed to authenticate (e.g., no other network
@@ -791,7 +790,7 @@ pub fn fetch(
 }
 
 fn fetch_with_cli(
-    repo: &mut git2::Repository,
+    repo: &git2::Repository,
     url: &str,
     refspecs: &[String],
     tags: bool,

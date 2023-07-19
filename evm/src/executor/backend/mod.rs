@@ -65,6 +65,10 @@ type ForkLookupIndex = usize;
 const DEFAULT_PERSISTENT_ACCOUNTS: [H160; 3] =
     [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
 
+/// Slot corresponding to "failed" in bytes on the cheatcodes (HEVM) address.
+const GLOBAL_FAILURE_SLOT: &str =
+    "0x6661696c65640000000000000000000000000000000000000000000000000000";
+
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut, Box)]
 pub trait DatabaseExt: Database<Error = DatabaseError> {
@@ -219,15 +223,15 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     ///
     /// ```solidity
     /// function testCanDeploy() public {
-    ///    cheats.selectFork(mainnetFork);
+    ///    vm.selectFork(mainnetFork);
     ///    // contract created while on `mainnetFork`
     ///    DummyContract dummy = new DummyContract();
     ///    // this will succeed
     ///    dummy.hello();
     ///
-    ///    cheats.selectFork(optimismFork);
+    ///    vm.selectFork(optimismFork);
     ///
-    ///    cheats.expectRevert();
+    ///    vm.expectRevert();
     ///    // this will revert since `dummy` contract only exists on `mainnetFork`
     ///    dummy.hello();
     /// }
@@ -390,9 +394,9 @@ pub struct Backend {
 // === impl Backend ===
 
 impl Backend {
-    /// Creates a new Backend with a spawned multi fork thread
-    pub fn spawn(fork: Option<CreateFork>) -> Self {
-        Self::new(MultiFork::spawn(), fork)
+    /// Creates a new Backend with a spawned multi fork thread.
+    pub async fn spawn(fork: Option<CreateFork>) -> Self {
+        Self::new(MultiFork::spawn().await, fork)
     }
 
     /// Creates a new instance of `Backend`
@@ -435,8 +439,12 @@ impl Backend {
 
     /// Creates a new instance of `Backend` with fork added to the fork database and sets the fork
     /// as active
-    pub(crate) fn new_with_fork(id: &ForkId, fork: Fork, journaled_state: JournaledState) -> Self {
-        let mut backend = Self::spawn(None);
+    pub(crate) async fn new_with_fork(
+        id: &ForkId,
+        fork: Fork,
+        journaled_state: JournaledState,
+    ) -> Self {
+        let mut backend = Self::spawn(None).await;
         let fork_ids = backend.inner.insert_new_fork(id.clone(), fork.db, journaled_state);
         backend.inner.launched_with_fork = Some((id.clone(), fork_ids.0, fork_ids.1));
         backend.active_fork_ids = Some(fork_ids);
@@ -461,6 +469,24 @@ impl Backend {
         } else {
             self.mem_db.insert_account_info(h160_to_b160(address), account)
         }
+    }
+
+    /// Inserts a value on an account's storage without overriding account info
+    pub fn insert_account_storage(
+        &mut self,
+        address: H160,
+        slot: U256,
+        value: U256,
+    ) -> Result<(), DatabaseError> {
+        let ret = if let Some(db) = self.active_fork_db_mut() {
+            db.insert_account_storage(h160_to_b160(address), slot.into(), value.into())
+        } else {
+            self.mem_db.insert_account_storage(h160_to_b160(address), slot.into(), value.into())
+        };
+
+        debug_assert!(self.storage(h160_to_b160(address), slot.into()).unwrap() == value.into());
+
+        ret
     }
 
     /// Returns all snapshots created in this backend
@@ -580,11 +606,15 @@ impl Backend {
     /// In addition to the `_failed` variable, `DSTest::fail()` stores a failure
     /// in "failed"
     /// See <https://github.com/dapphub/ds-test/blob/9310e879db8ba3ea6d5c6489a579118fd264a3f5/src/test.sol#L66-L72>
-    pub fn is_global_failure(&self) -> bool {
-        let index = U256::from(&b"failed"[..]);
-        self.storage(h160_to_b160(CHEATCODE_ADDRESS), index.into())
-            .map(|value| value == revm::primitives::U256::from(1))
-            .unwrap_or_default()
+    pub fn is_global_failure(&self, current_state: &JournaledState) -> bool {
+        let index: rU256 =
+            U256::from_str_radix(GLOBAL_FAILURE_SLOT, 16).expect("This is a bug.").into();
+        if let Some(account) = current_state.state.get(&h160_to_b160(CHEATCODE_ADDRESS)) {
+            let value = account.storage.get(&index).cloned().unwrap_or_default().present_value();
+            return value == revm::primitives::U256::from(1)
+        }
+
+        false
     }
 
     /// When creating or switching forks, we update the AccountInfo of the contract
@@ -651,7 +681,7 @@ impl Backend {
     }
 
     /// Returns the currently active `ForkDB`, if any
-    fn active_fork_db_mut(&mut self) -> Option<&mut ForkDB> {
+    pub fn active_fork_db_mut(&mut self) -> Option<&mut ForkDB> {
         self.active_fork_mut().map(|f| &mut f.db)
     }
 
@@ -851,13 +881,9 @@ impl DatabaseExt for Backend {
     ) -> Option<JournaledState> {
         trace!(?id, "revert snapshot");
         if let Some(mut snapshot) = self.inner.snapshots.remove(id) {
-            // need to check whether DSTest's `failed` variable is set to `true` which means an
-            // error occurred either during the snapshot or even before
-            if self
-                .test_contract_address()
-                .map(|addr| self.is_failed_test_contract_state(addr, current_state))
-                .unwrap_or_default()
-            {
+            // need to check whether there's a global failure which means an error occurred either
+            // during the snapshot or even before
+            if self.is_global_failure(current_state) {
                 self.inner.has_snapshot_failure.store(true, Ordering::Relaxed);
             }
 
@@ -1752,7 +1778,10 @@ fn commit_transaction(
         let mut evm = EVM::new();
         evm.env = env;
 
-        let db = Backend::new_with_fork(fork_id, fork.clone(), journaled_state.clone());
+        let fork = fork.clone();
+        let journaled_state = journaled_state.clone();
+        let db = crate::utils::RuntimeOrHandle::new()
+            .block_on(async move { Backend::new_with_fork(fork_id, fork, journaled_state).await });
         evm.database(db);
 
         if let Some(inspector) = cheatcodes_inspector {

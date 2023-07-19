@@ -32,5 +32,5 @@ tracing-subscriber = "0.3"
 yansi = "0.5"
 
 [dev-dependencies]
-ethers = { workspace = true, features = ["solc-full", "solc-tests"] }
+ethers = { workspace = true, features = ["solc-full", "solc-tests", "rustls"] }
 foundry-utils = { path = "./../utils" }

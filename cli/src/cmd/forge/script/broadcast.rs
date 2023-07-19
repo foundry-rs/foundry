@@ -187,7 +187,7 @@ impl ScriptArgs {
 
             for (target_block, transactions) in bundle_map.iter() {
                 let bundle_signer = LocalWallet::new(&mut thread_rng());
-
+                
                 let mut bundle = BundleRequest::new();
 
                 let client = FlashbotsMiddleware::new(

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.18;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "./Cheats.sol";
+import "./Vm.sol";
 
 struct Storage {
     uint256 slot0;
@@ -10,7 +10,7 @@ struct Storage {
 }
 
 contract SnapshotTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     Storage store;
 
@@ -20,14 +20,14 @@ contract SnapshotTest is DSTest {
     }
 
     function testSnapshot() public {
-        uint256 snapshot = cheats.snapshot();
+        uint256 snapshot = vm.snapshot();
         store.slot0 = 300;
         store.slot1 = 400;
 
         assertEq(store.slot0, 300);
         assertEq(store.slot1, 400);
 
-        cheats.revertTo(snapshot);
+        vm.revertTo(snapshot);
         assertEq(store.slot0, 10, "snapshot revert for slot 0 unsuccessful");
         assertEq(store.slot1, 20, "snapshot revert for slot 1 unsuccessful");
     }
@@ -38,18 +38,18 @@ contract SnapshotTest is DSTest {
         uint256 time = block.timestamp;
         uint256 prevrandao = block.prevrandao;
 
-        uint256 snapshot = cheats.snapshot();
+        uint256 snapshot = vm.snapshot();
 
-        cheats.warp(1337);
+        vm.warp(1337);
         assertEq(block.timestamp, 1337);
 
-        cheats.roll(99);
+        vm.roll(99);
         assertEq(block.number, 99);
 
-        cheats.prevrandao(bytes32(uint256(123)));
+        vm.prevrandao(bytes32(uint256(123)));
         assertEq(block.prevrandao, 123);
 
-        assert(cheats.revertTo(snapshot));
+        assert(vm.revertTo(snapshot));
 
         assertEq(block.number, num, "snapshot revert for block.number unsuccessful");
         assertEq(block.timestamp, time, "snapshot revert for block.timestamp unsuccessful");

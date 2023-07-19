@@ -26,11 +26,11 @@ reqwest = { version = "0.11", default-features = false }
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 comfy-table = "6"
 tracing = "0.1"
-is-terminal = "0.4"
 yansi = "0.5"
 tempfile = "3"
 
 #  misc
+auto_impl = "1.1.0"
 serde = "1"
 serde_json = "1"
 thiserror = "1"
@@ -40,6 +40,7 @@ semver = "1"
 once_cell = "1"
 dunce = "1"
 regex = "1"
+globset = "0.4"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

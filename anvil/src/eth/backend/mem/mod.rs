@@ -54,6 +54,7 @@ use ethers::{
     },
     utils::{get_contract_address, hex, keccak256, rlp},
 };
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use forge::{
     executor::inspector::AccessListTracer,
     hashbrown,
@@ -69,17 +70,25 @@ use forge::{
 use foundry_evm::{
     decode::{decode_custom_error_args, decode_revert},
     executor::backend::{DatabaseError, DatabaseResult},
-    revm,
     revm::{
+        self,
         db::CacheDB,
-        primitives::{Account, CreateScheme, Env, Output, SpecId, TransactTo, TxEnv, KECCAK_EMPTY},
+        primitives::{
+            Account, CreateScheme, EVMError, Env, Output, SpecId, TransactTo, TxEnv, KECCAK_EMPTY,
+        },
     },
     utils::u256_to_h256_be,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
-use std::{collections::HashMap, ops::Deref, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    io::{Read, Write},
+    ops::Deref,
+    sync::Arc,
+    time::Duration,
+};
 use storage::{Blockchain, MinedTransaction};
 use tokio::sync::RwLock as AsyncRwLock;
 use tracing::{trace, warn};
@@ -309,9 +318,8 @@ impl Backend {
     }
 
     /// If set to true will make every account impersonated
-    pub async fn auto_impersonate_account(&self, enabled: bool) -> DatabaseResult<()> {
+    pub async fn auto_impersonate_account(&self, enabled: bool) {
         self.cheats.set_auto_impersonate_account(enabled);
-        Ok(())
     }
 
     /// Returns the configured fork, if any
@@ -501,6 +509,11 @@ impl Backend {
         (self.spec_id() as u8) >= (SpecId::LONDON as u8)
     }
 
+    /// Returns true for post Merge
+    pub fn is_eip3675(&self) -> bool {
+        (self.spec_id() as u8) >= (SpecId::MERGE as u8)
+    }
+
     /// Returns true for post Berlin
     pub fn is_eip2930(&self) -> bool {
         (self.spec_id() as u8) >= (SpecId::BERLIN as u8)
@@ -630,14 +643,28 @@ impl Backend {
     /// Write all chain data to serialized bytes buffer
     pub async fn dump_state(&self) -> Result<Bytes, BlockchainError> {
         let state = self.serialized_state().await?;
-        let content = serde_json::to_vec(&state).unwrap_or_default().into();
-        Ok(content)
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder
+            .write_all(&serde_json::to_vec(&state).unwrap_or_default())
+            .map_err(|_| BlockchainError::DataUnavailable)?;
+        Ok(encoder.finish().unwrap_or_default().into())
     }
 
     /// Deserialize and add all chain data to the backend storage
     pub async fn load_state(&self, buf: Bytes) -> Result<bool, BlockchainError> {
-        let state: SerializableState =
-            serde_json::from_slice(&buf.0).map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
+        let orig_buf = &buf.0[..];
+        let mut decoder = GzDecoder::new(orig_buf);
+        let mut decoded_data = Vec::new();
+
+        let state: SerializableState = serde_json::from_slice(if decoder.header().is_some() {
+            decoder
+                .read_to_end(decoded_data.as_mut())
+                .map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
+            &decoded_data
+        } else {
+            &buf.0
+        })
+        .map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
 
         if !self.db.write().await.load_state(state)? {
             Err(RpcError::invalid_params(
@@ -760,7 +787,14 @@ impl Backend {
         let (outcome, header, block_hash) = {
             let current_base_fee = self.base_fee();
 
-            let mut env = self.env.read().clone();
+            let mut env = self.env().read().clone();
+
+            if env.block.basefee == revm::primitives::U256::ZERO {
+                // this is an edge case because the evm fails if `tx.effective_gas_price < base_fee`
+                // 0 is only possible if it's manually set
+                env.cfg.disable_base_fee = true;
+            }
+
             // increase block number for this block
             env.block.number = env.block.number.saturating_add(rU256::from(1));
             env.block.basefee = current_base_fee.into();
@@ -814,7 +848,12 @@ impl Backend {
             // update block metadata
             storage.best_number = block_number;
             storage.best_hash = block_hash;
-            storage.total_difficulty = storage.total_difficulty.saturating_add(header.difficulty);
+            // Difficulty is removed and not used after Paris (aka TheMerge). Value is replaced with
+            // prevrandao. https://github.com/bluealloy/revm/blob/1839b3fce8eaeebb85025576f2519b80615aca1e/crates/interpreter/src/instructions/host_env.rs#L27
+            if !self.is_eip3675() {
+                storage.total_difficulty =
+                    storage.total_difficulty.saturating_add(header.difficulty);
+            }
 
             storage.blocks.insert(block_hash, block);
             storage.hashes.insert(block_number, block_hash);
@@ -993,6 +1032,13 @@ impl Backend {
             nonce: nonce.map(|n| n.as_u64()),
             access_list: to_revm_access_list(access_list.unwrap_or_default()),
         };
+
+        if env.block.basefee == revm::primitives::U256::ZERO {
+            // this is an edge case because the evm fails if `tx.effective_gas_price < base_fee`
+            // 0 is only possible if it's manually set
+            env.cfg.disable_base_fee = true;
+        }
+
         env
     }
 
@@ -1012,9 +1058,13 @@ impl Backend {
         evm.database(state);
         let result_and_state = match evm.inspect_ref(&mut inspector) {
             Ok(result_and_state) => result_and_state,
-            Err(_) => {
-                return Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh))
-            }
+            Err(e) => match e {
+                EVMError::Transaction(invalid_tx) => {
+                    return Err(BlockchainError::InvalidTransaction(invalid_tx.into()))
+                }
+                EVMError::PrevrandaoNotSet => return Err(BlockchainError::PrevrandaoNotSet),
+                EVMError::Database(e) => return Err(BlockchainError::DatabaseError(e)),
+            },
         };
         let state = result_and_state.state;
         let state: hashbrown::HashMap<H160, Account> =
@@ -1574,7 +1624,6 @@ impl Backend {
 
                     block.number = block_number.into();
                     block.timestamp = rU256::from(fork.timestamp());
-                    block.difficulty = fork.total_difficulty().into();
                     block.basefee = fork.base_fee().unwrap_or_default().into();
 
                     return Ok(f(Box::new(&gen_db), block))
@@ -2128,7 +2177,8 @@ impl TransactionValidator for Backend {
             return Err(InvalidTransactionError::GasTooLow)
         }
 
-        if tx.gas_limit() > env.block.gas_limit.into() {
+        // Check gas limit, iff block gas limit is set.
+        if !env.cfg.disable_block_gas_limit && tx.gas_limit() > env.block.gas_limit.into() {
             warn!(target: "backend", "[{:?}] gas too high", tx.hash());
             return Err(InvalidTransactionError::GasTooHigh)
         }

@@ -4,7 +4,7 @@ pragma solidity ^0.6.12;
 import "ds-test/test.sol";
 import "./DssExecLib.sol";
 
-interface Cheats {
+interface Vm {
     function store(address account, bytes32 slot, bytes32 value) external;
     function activeFork() external returns (uint256);
 }
@@ -29,7 +29,7 @@ contract ForkTest is DSTest {
 
     // checks that we can retrieve the fork we launched with
     function testActiveFork() public {
-        Cheats cheatvm = Cheats(HEVM_ADDRESS);
+        Vm cheatvm = Vm(HEVM_ADDRESS);
         uint256 activeFork = cheatvm.activeFork();
         // launch fork has id `0`
         assertEq(activeFork, 0);
@@ -52,7 +52,7 @@ contract ForkTest is DSTest {
     }
 
     function testCheatcode() public {
-        Cheats cheatvm = Cheats(HEVM_ADDRESS);
+        Vm cheatvm = Vm(HEVM_ADDRESS);
         IWETH WETH = IWETH(WETH_TOKEN_ADDR);
         bytes32 value = bytes32(uint256(1));
         // "0x3617319a054d772f909f7c479a2cebe5066e836a939412e32403c99029b92eff" is the slot storing the balance of zero address for the weth contract

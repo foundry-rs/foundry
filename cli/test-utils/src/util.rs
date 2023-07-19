@@ -14,7 +14,7 @@ use std::{
     fmt::Display,
     fs,
     fs::File,
-    io::{BufWriter, Write},
+    io::{BufWriter, IsTerminal, Write},
     path::{Path, PathBuf},
     process::{self, Command, Stdio},
     sync::{
@@ -33,7 +33,7 @@ static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 static PRE_INSTALL_SOLC_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
 // This stores `true` if the current terminal is a tty
-pub static IS_TTY: Lazy<bool> = Lazy::new(|| is_terminal::is_terminal(&std::io::stdout()));
+pub static IS_TTY: Lazy<bool> = Lazy::new(|| std::io::stdout().is_terminal());
 
 /// Contains a `forge init` initialized project
 pub static FORGE_INITIALIZED: Lazy<TestProject> = Lazy::new(|| {

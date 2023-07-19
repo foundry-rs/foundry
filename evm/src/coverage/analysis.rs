@@ -115,7 +115,6 @@ impl<'a> ContractVisitor<'a> {
             NodeType::Continue |
             NodeType::EmitStatement |
             NodeType::PlaceholderStatement |
-            NodeType::Return |
             NodeType::RevertStatement |
             NodeType::YulAssignment |
             NodeType::YulBreak |
@@ -128,6 +127,20 @@ impl<'a> ContractVisitor<'a> {
                 });
                 Ok(())
             }
+
+            // Return with eventual subcall
+            NodeType::Return => {
+                self.push_item(CoverageItem {
+                    kind: CoverageItemKind::Statement,
+                    loc: self.source_location_for(&node.src),
+                    hits: 0,
+                });
+                if let Some(expr) = node.attribute("expression") {
+                    self.visit_expression(expr)?;
+                }
+                Ok(())
+            }
+
             // Variable declaration
             NodeType::VariableDeclarationStatement => {
                 self.push_item(CoverageItem {
@@ -268,12 +281,32 @@ impl<'a> ContractVisitor<'a> {
         //  tupleexpression
         //  yulfunctioncall
         match node.node_type {
-            NodeType::Assignment | NodeType::UnaryOperation | NodeType::BinaryOperation => {
+            NodeType::Assignment | NodeType::UnaryOperation => {
                 self.push_item(CoverageItem {
                     kind: CoverageItemKind::Statement,
                     loc: self.source_location_for(&node.src),
                     hits: 0,
                 });
+                Ok(())
+            }
+            NodeType::BinaryOperation => {
+                self.push_item(CoverageItem {
+                    kind: CoverageItemKind::Statement,
+                    loc: self.source_location_for(&node.src),
+                    hits: 0,
+                });
+
+                // visit left and right expressions
+                // There could possibly a function call in the left or right expression
+                // e.g: callFunc(a) + callFunc(b)
+                if let Some(expr) = node.attribute("leftExpression") {
+                    self.visit_expression(expr)?;
+                }
+
+                if let Some(expr) = node.attribute("rightExpression") {
+                    self.visit_expression(expr)?;
+                }
+
                 Ok(())
             }
             NodeType::FunctionCall => {
@@ -482,13 +515,52 @@ impl SourceAnalyzer {
 
         // Flatten the data
         let mut flattened: HashMap<ContractId, Vec<usize>> = HashMap::new();
-        for (contract_id, own_item_ids) in &self.contract_items {
-            let mut item_ids = own_item_ids.clone();
-            if let Some(base_contract_ids) = self.contract_bases.get(contract_id) {
-                for item_id in
-                    base_contract_ids.iter().filter_map(|id| self.contract_items.get(id)).flatten()
-                {
-                    item_ids.push(*item_id);
+        for contract_id in self.contract_items.keys() {
+            let mut item_ids: Vec<usize> = Vec::new();
+
+            //
+            // for a specific contract (id == contract_id):
+            //
+            // self.contract_bases.get(contract_id) includes the following contracts:
+            //   1. all the ancestors of this contract (including parent, grandparent, ...
+            //      contracts)
+            //   2. the libraries **directly** used by this contract
+            //
+            // The missing contracts are:
+            //   1. libraries used in ancestors of this contracts
+            //   2. libraries used in libaries (i.e libs indirectly used by this contract)
+            //
+            // We want to find out all the above contracts and libraries related to this contract.
+
+            for contract_or_lib in {
+                // A set of contracts and libraries related to this contract (will include "this"
+                // contract itself)
+                let mut contracts_libraries: HashSet<&ContractId> = HashSet::new();
+
+                // we use a stack for depth-first search.
+                let mut stack: Vec<&ContractId> = Vec::new();
+
+                // push "this" contract onto the stack
+                stack.push(contract_id);
+
+                while let Some(contract_or_lib) = stack.pop() {
+                    // whenever a contract_or_lib is removed from the stack, it is added to the set
+                    contracts_libraries.insert(contract_or_lib);
+
+                    // push all ancestors of contract_or_lib and libraries used by contract_or_lib
+                    // onto the stack
+                    if let Some(bases) = self.contract_bases.get(contract_or_lib) {
+                        stack.extend(
+                            bases.iter().filter(|base| !contracts_libraries.contains(base)),
+                        );
+                    }
+                }
+
+                contracts_libraries
+            } {
+                // get items of each contract or library
+                if let Some(items) = self.contract_items.get(contract_or_lib) {
+                    item_ids.extend(items.iter());
                 }
             }
 

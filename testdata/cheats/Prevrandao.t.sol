@@ -1,34 +1,34 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.18;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "./Cheats.sol";
+import "./Vm.sol";
 
 contract PrevrandaoTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testPrevrandao() public {
         assertEq(block.prevrandao, 0);
-        cheats.prevrandao(bytes32(uint256(10)));
+        vm.prevrandao(bytes32(uint256(10)));
         assertEq(block.prevrandao, 10, "prevrandao cheatcode failed");
     }
 
     function testPrevrandaoFuzzed(uint256 newPrevrandao) public {
-        cheats.assume(newPrevrandao != block.prevrandao);
+        vm.assume(newPrevrandao != block.prevrandao);
         assertEq(block.prevrandao, 0);
-        cheats.prevrandao(bytes32(newPrevrandao));
+        vm.prevrandao(bytes32(newPrevrandao));
         assertEq(block.prevrandao, newPrevrandao);
     }
 
     function testPrevrandaoSnapshotFuzzed(uint256 newPrevrandao) public {
-        cheats.assume(newPrevrandao != block.prevrandao);
+        vm.assume(newPrevrandao != block.prevrandao);
         uint256 oldPrevrandao = block.prevrandao;
-        uint256 snapshot = cheats.snapshot();
+        uint256 snapshot = vm.snapshot();
 
-        cheats.prevrandao(bytes32(newPrevrandao));
+        vm.prevrandao(bytes32(newPrevrandao));
         assertEq(block.prevrandao, newPrevrandao);
 
-        assert(cheats.revertTo(snapshot));
+        assert(vm.revertTo(snapshot));
         assertEq(block.prevrandao, oldPrevrandao);
     }
 }

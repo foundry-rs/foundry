@@ -85,6 +85,26 @@ impl Prank {
     }
 }
 
+/// Represents the possible caller modes for the readCallers() cheat code return value
+enum CallerMode {
+    /// No caller modification is currently active
+    None,
+    /// A one time broadcast triggered by a `vm.broadcast()` call is currently active
+    Broadcast,
+    /// A recurrent broadcast triggered by a `vm.startBroadcast()` call is currently active
+    RecurrentBroadcast,
+    /// A one time prank triggered by a `vm.prank()` call is currently active
+    Prank,
+    /// A recurrent prank triggered by a `vm.startPrank()` call is currently active
+    RecurrentPrank,
+}
+
+impl From<CallerMode> for U256 {
+    fn from(value: CallerMode) -> Self {
+        (value as i8).into()
+    }
+}
+
 /// Sets up broadcasting from a script using `origin` as the sender
 fn broadcast(
     state: &mut Cheatcodes,
@@ -108,6 +128,7 @@ fn broadcast(
 
 /// Sets up broadcasting from a script with the sender derived from `private_key`
 /// Adds this private key to `state`'s `script_wallets` vector to later be used for signing
+/// iff broadcast is successful
 fn broadcast_key(
     state: &mut Cheatcodes,
     private_key: U256,
@@ -120,9 +141,12 @@ fn broadcast_key(
     let key = super::util::parse_private_key(private_key)?;
     let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
     let new_origin = wallet.address();
-    state.script_wallets.push(wallet);
 
-    broadcast(state, new_origin, original_caller, original_origin, depth, single_call)
+    let result = broadcast(state, new_origin, original_caller, original_origin, depth, single_call);
+    if result.is_ok() {
+        state.script_wallets.push(wallet);
+    }
+    result
 }
 
 fn prank(
@@ -148,6 +172,64 @@ fn prank(
 
     state.prank = Some(prank);
     Ok(Bytes::new())
+}
+
+/// Reads the current caller information and returns the current [CallerMode], `msg.sender` and
+/// `tx.origin`.
+///
+/// Depending on the current caller mode, one of the following results will be returned:
+/// - If there is an active prank:
+///     - caller_mode will be equal to:
+///         - [CallerMode::Prank] if the prank has been set with `vm.prank(..)`.
+///         - [CallerMode::RecurrentPrank] if the prank has been set with `vm.startPrank(..)`.
+///     - `msg.sender` will be equal to the address set for the prank.
+///     - `tx.origin` will be equal to the default sender address unless an alternative one has been
+///       set when configuring the prank.
+///
+/// - If there is an active broadcast:
+///     - caller_mode will be equal to:
+///         - [CallerMode::Broadcast] if the broadcast has been set with `vm.broadcast(..)`.
+///         - [CallerMode::RecurrentBroadcast] if the broadcast has been set with
+///           `vm.startBroadcast(..)`.
+///     - `msg.sender` and `tx.origin` will be equal to the address provided when setting the
+///       broadcast.
+///
+/// - If no caller modification is active:
+///     - caller_mode will be equal to [CallerMode::None],
+///     - `msg.sender` and `tx.origin` will be equal to the default sender address.
+fn read_callers(state: &Cheatcodes, default_sender: Address) -> Bytes {
+    let Cheatcodes { prank, broadcast, .. } = &state;
+
+    let data = if let Some(prank) = prank {
+        let caller_mode =
+            if prank.single_call { CallerMode::Prank } else { CallerMode::RecurrentPrank };
+
+        [
+            Token::Uint(caller_mode.into()),
+            Token::Address(prank.new_caller),
+            Token::Address(prank.new_origin.unwrap_or(default_sender)),
+        ]
+    } else if let Some(broadcast) = broadcast {
+        let caller_mode = if broadcast.single_call {
+            CallerMode::Broadcast
+        } else {
+            CallerMode::RecurrentBroadcast
+        };
+
+        [
+            Token::Uint(caller_mode.into()),
+            Token::Address(broadcast.new_origin),
+            Token::Address(broadcast.new_origin),
+        ]
+    } else {
+        [
+            Token::Uint(CallerMode::None.into()),
+            Token::Address(default_sender),
+            Token::Address(default_sender),
+        ]
+    };
+
+    abi::encode(&data).into()
 }
 
 #[derive(Clone, Debug, Default)]
@@ -367,6 +449,7 @@ pub fn apply<DB: DatabaseExt>(
             state.prank = None;
             Bytes::new()
         }
+        HEVMCalls::ReadCallers(_) => read_callers(state, b160_to_h160(data.env.tx.caller)),
         HEVMCalls::Record(_) => {
             start_record(state);
             Bytes::new()

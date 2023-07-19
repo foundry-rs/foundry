@@ -1,40 +1,38 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.18;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "./Cheats.sol";
+import "./Vm.sol";
 
 contract RpcUrlTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     // returns the correct url
     function testCanGetRpcUrl() public {
-        string memory url = cheats.rpcUrl("rpcAlias"); // note: this alias is pre-configured in the test runner
+        string memory url = vm.rpcUrl("rpcAlias"); // note: this alias is pre-configured in the test runner
         assertEq(url, "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf");
     }
 
     // returns an error if env alias does not exist
     function testRevertsOnMissingEnv() public {
-        cheats.expectRevert(
-            "Failed to resolve env var `RPC_ENV_ALIAS` in `${RPC_ENV_ALIAS}`: environment variable not found"
-        );
-        string memory url = cheats.rpcUrl("rpcEnvAlias");
+        vm.expectRevert("invalid rpc url rpcUrlEnv");
+        string memory url = this.rpcUrl("rpcUrlEnv");
     }
 
     // can set env and return correct url
     function testCanSetAndGetURLAndAllUrls() public {
         // this will fail because alias is not set
-        cheats.expectRevert(
+        vm.expectRevert(
             "Failed to resolve env var `RPC_ENV_ALIAS` in `${RPC_ENV_ALIAS}`: environment variable not found"
         );
-        string[2][] memory _urls = cheats.rpcUrls();
+        string[2][] memory _urls = this.rpcUrls();
 
-        string memory url = cheats.rpcUrl("rpcAlias");
-        cheats.setEnv("RPC_ENV_ALIAS", url);
-        string memory envUrl = cheats.rpcUrl("rpcEnvAlias");
+        string memory url = vm.rpcUrl("rpcAlias");
+        vm.setEnv("RPC_ENV_ALIAS", url);
+        string memory envUrl = vm.rpcUrl("rpcEnvAlias");
         assertEq(url, envUrl);
 
-        string[2][] memory allUrls = cheats.rpcUrls();
+        string[2][] memory allUrls = vm.rpcUrls();
         assertEq(allUrls.length, 2);
 
         string[2] memory val = allUrls[0];
@@ -42,5 +40,13 @@ contract RpcUrlTest is DSTest {
 
         string[2] memory env = allUrls[1];
         assertEq(env[0], "rpcEnvAlias");
+    }
+
+    function rpcUrl(string memory _alias) public returns (string memory) {
+        return vm.rpcUrl(_alias);
+    }
+
+    function rpcUrls() public returns (string[2][] memory) {
+        return vm.rpcUrls();
     }
 }

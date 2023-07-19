@@ -24,8 +24,9 @@ ui = { path = "../ui" }
 
 # eth
 ethers = { workspace = true, features = ["rustls"] }
-solang-parser = "=0.2.4"
-ethers-flashbots = { git = "https://github.com/onbjerg/ethers-flashbots" }
+solang-parser.workspace = true
+ethers-flashbots = { git = "https://github.com/ape-dev-cs/ethers-flashbots.git" }
+
 
 # cli
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
@@ -35,14 +36,12 @@ yansi = "0.5"
 tracing-error = "0.2"
 tracing-subscriber = { version = "0.3", features = ["registry", "env-filter", "fmt"] }
 tracing = "0.1"
-console = "0.15"
 watchexec = "2"
-is-terminal = "0.4"
 comfy-table = "6"
 reqwest = { version = "0.11", default-features = false, features = [
-    "json",
-    "rustls",
-    "rustls-tls-native-roots",
+  "json",
+  "rustls",
+  "rustls-tls-native-roots",
 ] }
 dotenvy = "0.15"
 dialoguer = { version = "0.10", default-features = false }
@@ -56,7 +55,6 @@ async-trait = "0.1"
 # disk / paths
 walkdir = "2"
 dunce = "1"
-globset = "0.4"
 path-slash = "0.2"
 tempfile = "3"
 
@@ -76,10 +74,9 @@ once_cell = "1"
 similar = { version = "2", features = ["inline"] }
 strsim = "0.10"
 bytes = "1.4"
-strum = { version = "0.24", features = ["derive"] }
+strum = { version = "0.25", features = ["derive"] }
 thiserror = "1"
 indicatif = "0.17"
-which = "4"
 parking_lot = "0.12"
 
 [dev-dependencies]
@@ -91,6 +88,7 @@ toml = "0.7"
 serial_test = "2"
 criterion = "0.4"
 svm = { package = "svm-rs", version = "0.2", default-features = false, features = ["rustls"] }
+globset = "0.4"
 
 [features]
 default = ["rustls"]
