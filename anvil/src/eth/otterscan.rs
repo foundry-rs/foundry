@@ -7,6 +7,7 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use super::{backend::mem::Backend, error::Result};
 
+/// Patched Block struct, to include the additional `transactionCount` field expected by Otterscan
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase", bound = "TX: Serialize + DeserializeOwned")]
 pub struct OtsBlock<TX> {
@@ -15,21 +16,7 @@ pub struct OtsBlock<TX> {
     transaction_count: usize,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OtsTransactionReceipt {
-    #[serde(flatten)]
-    receipt: TransactionReceipt,
-    timestamp: u64,
-}
-
-#[derive(Debug, Serialize, Default)]
-pub struct Issuance {
-    block_reward: U256,
-    uncle_reward: U256,
-    issuance: U256,
-}
-
+/// Block structure with additional details regarding fees and issuance
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase", bound = "TX: Serialize + DeserializeOwned")]
 pub struct OtsBlockDetails<TX> {
@@ -38,18 +25,38 @@ pub struct OtsBlockDetails<TX> {
     issuance: Issuance,
 }
 
+/// Issuance information for a block. Expected by Otterscan in ots_getBlockDetails calls
+#[derive(Debug, Serialize, Default)]
+pub struct Issuance {
+    block_reward: U256,
+    uncle_reward: U256,
+    issuance: U256,
+}
+
+/// Holds both transactions and receipts for a block
 #[derive(Serialize, Debug)]
 pub struct OtsBlockTransactions {
     fullblock: OtsBlock<Transaction>,
     receipts: Vec<TransactionReceipt>,
 }
 
+/// Patched Receipt struct, to include the additional `timestamp` field expected by Otterscan
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OtsTransactionReceipt {
+    #[serde(flatten)]
+    receipt: TransactionReceipt,
+    timestamp: u64,
+}
+
+/// Inforrmation about the creator address and transaction for a contract
 #[derive(Serialize, Debug)]
 pub struct OtsContractCreator {
     pub hash: H256,
     pub creator: Address,
 }
 
+/// Paginated search results of an account's history
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct OtsSearchTransactions {
@@ -59,6 +66,7 @@ pub struct OtsSearchTransactions {
     pub last_page: bool,
 }
 
+/// Otterscan format for listing relevant internal operations
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct OtsInternalOperation {
@@ -68,6 +76,7 @@ pub struct OtsInternalOperation {
     value: U256,
 }
 
+/// Types of internal operations recognized by Otterscan
 #[derive(Serialize, Debug)]
 pub enum OtsInternalOperationType {
     Transfer = 0,

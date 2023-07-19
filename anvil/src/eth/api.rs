@@ -73,8 +73,8 @@ use tracing::{trace, warn};
 use super::{
     backend::mem::BlockRequest,
     otterscan::{
-        OtsBlock, OtsBlockDetails, OtsBlockTransactions, OtsContractCreator, OtsInternalOperation,
-        OtsSearchTransactions, OtsTransactionReceipt,
+        OtsBlockDetails, OtsBlockTransactions, OtsContractCreator, OtsInternalOperation,
+        OtsSearchTransactions,
     },
     sign::build_typed_transaction,
 };
