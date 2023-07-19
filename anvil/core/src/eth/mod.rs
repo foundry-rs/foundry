@@ -602,6 +602,8 @@ pub enum EthRequest {
     TxPoolContent(()),
 
     /// Otterscan's `ots_getApiLevel` endpoint
+    /// Otterscan currently requires this endpoint, even though it's not part of the ots_*
+    /// https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71
     #[cfg(feature = "otterscan")]
     #[cfg_attr(feature = "serde", serde(rename = "erigon_getHeaderByNumber"))]
     ErigonGetHeaderByNumber(
@@ -610,16 +612,20 @@ pub enum EthRequest {
     ),
 
     /// Otterscan's `ots_getApiLevel` endpoint
+    /// Used as a simple API versioning scheme for the ots_* namespace
     #[cfg(feature = "otterscan")]
     #[cfg_attr(feature = "serde", serde(rename = "ots_getApiLevel", with = "empty_params"))]
     OtsGetApiLevel(()),
 
     /// Otterscan's `ots_getInternalOperations` endpoint
+    /// Traces internal ETH transfers, contracts creation (CREATE/CREATE2) and self-destructs for a
+    /// certain transaction.
     #[cfg(feature = "otterscan")]
     #[cfg_attr(feature = "serde", serde(rename = "ots_getInternalOperations", with = "sequence"))]
     OtsGetInternalOperations(H256),
 
     /// Otterscan's `ots_hasCode` endpoint
+    /// Check if an ETH address contains code at a certain block number.
     #[cfg(feature = "otterscan")]
     #[cfg_attr(feature = "serde", serde(rename = "ots_hasCode"))]
     OtsHasCode(
@@ -629,16 +635,21 @@ pub enum EthRequest {
     ),
 
     /// Otterscan's `ots_traceTransaction` endpoint
+    /// Trace a transaction and generate a trace call tree.
     #[cfg(feature = "otterscan")]
     #[cfg_attr(feature = "serde", serde(rename = "ots_traceTransaction", with = "sequence"))]
     OtsTraceTransaction(H256),
 
     /// Otterscan's `ots_getTransactionError` endpoint
+    /// Given a transaction hash, returns its raw revert reason.
     #[cfg(feature = "otterscan")]
     #[cfg_attr(feature = "serde", serde(rename = "ots_getTransactionError", with = "sequence"))]
     OtsGetTransactionError(H256),
 
     /// Otterscan's `ots_getBlockDetails` endpoint
+    /// Given a block number, return its data. Similar to the standard eth_getBlockByNumber/Hash
+    /// method, but can be optimized by excluding unnecessary data such as transactions and
+    /// logBloom
     #[cfg(feature = "otterscan")]
     #[cfg_attr(feature = "serde", serde(rename = "ots_getBlockDetails"))]
     OtsGetBlockDetails(
@@ -647,21 +658,28 @@ pub enum EthRequest {
     ),
 
     /// Otterscan's `ots_getBlockTransactions` endpoint
+    /// Gets paginated transaction data for a certain block. Return data is similar to
+    /// eth_getBlockBy* + eth_getTransactionReceipt.
     #[cfg(feature = "otterscan")]
     #[cfg_attr(feature = "serde", serde(rename = "ots_getBlockTransactions"))]
     OtsGetBlockTransactions(u64, usize, usize),
 
     /// Otterscan's `ots_searchTransactionsBefore` endpoint
+    /// Address history navigation. searches backwards from certain point in time.
     #[cfg(feature = "otterscan")]
     #[cfg_attr(feature = "serde", serde(rename = "ots_searchTransactionsBefore"))]
     OtsSearchTransactionsBefore(Address, u64, usize),
 
     /// Otterscan's `ots_searchTransactionsAfter` endpoint
+    /// Address history navigation. searches forward from certain point in time.
     #[cfg(feature = "otterscan")]
     #[cfg_attr(feature = "serde", serde(rename = "ots_searchTransactionsAfter"))]
     OtsSearchTransactionsAfter(Address, u64, usize),
 
     /// Otterscan's `ots_getTransactionBySenderAndNonce` endpoint
+    /// Given a sender address and a nonce, returns the tx hash or null if not found. It returns
+    /// only the tx hash on success, you can use the standard eth_getTransactionByHash after that
+    /// to get the full transaction data.
     #[cfg(feature = "otterscan")]
     #[cfg_attr(feature = "serde", serde(rename = "ots_getTransactionBySenderAndNonce",))]
     OtsGetTransactionBySenderAndNonce(
@@ -670,6 +688,8 @@ pub enum EthRequest {
     ),
 
     /// Otterscan's `ots_getTransactionBySenderAndNonce` endpoint
+    /// Given an ETH contract address, returns the tx hash and the direct address who created the
+    /// contract.
     #[cfg(feature = "otterscan")]
     #[cfg_attr(feature = "serde", serde(rename = "ots_getContractCreator", with = "sequence"))]
     OtsGetContractCreator(Address),

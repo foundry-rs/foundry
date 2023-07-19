@@ -1,5 +1,5 @@
 pub mod api;
-mod otterscan;
+pub mod otterscan;
 pub use api::EthApi;
 
 pub mod backend;

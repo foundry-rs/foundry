@@ -70,7 +70,14 @@ use parking_lot::RwLock;
 use std::{sync::Arc, time::Duration};
 use tracing::{trace, warn};
 
-use super::{backend::mem::BlockRequest, sign::build_typed_transaction};
+use super::{
+    backend::mem::BlockRequest,
+    otterscan::{
+        OtsBlock, OtsBlockDetails, OtsBlockTransactions, OtsContractCreator, OtsInternalOperation,
+        OtsSearchTransactions, OtsTransactionReceipt,
+    },
+    sign::build_typed_transaction,
+};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
@@ -1990,13 +1997,12 @@ impl EthApi {
 }
 
 // === impl EthApi Otterscan endpoints ===
-use super::otterscan::*;
 
 impl EthApi {
     /// Otterscan currently requires this endpoint, even though it's not part of the ots_*
     /// https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71
     ///
-    /// It exists only as a faster alternative to eth_getBlockByNumber (by excluding uncle block
+    /// As a faster alternative to eth_getBlockByNumber (by excluding uncle block
     /// information), which is not relevant in the context of an anvil node
     pub async fn erigon_get_header_by_number(
         &self,
@@ -2008,7 +2014,6 @@ impl EthApi {
         self.backend.block_by_number(number).await
     }
 
-    /// Simple API versioning scheme for the ots_* namespace
     /// As per the latest Otterscan source code, at least version 8 is needed
     /// https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/params.ts#L1C2-L1C2
     pub async fn ots_get_api_level(&self) -> Result<u64> {
@@ -2061,20 +2066,16 @@ impl EthApi {
         Ok(Default::default())
     }
 
-    /// Given a block number, return its data. Similar to the standard eth_getBlockByNumber/Hash
-    /// method, but can be optimized by excluding unnecessary data such as transactions and logBloom
-    /// (which is not necessary in the context of an anvil node)
+    /// For simplicity purposes, we return the entire block instead of emptying the values that
+    /// Otterscan doesn't want. This is the original purpose of the endpoint (to save bandwidth),
+    /// but it doesn't seem necessary in the context of an anvil node
     pub async fn ots_get_block_details(
         &self,
         number: BlockNumber,
     ) -> Result<Option<OtsBlockDetails<TxHash>>> {
         node_info!("ots_getBlockDetails");
 
-        // this endpoint only exists to be faster than eth_getBlockByNumber by not returning uncle
-        // blocks
-        // we don't care about that in this context
         // TODO: probably only return blocks from before the fork?
-        //tracing::debug!("{:?}", BlockNumber::Number(number.into()));
         let block = self.backend.block_by_number(number).await?.map(Into::into);
 
         Ok(block)
