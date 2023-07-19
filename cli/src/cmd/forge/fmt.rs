@@ -54,28 +54,21 @@ impl Cmd for FmtArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let config = self.try_load_config_emit_warnings()?;
 
-        // Expand ignore globs
-        let ignored = expand_globs(&config.__root.0, config.fmt.ignore.iter())?;
+        // Expand ignore globs and canonicalize from the get go
+        let ignored = expand_globs(&config.__root.0, config.fmt.ignore.iter())?
+            .iter()
+            .map(|p| foundry_utils::path::canonicalize_path(p))
+            .flatten()
+            .collect::<Vec<_>>();
 
         let cwd = std::env::current_dir()?;
         let input = match &self.paths[..] {
             [] => {
-                // As we're retrieving the file paths from the project config,
-                // we'll need to canonicalize the ignored paths as well in case they're not,
-                // to properly filter them.
-                let canonicalized_ignored_paths: Vec<PathBuf> = ignored
-                    .iter()
-                    .map(|p| foundry_utils::path::canonicalize_path(p))
-                    .flatten()
-                    .collect();
                 // Retrieve the project paths, and filter out the ignored ones.
                 let project_paths: Vec<PathBuf> = config
                     .project_paths()
                     .input_files_iter()
-                    .filter(|p| {
-                        !(canonicalized_ignored_paths.contains(p) ||
-                            canonicalized_ignored_paths.contains(&cwd.join(p)))
-                    })
+                    .filter(|p| !(ignored.contains(p) || ignored.contains(&cwd.join(p))))
                     .collect();
                 Input::Paths(project_paths)
             }
