@@ -5,7 +5,6 @@ use ethers::{
     prelude::artifacts::CompactContractBytecode,
     types::*,
 };
-use eyre::Context;
 use foundry_common::{fmt::*, fs, get_artifact_path};
 use foundry_config::fs_permissions::FsAccessKind;
 use hex::FromHex;
@@ -342,7 +341,7 @@ fn serialize_json(
         serialization.clone()
     };
     let stringified = serde_json::to_string(&json)
-        .map_err(|err| fmt_err!(format!("Failed to stringify hashmap: {err}")))?;
+        .map_err(|err| fmt_err!("Failed to stringify hashmap: {err}"))?;
     Ok(abi::encode(&[Token::String(stringified)]).into())
 }
 
