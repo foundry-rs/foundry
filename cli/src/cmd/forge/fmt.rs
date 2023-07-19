@@ -59,7 +59,26 @@ impl Cmd for FmtArgs {
 
         let cwd = std::env::current_dir()?;
         let input = match &self.paths[..] {
-            [] => Input::Paths(config.project_paths().input_files_iter().collect()),
+            [] => {
+                // As we're retrieving the file paths from the project config,
+                // we'll need to canonicalize the ignored paths as well in case they're not,
+                // to properly filter them.
+                let canonicalized_ignored_paths: Vec<PathBuf> = ignored
+                    .iter()
+                    .map(|p| foundry_utils::path::canonicalize_path(p))
+                    .flatten()
+                    .collect();
+                // Retrieve the project paths, and filter out the ignored ones.
+                let project_paths: Vec<PathBuf> = config
+                    .project_paths()
+                    .input_files_iter()
+                    .filter(|p| {
+                        !(canonicalized_ignored_paths.contains(p) ||
+                            canonicalized_ignored_paths.contains(&cwd.join(p)))
+                    })
+                    .collect();
+                Input::Paths(project_paths)
+            }
             [one] if one == Path::new("-") => {
                 let mut s = String::new();
                 io::stdin().read_to_string(&mut s).expect("Failed to read from stdin");
