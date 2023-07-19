@@ -56,10 +56,6 @@ foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 #[derive(Debug, Clone, Parser, Serialize, Default)]
 #[clap(next_help_heading = "Build options", about = None, long_about = None)] // override doc
 pub struct BuildArgs {
-    #[clap(flatten)]
-    #[serde(flatten)]
-    pub args: CoreBuildArgs,
-
     /// Print compiled contract names.
     #[clap(long)]
     #[serde(skip)]
@@ -76,6 +72,10 @@ pub struct BuildArgs {
     #[clap(long, num_args(1..))]
     #[serde(skip)]
     pub skip: Option<Vec<SkipBuildFilter>>,
+
+    #[clap(flatten)]
+    #[serde(flatten)]
+    pub args: CoreBuildArgs,
 
     #[clap(flatten)]
     #[serde(skip)]

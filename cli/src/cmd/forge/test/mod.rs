@@ -48,9 +48,6 @@ foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 #[derive(Debug, Clone, Parser)]
 #[clap(next_help_heading = "Test options")]
 pub struct TestArgs {
-    #[clap(flatten)]
-    filter: FilterArgs,
-
     /// Run a test in the debugger.
     ///
     /// The argument passed to this flag is the name of the test function you want to run, and it
@@ -85,18 +82,9 @@ pub struct TestArgs {
     #[clap(long)]
     pub fail_fast: bool,
 
-    #[clap(flatten)]
-    evm_opts: EvmArgs,
-
     /// The Etherscan (or equivalent) API key
     #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     etherscan_api_key: Option<String>,
-
-    #[clap(flatten)]
-    opts: CoreBuildArgs,
-
-    #[clap(flatten)]
-    pub watch: WatchArgs,
 
     /// List tests instead of running them
     #[clap(long, short, help_heading = "Display options")]
@@ -108,6 +96,18 @@ pub struct TestArgs {
 
     #[clap(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
     pub fuzz_runs: Option<u64>,
+
+    #[clap(flatten)]
+    filter: FilterArgs,
+
+    #[clap(flatten)]
+    evm_opts: EvmArgs,
+
+    #[clap(flatten)]
+    opts: CoreBuildArgs,
+
+    #[clap(flatten)]
+    pub watch: WatchArgs,
 }
 
 impl TestArgs {
