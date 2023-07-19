@@ -57,8 +57,7 @@ impl Cmd for FmtArgs {
         // Expand ignore globs and canonicalize from the get go
         let ignored = expand_globs(&config.__root.0, config.fmt.ignore.iter())?
             .iter()
-            .map(|p| foundry_utils::path::canonicalize_path(p))
-            .flatten()
+            .flat_map(foundry_utils::path::canonicalize_path)
             .collect::<Vec<_>>();
 
         let cwd = std::env::current_dir()?;
