@@ -5,6 +5,7 @@ use ethers::{
     prelude::artifacts::CompactContractBytecode,
     types::*,
 };
+use eyre::Context;
 use foundry_common::{fmt::*, fs, get_artifact_path};
 use foundry_config::fs_permissions::FsAccessKind;
 use hex::FromHex;
@@ -268,7 +269,8 @@ fn parse_json_values(values: Vec<&Value>, key: &str) -> Result<Vec<Token>> {
 /// deserialized in the same order. That means that the solidity `struct` should order it's fields
 /// alphabetically and not by efficient packing or some other taxonomy.
 fn parse_json(json_str: &str, key: &str, coerce: Option<ParamType>) -> Result {
-    let json = serde_json::from_str(json_str)?;
+    let json =
+        serde_json::from_str(json_str).map_err(|err| fmt_err!("Failed to parse JSON: {err}"))?;
     match key {
         // Handle the special case of the root key. We want to return the entire JSON object
         // in this case.
