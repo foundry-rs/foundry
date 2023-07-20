@@ -92,12 +92,12 @@ impl<'a> InvariantExecutor<'a> {
         let failures =
             RefCell::new(InvariantFailures::new(&invariant_contract.invariant_functions));
 
-        let blank_executor = RefCell::new(&mut *self.executor);
+        let executor = RefCell::new(&mut *self.executor);
 
         let last_call_results = RefCell::new(
             assert_invariants(
                 &invariant_contract,
-                &blank_executor.borrow(),
+                &executor.borrow(),
                 &[],
                 &mut failures.borrow_mut(),
             )
@@ -129,9 +129,6 @@ impl<'a> InvariantExecutor<'a> {
                     }
                 }
 
-                // Before each run, we must reset the backend state.
-                let mut executor = blank_executor.borrow().clone();
-
                 // Used for stat reports (eg. gas usage).
                 let mut fuzz_runs = Vec::with_capacity(self.config.depth as usize);
 
@@ -144,6 +141,7 @@ impl<'a> InvariantExecutor<'a> {
 
                     // Executes the call from the randomly generated sequence.
                     let call_result = executor
+                        .borrow()
                         .call_raw(*sender, *address, calldata.0.clone(), U256::zero())
                         .expect("could not make raw evm call");
 
@@ -171,7 +169,7 @@ impl<'a> InvariantExecutor<'a> {
                     }
 
                     // Commit changes to the database.
-                    executor.backend_mut().commit(state_changeset);
+                    executor.borrow_mut().backend_mut().commit(state_changeset);
 
                     fuzz_runs.push(FuzzCase {
                         calldata: calldata.clone(),
@@ -182,7 +180,7 @@ impl<'a> InvariantExecutor<'a> {
                     let (can_continue, call_results) = can_continue(
                         &invariant_contract,
                         call_result,
-                        &executor,
+                        &executor.borrow(),
                         &inputs,
                         &mut failures.borrow_mut(),
                         self.config.fail_on_revert,
