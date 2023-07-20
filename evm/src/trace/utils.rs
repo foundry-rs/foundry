@@ -55,7 +55,30 @@ pub(crate) fn decode_cheatcode_inputs(
             Some(decoded.iter().map(format_token).collect())
         }
         "deriveKey" => Some(vec!["<pk>".to_string()]),
-        "parseJson" | "writeJson" | "keyExists" => {
+        "parseJson" |
+        "parseJsonUint" |
+        "parseJsonUintArray" |
+        "parseJsonInt" |
+        "parseJsonIntArray" |
+        "parseJsonString" |
+        "parseJsonStringArray" |
+        "parseJsonAddress" |
+        "parseJsonAddressArray" |
+        "parseJsonBool" |
+        "parseJsonBoolArray" |
+        "parseJsonBytes" |
+        "parseJsonBytesArray" |
+        "parseJsonBytes32" |
+        "parseJsonBytes32Array" |
+        "writeJson" |
+        "keyExists" |
+        "serializeBool" |
+        "serializeUint" |
+        "serializeInt" |
+        "serializeAddress" |
+        "serializeBytes32" |
+        "serializeString" |
+        "serializeBytes" => {
             if verbosity == 5 {
                 None
             } else {
