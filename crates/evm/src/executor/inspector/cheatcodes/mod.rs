@@ -127,7 +127,9 @@ pub struct Cheatcodes {
     /// Expected revert information
     pub expected_revert: Option<ExpectedRevert>,
 
-    /// Tracks the reverts that happen during evm execution if a there is an expected revert
+    /// Keeps track of the reverts thrown by an address during EVM execution if there is an
+    /// expected revert. It is used by [handle_expect_revert] to check if
+    /// `expected_reverted_address` reverted as specified by `expected_revert`.
     pub revert_per_address: BTreeMap<H160, HashSet<Bytes>>,
 
     /// Additional diagnostic for reverts

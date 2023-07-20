@@ -91,7 +91,28 @@ fn actual_error_from_bytes(data: Bytes) -> Bytes {
     data
 }
 
-#[instrument(skip_all, fields(expected_revert, status, retdata = hex::encode(&retdata)))]
+/// Verifies that a revert occurred during EVM execution and that matches the user provided data if
+/// any. Depending on the provided input, the expectation is verified under different assumptions:
+/// - See [handle_expect_revert_with_address]: If an address has been provided by the user check if
+///   anywhere in the call stack `expected_revert_address` reverted:
+///     - if the address did not revert fail.
+///     - if the address reverted:
+///         - if the user did not provided an `expected_revert` then it is a success.
+///         - if the user did provide an `expected_revert` check that is one of the reverts
+///           registered during EVM execution.
+///
+///
+/// - See [handle_expect_revert_with_data]: If an address has not been provided by the user:
+///  The status of the current call is checked:
+///     - If the call is not reverting then fail.
+///     - If the call is reverting then:
+///         - If the user did not provide any data to match then it is a success.
+///         - If the user provided data to match and it does, then it is a success, otherwise it is
+///           a failure.
+///     
+///
+/// More details here https://github.com/foundry-rs/foundry/pull/5430 and here:
+/// https://github.com/foundry-rs/foundry/issues/5299
 pub fn handle_expect_revert(
     is_create: bool,
     expected_revert: Option<&Bytes>,
@@ -102,16 +123,15 @@ pub fn handle_expect_revert(
 ) -> Result<(Option<Address>, Bytes)> {
     trace!("handle expect revert");
 
-    if let Some(expected_revert_address) = expected_revert_address {
-        return handle_expect_revert_with_address(
+    match expected_revert_address {
+        Some(expected_revert_address) => handle_expect_revert_with_address(
             is_create,
             expected_revert,
             expected_revert_address,
             reverts_by_address,
-        );
+        ),
+        None => handle_expect_revert_with_data(is_create, expected_revert, status, retdata),
     }
-
-    handle_expect_revert_with_data(is_create, expected_revert, status, retdata)
 }
 
 /// Verifies that `expected_revert_address` reverted with `expected_reverted` anywhere in the call
@@ -124,42 +144,42 @@ fn handle_expect_revert_with_address(
 ) -> Result<(Option<Address>, Bytes)> {
     let address_reverts = reverts_by_address.get(&expected_revert_address);
 
-    if address_reverts.is_none() {
-        return Err(fmt_err!(
+    match address_reverts {
+        Some(address_reverts) => {
+            // If None, accept any revert
+            let expected_revert = match expected_revert {
+                Some(x) => x,
+                None => return success_return!(is_create),
+            };
+
+            // Convert the HashSet<Bytes> to HashSet<String> after cleaning the revert data from any
+            // error prefix if present.
+            let address_reverts = address_reverts
+                .iter()
+                .map(|revert_data| actual_error_from_bytes(revert_data.clone()).to_string())
+                .collect::<HashSet<_>>();
+
+            if address_reverts.contains(&expected_revert.to_string()) {
+                success_return!(is_create)
+            }
+            // Empty revert data
+            else if address_reverts.contains("0x") {
+                bail!(
+                    "The expected revert address {:#?} reverted as expected, but without data",
+                    expected_revert_address
+                );
+            } else {
+                Err(fmt_err!(
+                    "The expected revert address {:#?} did not revert with the expected revert data: {}",
+                    expected_revert_address,
+                    stringify(expected_revert),
+                ))
+            }
+        }
+        None => Err(fmt_err!(
             "The expected revert address {:#?} did not revert",
             expected_revert_address,
-        ));
-    }
-
-    #[allow(clippy::mutable_key_type)]
-    let address_reverts = address_reverts.unwrap();
-
-    // If None, accept any revert
-    let expected_revert = match expected_revert {
-        Some(x) => x,
-        None => return success_return!(is_create),
-    };
-
-    let address_reverts = address_reverts
-        .iter()
-        .map(|revert_data| actual_error_from_bytes(revert_data.clone()).to_string())
-        .collect::<HashSet<_>>();
-
-    if address_reverts.contains(&expected_revert.to_string()) {
-        success_return!(is_create)
-    }
-    // Empty revert data
-    else if address_reverts.contains("0x") {
-        bail!(
-            "The expected revert address {:#?} reverted as expected, but without data",
-            expected_revert_address
-        );
-    } else {
-        Err(fmt_err!(
-            "The expected revert address {:#?} did not revert with the expected revert data: {}",
-            expected_revert_address,
-            stringify(expected_revert),
-        ))
+        )),
     }
 }
 
