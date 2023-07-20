@@ -274,6 +274,10 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Returns number of blank lines in source between two byte indexes
     fn blank_lines(&self, start: usize, end: usize) -> usize {
+        // because of sorting import statements, start can be greater than end
+        if start > end {
+            return 0
+        }
         self.source[start..end].trim_comments().matches('\n').count()
     }
 
@@ -1616,6 +1620,75 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     #[instrument(name = "SU", skip_all)]
     fn visit_source_unit(&mut self, source_unit: &mut SourceUnit) -> Result<()> {
+        println!("sort_imports: {}", self.config.sort_imports);
+        if self.config.sort_imports {
+            let mut import_slices: Vec<(isize, isize)> = vec![];
+
+            // get slices of contiguous import statements and sort
+            // them independent of each other.
+            let mut current_part = (-1isize, -1isize);
+            for (i, part) in source_unit.0.iter().enumerate() {
+                if let SourceUnitPart::ImportDirective(_) = part {
+                    // start of slice
+                    if current_part.0 == -1 {
+                        current_part.0 = i as isize;
+                    }
+                } else {
+                    // end of slice
+                    if current_part.0 != -1 {
+                        current_part.1 = i as isize;
+                        import_slices.push((current_part.0, current_part.1));
+                        // reset current part
+                        current_part.0 = -1;
+                        current_part.1 = -1;
+                    }
+                }
+            }
+            // if the last slice was not ended because it was last
+            // unit in the file, end it now
+            if (current_part.0 != -1) && (current_part.1 == -1) {
+                current_part.1 = source_unit.0.len() as isize;
+                import_slices.push((current_part.0, current_part.1));
+            }
+
+            for import_slice in import_slices {
+                let slice_start = import_slice.0 as usize;
+                let slice_end = import_slice.1 as usize;
+                let source_unit_part_slice = &mut source_unit.0[slice_start..slice_end];
+
+                for source_unit_part in source_unit_part_slice.iter_mut() {
+                    if let SourceUnitPart::ImportDirective(Import::Rename(_, renames, _)) =
+                        source_unit_part
+                    {
+                        // sort the identifiers in `import {} from ..` style imports
+                        // could sort by the renamed ident or the original ident, renamed
+                        // given preference, but not sure if original should be given preference
+                        // or renamed
+                        renames.sort_by_key(|(og_ident, renamed_ident)| {
+                            if let Some(renamed_ident) = renamed_ident {
+                                renamed_ident.to_string()
+                            } else {
+                                og_ident.to_string()
+                            }
+                        });
+                    }
+                }
+
+                // sort by path
+                source_unit_part_slice.sort_by_key(|item| match item {
+                    SourceUnitPart::ImportDirective(import) =>  {
+                        match import {
+                            Import::Plain(path, _) => path.to_string(),
+                            Import::GlobalSymbol(path, _, _) => path.to_string(),
+                            Import::Rename(path, _, _) => path.to_string(),
+                        }
+                    },
+                    _ => {
+                        panic!("this shouldnt happen, this slice should only contain import directives");
+                    }
+                });
+            }
+        }
         // TODO: do we need to put pragma and import directives at the top of the file?
         // source_unit.0.sort_by_key(|item| match item {
         //     SourceUnitPart::PragmaDirective(_, _, _) => 0,

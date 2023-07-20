@@ -199,4 +199,5 @@ test_directories! {
     MappingType,
     EmitStatement,
     Repros,
+    SortedImports
 }
