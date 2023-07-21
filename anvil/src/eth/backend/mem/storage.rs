@@ -335,6 +335,14 @@ impl Blockchain {
         }
     }
 
+    pub fn get_block_by_hash(&self, hash: &H256) -> Option<Block> {
+        self.storage.read().blocks.get(hash).cloned()
+    }
+
+    pub fn get_transaction_by_hash(&self, hash: &H256) -> Option<MinedTransaction> {
+        self.storage.read().transactions.get(hash).cloned()
+    }
+
     /// Returns the total number of blocks
     pub fn blocks_count(&self) -> usize {
         self.storage.read().blocks.len()
