@@ -111,12 +111,8 @@ library ChainlinkTWAP {
 }
 
 /// configures the `TestProject` with the given closure and calls the `forge create` command
-fn create_on_chain<F>(
-    info: Option<EnvExternalities>,
-    prj: TestProject,
-    mut cmd: TestCommand,
-    f: F,
-) where
+fn create_on_chain<F>(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand, f: F)
+where
     F: FnOnce(&TestProject) -> String,
 {
     if let Some(info) = info {
