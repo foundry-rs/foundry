@@ -52,8 +52,9 @@ pub fn find_git_root_path(relative_to: impl AsRef<Path>) -> eyre::Result<PathBuf
 ///      |__ [given_path | cwd]
 /// ```
 /// will still detect `repo` as root
-pub fn find_project_root_path(path: Option<PathBuf>) -> std::io::Result<PathBuf> {
-    let cwd = path.unwrap_or(std::env::current_dir()?);
+pub fn find_project_root_path(path: Option<&PathBuf>) -> std::io::Result<PathBuf> {
+    let cwd = &std::env::current_dir()?;
+    let cwd = path.unwrap_or(cwd);
     let boundary = find_git_root_path(&cwd)
         .ok()
         .filter(|p| !p.as_os_str().is_empty())
