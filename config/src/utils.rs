@@ -40,8 +40,8 @@ pub fn find_git_root_path(relative_to: impl AsRef<Path>) -> eyre::Result<PathBuf
 
 /// Returns the root path to set for the project root
 ///
-/// traverse the dir tree up and look for a `foundry.toml` file starting at the cwd, but only until
-/// the root dir of the current repo so that
+/// traverse the dir tree up and look for a `foundry.toml` file starting at the given path or cwd,
+/// but only until the root dir of the current repo so that
 ///
 /// ```text
 /// -- foundry.toml
@@ -49,7 +49,7 @@ pub fn find_git_root_path(relative_to: impl AsRef<Path>) -> eyre::Result<PathBuf
 /// -- repo
 ///   |__ .git
 ///   |__sub
-///      |__ cwd
+///      |__ [given_path | cwd]
 /// ```
 /// will still detect `repo` as root
 pub fn find_project_root_path(path: Option<PathBuf>) -> std::io::Result<PathBuf> {
