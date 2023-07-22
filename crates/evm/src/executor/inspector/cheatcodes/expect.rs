@@ -81,7 +81,10 @@ fn stringify(data: &[u8]) -> String {
         .unwrap_or_else(|| format!("0x{}", hex::encode(data)))
 }
 
-fn actual_error_from_bytes(data: Bytes) -> Bytes {
+/// Checks that the revert error data has the [ERROR_PREFIX] or [REVERT_PREFIX] prefixes and removes
+/// them to get the raw error data that will be used to verify if an expected revert happened as
+/// defined by the user.
+fn get_raw_error(data: Bytes) -> Bytes {
     if data.len() >= 4 && matches!(data[..4].try_into(), Ok(ERROR_PREFIX | REVERT_PREFIX)) {
         if let Ok(bytes) = Bytes::decode(&data[4..]) {
             return bytes;
@@ -156,7 +159,7 @@ fn handle_expect_revert_with_address(
             // error prefix if present.
             let address_reverts = address_reverts
                 .iter()
-                .map(|revert_data| actual_error_from_bytes(revert_data.clone()).to_string())
+                .map(|revert_data| get_raw_error(revert_data.clone()).to_string())
                 .collect::<HashSet<_>>();
 
             if address_reverts.contains(&expected_revert.to_string()) {
@@ -202,7 +205,7 @@ fn handle_expect_revert_with_data(
         bail!("Call reverted as expected, but without data");
     }
 
-    let actual_revert = actual_error_from_bytes(retdata);
+    let actual_revert = get_raw_error(retdata);
     if actual_revert == *expected_revert {
         success_return!(is_create)
     } else {
