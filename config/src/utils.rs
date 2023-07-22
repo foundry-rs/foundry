@@ -55,7 +55,7 @@ pub fn find_git_root_path(relative_to: impl AsRef<Path>) -> eyre::Result<PathBuf
 pub fn find_project_root_path(path: Option<&PathBuf>) -> std::io::Result<PathBuf> {
     let cwd = &std::env::current_dir()?;
     let cwd = path.unwrap_or(cwd);
-    let boundary = find_git_root_path(&cwd)
+    let boundary = find_git_root_path(cwd)
         .ok()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| cwd.clone());
