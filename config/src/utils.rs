@@ -21,7 +21,7 @@ pub fn load_config_with_root(root: Option<PathBuf>) -> Config {
     if let Some(root) = root {
         Config::load_with_root(root)
     } else {
-        Config::load_with_root(find_project_root_path().unwrap())
+        Config::load_with_root(find_project_root_path(None).unwrap())
     }
     .sanitized()
 }
@@ -52,8 +52,8 @@ pub fn find_git_root_path(relative_to: impl AsRef<Path>) -> eyre::Result<PathBuf
 ///      |__ cwd
 /// ```
 /// will still detect `repo` as root
-pub fn find_project_root_path() -> std::io::Result<PathBuf> {
-    let cwd = std::env::current_dir()?;
+pub fn find_project_root_path(path: Option<PathBuf>) -> std::io::Result<PathBuf> {
+    let cwd = path.unwrap_or(std::env::current_dir()?);
     let boundary = find_git_root_path(&cwd)
         .ok()
         .filter(|p| !p.as_os_str().is_empty())
