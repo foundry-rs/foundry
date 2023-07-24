@@ -73,7 +73,8 @@ impl RunArgs {
     ///
     /// Note: This executes the transaction(s) as is: Cheatcodes are disabled
     pub async fn run(self) -> eyre::Result<()> {
-        let figment = Config::figment_with_root(find_project_root_path().unwrap()).merge(self.rpc);
+        let figment =
+            Config::figment_with_root(find_project_root_path(None).unwrap()).merge(self.rpc);
         let mut evm_opts = figment.extract::<EvmOpts>()?;
         let config = Config::from_provider(figment).sanitized();
         let provider = utils::get_provider(&config)?;

@@ -62,7 +62,7 @@ macro_rules! impl_figment_convert {
                 if let Some(root) = args.root.clone() {
                     $crate::Config::figment_with_root(root)
                 } else {
-                    $crate::Config::figment_with_root($crate::find_project_root_path().unwrap())
+                    $crate::Config::figment_with_root($crate::find_project_root_path(None).unwrap())
                 }
                 .merge(args)
             }
@@ -190,7 +190,7 @@ macro_rules! impl_figment_convert_cast {
     ($name:ty) => {
         impl<'a> From<&'a $name> for $crate::figment::Figment {
             fn from(args: &'a $name) -> Self {
-                $crate::Config::figment_with_root($crate::find_project_root_path().unwrap())
+                $crate::Config::figment_with_root($crate::find_project_root_path(None).unwrap())
                     .merge(args)
             }
         }
