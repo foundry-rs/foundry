@@ -157,7 +157,7 @@ fn select_fork<DB: DatabaseExt>(
     fork_id: U256,
 ) -> Result {
     if state.broadcast.is_some() {
-        return Err(Error::SelectForkDuringBroadcast)
+        return Err(Error::SelectForkDuringBroadcast);
     }
 
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
@@ -175,7 +175,7 @@ fn create_select_fork<DB: DatabaseExt>(
     block: Option<u64>,
 ) -> Result {
     if state.broadcast.is_some() {
-        return Err(Error::SelectForkDuringBroadcast)
+        return Err(Error::SelectForkDuringBroadcast);
     }
 
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
@@ -205,7 +205,7 @@ fn create_select_fork_at_transaction<DB: DatabaseExt>(
     transaction: H256,
 ) -> Result {
     if state.broadcast.is_some() {
-        return Err(Error::SelectForkDuringBroadcast)
+        return Err(Error::SelectForkDuringBroadcast);
     }
 
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
@@ -255,10 +255,10 @@ fn create_fork_request<DB: DatabaseExt>(
 fn eth_getlogs<DB: DatabaseExt>(data: &mut EVMData<DB>, inner: &EthGetLogsCall) -> Result {
     let url = data.db.active_fork_url().ok_or(fmt_err!("No active fork url found"))?;
     if inner.0 > U256::from(u64::MAX) || inner.1 > U256::from(u64::MAX) {
-        return Err(fmt_err!("Blocks in block range must be less than 2^64 - 1"))
+        return Err(fmt_err!("Blocks in block range must be less than 2^64 - 1"));
     }
     if inner.3.len() > 4 {
-        return Err(fmt_err!("Topics array must be less than 4 elements"))
+        return Err(fmt_err!("Topics array must be less than 4 elements"));
     }
 
     let provider = ProviderBuilder::new(url).build()?;
@@ -281,7 +281,7 @@ fn eth_getlogs<DB: DatabaseExt>(data: &mut EVMData<DB>, inner: &EthGetLogsCall) 
     println!("Logs: {:?}", logs);
     if logs.len() == 0 {
         let empty: Bytes = abi::encode(&[Token::Array(vec![])]).into();
-        return Ok(empty)
+        return Ok(empty);
     }
 
     let result = abi::encode(
@@ -289,9 +289,15 @@ fn eth_getlogs<DB: DatabaseExt>(data: &mut EVMData<DB>, inner: &EthGetLogsCall) 
             .iter()
             .map(|entry| {
                 Token::Tuple(vec![
+                    entry.address.into_token(),
                     entry.topics.clone().into_token(),
                     Token::Bytes(entry.data.to_vec()),
-                    entry.address.into_token(),
+                    entry.block_number.expect("lol").as_u64().into_token(),
+                    entry.transaction_hash.expect("").into_token(),
+                    entry.transaction_index.expect("lol").as_u64().into_token(),
+                    entry.block_hash.expect("").into_token(),
+                    entry.log_index.expect("").into_token(),
+                    entry.removed.expect("").into_token(), // bool
                 ])
             })
             .collect::<Vec<Token>>()

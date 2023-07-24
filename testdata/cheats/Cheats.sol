@@ -24,17 +24,17 @@ interface Cheats {
         string url;
     }
 
-    // Used in eth_getLogs()
-    struct EthGetLogs {
+    // Used in eth_getLogs
+    struct EthGetLogs { 
         address emitter;
-        bytes32 blockHash;
-        uint256 blockNumber;
-        bytes data;
-        uint256 logIndex; 
-        bool removed;
         bytes32[] topics;
-        bytes32 transactionHash; 
-        uint256 transactionIndex; 
+        bytes data;
+        uint256 blockNumber;
+        bytes32 transactionHash;
+        uint256 transactionIndex;
+        bytes32 blockHash;
+        uint256 logIndex;
+        bool removed;
     }
 
     // Used in readDir

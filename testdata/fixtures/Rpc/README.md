@@ -21,3 +21,5 @@ To generate this fixture, send a POST request to a Eth Mainnet (chainId = 1) RPC
     ]
 }
 ```
+
+Then you must change the `address` key to `emitter` because in Solidity, a struct's name cannot be `address` as that is a keyword.

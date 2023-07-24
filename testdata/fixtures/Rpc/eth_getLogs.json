@@ -1,6 +1,6 @@
 [
     {
-        "address": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+        "emitter": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
         "topics": [
             "0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65",
             "0x0000000000000000000000007a250d5630b4cf539739df2c5dacb4c659f2488d"
@@ -14,7 +14,7 @@
         "removed": false
     },
     {
-        "address": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+        "emitter": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
         "topics": [
             "0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65",
             "0x0000000000000000000000002ec705d306b51e486b1bc0d6ebee708e0661add1"
@@ -28,7 +28,7 @@
         "removed": false
     },
     {
-        "address": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+        "emitter": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
         "topics": [
             "0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65",
             "0x0000000000000000000000007a250d5630b4cf539739df2c5dacb4c659f2488d"

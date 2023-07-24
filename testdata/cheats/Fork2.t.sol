@@ -3,6 +3,7 @@ pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
 import "./Cheats.sol";
+import "../logs/console.sol";
 
 struct MyStruct {
     uint256 value;
@@ -166,6 +167,18 @@ contract ForkTest is DSTest {
         string memory msg2 = dummy.hello();
     }
 
+    struct EthGetLogsJsonParseable {
+        bytes32 blockHash;
+        bytes blockNumber; // Should be uint256, but is returned from RPC in 0x... format
+        bytes32 data; // Should be bytes, but in our particular example is bytes32
+        address emitter;
+        bytes logIndex; // Should be uint256, but is returned from RPC in 0x... format
+        bool removed;
+        bytes32[] topics;
+        bytes32 transactionHash; 
+        bytes transactionIndex;  // Should be uint256, but is returned from RPC in 0x... format
+    }
+
     function testEthGetLogs() public {
         cheats.selectFork(mainnetFork);
         address weth = address(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
@@ -173,23 +186,37 @@ contract ForkTest is DSTest {
         uint256 blockNumber = 17623835;
 
         string memory path = "../testdata/fixtures/Rpc/eth_getLogs.json";
-        string memory json = vm.readFile(path);
-        Cheats.EthGetLogs[] memory groundTruth = abi.decode(json, (Cheats.EthGetLogs[]));
+        string memory file = cheats.readFile(path);
+        bytes memory parsed = cheats.parseJson(file);
+        EthGetLogsJsonParseable[] memory fixtureLogs = abi.decode(parsed, (EthGetLogsJsonParseable[]));
 
         bytes32[] memory topics = new bytes32[](1);
         topics[0] = withdrawalTopic;
-
-        Cheats.EthGetLogs[] memory logs = cheats.getLogs(blockNumber, blockNumber, weth, topics);
+        Cheats.EthGetLogs[] memory logs = cheats.eth_getLogs(blockNumber, blockNumber, weth, topics);
         assertEq(logs.length, 3);
 
-        // check that the logs are correct
         for (uint256 i = 0; i < logs.length; i++) {
             Cheats.EthGetLogs memory log = logs[i];
-            assertEq(log.emitter, weth);
+            assertEq(log.emitter, fixtureLogs[i].emitter);
+
+            string memory i_str;
+            if (i == 0) i_str = "0";
+            if (i == 1) i_str = "1";
+            if (i == 2) i_str = "2";
+
+            assertEq(log.blockNumber, cheats.parseJsonUint(file, string.concat("[", i_str, "].blockNumber")));
+            assertEq(log.logIndex, cheats.parseJsonUint(file, string.concat("[", i_str, "].logIndex")));
+            assertEq(log.transactionIndex, cheats.parseJsonUint(file, string.concat("[", i_str, "].transactionIndex")));
+
+            assertEq(log.blockHash, fixtureLogs[i].blockHash);
+            assertEq(log.removed, fixtureLogs[i].removed);
+            assertEq(log.transactionHash, fixtureLogs[i].transactionHash);
+
+            // In this specific example, the log.data is bytes32
+            assertEq(bytes32(log.data), fixtureLogs[i].data);
             assertEq(log.topics.length, 2);
             assertEq(log.topics[0], withdrawalTopic);
-            // TODO check that log.topics[1] and log.data match the response once the
-            // response is fixture-ized
+            assertEq(log.topics[1], fixtureLogs[i].topics[1]);
         }
     }
 }
