@@ -1745,7 +1745,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#d587981247af2286b413396c1d33601745d4723f"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1760,7 +1760,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#d587981247af2286b413396c1d33601745d4723f"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1771,7 +1771,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#d587981247af2286b413396c1d33601745d4723f"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1790,7 +1790,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#d587981247af2286b413396c1d33601745d4723f"
 dependencies = [
  "Inflector",
  "dunce",
@@ -1813,7 +1813,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#d587981247af2286b413396c1d33601745d4723f"
 dependencies = [
  "Inflector",
  "ethers-contract-abigen",
@@ -1828,7 +1828,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#d587981247af2286b413396c1d33601745d4723f"
 dependencies = [
  "arrayvec",
  "bytes",
@@ -1857,7 +1857,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#d587981247af2286b413396c1d33601745d4723f"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -1872,7 +1872,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#d587981247af2286b413396c1d33601745d4723f"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1898,7 +1898,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#d587981247af2286b413396c1d33601745d4723f"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1935,7 +1935,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#d587981247af2286b413396c1d33601745d4723f"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1962,9 +1962,10 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#d587981247af2286b413396c1d33601745d4723f"
 dependencies = [
  "cfg-if",
+ "dirs 5.0.1",
  "dunce",
  "ethers-core",
  "fs_extra",
@@ -6071,13 +6072,13 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 
 [[package]]
 name = "svm-rs"
-version = "0.2.23"
+version = "0.2.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a04fc4f5cd35c700153b233f5575ccb3237e0f941fa5049d9e98254d10bf2fe"
+checksum = "889bd6dcaae4684eb35b872fded040b130f947b5048f28cf6fc53539e6c7dc55"
 dependencies = [
+ "dirs 5.0.1",
  "fs2",
  "hex",
- "home",
  "once_cell",
  "reqwest",
  "semver",
