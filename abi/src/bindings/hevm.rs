@@ -3605,7 +3605,7 @@ pub mod hevm {
                                 },
                                 ::ethers_core::abi::ethabi::Param {
                                     name: ::std::string::String::new(),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Bytes,
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
                                     internal_type: ::core::option::Option::None,
                                 },
                             ],
@@ -6300,14 +6300,14 @@ pub mod hevm {
                 .method_hash([242, 131, 15, 123], (p0, p1))
                 .expect("method not found (this should never happen)")
         }
-        ///Calls the contract's `rpc` (0x30eab8e0) function
+        ///Calls the contract's `rpc` (0x1206c8a8) function
         pub fn rpc(
             &self,
             p0: ::std::string::String,
-            p1: ::ethers_core::types::Bytes,
+            p1: ::std::string::String,
         ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::Bytes> {
             self.0
-                .method_hash([48, 234, 184, 224], (p0, p1))
+                .method_hash([18, 6, 200, 168], (p0, p1))
                 .expect("method not found (this should never happen)")
         }
         ///Calls the contract's `rpcUrl` (0x975a6ce9) function
@@ -8839,7 +8839,7 @@ pub mod hevm {
     )]
     #[ethcall(name = "rollFork", abi = "rollFork(uint256,bytes32)")]
     pub struct RollFork3Call(pub ::ethers_core::types::U256, pub [u8; 32]);
-    ///Container type for all input parameters for the `rpc` function with signature `rpc(string,bytes)` and selector `0x30eab8e0`
+    ///Container type for all input parameters for the `rpc` function with signature `rpc(string,string)` and selector `0x1206c8a8`
     #[derive(
         Clone,
         ::ethers_contract::EthCall,
@@ -8850,8 +8850,8 @@ pub mod hevm {
         Eq,
         Hash
     )]
-    #[ethcall(name = "rpc", abi = "rpc(string,bytes)")]
-    pub struct RpcCall(pub ::std::string::String, pub ::ethers_core::types::Bytes);
+    #[ethcall(name = "rpc", abi = "rpc(string,string)")]
+    pub struct RpcCall(pub ::std::string::String, pub ::std::string::String);
     ///Container type for all input parameters for the `rpcUrl` function with signature `rpcUrl(string)` and selector `0x975a6ce9`
     #[derive(
         Clone,
@@ -13214,7 +13214,7 @@ pub mod hevm {
         Hash
     )]
     pub struct RevertToReturn(pub bool);
-    ///Container type for all return fields from the `rpc` function with signature `rpc(string,bytes)` and selector `0x30eab8e0`
+    ///Container type for all return fields from the `rpc` function with signature `rpc(string,string)` and selector `0x1206c8a8`
     #[derive(
         Clone,
         ::ethers_contract::EthAbiType,

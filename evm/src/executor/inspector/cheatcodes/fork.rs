@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use super::{fmt_err, Cheatcodes, Error, Result};
 use crate::{
     abi::HEVMCalls,
@@ -10,7 +12,7 @@ use ethers::{
     providers::Middleware,
     types::{Bytes, Filter, H256},
 };
-use foundry_abi::hevm::EthGetLogsCall;
+use foundry_abi::hevm::{EthGetLogsCall, RpcCall};
 use foundry_common::ProviderBuilder;
 use revm::EVMData;
 
@@ -145,6 +147,7 @@ pub fn apply<DB: DatabaseExt>(
             .map(empty)
             .map_err(Into::into),
         HEVMCalls::EthGetLogs(inner) => eth_getlogs(data, inner),
+        HEVMCalls::Rpc(inner) => rpc(data, inner),
         _ => return None,
     };
     Some(result)
@@ -276,9 +279,10 @@ fn eth_getlogs<DB: DatabaseExt>(data: &mut EVMData<DB>, inner: &EthGetLogsCall) 
         };
     }
 
-    // TODO: don't use `unwrap` below
-    let logs = RuntimeOrHandle::new().block_on(provider.get_logs(&filter)).unwrap();
-    println!("Logs: {:?}", logs);
+    let logs = RuntimeOrHandle::new()
+        .block_on(provider.get_logs(&filter))
+        .map_err(|_| fmt_err!("Error in calling eth_getLogs"))?;
+
     if logs.len() == 0 {
         let empty: Bytes = abi::encode(&[Token::Array(vec![])]).into();
         return Ok(empty);
@@ -292,12 +296,32 @@ fn eth_getlogs<DB: DatabaseExt>(data: &mut EVMData<DB>, inner: &EthGetLogsCall) 
                     entry.address.into_token(),
                     entry.topics.clone().into_token(),
                     Token::Bytes(entry.data.to_vec()),
-                    entry.block_number.expect("lol").as_u64().into_token(),
-                    entry.transaction_hash.expect("").into_token(),
-                    entry.transaction_index.expect("lol").as_u64().into_token(),
-                    entry.block_hash.expect("").into_token(),
-                    entry.log_index.expect("").into_token(),
-                    entry.removed.expect("").into_token(), // bool
+                    entry
+                        .block_number
+                        .expect("eth_getLogs response should include block_number field")
+                        .as_u64()
+                        .into_token(),
+                    entry
+                        .transaction_hash
+                        .expect("eth_getLogs response should include transaction_hash field")
+                        .into_token(),
+                    entry
+                        .transaction_index
+                        .expect("eth_getLogs response should include transaction_index field")
+                        .as_u64()
+                        .into_token(),
+                    entry
+                        .block_hash
+                        .expect("eth_getLogs response should include block_hash field")
+                        .into_token(),
+                    entry
+                        .log_index
+                        .expect("eth_getLogs response should include log_index field")
+                        .into_token(),
+                    entry
+                        .removed
+                        .expect("eth_getLogs response should include removed field")
+                        .into_token(),
                 ])
             })
             .collect::<Vec<Token>>()
@@ -305,4 +329,23 @@ fn eth_getlogs<DB: DatabaseExt>(data: &mut EVMData<DB>, inner: &EthGetLogsCall) 
     )
     .into();
     Ok(result)
+}
+
+fn rpc<DB: DatabaseExt>(data: &mut EVMData<DB>, inner: &RpcCall) -> Result {
+    let url = data.db.active_fork_url().ok_or(fmt_err!("No active fork url found"))?;
+    let provider = ProviderBuilder::new(url).build()?;
+    let method = inner.0.as_str();
+    let params = inner.1.as_str();
+
+    println!("Params: {:?}", params);
+    let params_json = serde_json::from_str(params)?;
+    println!("Params Json: {:?}", params_json);
+
+    let result: String = RuntimeOrHandle::new()
+        .block_on(provider.request(method, params_json))
+        .map_err(|_| fmt_err!("Error in calling {:?}", method))?;
+
+    println!("Result: {:?}", result);
+    let result_bytes = Bytes::from_str(result.as_str()).unwrap();
+    Ok(result_bytes)
 }

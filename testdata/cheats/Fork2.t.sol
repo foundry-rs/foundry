@@ -219,6 +219,14 @@ contract ForkTest is DSTest {
             assertEq(log.topics[1], fixtureLogs[i].topics[1]);
         }
     }
+
+    function testRpc() public {
+        cheats.selectFork(mainnetFork);
+        string memory path = "../testdata/fixtures/Rpc/params.json";
+        string memory file = cheats.readFile(path);
+        bytes memory result = cheats.rpc("eth_getBlockByHash", file);
+        console.logBytes(result);
+    }
 }
 
 contract DummyContract {
