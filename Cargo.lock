@@ -6071,13 +6071,13 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 
 [[package]]
 name = "svm-rs"
-version = "0.2.23"
+version = "0.2.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a04fc4f5cd35c700153b233f5575ccb3237e0f941fa5049d9e98254d10bf2fe"
+checksum = "889bd6dcaae4684eb35b872fded040b130f947b5048f28cf6fc53539e6c7dc55"
 dependencies = [
+ "dirs 5.0.1",
  "fs2",
  "hex",
- "home",
  "once_cell",
  "reqwest",
  "semver",
