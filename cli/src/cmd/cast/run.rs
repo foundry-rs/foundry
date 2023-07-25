@@ -7,6 +7,7 @@ use clap::Parser;
 use ethers::{
     abi::Address,
     prelude::{artifacts::ContractBytecodeSome, ArtifactId, Middleware},
+    solc::EvmVersion,
     types::H160,
 };
 use eyre::WrapErr;
@@ -64,6 +65,12 @@ pub struct RunArgs {
 
     #[clap(flatten)]
     rpc: RpcOpts,
+
+    /// The evm version to use.
+    ///
+    /// Overrides the version specified in the config.
+    #[clap(long, short)]
+    evm_version: Option<EvmVersion>,
 }
 
 impl RunArgs {
@@ -103,8 +110,9 @@ impl RunArgs {
 
         // configures a bare version of the evm executor: no cheatcode inspector is enabled,
         // tracing will be enabled only for the targeted transaction
-        let builder =
-            ExecutorBuilder::default().with_config(env).with_spec(evm_spec(&config.evm_version));
+        let builder = ExecutorBuilder::default()
+            .with_config(env)
+            .with_spec(evm_spec(&self.evm_version.unwrap_or(config.evm_version)));
 
         let mut executor = builder.build(db);
 
