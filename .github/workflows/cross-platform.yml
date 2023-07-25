@@ -35,7 +35,8 @@ jobs:
                       target: aarch64-apple-darwin
                     - os: windows-latest
                       target: x86_64-pc-windows-msvc
-                    - os: windows-native
+                      wsl: wsl
+                    - os: windows-latest
                       target: x86_64-pc-windows-msvc
 
         steps:
@@ -68,7 +69,7 @@ jobs:
 
             # For some reason the FFI cheatcode uses WSL bash instead of Git bash, so we need to install a WSL distribution
             - name: Windows setup
-              if: ${{ matrix.job.target == 'x86_64-pc-windows-msvc' }}
+              if: ${{ matrix.job.wsl == 'wsl' }}
               uses: Vampire/setup-wsl@v1
               with:
                   distribution: Ubuntu-20.04
