@@ -1187,7 +1187,7 @@ impl Backend {
         filter: Filter,
         hash: H256,
     ) -> Result<Vec<Log>, BlockchainError> {
-        if let Some(block) = self.blockchain.storage.read().blocks.get(&hash).cloned() {
+        if let Some(block) = self.blockchain.get_block_by_hash(&hash) {
             return Ok(self.mined_logs_for_block(filter, block))
         }
 
@@ -1352,7 +1352,7 @@ impl Backend {
     }
 
     fn mined_block_by_hash(&self, hash: H256) -> Option<EthersBlock<TxHash>> {
-        let block = self.blockchain.storage.read().blocks.get(&hash)?.clone();
+        let block = self.blockchain.get_block_by_hash(&hash)?;
         Some(self.convert_block(block))
     }
 
@@ -1451,7 +1451,7 @@ impl Backend {
     }
 
     pub fn get_block_by_hash(&self, hash: H256) -> Option<Block> {
-        self.blockchain.storage.read().blocks.get(&hash).cloned()
+        self.blockchain.get_block_by_hash(&hash)
     }
 
     pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<EthersBlock<TxHash>> {
@@ -1856,13 +1856,13 @@ impl Backend {
     /// Returns the transaction receipt for the given hash
     pub(crate) fn mined_transaction_receipt(&self, hash: H256) -> Option<MinedTransactionReceipt> {
         let MinedTransaction { info, receipt, block_hash, .. } =
-            self.blockchain.storage.read().transactions.get(&hash)?.clone();
+            self.blockchain.get_transaction_by_hash(&hash)?;
 
         let EIP658Receipt { status_code, gas_used, logs_bloom, logs } = receipt.into();
 
         let index = info.transaction_index as usize;
 
-        let block = self.blockchain.storage.read().blocks.get(&block_hash).cloned()?;
+        let block = self.blockchain.get_block_by_hash(&block_hash)?;
 
         // TODO store cumulative gas used in receipt instead
         let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash()));

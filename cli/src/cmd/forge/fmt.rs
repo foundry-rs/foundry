@@ -54,12 +54,23 @@ impl Cmd for FmtArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let config = self.try_load_config_emit_warnings()?;
 
-        // Expand ignore globs
-        let ignored = expand_globs(&config.__root.0, config.fmt.ignore.iter())?;
+        // Expand ignore globs and canonicalize from the get go
+        let ignored = expand_globs(&config.__root.0, config.fmt.ignore.iter())?
+            .iter()
+            .flat_map(foundry_utils::path::canonicalize_path)
+            .collect::<Vec<_>>();
 
         let cwd = std::env::current_dir()?;
         let input = match &self.paths[..] {
-            [] => Input::Paths(config.project_paths().input_files_iter().collect()),
+            [] => {
+                // Retrieve the project paths, and filter out the ignored ones.
+                let project_paths: Vec<PathBuf> = config
+                    .project_paths()
+                    .input_files_iter()
+                    .filter(|p| !(ignored.contains(p) || ignored.contains(&cwd.join(p))))
+                    .collect();
+                Input::Paths(project_paths)
+            }
             [one] if one == Path::new("-") => {
                 let mut s = String::new();
                 io::stdin().read_to_string(&mut s).expect("Failed to read from stdin");

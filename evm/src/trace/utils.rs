@@ -55,16 +55,40 @@ pub(crate) fn decode_cheatcode_inputs(
             Some(decoded.iter().map(format_token).collect())
         }
         "deriveKey" => Some(vec!["<pk>".to_string()]),
-        "parseJson" | "writeJson" => {
+        "parseJson" |
+        "parseJsonUint" |
+        "parseJsonUintArray" |
+        "parseJsonInt" |
+        "parseJsonIntArray" |
+        "parseJsonString" |
+        "parseJsonStringArray" |
+        "parseJsonAddress" |
+        "parseJsonAddressArray" |
+        "parseJsonBool" |
+        "parseJsonBoolArray" |
+        "parseJsonBytes" |
+        "parseJsonBytesArray" |
+        "parseJsonBytes32" |
+        "parseJsonBytes32Array" |
+        "writeJson" |
+        "keyExists" |
+        "serializeBool" |
+        "serializeUint" |
+        "serializeInt" |
+        "serializeAddress" |
+        "serializeBytes32" |
+        "serializeString" |
+        "serializeBytes" => {
             if verbosity == 5 {
                 None
             } else {
                 let mut decoded = func.decode_input(&data[SELECTOR_LEN..]).ok()?;
-                let token = if func.name.as_str() == "parseJson" {
-                    "<JSON file>"
-                } else {
-                    "<stringified JSON>"
-                };
+                let token =
+                    if func.name.as_str() == "parseJson" || func.name.as_str() == "keyExists" {
+                        "<JSON file>"
+                    } else {
+                        "<stringified JSON>"
+                    };
                 decoded[0] = Token::String(token.to_string());
                 Some(decoded.iter().map(format_token).collect())
             }
