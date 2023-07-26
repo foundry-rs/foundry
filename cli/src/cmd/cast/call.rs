@@ -16,10 +16,14 @@ use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{
     debug::DebugArena,
     executor::{DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
-    trace::{CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces},
+    trace::{
+        identifier::{EtherscanIdentifier, SignaturesIdentifier},
+        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
+    },
     utils::{evm_spec, h160_to_b160},
 };
-use std::{ops::DerefMut, str::FromStr};
+use std::{collections::BTreeMap, ops::DerefMut, str::FromStr};
+use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
 
 type Provider =
@@ -48,11 +52,27 @@ pub struct CallArgs {
     )]
     data: Option<String>,
 
+    /// Forks the remote rpc, executes the transaction locally and prints a trace
     #[clap(long, default_value_t = false)]
     trace: bool,
 
+    /// Can only be used with "--trace"
+    ///
+    /// opens an interactive debugger
     #[clap(long, requires = "trace")]
     debug: bool,
+
+    /// Can only be used with "--trace"
+    ///
+    /// prints a more verbose trace
+    #[clap(long, requires = "trace")]
+    verbose: bool,
+
+    /// Labels to apply to the traces.
+    ///
+    /// Format: `address:label`
+    #[clap(long, requires = "trace")]
+    labels: Vec<String>,
 
     /// only for tracing mode
     #[clap(long)]
@@ -104,11 +124,11 @@ struct TracingExecutor {
 
 impl TracingExecutor {
     pub async fn new(
-        config: foundry_config::Config,
+        config: &foundry_config::Config,
         version: Option<EvmVersion>,
         rpc_opts: RpcOpts,
         debug: bool,
-    ) -> eyre::Result<Self> {
+    ) -> eyre::Result<(Self, EvmOpts)> {
         // todo:n find out what this is
         let figment =
             Config::figment_with_root(find_project_root_path(None).unwrap()).merge(rpc_opts);
@@ -132,7 +152,7 @@ impl TracingExecutor {
 
         executor.set_tracing(true).set_debugger(debug);
 
-        Ok(Self { executor })
+        Ok((Self { executor }, evm_opts))
     }
 }
 
@@ -152,8 +172,21 @@ impl DerefMut for TracingExecutor {
 
 impl CallArgs {
     pub async fn run(self) -> eyre::Result<()> {
-        let CallArgs { to, sig, args, data, tx, eth, command, block, trace, evm_version, debug } =
-            self;
+        let CallArgs {
+            to,
+            sig,
+            args,
+            data,
+            tx,
+            eth,
+            command,
+            block,
+            trace,
+            evm_version,
+            debug,
+            verbose,
+            labels,
+        } = self;
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
@@ -173,10 +206,10 @@ impl CallArgs {
         match command {
             Some(CallSubcommands::Create { code, sig, args, value }) => {
                 if trace {
-                    let mut executor =
-                        TracingExecutor::new(config, evm_version, eth.rpc, debug).await?;
+                    let (mut executor, opts) =
+                        TracingExecutor::new(&config, evm_version, eth.rpc, debug).await?;
 
-                    let mut trace = match executor.deploy(
+                    let trace = match executor.deploy(
                         sender,
                         code.into(),
                         value.unwrap_or(U256::zero()),
@@ -209,9 +242,7 @@ impl CallArgs {
                         }
                     };
 
-                    let decoder = CallTraceDecoderBuilder::new().build();
-
-                    print_traces(&mut trace, decoder, debug).await?;
+                    handle_traces(trace, config, opts, labels, verbose, debug).await?;
 
                     return Ok(());
                 }
@@ -224,8 +255,8 @@ impl CallArgs {
                 build_tx(&mut builder, tx.value, sig, args, data).await?;
 
                 if trace {
-                    let mut executor =
-                        TracingExecutor::new(config, evm_version, eth.rpc, debug).await?;
+                    let (mut executor, opts) =
+                        TracingExecutor::new(&config, evm_version, eth.rpc, debug).await?;
 
                     let (tx, _) = builder.build();
 
@@ -235,20 +266,20 @@ impl CallArgs {
                         tx.data().map(|d| d.clone()).unwrap_or_default().to_vec().into(),
                         tx.value().map(|v| v.clone()).unwrap_or_default(),
                     ) {
-                        Ok(RawCallResult { gas_used, traces, reverted, .. }) => TraceResult {
-                            success: !reverted,
-                            traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
-                            debug: DebugArena::default(),
-                            gas_used,
-                        },
+                        Ok(RawCallResult { gas_used, traces, reverted, debug, .. }) => {
+                            TraceResult {
+                                success: !reverted,
+                                traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
+                                debug: debug.unwrap_or_default(),
+                                gas_used,
+                            }
+                        }
                         Err(e) => {
                             eyre::bail!("unexpected error when running call transaction: {:?}", e)
                         }
                     };
 
-                    let decoder = CallTraceDecoderBuilder::new().build();
-
-                    print_traces(&mut trace, decoder, debug).await?;
+                    handle_traces(trace, config, opts, labels, verbose, debug).await?;
 
                     return Ok(());
                 }
@@ -305,6 +336,51 @@ async fn build_tx(
     Ok(())
 }
 
+async fn handle_traces(
+    mut result: TraceResult,
+    config: Config,
+    evm_opts: EvmOpts,
+    labels: Vec<String>,
+    verbose: bool,
+    debug: bool,
+) -> eyre::Result<()> {
+    let mut etherscan_identifier =
+        EtherscanIdentifier::new(&config, evm_opts.get_remote_chain_id())?;
+
+    let labeled_addresses = labels.iter().filter_map(|label_str| {
+        let mut iter = label_str.split(':');
+
+        if let Some(addr) = iter.next() {
+            if let (Ok(address), Some(label)) =
+                (ethers::types::Address::from_str(addr), iter.next())
+            {
+                return Some((address, label.to_string()));
+            }
+        }
+        None
+    });
+
+    let mut decoder = CallTraceDecoderBuilder::new().with_labels(labeled_addresses).build();
+
+    decoder.add_signature_identifier(SignaturesIdentifier::new(
+        Config::foundry_cache_dir(),
+        config.offline,
+    )?);
+
+    for (_, trace) in &mut result.traces {
+        decoder.identify(trace, &mut etherscan_identifier);
+    }
+
+    if debug {
+        let (sources, bytecode) = etherscan_identifier.get_compiled_contracts().await?;
+        // run_debugger(result, decoder, bytecode, sources)?;
+    } else {
+        print_traces(&mut result, decoder, verbose).await?;
+    }
+
+    Ok(())
+}
+
 async fn print_traces(
     result: &mut TraceResult,
     decoder: CallTraceDecoder,
@@ -334,6 +410,34 @@ async fn print_traces(
     println!("Gas used: {}", result.gas_used);
     Ok(())
 }
+
+// fn run_debugger(
+//     result: RunResult,
+//     decoder: CallTraceDecoder,
+//     known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
+//     sources: BTreeMap<ArtifactId, String>,
+// ) -> eyre::Result<()> {
+//     let calls: Vec<DebugArena> = vec![result.debug];
+//     let flattened = calls.last().expect("we should have collected debug info").flatten(0);
+//     let tui = Tui::new(
+//         flattened,
+//         0,
+//         decoder.contracts,
+//         known_contracts.into_iter().map(|(id, artifact)| (id.name, artifact)).collect(),
+//         sources
+//             .into_iter()
+//             .map(|(id, source)| {
+//                 let mut sources = BTreeMap::new();
+//                 sources.insert(0, source);
+//                 (id.name, sources)
+//             })
+//             .collect(),
+//         Default::default(),
+//     )?;
+//     match tui.start().expect("Failed to start tui") {
+//         TUIExitReason::CharExit => Ok(()),
+//     }
+// }
 
 /// taken from cast run, should find common place
 struct TraceResult {
