@@ -2237,12 +2237,12 @@ impl EthApi {
     ) -> Result<Option<OtsContractCreator>> {
         node_info!("ots_getContractCreator");
 
-        let from = self.get_fork().map(|f| f.block_number() + 1).unwrap_or_default();
+        let from = self.get_fork().map(|f| f.block_number()).unwrap_or_default();
         let to = self.backend.best_number().as_u64();
 
         // loop in reverse, since we want the latest deploy to the address
         for n in (from..=to).rev() {
-            if let Some(traces) = self.backend.mined_parity_trace_block(n) {
+            if let Some(traces) = dbg!(self.backend.mined_parity_trace_block(n)) {
                 for trace in traces.into_iter().rev() {
                     match (trace.action, trace.result) {
                         (

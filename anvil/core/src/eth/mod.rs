@@ -604,6 +604,7 @@ pub enum EthRequest {
     /// Otterscan's `ots_getApiLevel` endpoint
     /// Otterscan currently requires this endpoint, even though it's not part of the ots_*
     /// https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71
+    /// Related upstream issue: https://github.com/otterscan/otterscan/issues/1081
     #[cfg(feature = "otterscan")]
     #[cfg_attr(feature = "serde", serde(rename = "erigon_getHeaderByNumber"))]
     ErigonGetHeaderByNumber(
