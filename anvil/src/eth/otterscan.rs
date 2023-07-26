@@ -49,7 +49,7 @@ pub struct OtsTransactionReceipt {
     timestamp: u64,
 }
 
-/// Inforrmation about the creator address and transaction for a contract
+/// Information about the creator address and transaction for a contract
 #[derive(Serialize, Debug)]
 pub struct OtsContractCreator {
     pub hash: H256,
