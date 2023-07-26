@@ -398,6 +398,11 @@ impl EthApi {
             }
 
             #[cfg(feature = "otterscan")]
+            EthRequest::OtsGetBlockDetailsByHash(hash) => {
+                self.ots_get_block_details_by_hash(hash).await.to_rpc_result()
+            }
+
+            #[cfg(feature = "otterscan")]
             EthRequest::OtsGetBlockTransactions(num, page, page_size) => {
                 self.ots_get_block_transactions(num, page, page_size).await.to_rpc_result()
             }
@@ -2078,6 +2083,21 @@ impl EthApi {
 
         // TODO: probably only return blocks from before the fork?
         let block = self.backend.block_by_number(number).await?.map(Into::into);
+
+        Ok(block)
+    }
+
+    /// For simplicity purposes, we return the entire block instead of emptying the values that
+    /// Otterscan doesn't want. This is the original purpose of the endpoint (to save bandwidth),
+    /// but it doesn't seem necessary in the context of an anvil node
+    pub async fn ots_get_block_details_by_hash(
+        &self,
+        hash: H256,
+    ) -> Result<Option<OtsBlockDetails<TxHash>>> {
+        node_info!("ots_getBlockDetailsByHash");
+
+        // TODO: probably only return blocks from before the fork?
+        let block = self.backend.block_by_hash(hash).await?.map(Into::into);
 
         Ok(block)
     }

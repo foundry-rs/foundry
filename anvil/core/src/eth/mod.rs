@@ -658,6 +658,12 @@ pub enum EthRequest {
         BlockNumber,
     ),
 
+    /// Otterscan's `ots_getBlockDetails` endpoint
+    /// Same as `ots_getBlockDetails`, but receiving a block hash instead of number
+    #[cfg(feature = "otterscan")]
+    #[cfg_attr(feature = "serde", serde(rename = "ots_getBlockDetailsByHash", with = "sequence"))]
+    OtsGetBlockDetailsByHash(H256),
+
     /// Otterscan's `ots_getBlockTransactions` endpoint
     /// Gets paginated transaction data for a certain block. Return data is similar to
     /// eth_getBlockBy* + eth_getTransactionReceipt.
