@@ -6,8 +6,7 @@ use crate::{
 use cast::{Cast, TxBuilder};
 use clap::Parser;
 use ethers::{
-    solc::EvmVersion,
-    types::{transaction::eip2718::TypedTransaction, Transaction},
+    solc::{artifacts::ContractBytecodeSome, ArtifactId, EvmVersion},
     types::{BlockId, NameOrAddress, U256},
 };
 use eyre::WrapErr;
@@ -20,7 +19,7 @@ use foundry_evm::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
-    utils::{evm_spec, h160_to_b160},
+    utils::evm_spec,
 };
 use std::{collections::BTreeMap, ops::DerefMut, str::FromStr};
 use ui::{TUIExitReason, Tui, Ui};
@@ -33,8 +32,6 @@ type Provider =
 #[derive(Debug, Parser)]
 pub struct CallArgs {
     /// The destination of the transaction.
-    ///
-    /// use --create tp ignore this field
     #[clap(value_parser = NameOrAddress::from_str)]
     to: Option<NameOrAddress>,
 
@@ -68,6 +65,7 @@ pub struct CallArgs {
     #[clap(long, requires = "trace")]
     verbose: bool,
 
+    /// Can only be used with "--trace"
     /// Labels to apply to the traces.
     ///
     /// Format: `address:label`
@@ -118,6 +116,7 @@ pub enum CallSubcommands {
     },
 }
 
+/// a default executor with tracing enabled
 struct TracingExecutor {
     executor: Executor,
 }
@@ -136,6 +135,7 @@ impl TracingExecutor {
         let mut evm_opts = figment.extract::<EvmOpts>()?;
 
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
+        evm_opts.fork_block_number = config.fork_block_number;
 
         // Set up the execution environment
         let env = evm_opts.evm_env().await;
@@ -260,7 +260,7 @@ impl CallArgs {
 
                     let (tx, _) = builder.build();
 
-                    let mut trace = match executor.call_raw_committing(
+                    let trace = match executor.call_raw_committing(
                         sender,
                         tx.to_addr().map(|a| a.clone()).expect("an address to be here"),
                         tx.data().map(|d| d.clone()).unwrap_or_default().to_vec().into(),
@@ -294,6 +294,7 @@ impl CallArgs {
     }
 }
 
+/// builds the transaction from create args
 async fn build_create_tx(
     builder: &mut TxBuilder<'_, Provider>,
     value: Option<U256>,
@@ -315,6 +316,7 @@ async fn build_create_tx(
     Ok(())
 }
 
+/// builds the tx from args
 async fn build_tx(
     builder: &mut TxBuilder<'_, Provider>,
     value: Option<U256>,
@@ -336,6 +338,7 @@ async fn build_tx(
     Ok(())
 }
 
+/// labels the traces, conditonally prints them or opens the debugger
 async fn handle_traces(
     mut result: TraceResult,
     config: Config,
@@ -373,7 +376,7 @@ async fn handle_traces(
 
     if debug {
         let (sources, bytecode) = etherscan_identifier.get_compiled_contracts().await?;
-        // run_debugger(result, decoder, bytecode, sources)?;
+        run_debugger(result, decoder, bytecode, sources)?;
     } else {
         print_traces(&mut result, decoder, verbose).await?;
     }
@@ -411,33 +414,33 @@ async fn print_traces(
     Ok(())
 }
 
-// fn run_debugger(
-//     result: RunResult,
-//     decoder: CallTraceDecoder,
-//     known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
-//     sources: BTreeMap<ArtifactId, String>,
-// ) -> eyre::Result<()> {
-//     let calls: Vec<DebugArena> = vec![result.debug];
-//     let flattened = calls.last().expect("we should have collected debug info").flatten(0);
-//     let tui = Tui::new(
-//         flattened,
-//         0,
-//         decoder.contracts,
-//         known_contracts.into_iter().map(|(id, artifact)| (id.name, artifact)).collect(),
-//         sources
-//             .into_iter()
-//             .map(|(id, source)| {
-//                 let mut sources = BTreeMap::new();
-//                 sources.insert(0, source);
-//                 (id.name, sources)
-//             })
-//             .collect(),
-//         Default::default(),
-//     )?;
-//     match tui.start().expect("Failed to start tui") {
-//         TUIExitReason::CharExit => Ok(()),
-//     }
-// }
+fn run_debugger(
+    result: TraceResult,
+    decoder: CallTraceDecoder,
+    known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
+    sources: BTreeMap<ArtifactId, String>,
+) -> eyre::Result<()> {
+    let calls: Vec<DebugArena> = vec![result.debug];
+    let flattened = calls.last().expect("we should have collected debug info").flatten(0);
+    let tui = Tui::new(
+        flattened,
+        0,
+        decoder.contracts,
+        known_contracts.into_iter().map(|(id, artifact)| (id.name, artifact)).collect(),
+        sources
+            .into_iter()
+            .map(|(id, source)| {
+                let mut sources = BTreeMap::new();
+                sources.insert(0, source);
+                (id.name, sources)
+            })
+            .collect(),
+        Default::default(),
+    )?;
+    match tui.start().expect("Failed to start tui") {
+        TUIExitReason::CharExit => Ok(()),
+    }
+}
 
 /// taken from cast run, should find common place
 struct TraceResult {
