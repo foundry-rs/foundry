@@ -2,9 +2,10 @@
 use crate::abi::MulticallContract;
 use anvil::{spawn, NodeConfig};
 use ethers::{
+    abi::Address,
     prelude::{Middleware, SignerMiddleware},
     signers::Signer,
-    types::BlockNumber,
+    types::{BlockNumber, TransactionRequest},
     utils::get_contract_address,
 };
 use std::sync::Arc;
@@ -60,6 +61,29 @@ async fn can_call_ots_has_code() {
         .ots_has_code(pending_contract_address, BlockNumber::Number(num - 1))
         .await
         .unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_call_ots_get_transaction_by_sender_and_nonce() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    api.mine_one().await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let sender = wallet.address();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let tx1 = TransactionRequest::new().to(Address::random()).value(100u64);
+    let tx2 = TransactionRequest::new().to(Address::random()).value(100u64);
+
+    let receipt1 = client.send_transaction(tx1, None).await.unwrap().await.unwrap().unwrap();
+    let receipt2 = client.send_transaction(tx2, None).await.unwrap().await.unwrap().unwrap();
+
+    let result1 = api.ots_get_transaction_by_sender_and_nonce(sender, 0.into()).await.unwrap();
+    let result2 = api.ots_get_transaction_by_sender_and_nonce(sender, 1.into()).await.unwrap();
+
+    assert_eq!(result1.unwrap().hash, receipt1.transaction_hash);
+    assert_eq!(result2.unwrap().hash, receipt2.transaction_hash);
 }
 
 #[tokio::test(flavor = "multi_thread")]
