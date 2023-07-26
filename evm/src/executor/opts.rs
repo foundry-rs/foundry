@@ -24,7 +24,6 @@ pub struct EvmOpts {
     pub fork_url: Option<RpcUrl>,
 
     /// pins the block number for the state fork
-    /// if left unset, the latest block will be used
     pub fork_block_number: Option<u64>,
 
     /// initial retry backoff
