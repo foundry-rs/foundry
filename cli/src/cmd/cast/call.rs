@@ -172,7 +172,10 @@ impl CallArgs {
                         Ok(DeployResult { gas_used, traces, debug: run_debug, .. }) => {
                             TraceResult {
                                 success: true,
-                                traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
+                                traces: vec![(
+                                    TraceKind::Execution,
+                                    traces.ok_or_else(|| eyre::eyre!("no traces recorded"))?,
+                                )],
                                 debug: run_debug.unwrap_or_default(),
                                 gas_used,
                             }
@@ -183,7 +186,10 @@ impl CallArgs {
                             } = *inner;
                             TraceResult {
                                 success: !reverted,
-                                traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
+                                traces: vec![(
+                                    TraceKind::Execution,
+                                    traces.ok_or_else(|| eyre::eyre!("no traces recorded"))?,
+                                )],
                                 debug: run_debug.unwrap_or_default(),
                                 gas_used,
                             }
@@ -232,7 +238,10 @@ impl CallArgs {
                         Ok(RawCallResult { gas_used, traces, reverted, debug, .. }) => {
                             TraceResult {
                                 success: !reverted,
-                                traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
+                                traces: vec![(
+                                    TraceKind::Execution,
+                                    traces.ok_or_else(|| eyre::eyre!("no traces recorded"))?,
+                                )],
                                 debug: debug.unwrap_or_default(),
                                 gas_used,
                             }
