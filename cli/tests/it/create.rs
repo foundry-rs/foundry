@@ -24,7 +24,7 @@ use std::{path::PathBuf, str::FromStr};
 /// This will create a library `remapping/MyLib.sol:MyLib`
 ///
 /// returns the contract argument for the create command
-fn setup_with_simple_remapping(prj: &mut TestProject) -> String {
+fn setup_with_simple_remapping(prj: &TestProject) -> String {
     // explicitly set remapping and libraries
     let config = Config {
         remappings: vec![Remapping::from_str("remapping/=lib/remapping/").unwrap().into()],
@@ -65,7 +65,7 @@ library MyLib {
     "src/LinkTest.sol:LinkTest".to_string()
 }
 
-fn setup_oracle(prj: &mut TestProject) -> String {
+fn setup_oracle(prj: &TestProject) -> String {
     let config = Config {
         libraries: vec![format!(
             "./src/libraries/ChainlinkTWAP.sol:ChainlinkTWAP:{:?}",
@@ -111,16 +111,12 @@ library ChainlinkTWAP {
 }
 
 /// configures the `TestProject` with the given closure and calls the `forge create` command
-fn create_on_chain<F>(
-    info: Option<EnvExternalities>,
-    mut prj: TestProject,
-    mut cmd: TestCommand,
-    f: F,
-) where
-    F: FnOnce(&mut TestProject) -> String,
+fn create_on_chain<F>(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand, f: F)
+where
+    F: FnOnce(&TestProject) -> String,
 {
     if let Some(info) = info {
-        let contract_path = f(&mut prj);
+        let contract_path = f(&prj);
         cmd.arg("create");
         cmd.args(info.create_args()).arg(contract_path);
 

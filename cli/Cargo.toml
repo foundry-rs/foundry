@@ -85,7 +85,7 @@ pretty_assertions = "1"
 toml = "0.7"
 serial_test = "2"
 criterion = "0.4"
-svm = { package = "svm-rs", version = "0.2", default-features = false, features = ["rustls"] }
+svm = { package = "svm-rs", version = "0.3", default-features = false, features = ["rustls"] }
 globset = "0.4"
 
 [features]

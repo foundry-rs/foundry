@@ -1430,8 +1430,9 @@ impl EthApi {
         for _ in 0..blocks.as_u64() {
             self.mine_one().await;
 
+            // If we have an interval, jump forwards in time to the "next" timestamp
             if let Some(interval) = interval {
-                tokio::time::sleep(Duration::from_secs(interval)).await;
+                self.backend.time().increase_time(interval);
             }
         }
 

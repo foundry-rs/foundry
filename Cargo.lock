@@ -274,6 +274,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "array-init"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23589ecb866b460d3a0f1278834750268c607e8e28a1b982c907219f3178cd72"
+dependencies = [
+ "nodrop",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -646,9 +655,9 @@ dependencies = [
 
 [[package]]
 name = "cargo_metadata"
-version = "0.15.4"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eee4243f1f26fc7a42710e7439c149e2b10b05472f88090acce52632f231a73a"
+checksum = "e7daec1a2a2129eeba1644b220b4647ec537b0b5d4bfd6876fcc5a540056b592"
 dependencies = [
  "camino",
  "cargo-platform",
@@ -1582,11 +1591,11 @@ checksum = "c34f04666d835ff5d62e058c3995147c06f42fe86ff053337632bca83e42702d"
 
 [[package]]
 name = "enr"
-version = "0.8.1"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf56acd72bb22d2824e66ae8e9e5ada4d0de17a69c7fd35569dde2ada8ec9116"
+checksum = "0be7b2ac146c1f99fe245c02d16af0696450d8e06c135db75e10eeb9e642c20d"
 dependencies = [
- "base64 0.13.1",
+ "base64 0.21.2",
  "bytes",
  "hex",
  "k256",
@@ -1594,6 +1603,7 @@ dependencies = [
  "rand 0.8.5",
  "rlp",
  "serde",
+ "serde-hex",
  "sha3",
  "zeroize",
 ]
@@ -1745,7 +1755,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#594627dc1c3b490ba8f513f8f5e23d11448cbcf8"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1760,7 +1770,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#594627dc1c3b490ba8f513f8f5e23d11448cbcf8"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1771,7 +1781,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#594627dc1c3b490ba8f513f8f5e23d11448cbcf8"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1790,7 +1800,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#594627dc1c3b490ba8f513f8f5e23d11448cbcf8"
 dependencies = [
  "Inflector",
  "dunce",
@@ -1813,7 +1823,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#594627dc1c3b490ba8f513f8f5e23d11448cbcf8"
 dependencies = [
  "Inflector",
  "ethers-contract-abigen",
@@ -1828,7 +1838,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#594627dc1c3b490ba8f513f8f5e23d11448cbcf8"
 dependencies = [
  "arrayvec",
  "bytes",
@@ -1857,7 +1867,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#594627dc1c3b490ba8f513f8f5e23d11448cbcf8"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -1872,7 +1882,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#594627dc1c3b490ba8f513f8f5e23d11448cbcf8"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1898,7 +1908,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#594627dc1c3b490ba8f513f8f5e23d11448cbcf8"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1935,7 +1945,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#594627dc1c3b490ba8f513f8f5e23d11448cbcf8"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1962,9 +1972,10 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#030bf439a100dcacd2e968e3114de0612229056b"
+source = "git+https://github.com/gakonst/ethers-rs#594627dc1c3b490ba8f513f8f5e23d11448cbcf8"
 dependencies = [
  "cfg-if",
+ "dirs 5.0.1",
  "dunce",
  "ethers-core",
  "fs_extra",
@@ -2750,7 +2761,7 @@ dependencies = [
  "memchr",
  "nom",
  "once_cell",
- "smallvec",
+ "smallvec 1.11.0",
  "thiserror",
  "unicode-bom",
 ]
@@ -2849,7 +2860,7 @@ dependencies = [
  "hex",
  "itoa",
  "nom",
- "smallvec",
+ "smallvec 1.11.0",
  "thiserror",
 ]
 
@@ -3779,6 +3790,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73cbba799671b762df5a175adf59ce145165747bb891505c43d09aefbbf38beb"
 
 [[package]]
+name = "maybe-uninit"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60302e4db3a61da70c0cb7991976248362f30319e88850c487b9b95bbf059e00"
+
+[[package]]
 name = "md-5"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3966,7 +3983,7 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77a5d83df9f36fe23f0c3648c6bbb8b0298bb5f1939c8f2704431371f4b84d43"
 dependencies = [
- "smallvec",
+ "smallvec 1.11.0",
 ]
 
 [[package]]
@@ -3982,6 +3999,12 @@ dependencies = [
  "pin-utils",
  "static_assertions",
 ]
+
+[[package]]
+name = "nodrop"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72ef4a56884ca558e5ddb05a1d1e7e1bfd9a68d9ed024c21704cc98872dae1bb"
 
 [[package]]
 name = "nom"
@@ -4373,7 +4396,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "redox_syscall 0.3.5",
- "smallvec",
+ "smallvec 1.11.0",
  "windows-targets 0.48.1",
 ]
 
@@ -5697,6 +5720,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-hex"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca37e3e4d1b39afd7ff11ee4e947efae85adfddf4841787bfa47c470e96dc26d"
+dependencies = [
+ "array-init",
+ "serde",
+ "smallvec 0.6.14",
+]
+
+[[package]]
 name = "serde_derive"
 version = "1.0.171"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5921,6 +5955,15 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
+version = "0.6.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b97fcaeba89edba30f044a10c6a3cc39df9c3f17d7cd829dd1446cab35f890e0"
+dependencies = [
+ "maybe-uninit",
+]
+
+[[package]]
+name = "smallvec"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62bb4feee49fdd9f707ef802e22365a35de4b7b299de4763d44bfea899442ff9"
@@ -6071,13 +6114,13 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 
 [[package]]
 name = "svm-rs"
-version = "0.2.23"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a04fc4f5cd35c700153b233f5575ccb3237e0f941fa5049d9e98254d10bf2fe"
+checksum = "597e3a746727984cb7ea2487b6a40726cad0dbe86628e7d429aa6b8c4c153db4"
 dependencies = [
+ "dirs 5.0.1",
  "fs2",
  "hex",
- "home",
  "once_cell",
  "reqwest",
  "semver",
@@ -6091,9 +6134,9 @@ dependencies = [
 
 [[package]]
 name = "svm-rs-builds"
-version = "0.1.15"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32deae08684d03d8a4ba99b8a3b0a1575364820339930f6fa2afdfa3a6d98c84"
+checksum = "2271abd7d01895a3e5bfa4b578e32f09155002ce1ec239532e297f82aafad06b"
 dependencies = [
  "build_const",
  "hex",
@@ -6646,7 +6689,7 @@ dependencies = [
  "once_cell",
  "regex",
  "sharded-slab",
- "smallvec",
+ "smallvec 1.11.0",
  "thread_local",
  "tracing",
  "tracing-core",
@@ -6678,7 +6721,7 @@ dependencies = [
  "hashbrown 0.12.3",
  "log",
  "rustc-hex",
- "smallvec",
+ "smallvec 1.11.0",
 ]
 
 [[package]]
