@@ -1,6 +1,6 @@
 // cast estimate subcommands
 use crate::{
-    opts::{EthereumOpts, RpcOpts, TransactionOpts},
+    opts::{EthereumOpts, TransactionOpts},
     utils::{self, parse_ether_value},
 };
 use cast::{Cast, TxBuilder};
@@ -10,22 +10,19 @@ use ethers::{
     types::{BlockId, NameOrAddress, U256},
 };
 use eyre::WrapErr;
-use forge::executor::{opts::EvmOpts, Backend, ExecutorBuilder};
-use foundry_config::{find_project_root_path, Chain, Config};
+use forge::executor::opts::EvmOpts;
+use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{
     debug::DebugArena,
-    executor::{
-        fork::CreateFork, DeployResult, Env, EvmError, ExecutionErr, Executor, RawCallResult,
-    },
+    executor::{DeployResult, EvmError, ExecutionErr, RawCallResult},
     trace::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
         utils::{print_traces, TraceResult},
-        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces, TracingExecutor,
+        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, TracingExecutor,
     },
 };
 use std::{collections::BTreeMap, str::FromStr};
 use ui::{TUIExitReason, Tui, Ui};
-use yansi::Paint;
 
 type Provider =
     ethers::providers::Provider<ethers::providers::RetryClient<ethers::providers::Http>>;
@@ -154,7 +151,13 @@ impl CallArgs {
         match command {
             Some(CallSubcommands::Create { code, sig, args, value }) => {
                 if trace {
-                    let (env, fork, chain) = get_fork_material(&config, eth.rpc).await?;
+                    let figment = Config::figment_with_root(find_project_root_path(None).unwrap())
+                        .merge(eth.rpc);
+
+                    let evm_opts = figment.extract::<EvmOpts>()?;
+
+                    let (env, fork, chain) =
+                        TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
                     let mut executor =
                         foundry_evm::trace::TracingExecutor::new(env, fork, evm_version, debug)
@@ -198,15 +201,21 @@ impl CallArgs {
                     return Ok(());
                 }
 
-                // fill it last because we dont need anything from the built one
+                // fill the builder after the comditional so we dont move values
                 fill_create(&mut builder, value, code, sig, args).await?;
             }
             _ => {
-                // fill it first becasue builder parses args / addr
+                // fill first here because we need to use the builder in the conditional
                 fill_tx(&mut builder, tx.value, sig, args, data).await?;
 
                 if trace {
-                    let (env, fork, chain) = get_fork_material(&config, eth.rpc).await?;
+                    let figment = Config::figment_with_root(find_project_root_path(None).unwrap())
+                        .merge(eth.rpc);
+
+                    let evm_opts = figment.extract::<EvmOpts>()?;
+
+                    let (env, fork, chain) =
+                        TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
                     let mut executor =
                         foundry_evm::trace::TracingExecutor::new(env, fork, evm_version, debug)
@@ -249,24 +258,6 @@ impl CallArgs {
 
         Ok(())
     }
-}
-
-async fn get_fork_material(
-    config: &Config,
-    rpc: RpcOpts,
-) -> eyre::Result<(Env, Option<CreateFork>, Option<ethers::types::Chain>)> {
-    let figment = Config::figment_with_root(find_project_root_path(None).unwrap()).merge(rpc);
-
-    let mut evm_opts = figment.extract::<EvmOpts>()?;
-
-    evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
-    evm_opts.fork_block_number = config.fork_block_number;
-
-    let env = evm_opts.evm_env().await;
-
-    let fork = evm_opts.get_fork(config, env.clone());
-
-    Ok((env, fork, evm_opts.get_remote_chain_id()))
 }
 
 /// builds the transaction from create arg
