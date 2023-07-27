@@ -12,8 +12,8 @@ use super::{backend::mem::Backend, error::Result};
 #[serde(rename_all = "camelCase", bound = "TX: Serialize + DeserializeOwned")]
 pub struct OtsBlock<TX> {
     #[serde(flatten)]
-    block: Block<TX>,
-    transaction_count: usize,
+    pub block: Block<TX>,
+    pub transaction_count: usize,
 }
 
 /// Block structure with additional details regarding fees and issuance
@@ -36,8 +36,8 @@ pub struct Issuance {
 /// Holds both transactions and receipts for a block
 #[derive(Serialize, Debug)]
 pub struct OtsBlockTransactions {
-    fullblock: OtsBlock<Transaction>,
-    receipts: Vec<TransactionReceipt>,
+    pub fullblock: OtsBlock<Transaction>,
+    pub receipts: Vec<TransactionReceipt>,
 }
 
 /// Patched Receipt struct, to include the additional `timestamp` field expected by Otterscan

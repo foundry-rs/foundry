@@ -64,6 +64,47 @@ async fn can_call_ots_has_code() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_call_ots_get_block_transactions() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let sender = wallet.address();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    // disable automine
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let mut hashes = VecDeque::new();
+    for i in 0..10 {
+        let tx = TransactionRequest::new().to(Address::random()).value(100u64).nonce(i);
+        let receipt = client.send_transaction(tx, None).await.unwrap();
+        hashes.push_back(receipt.tx_hash());
+    }
+
+    dbg!(&hashes);
+    api.mine_one().await;
+
+    let page_size = 3;
+    for page in 0..4 {
+        let result = api.ots_get_block_transactions(1, page, page_size).await.unwrap();
+        dbg!(&result);
+
+        assert!(result.receipts.len() <= page_size);
+        assert!(result.fullblock.block.transactions.len() <= page_size);
+        assert!(result.fullblock.transaction_count == result.receipts.len());
+
+        result.receipts.iter().enumerate().for_each(|(i, receipt)| {
+            let expected = hashes.pop_front();
+            assert_eq!(expected, Some(receipt.transaction_hash));
+            assert_eq!(expected, Some(result.fullblock.block.transactions[i].hash));
+        });
+    }
+
+    assert!(hashes.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_call_ots_search_transactions_before() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -95,7 +136,7 @@ async fn can_call_ots_search_transactions_before() {
         block = result.txs.last().unwrap().block_number.unwrap().as_u64() - 1;
     }
 
-    assert_eq!(hashes.pop(), None);
+    assert!(hashes.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -117,7 +158,7 @@ async fn can_call_ots_search_transactions_after() {
 
     let page_size = 2;
     let mut block = 0;
-    for p in 0..4 {
+    for _ in 0..4 {
         let result = api.ots_search_transactions_after(sender, block, page_size).await.unwrap();
 
         assert!(result.txs.len() <= page_size);
@@ -130,7 +171,7 @@ async fn can_call_ots_search_transactions_after() {
         block = result.txs.last().unwrap().block_number.unwrap().as_u64() + 1;
     }
 
-    assert_eq!(hashes.pop_front(), None);
+    assert!(hashes.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]
