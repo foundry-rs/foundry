@@ -104,6 +104,8 @@ pub struct EthApi {
     transaction_order: Arc<RwLock<TransactionOrder>>,
     /// Whether we're listening for RPC calls
     net_listening: bool,
+    /// Whether to relax rpc handling
+    relaxed_rpc: bool,
 }
 
 // === impl Eth RPC API ===
@@ -121,6 +123,7 @@ impl EthApi {
         logger: LoggingManager,
         filters: Filters,
         transactions_order: TransactionOrder,
+        relaxed_rpc: bool,
     ) -> Self {
         Self {
             pool,
@@ -134,6 +137,7 @@ impl EthApi {
             filters,
             net_listening: true,
             transaction_order: Arc::new(RwLock::new(transactions_order)),
+            relaxed_rpc,
         }
     }
 
@@ -1790,6 +1794,7 @@ impl EthApi {
                 ProviderBuilder::new(&url)
                     .max_retry(10)
                     .initial_backoff(1000)
+                    .relaxed_rpc(self.relaxed_rpc)
                     .build()
                     .map_err(|_| {
                         ProviderError::CustomError(format!("Failed to parse invalid url {url}"))

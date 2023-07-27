@@ -526,6 +526,7 @@ impl ClientFork {
 #[derive(Debug, Clone)]
 pub struct ClientForkConfig {
     pub eth_rpc_url: String,
+    pub relaxed_rpc: bool,
     pub block_number: u64,
     pub block_hash: H256,
     // TODO make provider agnostic
@@ -560,6 +561,7 @@ impl ClientForkConfig {
         let interval = self.provider.get_interval();
         self.provider = Arc::new(
             ProviderBuilder::new(url.as_str())
+                .relaxed_rpc(self.relaxed_rpc)
                 .timeout(self.timeout)
                 .timeout_retry(self.retries)
                 .max_retry(10)

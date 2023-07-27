@@ -1,6 +1,6 @@
-use ethers::prelude::{Http, Middleware, Provider, RetryClient, U256};
+use ethers::prelude::{Middleware, Provider, RetryClient, U256};
 use eyre::WrapErr;
-use foundry_common::{get_http_provider, RpcUrl};
+use foundry_common::{get_http_provider, ProviderTypes, RpcUrl};
 use foundry_config::Chain;
 use std::{
     collections::{hash_map::Entry, HashMap},
@@ -42,7 +42,7 @@ impl Deref for ProvidersManager {
 /// Holds related metadata to each provider RPC.
 #[derive(Debug)]
 pub struct ProviderInfo {
-    pub provider: Arc<Provider<RetryClient<Http>>>,
+    pub provider: Arc<Provider<RetryClient<ProviderTypes>>>,
     pub chain: u64,
     pub gas_price: GasPrice,
     pub is_legacy: bool,

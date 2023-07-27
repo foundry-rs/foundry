@@ -124,6 +124,8 @@ pub struct NodeConfig {
     pub fork_block_number: Option<u64>,
     /// specifies chain id for cache to skip fetching from remote in offline-start mode
     pub fork_chain_id: Option<U256>,
+    /// relaxed rpc handling
+    pub relaxed_rpc: bool,
     /// The generator used to generate the dev accounts
     pub account_generator: Option<AccountGenerator>,
     /// whether to enable tracing
@@ -377,6 +379,7 @@ impl Default for NodeConfig {
             silent: false,
             eth_rpc_url: None,
             fork_block_number: None,
+            relaxed_rpc: false,
             account_generator: None,
             base_fee: None,
             enable_tracing: true,
@@ -693,6 +696,14 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to process rpc in a relaxed way (for now this just means if method: appears in
+    /// the response, ignore it)
+    #[must_use]
+    pub fn with_relaxed_rpc(mut self, relaxed_rpc: bool) -> Self {
+        self.relaxed_rpc = relaxed_rpc;
+        self
+    }
+
     /// Sets whether to enable tracing
     #[must_use]
     pub fn with_tracing(mut self, enable_tracing: bool) -> Self {
@@ -806,6 +817,7 @@ impl NodeConfig {
                         .timeout_retry(self.fork_request_retries)
                         .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
                         .compute_units_per_second(self.compute_units_per_second)
+                        .relaxed_rpc(self.relaxed_rpc)
                         .max_retry(10)
                         .initial_backoff(1000)
                         .build()
@@ -958,6 +970,7 @@ latest block number: {latest_block}"
                 let fork = ClientFork::new(
                     ClientForkConfig {
                         eth_rpc_url,
+                        relaxed_rpc: self.relaxed_rpc,
                         block_number: fork_block_number,
                         block_hash,
                         provider,

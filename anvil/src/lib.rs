@@ -111,6 +111,7 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
         no_mining,
         transaction_order,
         genesis,
+        relaxed_rpc,
         ..
     } = config.clone();
 
@@ -160,6 +161,7 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
         logger,
         filters.clone(),
         transaction_order,
+        relaxed_rpc,
     );
 
     // spawn the node service

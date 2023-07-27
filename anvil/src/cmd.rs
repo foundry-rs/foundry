@@ -194,6 +194,7 @@ impl NodeArgs {
             .fork_retry_backoff(self.evm_opts.fork_retry_backoff.map(Duration::from_millis))
             .fork_compute_units_per_second(compute_units_per_second)
             .with_eth_rpc_url(self.evm_opts.fork_url.map(|fork| fork.url))
+            .with_relaxed_rpc(self.evm_opts.relaxed_rpc)
             .with_base_fee(self.evm_opts.block_base_fee_per_gas)
             .with_storage_caching(self.evm_opts.no_storage_caching)
             .with_server_config(self.server_config)
@@ -410,6 +411,12 @@ pub struct AnvilEvmArgs {
     /// See --fork-url.
     #[clap(long, requires = "fork_url", help_heading = "Fork config")]
     pub no_storage_caching: bool,
+
+    /// Specify whether to be strict in json rpc handling of the upstream provider
+    ///
+    /// You still must pass both `--fork-url` and `--relaxed-rpc`
+    #[clap(long, requires = "fork_url", help_heading = "Fork config")]
+    pub relaxed_rpc: bool,
 
     /// The block gas limit.
     #[clap(long, alias = "block-gas-limit", help_heading = "Environment config")]

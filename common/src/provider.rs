@@ -1,18 +1,48 @@
 //! Commonly used helpers to construct `Provider`s
 
 use crate::{ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
+use async_trait::async_trait;
 use ethers_core::types::{Chain, U256};
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use ethers_providers::{
-    is_local_endpoint, Http, HttpRateLimitRetryPolicy, Middleware, Provider, RetryClient,
-    RetryClientBuilder, DEFAULT_LOCAL_POLL_INTERVAL,
+    is_local_endpoint, Http, HttpRateLimitRetryPolicy, JsonRpcClient, LooseHttp, Middleware,
+    Provider, RetryClient, RetryClientBuilder, DEFAULT_LOCAL_POLL_INTERVAL,
 };
 use eyre::WrapErr;
 use reqwest::{IntoUrl, Url};
-use std::{borrow::Cow, time::Duration};
+use serde::{de::DeserializeOwned, Serialize};
+use std::{borrow::Cow, fmt::Debug, time::Duration};
+
+/// Wraps strict or loose rpc handling in the Http provider
+#[derive(Debug)]
+pub enum ProviderTypes {
+    ///strict
+    Http(Http),
+    ///loose
+    LooseHttp(LooseHttp),
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl JsonRpcClient for ProviderTypes {
+    type Error = <Http as JsonRpcClient>::Error;
+
+    /// Sends a request with the provided JSON-RPC and parameters serialized as JSON
+    async fn request<T, R>(&self, method: &str, params: T) -> Result<R, Self::Error>
+    where
+        T: Debug + Serialize + Send + Sync,
+        R: DeserializeOwned + Send,
+    {
+        match self {
+            ProviderTypes::Http(i) => i.request(method, params).await,
+            ProviderTypes::LooseHttp(i) => i.request(method, params).await,
+        }
+    }
+}
+//.await.map_err(Self::Error::into)?,
 
 /// Helper type alias for a retry provider
-pub type RetryProvider = Provider<RetryClient<Http>>;
+pub type RetryProvider = Provider<RetryClient<ProviderTypes>>;
 
 /// Helper type alias for a rpc url
 pub type RpcUrl = String;
@@ -53,6 +83,7 @@ pub struct ProviderBuilder {
     timeout: Duration,
     /// available CUPS
     compute_units_per_second: u64,
+    relaxed_rpc: bool,
 }
 
 // === impl ProviderBuilder ===
@@ -76,6 +107,7 @@ impl ProviderBuilder {
             timeout: REQUEST_TIMEOUT,
             // alchemy max cpus <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
+            relaxed_rpc: false,
         }
     }
 
@@ -131,6 +163,12 @@ impl ProviderBuilder {
         self.max_retry(100).initial_backoff(100)
     }
 
+    /// sets relaxed_rpc mode
+    pub fn relaxed_rpc(mut self, relaxed_rpc: bool) -> Self {
+        self.relaxed_rpc = relaxed_rpc;
+        self
+    }
+
     /// Same as [`Self:build()`] but also retrieves the `chainId` in order to derive an appropriate
     /// interval
     pub async fn connect(self) -> eyre::Result<RetryProvider> {
@@ -153,13 +191,18 @@ impl ProviderBuilder {
             initial_backoff,
             timeout,
             compute_units_per_second,
+            relaxed_rpc,
         } = self;
         let url = url?;
 
         let client = reqwest::Client::builder().timeout(timeout).build()?;
         let is_local = is_local_endpoint(url.as_str());
 
-        let provider = Http::new_with_client(url, client);
+        let json_client = if relaxed_rpc {
+            ProviderTypes::LooseHttp(LooseHttp::new_with_client(url, client))
+        } else {
+            ProviderTypes::Http(Http::new_with_client(url, client))
+        };
 
         #[allow(clippy::box_default)]
         let mut provider = Provider::new(
@@ -168,7 +211,7 @@ impl ProviderBuilder {
                 .rate_limit_retries(max_retry)
                 .timeout_retries(timeout_retry)
                 .compute_units_per_second(compute_units_per_second)
-                .build(provider, Box::new(HttpRateLimitRetryPolicy)),
+                .build(json_client, Box::new(HttpRateLimitRetryPolicy)),
         );
 
         if is_local {
