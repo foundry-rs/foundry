@@ -20,9 +20,9 @@ pub struct OtsBlock<TX> {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase", bound = "TX: Serialize + DeserializeOwned")]
 pub struct OtsBlockDetails<TX> {
-    block: OtsBlock<TX>,
-    total_fees: U256,
-    issuance: Issuance,
+    pub block: OtsBlock<TX>,
+    pub total_fees: U256,
+    pub issuance: Issuance,
 }
 
 /// Issuance information for a block. Expected by Otterscan in ots_getBlockDetails calls
