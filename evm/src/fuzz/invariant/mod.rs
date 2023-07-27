@@ -135,4 +135,8 @@ pub struct InvariantFuzzTestResult {
     pub reverts: usize,
 
     pub last_call_results: Option<BTreeMap<String, RawCallResult>>,
+
+    pub last_call_logs: Vec<Log>,
+
+    pub last_run_traces: Option<CallTraceArena>,
 }

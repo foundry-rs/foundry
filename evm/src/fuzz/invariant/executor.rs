@@ -16,12 +16,14 @@ use crate::{
         },
         FuzzCase, FuzzedCases,
     },
+    trace::CallTraceArena,
     utils::{get_function, h160_to_b160},
     CALLER,
 };
 use ethers::{
     abi::{Abi, Address, Detokenize, FixedBytes, Function, Tokenizable, TokenizableItem},
     prelude::U256,
+    types::Log,
 };
 use eyre::ContextCompat;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
@@ -104,6 +106,8 @@ impl<'a> InvariantExecutor<'a> {
             )
             .ok(),
         );
+        let last_run_logs = RefCell::new(vec![]);
+        let last_run_traces = RefCell::new(None);
         // Make sure invariants are sound even before starting to fuzz
         if last_call_results.borrow().is_none() {
             fuzz_cases.borrow_mut().push(FuzzedCases::new(vec![]));
@@ -139,7 +143,7 @@ impl<'a> InvariantExecutor<'a> {
                 // Created contracts during a run.
                 let mut created_contracts = vec![];
 
-                'fuzz_run: for _ in 0..self.config.depth {
+                'fuzz_run: for current_run in 0..self.config.depth {
                     let (sender, (address, calldata)) =
                         inputs.last().expect("to have the next randomly generated input.");
 
@@ -180,17 +184,23 @@ impl<'a> InvariantExecutor<'a> {
                         stipend: call_result.stipend,
                     });
 
-                    let (can_continue, call_results) = can_continue(
-                        &invariant_contract,
-                        call_result,
-                        &executor,
-                        &inputs,
-                        &mut failures.borrow_mut(),
-                        &targeted_contracts,
-                        state_changeset,
-                        self.config.fail_on_revert,
-                        self.config.shrink_sequence,
-                    );
+                    let (can_continue, call_results, call_result_logs, call_result_traces) =
+                        can_continue(
+                            &invariant_contract,
+                            call_result,
+                            &executor,
+                            &inputs,
+                            &mut failures.borrow_mut(),
+                            &targeted_contracts,
+                            state_changeset,
+                            self.config.fail_on_revert,
+                            self.config.shrink_sequence,
+                        );
+
+                    if !can_continue || current_run == self.config.depth - 1 {
+                        *last_run_logs.borrow_mut() = call_result_logs;
+                        *last_run_traces.borrow_mut() = call_result_traces;
+                    }
 
                     if !can_continue {
                         break 'fuzz_run
@@ -231,6 +241,8 @@ impl<'a> InvariantExecutor<'a> {
             cases: fuzz_cases.into_inner(),
             reverts,
             last_call_results: last_call_results.take(),
+            last_call_logs: last_run_logs.take(),
+            last_run_traces: last_run_traces.take(),
         })
     }
 
@@ -565,7 +577,7 @@ fn can_continue(
     state_changeset: StateChangeset,
     fail_on_revert: bool,
     shrink_sequence: bool,
-) -> (bool, Option<BTreeMap<String, RawCallResult>>) {
+) -> (bool, Option<BTreeMap<String, RawCallResult>>, Vec<Log>, Option<CallTraceArena>) {
     let mut call_results = None;
 
     // Detect handler assertion failures first.
@@ -578,7 +590,7 @@ fn can_continue(
     if !call_result.reverted && !handlers_failed {
         call_results = assert_invariants(invariant_contract, executor, calldata, failures).ok();
         if call_results.is_none() {
-            return (false, None)
+            return (false, None, call_result.logs, call_result.traces)
         }
     } else {
         failures.reverts += 1;
@@ -586,6 +598,9 @@ fn can_continue(
         // The user might want to stop all execution if a revert happens to
         // better bound their testing space.
         if fail_on_revert {
+            let call_result_logs = call_result.logs.clone();
+            let call_result_traces = call_result.traces.clone();
+
             let error = InvariantFuzzError::new(
                 invariant_contract,
                 None,
@@ -602,10 +617,10 @@ fn can_continue(
                 failures.failed_invariants.insert(invariant.name.clone(), Some(error.clone()));
             }
 
-            return (false, None)
+            return (false, None, call_result_logs, call_result_traces)
         }
     }
-    (true, call_results)
+    (true, call_results, call_result.logs, call_result.traces)
 }
 
 #[derive(Clone)]
