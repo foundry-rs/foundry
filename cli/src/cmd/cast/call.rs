@@ -260,7 +260,7 @@ impl CallArgs {
     }
 }
 
-/// builds the transaction from create arg
+/// fills the builder from create arg
 async fn fill_create(
     builder: &mut TxBuilder<'_, Provider>,
     value: Option<U256>,
@@ -282,7 +282,7 @@ async fn fill_create(
     Ok(())
 }
 
-/// builds the tx from args
+/// fills the builder from args
 async fn fill_tx(
     builder: &mut TxBuilder<'_, Provider>,
     value: Option<U256>,
