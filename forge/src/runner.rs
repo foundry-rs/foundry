@@ -449,8 +449,14 @@ impl<'a> ContractRunner<'a> {
         let invariant_contract =
             InvariantContract { address, invariant_functions: functions, abi: self.contract };
 
-        let Ok(InvariantFuzzTestResult { invariants, cases, reverts, mut last_call_results }) =
-            evm.invariant_fuzz(invariant_contract)
+        let Ok(InvariantFuzzTestResult {
+            invariants,
+            cases,
+            reverts,
+            mut last_call_results,
+            last_call_logs,
+            last_run_traces,
+        }) = evm.invariant_fuzz(invariant_contract)
         else {
             return vec![]
         };
@@ -484,6 +490,7 @@ impl<'a> ContractRunner<'a> {
                         };
 
                         logs.extend(error.logs);
+                        logs.extend(last_call_logs.clone());
 
                         if let Some(error_traces) = error.traces {
                             traces.push((TraceKind::Execution, error_traces));
@@ -496,9 +503,14 @@ impl<'a> ContractRunner<'a> {
                             .and_then(|call_results| call_results.remove(&func_name))
                         {
                             logs.extend(last_call_result.logs);
+                            logs.extend(last_call_logs.clone());
 
                             if let Some(last_call_traces) = last_call_result.traces {
                                 traces.push((TraceKind::Execution, last_call_traces));
+                            }
+
+                            if let Some(last_run_traces) = last_run_traces.clone() {
+                                traces.push((TraceKind::Execution, last_run_traces));
                             }
                         }
                     }
