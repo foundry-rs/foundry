@@ -11,17 +11,19 @@ use ethers::{
 };
 use eyre::WrapErr;
 use forge::executor::{opts::EvmOpts, Backend, ExecutorBuilder};
-use foundry_config::{find_project_root_path, Config};
+use foundry_config::{find_project_root_path, Chain, Config};
 use foundry_evm::{
     debug::DebugArena,
-    executor::{DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
+    executor::{
+        fork::CreateFork, DeployResult, Env, EvmError, ExecutionErr, Executor, RawCallResult,
+    },
     trace::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
-        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
+        utils::{print_traces, TraceResult},
+        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces, TracingExecutor,
     },
-    utils::evm_spec,
 };
-use std::{collections::BTreeMap, ops::DerefMut, str::FromStr};
+use std::{collections::BTreeMap, str::FromStr};
 use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
 
@@ -116,60 +118,6 @@ pub enum CallSubcommands {
     },
 }
 
-/// a default executor with tracing enabled
-struct TracingExecutor {
-    executor: Executor,
-}
-
-impl TracingExecutor {
-    pub async fn new(
-        config: &foundry_config::Config,
-        version: Option<EvmVersion>,
-        rpc_opts: RpcOpts,
-        debug: bool,
-    ) -> eyre::Result<(Self, EvmOpts)> {
-        // todo:n find out what this is
-        let figment =
-            Config::figment_with_root(find_project_root_path(None).unwrap()).merge(rpc_opts);
-
-        let mut evm_opts = figment.extract::<EvmOpts>()?;
-
-        evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
-        evm_opts.fork_block_number = config.fork_block_number;
-
-        // Set up the execution environment
-        let env = evm_opts.evm_env().await;
-
-        let db = Backend::spawn(evm_opts.get_fork(&config, env.clone())).await;
-
-        // configures a bare version of the evm executor: no cheatcode inspector is enabled,
-        // tracing will be enabled only for the targeted transaction
-        let builder = ExecutorBuilder::default()
-            .with_config(env)
-            .with_spec(evm_spec(&version.unwrap_or(config.evm_version)));
-
-        let mut executor = builder.build(db);
-
-        executor.set_tracing(true).set_debugger(debug);
-
-        Ok((Self { executor }, evm_opts))
-    }
-}
-
-impl std::ops::Deref for TracingExecutor {
-    type Target = Executor;
-
-    fn deref(&self) -> &Self::Target {
-        &self.executor
-    }
-}
-
-impl DerefMut for TracingExecutor {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.executor
-    }
-}
-
 impl CallArgs {
     pub async fn run(self) -> eyre::Result<()> {
         let CallArgs {
@@ -206,8 +154,11 @@ impl CallArgs {
         match command {
             Some(CallSubcommands::Create { code, sig, args, value }) => {
                 if trace {
-                    let (mut executor, opts) =
-                        TracingExecutor::new(&config, evm_version, eth.rpc, debug).await?;
+                    let (opts, env, fork, chain) = setup_fork_env(&config, eth.rpc).await?;
+
+                    let mut executor =
+                        foundry_evm::trace::TracingExecutor::new(env, fork, evm_version, debug)
+                            .await;
 
                     let trace = match executor.deploy(
                         sender,
@@ -242,7 +193,7 @@ impl CallArgs {
                         }
                     };
 
-                    handle_traces(trace, config, opts, labels, verbose, debug).await?;
+                    handle_traces(trace, config, chain, labels, verbose, debug).await?;
 
                     return Ok(());
                 }
@@ -255,8 +206,11 @@ impl CallArgs {
                 fill_tx(&mut builder, tx.value, sig, args, data).await?;
 
                 if trace {
-                    let (mut executor, opts) =
-                        TracingExecutor::new(&config, evm_version, eth.rpc, debug).await?;
+                    let (opts, env, fork, chain) = setup_fork_env(&config, eth.rpc).await?;
+
+                    let mut executor =
+                        foundry_evm::trace::TracingExecutor::new(env, fork, evm_version, debug)
+                            .await;
 
                     let (tx, _) = builder.build();
 
@@ -279,14 +233,17 @@ impl CallArgs {
                         }
                     };
 
-                    handle_traces(trace, config, opts, labels, verbose, debug).await?;
+                    handle_traces(trace, config, chain, labels, verbose, debug).await?;
 
                     return Ok(());
                 }
             }
         };
 
-        let builder_output = builder.build();
+        let builder_output: (
+            ethers::types::transaction::eip2718::TypedTransaction,
+            Option<ethers::abi::Function>,
+        ) = builder.build();
 
         println!("{}", Cast::new(provider).call(builder_output, block).await?);
 
@@ -294,7 +251,27 @@ impl CallArgs {
     }
 }
 
-/// builds the transaction from create args
+async fn setup_fork_env(
+    config: &Config,
+    rpc: RpcOpts,
+) -> eyre::Result<(EvmOpts, Env, Option<CreateFork>, Option<ethers::types::Chain>)> {
+    let figment = Config::figment_with_root(find_project_root_path(None).unwrap()).merge(rpc);
+
+    let mut evm_opts = figment.extract::<EvmOpts>()?;
+
+    evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
+    evm_opts.fork_block_number = config.fork_block_number;
+
+    let env = evm_opts.evm_env().await;
+
+    let fork = evm_opts.get_fork(config, env.clone());
+
+    let chain = evm_opts.get_remote_chain_id();
+
+    Ok((evm_opts, env, fork, chain))
+}
+
+/// builds the transaction from create arg
 async fn fill_create(
     builder: &mut TxBuilder<'_, Provider>,
     value: Option<U256>,
@@ -342,13 +319,12 @@ async fn fill_tx(
 async fn handle_traces(
     mut result: TraceResult,
     config: Config,
-    evm_opts: EvmOpts,
+    chain: Option<ethers::types::Chain>,
     labels: Vec<String>,
     verbose: bool,
     debug: bool,
 ) -> eyre::Result<()> {
-    let mut etherscan_identifier =
-        EtherscanIdentifier::new(&config, evm_opts.get_remote_chain_id())?;
+    let mut etherscan_identifier = EtherscanIdentifier::new(&config, chain)?;
 
     let labeled_addresses = labels.iter().filter_map(|label_str| {
         let mut iter = label_str.split(':');
@@ -378,39 +354,9 @@ async fn handle_traces(
         let (sources, bytecode) = etherscan_identifier.get_compiled_contracts().await?;
         run_debugger(result, decoder, bytecode, sources)?;
     } else {
-        print_traces(&mut result, decoder, verbose).await?;
+        foundry_evm::trace::utils::print_traces(&mut result, decoder, verbose).await?;
     }
 
-    Ok(())
-}
-
-async fn print_traces(
-    result: &mut TraceResult,
-    decoder: CallTraceDecoder,
-    verbose: bool,
-) -> eyre::Result<()> {
-    if result.traces.is_empty() {
-        eyre::bail!("Unexpected error: No traces. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
-    }
-
-    println!("Traces:");
-    for (_, trace) in &mut result.traces {
-        decoder.decode(trace).await;
-        if !verbose {
-            println!("{trace}");
-        } else {
-            println!("{trace:#}");
-        }
-    }
-    println!();
-
-    if result.success {
-        println!("{}", Paint::green("Transaction successfully executed."));
-    } else {
-        println!("{}", Paint::red("Transaction failed."));
-    }
-
-    println!("Gas used: {}", result.gas_used);
     Ok(())
 }
 
@@ -440,14 +386,6 @@ fn run_debugger(
     match tui.start().expect("Failed to start tui") {
         TUIExitReason::CharExit => Ok(()),
     }
-}
-
-/// taken from cast run, should find common place
-struct TraceResult {
-    pub success: bool,
-    pub traces: Traces,
-    pub debug: DebugArena,
-    pub gas_used: u64,
 }
 
 #[cfg(test)]

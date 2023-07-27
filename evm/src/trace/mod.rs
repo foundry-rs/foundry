@@ -1,10 +1,16 @@
 use crate::{
-    abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier, CallKind,
+    abi::CHEATCODE_ADDRESS,
+    debug::Instruction,
+    executor::{fork::CreateFork, Backend, Executor, ExecutorBuilder},
+    trace::identifier::LocalTraceIdentifier,
+    utils::evm_spec,
+    CallKind,
 };
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{
     abi::{ethereum_types::BigEndianHash, Address, RawLog},
     core::utils::to_checksum,
+    solc::EvmVersion,
     types::{Bytes, DefaultFrame, GethDebugTracingOptions, StructLog, H256, U256},
 };
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
@@ -15,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
     fmt::{self, Write},
+    ops::{Deref, DerefMut},
 };
 use yansi::{Color, Paint};
 
@@ -25,8 +32,49 @@ pub mod identifier;
 
 mod decoder;
 pub mod node;
-mod utils;
+pub mod utils;
 
+/// a default executor with tracing enabled
+pub struct TracingExecutor {
+    executor: Executor,
+}
+
+impl TracingExecutor {
+    pub async fn new(
+        env: revm::primitives::Env,
+        fork: Option<CreateFork>,
+        version: Option<EvmVersion>,
+        debug: bool,
+    ) -> Self {
+        let db = Backend::spawn(fork).await;
+
+        // configures a bare version of the evm executor: no cheatcode inspector is enabled,
+        // tracing will be enabled only for the targeted transaction
+        let builder = ExecutorBuilder::default()
+            .with_config(env)
+            .with_spec(evm_spec(&version.unwrap_or_default()));
+
+        let mut executor = builder.build(db);
+
+        executor.set_tracing(true).set_debugger(debug);
+
+        Self { executor }
+    }
+}
+
+impl Deref for TracingExecutor {
+    type Target = Executor;
+
+    fn deref(&self) -> &Self::Target {
+        &self.executor
+    }
+}
+
+impl DerefMut for TracingExecutor {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.executor
+    }
+}
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
 /// An arena of [CallTraceNode]s

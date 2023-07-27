@@ -1,12 +1,23 @@
 //! utilities used within tracing
 
-use crate::decode;
+use crate::{debug::DebugArena, decode};
 use ethers::{
     abi::{Abi, Address, Function, ParamType, Token},
     core::utils::to_checksum,
+    solc::{artifacts::ContractBytecodeSome, ArtifactId},
 };
 use foundry_common::{abi::format_token, SELECTOR_LEN};
-use std::collections::HashMap;
+use foundry_config::{Chain, Config};
+use std::{
+    collections::{BTreeMap, HashMap},
+    str::FromStr,
+};
+use yansi::Paint;
+
+use super::{
+    identifier::{EtherscanIdentifier, SignaturesIdentifier},
+    CallTraceDecoder, CallTraceDecoderBuilder, Traces,
+};
 
 /// Returns the label for the given `token`
 ///
@@ -55,30 +66,30 @@ pub(crate) fn decode_cheatcode_inputs(
             Some(decoded.iter().map(format_token).collect())
         }
         "deriveKey" => Some(vec!["<pk>".to_string()]),
-        "parseJson" |
-        "parseJsonUint" |
-        "parseJsonUintArray" |
-        "parseJsonInt" |
-        "parseJsonIntArray" |
-        "parseJsonString" |
-        "parseJsonStringArray" |
-        "parseJsonAddress" |
-        "parseJsonAddressArray" |
-        "parseJsonBool" |
-        "parseJsonBoolArray" |
-        "parseJsonBytes" |
-        "parseJsonBytesArray" |
-        "parseJsonBytes32" |
-        "parseJsonBytes32Array" |
-        "writeJson" |
-        "keyExists" |
-        "serializeBool" |
-        "serializeUint" |
-        "serializeInt" |
-        "serializeAddress" |
-        "serializeBytes32" |
-        "serializeString" |
-        "serializeBytes" => {
+        "parseJson"
+        | "parseJsonUint"
+        | "parseJsonUintArray"
+        | "parseJsonInt"
+        | "parseJsonIntArray"
+        | "parseJsonString"
+        | "parseJsonStringArray"
+        | "parseJsonAddress"
+        | "parseJsonAddressArray"
+        | "parseJsonBool"
+        | "parseJsonBoolArray"
+        | "parseJsonBytes"
+        | "parseJsonBytesArray"
+        | "parseJsonBytes32"
+        | "parseJsonBytes32Array"
+        | "writeJson"
+        | "keyExists"
+        | "serializeBool"
+        | "serializeUint"
+        | "serializeInt"
+        | "serializeAddress"
+        | "serializeBytes32"
+        | "serializeString"
+        | "serializeBytes" => {
             if verbosity == 5 {
                 None
             } else {
@@ -105,17 +116,54 @@ pub(crate) fn decode_cheatcode_outputs(
 ) -> Option<String> {
     if func.name.starts_with("env") {
         // redacts the value stored in the env var
-        return Some("<env var value>".to_string())
+        return Some("<env var value>".to_string());
     }
     if func.name == "deriveKey" {
         // redacts derived private key
-        return Some("<pk>".to_string())
+        return Some("<pk>".to_string());
     }
     if func.name == "parseJson" && verbosity != 5 {
-        return Some("<encoded JSON value>".to_string())
+        return Some("<encoded JSON value>".to_string());
     }
     if func.name == "readFile" && verbosity != 5 {
-        return Some("<file>".to_string())
+        return Some("<file>".to_string());
     }
     None
+}
+
+pub async fn print_traces(
+    result: &mut TraceResult,
+    decoder: CallTraceDecoder,
+    verbose: bool,
+) -> eyre::Result<()> {
+    if result.traces.is_empty() {
+        eyre::bail!("Unexpected error: No traces. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
+    }
+
+    println!("Traces:");
+    for (_, trace) in &mut result.traces {
+        decoder.decode(trace).await;
+        if !verbose {
+            println!("{trace}");
+        } else {
+            println!("{trace:#}");
+        }
+    }
+    println!();
+
+    if result.success {
+        println!("{}", Paint::green("Transaction successfully executed."));
+    } else {
+        println!("{}", Paint::red("Transaction failed."));
+    }
+
+    println!("Gas used: {}", result.gas_used);
+    Ok(())
+}
+
+pub struct TraceResult {
+    pub success: bool,
+    pub traces: Traces,
+    pub debug: DebugArena,
+    pub gas_used: u64,
 }
