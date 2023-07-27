@@ -247,12 +247,12 @@ impl CallArgs {
                     return Ok(());
                 }
 
-                // build it last because we dont need anything from the built one
-                build_create_tx(&mut builder, value, code, sig, args).await?;
+                // fill it last because we dont need anything from the built one
+                fill_create(&mut builder, value, code, sig, args).await?;
             }
             _ => {
-                // build it first becasue builder parses args / addr
-                build_tx(&mut builder, tx.value, sig, args, data).await?;
+                // fill it first becasue builder parses args / addr
+                fill_tx(&mut builder, tx.value, sig, args, data).await?;
 
                 if trace {
                     let (mut executor, opts) =
@@ -295,7 +295,7 @@ impl CallArgs {
 }
 
 /// builds the transaction from create args
-async fn build_create_tx(
+async fn fill_create(
     builder: &mut TxBuilder<'_, Provider>,
     value: Option<U256>,
     code: String,
@@ -317,7 +317,7 @@ async fn build_create_tx(
 }
 
 /// builds the tx from args
-async fn build_tx(
+async fn fill_tx(
     builder: &mut TxBuilder<'_, Provider>,
     value: Option<U256>,
     sig: Option<String>,
