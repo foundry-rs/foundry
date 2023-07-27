@@ -156,7 +156,7 @@ impl OtsInternalOperation {
     pub fn batch_build(traces: Vec<Trace>) -> Vec<OtsInternalOperation> {
         traces
             .iter()
-            .map(|trace| {
+            .filter_map(|trace| {
                 match (trace.action.clone(), trace.result.clone()) {
                     (Action::Call(Call { from, to, value, .. }), _) if !value.is_zero() => {
                         Some(Self { r#type: OtsInternalOperationType::Transfer, from, to, value })
@@ -185,7 +185,6 @@ impl OtsInternalOperation {
                     _ => None,
                 }
             })
-            .flatten()
             .collect()
     }
 
@@ -194,10 +193,8 @@ impl OtsInternalOperation {
         traces: &Vec<Trace>,
         suicide_address: &Vec<usize>,
     ) -> Option<(Address, U256)> {
-        traces
-            .iter()
-            .find(|t| t.trace_address == &suicide_address[..suicide_address.len() - 1])
-            .map(|t| match t.action {
+        traces.iter().find(|t| t.trace_address == suicide_address[..suicide_address.len() - 1]).map(
+            |t| match t.action {
                 Action::Call(Call { from, value, .. }) => (from, value),
 
                 Action::Create(Create { from, value, .. }) => (from, value),
@@ -206,6 +203,7 @@ impl OtsInternalOperation {
                 Action::Suicide(_) => Self::find_suicide_caller(traces, &t.trace_address).unwrap(),
 
                 Action::Reward(_) => unreachable!(),
-            })
+            },
+        )
     }
 }
