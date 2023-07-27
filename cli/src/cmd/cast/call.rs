@@ -154,7 +154,7 @@ impl CallArgs {
         match command {
             Some(CallSubcommands::Create { code, sig, args, value }) => {
                 if trace {
-                    let (opts, env, fork, chain) = setup_fork_env(&config, eth.rpc).await?;
+                    let (env, fork, chain) = get_fork_material(&config, eth.rpc).await?;
 
                     let mut executor =
                         foundry_evm::trace::TracingExecutor::new(env, fork, evm_version, debug)
@@ -206,7 +206,7 @@ impl CallArgs {
                 fill_tx(&mut builder, tx.value, sig, args, data).await?;
 
                 if trace {
-                    let (opts, env, fork, chain) = setup_fork_env(&config, eth.rpc).await?;
+                    let (env, fork, chain) = get_fork_material(&config, eth.rpc).await?;
 
                     let mut executor =
                         foundry_evm::trace::TracingExecutor::new(env, fork, evm_version, debug)
@@ -251,10 +251,10 @@ impl CallArgs {
     }
 }
 
-async fn setup_fork_env(
+async fn get_fork_material(
     config: &Config,
     rpc: RpcOpts,
-) -> eyre::Result<(EvmOpts, Env, Option<CreateFork>, Option<ethers::types::Chain>)> {
+) -> eyre::Result<(Env, Option<CreateFork>, Option<ethers::types::Chain>)> {
     let figment = Config::figment_with_root(find_project_root_path(None).unwrap()).merge(rpc);
 
     let mut evm_opts = figment.extract::<EvmOpts>()?;
@@ -266,9 +266,7 @@ async fn setup_fork_env(
 
     let fork = evm_opts.get_fork(config, env.clone());
 
-    let chain = evm_opts.get_remote_chain_id();
-
-    Ok((evm_opts, env, fork, chain))
+    Ok((env, fork, evm_opts.get_remote_chain_id()))
 }
 
 /// builds the transaction from create arg
@@ -354,7 +352,7 @@ async fn handle_traces(
         let (sources, bytecode) = etherscan_identifier.get_compiled_contracts().await?;
         run_debugger(result, decoder, bytecode, sources)?;
     } else {
-        foundry_evm::trace::utils::print_traces(&mut result, decoder, verbose).await?;
+        print_traces(&mut result, decoder, verbose).await?;
     }
 
     Ok(())
