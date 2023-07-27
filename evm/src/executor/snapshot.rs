@@ -55,10 +55,12 @@ impl<T> Snapshots<T> {
         id
     }
 
-    /// Inserts the new snapshot at the given `id`, without auto-incrementing the next `id`.
-    pub fn insert_at(&mut self, snapshot: T, id: U256) -> bool {
+    /// Inserts the new snapshot at the given `id`.
+    ///
+    ///  Does not auto-increment the next `id`.
+    pub fn insert_at(&mut self, snapshot: T, id: U256) -> U256 {
         self.snapshots.insert(id, snapshot);
-        true
+        id
     }
 }
 
