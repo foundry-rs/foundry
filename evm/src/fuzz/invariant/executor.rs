@@ -564,8 +564,12 @@ fn collect_data(
     }
 }
 
+type RichInvariantResults =
+    (bool, Option<BTreeMap<String, RawCallResult>>, Vec<Log>, Option<CallTraceArena>);
+
 /// Verifies that the invariant run execution can continue.
-/// Returns the mapping of (Invariant Function Name -> Call Result) if invariants were asserted.
+/// Returns the mapping of (Invariant Function Name -> Call Result, Logs, Traces) if invariants were
+/// asserted.
 #[allow(clippy::too_many_arguments)]
 fn can_continue(
     invariant_contract: &InvariantContract,
@@ -577,7 +581,7 @@ fn can_continue(
     state_changeset: StateChangeset,
     fail_on_revert: bool,
     shrink_sequence: bool,
-) -> (bool, Option<BTreeMap<String, RawCallResult>>, Vec<Log>, Option<CallTraceArena>) {
+) -> RichInvariantResults {
     let mut call_results = None;
 
     // Detect handler assertion failures first.
