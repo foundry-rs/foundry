@@ -8,7 +8,7 @@ use ethers::{
     types::{BlockNumber, TransactionRequest},
     utils::get_contract_address,
 };
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_erigon_get_header_by_number() {
@@ -61,6 +61,76 @@ async fn can_call_ots_has_code() {
         .ots_has_code(pending_contract_address, BlockNumber::Number(num - 1))
         .await
         .unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_call_ots_search_transactions_before() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let sender = wallet.address();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let mut hashes = vec![];
+
+    for i in 0..7 {
+        let tx = TransactionRequest::new().to(Address::random()).value(100u64).nonce(i);
+        let receipt = client.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+        hashes.push(receipt.transaction_hash);
+    }
+
+    let page_size = 2;
+    let mut block = 0;
+    for _ in 0..4 {
+        let result = api.ots_search_transactions_before(sender, block, page_size).await.unwrap();
+
+        assert!(result.txs.len() <= page_size);
+
+        // check each individual hash
+        result.txs.iter().for_each(|tx| {
+            assert_eq!(hashes.pop(), Some(tx.hash));
+        });
+
+        block = result.txs.last().unwrap().block_number.unwrap().as_u64() - 1;
+    }
+
+    assert_eq!(hashes.pop(), None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_call_ots_search_transactions_after() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let sender = wallet.address();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let mut hashes = VecDeque::new();
+
+    for i in 0..7 {
+        let tx = TransactionRequest::new().to(Address::random()).value(100u64).nonce(i);
+        let receipt = client.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+        hashes.push_front(receipt.transaction_hash);
+    }
+
+    let page_size = 2;
+    let mut block = 0;
+    for p in 0..4 {
+        let result = api.ots_search_transactions_after(sender, block, page_size).await.unwrap();
+
+        assert!(result.txs.len() <= page_size);
+
+        // check each individual hash
+        result.txs.iter().for_each(|tx| {
+            assert_eq!(hashes.pop_back(), Some(tx.hash));
+        });
+
+        block = result.txs.last().unwrap().block_number.unwrap().as_u64() + 1;
+    }
+
+    assert_eq!(hashes.pop_front(), None);
 }
 
 #[tokio::test(flavor = "multi_thread")]

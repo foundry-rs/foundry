@@ -2138,6 +2138,7 @@ impl EthApi {
 
         let mut res: Vec<_> = vec![];
 
+        dbg!(to, from);
         for n in (to..=from).rev() {
             if n == to {
                 last_page = true;
