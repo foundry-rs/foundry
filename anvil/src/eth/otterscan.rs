@@ -67,17 +67,17 @@ pub struct OtsSearchTransactions {
 }
 
 /// Otterscan format for listing relevant internal operations
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct OtsInternalOperation {
-    r#type: OtsInternalOperationType,
-    from: Address,
-    to: Address,
-    value: U256,
+    pub r#type: OtsInternalOperationType,
+    pub from: Address,
+    pub to: Address,
+    pub value: U256,
 }
 
 /// Types of internal operations recognized by Otterscan
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, PartialEq)]
 pub enum OtsInternalOperationType {
     Transfer = 0,
     SelfDestruct = 1,

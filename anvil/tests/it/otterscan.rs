@@ -1,11 +1,14 @@
 //! tests for otterscan endpoints
 use crate::abi::MulticallContract;
-use anvil::{spawn, NodeConfig};
+use anvil::{
+    eth::otterscan::{OtsInternalOperation, OtsInternalOperationType},
+    spawn, NodeConfig,
+};
 use ethers::{
     abi::Address,
     prelude::{ContractFactory, Middleware, SignerMiddleware},
     signers::Signer,
-    types::{BlockNumber, TransactionRequest, U256},
+    types::{BlockNumber, Create, TransactionRequest, U256},
     utils::get_contract_address,
 };
 use ethers_solc::{project_util::TempProject, Artifact};
@@ -28,6 +31,35 @@ async fn can_call_ots_get_api_level() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
 
     assert_eq!(api.ots_get_api_level().await.unwrap(), 8);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_call_ots_get_internal_operations_contract_deploy() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let sender = wallet.address();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let mut deploy_tx = MulticallContract::deploy(Arc::clone(&client), ()).unwrap().deployer.tx;
+    deploy_tx.set_nonce(0);
+    let contract_address = get_contract_address(sender, deploy_tx.nonce().unwrap());
+
+    let receipt = client.send_transaction(deploy_tx, None).await.unwrap().await.unwrap().unwrap();
+
+    let res = api.ots_get_internal_operations(receipt.transaction_hash).await.unwrap();
+
+    assert_eq!(res.len(), 1);
+    assert_eq!(
+        res[0],
+        OtsInternalOperation {
+            r#type: OtsInternalOperationType::Create,
+            from: sender,
+            to: contract_address,
+            value: 0.into()
+        }
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -111,8 +143,6 @@ contract Contract {
 
     //let res = api.ots_get_transaction_error(tx).await.unwrap().unwrap();
     // dbg!(&res);
-
-    panic!()
 }
 
 #[tokio::test(flavor = "multi_thread")]
