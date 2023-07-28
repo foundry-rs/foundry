@@ -23,6 +23,10 @@ pub struct RpcOpts {
     /// Use the Flashbots RPC URL (https://rpc.flashbots.net).
     #[clap(long)]
     pub flashbots: bool,
+
+    /// JWT Secret for the RPC endpoint.
+    #[clap(long, env = "ETH_RPC_JWT")]
+    pub jwt: Option<String>,
 }
 
 impl_figment_convert_cast!(RpcOpts);
@@ -49,10 +53,23 @@ impl RpcOpts {
         Ok(url)
     }
 
+    /// Returns the JWT secret.
+    pub fn jwt<'a>(&'a self, config: Option<&'a Config>) -> Result<Option<Cow<'a, str>>> {
+        let jwt = match (self.jwt.as_deref(), config) {
+            (Some(jwt), _) => Some(Cow::Borrowed(jwt)),
+            (None, Some(config)) => config.get_rpc_jwt_secret()?,
+            (None, None) => None,
+        };
+        Ok(jwt)
+    }
+
     pub fn dict(&self) -> Dict {
         let mut dict = Dict::new();
         if let Ok(Some(url)) = self.url(None) {
             dict.insert("eth_rpc_url".into(), url.into_owned().into());
+        }
+        if let Ok(Some(jwt)) = self.jwt(None) {
+            dict.insert("eth_rpc_jwt".into(), jwt.into_owned().into());
         }
         dict
     }

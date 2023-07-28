@@ -90,6 +90,7 @@ pub fn parse_u256(s: &str) -> Result<U256> {
 pub fn get_provider(config: &Config) -> Result<foundry_common::RetryProvider> {
     get_provider_builder(config)?.build()
 }
+
 /// Returns a [ProviderBuilder](foundry_common::ProviderBuilder) instantiated using [Config]'s RPC
 /// URL and chain.
 ///
@@ -97,7 +98,14 @@ pub fn get_provider(config: &Config) -> Result<foundry_common::RetryProvider> {
 pub fn get_provider_builder(config: &Config) -> Result<foundry_common::ProviderBuilder> {
     let url = config.get_rpc_url_or_localhost_http()?;
     let chain = config.chain_id.unwrap_or_default();
-    Ok(foundry_common::ProviderBuilder::new(url.as_ref()).chain(chain))
+    let mut builder = foundry_common::ProviderBuilder::new(url.as_ref()).chain(chain);
+
+    let jwt = config.get_rpc_jwt_secret()?;
+    if let Some(jwt) = jwt {
+        builder = builder.jwt(jwt.as_ref());
+    }
+
+    builder.build()
 }
 
 pub async fn get_chain<M>(chain: Option<Chain>, provider: M) -> Result<Chain>
