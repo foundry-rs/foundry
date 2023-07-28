@@ -3,11 +3,12 @@ use crate::abi::MulticallContract;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     abi::Address,
-    prelude::{Middleware, SignerMiddleware},
+    prelude::{ContractFactory, Middleware, SignerMiddleware},
     signers::Signer,
-    types::{BlockNumber, TransactionRequest},
+    types::{BlockNumber, TransactionRequest, U256},
     utils::get_contract_address,
 };
+use ethers_solc::{project_util::TempProject, Artifact};
 use std::{collections::VecDeque, sync::Arc};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -61,6 +62,56 @@ async fn can_call_ots_has_code() {
         .ots_has_code(pending_contract_address, BlockNumber::Number(num - 1))
         .await
         .unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_call_ots_get_transactionn_error() {
+    let prj = TempProject::dapptools().unwrap();
+    prj.add_source(
+        "Contract",
+        r#"
+pragma solidity 0.8.13;
+contract Contract {
+    uint256 public number;
+
+    function setNumber(uint256 num) public {
+        require(num != 0, "RevertStringFooBar");
+        number = num;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let mut compiled = prj.compile().unwrap();
+    assert!(!compiled.has_compiler_errors());
+    let contract = compiled.remove_first("Contract").unwrap();
+    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider().await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    // deploy successfully
+    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
+    let contract = factory.deploy(()).unwrap().send().await.unwrap();
+
+    let call = contract.method::<_, ()>("setNumber", U256::zero()).unwrap();
+    let resp = call.send().await;
+
+    // TODO: Resp is a Result<PendingTransaction. How can I force it to be included in a block?
+    // api.mine_one().await will still give out a block with no txs
+    // resp.unwrap() fails because the tx reverts
+
+    let block = api.block_by_number_full(BlockNumber::Latest).await.unwrap().unwrap();
+    // let tx = block.transactions[0].hashVg
+
+    // let res = api.ots_get_transaction_error(tx).await.unwrap().unwrap();
+    // dbg!(&res);
+
+    panic!()
 }
 
 #[tokio::test(flavor = "multi_thread")]
