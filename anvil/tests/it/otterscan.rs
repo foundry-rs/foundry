@@ -62,6 +62,9 @@ async fn can_call_ots_get_internal_operations_contract_deploy() {
     );
 }
 
+// TODO: test ots_getInternalOperations for a regular contract call, and for a EOA-to-EOA value
+// transfer
+
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_ots_has_code() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -95,6 +98,8 @@ async fn can_call_ots_has_code() {
         .await
         .unwrap());
 }
+
+// TODO: ots_traceTransaction
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_ots_get_transactionn_error() {

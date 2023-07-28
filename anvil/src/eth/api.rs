@@ -2053,8 +2053,7 @@ impl EthApi {
     /// Trace a transaction and generate a trace call tree.
     pub async fn ots_trace_transaction(&self, hash: H256) -> Result<Vec<Trace>> {
         node_info!("ots_traceTransaction");
-        // TODO: is this right?
-        // Maybe needs to be a tree
+
         self.backend.trace_transaction(hash).await
     }
 
