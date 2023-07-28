@@ -1,14 +1,14 @@
 //! tests for otterscan endpoints
 use crate::abi::MulticallContract;
 use anvil::{
-    eth::otterscan::{OtsInternalOperation, OtsInternalOperationType},
+    eth::otterscan::types::{OtsInternalOperation, OtsInternalOperationType},
     spawn, NodeConfig,
 };
 use ethers::{
     abi::Address,
     prelude::{ContractFactory, Middleware, SignerMiddleware},
     signers::Signer,
-    types::{BlockNumber, Create, TransactionRequest, U256},
+    types::{BlockNumber, TransactionRequest, U256},
     utils::get_contract_address,
 };
 use ethers_solc::{project_util::TempProject, Artifact};

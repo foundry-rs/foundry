@@ -5,7 +5,7 @@ use ethers::types::{
 use futures::future::join_all;
 use serde::{de::DeserializeOwned, Serialize};
 
-use super::{backend::mem::Backend, error::Result};
+use crate::eth::{backend::mem::Backend, error::Result};
 
 /// Patched Block struct, to include the additional `transactionCount` field expected by Otterscan
 #[derive(Debug, Serialize)]
