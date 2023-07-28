@@ -45,7 +45,7 @@ impl GenerateTestArgs {
         fs::write(&test_file_path, test_content).unwrap();
 
         println!("Test file generated: {}", test_file_path.to_str().unwrap());
-        return Ok(());
+        Ok(())
     }
 }
 
