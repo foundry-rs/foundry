@@ -55,30 +55,30 @@ pub(crate) fn decode_cheatcode_inputs(
             Some(decoded.iter().map(format_token).collect())
         }
         "deriveKey" => Some(vec!["<pk>".to_string()]),
-        "parseJson"
-        | "parseJsonUint"
-        | "parseJsonUintArray"
-        | "parseJsonInt"
-        | "parseJsonIntArray"
-        | "parseJsonString"
-        | "parseJsonStringArray"
-        | "parseJsonAddress"
-        | "parseJsonAddressArray"
-        | "parseJsonBool"
-        | "parseJsonBoolArray"
-        | "parseJsonBytes"
-        | "parseJsonBytesArray"
-        | "parseJsonBytes32"
-        | "parseJsonBytes32Array"
-        | "writeJson"
-        | "keyExists"
-        | "serializeBool"
-        | "serializeUint"
-        | "serializeInt"
-        | "serializeAddress"
-        | "serializeBytes32"
-        | "serializeString"
-        | "serializeBytes" => {
+        "parseJson" |
+        "parseJsonUint" |
+        "parseJsonUintArray" |
+        "parseJsonInt" |
+        "parseJsonIntArray" |
+        "parseJsonString" |
+        "parseJsonStringArray" |
+        "parseJsonAddress" |
+        "parseJsonAddressArray" |
+        "parseJsonBool" |
+        "parseJsonBoolArray" |
+        "parseJsonBytes" |
+        "parseJsonBytesArray" |
+        "parseJsonBytes32" |
+        "parseJsonBytes32Array" |
+        "writeJson" |
+        "keyExists" |
+        "serializeBool" |
+        "serializeUint" |
+        "serializeInt" |
+        "serializeAddress" |
+        "serializeBytes32" |
+        "serializeString" |
+         "serializeBytes" => {
             if verbosity == 5 {
                 None
             } else {
@@ -105,17 +105,17 @@ pub(crate) fn decode_cheatcode_outputs(
 ) -> Option<String> {
     if func.name.starts_with("env") {
         // redacts the value stored in the env var
-        return Some("<env var value>".to_string());
+        return Some("<env var value>".to_string())
     }
     if func.name == "deriveKey" {
         // redacts derived private key
-        return Some("<pk>".to_string());
+        return Some("<pk>".to_string())
     }
     if func.name == "parseJson" && verbosity != 5 {
-        return Some("<encoded JSON value>".to_string());
+        return Some("<encoded JSON value>".to_string())
     }
     if func.name == "readFile" && verbosity != 5 {
-        return Some("<file>".to_string());
+        return Some("<file>".to_string())
     }
     None
 }
