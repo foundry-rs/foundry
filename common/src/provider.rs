@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use ethers_core::types::{Chain, U256};
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use ethers_providers::{
-    is_local_endpoint, Http, HttpRateLimitRetryPolicy, JsonRpcClient, LooseHttp, Middleware,
-    Provider, RetryClient, RetryClientBuilder, DEFAULT_LOCAL_POLL_INTERVAL,
+    is_local_endpoint, Http, HttpRateLimitRetryPolicy, JsonRpcClient, Middleware, Provider,
+    RelaxedHttp, RetryClient, RetryClientBuilder, DEFAULT_LOCAL_POLL_INTERVAL,
 };
 use eyre::WrapErr;
 use reqwest::{IntoUrl, Url};
@@ -15,16 +15,16 @@ use std::{borrow::Cow, fmt::Debug, time::Duration};
 
 /// Wraps strict or loose rpc handling in the Http provider
 #[derive(Debug)]
-pub enum ProviderTypes {
+pub enum ProviderKinds {
     ///strict
     Http(Http),
     ///loose
-    LooseHttp(LooseHttp),
+    RelaxedHttp(RelaxedHttp),
 }
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl JsonRpcClient for ProviderTypes {
+impl JsonRpcClient for ProviderKinds {
     type Error = <Http as JsonRpcClient>::Error;
 
     /// Sends a request with the provided JSON-RPC and parameters serialized as JSON
@@ -34,15 +34,15 @@ impl JsonRpcClient for ProviderTypes {
         R: DeserializeOwned + Send,
     {
         match self {
-            ProviderTypes::Http(i) => i.request(method, params).await,
-            ProviderTypes::LooseHttp(i) => i.request(method, params).await,
+            ProviderKinds::Http(i) => i.request(method, params).await,
+            ProviderKinds::RelaxedHttp(i) => i.request(method, params).await,
         }
     }
 }
 //.await.map_err(Self::Error::into)?,
 
 /// Helper type alias for a retry provider
-pub type RetryProvider = Provider<RetryClient<ProviderTypes>>;
+pub type RetryProvider = Provider<RetryClient<ProviderKinds>>;
 
 /// Helper type alias for a rpc url
 pub type RpcUrl = String;
@@ -199,9 +199,9 @@ impl ProviderBuilder {
         let is_local = is_local_endpoint(url.as_str());
 
         let json_client = if relaxed_rpc {
-            ProviderTypes::LooseHttp(LooseHttp::new_with_client(url, client))
+            ProviderKinds::RelaxedHttp(RelaxedHttp::new_with_client(url, client))
         } else {
-            ProviderTypes::Http(Http::new_with_client(url, client))
+            ProviderKinds::Http(Http::new_with_client(url, client))
         };
 
         #[allow(clippy::box_default)]

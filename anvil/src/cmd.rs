@@ -412,7 +412,8 @@ pub struct AnvilEvmArgs {
     #[clap(long, requires = "fork_url", help_heading = "Fork config")]
     pub no_storage_caching: bool,
 
-    /// Specify whether to be strict in json rpc handling of the upstream provider
+    /// Specify whether to be strict in json rpc handling of the upstream provider.
+    /// For now this amounts to whether the json response dict can contain a "method"
     ///
     /// You still must pass both `--fork-url` and `--relaxed-rpc`
     #[clap(long, requires = "fork_url", help_heading = "Fork config")]

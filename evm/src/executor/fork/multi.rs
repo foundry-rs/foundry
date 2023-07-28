@@ -12,7 +12,7 @@ use ethers::{
     providers::{Provider, RetryClient},
     types::{BlockId, BlockNumber},
 };
-use foundry_common::{ProviderBuilder, ProviderTypes};
+use foundry_common::{ProviderBuilder, ProviderKinds};
 use foundry_config::Config;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
@@ -168,7 +168,7 @@ impl MultiFork {
     }
 }
 
-type Handler = BackendHandler<Arc<Provider<RetryClient<ProviderTypes>>>>;
+type Handler = BackendHandler<Arc<Provider<RetryClient<ProviderKinds>>>>;
 
 type CreateFuture = Pin<Box<dyn Future<Output = eyre::Result<(CreatedFork, Handler)>> + Send>>;
 type CreateSender = OneshotSender<eyre::Result<(ForkId, SharedBackend, Env)>>;
