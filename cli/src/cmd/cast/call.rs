@@ -197,7 +197,7 @@ impl CallArgs {
                         }
                     };
 
-                    handle_traces(trace, config, chain, labels, verbose, debug).await?;
+                    handle_traces(trace, &config, chain, labels, verbose, debug).await?;
 
                     return Ok(());
                 }
@@ -246,7 +246,7 @@ impl CallArgs {
                         }
                     };
 
-                    handle_traces(trace, config, chain, labels, verbose, debug).await?;
+                    handle_traces(trace, &config, chain, labels, verbose, debug).await?;
 
                     return Ok(());
                 }

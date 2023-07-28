@@ -319,7 +319,7 @@ pub struct TraceResult {
 /// labels the traces, conditonally prints them or opens the debugger
 pub async fn handle_traces(
     mut result: TraceResult,
-    config: Config,
+    config: &Config,
     chain: Option<ethers::types::Chain>,
     labels: Vec<String>,
     verbose: bool,
