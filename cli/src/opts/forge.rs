@@ -9,7 +9,7 @@ use crate::cmd::forge::{
     flatten,
     fmt::FmtArgs,
     fourbyte::UploadSelectorsArgs,
-    geiger,
+    geiger, generate,
     init::InitArgs,
     inspect,
     install::InstallArgs,
@@ -163,6 +163,9 @@ pub enum Subcommands {
         #[clap(subcommand)]
         command: SelectorsSubcommands,
     },
+
+    /// Generate scaffold files.
+    Generate(generate::GenerateArgs),
 }
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended
