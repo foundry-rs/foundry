@@ -102,7 +102,7 @@ pub fn get_cached_entry_by_name(
     }
 
     if let Some(entry) = cached_entry {
-        return Ok(entry);
+        return Ok(entry)
     }
 
     let mut err = format!("could not find artifact: `{name}`");
@@ -174,7 +174,7 @@ macro_rules! update_progress {
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain: u64) -> bool {
     if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
-        return matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::ArbitrumGoerli);
+        return matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::ArbitrumGoerli)
     }
     false
 }
@@ -182,7 +182,7 @@ pub fn has_different_gas_calc(chain: u64) -> bool {
 /// True if it supports broadcasting in batches.
 pub fn has_batch_support(chain: u64) -> bool {
     if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
-        return !matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::ArbitrumGoerli);
+        return !matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::ArbitrumGoerli)
     }
     true
 }

@@ -78,7 +78,7 @@ pub(crate) fn decode_cheatcode_inputs(
         "serializeAddress" |
         "serializeBytes32" |
         "serializeString" |
-         "serializeBytes" => {
+        "serializeBytes" => {
             if verbosity == 5 {
                 None
             } else {
