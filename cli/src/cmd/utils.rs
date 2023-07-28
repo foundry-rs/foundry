@@ -3,19 +3,27 @@ use ethers::{
     abi::Abi,
     core::types::Chain,
     solc::{
-        artifacts::{CompactBytecode, CompactDeployedBytecode},
+        artifacts::{CompactBytecode, CompactDeployedBytecode, ContractBytecodeSome},
         cache::{CacheEntry, SolFilesCache},
         info::ContractInfo,
         utils::read_json_file,
-        Artifact, ProjectCompileOutput,
+        Artifact, ArtifactId, ProjectCompileOutput,
     },
 };
 use eyre::WrapErr;
 use forge::executor::opts::EvmOpts;
 use foundry_common::{cli_warn, fs, TestFunctionExt};
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain as ConfigChain, Config};
-use std::{fmt::Write, path::PathBuf};
+use foundry_evm::{
+    debug::DebugArena,
+    trace::{
+        identifier::{EtherscanIdentifier, SignaturesIdentifier},
+        CallTraceDecoder, CallTraceDecoderBuilder, Traces,
+    },
+};
+use std::{collections::BTreeMap, fmt::Write, path::PathBuf, str::FromStr};
 use tracing::trace;
+use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
 
 /// Common trait for all cli commands
@@ -94,7 +102,7 @@ pub fn get_cached_entry_by_name(
     }
 
     if let Some(entry) = cached_entry {
-        return Ok(entry)
+        return Ok(entry);
     }
 
     let mut err = format!("could not find artifact: `{name}`");
@@ -166,7 +174,7 @@ macro_rules! update_progress {
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain: u64) -> bool {
     if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
-        return matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::ArbitrumGoerli)
+        return matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::ArbitrumGoerli);
     }
     false
 }
@@ -174,7 +182,7 @@ pub fn has_different_gas_calc(chain: u64) -> bool {
 /// True if it supports broadcasting in batches.
 pub fn has_batch_support(chain: u64) -> bool {
     if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
-        return !matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::ArbitrumGoerli)
+        return !matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::ArbitrumGoerli);
     }
     true
 }
@@ -298,4 +306,115 @@ pub fn read_constructor_args_file(constructor_args_path: PathBuf) -> eyre::Resul
         fs::read_to_string(constructor_args_path)?.split_whitespace().map(str::to_string).collect()
     };
     Ok(args)
+}
+
+/// A slimmed down return from the executor
+pub struct TraceResult {
+    pub success: bool,
+    pub traces: Traces,
+    pub debug: DebugArena,
+    pub gas_used: u64,
+}
+
+/// labels the traces, conditonally prints them or opens the debugger
+pub async fn handle_traces(
+    mut result: TraceResult,
+    config: Config,
+    chain: Option<ethers::types::Chain>,
+    labels: Vec<String>,
+    verbose: bool,
+    debug: bool,
+) -> eyre::Result<()> {
+    let mut etherscan_identifier = EtherscanIdentifier::new(&config, chain)?;
+
+    let labeled_addresses = labels.iter().filter_map(|label_str| {
+        let mut iter = label_str.split(':');
+
+        if let Some(addr) = iter.next() {
+            if let (Ok(address), Some(label)) =
+                (ethers::types::Address::from_str(addr), iter.next())
+            {
+                return Some((address, label.to_string()));
+            }
+        }
+        None
+    });
+
+    let mut decoder = CallTraceDecoderBuilder::new().with_labels(labeled_addresses).build();
+
+    decoder.add_signature_identifier(SignaturesIdentifier::new(
+        Config::foundry_cache_dir(),
+        config.offline,
+    )?);
+
+    for (_, trace) in &mut result.traces {
+        decoder.identify(trace, &mut etherscan_identifier);
+    }
+
+    if debug {
+        let (sources, bytecode) = etherscan_identifier.get_compiled_contracts().await?;
+        run_debugger(result, decoder, bytecode, sources)?;
+    } else {
+        print_traces(&mut result, decoder, verbose).await?;
+    }
+
+    Ok(())
+}
+
+pub async fn print_traces(
+    result: &mut TraceResult,
+    decoder: CallTraceDecoder,
+    verbose: bool,
+) -> eyre::Result<()> {
+    if result.traces.is_empty() {
+        eyre::bail!("Unexpected error: No traces. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
+    }
+
+    println!("Traces:");
+    for (_, trace) in &mut result.traces {
+        decoder.decode(trace).await;
+        if !verbose {
+            println!("{trace}");
+        } else {
+            println!("{trace:#}");
+        }
+    }
+    println!();
+
+    if result.success {
+        println!("{}", Paint::green("Transaction successfully executed."));
+    } else {
+        println!("{}", Paint::red("Transaction failed."));
+    }
+
+    println!("Gas used: {}", result.gas_used);
+    Ok(())
+}
+
+pub fn run_debugger(
+    result: TraceResult,
+    decoder: CallTraceDecoder,
+    known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
+    sources: BTreeMap<ArtifactId, String>,
+) -> eyre::Result<()> {
+    let calls: Vec<DebugArena> = vec![result.debug];
+    let flattened = calls.last().expect("we should have collected debug info").flatten(0);
+    let tui = Tui::new(
+        flattened,
+        0,
+        decoder.contracts,
+        known_contracts.into_iter().map(|(id, artifact)| (id.name, artifact)).collect(),
+        sources
+            .into_iter()
+            .map(|(id, source)| {
+                let mut sources = BTreeMap::new();
+                sources.insert(0, source);
+                (id.name, sources)
+            })
+            .collect(),
+        Default::default(),
+    )?;
+    match tui.start().expect("Failed to start tui") {
+        TUIExitReason::CharExit => Ok(()),
+    }
 }

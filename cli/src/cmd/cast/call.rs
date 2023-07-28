@@ -1,28 +1,23 @@
 // cast estimate subcommands
 use crate::{
+    cmd::utils::{handle_traces, TraceResult},
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, parse_ether_value},
 };
 use cast::{Cast, TxBuilder};
 use clap::Parser;
 use ethers::{
-    solc::{artifacts::ContractBytecodeSome, ArtifactId, EvmVersion},
+    solc::EvmVersion,
     types::{BlockId, NameOrAddress, U256},
 };
 use eyre::WrapErr;
 use forge::executor::opts::EvmOpts;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{
-    debug::DebugArena,
     executor::{DeployResult, EvmError, ExecutionErr, RawCallResult},
-    trace::{
-        identifier::{EtherscanIdentifier, SignaturesIdentifier},
-        utils::{print_traces, TraceResult},
-        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, TracingExecutor,
-    },
+    trace::{TraceKind, TracingExecutor},
 };
-use std::{collections::BTreeMap, str::FromStr};
-use ui::{TUIExitReason, Tui, Ui};
+use std::str::FromStr;
 
 type Provider =
     ethers::providers::Provider<ethers::providers::RetryClient<ethers::providers::Http>>;
@@ -311,79 +306,6 @@ async fn fill_tx(
     }
 
     Ok(())
-}
-
-/// labels the traces, conditonally prints them or opens the debugger
-async fn handle_traces(
-    mut result: TraceResult,
-    config: Config,
-    chain: Option<ethers::types::Chain>,
-    labels: Vec<String>,
-    verbose: bool,
-    debug: bool,
-) -> eyre::Result<()> {
-    let mut etherscan_identifier = EtherscanIdentifier::new(&config, chain)?;
-
-    let labeled_addresses = labels.iter().filter_map(|label_str| {
-        let mut iter = label_str.split(':');
-
-        if let Some(addr) = iter.next() {
-            if let (Ok(address), Some(label)) =
-                (ethers::types::Address::from_str(addr), iter.next())
-            {
-                return Some((address, label.to_string()));
-            }
-        }
-        None
-    });
-
-    let mut decoder = CallTraceDecoderBuilder::new().with_labels(labeled_addresses).build();
-
-    decoder.add_signature_identifier(SignaturesIdentifier::new(
-        Config::foundry_cache_dir(),
-        config.offline,
-    )?);
-
-    for (_, trace) in &mut result.traces {
-        decoder.identify(trace, &mut etherscan_identifier);
-    }
-
-    if debug {
-        let (sources, bytecode) = etherscan_identifier.get_compiled_contracts().await?;
-        run_debugger(result, decoder, bytecode, sources)?;
-    } else {
-        print_traces(&mut result, decoder, verbose).await?;
-    }
-
-    Ok(())
-}
-
-fn run_debugger(
-    result: TraceResult,
-    decoder: CallTraceDecoder,
-    known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
-    sources: BTreeMap<ArtifactId, String>,
-) -> eyre::Result<()> {
-    let calls: Vec<DebugArena> = vec![result.debug];
-    let flattened = calls.last().expect("we should have collected debug info").flatten(0);
-    let tui = Tui::new(
-        flattened,
-        0,
-        decoder.contracts,
-        known_contracts.into_iter().map(|(id, artifact)| (id.name, artifact)).collect(),
-        sources
-            .into_iter()
-            .map(|(id, source)| {
-                let mut sources = BTreeMap::new();
-                sources.insert(0, source);
-                (id.name, sources)
-            })
-            .collect(),
-        Default::default(),
-    )?;
-    match tui.start().expect("Failed to start tui") {
-        TUIExitReason::CharExit => Ok(()),
-    }
 }
 
 #[cfg(test)]

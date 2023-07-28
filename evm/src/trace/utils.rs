@@ -1,23 +1,12 @@
 //! utilities used within tracing
 
-use crate::{debug::DebugArena, decode};
+use crate::decode;
 use ethers::{
     abi::{Abi, Address, Function, ParamType, Token},
     core::utils::to_checksum,
-    solc::{artifacts::ContractBytecodeSome, ArtifactId},
 };
 use foundry_common::{abi::format_token, SELECTOR_LEN};
-use foundry_config::{Chain, Config};
-use std::{
-    collections::{BTreeMap, HashMap},
-    str::FromStr,
-};
-use yansi::Paint;
-
-use super::{
-    identifier::{EtherscanIdentifier, SignaturesIdentifier},
-    CallTraceDecoder, CallTraceDecoderBuilder, Traces,
-};
+use std::collections::HashMap;
 
 /// Returns the label for the given `token`
 ///
@@ -129,41 +118,4 @@ pub(crate) fn decode_cheatcode_outputs(
         return Some("<file>".to_string());
     }
     None
-}
-
-pub async fn print_traces(
-    result: &mut TraceResult,
-    decoder: CallTraceDecoder,
-    verbose: bool,
-) -> eyre::Result<()> {
-    if result.traces.is_empty() {
-        eyre::bail!("Unexpected error: No traces. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
-    }
-
-    println!("Traces:");
-    for (_, trace) in &mut result.traces {
-        decoder.decode(trace).await;
-        if !verbose {
-            println!("{trace}");
-        } else {
-            println!("{trace:#}");
-        }
-    }
-    println!();
-
-    if result.success {
-        println!("{}", Paint::green("Transaction successfully executed."));
-    } else {
-        println!("{}", Paint::red("Transaction failed."));
-    }
-
-    println!("Gas used: {}", result.gas_used);
-    Ok(())
-}
-
-pub struct TraceResult {
-    pub success: bool,
-    pub traces: Traces,
-    pub debug: DebugArena,
-    pub gas_used: u64,
 }
