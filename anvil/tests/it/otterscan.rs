@@ -102,9 +102,9 @@ contract Contract {
     let resp = call.send().await;
     dbg!(&resp);
 
-    // TODO: Resp is a Result<PendingTransaction. How can I force it to be included in a block?
+    // TODO: resp is a Result<PendingTransaction>. How can I force it to be included in a block?
     // api.mine_one().await will still give out a block with no txs
-    // resp.unwrap() fails because the tx reverts
+    // resp.unwrap().await fails because the tx reverts
 
     //let block = api.block_by_number_full(BlockNumber::Latest).await.unwrap().unwrap();
     // let tx = block.transactions[0].hashVg
