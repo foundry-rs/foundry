@@ -75,7 +75,7 @@ impl InspectorStackConfig {
     /// See also [`revm::Evm::inspect_ref`] and  [`revm::Evm::commit_ref`]
     pub fn stack(&self) -> InspectorStack {
         let mut stack =
-            InspectorStack { logs: Some(LogCollector::default()), ..Default::default() };
+            InspectorStack { logger: Some(LogCollector::default()), ..Default::default() };
 
         stack.cheatcodes = self.create_cheatcodes();
         if let Some(ref mut cheatcodes) = stack.cheatcodes {
