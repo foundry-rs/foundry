@@ -208,7 +208,7 @@ fn install_commonly_used_solc() {
         };
 
         // only set to installed if succeeded
-        *is_preinstalled = wait(v0_8_18).and(wait(v0_8_19)).and(wait(v0_8_20)).is_ok();
+        *is_preinstalled = wait(v0_8_19).and(wait(v0_8_20)).and(wait(v0_8_21)).is_ok();
     }
 }
 
