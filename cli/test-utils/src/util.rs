@@ -191,9 +191,9 @@ pub fn setup_cast_project(test: TestProject) -> (TestProject, TestCommand) {
 fn install_commonly_used_solc() {
     let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock();
     if !*is_preinstalled {
-        let v0_8_18 = std::thread::spawn(|| Solc::blocking_install(&"0.8.18".parse().unwrap()));
         let v0_8_19 = std::thread::spawn(|| Solc::blocking_install(&"0.8.19".parse().unwrap()));
         let v0_8_20 = std::thread::spawn(|| Solc::blocking_install(&"0.8.20".parse().unwrap()));
+        let v0_8_21 = std::thread::spawn(|| Solc::blocking_install(&"0.8.21".parse().unwrap()));
 
         let wait = |res: std::thread::JoinHandle<_>| -> Result<(), ()> {
             if let Err(err) = res.join().unwrap() {
@@ -208,7 +208,7 @@ fn install_commonly_used_solc() {
         };
 
         // only set to installed if succeeded
-        *is_preinstalled = wait(v0_8_18).and(wait(v0_8_19)).and(wait(v0_8_20)).is_ok();
+        *is_preinstalled = wait(v0_8_19).and(wait(v0_8_20)).and(wait(v0_8_21)).is_ok();
     }
 }
 
