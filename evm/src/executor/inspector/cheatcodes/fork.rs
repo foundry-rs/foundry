@@ -1,9 +1,9 @@
-use std::str::FromStr;
-
 use super::{fmt_err, Cheatcodes, Error, Result};
 use crate::{
     abi::HEVMCalls,
-    executor::{backend::DatabaseExt, fork::CreateFork},
+    executor::{
+        backend::DatabaseExt, fork::CreateFork, inspector::cheatcodes::ext::value_to_token,
+    },
     utils::{b160_to_h160, RuntimeOrHandle},
 };
 use ethers::{
@@ -15,6 +15,7 @@ use ethers::{
 use foundry_abi::hevm::{EthGetLogsCall, RpcCall};
 use foundry_common::ProviderBuilder;
 use revm::EVMData;
+use serde_json::Value;
 
 fn empty<T>(_: T) -> Bytes {
     Bytes::new()
@@ -160,7 +161,7 @@ fn select_fork<DB: DatabaseExt>(
     fork_id: U256,
 ) -> Result {
     if state.broadcast.is_some() {
-        return Err(Error::SelectForkDuringBroadcast)
+        return Err(Error::SelectForkDuringBroadcast);
     }
 
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
@@ -178,7 +179,7 @@ fn create_select_fork<DB: DatabaseExt>(
     block: Option<u64>,
 ) -> Result {
     if state.broadcast.is_some() {
-        return Err(Error::SelectForkDuringBroadcast)
+        return Err(Error::SelectForkDuringBroadcast);
     }
 
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
@@ -208,7 +209,7 @@ fn create_select_fork_at_transaction<DB: DatabaseExt>(
     transaction: H256,
 ) -> Result {
     if state.broadcast.is_some() {
-        return Err(Error::SelectForkDuringBroadcast)
+        return Err(Error::SelectForkDuringBroadcast);
     }
 
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
@@ -258,10 +259,10 @@ fn create_fork_request<DB: DatabaseExt>(
 fn eth_getlogs<DB: DatabaseExt>(data: &mut EVMData<DB>, inner: &EthGetLogsCall) -> Result {
     let url = data.db.active_fork_url().ok_or(fmt_err!("No active fork url found"))?;
     if inner.0 > U256::from(u64::MAX) || inner.1 > U256::from(u64::MAX) {
-        return Err(fmt_err!("Blocks in block range must be less than 2^64 - 1"))
+        return Err(fmt_err!("Blocks in block range must be less than 2^64 - 1"));
     }
     if inner.3.len() > 4 {
-        return Err(fmt_err!("Topics array must be less than 4 elements"))
+        return Err(fmt_err!("Topics array must be less than 4 elements"));
     }
 
     let provider = ProviderBuilder::new(url).build()?;
@@ -285,7 +286,7 @@ fn eth_getlogs<DB: DatabaseExt>(data: &mut EVMData<DB>, inner: &EthGetLogsCall) 
 
     if logs.len() == 0 {
         let empty: Bytes = abi::encode(&[Token::Array(vec![])]).into();
-        return Ok(empty)
+        return Ok(empty);
     }
 
     let result = abi::encode(
@@ -334,18 +335,27 @@ fn eth_getlogs<DB: DatabaseExt>(data: &mut EVMData<DB>, inner: &EthGetLogsCall) 
 fn rpc<DB: DatabaseExt>(data: &mut EVMData<DB>, inner: &RpcCall) -> Result {
     let url = data.db.active_fork_url().ok_or(fmt_err!("No active fork url found"))?;
     let provider = ProviderBuilder::new(url).build()?;
+
     let method = inner.0.as_str();
     let params = inner.1.as_str();
+    let params_json: Value = serde_json::from_str(params)?;
 
-    println!("Params: {:?}", params);
-    let params_json = serde_json::from_str(params)?;
-    println!("Params Json: {:?}", params_json);
-
-    let result: String = RuntimeOrHandle::new()
+    let result: Value = RuntimeOrHandle::new()
         .block_on(provider.request(method, params_json))
-        .map_err(|_| fmt_err!("Error in calling {:?}", method))?;
+        .map_err(|err| fmt_err!("Error in calling {:?}: {:?}", method, err))?;
 
-    println!("Result: {:?}", result);
-    let result_bytes = Bytes::from_str(result.as_str()).unwrap();
-    Ok(result_bytes)
+    let result_as_tokens =
+        value_to_token(&result).map_err(|err| fmt_err!("Failed to parse result: {err}"))?;
+
+    let abi_encoded: Vec<u8>;
+    match result_as_tokens {
+        Token::Tuple(vec) | Token::Array(vec) | Token::FixedArray(vec) => {
+            abi_encoded = abi::encode(&vec);
+        }
+        _ => {
+            let vec = vec![result_as_tokens];
+            abi_encoded = abi::encode(&vec);
+        }
+    }
+    Ok(abi_encoded.into())
 }

@@ -3612,7 +3612,7 @@ pub mod hevm {
                             outputs: ::std::vec![
                                 ::ethers_core::abi::ethabi::Param {
                                     name: ::std::string::String::new(),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Bytes,
                                     internal_type: ::core::option::Option::None,
                                 },
                             ],
@@ -6305,7 +6305,7 @@ pub mod hevm {
             &self,
             p0: ::std::string::String,
             p1: ::std::string::String,
-        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::Bytes> {
             self.0
                 .method_hash([18, 6, 200, 168], (p0, p1))
                 .expect("method not found (this should never happen)")
@@ -13225,7 +13225,7 @@ pub mod hevm {
         Eq,
         Hash
     )]
-    pub struct RpcReturn(pub ::std::string::String);
+    pub struct RpcReturn(pub ::ethers_core::types::Bytes);
     ///Container type for all return fields from the `rpcUrl` function with signature `rpcUrl(string)` and selector `0x975a6ce9`
     #[derive(
         Clone,

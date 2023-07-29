@@ -534,7 +534,7 @@ interface Cheats {
     // Gets all the logs according to specified filter
     function eth_getLogs(uint256, uint256, address, bytes32[] memory) external returns (EthGetLogs[] memory);
 
-    function rpc(string calldata, string calldata) external returns(string memory);
+    function rpc(string calldata, string calldata) external returns(bytes memory);
 
     function parseJson(string calldata, string calldata) external returns (bytes memory);
 

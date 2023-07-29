@@ -222,10 +222,10 @@ contract ForkTest is DSTest {
 
     function testRpc() public {
         cheats.selectFork(mainnetFork);
-        string memory path = "../testdata/fixtures/Rpc/params.json";
+        string memory path = "../testdata/fixtures/Rpc/balance_params.json";
         string memory file = cheats.readFile(path);
-        string memory result = cheats.rpc("eth_getBlockByHash", file);
-        console.log(result);
+        bytes memory result = cheats.rpc("eth_getBalance", file);
+        assertEq(result, hex'03202879715fd8');
     }
 }
 
