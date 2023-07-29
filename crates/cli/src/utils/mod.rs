@@ -105,7 +105,7 @@ pub fn get_provider_builder(config: &Config) -> Result<foundry_common::ProviderB
         builder = builder.jwt(jwt.as_ref());
     }
 
-    builder.build()
+    Ok(builder)
 }
 
 pub async fn get_chain<M>(chain: Option<Chain>, provider: M) -> Result<Chain>
