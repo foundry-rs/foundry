@@ -177,7 +177,7 @@ rpcUrl(string)(string)
 rpcUrls()(string[2][])
 rpcUrlStructs()(Rpc[])
 eth_getLogs(uint256,uint256,address,bytes32[])(EthGetLogs[])
-rpc(string,string)(bytes)
+rpc(string,string)(string)
 
 
 writeJson(string, string)
