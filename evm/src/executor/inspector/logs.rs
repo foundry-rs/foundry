@@ -7,22 +7,48 @@ use ethers::{
     abi::{AbiDecode, Token},
     types::{Log, H256},
 };
-use foundry_macros::ConsoleFmt;
 use revm::{
     interpreter::{CallInputs, Gas, InstructionResult},
     primitives::{B160, B256},
     Database, EVMData, Inspector,
 };
+use std::fmt::Debug;
+
+pub trait OnLog {
+    type OnLogState: Default + Clone;
+    fn on_log(ls: &mut Self::OnLogState, log: &Log);
+}
 
 /// An inspector that collects logs during execution.
 ///
 /// The inspector collects logs from the LOG opcodes as well as Hardhat-style logs.
-#[derive(Debug, Clone, Default)]
-pub struct LogCollector {
+#[derive(Clone)]
+pub struct EvmEventLogger<ONLOG: OnLog>
+where
+    ONLOG::OnLogState: Default,
+{
     pub logs: Vec<Log>,
+    pub on_log_state: ONLOG::OnLogState,
 }
 
-impl LogCollector {
+impl<ONLOG: OnLog> Default for EvmEventLogger<ONLOG> {
+    fn default() -> EvmEventLogger<ONLOG> {
+        Self { logs: Vec::<Log>::default(), on_log_state: ONLOG::OnLogState::default() }
+    }
+}
+
+impl OnLog for () {
+    type OnLogState = ();
+    fn on_log(_: &mut Self::OnLogState, _: &Log) {}
+}
+
+impl<ONLOG: OnLog> Debug for EvmEventLogger<ONLOG> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EvmEventLogger").field("logs", &self.logs).finish()
+    }
+}
+
+impl<ONLOG: OnLog> EvmEventLogger<ONLOG> {
     fn hardhat_log(&mut self, mut input: Vec<u8>) -> (InstructionResult, Bytes) {
         // Patch the Hardhat-style selectors
         patch_hardhat_console_selector(&mut input);
@@ -36,24 +62,29 @@ impl LogCollector {
             }
         };
 
+        let log_entry = convert_hh_log_to_event(decoded);
+        ONLOG::on_log(&mut self.on_log_state, &log_entry);
+
         // Convert it to a DS-style `emit log(string)` event
-        self.logs.push(convert_hh_log_to_event(decoded));
+        self.logs.push(log_entry);
 
         (InstructionResult::Continue, Bytes::new())
     }
 }
 
-impl<DB> Inspector<DB> for LogCollector
+impl<DB, ONLOG: OnLog> Inspector<DB> for EvmEventLogger<ONLOG>
 where
     DB: Database,
 {
     fn log(&mut self, _: &mut EVMData<'_, DB>, address: &B160, topics: &[B256], data: &Bytes) {
-        self.logs.push(Log {
+        let log_entry = Log {
             address: b160_to_h160(*address),
             topics: topics.iter().copied().map(b256_to_h256).collect(),
             data: data.clone().into(),
             ..Default::default()
-        });
+        };
+        ONLOG::on_log(&mut self.on_log_state, &log_entry);
+        self.logs.push(log_entry);
     }
 
     fn call(
@@ -82,7 +113,7 @@ const TOPIC: H256 = H256([
 /// Converts a call to Hardhat's `console.log` to a DSTest `log(string)` event.
 fn convert_hh_log_to_event(call: HardhatConsoleCalls) -> Log {
     // Convert the parameters of the call to their string representation using `ConsoleFmt`.
-    let fmt = call.fmt(Default::default());
+    let fmt = foundry_macros::ConsoleFmt::fmt(&call, Default::default());
     let token = Token::String(fmt);
     let data = ethers::abi::encode(&[token]).into();
     Log { topics: vec![TOPIC], data, ..Default::default() }

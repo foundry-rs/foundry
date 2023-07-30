@@ -1,7 +1,7 @@
 use crate::{
     coverage::HitMaps,
     decode::{self, decode_console_logs},
-    executor::{Executor, RawCallResult},
+    executor::{Executor, OnLog, RawCallResult},
     trace::CallTraceArena,
 };
 use error::{FuzzError, ASSUME_MAGIC_RETURN_CODE};
@@ -30,9 +30,9 @@ pub mod strategies;
 /// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contract with
 /// inputs, until it finds a counterexample. The provided [`TestRunner`] contains all the
 /// configuration which can be overridden via [environment variables](https://docs.rs/proptest/1.0.0/proptest/test_runner/struct.Config.html)
-pub struct FuzzedExecutor<'a> {
+pub struct FuzzedExecutor<'a, ONLOG: OnLog> {
     /// The VM
-    executor: &'a Executor,
+    executor: &'a Executor<ONLOG>,
     /// The fuzzer
     runner: TestRunner,
     /// The account that calls tests
@@ -41,10 +41,10 @@ pub struct FuzzedExecutor<'a> {
     config: FuzzConfig,
 }
 
-impl<'a> FuzzedExecutor<'a> {
+impl<'a, ONLOG: OnLog> FuzzedExecutor<'a, ONLOG> {
     /// Instantiates a fuzzed executor given a testrunner
     pub fn new(
-        executor: &'a Executor,
+        executor: &'a Executor<ONLOG>,
         runner: TestRunner,
         sender: Address,
         config: FuzzConfig,

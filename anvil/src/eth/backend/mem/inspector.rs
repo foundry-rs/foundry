@@ -6,8 +6,8 @@ use ethers::types::Log;
 use forge::revm::primitives::{B160, B256};
 use foundry_evm::{
     call_inspectors,
-    decode::decode_console_logs,
-    executor::inspector::{LogCollector, Tracer},
+    decode::{decode_console_log, decode_console_logs},
+    executor::inspector::{EvmEventLogger, OnLog, Tracer},
     revm,
     revm::{
         inspectors::GasInspector,
@@ -15,7 +15,7 @@ use foundry_evm::{
         EVMData,
     },
 };
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, fmt::Debug, rc::Rc};
 
 /// The [`revm::Inspector`] used when transacting in the evm
 #[derive(Debug, Clone, Default)]
@@ -23,10 +23,34 @@ pub struct Inspector {
     pub gas: Option<Rc<RefCell<GasInspector>>>,
     pub tracer: Option<Tracer>,
     /// collects all `console.sol` logs
-    pub logger: LogCollector,
+    pub logger: EvmEventLogger<InlineLogs>,
 }
 
+/*
+impl<ONLOG: OnLog> std::fmt::Debug for Inspector<ONLOG> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Inspector")
+            .field("gas", &self.gas)
+            .field("tracer", &self.tracer)
+            .field("logger", &self.logger)
+            .finish()
+    }
+}
+*/
+
 // === impl Inspector ===
+
+#[derive(Debug, Clone, Default)]
+pub struct InlineLogs;
+
+impl OnLog for InlineLogs {
+    type OnLogState = bool;
+    fn on_log(inline_logs_enabled: &mut Self::OnLogState, log_entry: &Log) {
+        if *inline_logs_enabled {
+            node_info!("{}", decode_console_log(log_entry).unwrap_or(format!("{:?}", log_entry)));
+        }
+    }
+}
 
 impl Inspector {
     /// Called after the inspecting the evm
@@ -39,6 +63,12 @@ impl Inspector {
     /// Configures the `Tracer` [`revm::Inspector`]
     pub fn with_tracing(mut self) -> Self {
         self.tracer = Some(Default::default());
+        self
+    }
+
+    /// Configures the `Tracer` [`revm::Inspector`]
+    pub fn with_inline_logs(mut self) -> Self {
+        self.logger.on_log_state = true;
         self
     }
 

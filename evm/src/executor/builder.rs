@@ -1,5 +1,5 @@
 use super::{
-    inspector::{Cheatcodes, Fuzzer, InspectorStackConfig},
+    inspector::{Cheatcodes, Fuzzer, InspectorStackConfig, OnLog},
     Executor,
 };
 use crate::{
@@ -105,7 +105,7 @@ impl ExecutorBuilder {
     }
 
     /// Builds the executor as configured.
-    pub fn build(self, db: Backend) -> Executor {
+    pub fn build<ONLOG: OnLog>(self, db: Backend) -> Executor<ONLOG> {
         let gas_limit = self.gas_limit.unwrap_or(self.env.block.gas_limit.into());
         Executor::new(db, self.env, self.inspector_config, gas_limit)
     }

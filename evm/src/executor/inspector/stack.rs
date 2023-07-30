@@ -1,4 +1,6 @@
-use super::{Cheatcodes, ChiselState, Debugger, Fuzzer, LogCollector, TracePrinter, Tracer};
+use super::{
+    Cheatcodes, ChiselState, Debugger, EvmEventLogger, Fuzzer, OnLog, TracePrinter, Tracer,
+};
 use crate::{
     coverage::HitMaps,
     debug::DebugArena,
@@ -49,10 +51,9 @@ pub struct InspectorData {
 ///
 /// If a call to an inspector returns a value other than [InstructionResult::Continue] (or
 /// equivalent) the remaining inspectors are not called.
-#[derive(Default)]
-pub struct InspectorStack {
+pub struct InspectorStack<ONLOG: OnLog> {
     pub tracer: Option<Tracer>,
-    pub logger: Option<LogCollector>,
+    pub logger: Option<EvmEventLogger<ONLOG>>,
     pub cheatcodes: Option<Cheatcodes>,
     pub gas: Option<Rc<RefCell<GasInspector>>>,
     pub debugger: Option<Debugger>,
@@ -62,7 +63,23 @@ pub struct InspectorStack {
     pub chisel_state: Option<ChiselState>,
 }
 
-impl InspectorStack {
+impl<ONLOG: OnLog> Default for InspectorStack<ONLOG> {
+    fn default() -> Self {
+        Self {
+            tracer: Option::<Tracer>::default(),
+            logger: Option::<EvmEventLogger<ONLOG>>::default(),
+            cheatcodes: Option::<Cheatcodes>::default(),
+            gas: Option::<Rc<RefCell<GasInspector>>>::default(),
+            debugger: Option::<Debugger>::default(),
+            fuzzer: Option::<Fuzzer>::default(),
+            coverage: Option::<CoverageCollector>::default(),
+            printer: Option::<TracePrinter>::default(),
+            chisel_state: Option::<ChiselState>::default(),
+        }
+    }
+}
+
+impl<ONLOG: OnLog> InspectorStack<ONLOG> {
     pub fn collect_inspector_states(self) -> InspectorData {
         InspectorData {
             logs: self.logger.map(|logs| logs.logs).unwrap_or_default(),
@@ -130,7 +147,7 @@ impl InspectorStack {
     }
 }
 
-impl<DB> Inspector<DB> for InspectorStack
+impl<DB, ONLOG: OnLog> Inspector<DB> for InspectorStack<ONLOG>
 where
     DB: DatabaseExt,
 {

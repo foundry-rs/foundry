@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{
     executor::{
-        inspector::Fuzzer, Executor, RawCallResult, StateChangeset, CHEATCODE_ADDRESS,
+        inspector::Fuzzer, Executor, OnLog, RawCallResult, StateChangeset, CHEATCODE_ADDRESS,
         HARDHAT_CONSOLE_ADDRESS,
     },
     fuzz::{
@@ -44,8 +44,8 @@ type InvariantPreparation =
 /// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contracts with
 /// inputs, until it finds a counterexample sequence. The provided [`TestRunner`] contains all the
 /// configuration which can be overridden via [environment variables](https://docs.rs/proptest/1.0.0/proptest/test_runner/struct.Config.html)
-pub struct InvariantExecutor<'a> {
-    pub executor: &'a mut Executor,
+pub struct InvariantExecutor<'a, ONLOG: OnLog> {
+    pub executor: &'a mut Executor<ONLOG>,
     /// Proptest runner.
     runner: TestRunner,
     /// The invariant configuration
@@ -59,10 +59,10 @@ pub struct InvariantExecutor<'a> {
     artifact_filters: ArtifactFilters,
 }
 
-impl<'a> InvariantExecutor<'a> {
+impl<'a, ONLOG: OnLog> InvariantExecutor<'a, ONLOG> {
     /// Instantiates a fuzzed executor EVM given a testrunner
     pub fn new(
-        executor: &'a mut Executor,
+        executor: &'a mut Executor<ONLOG>,
         runner: TestRunner,
         config: InvariantConfig,
         setup_contracts: &'a ContractsByAddress,
@@ -555,10 +555,10 @@ fn collect_data(
 /// Verifies that the invariant run execution can continue.
 /// Returns the mapping of (Invariant Function Name -> Call Result) if invariants were asserted.
 #[allow(clippy::too_many_arguments)]
-fn can_continue(
+fn can_continue<ONLOG: OnLog>(
     invariant_contract: &InvariantContract,
     call_result: RawCallResult,
-    executor: &Executor,
+    executor: &Executor<ONLOG>,
     calldata: &[BasicTxDetails],
     failures: &mut InvariantFailures,
     targeted_contracts: &FuzzRunIdentifiedContracts,

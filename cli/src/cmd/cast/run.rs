@@ -114,7 +114,7 @@ impl RunArgs {
             .with_config(env)
             .with_spec(evm_spec(&self.evm_version.unwrap_or(config.evm_version)));
 
-        let mut executor = builder.build(db);
+        let mut executor = builder.build::<()>(db);
 
         let mut env = executor.env().clone();
         env.block.number = rU256::from(tx_block_number);

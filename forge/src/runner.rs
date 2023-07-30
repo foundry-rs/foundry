@@ -14,7 +14,7 @@ use foundry_common::{
 use foundry_config::{FuzzConfig, InvariantConfig};
 use foundry_evm::{
     decode::decode_console_logs,
-    executor::{CallResult, EvmError, ExecutionErr, Executor},
+    executor::{CallResult, EvmError, ExecutionErr, Executor, OnLog},
     fuzz::{
         invariant::{
             InvariantContract, InvariantExecutor, InvariantFuzzError, InvariantFuzzTestResult,
@@ -28,15 +28,16 @@ use proptest::test_runner::{TestError, TestRunner};
 use rayon::prelude::*;
 use std::{
     collections::{BTreeMap, HashMap},
+    marker::Sync,
     time::Instant,
 };
 
 /// A type that executes all tests of a contract
-#[derive(Debug, Clone)]
-pub struct ContractRunner<'a> {
+#[derive(Debug)]
+pub struct ContractRunner<'a, ONLOG: OnLog> {
     pub name: &'a str,
     /// The executor used by the runner.
-    pub executor: Executor,
+    pub executor: Executor<ONLOG>,
     /// Library contracts to be deployed before the test contract
     pub predeploy_libs: &'a [Bytes],
     /// The deployed contract's code
@@ -52,11 +53,26 @@ pub struct ContractRunner<'a> {
     pub sender: Address,
 }
 
-impl<'a> ContractRunner<'a> {
+impl<'a, ONLOG: OnLog> Clone for ContractRunner<'a, ONLOG> {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name,
+            executor: self.executor.clone(),
+            predeploy_libs: self.predeploy_libs,
+            code: self.code.clone(),
+            contract: self.contract,
+            errors: self.errors,
+            initial_balance: self.initial_balance.clone(),
+            sender: self.sender.clone(),
+        }
+    }
+}
+
+impl<'a, ONLOG: OnLog> ContractRunner<'a, ONLOG> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: &'a str,
-        executor: Executor,
+        executor: Executor<ONLOG>,
         contract: &'a Abi,
         code: Bytes,
         initial_balance: U256,
@@ -77,7 +93,7 @@ impl<'a> ContractRunner<'a> {
     }
 }
 
-impl<'a> ContractRunner<'a> {
+impl<'a, ONLOG: OnLog + Sync> ContractRunner<'a, ONLOG> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn setup(&mut self, setup: bool) -> TestSetup {

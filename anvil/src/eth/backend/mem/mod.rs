@@ -167,6 +167,7 @@ pub struct Backend {
     /// keeps track of active snapshots at a specific block
     active_snapshots: Arc<Mutex<HashMap<U256, (u64, H256)>>>,
     enable_steps_tracing: bool,
+    inline_logs: bool,
     /// How to keep history state
     prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
@@ -183,6 +184,7 @@ impl Backend {
         fees: FeeManager,
         fork: Option<ClientFork>,
         enable_steps_tracing: bool,
+        inline_logs: bool,
         prune_state_history_config: PruneStateHistoryConfig,
         transaction_block_keeper: Option<usize>,
         automine_block_time: Option<Duration>,
@@ -226,6 +228,7 @@ impl Backend {
             genesis,
             active_snapshots: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
+            inline_logs,
             prune_state_history_config,
             transaction_block_keeper,
         };
@@ -699,6 +702,10 @@ impl Backend {
         let db = self.db.read().await;
         let mut inspector = Inspector::default();
 
+        if self.inline_logs {
+            inspector = inspector.with_inline_logs();
+        }
+
         let mut evm = revm::EVM::new();
         evm.env = env;
         evm.database(&*db);
@@ -760,6 +767,7 @@ impl Backend {
             parent_hash: storage.best_hash,
             gas_used: U256::zero(),
             enable_steps_tracing: self.enable_steps_tracing,
+            inline_logs: self.inline_logs,
         };
 
         // create a new pending block
@@ -819,6 +827,7 @@ impl Backend {
                     parent_hash: best_hash,
                     gas_used: U256::zero(),
                     enable_steps_tracing: self.enable_steps_tracing,
+                    inline_logs: self.inline_logs,
                 };
                 let executed_tx = executor.execute();
 
@@ -885,13 +894,13 @@ impl Backend {
                                         // assuming max 5 args
                                         Some(token) => {
                                             node_info!(
-                                                "    Error: reverted with custom error: {:?}",
+                                                "    Error: reverted with custom error (1): {:?}",
                                                 token
                                             );
                                         }
                                         None => {
                                             node_info!(
-                                                "    Error: reverted with custom error: {}",
+                                                "    Error: reverted with custom error (2): {}",
                                                 hex::encode(r)
                                             );
                                         }
@@ -1053,6 +1062,11 @@ impl Backend {
         D: DatabaseRef<Error = DatabaseError>,
     {
         let mut inspector = Inspector::default();
+
+        if self.inline_logs {
+            inspector = inspector.with_inline_logs();
+        }
+
         let mut evm = revm::EVM::new();
         evm.env = self.build_call_env(request, fee_details, block_env);
         evm.database(state);
@@ -1093,6 +1107,9 @@ impl Backend {
     ) -> Result<DefaultFrame, BlockchainError> {
         self.with_database_at(block_request, |state, block| {
             let mut inspector = Inspector::default().with_steps_tracing();
+            if self.inline_logs {
+                inspector = inspector.with_inline_logs();
+            }
             let block_number = block.number;
             let mut evm = revm::EVM::new();
             evm.env = self.build_call_env(request, fee_details, block);

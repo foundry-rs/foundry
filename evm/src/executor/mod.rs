@@ -1,3 +1,4 @@
+pub use self::inspector::OnLog;
 use self::inspector::{
     cheatcodes::util::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStackConfig,
 };
@@ -33,7 +34,7 @@ pub use revm::{
         B160, U256 as rU256,
     },
 };
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, marker::PhantomData};
 
 /// ABIs used internally in the executor
 pub mod abi;
@@ -75,8 +76,8 @@ pub const DEFAULT_CREATE2_DEPLOYER_CODE: &[u8] = &hex!("604580600e600039806000f3
 ///  - `committing`: any state changes made during the call are recorded and are persisting
 ///  - `raw`: state changes only exist for the duration of the call and are discarded afterwards, in
 ///    other words: the state of the underlying database remains unchanged.
-#[derive(Debug, Clone)]
-pub struct Executor {
+#[derive(Debug)]
+pub struct Executor<ONLOG: OnLog> {
     /// The underlying `revm::Database` that contains the EVM storage
     // Note: We do not store an EVM here, since we are really
     // only interested in the database. REVM's `EVM` is a thin
@@ -89,11 +90,25 @@ pub struct Executor {
     /// the passed in environment, as those limits are used by the EVM for certain opcodes like
     /// `gaslimit`.
     gas_limit: U256,
+    _marker: std::marker::PhantomData<ONLOG>,
 }
 
 // === impl Executor ===
 
-impl Executor {
+// the Clone derivation ends up producing errors elsewhere (expected Executor but got &Executor)
+impl<ONLOG: OnLog> Clone for Executor<ONLOG> {
+    fn clone(&self) -> Self {
+        Executor {
+            backend: self.backend.clone(),
+            env: self.env.clone(),
+            inspector_config: self.inspector_config.clone(),
+            gas_limit: self.gas_limit.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<ONLOG: OnLog> Executor<ONLOG> {
     pub fn new(
         mut backend: Backend,
         env: Env,
@@ -110,7 +125,7 @@ impl Executor {
             },
         );
 
-        Executor { backend, env, inspector_config, gas_limit }
+        Executor { backend, env, inspector_config, gas_limit, _marker: PhantomData }
     }
 
     /// Returns a reference to the Env
@@ -352,7 +367,7 @@ impl Executor {
         value: U256,
     ) -> eyre::Result<RawCallResult> {
         // execute the call
-        let mut inspector = self.inspector_config.stack();
+        let mut inspector = self.inspector_config.stack::<ONLOG>();
         // Build VM
         let mut env =
             self.build_test_env(from, TransactTo::Call(h160_to_b160(to)), calldata, value);
@@ -377,7 +392,7 @@ impl Executor {
     /// Execute the transaction configured in `env.tx`
     pub fn call_raw_with_env(&mut self, mut env: Env) -> eyre::Result<RawCallResult> {
         // execute the call
-        let mut inspector = self.inspector_config.stack();
+        let mut inspector = self.inspector_config.stack::<ONLOG>();
         let result = self.backend_mut().inspect_ref(&mut env, &mut inspector)?;
         convert_executed_result(env, inspector, result)
     }
@@ -562,8 +577,12 @@ impl Executor {
         // for the contract's `failed` variable and the `globalFailure` flag in the state of the
         // cheatcode address which are both read when call `"failed()(bool)"` in the next step
         backend.commit(state_changeset);
-        let executor =
-            Executor::new(backend, self.env.clone(), self.inspector_config.clone(), self.gas_limit);
+        let executor = Executor::<ONLOG>::new(
+            backend,
+            self.env.clone(),
+            self.inspector_config.clone(),
+            self.gas_limit,
+        );
 
         let mut success = !reverted;
         if success {
@@ -783,9 +802,9 @@ fn calc_stipend(calldata: &[u8], spec: SpecId) -> u64 {
 }
 
 /// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`
-fn convert_executed_result(
+fn convert_executed_result<ONLOG: OnLog>(
     env: Env,
-    inspector: InspectorStack,
+    inspector: InspectorStack<ONLOG>,
     result: ResultAndState,
 ) -> eyre::Result<RawCallResult> {
     let ResultAndState { result: exec_result, state: state_changeset } = result;

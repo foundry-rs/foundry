@@ -3,7 +3,7 @@ mod utils;
 
 mod logs;
 
-pub use logs::LogCollector;
+pub use logs::{EvmEventLogger, OnLog};
 use std::{cell::RefCell, rc::Rc};
 
 mod access_list;
@@ -73,9 +73,11 @@ impl InspectorStackConfig {
     /// Returns the stack of inspectors to use when transacting/committing on the EVM
     ///
     /// See also [`revm::Evm::inspect_ref`] and  [`revm::Evm::commit_ref`]
-    pub fn stack(&self) -> InspectorStack {
-        let mut stack =
-            InspectorStack { logger: Some(LogCollector::default()), ..Default::default() };
+    pub fn stack<ONLOG: OnLog>(&self) -> InspectorStack<ONLOG> {
+        let mut stack = InspectorStack {
+            logger: Some(EvmEventLogger::<ONLOG>::default()),
+            ..Default::default()
+        };
 
         stack.cheatcodes = self.create_cheatcodes();
         if let Some(ref mut cheatcodes) = stack.cheatcodes {

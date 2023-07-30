@@ -10,7 +10,7 @@ use foundry_common::{ContractsByArtifact, TestFunctionExt};
 use foundry_evm::{
     executor::{
         backend::Backend, fork::CreateFork, inspector::CheatsConfig, opts::EvmOpts, Executor,
-        ExecutorBuilder,
+        ExecutorBuilder, OnLog,
     },
     revm,
 };
@@ -146,7 +146,7 @@ impl MultiContractRunner {
                     .with_gas_limit(self.evm_opts.gas_limit())
                     .set_tracing(self.evm_opts.verbosity >= 3)
                     .set_coverage(self.coverage)
-                    .build(db.clone());
+                    .build::<()>(db.clone());
                 let identifier = id.identifier();
                 trace!(contract=%identifier, "start executing all tests in contract");
 
@@ -172,11 +172,11 @@ impl MultiContractRunner {
 
     #[instrument(skip_all, fields(name = %name))]
     #[allow(clippy::too_many_arguments)]
-    fn run_tests(
+    fn run_tests<ONLOG: OnLog + Sync>(
         &self,
         name: &str,
         contract: &Abi,
-        executor: Executor,
+        executor: Executor<ONLOG>,
         deploy_code: Bytes,
         libs: &[Bytes],
         filter: impl TestFilter,

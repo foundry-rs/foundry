@@ -11,7 +11,7 @@ use foundry_evm::{
     executor::{
         backend::Backend,
         opts::{Env, EvmOpts},
-        DatabaseRef, Executor, ExecutorBuilder,
+        DatabaseRef, Executor, ExecutorBuilder, OnLog,
     },
     fuzz::FuzzedExecutor,
     CALLER,
@@ -76,7 +76,9 @@ pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
     ..Default::default()
 });
 
-pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor) -> FuzzedExecutor {
+pub fn fuzz_executor<DB: DatabaseRef, ONLOG: OnLog>(
+    executor: &Executor<ONLOG>,
+) -> FuzzedExecutor<ONLOG> {
     let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
 
     FuzzedExecutor::new(
