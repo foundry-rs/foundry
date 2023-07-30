@@ -581,4 +581,24 @@ contract ExpectRevertWithAddressTest is DSTest {
         vm.expectRevert(CustomError.selector, address(middleWrapper));
         outerWrapper.revertWithCustomError();
     }
+
+    function testFailExpectRevertWithAddressCombinedWithExpectRevertIfCallDoesNotRevert(string memory data) external {
+        ReverterWrapper middleWrapper = new ReverterWrapper(reverter);
+        RevertCatcher outerWrapper = new RevertCatcher(middleWrapper);
+
+        vm.expectRevert(bytes(data), reverterAddress);
+        vm.expectRevert(bytes(data), address(middleWrapper));
+        vm.expectRevert(bytes(data));
+        outerWrapper.revertWithMessage(data);
+    }
+
+    function testExpectRevertWithAddressCombinedWithExpectRevert(string memory data) external {
+        ReverterWrapper middleWrapper = new ReverterWrapper(reverter);
+        ReverterWrapper outerWrapper = new ReverterWrapper(middleWrapper);
+
+        vm.expectRevert(bytes(data), reverterAddress);
+        vm.expectRevert(bytes(data), address(middleWrapper));
+        vm.expectRevert(bytes(data));
+        outerWrapper.revertWithMessage(data);
+    }
 }
