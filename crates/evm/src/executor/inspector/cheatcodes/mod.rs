@@ -138,6 +138,10 @@ pub struct Cheatcodes {
     /// root call return data from a revert to a simple return
     pub matched_all_expected_reverts_with_address: bool,
 
+    /// Tracks if an EVM execution result can be altered after matching all the expected reverts
+    /// associated to an address. It can only be false if a simple expect revert failed.
+    pub alter_revert_result: bool,
+
     /// Additional diagnostic for reverts
     pub fork_revert_diagnostic: Option<RevertDiagnostic>,
 
@@ -211,7 +215,7 @@ impl Cheatcodes {
     /// Creates a new `Cheatcodes` with the given settings.
     #[inline]
     pub fn new(config: Arc<CheatsConfig>) -> Self {
-        Self { config, fs_commit: true, ..Default::default() }
+        Self { config, fs_commit: true, alter_revert_result: true, ..Default::default() }
     }
 
     #[instrument(level = "error", name = "apply", target = "evm::cheatcodes", skip_all)]
@@ -260,12 +264,12 @@ impl Cheatcodes {
             .unwrap_or_default();
         let created_address = get_create_address(inputs, old_nonce);
 
-        if data.journaled_state.depth > 1
-            && !data.db.has_cheatcode_access(b160_to_h160(inputs.caller))
+        if data.journaled_state.depth > 1 &&
+            !data.db.has_cheatcode_access(b160_to_h160(inputs.caller))
         {
             // we only grant cheat code access for new contracts if the caller also has
             // cheatcode access and the new contract is created in top most call
-            return;
+            return
         }
 
         data.db.allow_cheatcode_access(created_address);
@@ -280,12 +284,12 @@ impl Cheatcodes {
 
         // Delay revert clean up until expected revert is handled, if set.
         if self.expected_revert.is_some() {
-            return;
+            return
         }
 
         // we only want to apply cleanup top level
         if data.journaled_state.depth() > 0 {
-            return;
+            return
         }
 
         // Roll back all previously applied deals
@@ -626,24 +630,24 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         mock_retdata.ret_type,
                         Gas::new(call.gas_limit),
                         mock_retdata.data.clone().0,
-                    );
+                    )
                 } else if let Some((_, mock_retdata)) = mocks.iter().find(|(mock, _)| {
-                    mock.calldata.len() <= call.input.len()
-                        && *mock.calldata == call.input[..mock.calldata.len()]
-                        && mock.value.map_or(true, |value| value == call.transfer.value.into())
+                    mock.calldata.len() <= call.input.len() &&
+                        *mock.calldata == call.input[..mock.calldata.len()] &&
+                        mock.value.map_or(true, |value| value == call.transfer.value.into())
                 }) {
                     return (
                         mock_retdata.ret_type,
                         Gas::new(call.gas_limit),
                         mock_retdata.data.0.clone(),
-                    );
+                    )
                 }
             }
 
             // Apply our prank
             if let Some(prank) = &self.prank {
-                if data.journaled_state.depth() >= prank.depth
-                    && call.context.caller == h160_to_b160(prank.prank_caller)
+                if data.journaled_state.depth() >= prank.depth &&
+                    call.context.caller == h160_to_b160(prank.prank_caller)
                 {
                     let mut prank_applied = false;
                     // At the target depth we set `msg.sender`
@@ -674,8 +678,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 //
                 // We do this because any subsequent contract calls *must* exist on chain and
                 // we only want to grab *this* call, not internal ones
-                if data.journaled_state.depth() == broadcast.depth
-                    && call.context.caller == h160_to_b160(broadcast.original_caller)
+                if data.journaled_state.depth() == broadcast.depth &&
+                    call.context.caller == h160_to_b160(broadcast.original_caller)
                 {
                     // At the target depth we set `msg.sender` & tx.origin.
                     // We are simulating the caller as being an EOA, so *both* must be set to the
@@ -697,7 +701,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                                 InstructionResult::Revert,
                                 Gas::new(call.gas_limit),
                                 err.encode_string().0,
-                            );
+                            )
                         }
 
                         let is_fixed_gas_limit = check_if_fixed_gas_limit(data, call.gas_limit);
@@ -755,10 +759,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         retdata: bytes::Bytes,
         _: bool,
     ) -> (InstructionResult, Gas, bytes::Bytes) {
-        if call.contract == h160_to_b160(CHEATCODE_ADDRESS)
-            || call.contract == h160_to_b160(HARDHAT_CONSOLE_ADDRESS)
+        if call.contract == h160_to_b160(CHEATCODE_ADDRESS) ||
+            call.contract == h160_to_b160(HARDHAT_CONSOLE_ADDRESS)
         {
-            return (status, remaining_gas, retdata);
+            return (status, remaining_gas, retdata)
         }
 
         if data.journaled_state.depth() == 0 && self.skip {
@@ -766,7 +770,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 InstructionResult::Revert,
                 remaining_gas,
                 Error::custom_bytes(MAGIC_SKIP_BYTES).encode_error().0,
-            );
+            )
         }
 
         // Clean up pranks
@@ -803,7 +807,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
             if data.journaled_state.depth() <= expected_revert.depth {
-                println!("DEPTH AT REVERT IS {}", data.journaled_state.depth());
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
 
                 return match handle_expect_revert(
@@ -814,13 +817,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 ) {
                     Err(error) => {
                         trace!(expected=?expected_revert, ?error, ?status, "Expected revert mismatch");
-                        // In case this was true we reset it to false to avoid altering the latest
-                        // return data considering that this expectation failed
-                        self.matched_all_expected_reverts_with_address = false;
+                        self.alter_revert_result = false;
                         (InstructionResult::Revert, remaining_gas, error.encode_error().0)
                     }
                     Ok((_, retdata)) => (InstructionResult::Return, remaining_gas, retdata.0),
-                };
+                }
             }
         }
 
@@ -849,7 +850,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     InstructionResult::Revert,
                     remaining_gas,
                     "Log != expected log".to_string().encode().into(),
-                );
+                )
             } else {
                 // All emits were found, we're good.
                 // Clear the queue, as we expect the user to declare more events for the next call
@@ -893,7 +894,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                                     InstructionResult::Revert,
                                     remaining_gas,
                                     failure_message.encode().into(),
-                                );
+                                )
                             }
                         }
                         // If the cheatcode was called without a `count` argument,
@@ -920,7 +921,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                                     InstructionResult::Revert,
                                     remaining_gas,
                                     failure_message.encode().into(),
-                                );
+                                )
                             }
                         }
                     }
@@ -941,7 +942,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     InstructionResult::Revert,
                     remaining_gas,
                     failure_message.to_string().encode().into(),
-                );
+                )
             }
 
             // Check if there are any expected reverts by address that haven't been matched
@@ -956,7 +957,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     build_expect_revert_with_address_failure_message(pending_expected_revert)
                         .encode()
                         .into(),
-                );
+                )
             }
         }
 
@@ -964,7 +965,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // return a better error here
         if status == InstructionResult::Revert {
             if let Some(err) = self.fork_revert_diagnostic.take() {
-                return (status, remaining_gas, err.to_error_msg(self).encode().into());
+                return (status, remaining_gas, err.to_error_msg(self).encode().into())
             }
         }
 
@@ -977,32 +978,26 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let TransactTo::Call(test_contract) = data.env.tx.transact_to {
             // if a call to a different contract than the original test contract returned with
             // `Stop` we check if the contract actually exists on the active fork
-            if data.db.is_forked_mode()
-                && status == InstructionResult::Stop
-                && call.contract != test_contract
+            if data.db.is_forked_mode() &&
+                status == InstructionResult::Stop &&
+                call.contract != test_contract
             {
                 self.fork_revert_diagnostic =
                     data.db.diagnose_revert(b160_to_h160(call.contract), &data.journaled_state);
             }
         }
 
-        println!(
-            "DEPTH IS {} AND REVERT MATCHES IS {}",
-            data.journaled_state.depth(),
-            self.matched_all_expected_reverts_with_address
-        );
-
-        // // TODO: improve this description
-        // TODO fix bug when combining expectation by address with normal expectation
-        // // We must verify that the current call is reverting and if we matched all the expcted
-        // // reverts with address because the whole call would be reverting but all checks would
-        // pass // so it would be incorrect to revert the call because the test would fail
-        // instead of pass.
-        if self.matched_all_expected_reverts_with_address
-            && data.journaled_state.depth() == 0
-            && status == InstructionResult::Revert
+        // We must verify that all the expected reverts have been matched and that we are at the
+        // root call to alter the execution result. This is needed to cover the scenario where the
+        // current call is reverting while all the revert expectations have been satisfied, which
+        // would cause the call to fail even if it shouldn't. This happens when using expect_revert
+        // with an address.
+        if self.matched_all_expected_reverts_with_address &&
+            self.alter_revert_result &&
+            data.journaled_state.depth() == 0 &&
+            status == InstructionResult::Revert
         {
-            return (InstructionResult::Return, remaining_gas, DUMMY_CALL_OUTPUT.to_vec().into());
+            return (InstructionResult::Return, remaining_gas, DUMMY_CALL_OUTPUT.to_vec().into())
         }
 
         (status, remaining_gas, retdata)
@@ -1018,8 +1013,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Apply our prank
         if let Some(prank) = &self.prank {
-            if data.journaled_state.depth() >= prank.depth
-                && call.caller == h160_to_b160(prank.prank_caller)
+            if data.journaled_state.depth() >= prank.depth &&
+                call.caller == h160_to_b160(prank.prank_caller)
             {
                 // At the target depth we set `msg.sender`
                 if data.journaled_state.depth() == prank.depth {
@@ -1035,8 +1030,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
-            if data.journaled_state.depth() >= broadcast.depth
-                && call.caller == h160_to_b160(broadcast.original_caller)
+            if data.journaled_state.depth() >= broadcast.depth &&
+                call.caller == h160_to_b160(broadcast.original_caller)
             {
                 if let Err(err) =
                     data.journaled_state.load_account(h160_to_b160(broadcast.new_origin), data.db)
@@ -1046,7 +1041,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         None,
                         Gas::new(call.gas_limit),
                         err.encode_string().0,
-                    );
+                    )
                 }
 
                 data.env.tx.caller = h160_to_b160(broadcast.new_origin);
@@ -1144,7 +1139,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     Err(err) => {
                         (InstructionResult::Revert, None, remaining_gas, err.encode_error().0)
                     }
-                };
+                }
             }
         }
 
