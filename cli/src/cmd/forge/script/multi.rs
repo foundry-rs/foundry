@@ -142,7 +142,7 @@ impl ScriptArgs {
                 .iter_mut()
                 .map(|sequence| async move {
                     let provider = Arc::new(get_http_provider(
-                        sequence.typed_transactions().first().unwrap().0.clone(),
+                        sequence.typed_transactions().first().unwrap().0.rpc.clone(),
                     ));
                     receipts::wait_for_pending(provider, sequence).await
                 })
@@ -165,7 +165,7 @@ impl ScriptArgs {
                 match self
                     .send_transactions(
                         sequence,
-                        &sequence.typed_transactions().first().unwrap().0.clone(),
+                        &sequence.typed_transactions().first().unwrap().0.rpc.clone(),
                         &script_wallets,
                     )
                     .await

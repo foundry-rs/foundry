@@ -451,6 +451,23 @@ forgetest_async!(can_deploy_script_with_lib, |prj: TestProject, cmd: TestCommand
         .await;
 });
 
+forgetest_async!(can_run_script_with_flashbots, |prj: TestProject, cmd: TestCommand| async move {
+    let node_config = NodeConfig::test()
+    .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
+    .silent();
+let (_api, handle) = spawn(node_config).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    tester
+        .load_private_keys(vec![1])
+        .await
+        .add_sig("BroadcastTestNoLinking", "deployFlashbots()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(vec![(0, 2)])
+        .await;
+});
+
 forgetest_async!(
     #[serial_test::serial]
     can_deploy_script_private_key,

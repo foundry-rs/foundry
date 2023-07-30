@@ -46,6 +46,8 @@ pub const MAGIC_SKIP_BYTES: &[u8] = b"FOUNDRY::SKIP";
 #[derive(Debug, Clone, Default)]
 pub struct BroadcastableTransaction {
     pub rpc: Option<RpcUrl>,
+    pub bundle_block: Option<U64>,
+    pub bundle_gas: Option<U256>,
     pub transaction: TypedTransaction,
 }
 

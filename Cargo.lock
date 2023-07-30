@@ -1880,6 +1880,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethers-flashbots"
+version = "0.13.1"
+source = "git+https://github.com/ape-dev-cs/ethers-flashbots.git#7888d7f1e80a261cbb1a7ec6745767834ab27be5"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "ethers",
+ "futures-core",
+ "futures-util",
+ "pin-project",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "url",
+]
+
+[[package]]
 name = "ethers-middleware"
 version = "2.0.8"
 source = "git+https://github.com/gakonst/ethers-rs#594627dc1c3b490ba8f513f8f5e23d11448cbcf8"
@@ -2307,6 +2325,7 @@ dependencies = [
  "dotenvy",
  "dunce",
  "ethers",
+ "ethers-flashbots",
  "eyre",
  "forge",
  "forge-doc",

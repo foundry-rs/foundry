@@ -4314,6 +4314,29 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("startBundle"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("startBundle"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Uint(64usize),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("startPrank"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -4354,6 +4377,18 @@ pub mod hevm {
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
                             name: ::std::borrow::ToOwned::to_owned("stopBroadcast"),
+                            inputs: ::std::vec![],
+                            outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
+                    ::std::borrow::ToOwned::to_owned("stopBundle"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("stopBundle"),
                             inputs: ::std::vec![],
                             outputs: ::std::vec![],
                             constant: ::core::option::Option::None,
@@ -6497,6 +6532,16 @@ pub mod hevm {
                 .method_hash([206, 129, 125, 71], p0)
                 .expect("method not found (this should never happen)")
         }
+        ///Calls the contract's `startBundle` (0x13580fe5) function
+        pub fn start_bundle(
+            &self,
+            p0: u64,
+            p1: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([19, 88, 15, 229], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
         ///Calls the contract's `startPrank` (0x06447d56) function
         pub fn start_prank_0(
             &self,
@@ -6522,6 +6567,12 @@ pub mod hevm {
         ) -> ::ethers_contract::builders::ContractCall<M, ()> {
             self.0
                 .method_hash([118, 234, 221, 54], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `stopBundle` (0x433ac3ce) function
+        pub fn stop_bundle(&self) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([67, 58, 195, 206], ())
                 .expect("method not found (this should never happen)")
         }
         ///Calls the contract's `stopPrank` (0x90c5013b) function
@@ -9160,6 +9211,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "startBroadcast", abi = "startBroadcast(uint256)")]
     pub struct StartBroadcast2Call(pub ::ethers_core::types::U256);
+    ///Container type for all input parameters for the `startBundle` function with signature `startBundle(uint64,uint256)` and selector `0x13580fe5`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "startBundle", abi = "startBundle(uint64,uint256)")]
+    pub struct StartBundleCall(pub u64, pub ::ethers_core::types::U256);
     ///Container type for all input parameters for the `startPrank` function with signature `startPrank(address)` and selector `0x06447d56`
     #[derive(
         Clone,
@@ -9202,6 +9266,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "stopBroadcast", abi = "stopBroadcast()")]
     pub struct StopBroadcastCall;
+    ///Container type for all input parameters for the `stopBundle` function with signature `stopBundle()` and selector `0x433ac3ce`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "stopBundle", abi = "stopBundle()")]
+    pub struct StopBundleCall;
     ///Container type for all input parameters for the `stopPrank` function with signature `stopPrank()` and selector `0x90c5013b`
     #[derive(
         Clone,
@@ -9604,9 +9681,11 @@ pub mod hevm {
         StartBroadcast0(StartBroadcast0Call),
         StartBroadcast1(StartBroadcast1Call),
         StartBroadcast2(StartBroadcast2Call),
+        StartBundle(StartBundleCall),
         StartPrank0(StartPrank0Call),
         StartPrank1(StartPrank1Call),
         StopBroadcast(StopBroadcastCall),
+        StopBundle(StopBundleCall),
         StopPrank(StopPrankCall),
         Store(StoreCall),
         ToString0(ToString0Call),
@@ -10355,6 +10434,10 @@ pub mod hevm {
                 return Ok(Self::StartBroadcast2(decoded));
             }
             if let Ok(decoded)
+                = <StartBundleCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::StartBundle(decoded));
+            }
+            if let Ok(decoded)
                 = <StartPrank0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::StartPrank0(decoded));
             }
@@ -10365,6 +10448,10 @@ pub mod hevm {
             if let Ok(decoded)
                 = <StopBroadcastCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::StopBroadcast(decoded));
+            }
+            if let Ok(decoded)
+                = <StopBundleCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::StopBundle(decoded));
             }
             if let Ok(decoded)
                 = <StopPrankCall as ::ethers_core::abi::AbiDecode>::decode(data) {
@@ -10845,6 +10932,9 @@ pub mod hevm {
                 Self::StartBroadcast2(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
+                Self::StartBundle(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
                 Self::StartPrank0(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
@@ -10852,6 +10942,9 @@ pub mod hevm {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
                 Self::StopBroadcast(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
+                Self::StopBundle(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
                 Self::StopPrank(element) => {
@@ -11092,9 +11185,11 @@ pub mod hevm {
                 Self::StartBroadcast0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::StartBroadcast1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::StartBroadcast2(element) => ::core::fmt::Display::fmt(element, f),
+                Self::StartBundle(element) => ::core::fmt::Display::fmt(element, f),
                 Self::StartPrank0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::StartPrank1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::StopBroadcast(element) => ::core::fmt::Display::fmt(element, f),
+                Self::StopBundle(element) => ::core::fmt::Display::fmt(element, f),
                 Self::StopPrank(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Store(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ToString0(element) => ::core::fmt::Display::fmt(element, f),
@@ -11970,6 +12065,11 @@ pub mod hevm {
             Self::StartBroadcast2(value)
         }
     }
+    impl ::core::convert::From<StartBundleCall> for HEVMCalls {
+        fn from(value: StartBundleCall) -> Self {
+            Self::StartBundle(value)
+        }
+    }
     impl ::core::convert::From<StartPrank0Call> for HEVMCalls {
         fn from(value: StartPrank0Call) -> Self {
             Self::StartPrank0(value)
@@ -11983,6 +12083,11 @@ pub mod hevm {
     impl ::core::convert::From<StopBroadcastCall> for HEVMCalls {
         fn from(value: StopBroadcastCall) -> Self {
             Self::StopBroadcast(value)
+        }
+    }
+    impl ::core::convert::From<StopBundleCall> for HEVMCalls {
+        fn from(value: StopBundleCall) -> Self {
+            Self::StopBundle(value)
         }
     }
     impl ::core::convert::From<StopPrankCall> for HEVMCalls {

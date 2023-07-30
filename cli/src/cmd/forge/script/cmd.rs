@@ -177,6 +177,8 @@ impl ScriptArgs {
             for tx in txs.iter() {
                 lib_deploy.push_back(BroadcastableTransaction {
                     rpc: tx.rpc.clone(),
+                    bundle_block: tx.bundle_block.clone(),
+                    bundle_gas: tx.bundle_gas.clone(),
                     transaction: TypedTransaction::Legacy(tx.transaction.clone().into()),
                 });
             }
@@ -338,6 +340,8 @@ impl ScriptArgs {
             for new_tx in new_txs.iter() {
                 txs.push_back(BroadcastableTransaction {
                     rpc: new_tx.rpc.clone(),
+                    bundle_block: new_tx.bundle_block.clone(),
+                    bundle_gas: new_tx.bundle_gas.clone(),
                     transaction: TypedTransaction::Legacy(new_tx.transaction.clone().into()),
                 });
             }

@@ -199,6 +199,19 @@ contract BroadcastTestNoLinking is DSTest {
         test.t(0);
     }
 
+    function deployFlashbots() public {
+        cheats.startBroadcast(ACCOUNT_B);
+        cheats.startBundle(uint64(block.number + 1), 500 gwei);
+        NoLink test = new NoLink();
+        cheats.stopBroadcast();
+
+        // this will
+        cheats.startBroadcast(ACCOUNT_B);
+        test.t(2);
+        cheats.stopBundle();
+        cheats.stopBroadcast();
+    }
+
     function deployMany() public {
         assert(vm.getNonce(msg.sender) == 0);
 

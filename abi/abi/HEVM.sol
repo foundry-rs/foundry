@@ -118,6 +118,9 @@ startBroadcast(address)
 startBroadcast(uint256)
 stopBroadcast()
 
+startBundle(uint64,uint256)
+stopBundle()
+
 projectRoot()(string)
 readFile(string)(string)
 readFileBinary(string)(bytes)

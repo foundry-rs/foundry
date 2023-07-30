@@ -145,6 +145,9 @@ impl ScriptArgs {
                     .expect("to have been built.")
                     .write();
 
+                let bundle_block = transaction.bundle_block;
+                let bundle_gas = transaction.clone().bundle_gas;
+
                 if let TypedTransaction::Legacy(mut tx) = transaction.transaction {
                     let result = runner
                         .simulate(
@@ -201,6 +204,8 @@ impl ScriptArgs {
                         decoder,
                         created_contracts,
                         is_fixed_gas_limit,
+                        bundle_block,
+                        bundle_gas
                     )?;
 
                     Ok((Some(tx), result.traces))

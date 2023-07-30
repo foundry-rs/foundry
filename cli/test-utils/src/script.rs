@@ -222,6 +222,8 @@ impl ScriptTester {
         if !output.contains(expected.as_str()) {
             panic!("OUTPUT: {output}\n\nEXPECTED: {}", expected.as_str());
         }
+        // println!("{output}");
+
         self
     }
 
