@@ -102,7 +102,7 @@ impl<ONLOG: OnLog> Clone for Executor<ONLOG> {
             backend: self.backend.clone(),
             env: self.env.clone(),
             inspector_config: self.inspector_config.clone(),
-            gas_limit: self.gas_limit.clone(),
+            gas_limit: self.gas_limit,
             _marker: PhantomData,
         }
     }
