@@ -238,6 +238,7 @@ interface Vm {
 
     function expectRevert(bytes4) external;
 
+    // Expect a revert at any depth of the call stack at the specified address
     function expectRevert(bytes calldata, address) external;
 
     function expectRevert(bytes4, address) external;
