@@ -22,7 +22,7 @@ use std::{
 ///
 /// 8912 bytes was arbitrarily chosen because it is long enough for return values up to 256 words in
 /// size.
-static DUMMY_CALL_OUTPUT: Lazy<Bytes> = Lazy::new(|| Bytes::from_static(&[0u8; 8192]));
+pub static DUMMY_CALL_OUTPUT: Lazy<Bytes> = Lazy::new(|| Bytes::from_static(&[0u8; 8192]));
 
 /// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
 static DUMMY_CREATE_ADDRESS: Address =
@@ -37,6 +37,32 @@ pub struct ExpectedRevert {
     pub reason: Option<Bytes>,
     /// The depth at which the revert is expected
     pub depth: u64,
+}
+
+// TODO remove address logic
+#[derive(Clone, Debug, Default)]
+pub struct ExpectRevertWithAddress {
+    /// The address from which the revert is expected to be thrown.
+    pub address: H160,
+
+    /// The expected data returned by the revert, None being any
+    pub reason: Option<Bytes>,
+
+    pub found: bool,
+}
+
+impl ExpectRevertWithAddress {
+    pub fn compare_revert(&self, other: H160, data: &Bytes) -> bool {
+        if self.address != other {
+            return false;
+        }
+
+        if let Some(ref expected_data) = self.reason {
+            return expected_data == &get_raw_error(data.clone());
+        }
+
+        true
+    }
 }
 
 fn expect_revert(
@@ -214,6 +240,34 @@ fn handle_expect_revert_with_data(
             stringify(&actual_revert),
             stringify(expected_revert),
         ))
+    }
+}
+
+pub fn handle_expect_reverts_with_address(
+    state: &mut Cheatcodes,
+    current_contract: H160,
+    revert_data: Bytes,
+) {
+    if state.expected_reverts_with_address.is_empty() {
+        return;
+    }
+
+    if let Some(mut first) = state.expected_reverts_with_address.pop_front() {
+        // If the first element hasn't been matched yet then we proceed to compare it
+        // against the current revert
+        if !first.found {
+            if first.compare_revert(current_contract, &revert_data) {
+                first.found = true;
+                state.expected_reverts_with_address.push_back(first);
+            } else {
+                state.expected_reverts_with_address.push_front(first);
+            }
+        }
+        // Else we clear the expected reverts becasue they have been all matched
+        else {
+            state.matched_all_expected_reverts_with_address = true;
+            state.expected_reverts_with_address.clear();
+        }
     }
 }
 
@@ -459,13 +513,27 @@ pub fn apply<DB: DatabaseExt>(
             expect_revert(state, Some(inner.0.into()), data.journaled_state.depth(), None)
         }
         HEVMCalls::ExpectRevert3(inner) => {
-            expect_revert(state, None, data.journaled_state.depth(), Some(inner.0))
+            state
+                .expected_reverts_with_address
+                .push_back(ExpectRevertWithAddress { address: inner.0, ..Default::default() });
+            Ok(Bytes::new())
         }
         HEVMCalls::ExpectRevert4(inner) => {
-            expect_revert(state, Some(inner.0.clone()), data.journaled_state.depth(), Some(inner.1))
+            state.expected_reverts_with_address.push_back(ExpectRevertWithAddress {
+                address: inner.1,
+                reason: Some(inner.0.clone()),
+                ..Default::default()
+            });
+            Ok(Bytes::new())
         }
         HEVMCalls::ExpectRevert5(inner) => {
-            expect_revert(state, Some(inner.0.into()), data.journaled_state.depth(), Some(inner.1))
+            state.expected_reverts_with_address.push_back(ExpectRevertWithAddress {
+                address: inner.1,
+                reason: Some(inner.0.into()),
+                ..Default::default()
+            });
+
+            Ok(Bytes::new())
         }
         HEVMCalls::ExpectEmit0(_) => {
             state.expected_emits.push_back(ExpectedEmit {
