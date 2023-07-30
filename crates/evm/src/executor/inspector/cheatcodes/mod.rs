@@ -1,8 +1,9 @@
 use self::{
     env::Broadcast,
     expect::{
-        handle_expect_emit, handle_expect_revert, handle_expected_reverts_with_address,
-        ExpectedCallType, ExpectedRevertWithAddress, DUMMY_CALL_OUTPUT,
+        build_expect_revert_with_address_failure_message, handle_expect_emit, handle_expect_revert,
+        handle_expected_reverts_with_address, ExpectedCallType, ExpectedRevertWithAddress,
+        DUMMY_CALL_OUTPUT,
     },
     mapping::MappingSlots,
     util::{check_if_fixed_gas_limit, process_create, BroadcastableTransactions, MAGIC_SKIP_BYTES},
@@ -802,6 +803,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
             if data.journaled_state.depth() <= expected_revert.depth {
+                println!("DEPTH AT REVERT IS {}", data.journaled_state.depth());
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
 
                 return match handle_expect_revert(
@@ -812,6 +814,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 ) {
                     Err(error) => {
                         trace!(expected=?expected_revert, ?error, ?status, "Expected revert mismatch");
+                        // In case this was true we reset it to false to avoid altering the latest
+                        // return data considering that this expectation failed
+                        self.matched_all_expected_reverts_with_address = false;
                         (InstructionResult::Revert, remaining_gas, error.encode_error().0)
                     }
                     Ok((_, retdata)) => (InstructionResult::Return, remaining_gas, retdata.0),
@@ -939,15 +944,18 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 );
             }
 
-            // Check if there are any expected reverts by address
+            // Check if there are any expected reverts by address that haven't been matched
             self.expected_reverts_with_address.retain(|expected_revert| !expected_revert.found);
 
-            if !self.expected_reverts_with_address.is_empty() {
-                let failure_message = "BWOAH THERE WERE SOME REVERTS THAT DID NOT MATCH";
+            // If `expected_reverts_with_address` is not empty then we did not match all the
+            // expected reverts with an address
+            if let Some(pending_expected_revert) = self.expected_reverts_with_address.pop_front() {
                 return (
                     InstructionResult::Revert,
                     remaining_gas,
-                    failure_message.to_string().encode().into(),
+                    build_expect_revert_with_address_failure_message(pending_expected_revert)
+                        .encode()
+                        .into(),
                 );
             }
         }
@@ -978,10 +986,18 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
-        // TODO: improve this description
-        // We must verify that the current call is reverting and if we matched all the expcted
-        // reverts with address because the whole call would be reverting but all checks would pass
-        // so it would be incorrect to revert the call because the test would fail instead of pass.
+        println!(
+            "DEPTH IS {} AND REVERT MATCHES IS {}",
+            data.journaled_state.depth(),
+            self.matched_all_expected_reverts_with_address
+        );
+
+        // // TODO: improve this description
+        // TODO fix bug when combining expectation by address with normal expectation
+        // // We must verify that the current call is reverting and if we matched all the expcted
+        // // reverts with address because the whole call would be reverting but all checks would
+        // pass // so it would be incorrect to revert the call because the test would fail
+        // instead of pass.
         if self.matched_all_expected_reverts_with_address
             && data.journaled_state.depth() == 0
             && status == InstructionResult::Revert
