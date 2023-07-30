@@ -30,52 +30,44 @@ static DUMMY_CREATE_ADDRESS: Address =
 
 #[derive(Clone, Debug, Default)]
 pub struct ExpectedRevert {
-    /// The address from which the revert is expected to be thrown, None being any address
-    /// is valid.
-    pub address: Option<H160>,
     /// The expected data returned by the revert, None being any
     pub reason: Option<Bytes>,
     /// The depth at which the revert is expected
     pub depth: u64,
 }
 
-// TODO remove address logic
 #[derive(Clone, Debug, Default)]
-pub struct ExpectRevertWithAddress {
-    /// The address from which the revert is expected to be thrown.
+pub struct ExpectedRevertWithAddress {
+    /// The address from which the revert is expected to be thrown
     pub address: H160,
 
     /// The expected data returned by the revert, None being any
     pub reason: Option<Bytes>,
 
+    /// Tracks if the revert has been matched during EVM execution
     pub found: bool,
 }
 
-impl ExpectRevertWithAddress {
-    pub fn compare_revert(&self, other: H160, data: &Bytes) -> bool {
+impl ExpectedRevertWithAddress {
+    pub fn compare_revert(&self, other: H160, data: Bytes) -> bool {
         if self.address != other {
             return false;
         }
 
         if let Some(ref expected_data) = self.reason {
-            return expected_data == &get_raw_error(data.clone());
+            return expected_data == &get_raw_error(data);
         }
 
         true
     }
 }
 
-fn expect_revert(
-    state: &mut Cheatcodes,
-    reason: Option<Bytes>,
-    depth: u64,
-    address: Option<H160>,
-) -> Result {
+fn expect_revert(state: &mut Cheatcodes, reason: Option<Bytes>, depth: u64) -> Result {
     ensure!(
         state.expected_revert.is_none(),
         "You must call another function prior to expecting a second revert."
     );
-    state.expected_revert = Some(ExpectedRevert { reason, depth, address });
+    state.expected_revert = Some(ExpectedRevert { reason, depth });
     Ok(Bytes::new())
 }
 
@@ -145,21 +137,32 @@ fn get_raw_error(data: Bytes) -> Bytes {
 pub fn handle_expect_revert(
     is_create: bool,
     expected_revert: Option<&Bytes>,
-    expected_revert_address: Option<H160>,
     status: InstructionResult,
-    reverts_by_address: BTreeMap<H160, HashSet<Bytes>>,
     retdata: Bytes,
 ) -> Result<(Option<Address>, Bytes)> {
     trace!("handle expect revert");
 
-    match expected_revert_address {
-        Some(expected_revert_address) => handle_expect_revert_with_address(
-            is_create,
-            expected_revert,
-            expected_revert_address,
-            reverts_by_address,
-        ),
-        None => handle_expect_revert_with_data(is_create, expected_revert, status, retdata),
+    ensure!(!matches!(status, return_ok!()), "Call did not revert as expected");
+
+    // If None, accept any revert
+    let expected_revert = match expected_revert {
+        Some(x) => x,
+        None => return success_return!(is_create),
+    };
+
+    if !expected_revert.is_empty() && retdata.is_empty() {
+        bail!("Call reverted as expected, but without data");
+    }
+
+    let actual_revert = get_raw_error(retdata);
+    if actual_revert == *expected_revert {
+        success_return!(is_create)
+    } else {
+        Err(fmt_err!(
+            "Error != expected error: {} != {}",
+            stringify(&actual_revert),
+            stringify(expected_revert),
+        ))
     }
 }
 
@@ -212,58 +215,35 @@ fn handle_expect_revert_with_address(
     }
 }
 
-/// Verifies that the current call is reverting and that it reverted with `expected_revert`
-fn handle_expect_revert_with_data(
-    is_create: bool,
-    expected_revert: Option<&Bytes>,
-    status: InstructionResult,
-    retdata: Bytes,
-) -> Result<(Option<Address>, Bytes)> {
-    ensure!(!matches!(status, return_ok!()), "Call did not revert as expected");
-
-    // If None, accept any revert
-    let expected_revert = match expected_revert {
-        Some(x) => x,
-        None => return success_return!(is_create),
-    };
-
-    if !expected_revert.is_empty() && retdata.is_empty() {
-        bail!("Call reverted as expected, but without data");
-    }
-
-    let actual_revert = get_raw_error(retdata);
-    if actual_revert == *expected_revert {
-        success_return!(is_create)
-    } else {
-        Err(fmt_err!(
-            "Error != expected error: {} != {}",
-            stringify(&actual_revert),
-            stringify(expected_revert),
-        ))
-    }
-}
-
-pub fn handle_expect_reverts_with_address(
+pub fn handle_expected_reverts_with_address(
     state: &mut Cheatcodes,
     current_contract: H160,
-    revert_data: Bytes,
+    current_revert_data: Bytes,
 ) {
+    // If this is empty we don't need to match any revert
     if state.expected_reverts_with_address.is_empty() {
         return;
     }
 
+    // Take the first expected revert and...
     if let Some(mut first) = state.expected_reverts_with_address.pop_front() {
-        // If the first element hasn't been matched yet then we proceed to compare it
-        // against the current revert
+        // ... verify if it has been alredy matched.
         if !first.found {
-            if first.compare_revert(current_contract, &revert_data) {
+            // if it matches with the current revert mark found as true and push the current
+            // expected revert to the end of the queue to match any other pending expected
+            // revert.
+            if first.compare_revert(current_contract, current_revert_data) {
                 first.found = true;
                 state.expected_reverts_with_address.push_back(first);
-            } else {
+            }
+            // If the current expected revert does not match we push it to the front of the queue to
+            // try to match it again with the next revert.
+            else {
                 state.expected_reverts_with_address.push_front(first);
             }
         }
-        // Else we clear the expected reverts becasue they have been all matched
+        // If the first expected revert has already been matched it means that all the expected
+        // reverts of the queue have been matched and we can safely clear the queque.
         else {
             state.matched_all_expected_reverts_with_address = true;
             state.expected_reverts_with_address.clear();
@@ -503,23 +483,21 @@ pub fn apply<DB: DatabaseExt>(
     call: &HEVMCalls,
 ) -> Option<Result> {
     let result = match call {
-        HEVMCalls::ExpectRevert0(_) => {
-            expect_revert(state, None, data.journaled_state.depth(), None)
-        }
+        HEVMCalls::ExpectRevert0(_) => expect_revert(state, None, data.journaled_state.depth()),
         HEVMCalls::ExpectRevert1(inner) => {
-            expect_revert(state, Some(inner.0.clone()), data.journaled_state.depth(), None)
+            expect_revert(state, Some(inner.0.clone()), data.journaled_state.depth())
         }
         HEVMCalls::ExpectRevert2(inner) => {
-            expect_revert(state, Some(inner.0.into()), data.journaled_state.depth(), None)
+            expect_revert(state, Some(inner.0.into()), data.journaled_state.depth())
         }
         HEVMCalls::ExpectRevert3(inner) => {
             state
                 .expected_reverts_with_address
-                .push_back(ExpectRevertWithAddress { address: inner.0, ..Default::default() });
+                .push_back(ExpectedRevertWithAddress { address: inner.0, ..Default::default() });
             Ok(Bytes::new())
         }
         HEVMCalls::ExpectRevert4(inner) => {
-            state.expected_reverts_with_address.push_back(ExpectRevertWithAddress {
+            state.expected_reverts_with_address.push_back(ExpectedRevertWithAddress {
                 address: inner.1,
                 reason: Some(inner.0.clone()),
                 ..Default::default()
@@ -527,7 +505,7 @@ pub fn apply<DB: DatabaseExt>(
             Ok(Bytes::new())
         }
         HEVMCalls::ExpectRevert5(inner) => {
-            state.expected_reverts_with_address.push_back(ExpectRevertWithAddress {
+            state.expected_reverts_with_address.push_back(ExpectedRevertWithAddress {
                 address: inner.1,
                 reason: Some(inner.0.into()),
                 ..Default::default()

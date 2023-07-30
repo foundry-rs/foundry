@@ -1,8 +1,8 @@
 use self::{
     env::Broadcast,
     expect::{
-        handle_expect_emit, handle_expect_revert, handle_expect_reverts_with_address,
-        ExpectRevertWithAddress, ExpectedCallType, DUMMY_CALL_OUTPUT,
+        handle_expect_emit, handle_expect_revert, handle_expected_reverts_with_address,
+        ExpectedCallType, ExpectedRevertWithAddress, DUMMY_CALL_OUTPUT,
     },
     mapping::MappingSlots,
     util::{check_if_fixed_gas_limit, process_create, BroadcastableTransactions, MAGIC_SKIP_BYTES},
@@ -20,7 +20,7 @@ use ethers::{
     signers::LocalWallet,
     types::{
         transaction::eip2718::TypedTransaction, Address, Bytes, NameOrAddress, TransactionRequest,
-        H160, U256,
+        U256,
     },
 };
 use foundry_common::evm::Breakpoints;
@@ -33,7 +33,7 @@ use revm::{
 };
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     fs::File,
     io::BufReader,
     ops::Range,
@@ -130,13 +130,8 @@ pub struct Cheatcodes {
     /// Expected revert information
     pub expected_revert: Option<ExpectedRevert>,
 
-    /// Keeps track of the reverts thrown by an address during EVM execution if there is an
-    /// expected revert. It is used by [handle_expect_revert] to check if
-    /// `expected_reverted_address` reverted as specified by `expected_revert`.
-    pub revert_per_address: BTreeMap<H160, HashSet<Bytes>>,
-
     /// Stores the expected reverts associated to an address
-    pub expected_reverts_with_address: VecDeque<ExpectRevertWithAddress>,
+    pub expected_reverts_with_address: VecDeque<ExpectedRevertWithAddress>,
 
     /// Tracks if all the expected reverts associated to an address have been matched to alter the
     /// root call return data from a revert to a simple return
@@ -797,7 +792,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // If we are reverting check if the current revert matches any of the expected reverts
         // associated to an address if any has been set.
         if status == InstructionResult::Revert {
-            handle_expect_reverts_with_address(
+            handle_expected_reverts_with_address(
                 self,
                 b160_to_h160(call.contract),
                 retdata.clone().into(),
@@ -808,14 +803,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(expected_revert) = &self.expected_revert {
             if data.journaled_state.depth() <= expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                let reverts_by_address = std::mem::take(&mut self.revert_per_address);
 
                 return match handle_expect_revert(
                     false,
                     expected_revert.reason.as_ref(),
-                    expected_revert.address,
                     status,
-                    reverts_by_address,
                     retdata.into(),
                 ) {
                     Err(error) => {
@@ -1120,14 +1112,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(expected_revert) = &self.expected_revert {
             if data.journaled_state.depth() <= expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                let reverts_by_address = std::mem::take(&mut self.revert_per_address);
 
                 return match handle_expect_revert(
                     true,
                     expected_revert.reason.as_ref(),
-                    expected_revert.address,
                     status,
-                    reverts_by_address,
                     retdata.into(),
                 ) {
                     Ok((address, retdata)) => (
@@ -1147,7 +1136,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // associated to an address if any has been set.
         if status == InstructionResult::Revert {
             if let Some(address) = address {
-                handle_expect_reverts_with_address(
+                handle_expected_reverts_with_address(
                     self,
                     b160_to_h160(address),
                     retdata.clone().into(),
