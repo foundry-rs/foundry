@@ -62,8 +62,8 @@ impl<'a, ONLOG: OnLog> Clone for ContractRunner<'a, ONLOG> {
             code: self.code.clone(),
             contract: self.contract,
             errors: self.errors,
-            initial_balance: self.initial_balance.clone(),
-            sender: self.sender.clone(),
+            initial_balance: self.initial_balance,
+            sender: self.sender,
         }
     }
 }
