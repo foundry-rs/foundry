@@ -89,6 +89,21 @@ contract ConstructorReverter {
     }
 }
 
+contract Emitter {
+    IReverter inner;
+
+    event CustomEvent();
+
+    constructor(IReverter _inner) {
+        inner = _inner;
+    }
+
+    function revertWithNoDataAndEmit() external {
+        emit CustomEvent();
+        inner.revertWithoutReason();
+    }
+}
+
 /// Used to ensure that the dummy data from `vm.expectRevert`
 /// is large enough to decode big structs.
 ///
@@ -251,6 +266,8 @@ contract ExpectRevertWithAddressTest is DSTest {
     address nestedReverterAddress;
 
     error CustomError();
+
+    event CustomEvent();
 
     function setUp() public {
         reverter = new Reverter();
@@ -600,5 +617,17 @@ contract ExpectRevertWithAddressTest is DSTest {
         vm.expectRevert(bytes(data), address(middleWrapper));
         vm.expectRevert(bytes(data));
         outerWrapper.revertWithMessage(data);
+    }
+
+    function testExpectEmitCombinedWithExpectRevertWithAddress() external {
+        ReverterWrapper middleWrapper = new ReverterWrapper(reverter);
+        Emitter emitter = new Emitter(middleWrapper);
+
+        vm.expectEmit();
+        emit CustomEvent();
+
+        vm.expectRevert(reverterAddress);
+        vm.expectRevert(address(middleWrapper));
+        emitter.revertWithNoDataAndEmit();
     }
 }

@@ -155,30 +155,33 @@ pub fn handle_expect_revert(
 pub fn build_expect_revert_with_address_failure_message(
     expected_revert: ExpectedRevertWithAddress,
 ) -> String {
-    if let Some(captured_revert_data) = expected_revert.captured_revert_data {
-        if captured_revert_data.is_empty() {
-            format!(
-                "The expected revert address {:#?} reverted as expected, but without data",
-                expected_revert.address
-            )
-        } else if let Some(expected_revert_reason) = expected_revert.reason {
-            format!(
+    match expected_revert.captured_revert_data {
+        Some(captured_revert_data) => {
+            if captured_revert_data.is_empty() {
+                format!(
+                    "The expected revert address {:#?} reverted as expected, but without data",
+                    expected_revert.address
+                )
+            } else if let Some(expected_revert_reason) = expected_revert.reason {
+                format!(
                 "The expected revert address {:#?} did not revert with the expected revert data. Expected: {} but found: {}",
                 expected_revert.address,
                 stringify(&expected_revert_reason),
                 stringify(&captured_revert_data),
             )
-        }
-        // Technically this scenario shouldn't happen because if the expected revert data is None
-        // and the address of the revert matches then the test should pass.
-        else {
-            format!(
+            }
+            // Technically this scenario shouldn't happen because if the expected revert data is
+            // None and the address of the revert matches then the test should pass.
+            else {
+                format!(
                 "The expected revert address {:#?} did not revert with the expected revert data.",
                 expected_revert.address
             )
+            }
         }
-    } else {
-        format!("The expected revert address {:#?} did not revert", expected_revert.address,)
+        None => {
+            format!("The expected revert address {:#?} did not revert", expected_revert.address,)
+        }
     }
 }
 
