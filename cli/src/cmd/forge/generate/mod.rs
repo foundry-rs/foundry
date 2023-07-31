@@ -1,8 +1,7 @@
 //! generate command
 
 use clap::{Parser, Subcommand};
-use std::fs;
-use std::path::Path;
+use std::{fs, path::Path};
 
 /// CLI arguments for `forge generate`.
 #[derive(Debug, Parser)]
