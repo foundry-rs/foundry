@@ -57,12 +57,7 @@ pub fn get_mapping_length(state: &Cheatcodes, address: Address, slot: U256) -> B
     abi::encode(&[Token::Uint(result.into())]).into()
 }
 
-pub fn get_mapping_slot_at(
-    state: &Cheatcodes,
-    address: Address,
-    slot: U256,
-    index: U256,
-) -> Bytes {
+pub fn get_mapping_slot_at(state: &Cheatcodes, address: Address, slot: U256, index: U256) -> Bytes {
     let result = match state.mapping_slots.as_ref().and_then(|dict| dict.get(&address)) {
         Some(mapping_slots) => mapping_slots
             .children
