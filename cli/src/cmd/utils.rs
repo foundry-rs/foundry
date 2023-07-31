@@ -316,7 +316,7 @@ pub struct TraceResult {
     pub gas_used: u64,
 }
 
-/// labels the traces, conditonally prints them or opens the debugger
+/// labels the traces, conditionally prints them or opens the debugger
 pub async fn handle_traces(
     mut result: TraceResult,
     config: &Config,
