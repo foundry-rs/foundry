@@ -242,7 +242,6 @@ impl MultiContractRunnerBuilder {
             .iter()
             .map(|(i, _)| (i.identifier(), root.as_ref().join(&i.source).to_string_lossy().into()))
             .collect::<BTreeMap<String, String>>();
-
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
@@ -307,6 +306,7 @@ impl MultiContractRunnerBuilder {
                     .and_then(|bytes| known_contracts.insert(id.clone(), (abi, bytes.to_vec())));
                 Ok(())
             },
+            root,
         )?;
 
         let execution_info = known_contracts.flatten();

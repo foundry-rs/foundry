@@ -2122,6 +2122,35 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("keyExists"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("keyExists"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Bool,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("label"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -5700,6 +5729,16 @@ pub mod hevm {
                 .method_hash([217, 45, 142, 253], p0)
                 .expect("method not found (this should never happen)")
         }
+        ///Calls the contract's `keyExists` (0x528a683c) function
+        pub fn key_exists(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, bool> {
+            self.0
+                .method_hash([82, 138, 104, 60], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
         ///Calls the contract's `label` (0xc657c718) function
         pub fn label(
             &self,
@@ -8035,6 +8074,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "isPersistent", abi = "isPersistent(address)")]
     pub struct IsPersistentCall(pub ::ethers_core::types::Address);
+    ///Container type for all input parameters for the `keyExists` function with signature `keyExists(string,string)` and selector `0x528a683c`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "keyExists", abi = "keyExists(string,string)")]
+    pub struct KeyExistsCall(pub ::std::string::String, pub ::std::string::String);
     ///Container type for all input parameters for the `label` function with signature `label(address,string)` and selector `0xc657c718`
     #[derive(
         Clone,
@@ -9701,6 +9753,7 @@ pub mod hevm {
         GetNonce(GetNonceCall),
         GetRecordedLogs(GetRecordedLogsCall),
         IsPersistent(IsPersistentCall),
+        KeyExists(KeyExistsCall),
         Label(LabelCall),
         Load(LoadCall),
         MakePersistent0(MakePersistent0Call),
@@ -10170,6 +10223,10 @@ pub mod hevm {
             if let Ok(decoded)
                 = <IsPersistentCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::IsPersistent(decoded));
+            }
+            if let Ok(decoded)
+                = <KeyExistsCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::KeyExists(decoded));
             }
             if let Ok(decoded)
                 = <LabelCall as ::ethers_core::abi::AbiDecode>::decode(data) {
@@ -10840,6 +10897,9 @@ pub mod hevm {
                 Self::IsPersistent(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
+                Self::KeyExists(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
                 Self::Label(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::Load(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::MakePersistent0(element) => {
@@ -11217,6 +11277,7 @@ pub mod hevm {
                 Self::GetNonce(element) => ::core::fmt::Display::fmt(element, f),
                 Self::GetRecordedLogs(element) => ::core::fmt::Display::fmt(element, f),
                 Self::IsPersistent(element) => ::core::fmt::Display::fmt(element, f),
+                Self::KeyExists(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Label(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Load(element) => ::core::fmt::Display::fmt(element, f),
                 Self::MakePersistent0(element) => ::core::fmt::Display::fmt(element, f),
@@ -11769,6 +11830,11 @@ pub mod hevm {
     impl ::core::convert::From<IsPersistentCall> for HEVMCalls {
         fn from(value: IsPersistentCall) -> Self {
             Self::IsPersistent(value)
+        }
+    }
+    impl ::core::convert::From<KeyExistsCall> for HEVMCalls {
+        fn from(value: KeyExistsCall) -> Self {
+            Self::KeyExists(value)
         }
     }
     impl ::core::convert::From<LabelCall> for HEVMCalls {
@@ -12888,6 +12954,18 @@ pub mod hevm {
         Hash
     )]
     pub struct IsPersistentReturn(pub bool);
+    ///Container type for all return fields from the `keyExists` function with signature `keyExists(string,string)` and selector `0x528a683c`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct KeyExistsReturn(pub bool);
     ///Container type for all return fields from the `load` function with signature `load(address,bytes32)` and selector `0x667f9d70`
     #[derive(
         Clone,

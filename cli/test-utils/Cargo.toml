@@ -14,7 +14,6 @@ ethers = { workspace = true }
 ethers-solc = { workspace = true, features = ["project-util"] }
 
 eyre = "0.6"
-is-terminal = "0.4"
 once_cell = "1"
 parking_lot = "0.12"
 pretty_assertions = "1"

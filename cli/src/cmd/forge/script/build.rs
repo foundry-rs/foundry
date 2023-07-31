@@ -171,6 +171,7 @@ impl ScriptArgs {
                 highlevel_known_contracts.insert(id, tc.unwrap());
                 Ok(())
             },
+            project.root(),
         )?;
 
         let target = extra_info
@@ -292,7 +293,7 @@ pub fn filter_sources_and_artifacts(
         .filter_map(|(id, path)| {
             let mut resolved = project
                 .paths
-                .resolve_library_import(&PathBuf::from(&path))
+                .resolve_library_import(project.root(), &PathBuf::from(&path))
                 .unwrap_or_else(|| PathBuf::from(&path));
 
             if !resolved.is_absolute() {

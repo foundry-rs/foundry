@@ -5,7 +5,7 @@ import "ds-test/test.sol";
 import "./Vm.sol";
 import "../logs/console.sol";
 
-contract ParseJson is DSTest {
+contract ParseJsonTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     string json;
 
@@ -150,7 +150,7 @@ contract ParseJson is DSTest {
     }
 }
 
-contract WriteJson is DSTest {
+contract WriteJsonTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     string json1;
@@ -236,6 +236,29 @@ contract WriteJson is DSTest {
         string memory json = vm.readFile(path);
         bytes memory data = vm.parseJson(json);
         notSimpleJson memory decodedData = abi.decode(data, (notSimpleJson));
+    }
+
+    function test_retrieveEntireJson() public {
+        string memory path = "../testdata/fixtures/Json/write_complex_test.json";
+        string memory json = vm.readFile(path);
+        bytes memory data = vm.parseJson(json, ".");
+        notSimpleJson memory decodedData = abi.decode(data, (notSimpleJson));
+        console.log(decodedData.a);
+        assertEq(decodedData.a, 123);
+    }
+
+    function test_checkKeyExists() public {
+        string memory path = "../testdata/fixtures/Json/write_complex_test.json";
+        string memory json = vm.readFile(path);
+        bool exists = vm.keyExists(json, "a");
+        assertTrue(exists);
+    }
+
+    function test_checkKeyDoesNotExist() public {
+        string memory path = "../testdata/fixtures/Json/write_complex_test.json";
+        string memory json = vm.readFile(path);
+        bool exists = vm.keyExists(json, "d");
+        assertTrue(!exists);
     }
 
     function test_writeJson() public {
