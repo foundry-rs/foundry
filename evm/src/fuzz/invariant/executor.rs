@@ -41,6 +41,28 @@ use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 type InvariantPreparation =
     (EvmFuzzState, FuzzRunIdentifiedContracts, BoxedStrategy<Vec<BasicTxDetails>>);
 
+/// Enriched results of an invariant run check.
+///
+/// Contains the call results, logs and traces of the last run along with the overall success
+/// condition.
+struct RichInvariantResults {
+    success: bool,
+    call_results: Option<BTreeMap<String, RawCallResult>>,
+    logs: Vec<Log>,
+    traces: Option<CallTraceArena>,
+}
+
+impl RichInvariantResults {
+    fn new(
+        success: bool,
+        call_results: Option<BTreeMap<String, RawCallResult>>,
+        logs: Vec<Log>,
+        traces: Option<CallTraceArena>,
+    ) -> Self {
+        Self { success, call_results, logs, traces }
+    }
+}
+
 /// Wrapper around any [`Executor`] implementor which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
 ///
 /// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contracts with
@@ -184,18 +206,22 @@ impl<'a> InvariantExecutor<'a> {
                         stipend: call_result.stipend,
                     });
 
-                    let (can_continue, call_results, call_result_logs, call_result_traces) =
-                        can_continue(
-                            &invariant_contract,
-                            call_result,
-                            &executor,
-                            &inputs,
-                            &mut failures.borrow_mut(),
-                            &targeted_contracts,
-                            state_changeset,
-                            self.config.fail_on_revert,
-                            self.config.shrink_sequence,
-                        );
+                    let RichInvariantResults {
+                        success: can_continue,
+                        call_results,
+                        logs: call_result_logs,
+                        traces: call_result_traces,
+                    } = can_continue(
+                        &invariant_contract,
+                        call_result,
+                        &executor,
+                        &inputs,
+                        &mut failures.borrow_mut(),
+                        &targeted_contracts,
+                        state_changeset,
+                        self.config.fail_on_revert,
+                        self.config.shrink_sequence,
+                    );
 
                     if !can_continue || current_run == self.config.depth - 1 {
                         *last_run_logs.borrow_mut() = call_result_logs;
@@ -564,9 +590,6 @@ fn collect_data(
     }
 }
 
-type RichInvariantResults =
-    (bool, Option<BTreeMap<String, RawCallResult>>, Vec<Log>, Option<CallTraceArena>);
-
 /// Verifies that the invariant run execution can continue.
 /// Returns the mapping of (Invariant Function Name -> Call Result, Logs, Traces) if invariants were
 /// asserted.
@@ -594,7 +617,7 @@ fn can_continue(
     if !call_result.reverted && !handlers_failed {
         call_results = assert_invariants(invariant_contract, executor, calldata, failures).ok();
         if call_results.is_none() {
-            return (false, None, call_result.logs, call_result.traces)
+            return RichInvariantResults::new(false, None, call_result.logs, call_result.traces)
         }
     } else {
         failures.reverts += 1;
@@ -621,10 +644,10 @@ fn can_continue(
                 failures.failed_invariants.insert(invariant.name.clone(), Some(error.clone()));
             }
 
-            return (false, None, call_result_logs, call_result_traces)
+            return RichInvariantResults::new(false, None, call_result_logs, call_result_traces)
         }
     }
-    (true, call_results, call_result.logs, call_result.traces)
+    RichInvariantResults::new(true, call_results, call_result.logs, call_result.traces)
 }
 
 #[derive(Clone)]
