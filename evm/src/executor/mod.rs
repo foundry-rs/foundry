@@ -942,10 +942,10 @@ fn convert_call_result<D: Detokenize>(
 }
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub struct ExportedValue {
-    name: String,
-    context: Option<String>,
-    block: u64,
-    chain: ethers::prelude::Chain,
+    pub name: String,
+    pub context: Option<String>,
+    pub block: u64,
+    pub chain: ethers::prelude::Chain,
 }
 
 impl ExportedValue {
@@ -966,11 +966,11 @@ impl ExportedValue {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct RawExportedData(HashMap<String, String>);
+pub struct RawExportedData(std::collections::HashMap<String, String>);
 
 impl RawExportedData {
     fn new() -> Self {
-        Self(HashMap::new())
+        Self(std::collections::HashMap::new())
     }
 
     fn insert(&mut self, key: String, value: String) -> Option<String> {
@@ -979,11 +979,20 @@ impl RawExportedData {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct ExportedData(HashMap<ExportedValue, String>);
+pub struct ExportedData(std::collections::HashMap<ExportedValue, String>);
+
+impl IntoIterator for ExportedData {
+    type Item = (ExportedValue, String);
+    type IntoIter = std::collections::hash_map::IntoIter<ExportedValue, String>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
 
 impl ExportedData {
     pub fn new() -> Self {
-        Self(HashMap::new())
+        Self(std::collections::HashMap::new())
     }
 
     pub fn insert(&mut self, key: ExportedValue, value: String) -> Option<String> {
