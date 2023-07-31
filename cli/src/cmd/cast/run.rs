@@ -102,7 +102,7 @@ impl RunArgs {
         evm_opts.fork_block_number = Some(tx_block_number - 1);
 
         // Set up the execution environment
-        let mut env = evm_opts.evm_env().await;
+        let mut env = evm_opts.evm_env().await?;
         // can safely disable base fee checks on replaying txs because can
         // assume those checks already passed on confirmed txs
         env.cfg.disable_base_fee = true;
