@@ -65,6 +65,7 @@ impl TracingExecutor {
         Self { executor }
     }
 
+    /// uses the fork block number from the config
     pub async fn get_fork_material(
         config: &Config,
         mut evm_opts: EvmOpts,

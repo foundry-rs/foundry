@@ -1,32 +1,24 @@
-use crate::{init_progress, opts::RpcOpts, update_progress, utils};
-use cast::{
-    executor::{EvmError, ExecutionErr},
-    trace::{identifier::SignaturesIdentifier, CallTraceDecoder, Traces},
+use crate::{
+    cmd::utils::{handle_traces, TraceResult},
+    init_progress,
+    opts::RpcOpts,
+    update_progress, utils,
 };
+use cast::executor::{EvmError, ExecutionErr};
 use clap::Parser;
-use ethers::{
-    abi::Address,
-    prelude::{artifacts::ContractBytecodeSome, ArtifactId, Middleware},
-    solc::EvmVersion,
-    types::H160,
-};
+use ethers::{prelude::Middleware, solc::EvmVersion, types::H160};
 use eyre::WrapErr;
 use forge::{
-    debug::DebugArena,
     executor::{
-        inspector::cheatcodes::util::configure_tx_env, opts::EvmOpts, Backend, DeployResult,
-        ExecutorBuilder, RawCallResult,
+        inspector::cheatcodes::util::configure_tx_env, opts::EvmOpts, DeployResult, RawCallResult,
     },
     revm::primitives::U256 as rU256,
-    trace::{identifier::EtherscanIdentifier, CallTraceDecoderBuilder, TraceKind},
+    trace::TraceKind,
     utils::h256_to_b256,
 };
 use foundry_config::{find_project_root_path, Config};
-use foundry_evm::utils::evm_spec;
-use std::{collections::BTreeMap, str::FromStr};
+use foundry_evm::trace::TracingExecutor;
 use tracing::trace;
-use ui::{TUIExitReason, Tui, Ui};
-use yansi::Paint;
 
 const ARBITRUM_SENDER: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -82,8 +74,9 @@ impl RunArgs {
     pub async fn run(self) -> eyre::Result<()> {
         let figment =
             Config::figment_with_root(find_project_root_path(None).unwrap()).merge(self.rpc);
-        let mut evm_opts = figment.extract::<EvmOpts>()?;
-        let config = Config::from_provider(figment).sanitized();
+        let evm_opts = figment.extract::<EvmOpts>()?;
+        let mut config = Config::from_provider(figment).sanitized();
+
         let provider = utils::get_provider(&config)?;
 
         let tx_hash = self.tx_hash.parse().wrap_err("invalid tx hash")?;
@@ -96,27 +89,14 @@ impl RunArgs {
             .block_number
             .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?
             .as_u64();
-        evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
-        // we need to set the fork block to the previous block, because that's the state at
-        // which we access the data in order to execute the transaction(s)
-        evm_opts.fork_block_number = Some(tx_block_number - 1);
 
-        // Set up the execution environment
-        let mut env = evm_opts.evm_env().await?;
-        // can safely disable base fee checks on replaying txs because can
-        // assume those checks already passed on confirmed txs
-        env.cfg.disable_base_fee = true;
-        let db = Backend::spawn(evm_opts.get_fork(&config, env.clone())).await;
+        config.fork_block_number = Some(tx_block_number - 1);
 
-        // configures a bare version of the evm executor: no cheatcode inspector is enabled,
-        // tracing will be enabled only for the targeted transaction
-        let builder = ExecutorBuilder::default()
-            .with_config(env)
-            .with_spec(evm_spec(&self.evm_version.unwrap_or(config.evm_version)));
+        let (mut env, fork, chain) = TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
-        let mut executor = builder.build(db);
+        let mut executor =
+            TracingExecutor::new(env.clone(), fork, self.evm_version, self.debug).await;
 
-        let mut env = executor.env().clone();
         env.block.number = rU256::from(tx_block_number);
 
         let block = provider.get_block_with_txs(tx_block_number).await?;
@@ -142,10 +122,10 @@ impl RunArgs {
                     // and gas limit 0 which causes reverts, so we skip it
                     if tx.from == ARBITRUM_SENDER {
                         update_progress!(pb, index);
-                        continue
+                        continue;
                     }
                     if tx.hash().eq(&tx_hash) {
-                        break
+                        break;
                     }
 
                     configure_tx_env(&mut env, &tx);
@@ -168,11 +148,8 @@ impl RunArgs {
         }
 
         // Execute our transaction
-        let mut result = {
-            executor
-                .set_tracing(true)
-                .set_debugger(self.debug)
-                .set_trace_printer(self.trace_printer);
+        let result = {
+            executor.set_trace_printer(self.trace_printer);
 
             configure_tx_env(&mut env, &tx);
 
@@ -187,7 +164,7 @@ impl RunArgs {
                     ..
                 } = executor.commit_tx_with_env(env).unwrap();
 
-                RunResult {
+                TraceResult {
                     success: !reverted,
                     traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
                     debug: run_debug.unwrap_or_default(),
@@ -196,7 +173,7 @@ impl RunArgs {
             } else {
                 trace!(tx=?tx.hash, "executing create transaction");
                 match executor.deploy_with_env(env, None) {
-                    Ok(DeployResult { gas_used, traces, debug: run_debug, .. }) => RunResult {
+                    Ok(DeployResult { gas_used, traces, debug: run_debug, .. }) => TraceResult {
                         success: true,
                         traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
                         debug: run_debug.unwrap_or_default(),
@@ -205,7 +182,7 @@ impl RunArgs {
                     Err(EvmError::Execution(inner)) => {
                         let ExecutionErr { reverted, gas_used, traces, debug: run_debug, .. } =
                             *inner;
-                        RunResult {
+                        TraceResult {
                             success: !reverted,
                             traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
                             debug: run_debug.unwrap_or_default(),
@@ -219,102 +196,8 @@ impl RunArgs {
             }
         };
 
-        let mut etherscan_identifier =
-            EtherscanIdentifier::new(&config, evm_opts.get_remote_chain_id())?;
+        handle_traces(result, &config, chain, self.label, self.verbose, self.debug).await?;
 
-        let labeled_addresses = self.label.iter().filter_map(|label_str| {
-            let mut iter = label_str.split(':');
-
-            if let Some(addr) = iter.next() {
-                if let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next()) {
-                    return Some((address, label.to_string()))
-                }
-            }
-            None
-        });
-
-        let mut decoder = CallTraceDecoderBuilder::new().with_labels(labeled_addresses).build();
-
-        decoder.add_signature_identifier(SignaturesIdentifier::new(
-            Config::foundry_cache_dir(),
-            config.offline,
-        )?);
-
-        for (_, trace) in &mut result.traces {
-            decoder.identify(trace, &mut etherscan_identifier);
-        }
-
-        if self.debug {
-            let (sources, bytecode) = etherscan_identifier.get_compiled_contracts().await?;
-            run_debugger(result, decoder, bytecode, sources)?;
-        } else {
-            print_traces(&mut result, decoder, self.verbose).await?;
-        }
         Ok(())
     }
-}
-
-fn run_debugger(
-    result: RunResult,
-    decoder: CallTraceDecoder,
-    known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
-    sources: BTreeMap<ArtifactId, String>,
-) -> eyre::Result<()> {
-    let calls: Vec<DebugArena> = vec![result.debug];
-    let flattened = calls.last().expect("we should have collected debug info").flatten(0);
-    let tui = Tui::new(
-        flattened,
-        0,
-        decoder.contracts,
-        known_contracts.into_iter().map(|(id, artifact)| (id.name, artifact)).collect(),
-        sources
-            .into_iter()
-            .map(|(id, source)| {
-                let mut sources = BTreeMap::new();
-                sources.insert(0, source);
-                (id.name, sources)
-            })
-            .collect(),
-        Default::default(),
-    )?;
-    match tui.start().expect("Failed to start tui") {
-        TUIExitReason::CharExit => Ok(()),
-    }
-}
-
-async fn print_traces(
-    result: &mut RunResult,
-    decoder: CallTraceDecoder,
-    verbose: bool,
-) -> eyre::Result<()> {
-    if result.traces.is_empty() {
-        eyre::bail!("Unexpected error: No traces. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
-    }
-
-    println!("Traces:");
-    for (_, trace) in &mut result.traces {
-        decoder.decode(trace).await;
-        if !verbose {
-            println!("{trace}");
-        } else {
-            println!("{trace:#}");
-        }
-    }
-    println!();
-
-    if result.success {
-        println!("{}", Paint::green("Transaction successfully executed."));
-    } else {
-        println!("{}", Paint::red("Transaction failed."));
-    }
-
-    println!("Gas used: {}", result.gas_used);
-    Ok(())
-}
-
-struct RunResult {
-    pub success: bool,
-    pub traces: Traces,
-    pub debug: DebugArena,
-    pub gas_used: u64,
 }
