@@ -194,16 +194,16 @@ fn value_to_token(value: &Value) -> Result<Token> {
                     let fallback_s = format!("{f}");
 
                     if let Ok(n) = U256::from_dec_str(&s) {
-                        return Ok(Token::Uint(n))
+                        return Ok(Token::Uint(n));
                     }
                     if let Ok(n) = I256::from_dec_str(&s) {
-                        return Ok(Token::Int(n.into_raw()))
+                        return Ok(Token::Int(n.into_raw()));
                     }
                     if let Ok(n) = U256::from_dec_str(&fallback_s) {
-                        return Ok(Token::Uint(n))
+                        return Ok(Token::Uint(n));
                     }
                     if let Ok(n) = I256::from_dec_str(&fallback_s) {
-                        return Ok(Token::Int(n.into_raw()))
+                        return Ok(Token::Int(n.into_raw()));
                     }
                 }
             }
@@ -305,7 +305,7 @@ fn parse_json(json_str: &str, key: &str, coerce: Option<ParamType>) -> Result {
                     util::parse_array(array.iter().map(to_string), &coercion_type)
                 } else {
                     util::parse(&to_string(values[0]), &coercion_type)
-                }
+                };
             }
 
             let res = parse_json_values(values, key)?;
@@ -414,6 +414,12 @@ fn key_exists(json_str: &str, key: &str) -> Result {
     let values = jsonpath_lib::select(&json, &canonicalize_json_key(key))?;
     let exists = util::parse(&(!values.is_empty()).to_string(), &ParamType::Bool)?;
     Ok(exists)
+}
+
+/// Export data for external consumption
+fn export(state: &mut Cheatcodes, key: &str, value: &str) -> Result {
+    state.raw_exported_data.insert(key.to_string(), value.to_string());
+    Ok(Bytes::new())
 }
 
 #[instrument(level = "error", name = "ext", target = "evm::cheatcodes", skip_all)]
@@ -593,6 +599,7 @@ pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
         HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
         HEVMCalls::WriteJson1(inner) => write_json(state, &inner.0, &inner.1, Some(&inner.2)),
         HEVMCalls::KeyExists(inner) => key_exists(&inner.0, &inner.1),
+        HEVMCalls::Export(inner) => export(state, &inner.0, &inner.1),
         _ => return None,
     })
 }

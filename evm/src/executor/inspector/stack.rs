@@ -2,7 +2,7 @@ use super::{Cheatcodes, ChiselState, Debugger, Fuzzer, LogCollector, TracePrinte
 use crate::{
     coverage::HitMaps,
     debug::DebugArena,
-    executor::{backend::DatabaseExt, inspector::CoverageCollector},
+    executor::{backend::DatabaseExt, inspector::CoverageCollector, ExportedData},
     trace::CallTraceArena,
 };
 use bytes::Bytes;
@@ -43,6 +43,7 @@ pub struct InspectorData {
     pub cheatcodes: Option<Cheatcodes>,
     pub script_wallets: Vec<LocalWallet>,
     pub chisel_state: Option<(Stack, Memory, InstructionResult)>,
+    pub raw_exported_data: crate::executor::RawExportedData,
 }
 
 /// An inspector that calls multiple inspectors in sequence.
@@ -79,6 +80,11 @@ impl InspectorStack {
                 .cheatcodes
                 .as_ref()
                 .map(|cheatcodes| cheatcodes.script_wallets.clone())
+                .unwrap_or_default(),
+            raw_exported_data: self
+                .cheatcodes
+                .as_ref()
+                .map(|cheatcodes| cheatcodes.raw_exported_data.clone())
                 .unwrap_or_default(),
             cheatcodes: self.cheatcodes,
             chisel_state: self.chisel_state.unwrap_or_default().state,
@@ -118,10 +124,10 @@ impl InspectorStack {
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                if new_status != status ||
-                    (new_status == InstructionResult::Revert && new_retdata != retdata)
+                if new_status != status
+                    || (new_status == InstructionResult::Revert && new_retdata != retdata)
                 {
-                    return (new_status, new_gas, new_retdata)
+                    return (new_status, new_gas, new_retdata);
                 }
             }
         );
@@ -156,7 +162,7 @@ where
 
                 // Allow inspectors to exit early
                 if status != InstructionResult::Continue {
-                    return status
+                    return status;
                 }
             }
         );
@@ -187,7 +193,7 @@ where
 
                 // Allow inspectors to exit early
                 if status != InstructionResult::Continue {
-                    return status
+                    return status;
                 }
             }
         );
@@ -234,7 +240,7 @@ where
 
                 // Allow inspectors to exit early
                 if status != InstructionResult::Continue {
-                    return status
+                    return status;
                 }
             }
         );
@@ -265,7 +271,7 @@ where
 
                 // Allow inspectors to exit early
                 if status != InstructionResult::Continue {
-                    return (status, gas, retdata)
+                    return (status, gas, retdata);
                 }
             }
         );
@@ -317,7 +323,7 @@ where
 
                 // Allow inspectors to exit early
                 if status != InstructionResult::Continue {
-                    return (status, addr, gas, retdata)
+                    return (status, addr, gas, retdata);
                 }
             }
         );
@@ -356,7 +362,7 @@ where
                 );
 
                 if new_status != status {
-                    return (new_status, new_address, new_gas, new_retdata)
+                    return (new_status, new_address, new_gas, new_retdata);
                 }
             }
         );
