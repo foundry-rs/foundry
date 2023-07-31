@@ -57,6 +57,12 @@ impl SuiteResult {
     pub fn len(&self) -> usize {
         self.test_results.len()
     }
+
+    pub fn exported_data(&self) -> ExportedData {
+        let mut exported_data = ExportedData::new();
+        self.test_results.values().for_each(|res| exported_data.extend(res.exported_data.clone()));
+        exported_data
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
