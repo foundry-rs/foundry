@@ -1,7 +1,7 @@
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "../cheats/Cheats.sol";
+import "../cheats/Vm.sol";
 
 contract RecursiveCall {
     TraceTest factory;
@@ -52,7 +52,7 @@ contract RecursiveCall {
 }
 
 contract TraceTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     uint256 nodeId = 0;
     RecursiveCall first;
@@ -63,7 +63,7 @@ contract TraceTest is DSTest {
 
     function create() public returns (RecursiveCall) {
         RecursiveCall node = new RecursiveCall(address(this));
-        cheats.label(address(node), string(abi.encodePacked("Node ", uintToString(nodeId++))));
+        vm.label(address(node), string(abi.encodePacked("Node ", uintToString(nodeId++))));
 
         return node;
     }

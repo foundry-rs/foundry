@@ -21,7 +21,7 @@ pub fn load_config_with_root(root: Option<PathBuf>) -> Config {
     if let Some(root) = root {
         Config::load_with_root(root)
     } else {
-        Config::load_with_root(find_project_root_path().unwrap())
+        Config::load_with_root(find_project_root_path(None).unwrap())
     }
     .sanitized()
 }
@@ -40,8 +40,8 @@ pub fn find_git_root_path(relative_to: impl AsRef<Path>) -> eyre::Result<PathBuf
 
 /// Returns the root path to set for the project root
 ///
-/// traverse the dir tree up and look for a `foundry.toml` file starting at the cwd, but only until
-/// the root dir of the current repo so that
+/// traverse the dir tree up and look for a `foundry.toml` file starting at the given path or cwd,
+/// but only until the root dir of the current repo so that
 ///
 /// ```text
 /// -- foundry.toml
@@ -49,12 +49,13 @@ pub fn find_git_root_path(relative_to: impl AsRef<Path>) -> eyre::Result<PathBuf
 /// -- repo
 ///   |__ .git
 ///   |__sub
-///      |__ cwd
+///      |__ [given_path | cwd]
 /// ```
 /// will still detect `repo` as root
-pub fn find_project_root_path() -> std::io::Result<PathBuf> {
-    let cwd = std::env::current_dir()?;
-    let boundary = find_git_root_path(&cwd)
+pub fn find_project_root_path(path: Option<&PathBuf>) -> std::io::Result<PathBuf> {
+    let cwd = &std::env::current_dir()?;
+    let cwd = path.unwrap_or(cwd);
+    let boundary = find_git_root_path(cwd)
         .ok()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| cwd.clone());
@@ -159,7 +160,11 @@ pub fn foundry_toml_dirs(root: impl AsRef<Path>) -> Vec<PathBuf> {
 pub(crate) fn get_dir_remapping(dir: impl AsRef<Path>) -> Option<Remapping> {
     let dir = dir.as_ref();
     if let Some(dir_name) = dir.file_name().and_then(|s| s.to_str()).filter(|s| !s.is_empty()) {
-        let mut r = Remapping { name: format!("{dir_name}/"), path: format!("{}", dir.display()) };
+        let mut r = Remapping {
+            context: None,
+            name: format!("{dir_name}/"),
+            path: format!("{}", dir.display()),
+        };
         if !r.path.ends_with('/') {
             r.path.push('/')
         }

@@ -2,12 +2,12 @@
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "./Cheats.sol";
+import "./Vm.sol";
 
 contract LabelTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testLabel() public {
-        cheats.label(address(1), "Sir Address the 1st");
+        vm.label(address(1), "Sir Address the 1st");
     }
 }

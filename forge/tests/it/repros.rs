@@ -150,6 +150,13 @@ async fn test_issue_3221() {
     test_repro!("Issue3221");
 }
 
+// <https://github.com/foundry-rs/foundry/issues/3437>
+// 1.0 related
+// #[tokio::test(flavor = "multi_thread")]
+// async fn test_issue_3437() {
+//     test_repro!("Issue3437");
+// }
+
 // <https://github.com/foundry-rs/foundry/issues/3708>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_issue_3708() {
@@ -239,6 +246,13 @@ async fn test_issue_3703() {
     test_repro!("Issue3703");
 }
 
+// <https://github.com/foundry-rs/foundry/issues/3723>
+// 1.0 related
+// #[tokio::test(flavor = "multi_thread")]
+// async fn test_issue_3723() {
+//     test_repro!("Issue3723");
+// }
+
 // <https://github.com/foundry-rs/foundry/issues/3753>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_issue_3753() {
@@ -257,8 +271,21 @@ async fn test_issue_4586() {
     test_repro!("Issue4586");
 }
 
+// https://github.com/foundry-rs/foundry/issues/4832
+// 1.0 related
+// #[tokio::test(flavor = "multi_thread")]
+// async fn test_issue_4832() {
+//     test_repro!("Issue4832");
+// }
+
 // <https://github.com/foundry-rs/foundry/issues/5038>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_issue_5038() {
     test_repro!("Issue5038");
+}
+
+// <https://github.com/foundry-rs/foundry/issues/3792>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_issue3792() {
+    test_repro!("Issue3792");
 }

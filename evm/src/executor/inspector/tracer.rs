@@ -92,7 +92,7 @@ impl Tracer {
         }
     }
 
-    fn start_step<DB: Database>(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>) {
+    fn start_step<DB: Database>(&mut self, interp: &Interpreter, data: &EVMData<'_, DB>) {
         let trace_idx =
             *self.trace_stack.last().expect("can't start step without starting a trace first");
         let trace = &mut self.traces.arena[trace_idx];
@@ -118,8 +118,8 @@ impl Tracer {
 
     fn fill_step<DB: Database>(
         &mut self,
-        interp: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
+        interp: &Interpreter,
+        data: &EVMData<'_, DB>,
         status: InstructionResult,
     ) {
         let (trace_idx, step_idx) =

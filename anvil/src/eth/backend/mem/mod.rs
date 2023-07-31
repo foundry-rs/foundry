@@ -70,10 +70,12 @@ use forge::{
 use foundry_evm::{
     decode::{decode_custom_error_args, decode_revert},
     executor::backend::{DatabaseError, DatabaseResult},
-    revm,
     revm::{
+        self,
         db::CacheDB,
-        primitives::{Account, CreateScheme, Env, Output, SpecId, TransactTo, TxEnv, KECCAK_EMPTY},
+        primitives::{
+            Account, CreateScheme, EVMError, Env, Output, SpecId, TransactTo, TxEnv, KECCAK_EMPTY,
+        },
     },
     utils::u256_to_h256_be,
 };
@@ -316,9 +318,8 @@ impl Backend {
     }
 
     /// If set to true will make every account impersonated
-    pub async fn auto_impersonate_account(&self, enabled: bool) -> DatabaseResult<()> {
+    pub async fn auto_impersonate_account(&self, enabled: bool) {
         self.cheats.set_auto_impersonate_account(enabled);
-        Ok(())
     }
 
     /// Returns the configured fork, if any
@@ -1057,9 +1058,13 @@ impl Backend {
         evm.database(state);
         let result_and_state = match evm.inspect_ref(&mut inspector) {
             Ok(result_and_state) => result_and_state,
-            Err(_) => {
-                return Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh))
-            }
+            Err(e) => match e {
+                EVMError::Transaction(invalid_tx) => {
+                    return Err(BlockchainError::InvalidTransaction(invalid_tx.into()))
+                }
+                EVMError::PrevrandaoNotSet => return Err(BlockchainError::PrevrandaoNotSet),
+                EVMError::Database(e) => return Err(BlockchainError::DatabaseError(e)),
+            },
         };
         let state = result_and_state.state;
         let state: hashbrown::HashMap<H160, Account> =
@@ -1182,7 +1187,7 @@ impl Backend {
         filter: Filter,
         hash: H256,
     ) -> Result<Vec<Log>, BlockchainError> {
-        if let Some(block) = self.blockchain.storage.read().blocks.get(&hash).cloned() {
+        if let Some(block) = self.blockchain.get_block_by_hash(&hash) {
             return Ok(self.mined_logs_for_block(filter, block))
         }
 
@@ -1347,7 +1352,7 @@ impl Backend {
     }
 
     fn mined_block_by_hash(&self, hash: H256) -> Option<EthersBlock<TxHash>> {
-        let block = self.blockchain.storage.read().blocks.get(&hash)?.clone();
+        let block = self.blockchain.get_block_by_hash(&hash)?;
         Some(self.convert_block(block))
     }
 
@@ -1436,7 +1441,7 @@ impl Backend {
     }
 
     pub fn get_block_by_hash(&self, hash: H256) -> Option<Block> {
-        self.blockchain.storage.read().blocks.get(&hash).cloned()
+        self.blockchain.get_block_by_hash(&hash)
     }
 
     fn mined_block_by_number(&self, number: BlockNumber) -> Option<EthersBlock<TxHash>> {
@@ -1841,13 +1846,13 @@ impl Backend {
     /// Returns the transaction receipt for the given hash
     pub(crate) fn mined_transaction_receipt(&self, hash: H256) -> Option<MinedTransactionReceipt> {
         let MinedTransaction { info, receipt, block_hash, .. } =
-            self.blockchain.storage.read().transactions.get(&hash)?.clone();
+            self.blockchain.get_transaction_by_hash(&hash)?;
 
         let EIP658Receipt { status_code, gas_used, logs_bloom, logs } = receipt.into();
 
         let index = info.transaction_index as usize;
 
-        let block = self.blockchain.storage.read().blocks.get(&block_hash).cloned()?;
+        let block = self.blockchain.get_block_by_hash(&block_hash)?;
 
         // TODO store cumulative gas used in receipt instead
         let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash()));
@@ -2172,7 +2177,8 @@ impl TransactionValidator for Backend {
             return Err(InvalidTransactionError::GasTooLow)
         }
 
-        if tx.gas_limit() > env.block.gas_limit.into() {
+        // Check gas limit, iff block gas limit is set.
+        if !env.cfg.disable_block_gas_limit && tx.gas_limit() > env.block.gas_limit.into() {
             warn!(target: "backend", "[{:?}] gas too high", tx.hash());
             return Err(InvalidTransactionError::GasTooHigh)
         }

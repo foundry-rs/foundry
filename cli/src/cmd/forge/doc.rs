@@ -50,7 +50,7 @@ impl Cmd for DocArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let root = self.root.clone().unwrap_or(find_project_root_path()?);
+        let root = self.root.clone().unwrap_or(find_project_root_path(None)?);
         let config = load_config_with_root(Some(root.clone()));
 
         let mut doc_config = config.doc.clone();

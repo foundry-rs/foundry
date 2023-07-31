@@ -2,14 +2,14 @@
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "../cheats/Cheats.sol";
+import "../cheats/Vm.sol";
 import "../logs/console.sol";
 
 // https://github.com/foundry-rs/foundry/issues/2898
 contract Issue2898Test is DSTest {
     address private constant BRIDGE = address(10);
     address private constant BENEFICIARY = address(11);
-    Cheats constant vm = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function setUp() public {
         vm.deal(BRIDGE, 100);

@@ -2,11 +2,11 @@
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "../cheats/Cheats.sol";
+import "../cheats/Vm.sol";
 
 // https://github.com/foundry-rs/foundry/issues/4630
 contract Issue4630Test is DSTest {
-    Cheats constant vm = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testExistingValue() public {
         string memory path = "../testdata/fixtures/Json/Issue4630.json";
@@ -19,6 +19,10 @@ contract Issue4630Test is DSTest {
         string memory path = "../testdata/fixtures/Json/Issue4630.json";
         string memory json = vm.readFile(path);
         vm.expectRevert();
-        uint256 val = vm.parseJsonUint(json, ".localempty.prop1");
+        uint256 val = this.parseJsonUint(json, ".localempty.prop1");
+    }
+
+    function parseJsonUint(string memory json, string memory path) public returns (uint256) {
+        return vm.parseJsonUint(json, path);
     }
 }

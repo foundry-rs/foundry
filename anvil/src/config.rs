@@ -41,7 +41,12 @@ use foundry_evm::{
 use parking_lot::RwLock;
 use serde_json::{json, to_writer, Value};
 use std::{
-    collections::HashMap, fmt::Write as FmtWrite, fs::File, net::IpAddr, path::PathBuf, sync::Arc,
+    collections::HashMap,
+    fmt::Write as FmtWrite,
+    fs::File,
+    net::{IpAddr, Ipv4Addr},
+    path::PathBuf,
+    sync::Arc,
     time::Duration,
 };
 use yansi::Paint;
@@ -128,7 +133,7 @@ pub struct NodeConfig {
     /// How to configure the server
     pub server_config: ServerConfig,
     /// The host the server will listen on
-    pub host: Option<IpAddr>,
+    pub host: Vec<IpAddr>,
     /// How transactions are sorted in the mempool
     pub transaction_order: TransactionOrder,
     /// Filename to write anvil output as json
@@ -147,6 +152,8 @@ pub struct NodeConfig {
     pub ipc_path: Option<Option<String>>,
     /// Enable transaction/call steps tracing for debug calls returning geth-style traces
     pub enable_steps_tracing: bool,
+    /// Enable auto impersonation of accounts on startup
+    pub enable_auto_impersonate: bool,
     /// Configure the code size limit
     pub code_size_limit: Option<usize>,
     /// Configures how to remove historic state.
@@ -374,9 +381,10 @@ impl Default for NodeConfig {
             base_fee: None,
             enable_tracing: true,
             enable_steps_tracing: false,
+            enable_auto_impersonate: false,
             no_storage_caching: false,
             server_config: Default::default(),
-            host: None,
+            host: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
             transaction_order: Default::default(),
             config_out: None,
             genesis: None,
@@ -699,6 +707,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to enable autoImpersonate
+    #[must_use]
+    pub fn with_auto_impersonate(mut self, enable_auto_impersonate: bool) -> Self {
+        self.enable_auto_impersonate = enable_auto_impersonate;
+        self
+    }
+
     #[must_use]
     pub fn with_server_config(mut self, config: ServerConfig) -> Self {
         self.server_config = config;
@@ -707,8 +722,8 @@ impl NodeConfig {
 
     /// Sets the host the server will listen on
     #[must_use]
-    pub fn with_host(mut self, host: Option<IpAddr>) -> Self {
-        self.host = host;
+    pub fn with_host(mut self, host: Vec<IpAddr>) -> Self {
+        self.host = if host.is_empty() { vec![IpAddr::V4(Ipv4Addr::LOCALHOST)] } else { host };
         self
     }
 
@@ -852,10 +867,11 @@ latest block number: {latest_block}"
                     panic!("Failed to get block for block number: {fork_block_number}")
                 };
 
-                // we only use the gas limit value of the block if it is non-zero, since there are networks where this is not used and is always `0x0` which would inevitably result in `OutOfGas` errors as soon as the evm is about to record gas, See also <https://github.com/foundry-rs/foundry/issues/3247>
-
-                let gas_limit = if block.gas_limit.is_zero() {
-                    env.block.gas_limit
+                // we only use the gas limit value of the block if it is non-zero and the block gas
+                // limit is enabled, since there are networks where this is not used and is always
+                // `0x0` which would inevitably result in `OutOfGas` errors as soon as the evm is about to record gas, See also <https://github.com/foundry-rs/foundry/issues/3247>
+                let gas_limit = if self.disable_block_gas_limit || block.gas_limit.is_zero() {
+                    u256_to_ru256(u64::MAX.into())
                 } else {
                     u256_to_ru256(block.gas_limit)
                 };

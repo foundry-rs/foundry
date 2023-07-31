@@ -15,7 +15,7 @@ use rustyline::{
     Helper,
 };
 use solang_parser::{
-    lexer::{Lexer, LexicalError, Token},
+    lexer::{Lexer, Token},
     pt,
 };
 use std::{borrow::Cow, str::FromStr};
@@ -60,7 +60,6 @@ impl SolidityHelper {
         let mut comments = Vec::with_capacity(DEFAULT_COMMENTS);
         let mut errors = Vec::with_capacity(5);
         let mut out = Lexer::new(input, 0, &mut comments, &mut errors)
-            .flatten()
             .map(|(start, token, end)| (start, token.style(), end))
             .collect::<Vec<_>>();
 
@@ -156,35 +155,27 @@ impl SolidityHelper {
         let mut comments = Vec::with_capacity(DEFAULT_COMMENTS);
         // returns on any encountered error, so allocate for just one
         let mut errors = Vec::with_capacity(1);
-        for res in Lexer::new(input, 0, &mut comments, &mut errors) {
-            match res {
-                Err(err) => match err {
-                    LexicalError::EndOfFileInComment(_) |
-                    LexicalError::EndofFileInHex(_) |
-                    LexicalError::EndOfFileInString(_) => return ValidationResult::Incomplete,
-                    _ => return ValidationResult::Valid(None),
-                },
-                Ok((_, token, _)) => match token {
-                    Token::OpenBracket => {
-                        bracket_depth += 1;
-                    }
-                    Token::OpenCurlyBrace => {
-                        brace_depth += 1;
-                    }
-                    Token::OpenParenthesis => {
-                        paren_depth += 1;
-                    }
-                    Token::CloseBracket => {
-                        bracket_depth = bracket_depth.saturating_sub(1);
-                    }
-                    Token::CloseCurlyBrace => {
-                        brace_depth = brace_depth.saturating_sub(1);
-                    }
-                    Token::CloseParenthesis => {
-                        paren_depth = paren_depth.saturating_sub(1);
-                    }
-                    _ => {}
-                },
+        for (_, token, _) in Lexer::new(input, 0, &mut comments, &mut errors) {
+            match token {
+                Token::OpenBracket => {
+                    bracket_depth += 1;
+                }
+                Token::OpenCurlyBrace => {
+                    brace_depth += 1;
+                }
+                Token::OpenParenthesis => {
+                    paren_depth += 1;
+                }
+                Token::CloseBracket => {
+                    bracket_depth = bracket_depth.saturating_sub(1);
+                }
+                Token::CloseCurlyBrace => {
+                    brace_depth = brace_depth.saturating_sub(1);
+                }
+                Token::CloseParenthesis => {
+                    paren_depth = paren_depth.saturating_sub(1);
+                }
+                _ => {}
             }
         }
         if (bracket_depth | brace_depth | paren_depth) == 0 {

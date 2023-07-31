@@ -114,8 +114,9 @@ impl ForkedDatabase {
     }
 
     pub fn revert_snapshot(&mut self, id: U256) -> bool {
-        let snapshot = { self.snapshots().lock().remove(id) };
+        let snapshot = { self.snapshots().lock().remove_at(id) };
         if let Some(snapshot) = snapshot {
+            self.snapshots().lock().insert_at(snapshot.clone(), id);
             let ForkDbSnapshot {
                 local,
                 snapshot: StateSnapshot { accounts, storage, block_hashes },
@@ -200,7 +201,7 @@ impl DatabaseCommit for ForkedDatabase {
 /// Represents a snapshot of the database
 ///
 /// This mimics `revm::CacheDB`
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ForkDbSnapshot {
     pub local: CacheDB<SharedBackend>,
     pub snapshot: StateSnapshot,

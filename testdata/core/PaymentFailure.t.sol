@@ -2,18 +2,18 @@
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "../cheats/Cheats.sol";
+import "../cheats/Vm.sol";
 
 contract Payable {
     function pay() public payable {}
 }
 
 contract PaymentFailureTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testCantPay() public {
         Payable target = new Payable();
-        cheats.prank(address(1));
+        vm.prank(address(1));
         target.pay{value: 1}();
     }
 }

@@ -139,12 +139,17 @@ pub fn halt_to_instruction_result(
 /// Converts an `EvmVersion` into a `SpecId`
 pub fn evm_spec(evm: &EvmVersion) -> SpecId {
     match evm {
+        EvmVersion::Homestead => SpecId::HOMESTEAD,
+        EvmVersion::TangerineWhistle => SpecId::TANGERINE,
+        EvmVersion::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
+        EvmVersion::Byzantium => SpecId::BYZANTIUM,
+        EvmVersion::Constantinople => SpecId::CONSTANTINOPLE,
+        EvmVersion::Petersburg => SpecId::PETERSBURG,
         EvmVersion::Istanbul => SpecId::ISTANBUL,
         EvmVersion::Berlin => SpecId::BERLIN,
         EvmVersion::London => SpecId::LONDON,
         EvmVersion::Paris => SpecId::MERGE,
         EvmVersion::Shanghai => SpecId::SHANGHAI,
-        _ => panic!("Unsupported EVM version"),
     }
 }
 

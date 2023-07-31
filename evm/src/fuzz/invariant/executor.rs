@@ -6,7 +6,8 @@ use super::{
 };
 use crate::{
     executor::{
-        inspector::Fuzzer, Executor, RawCallResult, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS,
+        inspector::Fuzzer, Executor, RawCallResult, StateChangeset, CHEATCODE_ADDRESS,
+        HARDHAT_CONSOLE_ADDRESS,
     },
     fuzz::{
         strategies::{
@@ -172,7 +173,7 @@ impl<'a> InvariantExecutor<'a> {
                     }
 
                     // Commit changes to the database.
-                    executor.backend_mut().commit(state_changeset);
+                    executor.backend_mut().commit(state_changeset.clone());
 
                     fuzz_runs.push(FuzzCase {
                         calldata: calldata.clone(),
@@ -186,6 +187,8 @@ impl<'a> InvariantExecutor<'a> {
                         &executor,
                         &inputs,
                         &mut failures.borrow_mut(),
+                        &targeted_contracts,
+                        state_changeset,
                         self.config.fail_on_revert,
                         self.config.shrink_sequence,
                     );
@@ -552,20 +555,29 @@ fn collect_data(
 
 /// Verifies that the invariant run execution can continue.
 /// Returns the mapping of (Invariant Function Name -> Call Result) if invariants were asserted.
+#[allow(clippy::too_many_arguments)]
 fn can_continue(
     invariant_contract: &InvariantContract,
     call_result: RawCallResult,
     executor: &Executor,
     calldata: &[BasicTxDetails],
     failures: &mut InvariantFailures,
+    targeted_contracts: &FuzzRunIdentifiedContracts,
+    state_changeset: StateChangeset,
     fail_on_revert: bool,
     shrink_sequence: bool,
 ) -> (bool, Option<BTreeMap<String, RawCallResult>>) {
     let mut call_results = None;
-    if !call_result.reverted {
-        call_results =
-            assert_invariants(invariant_contract, executor, calldata, failures, shrink_sequence)
-                .ok();
+
+    // Detect handler assertion failures first.
+    let handlers_failed = targeted_contracts
+        .lock()
+        .iter()
+        .any(|contract| !executor.is_success(*contract.0, false, state_changeset.clone(), false));
+
+    // Assert invariants IFF the call did not revert and the handlers did not fail.
+    if !call_result.reverted && !handlers_failed {
+        call_results = assert_invariants(invariant_contract, executor, calldata, failures, shrink_sequence).ok();
         if call_results.is_none() {
             return (false, None)
         }
