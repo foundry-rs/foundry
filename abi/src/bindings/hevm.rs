@@ -1827,6 +1827,29 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("export"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("export"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("fee"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -5494,6 +5517,16 @@ pub mod hevm {
                 .method_hash([5, 131, 139, 244], (p0, p1))
                 .expect("method not found (this should never happen)")
         }
+        ///Calls the contract's `export` (0xc8586906) function
+        pub fn export(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([200, 88, 105, 6], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
         ///Calls the contract's `fee` (0x39b37ab0) function
         pub fn fee(
             &self,
@@ -7748,6 +7781,19 @@ pub mod hevm {
         abi = "expectSafeMemoryCall(uint64,uint64)"
     )]
     pub struct ExpectSafeMemoryCallCall(pub u64, pub u64);
+    ///Container type for all input parameters for the `export` function with signature `export(string,string)` and selector `0xc8586906`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "export", abi = "export(string,string)")]
+    pub struct ExportCall(pub ::std::string::String, pub ::std::string::String);
     ///Container type for all input parameters for the `fee` function with signature `fee(uint256)` and selector `0x39b37ab0`
     #[derive(
         Clone,
@@ -9506,6 +9552,7 @@ pub mod hevm {
         ExpectRevert2(ExpectRevert2Call),
         ExpectSafeMemory(ExpectSafeMemoryCall),
         ExpectSafeMemoryCall(ExpectSafeMemoryCallCall),
+        Export(ExportCall),
         Fee(FeeCall),
         Ffi(FfiCall),
         FsMetadata(FsMetadataCall),
@@ -9933,6 +9980,10 @@ pub mod hevm {
                     data,
                 ) {
                 return Ok(Self::ExpectSafeMemoryCall(decoded));
+            }
+            if let Ok(decoded)
+                = <ExportCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::Export(decoded));
             }
             if let Ok(decoded)
                 = <FeeCall as ::ethers_core::abi::AbiDecode>::decode(data) {
@@ -10605,6 +10656,7 @@ pub mod hevm {
                 Self::ExpectSafeMemoryCall(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
+                Self::Export(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::Fee(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::Ffi(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::FsMetadata(element) => {
@@ -10982,6 +11034,7 @@ pub mod hevm {
                 Self::ExpectSafeMemoryCall(element) => {
                     ::core::fmt::Display::fmt(element, f)
                 }
+                Self::Export(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Fee(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Ffi(element) => ::core::fmt::Display::fmt(element, f),
                 Self::FsMetadata(element) => ::core::fmt::Display::fmt(element, f),
@@ -11478,6 +11531,11 @@ pub mod hevm {
     impl ::core::convert::From<ExpectSafeMemoryCallCall> for HEVMCalls {
         fn from(value: ExpectSafeMemoryCallCall) -> Self {
             Self::ExpectSafeMemoryCall(value)
+        }
+    }
+    impl ::core::convert::From<ExportCall> for HEVMCalls {
+        fn from(value: ExportCall) -> Self {
+            Self::Export(value)
         }
     }
     impl ::core::convert::From<FeeCall> for HEVMCalls {
