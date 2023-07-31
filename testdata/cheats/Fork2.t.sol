@@ -3,7 +3,6 @@ pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
 import "../logs/console.sol";
-import "./Cheats.sol";
 import "./Vm.sol";
 
 struct MyStruct {
@@ -181,23 +180,23 @@ contract ForkTest is DSTest {
     }
 
     function testEthGetLogs() public {
-        cheats.selectFork(mainnetFork);
+        vm.selectFork(mainnetFork);
         address weth = address(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
         bytes32 withdrawalTopic = 0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65;
         uint256 blockNumber = 17623835;
 
         string memory path = "../testdata/fixtures/Rpc/eth_getLogs.json";
-        string memory file = cheats.readFile(path);
-        bytes memory parsed = cheats.parseJson(file);
+        string memory file = vm.readFile(path);
+        bytes memory parsed = vm.parseJson(file);
         EthGetLogsJsonParseable[] memory fixtureLogs = abi.decode(parsed, (EthGetLogsJsonParseable[]));
 
         bytes32[] memory topics = new bytes32[](1);
         topics[0] = withdrawalTopic;
-        Cheats.EthGetLogs[] memory logs = cheats.eth_getLogs(blockNumber, blockNumber, weth, topics);
+        Vm.EthGetLogs[] memory logs = vm.eth_getLogs(blockNumber, blockNumber, weth, topics);
         assertEq(logs.length, 3);
 
         for (uint256 i = 0; i < logs.length; i++) {
-            Cheats.EthGetLogs memory log = logs[i];
+            Vm.EthGetLogs memory log = logs[i];
             assertEq(log.emitter, fixtureLogs[i].emitter);
 
             string memory i_str;
@@ -205,9 +204,9 @@ contract ForkTest is DSTest {
             if (i == 1) i_str = "1";
             if (i == 2) i_str = "2";
 
-            assertEq(log.blockNumber, cheats.parseJsonUint(file, string.concat("[", i_str, "].blockNumber")));
-            assertEq(log.logIndex, cheats.parseJsonUint(file, string.concat("[", i_str, "].logIndex")));
-            assertEq(log.transactionIndex, cheats.parseJsonUint(file, string.concat("[", i_str, "].transactionIndex")));
+            assertEq(log.blockNumber, vm.parseJsonUint(file, string.concat("[", i_str, "].blockNumber")));
+            assertEq(log.logIndex, vm.parseJsonUint(file, string.concat("[", i_str, "].logIndex")));
+            assertEq(log.transactionIndex, vm.parseJsonUint(file, string.concat("[", i_str, "].transactionIndex")));
 
             assertEq(log.blockHash, fixtureLogs[i].blockHash);
             assertEq(log.removed, fixtureLogs[i].removed);
@@ -222,10 +221,10 @@ contract ForkTest is DSTest {
     }
 
     function testRpc() public {
-        cheats.selectFork(mainnetFork);
+        vm.selectFork(mainnetFork);
         string memory path = "../testdata/fixtures/Rpc/balance_params.json";
-        string memory file = cheats.readFile(path);
-        bytes memory result = cheats.rpc("eth_getBalance", file);
+        string memory file = vm.readFile(path);
+        bytes memory result = vm.rpc("eth_getBalance", file);
         assertEq(result, hex'03202879715fd8');
     }
 }
