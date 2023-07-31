@@ -47,7 +47,7 @@ impl MappingSlots {
     }
 }
 
-pub fn get_mapping_length(state: &mut Cheatcodes, address: Address, slot: U256) -> Bytes {
+pub fn get_mapping_length(state: &Cheatcodes, address: Address, slot: U256) -> Bytes {
     let result = match state.mapping_slots.as_ref().and_then(|dict| dict.get(&address)) {
         Some(mapping_slots) => {
             mapping_slots.children.get(&slot).map(|set| set.len()).unwrap_or_default()
@@ -58,7 +58,7 @@ pub fn get_mapping_length(state: &mut Cheatcodes, address: Address, slot: U256) 
 }
 
 pub fn get_mapping_slot_at(
-    state: &mut Cheatcodes,
+    state: &Cheatcodes,
     address: Address,
     slot: U256,
     index: U256,
@@ -75,7 +75,7 @@ pub fn get_mapping_slot_at(
     abi::encode(&[Token::Uint(result)]).into()
 }
 
-pub fn get_mapping_key_and_parent(state: &mut Cheatcodes, address: Address, slot: U256) -> Bytes {
+pub fn get_mapping_key_and_parent(state: &Cheatcodes, address: Address, slot: U256) -> Bytes {
     let (found, key, parent) =
         match state.mapping_slots.as_ref().and_then(|dict| dict.get(&address)) {
             Some(mapping_slots) => match mapping_slots.keys.get(&slot) {
@@ -92,7 +92,7 @@ pub fn get_mapping_key_and_parent(state: &mut Cheatcodes, address: Address, slot
 
 pub fn on_evm_step<DB: Database>(
     mapping_slots: &mut BTreeMap<Address, MappingSlots>,
-    interpreter: &mut Interpreter,
+    interpreter: &Interpreter,
     _data: &mut EVMData<'_, DB>,
 ) {
     match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
