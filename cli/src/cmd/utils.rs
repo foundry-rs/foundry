@@ -308,7 +308,7 @@ pub fn read_constructor_args_file(constructor_args_path: PathBuf) -> eyre::Resul
     Ok(args)
 }
 
-/// A slimmed down return from the executor
+/// A slimmed down return from the executor used for returning minimal trace + gas metering info
 pub struct TraceResult {
     pub success: bool,
     pub traces: Traces,
