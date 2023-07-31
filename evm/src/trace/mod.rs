@@ -14,7 +14,7 @@ use ethers::{
     types::{Bytes, DefaultFrame, GethDebugTracingOptions, StructLog, H256, U256},
 };
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
-use foundry_config::{find_project_root_path, Config};
+use foundry_config::Config;
 use hashbrown::HashMap;
 use node::CallTraceNode;
 use revm::{
@@ -72,7 +72,7 @@ impl TracingExecutor {
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
         evm_opts.fork_block_number = config.fork_block_number;
 
-        let env = evm_opts.evm_env().await;
+        let env = evm_opts.evm_env().await?;
 
         let fork = evm_opts.get_fork(config, env.clone());
 
@@ -93,6 +93,7 @@ impl DerefMut for TracingExecutor {
         &mut self.executor
     }
 }
+
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
 /// An arena of [CallTraceNode]s
@@ -148,7 +149,7 @@ impl CallTraceArena {
             .map(|node| {
                 if node.trace.created() {
                     if let RawOrDecodedReturnData::Raw(ref bytes) = node.trace.output {
-                        return (&node.trace.address, Some(bytes.as_ref()))
+                        return (&node.trace.address, Some(bytes.as_ref()));
                     }
                 }
 
@@ -193,12 +194,12 @@ impl CallTraceArena {
                 Instruction::OpCode(opc) => {
                     match opc {
                         // If yes, descend into a child trace
-                        opcode::CREATE |
-                        opcode::CREATE2 |
-                        opcode::DELEGATECALL |
-                        opcode::CALL |
-                        opcode::STATICCALL |
-                        opcode::CALLCODE => {
+                        opcode::CREATE
+                        | opcode::CREATE2
+                        | opcode::DELEGATECALL
+                        | opcode::CALL
+                        | opcode::STATICCALL
+                        | opcode::CALLCODE => {
                             self.add_to_geth_trace(
                                 storage,
                                 &self.arena[trace_node.children[child_id]],
@@ -222,7 +223,7 @@ impl CallTraceArena {
         opts: GethDebugTracingOptions,
     ) -> DefaultFrame {
         if self.arena.is_empty() {
-            return Default::default()
+            return Default::default();
         }
 
         let mut storage = HashMap::new();
@@ -660,7 +661,7 @@ pub fn load_contracts(
             .iter()
             .filter_map(|(addr, name)| {
                 if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(name) {
-                    return Some((*addr, (name.clone(), abi.clone())))
+                    return Some((*addr, (name.clone(), abi.clone())));
                 }
                 None
             })
