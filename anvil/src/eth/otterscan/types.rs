@@ -85,17 +85,17 @@ pub enum OtsInternalOperationType {
     // The spec asks for a Create2 entry as well, but we don't have that info
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, PartialEq)]
 pub struct OtsTrace {
-    r#type: OtsTraceType,
-    depth: usize,
-    from: Address,
-    to: Address,
-    value: U256,
-    input: Bytes,
+    pub r#type: OtsTraceType,
+    pub depth: usize,
+    pub from: Address,
+    pub to: Address,
+    pub value: U256,
+    pub input: Bytes,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, PartialEq)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum OtsTraceType {
     Call,

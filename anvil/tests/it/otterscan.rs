@@ -1,18 +1,20 @@
 //! tests for otterscan endpoints
 use crate::abi::MulticallContract;
 use anvil::{
-    eth::otterscan::types::{OtsInternalOperation, OtsInternalOperationType},
+    eth::otterscan::types::{
+        OtsInternalOperation, OtsInternalOperationType, OtsTrace, OtsTraceType,
+    },
     spawn, NodeConfig,
 };
 use ethers::{
     abi::Address,
-    prelude::{ContractFactory, Middleware, SignerMiddleware},
+    prelude::{ContractFactory, ContractInstance, Middleware, SignerMiddleware},
     signers::Signer,
-    types::{BlockNumber, TransactionRequest, U256},
+    types::{BlockNumber, Bytes, TransactionRequest, U256},
     utils::get_contract_address,
 };
 use ethers_solc::{project_util::TempProject, Artifact};
-use std::{collections::VecDeque, sync::Arc};
+use std::{collections::VecDeque, str::FromStr, sync::Arc};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_erigon_get_header_by_number() {
@@ -99,7 +101,109 @@ async fn can_call_ots_has_code() {
         .unwrap());
 }
 
-// TODO: ots_traceTransaction
+#[tokio::test(flavor = "multi_thread")]
+async fn test_call_call_ots_trace_transaction() {
+    let prj = TempProject::dapptools().unwrap();
+    prj.add_source(
+        "Contract",
+        r#"
+pragma solidity 0.8.13;
+contract Contract {
+    address payable private owner;
+    constructor() public {
+        owner = payable(msg.sender);
+    }
+    function run() payable public {
+        this.do_staticcall();
+        this.do_call();
+    }
+
+    function do_staticcall() external view returns (bool) {
+        return true;
+    }
+
+    function do_call() external {
+        owner.call{value: address(this).balance}("");
+        address(this).delegatecall(abi.encodeWithSignature("do_delegatecall()"));
+    }
+    
+    function do_delegatecall() internal {
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let mut compiled = prj.compile().unwrap();
+    assert!(!compiled.has_compiler_errors());
+    let contract = compiled.remove_first("Contract").unwrap();
+    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider().await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
+
+    // deploy successfully
+    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
+    let contract = factory.deploy(()).unwrap().send().await.unwrap();
+
+    let contract = ContractInstance::new(
+        contract.address(),
+        abi.unwrap(),
+        SignerMiddleware::new(handle.http_provider(), wallets[1].clone()),
+    );
+    let call = contract.method::<_, ()>("run", ()).unwrap().value(1337);
+    let receipt = call.send().await.unwrap().await.unwrap().unwrap();
+
+    let res = api.ots_trace_transaction(receipt.transaction_hash).await.unwrap();
+
+    assert_eq!(
+        res,
+        vec![
+            OtsTrace {
+                r#type: OtsTraceType::Call,
+                depth: 0,
+                from: wallets[1].address(),
+                to: contract.address(),
+                value: 1337.into(),
+                input: Bytes::from_str("0xc0406226").unwrap()
+            },
+            OtsTrace {
+                r#type: OtsTraceType::StaticCall,
+                depth: 1,
+                from: contract.address(),
+                to: contract.address(),
+                value: U256::zero(),
+                input: Bytes::from_str("0x6a6758fe").unwrap()
+            },
+            OtsTrace {
+                r#type: OtsTraceType::Call,
+                depth: 1,
+                from: contract.address(),
+                to: contract.address(),
+                value: U256::zero(),
+                input: Bytes::from_str("0x96385e39").unwrap()
+            },
+            OtsTrace {
+                r#type: OtsTraceType::Call,
+                depth: 2,
+                from: contract.address(),
+                to: wallets[0].address(),
+                value: 1337.into(),
+                input: Bytes::from_str("0x").unwrap()
+            },
+            OtsTrace {
+                r#type: OtsTraceType::DelegateCall,
+                depth: 2,
+                from: contract.address(),
+                to: contract.address(),
+                value: U256::zero(),
+                input: Bytes::from_str("0xa1325397").unwrap()
+            },
+        ]
+    );
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_ots_get_transactionn_error() {
@@ -125,7 +229,7 @@ contract Contract {
     let contract = compiled.remove_first("Contract").unwrap();
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider().await;
 
     let wallet = handle.dev_wallets().next().unwrap();
