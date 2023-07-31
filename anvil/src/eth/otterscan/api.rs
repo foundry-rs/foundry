@@ -83,29 +83,31 @@ impl EthApi {
     /// For simplicity purposes, we return the entire block instead of emptying the values that
     /// Otterscan doesn't want. This is the original purpose of the endpoint (to save bandwidth),
     /// but it doesn't seem necessary in the context of an anvil node
-    pub async fn ots_get_block_details(
-        &self,
-        number: BlockNumber,
-    ) -> Result<Option<OtsBlockDetails<TxHash>>> {
+    pub async fn ots_get_block_details(&self, number: BlockNumber) -> Result<OtsBlockDetails> {
         node_info!("ots_getBlockDetails");
 
-        let block = self.backend.block_by_number(number).await?.map(Into::into);
+        if let Some(block) = self.backend.block_by_number_full(number).await? {
+            let ots_block = OtsBlockDetails::build(block, &self.backend).await?;
 
-        Ok(block)
+            Ok(ots_block)
+        } else {
+            Err(BlockchainError::BlockNotFound)
+        }
     }
 
     /// For simplicity purposes, we return the entire block instead of emptying the values that
     /// Otterscan doesn't want. This is the original purpose of the endpoint (to save bandwidth),
     /// but it doesn't seem necessary in the context of an anvil node
-    pub async fn ots_get_block_details_by_hash(
-        &self,
-        hash: H256,
-    ) -> Result<Option<OtsBlockDetails<TxHash>>> {
+    pub async fn ots_get_block_details_by_hash(&self, hash: H256) -> Result<OtsBlockDetails> {
         node_info!("ots_getBlockDetailsByHash");
 
-        let block = self.backend.block_by_hash(hash).await?.map(Into::into);
+        if let Some(block) = self.backend.block_by_hash_full(hash).await? {
+            let ots_block = OtsBlockDetails::build(block, &self.backend).await?;
 
-        Ok(block)
+            Ok(ots_block)
+        } else {
+            Err(BlockchainError::BlockNotFound)
+        }
     }
 
     /// Gets paginated transaction data for a certain block. Return data is similar to

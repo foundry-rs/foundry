@@ -1,3 +1,5 @@
+use std::ops::Mul;
+
 use ethers::types::{
     Action, Address, Block, Bytes, Call, CallType, Create, CreateResult, Res, Suicide, Trace,
     Transaction, TransactionReceipt, H256, U256,
@@ -18,9 +20,9 @@ pub struct OtsBlock<TX> {
 
 /// Block structure with additional details regarding fees and issuance
 #[derive(Serialize, Debug)]
-#[serde(rename_all = "camelCase", bound = "TX: Serialize + DeserializeOwned")]
-pub struct OtsBlockDetails<TX> {
-    pub block: OtsBlock<TX>,
+#[serde(rename_all = "camelCase")]
+pub struct OtsBlockDetails {
+    pub block: OtsBlock<Transaction>,
     pub total_fees: U256,
     pub issuance: Issuance,
 }
@@ -103,13 +105,31 @@ pub enum OtsTraceType {
     DelegateCall,
 }
 
-impl<TX> From<Block<TX>> for OtsBlockDetails<TX> {
-    fn from(block: Block<TX>) -> Self {
-        Self {
+impl OtsBlockDetails {
+    pub async fn build(mut block: Block<Transaction>, backend: &Backend) -> Result<Self> {
+        let receipts: Vec<TransactionReceipt> = join_all(
+            block
+                .transactions
+                .iter()
+                .map(|tx| async { backend.transaction_receipt(tx.hash).await.unwrap().unwrap() }),
+        )
+        .await;
+
+        let total_fees = receipts.iter().fold(U256::zero(), |acc, receipt| {
+            acc + receipt.gas_used.unwrap() * (receipt.effective_gas_price.unwrap())
+        });
+
+        // Otterscan doesn't need logsBloom, so we can save some bandwidth
+        // it also doesn't need transactions, but we can't really empty that, since it would cause
+        // `transaction_count` to also end up as 0
+        block.logs_bloom = None;
+
+        Ok(Self {
             block: block.into(),
-            total_fees: U256::zero(),     // TODO:
-            issuance: Default::default(), // TODO: fill block_reward
-        }
+            total_fees,
+            // issuance has no meaningful value in anvil's backend. just default to 0
+            issuance: Default::default(),
+        })
     }
 }
 
