@@ -855,14 +855,15 @@ where
                                 .into_iter()
                                 .flatten()
                                 .join(" and ");
+                                let failure_message = match status {
+                                    InstructionResult::Continue | InstructionResult::Stop | InstructionResult::Return | InstructionResult::SelfDestruct =>
+                                    format!("Expected call to {address:?} with {expected_values} to be called {count} time(s), but was called {actual_count} time(s)"),
+                                    _ => format!("Expected call to {address:?} with {expected_values} to be called {count} time(s), but the call reverted instead. Ensure you're testing the happy path when using the expectCall cheatcode"),
+                                };
                                 return (
                                     InstructionResult::Revert,
                                     remaining_gas,
-                                    format!(
-                                        "Expected call to {address:?} with {expected_values} to be called {count} time(s), but was called {actual_count} time(s)"
-                                    )
-                                    .encode()
-                                    .into(),
+                                    failure_message.encode().into(),
                                 )
                             }
                         }
@@ -881,14 +882,15 @@ where
                                 .into_iter()
                                 .flatten()
                                 .join(" and ");
+                                let failure_message = match status {
+                                    InstructionResult::Continue | InstructionResult::Stop | InstructionResult::Return | InstructionResult::SelfDestruct =>
+                                    format!("Expected call to {address:?} with {expected_values} to be called {count} time(s), but was called {actual_count} time(s)"),
+                                    _ => format!("Expected call to {address:?} with {expected_values} to be called {count} time(s), but the call reverted instead. Ensure you're testing the happy path when using the expectCall cheatcode"),
+                                };
                                 return (
                                     InstructionResult::Revert,
                                     remaining_gas,
-                                    format!(
-                                        "Expected call to {address:?} with {expected_values} to be called at least {count} time(s), but was called {actual_count} time(s)"
-                                    )
-                                    .encode()
-                                    .into(),
+                                    failure_message.encode().into(),
                                 )
                             }
                         }
@@ -901,13 +903,15 @@ where
             self.expected_emits.retain(|expected| !expected.found);
             // If not empty, we got mismatched emits
             if !self.expected_emits.is_empty() {
+                let failure_message = match status {
+                    InstructionResult::Continue | InstructionResult::Stop | InstructionResult::Return | InstructionResult::SelfDestruct =>
+                    "Expected an emit, but no logs were emitted afterward. You might have mismatched events or not enough events were emitted.",
+                    _ => "Expected an emit, but the call reverted instead. Ensure you're testing the happy path when using the `expectEmit` cheatcode.",
+                };
                 return (
                     InstructionResult::Revert,
                     remaining_gas,
-                    "Expected an emit, but no logs were emitted afterward. You might have mismatched events or not enough events were emitted."
-                        .to_string()
-                        .encode()
-                        .into(),
+                    failure_message.to_string().encode().into(),
                 )
             }
         }

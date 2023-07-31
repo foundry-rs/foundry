@@ -192,7 +192,7 @@ fn create_select_fork<DB: DatabaseExt>(
 
 /// Creates a new fork
 fn create_fork<DB: DatabaseExt>(
-    state: &mut Cheatcodes,
+    state: &Cheatcodes,
     data: &mut EVMData<'_, DB>,
     url_or_alias: String,
     block: Option<u64>,
@@ -227,7 +227,7 @@ fn create_select_fork_at_transaction<DB: DatabaseExt>(
 
 /// Creates a new fork at the given transaction
 fn create_fork_at_transaction<DB: DatabaseExt>(
-    state: &mut Cheatcodes,
+    state: &Cheatcodes,
     data: &mut EVMData<'_, DB>,
     url_or_alias: String,
     transaction: H256,

@@ -28,11 +28,12 @@ use forge::{
     MultiContractRunnerBuilder, TestOptions,
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
-use foundry_config::Config;
+use foundry_config::{Config, SolcReq};
 use foundry_evm::utils::evm_spec;
 use semver::Version;
 use std::{collections::HashMap, sync::mpsc::channel};
 use tracing::trace;
+use yansi::Paint;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(CoverageArgs, opts, evm_opts);
@@ -45,6 +46,13 @@ pub struct CoverageArgs {
     /// This flag can be used multiple times.
     #[clap(long, value_enum, default_value = "summary")]
     report: Vec<CoverageReportKind>,
+
+    /// Enable viaIR with minimum optimization
+    ///
+    /// This can fix most of the "stack too deep" errors while resulting a
+    /// relatively accurate source map.
+    #[clap(long)]
+    ir_minimum: bool,
 
     #[clap(flatten)]
     filter: FilterArgs,
@@ -96,11 +104,41 @@ impl CoverageArgs {
         let project = {
             let mut project = config.ephemeral_no_artifacts_project()?;
 
-            // Disable the optimizer for more accurate source maps
-            project.solc_config.settings.optimizer.disable();
-            project.solc_config.settings.optimizer.runs = None;
-            project.solc_config.settings.optimizer.details = None;
-            project.solc_config.settings.via_ir = None;
+            if self.ir_minimum {
+                // TODO: How to detect solc version if the user does not specify a solc version in
+                // config  case1: specify local installed solc ?
+                //  case2: mutliple solc versions used and  auto_detect_solc == true
+                if let Some(SolcReq::Version(version)) = &config.solc {
+                    if *version < Version::new(0, 8, 13) {
+                        return Err(eyre::eyre!(
+                            "viaIR with minimum optimization is only available in Solidity 0.8.13 and above."
+                        ));
+                    }
+                }
+
+                // print warning message
+                p_println!(!self.opts.silent => "{}",
+                Paint::yellow(
+                concat!(
+                "Warning! \"--ir-minimum\" flag enables viaIR with minimum optimization, which can result in inaccurate source mappings.\n",
+                "Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n",
+                "Note that \"viaIR\" is only available in Solidity 0.8.13 and above.\n",
+                "See more:\n",
+                "https://github.com/foundry-rs/foundry/issues/3357\n"
+                )));
+
+                // Enable viaIR with minimum optimization
+                // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
+                // And also in new releases of solidity:
+                // https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
+                project.solc_config.settings =
+                    project.solc_config.settings.with_via_ir_minimum_optimization()
+            } else {
+                project.solc_config.settings.optimizer.disable();
+                project.solc_config.settings.optimizer.runs = None;
+                project.solc_config.settings.optimizer.details = None;
+                project.solc_config.settings.via_ir = None;
+            }
 
             project
         };

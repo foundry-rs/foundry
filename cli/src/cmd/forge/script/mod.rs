@@ -134,15 +134,6 @@ pub struct ScriptArgs {
     #[clap(long, short, default_value = "130")]
     pub gas_estimate_multiplier: u64,
 
-    #[clap(flatten)]
-    pub opts: BuildArgs,
-
-    #[clap(flatten)]
-    pub wallets: MultiWallet,
-
-    #[clap(flatten)]
-    pub evm_opts: EvmArgs,
-
     /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
     #[clap(
         long,
@@ -183,9 +174,6 @@ pub struct ScriptArgs {
     #[clap(long)]
     pub verify: bool,
 
-    #[clap(flatten)]
-    pub verifier: super::verify::VerifierArgs,
-
     /// Output results in JSON format.
     #[clap(long)]
     pub json: bool,
@@ -198,6 +186,18 @@ pub struct ScriptArgs {
         value_name = "PRICE",
     )]
     pub with_gas_price: Option<U256>,
+
+    #[clap(flatten)]
+    pub opts: BuildArgs,
+
+    #[clap(flatten)]
+    pub wallets: MultiWallet,
+
+    #[clap(flatten)]
+    pub evm_opts: EvmArgs,
+
+    #[clap(flatten)]
+    pub verifier: super::verify::VerifierArgs,
 
     #[clap(flatten)]
     pub retry: RetryArgs,
@@ -517,7 +517,8 @@ impl ScriptArgs {
         Ok((func.clone(), data))
     }
 
-    /// Checks if the transaction is a deployment with a size above the `CONTRACT_MAX_SIZE`.
+    /// Checks if the transaction is a deployment with either a size above the `CONTRACT_MAX_SIZE`
+    /// or specified `code_size_limit`.
     ///
     /// If `self.broadcast` is enabled, it asks confirmation of the user. Otherwise, it just warns
     /// the user.
@@ -571,11 +572,16 @@ impl ScriptArgs {
         }
 
         let mut prompt_user = false;
+        let max_size = match self.evm_opts.env.code_size_limit {
+            Some(size) => size,
+            None => CONTRACT_MAX_SIZE,
+        };
+
         for (data, to) in result.transactions.iter().flat_map(|txes| {
             txes.iter().filter_map(|tx| {
                 tx.transaction
                     .data()
-                    .filter(|data| data.len() > CONTRACT_MAX_SIZE)
+                    .filter(|data| data.len() > max_size)
                     .map(|data| (data, tx.transaction.to()))
             })
         }) {
@@ -597,12 +603,12 @@ impl ScriptArgs {
             {
                 let deployment_size = deployed_code.len();
 
-                if deployment_size > CONTRACT_MAX_SIZE {
+                if deployment_size > max_size {
                     prompt_user = self.broadcast;
                     shell::println(format!(
                         "{}",
                         Paint::red(format!(
-                            "`{name}` is above the EIP-170 contract size limit ({deployment_size} > {CONTRACT_MAX_SIZE})."
+                            "`{name}` is above the contract size limit ({deployment_size} > {max_size})."
                         ))
                     ))?;
                 }
@@ -838,6 +844,21 @@ mod tests {
             args.verifier.verifier_url,
             Some("http://localhost:3000/api/verify".to_string())
         );
+    }
+
+    #[test]
+    fn can_extract_code_size_limit() {
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "script",
+            "script/Test.s.sol:TestScript",
+            "--fork-url",
+            "http://localhost:8545",
+            "--broadcast",
+            "--code-size-limit",
+            "50000",
+        ]);
+        assert_eq!(args.evm_opts.env.code_size_limit, Some(50000));
     }
 
     #[test]

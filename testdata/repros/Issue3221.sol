@@ -2,11 +2,11 @@
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "../cheats/Cheats.sol";
+import "../cheats/Vm.sol";
 
 // https://github.com/foundry-rs/foundry/issues/3221
 contract Issue3221Test is DSTest {
-    Cheats constant vm = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
     uint256 fork1;
     uint256 fork2;
 

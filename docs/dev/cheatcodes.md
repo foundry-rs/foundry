@@ -40,7 +40,7 @@ In solidity cheat codes are calls to a specific address, the cheat code handler 
 
 `address(uint160(uint256(keccak256('hevm cheat code'))))`: 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D
 
-which can be initialized like `Cheats constant cheats = Cheats(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);`, when
+which can be initialized like `Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);`, when
 inheriting from `forge-std/Test.sol` it can be accessed via `vm.<cheatcode>` directly.
 
 Since cheat codes are bound to a constant address, the cheat code inspector listens for that address:
