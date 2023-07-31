@@ -202,7 +202,7 @@ impl CallArgs {
                     return Ok(());
                 }
 
-                // fill the builder after the comditional so we dont move values
+                // fill the builder after the conditional so we dont move values
                 fill_create(&mut builder, value, code, sig, args).await?;
             }
             _ => {
