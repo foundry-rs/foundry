@@ -66,6 +66,7 @@ pub struct CallArgs {
     #[clap(long, requires = "trace")]
     labels: Vec<String>,
 
+    /// Can only be used with "--trace"
     #[clap(long)]
     evm_version: Option<EvmVersion>,
 
