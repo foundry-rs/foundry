@@ -590,4 +590,19 @@ interface Vm {
 
     // Resumes gas metering from where it left off
     function resumeGasMetering() external;
+
+    // Starts recording all map SSTOREs for later retrieval.
+    function startMappingRecording() external;
+
+    // Stops recording all map SSTOREs for later retrieval and clears the recorded data.
+    function stopMappingRecording() external;
+
+    // Gets the length of a mapping at a given slot, for a given address.
+    function getMappingLength(address target, bytes32 slot) external returns (uint256);
+
+    // Gets the element at index idx of a mapping at a given slot, for a given address.
+    function getMappingSlotAt(address target, bytes32 slot, uint256 idx) external returns (bytes32);
+
+    // Gets the map key and parent of a mapping at a given slot, for a given address.
+    function getMappingKeyAndParentOf(address target, bytes32 slot) external returns (bool, bytes32, bytes32);
 }

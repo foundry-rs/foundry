@@ -41,9 +41,24 @@ impl<T> Snapshots<T> {
         snapshot
     }
 
+    /// Removes the snapshot with the given `id`.
+    ///
+    /// Does not remove snapshots after it.
+    pub fn remove_at(&mut self, id: U256) -> Option<T> {
+        self.snapshots.remove(&id)
+    }
+
     /// Inserts the new snapshot and returns the id
     pub fn insert(&mut self, snapshot: T) -> U256 {
         let id = self.next_id();
+        self.snapshots.insert(id, snapshot);
+        id
+    }
+
+    /// Inserts the new snapshot at the given `id`.
+    ///
+    ///  Does not auto-increment the next `id`.
+    pub fn insert_at(&mut self, snapshot: T, id: U256) -> U256 {
         self.snapshots.insert(id, snapshot);
         id
     }
