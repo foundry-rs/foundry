@@ -18,7 +18,7 @@ use ethers::{
     abi::{Abi, Contract, Detokenize, Function, Tokenize},
     prelude::{decode_function_data, encode_function_data, Address, U256},
     signers::LocalWallet,
-    types::Log,
+    types::{Chain, Log},
 };
 use foundry_common::{abi::IntoFunction, evm::Breakpoints};
 use hashbrown::HashMap;
@@ -33,6 +33,7 @@ pub use revm::{
         B160, U256 as rU256,
     },
 };
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// ABIs used internally in the executor
@@ -258,6 +259,7 @@ impl Executor {
                         state_changeset: None,
                         transactions: None,
                         script_wallets: res.script_wallets,
+                        exported_data: res.exported_data,
                     })))
                 }
             }
@@ -430,6 +432,7 @@ impl Executor {
             debug,
             script_wallets,
             env,
+            exported_data,
             ..
         } = result;
 
@@ -455,7 +458,8 @@ impl Executor {
                         labels,
                         state_changeset: None,
                         transactions: None,
-                        script_wallets
+                        script_wallets,
+                        exported_data
                     })));
                 }
             }
@@ -475,7 +479,8 @@ impl Executor {
                     state_changeset: None,
                     transactions: None,
                     script_wallets,
-                })))
+                    exported_data,
+                })));
             }
         };
 
@@ -545,7 +550,7 @@ impl Executor {
     ) -> Result<bool, DatabaseError> {
         if self.backend().has_snapshot_failure() {
             // a failure occurred in a reverted snapshot, which is considered a failed test
-            return Ok(should_fail)
+            return Ok(should_fail);
         }
 
         // Construct a new VM with the state changeset
@@ -631,6 +636,7 @@ pub struct ExecutionErr {
     pub transactions: Option<BroadcastableTransactions>,
     pub state_changeset: Option<StateChangeset>,
     pub script_wallets: Vec<LocalWallet>,
+    pub exported_data: ExportedData,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -705,6 +711,7 @@ pub struct CallResult<D: Detokenize> {
     pub env: Env,
     /// breakpoints
     pub breakpoints: Breakpoints,
+    pub exported_data: ExportedData,
 }
 
 /// The result of a raw call.
@@ -749,6 +756,7 @@ pub struct RawCallResult {
     pub out: Option<Output>,
     /// The chisel state
     pub chisel_state: Option<(Stack, Memory, InstructionResult)>,
+    pub exported_data: ExportedData,
 }
 
 impl Default for RawCallResult {
@@ -772,6 +780,7 @@ impl Default for RawCallResult {
             cheatcodes: Default::default(),
             out: None,
             chisel_state: None,
+            exported_data: Default::default(),
         }
     }
 }
@@ -818,8 +827,10 @@ fn convert_executed_result(
         cheatcodes,
         script_wallets,
         chisel_state,
+        raw_exported_data,
     } = inspector.collect_inspector_states();
 
+    let exported_data = ExportedData::new().extend_with_raw(raw_exported_data, &env);
     let gas_refunded = gas.unwrap_or(gas_refunded);
     let transactions = match cheatcodes.as_ref() {
         Some(cheats) if !cheats.broadcastable_transactions.is_empty() => {
@@ -847,6 +858,7 @@ fn convert_executed_result(
         cheatcodes,
         out,
         chisel_state,
+        exported_data,
     })
 }
 
@@ -871,6 +883,7 @@ fn convert_call_result<D: Detokenize>(
         state_changeset,
         script_wallets,
         env,
+        exported_data,
         ..
     } = call_result;
 
@@ -900,13 +913,14 @@ fn convert_call_result<D: Detokenize>(
                 env,
                 breakpoints,
                 skipped: false,
+                exported_data,
             })
         }
         _ => {
             let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
                 .unwrap_or_else(|_| format!("{status:?}"));
             if reason == "SKIPPED" {
-                return Err(EvmError::SkipError)
+                return Err(EvmError::SkipError);
             }
             Err(EvmError::Execution(Box::new(ExecutionErr {
                 reverted,
@@ -921,7 +935,79 @@ fn convert_call_result<D: Detokenize>(
                 transactions,
                 state_changeset,
                 script_wallets,
+                exported_data,
             })))
         }
+    }
+}
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Deserialize, Serialize)]
+pub struct ExportedValue {
+    name: String,
+    context: Option<String>,
+    block: u64,
+    chain: ethers::prelude::Chain,
+}
+
+impl ExportedValue {
+    pub fn new(
+        name: String,
+        context: Option<String>,
+        block: u64,
+        chain: ethers::prelude::Chain,
+    ) -> Self {
+        Self { name, context, block, chain }
+    }
+
+    pub fn new_from_env(name: String, context: Option<String>, env: &Env) -> Self {
+        let block = env.block.number.to::<u64>();
+        let chain: Chain = env.cfg.chain_id.to::<u64>().try_into().unwrap();
+        Self { name, context, block, chain }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct RawExportedData(HashMap<String, String>);
+
+impl RawExportedData {
+    fn new() -> Self {
+        Self(HashMap::new())
+    }
+
+    fn insert(&mut self, key: String, value: String) -> Option<String> {
+        self.0.insert(key, value)
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ExportedData(HashMap<ExportedValue, String>);
+
+impl ExportedData {
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
+
+    pub fn insert(&mut self, key: ExportedValue, value: String) -> Option<String> {
+        self.0.insert(key, value)
+    }
+
+    pub fn insert_from_env(
+        &mut self,
+        key: String,
+        context: Option<String>,
+        env: &revm::primitives::Env,
+        value: String,
+    ) -> Option<String> {
+        self.insert(ExportedValue::new_from_env(key, context, env), value)
+    }
+
+    pub fn extend(&mut self, other: Self) {
+        self.0.extend(other.0)
+    }
+
+    pub fn extend_with_raw(mut self, raw: RawExportedData, env: &revm::primitives::Env) -> Self {
+        for (key, value) in raw.0 {
+            self.insert_from_env(key, None, env, value);
+        }
+        self
     }
 }
