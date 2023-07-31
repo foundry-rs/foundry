@@ -38,7 +38,7 @@ mod decoder;
 pub mod node;
 pub mod utils;
 
-/// a default executor with tracing enabled
+/// A default executor with tracing enabled
 pub struct TracingExecutor {
     executor: Executor,
 }
