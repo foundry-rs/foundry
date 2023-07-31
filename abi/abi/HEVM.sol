@@ -212,3 +212,8 @@ keyExists(string,string)(bool)
 
 pauseGasMetering()
 resumeGasMetering()
+startMappingRecording()
+stopMappingRecording()
+getMappingLength(address,bytes32)
+getMappingSlotAt(address,bytes32,uint256)
+getMappingKeyAndParentOf(address,bytes32)
