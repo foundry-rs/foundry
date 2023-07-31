@@ -7,6 +7,7 @@ use crate::cmd::forge::{
     },
     verify::provider::VerificationProviderType,
 };
+use cast::executor::inspector::cheatcodes::TransactionForm;
 use ethers::{
     abi::Address,
     prelude::{artifacts::Libraries, ArtifactId, TransactionReceipt, TxHash},
@@ -362,6 +363,11 @@ impl ScriptSequence {
                 (tx.rpc.clone().expect("to have been filled with a proper rpc"), tx.typed_tx())
             })
             .collect()
+    }
+
+    /// Returns the list of the transactions without the metadata.
+    pub fn base_transactions(&self) -> Vec<TransactionForm> {
+        self.transactions.iter().map(|tx| tx.transaction.clone()).collect()
     }
 }
 

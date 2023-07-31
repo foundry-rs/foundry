@@ -240,6 +240,10 @@ impl MultiWallet {
             }
         );
 
+        if local_wallets.len() == 0 && unused_wallets.len() == 0 {
+            return Ok(local_wallets)
+        }
+
         let mut error_msg = String::new();
 
         // This is an actual used address

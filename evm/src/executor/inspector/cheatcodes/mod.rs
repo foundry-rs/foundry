@@ -58,7 +58,7 @@ mod fuzz;
 mod snapshot;
 /// Utility cheatcodes (`sign` etc.)
 pub mod util;
-pub use util::{BroadcastableTransaction, DEFAULT_CREATE2_DEPLOYER};
+pub use util::{BroadcastableTransaction, TransactionForm, DEFAULT_CREATE2_DEPLOYER};
 
 mod config;
 use crate::executor::{backend::RevertDiagnostic, inspector::utils::get_create_address};
@@ -696,19 +696,22 @@ where
 
                         self.broadcastable_transactions.push_back(BroadcastableTransaction {
                             rpc: data.db.active_fork_url(),
-                            transaction: TypedTransaction::Legacy(TransactionRequest {
-                                from: Some(broadcast.new_origin),
-                                to: Some(NameOrAddress::Address(b160_to_h160(call.contract))),
-                                value: Some(call.transfer.value.into()),
-                                data: Some(call.input.clone().into()),
-                                nonce: Some(account.info.nonce.into()),
-                                gas: if is_fixed_gas_limit {
-                                    Some(call.gas_limit.into())
-                                } else {
-                                    None
+
+                            transaction: TransactionForm::Raw(TypedTransaction::Legacy(
+                                TransactionRequest {
+                                    from: Some(broadcast.new_origin),
+                                    to: Some(NameOrAddress::Address(b160_to_h160(call.contract))),
+                                    value: Some(call.transfer.value.into()),
+                                    data: Some(call.input.clone().into()),
+                                    nonce: Some(account.info.nonce.into()),
+                                    gas: if is_fixed_gas_limit {
+                                        Some(call.gas_limit.into())
+                                    } else {
+                                        None
+                                    },
+                                    ..Default::default()
                                 },
-                                ..Default::default()
-                            }),
+                            )),
                         });
 
                         // call_inner does not increase nonces, so we have to do it ourselves
@@ -1010,19 +1013,21 @@ where
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc: data.db.active_fork_url(),
-                        transaction: TypedTransaction::Legacy(TransactionRequest {
-                            from: Some(broadcast.new_origin),
-                            to,
-                            value: Some(call.value.into()),
-                            data: Some(bytecode.into()),
-                            nonce: Some(nonce.into()),
-                            gas: if is_fixed_gas_limit {
-                                Some(call.gas_limit.into())
-                            } else {
-                                None
+                        transaction: TransactionForm::Raw(TypedTransaction::Legacy(
+                            TransactionRequest {
+                                from: Some(broadcast.new_origin),
+                                to,
+                                value: Some(call.value.into()),
+                                data: Some(bytecode.into()),
+                                nonce: Some(nonce.into()),
+                                gas: if is_fixed_gas_limit {
+                                    Some(call.gas_limit.into())
+                                } else {
+                                    None
+                                },
+                                ..Default::default()
                             },
-                            ..Default::default()
-                        }),
+                        )),
                     });
                 }
             }

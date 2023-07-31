@@ -104,6 +104,16 @@ impl ScriptTester {
         Ok(())
     }
 
+    pub fn copy_cheat_file(current_dir: &Path, filename: &str) -> eyre::Result<()> {
+        let testdata = Self::testdata_path();
+        std::fs::copy(
+            testdata + "/cheats/" + filename,
+            current_dir.join(["src/", filename].join("")),
+        )?;
+
+        Ok(())
+    }
+
     pub async fn load_private_keys(&mut self, keys_indexes: Vec<u32>) -> &mut Self {
         for index in keys_indexes {
             self.cmd.args(["--private-keys", &self.accounts_priv[index as usize]]);

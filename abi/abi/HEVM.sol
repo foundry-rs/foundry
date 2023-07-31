@@ -109,6 +109,7 @@ resetNonce(address)
 setNonceUnsafe(address,uint64)
 chainId(uint256)
 txGasPrice(uint256)
+sendRawTransaction(bytes)
 
 broadcast()
 broadcast(address)

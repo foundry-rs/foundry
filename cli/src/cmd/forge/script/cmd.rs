@@ -5,7 +5,7 @@ use crate::cmd::{
 };
 use ethers::{
     prelude::{Middleware, Signer},
-    types::{transaction::eip2718::TypedTransaction, U256},
+    types::U256,
 };
 use foundry_common::{contracts::flatten_contracts, try_get_http_provider};
 use std::sync::Arc;
@@ -175,10 +175,7 @@ impl ScriptArgs {
 
         if let Some(txs) = &mut result.transactions {
             for tx in txs.iter() {
-                lib_deploy.push_back(BroadcastableTransaction {
-                    rpc: tx.rpc.clone(),
-                    transaction: TypedTransaction::Legacy(tx.transaction.clone().into()),
-                });
+                lib_deploy.push_back(tx.clone());
             }
             *txs = lib_deploy;
         }
@@ -336,10 +333,7 @@ impl ScriptArgs {
 
         if let Some(new_txs) = &result.transactions {
             for new_tx in new_txs.iter() {
-                txs.push_back(BroadcastableTransaction {
-                    rpc: new_tx.rpc.clone(),
-                    transaction: TypedTransaction::Legacy(new_tx.transaction.clone().into()),
-                });
+                txs.push_back(new_tx.clone());
             }
         }
 

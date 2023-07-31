@@ -145,7 +145,7 @@ impl ScriptArgs {
                     .expect("to have been built.")
                     .write();
 
-                if let TypedTransaction::Legacy(mut tx) = transaction.transaction {
+                if let TypedTransaction::Legacy(mut tx) = transaction.transaction.clone().into() {
                     let result = runner
                         .simulate(
                             tx.from.expect(
@@ -194,7 +194,11 @@ impl ScriptArgs {
                     }
 
                     let tx = TransactionWithMetadata::new(
-                        tx.into(),
+                        if transaction.transaction.is_signed() {
+                            transaction.transaction
+                        } else {
+                            TransactionForm::Raw(tx.into())
+                        },
                         transaction.rpc,
                         &result,
                         &address_to_abi,

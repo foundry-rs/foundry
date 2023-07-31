@@ -3,7 +3,7 @@ use crate::{cmd::forge::build::BuildArgs, opts::MultiWallet, utils::parse_ether_
 use cast::{
     decode,
     executor::inspector::{
-        cheatcodes::{util::BroadcastableTransactions, BroadcastableTransaction},
+        cheatcodes::{util::BroadcastableTransactions, BroadcastableTransaction, TransactionForm},
         DEFAULT_CREATE2_DEPLOYER,
     },
 };
@@ -393,19 +393,22 @@ impl ScriptArgs {
             if !predeploy_libraries.is_empty() && self.evm_opts.sender.is_none() {
                 for tx in txs.iter() {
                     match &tx.transaction {
-                        TypedTransaction::Legacy(tx) => {
-                            if tx.to.is_none() {
-                                let sender = tx.from.expect("no sender");
-                                if let Some(ns) = new_sender {
-                                    if sender != ns {
-                                        shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
-                                        return Ok(None)
+                        TransactionForm::Raw(_tx) => match _tx {
+                            TypedTransaction::Legacy(tx) => {
+                                if tx.to.is_none() {
+                                    let sender = tx.from.expect("no sender");
+                                    if let Some(ns) = new_sender {
+                                        if sender != ns {
+                                            shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
+                                            return Ok(None)
+                                        }
+                                    } else if sender != evm_opts.sender {
+                                        new_sender = Some(sender);
                                     }
-                                } else if sender != evm_opts.sender {
-                                    new_sender = Some(sender);
                                 }
                             }
-                        }
+                            _ => unreachable!(),
+                        },
                         _ => unreachable!(),
                     }
                 }
@@ -427,12 +430,12 @@ impl ScriptArgs {
             .enumerate()
             .map(|(i, bytes)| BroadcastableTransaction {
                 rpc: fork_url.clone(),
-                transaction: TypedTransaction::Legacy(TransactionRequest {
+                transaction: TransactionForm::Raw(TypedTransaction::Legacy(TransactionRequest {
                     from: Some(from),
                     data: Some(bytes.clone()),
                     nonce: Some(nonce + i),
                     ..Default::default()
-                }),
+                })),
             })
             .collect()
     }
@@ -579,10 +582,11 @@ impl ScriptArgs {
 
         for (data, to) in result.transactions.iter().flat_map(|txes| {
             txes.iter().filter_map(|tx| {
-                tx.transaction
-                    .data()
-                    .filter(|data| data.len() > max_size)
-                    .map(|data| (data, tx.transaction.to()))
+                let tx = match &tx.transaction {
+                    TransactionForm::Raw(_tx) => _tx,
+                    TransactionForm::Signed(_tx, _) => _tx,
+                };
+                tx.data().filter(|data| data.len() > max_size).map(|data| (data, tx.to()))
             })
         }) {
             let mut offset = 0;

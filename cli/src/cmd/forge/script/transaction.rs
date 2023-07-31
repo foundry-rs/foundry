@@ -1,5 +1,9 @@
 use crate::cmd::forge::script::{artifacts::ArtifactInfo, ScriptResult};
-use cast::{executor::inspector::DEFAULT_CREATE2_DEPLOYER, trace::CallTraceDecoder, CallKind};
+use cast::{
+    executor::inspector::{cheatcodes::TransactionForm, DEFAULT_CREATE2_DEPLOYER},
+    trace::CallTraceDecoder,
+    CallKind,
+};
 use ethers::{
     abi,
     abi::Address,
@@ -39,7 +43,7 @@ pub struct TransactionWithMetadata {
     pub arguments: Option<Vec<String>>,
     #[serde(skip)]
     pub rpc: Option<RpcUrl>,
-    pub transaction: TypedTransaction,
+    pub transaction: TransactionForm,
     pub additional_contracts: Vec<AdditionalContract>,
     pub is_fixed_gas_limit: bool,
 }
@@ -57,12 +61,12 @@ fn default_vec_of_strings() -> Option<Vec<String>> {
 }
 
 impl TransactionWithMetadata {
-    pub fn from_typed_transaction(transaction: TypedTransaction) -> Self {
+    pub fn from_typed_transaction(transaction: TransactionForm) -> Self {
         Self { transaction, ..Default::default() }
     }
 
     pub fn new(
-        transaction: TypedTransaction,
+        transaction: TransactionForm,
         rpc: Option<RpcUrl>,
         result: &ScriptResult,
         local_contracts: &BTreeMap<Address, ArtifactInfo>,
@@ -73,7 +77,9 @@ impl TransactionWithMetadata {
         let mut metadata = Self { transaction, rpc, is_fixed_gas_limit, ..Default::default() };
 
         // Specify if any contract was directly created with this transaction
-        if let Some(NameOrAddress::Address(to)) = metadata.transaction.to().cloned() {
+        if let Some(NameOrAddress::Address(to)) =
+            metadata.transaction.to_typed_transaction().to().cloned()
+        {
             if to == DEFAULT_CREATE2_DEPLOYER {
                 metadata.set_create(
                     true,
@@ -86,7 +92,7 @@ impl TransactionWithMetadata {
                     .set_call(to, local_contracts, decoder)
                     .wrap_err("Could not decode transaction type.")?;
             }
-        } else if metadata.transaction.to().is_none() {
+        } else if metadata.transaction.to_typed_transaction().to().is_none() {
             metadata.set_create(
                 false,
                 result.address.wrap_err("There should be a contract address from CREATE.")?,
@@ -133,7 +139,7 @@ impl TransactionWithMetadata {
         self.contract_name = contracts.get(&address).map(|info| info.contract_name.clone());
         self.contract_address = Some(address);
 
-        if let Some(data) = self.transaction.data() {
+        if let Some(data) = self.transaction.to_typed_transaction().data() {
             // a CREATE2 transaction is a CALL to the CREATE2 deployer function, so we need to
             // decode the arguments  from the function call
             if is_create2 {
@@ -204,7 +210,7 @@ impl TransactionWithMetadata {
     ) -> eyre::Result<()> {
         self.opcode = CallKind::Call;
 
-        if let Some(data) = self.transaction.data() {
+        if let Some(data) = self.transaction.to_typed_transaction().data() {
             if data.0.len() >= SELECTOR_LEN {
                 if let Some(info) = local_contracts.get(&target) {
                     // This CALL is made to a local contract.
@@ -248,23 +254,27 @@ impl TransactionWithMetadata {
     }
 
     pub fn set_tx(&mut self, tx: TypedTransaction) {
-        self.transaction = tx;
+        self.transaction = TransactionForm::Raw(tx);
     }
 
     pub fn change_type(&mut self, is_legacy: bool) {
         self.transaction = if is_legacy {
-            TypedTransaction::Legacy(self.transaction.clone().into())
+            TransactionForm::Raw(TypedTransaction::Legacy(
+                self.transaction.to_typed_transaction().clone().into(),
+            ))
         } else {
-            TypedTransaction::Eip1559(self.transaction.clone().into())
+            TransactionForm::Raw(TypedTransaction::Eip1559(
+                self.transaction.to_typed_transaction().clone().into(),
+            ))
         };
     }
 
     pub fn typed_tx(&self) -> &TypedTransaction {
-        &self.transaction
+        &self.transaction.to_typed_transaction()
     }
 
     pub fn typed_tx_mut(&mut self) -> &mut TypedTransaction {
-        &mut self.transaction
+        self.transaction.to_typed_transaction_mut()
     }
 
     pub fn is_create2(&self) -> bool {

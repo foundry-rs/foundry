@@ -302,6 +302,9 @@ interface Vm {
     // Set block.chainid (newChainId)
     function chainId(uint256) external;
 
+    // Executes a raw (signed) transaction
+    function sendRawTransaction(bytes memory signedTransaction) external;
+
     // Using the address that calls the test contract, has the next call (at this call depth only) create a transaction that can later be signed and sent onchain
     function broadcast() external;
 

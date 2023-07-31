@@ -2,7 +2,7 @@
 use crate::constants::TEMPLATE_CONTRACT;
 use anvil::{spawn, NodeConfig};
 use cast::SimpleCast;
-use ethers::abi::Address;
+use ethers::{abi::Address, providers::Middleware, types::U256, utils::parse_ether};
 use foundry_cli_test_utils::{
     forgetest, forgetest_async, forgetest_init,
     util::{OutputExt, TestCommand, TestProject},
@@ -1134,3 +1134,73 @@ contract NestedCreateFail is Script {
         assert!(cmd.stdout_lossy().contains("Script ran successfully."));
     }
 );
+
+forgetest_async!(broadcast_signed_tx, |prj: TestProject, cmd: TestCommand| async move {
+    let (api, handle) = spawn(NodeConfig::test().with_chain_id(Some(31337u64))).await;
+
+    let target_contract =
+        prj.root().join("src/SendRawTransaction.t.sol").to_string_lossy().to_string();
+    ScriptTester::copy_cheat_file(prj.root(), "SendRawTransaction.t.sol").unwrap();
+
+    let mut tester =
+        ScriptTester::new(cmd, Some(&handle.http_endpoint()), prj.root(), &target_contract);
+
+    let from: Address = "0x73E1A965542AFA4B412467761b1CED8A764E1D3B".parse().unwrap();
+    let to: Address = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266".parse().unwrap();
+    api.anvil_set_balance(from, parse_ether(1).unwrap()).await.unwrap();
+    api.anvil_set_balance(to, parse_ether(1).unwrap()).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let nonce_from = provider.get_transaction_count(from, None).await.unwrap();
+    let nonce_to = provider.get_transaction_count(to, None).await.unwrap();
+    assert_eq!(nonce_from.as_u64(), 0);
+    assert_eq!(nonce_to.as_u64(), 0);
+
+    tester
+        .add_sig("ScriptSendRawTransactionBroadcast", "runSignedTxBroadcast()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast);
+
+    assert_eq!(provider.get_transaction_count(from, None).await.unwrap().as_u64(), 1);
+    assert_eq!(provider.get_transaction_count(to, None).await.unwrap().as_u64(), 1);
+
+    let balance_from = parse_ether(1).unwrap() -
+        (U256::from(10 * u64::pow(10, 9)) * U256::from(21000)) -
+        U256::from(1234);
+    assert_eq!(provider.get_balance(from, None).await.unwrap(), balance_from);
+});
+
+forgetest_async!(broadcast_signed_tx2, |prj: TestProject, cmd: TestCommand| async move {
+    let (api, handle) = spawn(NodeConfig::test().with_chain_id(Some(31337u64))).await;
+
+    let target_contract =
+        prj.root().join("src/SendRawTransaction.t.sol").to_string_lossy().to_string();
+    ScriptTester::copy_cheat_file(prj.root(), "SendRawTransaction.t.sol").unwrap();
+
+    let mut tester =
+        ScriptTester::new(cmd, Some(&handle.http_endpoint()), prj.root(), &target_contract);
+
+    // make sure the deployer has some ETH to send the tx
+    let from: Address = "0x3fAB184622Dc19b6109349B94811493BF2a45362".parse().unwrap();
+    let contract: Address = "0x4e59b44847b379578588920cA78FbF26c0B4956C".parse().unwrap();
+    api.anvil_set_balance(from, parse_ether(1).unwrap()).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let nonce_from = provider.get_transaction_count(from, None).await.unwrap();
+    assert_eq!(nonce_from.as_u64(), 0);
+
+    let code_before = provider.get_code(contract, None).await.unwrap().to_string();
+    assert_eq!(code_before, "0x");
+
+    tester
+        .add_sig("ScriptSendRawTransactionBroadcast", "runDeployCreate2Deployer()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast);
+
+    assert_eq!(provider.get_transaction_count(from, None).await.unwrap().as_u64(), 1);
+
+    let code_after = provider.get_code(contract, None).await.unwrap().to_string();
+    assert_eq!(code_after, "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3");
+});

@@ -22,7 +22,7 @@ use ethers::{
         },
         MnemonicBuilder,
     },
-    types::{transaction::eip2718::TypedTransaction, NameOrAddress, H256, U256},
+    types::{transaction::eip2718::TypedTransaction, NameOrAddress, Signature, H256, U256},
     utils,
 };
 use foundry_common::{fmt::*, RpcUrl};
@@ -31,6 +31,7 @@ use revm::{
     primitives::{Account, TransactTo},
     Database, EVMData, JournaledState,
 };
+use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, str::FromStr};
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -42,11 +43,55 @@ pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
 
 pub const MAGIC_SKIP_BYTES: &[u8] = b"FOUNDRY::SKIP";
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum TransactionForm {
+    Raw(TypedTransaction),
+    Signed(TypedTransaction, Signature),
+}
+
+impl Default for TransactionForm {
+    fn default() -> Self {
+        Self::Raw(TypedTransaction::default())
+    }
+}
+
+impl From<TransactionForm> for TypedTransaction {
+    fn from(tx: TransactionForm) -> Self {
+        match tx {
+            TransactionForm::Raw(t) => t,
+            TransactionForm::Signed(t, _) => t,
+        }
+    }
+}
+
+impl TransactionForm {
+    pub fn to_typed_transaction(&self) -> &TypedTransaction {
+        match self {
+            TransactionForm::Raw(t) => t,
+            TransactionForm::Signed(t, _) => t,
+        }
+    }
+
+    pub fn to_typed_transaction_mut(&mut self) -> &mut TypedTransaction {
+        match self {
+            TransactionForm::Raw(t) => t,
+            TransactionForm::Signed(t, _) => t,
+        }
+    }
+
+    pub fn is_signed(&self) -> bool {
+        match self {
+            TransactionForm::Raw(_) => false,
+            TransactionForm::Signed(_, _) => true,
+        }
+    }
+}
+
 /// Helps collecting transactions from different forks.
 #[derive(Debug, Clone, Default)]
 pub struct BroadcastableTransaction {
     pub rpc: Option<RpcUrl>,
-    pub transaction: TypedTransaction,
+    pub transaction: TransactionForm,
 }
 
 pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;

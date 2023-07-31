@@ -5,7 +5,7 @@ use crate::{
         backend::DatabaseExt,
         inspector::cheatcodes::{
             util::{is_potential_precompile, with_journaled_account},
-            DealRecord,
+            BroadcastableTransaction, DealRecord, TransactionForm,
         },
     },
     utils::{b160_to_h160, h160_to_b160, ru256_to_u256, u256_to_ru256},
@@ -13,7 +13,8 @@ use crate::{
 use ethers::{
     abi::{self, AbiEncode, RawLog, Token, Tokenizable, Tokenize},
     signers::{LocalWallet, Signer},
-    types::{Address, Bytes, U256},
+    types::{transaction::eip2718::TypedTransaction, Address, Bytes, TransactionRequest, U256},
+    utils::rlp::Rlp,
 };
 use foundry_config::Config;
 use revm::{
@@ -639,6 +640,28 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::ResumeGasMetering(_) => {
             state.gas_metering = None;
+            Bytes::new()
+        }
+        HEVMCalls::SendRawTransaction(inner) => {
+            let decoded_tx = TransactionRequest::decode_signed_rlp(&Rlp::new(inner.0.as_ref()))
+                .map_err(|e| fmt_err!("sendRawTransaction: error decoding transaction {e}"))?;
+
+            if let Some(_broadcast) = &state.broadcast {
+                state.broadcastable_transactions.push_back(BroadcastableTransaction {
+                    rpc: data.db.active_fork_url(),
+                    transaction: TransactionForm::Signed(
+                        TypedTransaction::Legacy(decoded_tx.0.clone()),
+                        decoded_tx.1,
+                    ),
+                })
+            }
+
+            data.db.transact_from_tx(
+                decoded_tx.0,
+                data.env,
+                &mut data.journaled_state,
+                Some(state),
+            )?;
             Bytes::new()
         }
         _ => return Ok(None),

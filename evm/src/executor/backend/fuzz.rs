@@ -8,7 +8,10 @@ use crate::{
     },
     Address,
 };
-use ethers::prelude::{H256, U256};
+use ethers::{
+    prelude::{H256, U256},
+    types::TransactionRequest,
+};
 
 use revm::{
     db::DatabaseRef,
@@ -167,7 +170,7 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         self.backend_mut(env).roll_fork_to_transaction(id, transaction, env, journaled_state)
     }
 
-    fn transact(
+    fn transact_from_hash(
         &mut self,
         id: Option<LocalForkId>,
         transaction: H256,
@@ -175,8 +178,30 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         journaled_state: &mut JournaledState,
         cheatcodes_inspector: Option<&mut Cheatcodes>,
     ) -> eyre::Result<()> {
-        trace!(?id, ?transaction, "fuzz: execute transaction");
-        self.backend_mut(env).transact(id, transaction, env, journaled_state, cheatcodes_inspector)
+        trace!(?id, ?transaction, "fuzz: execute transaction by hash");
+        self.backend_mut(env).transact_from_hash(
+            id,
+            transaction,
+            env,
+            journaled_state,
+            cheatcodes_inspector,
+        )
+    }
+
+    fn transact_from_tx(
+        &mut self,
+        transaction: TransactionRequest,
+        env: &mut Env,
+        journaled_state: &mut JournaledState,
+        cheatcodes_inspector: Option<&mut Cheatcodes>,
+    ) -> eyre::Result<()> {
+        trace!(?transaction, "fuzz: execute transaction");
+        self.backend_mut(env).transact_from_tx(
+            transaction,
+            env,
+            journaled_state,
+            cheatcodes_inspector,
+        )
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {

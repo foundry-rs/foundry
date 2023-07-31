@@ -126,12 +126,18 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::Transact0(inner) => data
             .db
-            .transact(None, inner.0.into(), data.env, &mut data.journaled_state, Some(state))
+            .transact_from_hash(
+                None,
+                inner.0.into(),
+                data.env,
+                &mut data.journaled_state,
+                Some(state),
+            )
             .map(empty)
             .map_err(Into::into),
         HEVMCalls::Transact1(inner) => data
             .db
-            .transact(
+            .transact_from_hash(
                 Some(inner.0),
                 inner.1.into(),
                 data.env,

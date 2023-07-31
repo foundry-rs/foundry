@@ -3655,6 +3655,24 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("sendRawTransaction"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("sendRawTransaction"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Bytes,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("serializeAddress"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -6260,6 +6278,15 @@ pub mod hevm {
                 .method_hash([158, 191, 104, 39], p0)
                 .expect("method not found (this should never happen)")
         }
+        ///Calls the contract's `sendRawTransaction` (0xbc03d9f7) function
+        pub fn send_raw_transaction(
+            &self,
+            p0: ::ethers_core::types::Bytes,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([188, 3, 217, 247], p0)
+                .expect("method not found (this should never happen)")
+        }
         ///Calls the contract's `serializeAddress` (0x972c6062) function
         pub fn serialize_address_0(
             &self,
@@ -8793,6 +8820,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "selectFork", abi = "selectFork(uint256)")]
     pub struct SelectForkCall(pub ::ethers_core::types::U256);
+    ///Container type for all input parameters for the `sendRawTransaction` function with signature `sendRawTransaction(bytes)` and selector `0xbc03d9f7`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "sendRawTransaction", abi = "sendRawTransaction(bytes)")]
+    pub struct SendRawTransactionCall(pub ::ethers_core::types::Bytes);
     ///Container type for all input parameters for the `serializeAddress` function with signature `serializeAddress(string,string,address)` and selector `0x972c6062`
     #[derive(
         Clone,
@@ -9581,6 +9621,7 @@ pub mod hevm {
         RpcUrlStructs(RpcUrlStructsCall),
         RpcUrls(RpcUrlsCall),
         SelectFork(SelectForkCall),
+        SendRawTransaction(SendRawTransactionCall),
         SerializeAddress0(SerializeAddress0Call),
         SerializeAddress1(SerializeAddress1Call),
         SerializeBool0(SerializeBool0Call),
@@ -10255,6 +10296,12 @@ pub mod hevm {
                 return Ok(Self::SelectFork(decoded));
             }
             if let Ok(decoded)
+                = <SendRawTransactionCall as ::ethers_core::abi::AbiDecode>::decode(
+                    data,
+                ) {
+                return Ok(Self::SendRawTransaction(decoded));
+            }
+            if let Ok(decoded)
                 = <SerializeAddress0Call as ::ethers_core::abi::AbiDecode>::decode(
                     data,
                 ) {
@@ -10786,6 +10833,9 @@ pub mod hevm {
                 Self::SelectFork(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
+                Self::SendRawTransaction(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
                 Self::SerializeAddress0(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
@@ -11069,6 +11119,9 @@ pub mod hevm {
                 Self::RpcUrlStructs(element) => ::core::fmt::Display::fmt(element, f),
                 Self::RpcUrls(element) => ::core::fmt::Display::fmt(element, f),
                 Self::SelectFork(element) => ::core::fmt::Display::fmt(element, f),
+                Self::SendRawTransaction(element) => {
+                    ::core::fmt::Display::fmt(element, f)
+                }
                 Self::SerializeAddress0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::SerializeAddress1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::SerializeBool0(element) => ::core::fmt::Display::fmt(element, f),
@@ -11853,6 +11906,11 @@ pub mod hevm {
     impl ::core::convert::From<SelectForkCall> for HEVMCalls {
         fn from(value: SelectForkCall) -> Self {
             Self::SelectFork(value)
+        }
+    }
+    impl ::core::convert::From<SendRawTransactionCall> for HEVMCalls {
+        fn from(value: SendRawTransactionCall) -> Self {
+            Self::SendRawTransaction(value)
         }
     }
     impl ::core::convert::From<SerializeAddress0Call> for HEVMCalls {
