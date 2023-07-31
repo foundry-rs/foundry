@@ -14,7 +14,7 @@ use foundry_common::{
 use foundry_config::{FuzzConfig, InvariantConfig};
 use foundry_evm::{
     decode::decode_console_logs,
-    executor::{CallResult, EvmError, ExecutionErr, Executor},
+    executor::{CallResult, EvmError, ExecutionErr, Executor, ExportedData},
     fuzz::{
         invariant::{
             InvariantContract, InvariantExecutor, InvariantFuzzError, InvariantFuzzTestResult,
@@ -100,6 +100,7 @@ impl<'a> ContractRunner<'a> {
         // Deploy libraries
         let mut logs = Vec::new();
         let mut traces = Vec::with_capacity(self.predeploy_libs.len());
+        let mut exported_data = ExportedData::new();
         for code in self.predeploy_libs.iter() {
             match self.executor.deploy(self.sender, code.0.clone(), 0u32.into(), self.errors) {
                 Ok(d) => {
@@ -107,7 +108,13 @@ impl<'a> ContractRunner<'a> {
                     traces.extend(d.traces.map(|traces| (TraceKind::Deployment, traces)));
                 }
                 Err(e) => {
-                    return Ok(TestSetup::from_evm_error_with(e, logs, traces, Default::default()))
+                    return Ok(TestSetup::from_evm_error_with(
+                        e,
+                        logs,
+                        traces,
+                        Default::default(),
+                        exported_data,
+                    ))
                 }
             }
         }
@@ -125,7 +132,13 @@ impl<'a> ContractRunner<'a> {
                 d.address
             }
             Err(e) => {
-                return Ok(TestSetup::from_evm_error_with(e, logs, traces, Default::default()))
+                return Ok(TestSetup::from_evm_error_with(
+                    e,
+                    logs,
+                    traces,
+                    Default::default(),
+                    exported_data,
+                ))
             }
         };
 
@@ -140,28 +153,41 @@ impl<'a> ContractRunner<'a> {
         // Optionally call the `setUp` function
         let setup = if setup {
             trace!("setting up");
-            let (setup_logs, setup_traces, labeled_addresses, reason) =
+            let (setup_logs, setup_traces, labeled_addresses, reason, setup_exported_data) =
                 match self.executor.setup(None, address) {
-                    Ok(CallResult { traces, labels, logs, .. }) => {
+                    Ok(CallResult { traces, labels, logs, exported_data, .. }) => {
                         trace!(contract = ?address, "successfully setUp test");
-                        (logs, traces, labels, None)
+                        (logs, traces, labels, None, exported_data)
                     }
                     Err(EvmError::Execution(err)) => {
-                        let ExecutionErr { traces, labels, logs, reason, .. } = *err;
+                        let ExecutionErr { traces, labels, logs, reason, exported_data, .. } = *err;
                         error!(reason = ?reason, contract = ?address, "setUp failed");
-                        (logs, traces, labels, Some(format!("Setup failed: {reason}")))
+                        (
+                            logs,
+                            traces,
+                            labels,
+                            Some(format!("Setup failed: {reason}")),
+                            exported_data,
+                        )
                     }
                     Err(err) => {
                         error!(reason=?err, contract= ?address, "setUp failed");
-                        (Vec::new(), None, BTreeMap::new(), Some(format!("Setup failed: {err}")))
+                        (
+                            Vec::new(),
+                            None,
+                            BTreeMap::new(),
+                            Some(format!("Setup failed: {err}")),
+                            ExportedData::new(),
+                        )
                     }
                 };
             traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
+            exported_data.extend(setup_exported_data);
             logs.extend(setup_logs);
 
-            TestSetup { address, logs, traces, labeled_addresses, reason }
+            TestSetup { address, logs, traces, labeled_addresses, reason, exported_data }
         } else {
-            TestSetup::success(address, logs, traces, Default::default())
+            TestSetup::success(address, logs, traces, Default::default(), exported_data)
         };
 
         Ok(setup)
@@ -204,7 +230,7 @@ impl<'a> ContractRunner<'a> {
                 )]
                 .into(),
                 warnings,
-            )
+            );
         }
 
         let has_invariants = self.contract.functions().any(|func| func.is_invariant_test());
@@ -235,11 +261,12 @@ impl<'a> ContractRunner<'a> {
                         coverage: None,
                         labeled_addresses: setup.labeled_addresses,
                         breakpoints: Default::default(),
+                        exported_data: Default::default(),
                     },
                 )]
                 .into(),
                 warnings,
-            )
+            );
         }
 
         let mut test_results = self
@@ -309,7 +336,14 @@ impl<'a> ContractRunner<'a> {
     /// similar to `eth_call`.
     #[instrument(name = "test", skip_all, fields(name = %func.signature(), %should_fail))]
     pub fn run_test(mut self, func: &Function, should_fail: bool, setup: TestSetup) -> TestResult {
-        let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
+        let TestSetup {
+            address,
+            mut logs,
+            mut traces,
+            mut labeled_addresses,
+            mut exported_data,
+            ..
+        } = setup;
 
         // Run unit test
         let start = Instant::now();
@@ -327,17 +361,20 @@ impl<'a> ContractRunner<'a> {
                 labels: new_labels,
                 state_changeset,
                 breakpoints,
+                exported_data: execution_exported_data,
                 ..
             }) => {
                 traces.extend(execution_trace.map(|traces| (TraceKind::Execution, traces)));
                 labeled_addresses.extend(new_labels);
                 logs.extend(execution_logs);
+                exported_data.extend(execution_exported_data);
                 (reverted, None, gas, stipend, coverage, state_changeset, breakpoints)
             }
             Err(EvmError::Execution(err)) => {
                 traces.extend(err.traces.map(|traces| (TraceKind::Execution, traces)));
                 labeled_addresses.extend(err.labels);
                 logs.extend(err.logs);
+                exported_data.extend(err.exported_data);
                 (
                     err.reverted,
                     Some(err.reason),
@@ -400,6 +437,7 @@ impl<'a> ContractRunner<'a> {
             coverage,
             labeled_addresses,
             breakpoints,
+            exported_data,
         }
     }
 
@@ -435,7 +473,7 @@ impl<'a> ContractRunner<'a> {
                 labeled_addresses,
                 kind: TestKind::Standard(0),
                 ..Default::default()
-            }]
+            }];
         };
 
         let mut evm = InvariantExecutor::new(
@@ -470,6 +508,7 @@ impl<'a> ContractRunner<'a> {
                 match test_error {
                     // If invariants were broken, replay the error to collect logs and traces
                     Some(error @ InvariantFuzzError { test_error: TestError::Fail(_, _), .. }) => {
+                        // TODO: add exported data
                         match error.replay(
                             self.executor.clone(),
                             known_contracts,
@@ -484,7 +523,6 @@ impl<'a> ContractRunner<'a> {
                         };
 
                         logs.extend(error.logs);
-
                         if let Some(error_traces) = error.traces {
                             traces.push((TraceKind::Execution, error_traces));
                         }
@@ -524,6 +562,7 @@ impl<'a> ContractRunner<'a> {
                     traces,
                     labeled_addresses: labeled_addresses.clone(),
                     breakpoints: Default::default(),
+                    exported_data: Default::default(),
                 }
             })
             .collect()
@@ -556,7 +595,7 @@ impl<'a> ContractRunner<'a> {
                 labeled_addresses,
                 kind: TestKind::Standard(0),
                 ..Default::default()
-            }
+            };
         }
 
         let kind = TestKind::Fuzz {
@@ -591,6 +630,7 @@ impl<'a> ContractRunner<'a> {
             coverage: result.coverage,
             labeled_addresses,
             breakpoints: Default::default(),
+            exported_data: Default::default(),
         }
     }
 }
