@@ -246,7 +246,7 @@ fn canonicalize_json_key(key: &str) -> String {
 
 /// Encodes a vector of [`Token`] into a vector of bytes.
 fn encode_abi_values(values: Vec<Token>) -> Vec<u8> {
-    if values.len() == 0 {
+    if values.is_empty() {
         abi::encode(&[Token::Bytes(Vec::new())])
     } else if values.len() == 1 {
         abi::encode(&[Token::Bytes(abi::encode(&values))])
