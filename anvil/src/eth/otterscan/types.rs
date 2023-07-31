@@ -1,6 +1,6 @@
 use ethers::types::{
-    Action, Address, Block, Call, Create, CreateResult, Res, Suicide, Trace, Transaction,
-    TransactionReceipt, H256, U256,
+    Action, Address, Block, Bytes, Call, CallType, Create, CreateResult, Res, Suicide, Trace,
+    Transaction, TransactionReceipt, H256, U256,
 };
 use futures::future::join_all;
 use serde::{de::DeserializeOwned, Serialize};
@@ -83,6 +83,24 @@ pub enum OtsInternalOperationType {
     SelfDestruct = 1,
     Create = 2,
     // The spec asks for a Create2 entry as well, but we don't have that info
+}
+
+#[derive(Serialize, Debug)]
+pub struct OtsTrace {
+    r#type: OtsTraceType,
+    depth: usize,
+    from: Address,
+    to: Address,
+    value: U256,
+    input: Bytes,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum OtsTraceType {
+    Call,
+    StaticCall,
+    DelegateCall,
 }
 
 impl<TX> From<Block<TX>> for OtsBlockDetails<TX> {
@@ -205,5 +223,45 @@ impl OtsInternalOperation {
                 Action::Reward(_) => unreachable!(),
             },
         )
+    }
+}
+
+impl OtsTrace {
+    pub fn batch_build(traces: Vec<Trace>) -> Vec<Self> {
+        traces
+            .into_iter()
+            .filter_map(|trace| match trace.action {
+                Action::Call(call) => {
+                    if let Ok(ots_type) = call.call_type.try_into() {
+                        Some(OtsTrace {
+                            r#type: ots_type,
+                            depth: trace.trace_address.len(),
+                            from: call.from,
+                            to: call.to,
+                            value: call.value,
+                            input: call.input,
+                        })
+                    } else {
+                        None
+                    }
+                }
+                Action::Create(_) => None,
+                Action::Suicide(_) => None,
+                Action::Reward(_) => None,
+            })
+            .collect()
+    }
+}
+
+impl TryFrom<CallType> for OtsTraceType {
+    type Error = ();
+
+    fn try_from(value: CallType) -> std::result::Result<Self, Self::Error> {
+        match value {
+            CallType::Call => Ok(OtsTraceType::Call),
+            CallType::StaticCall => Ok(OtsTraceType::StaticCall),
+            CallType::DelegateCall => Ok(OtsTraceType::DelegateCall),
+            _ => Err(()),
+        }
     }
 }

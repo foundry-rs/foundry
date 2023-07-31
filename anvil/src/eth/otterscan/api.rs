@@ -6,13 +6,13 @@ use crate::eth::{
 
 use ethers::types::{
     Action, Address, Block, BlockId, BlockNumber, Bytes, Call, Create, CreateResult, Res, Reward,
-    Trace, Transaction, TxHash, H256, U256, U64,
+    Transaction, TxHash, H256, U256, U64,
 };
 use itertools::Itertools;
 
 use super::types::{
     OtsBlockDetails, OtsBlockTransactions, OtsContractCreator, OtsInternalOperation,
-    OtsSearchTransactions,
+    OtsSearchTransactions, OtsTrace,
 };
 
 impl EthApi {
@@ -62,10 +62,10 @@ impl EthApi {
     }
 
     /// Trace a transaction and generate a trace call tree.
-    pub async fn ots_trace_transaction(&self, hash: H256) -> Result<Vec<Trace>> {
+    pub async fn ots_trace_transaction(&self, hash: H256) -> Result<Vec<OtsTrace>> {
         node_info!("ots_traceTransaction");
 
-        self.backend.trace_transaction(hash).await
+        Ok(OtsTrace::batch_build(self.backend.trace_transaction(hash).await?))
     }
 
     /// Given a transaction hash, returns its raw revert reason.
