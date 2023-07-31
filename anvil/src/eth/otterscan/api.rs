@@ -27,7 +27,6 @@ impl EthApi {
     ) -> Result<Option<Block<TxHash>>> {
         node_info!("ots_getApiLevel");
 
-        // TODO: probably only return blocks from before the fork?
         self.backend.block_by_number(number).await
     }
 
@@ -72,7 +71,6 @@ impl EthApi {
     pub async fn ots_get_transaction_error(&self, hash: H256) -> Result<Option<Bytes>> {
         node_info!("ots_getTransactionError");
 
-        // TODO: I'm not sure this one is right, need input
         if let Some(receipt) = self.backend.mined_transaction_receipt(hash) {
             if receipt.inner.status == Some(U64::zero()) {
                 return Ok(receipt.out)
@@ -91,7 +89,6 @@ impl EthApi {
     ) -> Result<Option<OtsBlockDetails<TxHash>>> {
         node_info!("ots_getBlockDetails");
 
-        // TODO: probably only return blocks from before the fork?
         let block = self.backend.block_by_number(number).await?.map(Into::into);
 
         Ok(block)
@@ -106,7 +103,6 @@ impl EthApi {
     ) -> Result<Option<OtsBlockDetails<TxHash>>> {
         node_info!("ots_getBlockDetailsByHash");
 
-        // TODO: probably only return blocks from before the fork?
         let block = self.backend.block_by_hash(hash).await?.map(Into::into);
 
         Ok(block)
