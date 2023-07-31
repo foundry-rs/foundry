@@ -367,7 +367,7 @@ pub async fn print_traces(
     verbose: bool,
 ) -> eyre::Result<()> {
     if result.traces.is_empty() {
-        eyre::bail!("Unexpected error: No traces. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
+        panic!("No traces found")
     }
 
     println!("Traces:");
