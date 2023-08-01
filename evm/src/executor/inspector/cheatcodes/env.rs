@@ -161,8 +161,11 @@ fn prank(
 ) -> Result {
     let prank = Prank::new(prank_caller, prank_origin, new_caller, new_origin, depth, single_call);
 
-    if let Some(Prank { used, .. }) = state.prank {
+    if let Some(Prank { used, single_call: current_single_call, .. }) = state.prank {
         ensure!(used, "You cannot overwrite `prank` until it is applied at least once");
+        // This case can only fail if the user calls `vm.startPrank` and then `vm.prank` later on.
+        // This should not be possible without first calling `stopPrank`
+        ensure!(single_call == current_single_call, "You cannot override an ongoing prank with a single vm.prank. Use vm.startPrank to override the current prank.");
     }
 
     ensure!(
