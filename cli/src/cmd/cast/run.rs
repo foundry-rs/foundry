@@ -4,16 +4,13 @@ use crate::{
     opts::RpcOpts,
     update_progress, utils,
 };
-use cast::executor::{EvmError, ExecutionErr};
+
 use clap::Parser;
 use ethers::{prelude::Middleware, solc::EvmVersion, types::H160};
 use eyre::WrapErr;
 use forge::{
-    executor::{
-        inspector::cheatcodes::util::configure_tx_env, opts::EvmOpts, DeployResult, RawCallResult,
-    },
+    executor::{inspector::cheatcodes::util::configure_tx_env, opts::EvmOpts},
     revm::primitives::U256 as rU256,
-    trace::TraceKind,
     utils::h256_to_b256,
 };
 use foundry_config::{find_project_root_path, Config};

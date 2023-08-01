@@ -8,15 +8,12 @@ use cast::{Cast, TxBuilder};
 use clap::Parser;
 use ethers::{
     solc::EvmVersion,
-    types::{BlockId, NameOrAddress, Trace, U256},
+    types::{BlockId, NameOrAddress, U256},
 };
 use eyre::WrapErr;
 use forge::executor::opts::EvmOpts;
 use foundry_config::{find_project_root_path, Config};
-use foundry_evm::{
-    executor::{DeployResult, EvmError, ExecutionErr, RawCallResult},
-    trace::{TraceKind, TracingExecutor},
-};
+use foundry_evm::trace::TracingExecutor;
 use std::str::FromStr;
 
 type Provider =
