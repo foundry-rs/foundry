@@ -16,12 +16,12 @@ contract SleepTest is DSTest {
         inputs[1] = "+%s000";
 
         bytes memory res = vm.ffi(inputs);
-        uint256 start = vm.parseUint(string(res)); 
+        uint256 start = vm.parseUint(string(res));
 
         vm.sleep(milliseconds);
 
         res = vm.ffi(inputs);
-        uint256 end = vm.parseUint(string(res)); 
+        uint256 end = vm.parseUint(string(res));
 
         // Limit precision to 1000 ms
         assertGe(end - start, milliseconds / 1000 * 1000, "sleep failed");
@@ -38,12 +38,12 @@ contract SleepTest is DSTest {
         inputs[1] = "+%s000";
 
         bytes memory res = vm.ffi(inputs);
-        uint256 start = vm.parseUint(string(res)); 
+        uint256 start = vm.parseUint(string(res));
 
         vm.sleep(milliseconds);
 
         res = vm.ffi(inputs);
-        uint256 end = vm.parseUint(string(res)); 
+        uint256 end = vm.parseUint(string(res));
 
         // Limit precision to 1000 ms
         assertGe(end - start, milliseconds / 1000 * 1000, "sleep failed");
