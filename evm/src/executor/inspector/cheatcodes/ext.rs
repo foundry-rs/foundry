@@ -418,6 +418,15 @@ fn key_exists(json_str: &str, key: &str) -> Result {
     Ok(exists)
 }
 
+/// Sleeps for a given amount of milliseconds.
+fn sleep(milliseconds: &U256) -> Result {
+    let sleep_duration = std::time::Duration::from_millis(milliseconds.as_u64());
+    println!("Sleeping for {:?} milliseconds", sleep_duration);
+    std::thread::sleep(sleep_duration);
+
+    Ok(Default::default())
+}
+
 #[instrument(level = "error", name = "ext", target = "evm::cheatcodes", skip_all)]
 pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
     Some(match call {
@@ -592,6 +601,7 @@ pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
         HEVMCalls::SerializeBytes1(inner) => {
             serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
         }
+        HEVMCalls::Sleep(inner) => sleep(&inner.0),
         HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
         HEVMCalls::WriteJson1(inner) => write_json(state, &inner.0, &inner.1, Some(&inner.2)),
         HEVMCalls::KeyExists(inner) => key_exists(&inner.0, &inner.1),
