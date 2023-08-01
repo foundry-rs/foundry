@@ -2181,7 +2181,7 @@ impl TransactionValidator for Backend {
         if !env.cfg.disable_block_gas_limit && tx.gas_limit() > env.block.gas_limit.into() {
             warn!(target: "backend", "[{:?}] gas too high", tx.hash());
             return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
-                detail: String::from("tx.gas_limit>env.block.gas_limit"),
+                detail: String::from("tx.gas_limit > env.block.gas_limit"),
             }))
         }
 
