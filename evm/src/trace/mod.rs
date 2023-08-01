@@ -195,12 +195,12 @@ impl CallTraceArena {
                 Instruction::OpCode(opc) => {
                     match opc {
                         // If yes, descend into a child trace
-                        opcode::CREATE
-                        | opcode::CREATE2
-                        | opcode::DELEGATECALL
-                        | opcode::CALL
-                        | opcode::STATICCALL
-                        | opcode::CALLCODE => {
+                        opcode::CREATE |
+                        opcode::CREATE2 |
+                        opcode::DELEGATECALL |
+                        opcode::CALL |
+                        opcode::STATICCALL |
+                        opcode::CALLCODE => {
                             self.add_to_geth_trace(
                                 storage,
                                 &self.arena[trace_node.children[child_id]],
@@ -662,7 +662,7 @@ pub fn load_contracts(
             .iter()
             .filter_map(|(addr, name)| {
                 if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(name) {
-                    return Some((*addr, (name.clone(), abi.clone())));
+                    return Some((*addr, (name.clone(), abi.clone())))
                 }
                 None
             })
