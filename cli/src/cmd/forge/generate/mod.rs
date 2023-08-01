@@ -1,7 +1,9 @@
 //! generate command
 
 use clap::{Parser, Subcommand};
-use std::{fs, path::Path};
+use foundry_common::fs;
+use std::path::Path;
+use yansi::Paint;
 
 /// CLI arguments for `forge generate`.
 #[derive(Debug, Parser)]
@@ -35,15 +37,15 @@ impl GenerateTestArgs {
             .replace("{instance_name}", &instance_name);
 
         // Create the test directory if it doesn't exist.
-        fs::create_dir_all("test").unwrap();
+        fs::create_dir_all("test")?;
 
         // Define the test file path
         let test_file_path = Path::new("test").join(format!("{}.t.sol", contract_name));
 
         // Write the test content to the test file.
-        fs::write(&test_file_path, test_content).unwrap();
+        fs::write(&test_file_path, test_content)?;
 
-        println!("Test file generated: {}", test_file_path.to_str().unwrap());
+        println!("{} test file: {}", Paint::green("Generated"), test_file_path.to_str().unwrap());
         Ok(())
     }
 }
