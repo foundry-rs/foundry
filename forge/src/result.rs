@@ -1,16 +1,15 @@
 //! test outcomes
 
 use crate::Address;
-use ethers::{prelude::Log, types::Chain};
+use ethers::prelude::Log;
 use foundry_common::evm::Breakpoints;
 use foundry_evm::{
     coverage::HitMaps,
-    executor::{EvmError, Executor, ExportedData},
+    executor::{EvmError, ExportedData},
     fuzz::{CounterExample, FuzzCase},
     trace::{TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::{collections::BTreeMap, fmt, time::Duration};
 
 /// Results and duration for a set of tests included in the same test contract

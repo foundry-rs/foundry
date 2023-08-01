@@ -830,7 +830,8 @@ fn convert_executed_result(
         raw_exported_data,
     } = inspector.collect_inspector_states();
 
-    let exported_data = ExportedData::new().extend_with_raw(raw_exported_data, &env);
+    let mut exported_data = ExportedData::new();
+    exported_data.extend_from_env(raw_exported_data, &env);
     let gas_refunded = gas.unwrap_or(gas_refunded);
     let transactions = match cheatcodes.as_ref() {
         Some(cheats) if !cheats.broadcastable_transactions.is_empty() => {
@@ -940,12 +941,19 @@ fn convert_call_result<D: Detokenize>(
         }
     }
 }
+/// A value exported from the EVM via the `export` cheatcode
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub struct ExportedValue {
+    /// The name of the exported value
     pub name: String,
+    /// The context of the exported value
     pub context: Option<String>,
+    /// The block at which the value was read
     pub block: u64,
+    /// The chain on which the value was exported
     pub chain: ethers::prelude::Chain,
+    /// The value
+    pub value: String,
 }
 
 impl ExportedValue {
@@ -954,14 +962,20 @@ impl ExportedValue {
         context: Option<String>,
         block: u64,
         chain: ethers::prelude::Chain,
+        value: String,
     ) -> Self {
-        Self { name, context, block, chain }
+        Self { name, context, block, chain, value }
     }
 
-    pub fn new_from_env(name: String, context: Option<String>, env: &Env) -> Self {
+    pub fn new_from_env(
+        name: String,
+        context: Option<String>,
+        env: &Env,
+        value: impl Into<String>,
+    ) -> Self {
         let block = env.block.number.to::<u64>();
         let chain: Chain = env.cfg.chain_id.to::<u64>().try_into().unwrap();
-        Self { name, context, block, chain }
+        Self { name, context, block, chain, value: value.into() }
     }
 }
 
@@ -978,12 +992,21 @@ impl RawExportedData {
     }
 }
 
+impl IntoIterator for RawExportedData {
+    type Item = (String, String);
+    type IntoIter = std::collections::hash_map::IntoIter<String, String>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct ExportedData(std::collections::HashMap<ExportedValue, String>);
+pub struct ExportedData(Vec<ExportedValue>);
 
 impl IntoIterator for ExportedData {
-    type Item = (ExportedValue, String);
-    type IntoIter = std::collections::hash_map::IntoIter<ExportedValue, String>;
+    type Item = ExportedValue;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
@@ -992,31 +1015,35 @@ impl IntoIterator for ExportedData {
 
 impl ExportedData {
     pub fn new() -> Self {
-        Self(std::collections::HashMap::new())
+        Self(Vec::new())
     }
 
-    pub fn insert(&mut self, key: ExportedValue, value: String) -> Option<String> {
-        self.0.insert(key, value)
+    fn append(&mut self, value: ExportedValue) {
+        self.0.push(value)
     }
 
-    pub fn insert_from_env(
-        &mut self,
-        key: String,
-        context: Option<String>,
-        env: &revm::primitives::Env,
-        value: String,
-    ) -> Option<String> {
-        self.insert(ExportedValue::new_from_env(key, context, env), value)
+    fn append_from_env(&mut self, exported_value: ExportedValue) {
+        self.append(exported_value)
     }
 
     pub fn extend(&mut self, other: Self) {
         self.0.extend(other.0)
     }
 
-    pub fn extend_with_raw(mut self, raw: RawExportedData, env: &revm::primitives::Env) -> Self {
-        for (key, value) in raw.0 {
-            self.insert_from_env(key, None, env, value);
-        }
-        self
+    pub fn extend_from_env(
+        &mut self,
+        other: impl IntoIterator<Item = (String, String)>,
+        env: &Env,
+    ) {
+        other.into_iter().for_each(|(name, value)| {
+            let exported_value = ExportedValue {
+                name,
+                context: None,
+                block: env.block.number.to::<u64>(),
+                chain: env.cfg.chain_id.to::<u64>().try_into().unwrap(),
+                value,
+            };
+            self.append_from_env(exported_value);
+        })
     }
 }
