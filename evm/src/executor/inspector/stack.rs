@@ -52,7 +52,7 @@ pub struct InspectorData {
 #[derive(Default)]
 pub struct InspectorStack {
     pub tracer: Option<Tracer>,
-    pub logger: Option<LogCollector>,
+    pub log_collector: Option<LogCollector>,
     pub cheatcodes: Option<Cheatcodes>,
     pub gas: Option<Rc<RefCell<GasInspector>>>,
     pub debugger: Option<Debugger>,
@@ -65,7 +65,7 @@ pub struct InspectorStack {
 impl InspectorStack {
     pub fn collect_inspector_states(self) -> InspectorData {
         InspectorData {
-            logs: self.logger.map(|logs| logs.logs).unwrap_or_default(),
+            logs: self.log_collector.map(|logs| logs.logs).unwrap_or_default(),
             labels: self
                 .cheatcodes
                 .as_ref()
@@ -102,7 +102,7 @@ impl InspectorStack {
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
-                &mut self.logger,
+                &mut self.log_collector,
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
@@ -147,7 +147,7 @@ where
                 &mut self.debugger,
                 &mut self.coverage,
                 &mut self.tracer,
-                &mut self.logger,
+                &mut self.log_collector,
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
@@ -178,7 +178,7 @@ where
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
-                &mut self.logger,
+                &mut self.log_collector,
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
@@ -204,7 +204,7 @@ where
     ) {
         call_inspectors!(
             inspector,
-            [&mut self.tracer, &mut self.logger, &mut self.cheatcodes, &mut self.printer],
+            [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
             {
                 inspector.log(evm_data, address, topics, data);
             }
@@ -224,7 +224,7 @@ where
                 &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
                 &mut self.debugger,
                 &mut self.tracer,
-                &mut self.logger,
+                &mut self.log_collector,
                 &mut self.cheatcodes,
                 &mut self.printer,
                 &mut self.chisel_state
@@ -256,7 +256,7 @@ where
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
-                &mut self.logger,
+                &mut self.log_collector,
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
@@ -308,7 +308,7 @@ where
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
-                &mut self.logger,
+                &mut self.log_collector,
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
@@ -341,7 +341,7 @@ where
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
-                &mut self.logger,
+                &mut self.log_collector,
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
@@ -370,7 +370,7 @@ where
             [
                 &mut self.debugger,
                 &mut self.tracer,
-                &mut self.logger,
+                &mut self.log_collector,
                 &mut self.cheatcodes,
                 &mut self.printer,
                 &mut self.chisel_state
