@@ -13,7 +13,7 @@ use crate::{
             time::{utc_from_secs, TimeManager},
             validate::TransactionValidator,
         },
-        error::{BlockchainError, InvalidTransactionError},
+        error::{BlockchainError, ErrDetail, InvalidTransactionError},
         fees::{FeeDetails, FeeManager},
         macros::node_info,
         pool::transactions::PoolTransaction,
@@ -2197,7 +2197,9 @@ impl TransactionValidator for Backend {
         // Check gas limit, iff block gas limit is set.
         if !env.cfg.disable_block_gas_limit && tx.gas_limit() > env.block.gas_limit.into() {
             warn!(target: "backend", "[{:?}] gas too high", tx.hash());
-            return Err(InvalidTransactionError::GasTooHigh)
+            return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
+                detail: String::from("tx.gas_limit > env.block.gas_limit"),
+            }))
         }
 
         // check nonce
