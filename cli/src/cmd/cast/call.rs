@@ -202,7 +202,7 @@ impl CallArgs {
                     return Ok(());
                 }
 
-                // fill the builder after the comditional so we dont move values
+                // fill the builder after the conditional so we dont move values
                 fill_create(&mut builder, value, code, sig, args).await?;
             }
             _ => {
@@ -226,9 +226,9 @@ impl CallArgs {
 
                     let trace = match executor.call_raw_committing(
                         sender,
-                        tx.to_addr().map(|a| a.clone()).expect("an address to be here"),
-                        tx.data().map(|d| d.clone()).unwrap_or_default().to_vec().into(),
-                        tx.value().map(|v| v.clone()).unwrap_or_default(),
+                        tx.to_addr().copied().expect("an address to be here"),
+                        tx.data().cloned().unwrap_or_default().to_vec().into(),
+                        tx.value().copied().unwrap_or_default(),
                     ) {
                         Ok(RawCallResult { gas_used, traces, reverted, debug, .. }) => {
                             TraceResult {

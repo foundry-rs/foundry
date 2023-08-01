@@ -309,7 +309,7 @@ pub fn read_constructor_args_file(constructor_args_path: PathBuf) -> eyre::Resul
     Ok(args)
 }
 
-/// A slimmed down return from the executor
+/// A slimmed down return from the executor used for returning minimal trace + gas metering info
 pub struct TraceResult {
     pub success: bool,
     pub traces: Traces,
@@ -362,7 +362,7 @@ impl TryFrom<EvmError> for TraceResult {
     }
 }
 
-/// labels the traces, conditonally prints them or opens the debugger
+/// labels the traces, conditionally prints them or opens the debugger
 pub async fn handle_traces(
     mut result: TraceResult,
     config: &Config,
