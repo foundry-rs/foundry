@@ -8,7 +8,7 @@ use cast::{Cast, TxBuilder};
 use clap::Parser;
 use ethers::{
     solc::EvmVersion,
-    types::{BlockId, NameOrAddress, U256},
+    types::{BlockId, NameOrAddress, Trace, U256},
 };
 use eyre::WrapErr;
 use forge::executor::opts::EvmOpts;
@@ -164,37 +164,8 @@ impl CallArgs {
                         value.unwrap_or(U256::zero()),
                         None,
                     ) {
-                        Ok(DeployResult { gas_used, traces, debug: run_debug, .. }) => {
-                            TraceResult {
-                                success: true,
-                                traces: vec![(
-                                    TraceKind::Execution,
-                                    traces.ok_or_else(|| eyre::eyre!("no traces recorded"))?,
-                                )],
-                                debug: run_debug.unwrap_or_default(),
-                                gas_used,
-                            }
-                        }
-                        Err(EvmError::Execution(inner)) => {
-                            let ExecutionErr {
-                                reverted, gas_used, traces, debug: run_debug, ..
-                            } = *inner;
-                            TraceResult {
-                                success: !reverted,
-                                traces: vec![(
-                                    TraceKind::Execution,
-                                    traces.ok_or_else(|| eyre::eyre!("no traces recorded"))?,
-                                )],
-                                debug: run_debug.unwrap_or_default(),
-                                gas_used,
-                            }
-                        }
-                        Err(err) => {
-                            eyre::bail!(
-                                "unexpected error when running create transaction: {:?}",
-                                err
-                            )
-                        }
+                        Ok(deploy_result) => TraceResult::from(deploy_result),
+                        Err(evm_err) => TraceResult::try_from(evm_err)?,
                     };
 
                     handle_traces(trace, &config, chain, labels, verbose, debug).await?;
@@ -224,27 +195,12 @@ impl CallArgs {
 
                     let (tx, _) = builder.build();
 
-                    let trace = match executor.call_raw_committing(
+                    let trace = TraceResult::from(executor.call_raw_committing(
                         sender,
                         tx.to_addr().copied().expect("an address to be here"),
                         tx.data().cloned().unwrap_or_default().to_vec().into(),
                         tx.value().copied().unwrap_or_default(),
-                    ) {
-                        Ok(RawCallResult { gas_used, traces, reverted, debug, .. }) => {
-                            TraceResult {
-                                success: !reverted,
-                                traces: vec![(
-                                    TraceKind::Execution,
-                                    traces.ok_or_else(|| eyre::eyre!("no traces recorded"))?,
-                                )],
-                                debug: debug.unwrap_or_default(),
-                                gas_used,
-                            }
-                        }
-                        Err(e) => {
-                            eyre::bail!("unexpected error when running call transaction: {:?}", e)
-                        }
-                    };
+                    )?);
 
                     handle_traces(trace, &config, chain, labels, verbose, debug).await?;
 

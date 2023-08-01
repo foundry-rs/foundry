@@ -155,43 +155,12 @@ impl RunArgs {
 
             if let Some(to) = tx.to {
                 trace!(tx=?tx.hash,to=?to, "executing call transaction");
-                let RawCallResult {
-                    reverted,
-                    gas_used: gas,
-                    traces,
-                    debug: run_debug,
-                    exit_reason: _,
-                    ..
-                } = executor.commit_tx_with_env(env).unwrap();
-
-                TraceResult {
-                    success: !reverted,
-                    traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
-                    debug: run_debug.unwrap_or_default(),
-                    gas_used: gas,
-                }
+                TraceResult::from(executor.commit_tx_with_env(env)?)
             } else {
                 trace!(tx=?tx.hash, "executing create transaction");
                 match executor.deploy_with_env(env, None) {
-                    Ok(DeployResult { gas_used, traces, debug: run_debug, .. }) => TraceResult {
-                        success: true,
-                        traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
-                        debug: run_debug.unwrap_or_default(),
-                        gas_used,
-                    },
-                    Err(EvmError::Execution(inner)) => {
-                        let ExecutionErr { reverted, gas_used, traces, debug: run_debug, .. } =
-                            *inner;
-                        TraceResult {
-                            success: !reverted,
-                            traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
-                            debug: run_debug.unwrap_or_default(),
-                            gas_used,
-                        }
-                    }
-                    Err(err) => {
-                        eyre::bail!("unexpected error when running create transaction: {:?}", err)
-                    }
+                    Ok(res) => TraceResult::from(res),
+                    Err(err) => TraceResult::try_from(err)?,
                 }
             }
         };
