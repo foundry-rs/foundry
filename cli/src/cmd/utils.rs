@@ -16,9 +16,10 @@ use foundry_common::{cli_warn, fs, TestFunctionExt};
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain as ConfigChain, Config};
 use foundry_evm::{
     debug::DebugArena,
+    executor::{DeployResult, EvmError, ExecutionErr, RawCallResult},
     trace::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
-        CallTraceDecoder, CallTraceDecoderBuilder, Traces,
+        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
 use std::{collections::BTreeMap, fmt::Write, path::PathBuf, str::FromStr};
@@ -314,6 +315,51 @@ pub struct TraceResult {
     pub traces: Traces,
     pub debug: DebugArena,
     pub gas_used: u64,
+}
+
+impl From<RawCallResult> for TraceResult {
+    fn from(result: RawCallResult) -> Self {
+        let RawCallResult { gas_used, traces, reverted, debug, .. } = result;
+
+        Self {
+            success: !reverted,
+            traces: vec![(TraceKind::Execution, traces.expect("traces is None"))],
+            debug: debug.unwrap_or_default(),
+            gas_used,
+        }
+    }
+}
+
+impl From<DeployResult> for TraceResult {
+    fn from(result: DeployResult) -> Self {
+        let DeployResult { gas_used, traces, debug, .. } = result;
+
+        Self {
+            success: true,
+            traces: vec![(TraceKind::Execution, traces.expect("traces is None"))],
+            debug: debug.unwrap_or_default(),
+            gas_used,
+        }
+    }
+}
+
+impl TryFrom<EvmError> for TraceResult {
+    type Error = EvmError;
+
+    fn try_from(err: EvmError) -> Result<Self, Self::Error> {
+        match err {
+            EvmError::Execution(err) => {
+                let ExecutionErr { reverted, gas_used, traces, debug: run_debug, .. } = *err;
+                Ok(TraceResult {
+                    success: !reverted,
+                    traces: vec![(TraceKind::Execution, traces.expect("traces is None"))],
+                    debug: run_debug.unwrap_or_default(),
+                    gas_used,
+                })
+            }
+            _ => Err(err),
+        }
+    }
 }
 
 /// labels the traces, conditonally prints them or opens the debugger
