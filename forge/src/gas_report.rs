@@ -69,8 +69,7 @@ impl GasReport {
                 (!self.ignore.contains(&contract_name) && self.report_for.is_empty()) ||
                 (self.report_for.contains(&contract_name));
             if report_contract {
-                let contract_report =
-                    self.contracts.entry(name.to_string()).or_default();
+                let contract_report = self.contracts.entry(name.to_string()).or_default();
 
                 match &trace.data {
                     RawOrDecodedCall::Raw(bytes) if trace.created() => {
