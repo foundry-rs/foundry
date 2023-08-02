@@ -157,9 +157,17 @@ impl RunArgs {
                         })?;
                     } else {
                         trace!(tx=?tx.hash, "executing previous create transaction");
-                        executor.deploy_with_env(env.clone(), None).wrap_err_with(|| {
-                            format!("Failed to deploy transaction: {:?}", tx.hash())
-                        })?;
+                        if let Err(error) = executor.deploy_with_env(env.clone(), None) {
+                            match error {
+                                // Reverted transactions should be skipped
+                                EvmError::Execution(_) => (),
+                                error => {
+                                    return Err(error).wrap_err_with(|| {
+                                        format!("Failed to deploy transaction: {:?}", tx.hash())
+                                    })
+                                }
+                            }
+                        }
                     }
 
                     update_progress!(pb, index);

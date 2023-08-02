@@ -1209,7 +1209,6 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            let filter = filter;
             return Ok(fork.logs(&filter).await?)
         }
 

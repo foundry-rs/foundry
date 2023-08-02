@@ -119,14 +119,8 @@ impl ScriptArgs {
         verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);
         self.check_contract_sizes(&result, &highlevel_known_contracts)?;
 
-        self.handle_broadcastable_transactions(
-            result,
-            libraries,
-            &mut decoder,
-            script_config,
-            verify,
-        )
-        .await
+        self.handle_broadcastable_transactions(result, libraries, &decoder, script_config, verify)
+            .await
     }
 
     // In case there are libraries to be deployed, it makes sure that these are added to the list of
