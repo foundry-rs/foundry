@@ -95,8 +95,8 @@ impl ScriptArgs {
     pub async fn onchain_simulation(
         &self,
         transactions: BroadcastableTransactions,
-        script_config: &mut ScriptConfig,
-        decoder: &mut CallTraceDecoder,
+        script_config: &ScriptConfig,
+        decoder: &CallTraceDecoder,
         contracts: &ContractsByArtifact,
     ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
         trace!(target: "script", "executing onchain simulation");
@@ -247,10 +247,7 @@ impl ScriptArgs {
     }
 
     /// Build the multiple runners from different forks.
-    async fn build_runners(
-        &self,
-        script_config: &mut ScriptConfig,
-    ) -> HashMap<RpcUrl, ScriptRunner> {
+    async fn build_runners(&self, script_config: &ScriptConfig) -> HashMap<RpcUrl, ScriptRunner> {
         let sender = script_config.evm_opts.sender;
 
         if !shell::verbosity().is_silent() {
