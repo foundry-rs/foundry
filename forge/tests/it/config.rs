@@ -161,7 +161,12 @@ pub async fn runner_with_config(mut config: Config) -> MultiContractRunner {
     base_runner()
         .with_cheats_config(CheatsConfig::new(&config, &EVM_OPTS))
         .sender(config.sender)
-        .build(&PROJECT.paths.root, (*COMPILED).clone(), EVM_OPTS.evm_env().await, EVM_OPTS.clone())
+        .build(
+            &PROJECT.paths.root,
+            (*COMPILED).clone(),
+            EVM_OPTS.evm_env().await.expect("Could not instantiate fork environment"),
+            EVM_OPTS.clone(),
+        )
         .unwrap()
 }
 
@@ -170,7 +175,12 @@ pub async fn tracing_runner() -> MultiContractRunner {
     let mut opts = EVM_OPTS.clone();
     opts.verbosity = 5;
     base_runner()
-        .build(&PROJECT.paths.root, (*COMPILED).clone(), EVM_OPTS.evm_env().await, opts)
+        .build(
+            &PROJECT.paths.root,
+            (*COMPILED).clone(),
+            EVM_OPTS.evm_env().await.expect("Could not instantiate fork environment"),
+            opts,
+        )
         .unwrap()
 }
 
@@ -181,7 +191,7 @@ pub async fn forked_runner(rpc: &str) -> MultiContractRunner {
     opts.env.chain_id = None; // clear chain id so the correct one gets fetched from the RPC
     opts.fork_url = Some(rpc.to_string());
 
-    let env = opts.evm_env().await;
+    let env = opts.evm_env().await.expect("Could not instantiate fork environment");
     let fork = opts.get_fork(&Default::default(), env.clone());
 
     base_runner()

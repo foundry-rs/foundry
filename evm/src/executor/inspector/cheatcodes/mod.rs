@@ -1,6 +1,7 @@
 use self::{
     env::Broadcast,
     expect::{handle_expect_emit, handle_expect_revert, ExpectedCallType},
+    mapping::MappingSlots,
     util::{check_if_fixed_gas_limit, process_create, BroadcastableTransactions, MAGIC_SKIP_BYTES},
 };
 use crate::{
@@ -54,6 +55,8 @@ mod fork;
 mod fs;
 /// Cheatcodes that configure the fuzzer
 mod fuzz;
+/// Mapping related cheatcodes
+mod mapping;
 /// Snapshot related cheatcodes
 mod snapshot;
 /// Utility cheatcodes (`sign` etc.)
@@ -182,6 +185,10 @@ pub struct Cheatcodes {
     /// CREATE / CREATE2 frames. This is needed to make gas meter pausing work correctly when
     /// paused and creating new contracts.
     pub gas_metering_create: Option<Option<revm::interpreter::Gas>>,
+
+    /// Holds mapping slots info
+    pub mapping_slots: Option<BTreeMap<Address, MappingSlots>>,
+
     /// current program counter
     pub pc: usize,
     /// Breakpoints supplied by the `vm.breakpoint("<char>")` cheatcode
@@ -528,6 +535,11 @@ where
                 (RETURN, 0, 1, false),
                 (REVERT, 0, 1, false)
             ])
+        }
+
+        // Record writes with sstore (and sha3) if `StartMappingRecording` has been called
+        if let Some(mapping_slots) = &mut self.mapping_slots {
+            mapping::on_evm_step(mapping_slots, interpreter, data)
         }
 
         InstructionResult::Continue
