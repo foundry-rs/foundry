@@ -2053,7 +2053,7 @@ impl EthApi {
 
         // Exceptional case: init used too much gas, we need to increase the gas limit and try
         // again
-        if let Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh)) =
+        if let Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh(_))) =
             ethres
         {
             // if price or limit was included in the request then we can execute the request
@@ -2125,8 +2125,9 @@ impl EthApi {
 
             // Exceptional case: init used too much gas, we need to increase the gas limit and try
             // again
-            if let Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh)) =
-                ethres
+            if let Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh(
+                _,
+            ))) = ethres
             {
                 // increase the lowest gas limit
                 lowest_gas_limit = mid_gas_limit;

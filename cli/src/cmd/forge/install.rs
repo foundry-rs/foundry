@@ -402,7 +402,7 @@ impl Installer<'_> {
             let n = if s.is_empty() { Ok(1) } else { s.parse() };
             // match user input, 0 indicates skipping and use original tag
             match n {
-                Ok(i) if i == 0 => return Ok(tag.into()),
+                Ok(0) => return Ok(tag.into()),
                 Ok(i) if (1..=n_candidates).contains(&i) => {
                     let c = &candidates[i];
                     println!("[{i}] {c} selected");
@@ -470,7 +470,7 @@ impl Installer<'_> {
 
         // match user input, 0 indicates skipping and use original tag
         match input.parse::<usize>() {
-            Ok(i) if i == 0 => Ok(Some(tag.into())),
+            Ok(0) => Ok(Some(tag.into())),
             Ok(i) if (1..=n_candidates).contains(&i) => {
                 let c = &candidates[i];
                 println!("[{i}] {c} selected");

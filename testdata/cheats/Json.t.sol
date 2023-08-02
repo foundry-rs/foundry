@@ -148,6 +148,17 @@ contract ParseJsonTest is DSTest {
         string memory decodedData = abi.decode(data, (string));
         assertEq("hai", decodedData);
     }
+
+    function test_nonExistentKey() public {
+        bytes memory data = vm.parseJson(json, ".thisKeyDoesNotExist");
+        assertEq(0, data.length);
+
+        data = vm.parseJson(json, ".this.path.does.n.0.t.exist");
+        assertEq(0, data.length);
+
+        data = vm.parseJson("", ".");
+        assertEq(0, data.length);
+    }
 }
 
 contract WriteJsonTest is DSTest {

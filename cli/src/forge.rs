@@ -2,7 +2,7 @@ use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use foundry_cli::{
     cmd::{
-        forge::{cache::CacheSubcommands, watch},
+        forge::{cache::CacheSubcommands, generate::GenerateSubcommands, watch},
         Cmd,
     },
     handler,
@@ -97,5 +97,8 @@ fn main() -> eyre::Result<()> {
         }
         Subcommands::Doc(cmd) => cmd.run(),
         Subcommands::Selectors { command } => utils::block_on(command.run()),
+        Subcommands::Generate(cmd) => match cmd.sub {
+            GenerateSubcommands::Test(cmd) => cmd.run(),
+        },
     }
 }
