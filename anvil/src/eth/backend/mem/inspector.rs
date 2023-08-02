@@ -125,16 +125,20 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         data: &Bytes,
     ) {
         call_inspectors!(
-            inspector,
-            [
-                &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
-                &mut self.tracer,
-                Some(&mut self.logger)
-            ],
-            {
-                inspector.log(evm_data, address, topics, data);
-            }
-        );
+                    inspector,
+                    [
+                        &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
+                        &mut self.tracer,
+        <<<<<<< HEAD
+                        Some(&mut self.logger)
+        =======
+                        Some(&mut self.log_collector)
+        >>>>>>> e05b9c75 (logs member name changed to logger when referring to LogCollector inspector (#5498))
+                    ],
+                    {
+                        inspector.log(evm_data, address, topics, data);
+                    }
+                );
     }
 
     fn step_end(
@@ -161,16 +165,20 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         is_static: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         call_inspectors!(
-            inspector,
-            [
-                &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
-                &mut self.tracer,
-                Some(&mut self.logger)
-            ],
-            {
-                inspector.call(data, call, is_static);
-            }
-        );
+                    inspector,
+                    [
+                        &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
+                        &mut self.tracer,
+        <<<<<<< HEAD
+                        Some(&mut self.logger)
+        =======
+                        Some(&mut self.log_collector)
+        >>>>>>> e05b9c75 (logs member name changed to logger when referring to LogCollector inspector (#5498))
+                    ],
+                    {
+                        inspector.call(data, call, is_static);
+                    }
+                );
 
         (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
