@@ -206,7 +206,7 @@ impl CallTraceDecoder {
                         .errors
                         .errors
                         .entry(error.name.clone())
-                        .or_insert_with(Default::default);
+                        .or_default();
                     entry.push(error.clone());
                 });
 
