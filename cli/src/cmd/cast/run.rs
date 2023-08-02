@@ -14,7 +14,7 @@ use forge::{
     utils::h256_to_b256,
 };
 use foundry_config::{find_project_root_path, Config};
-use foundry_evm::trace::TracingExecutor;
+use foundry_evm::{executor::EvmError, trace::TracingExecutor};
 use tracing::trace;
 
 const ARBITRUM_SENDER: H160 = H160([
