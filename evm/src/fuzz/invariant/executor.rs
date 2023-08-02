@@ -101,6 +101,7 @@ impl<'a, ONLOG: OnLog> InvariantExecutor<'a, ONLOG> {
                 &blank_executor.borrow(),
                 &[],
                 &mut failures.borrow_mut(),
+                self.config.shrink_sequence,
             )
             .ok(),
         );
@@ -576,7 +577,9 @@ fn can_continue<ONLOG: OnLog>(
 
     // Assert invariants IFF the call did not revert and the handlers did not fail.
     if !call_result.reverted && !handlers_failed {
-        call_results = assert_invariants(invariant_contract, executor, calldata, failures).ok();
+        call_results =
+            assert_invariants(invariant_contract, executor, calldata, failures, shrink_sequence)
+                .ok();
         if call_results.is_none() {
             return (false, None)
         }
