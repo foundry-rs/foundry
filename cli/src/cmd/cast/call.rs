@@ -64,7 +64,7 @@ pub struct CallArgs {
     labels: Vec<String>,
 
     /// Can only be used with "--trace"
-    #[clap(long)]
+    #[clap(long, requires = "trace")]
     evm_version: Option<EvmVersion>,
 
     /// The block height to query at.
