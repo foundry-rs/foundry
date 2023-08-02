@@ -983,10 +983,6 @@ impl ExportedValue {
 pub struct RawExportedData(std::collections::HashMap<String, String>);
 
 impl RawExportedData {
-    fn new() -> Self {
-        Self(std::collections::HashMap::new())
-    }
-
     fn insert(&mut self, key: String, value: String) -> Option<String> {
         self.0.insert(key, value)
     }

@@ -2,7 +2,7 @@ use super::{Cheatcodes, ChiselState, Debugger, Fuzzer, LogCollector, TracePrinte
 use crate::{
     coverage::HitMaps,
     debug::DebugArena,
-    executor::{backend::DatabaseExt, inspector::CoverageCollector, ExportedData},
+    executor::{backend::DatabaseExt, inspector::CoverageCollector},
     trace::CallTraceArena,
 };
 use bytes::Bytes;
