@@ -116,7 +116,7 @@ fn broadcast(
     single_call: bool,
 ) -> Result {
     ensure!(
-        state.prank.is_none(),
+        state.prank.is_empty(),
         "You have an active prank. Broadcasting and pranks are not compatible. \
          Disable one or the other"
     );
@@ -150,22 +150,45 @@ fn broadcast_key(
     result
 }
 
-fn prank(
+fn add_single_use_prank(
     state: &mut Cheatcodes,
     prank_caller: Address,
     prank_origin: Address,
     new_caller: Address,
     new_origin: Option<Address>,
     depth: u64,
-    single_call: bool,
 ) -> Result {
-    let prank = Prank::new(prank_caller, prank_origin, new_caller, new_origin, depth, single_call);
+    // A single-use prank does not override an existing prank if:
+    // - It is used at a higher depth, or
+    // - There are no active pranks
+    ensure!(state.prank.last().map_or(true, |prank| prank.depth < depth), "You cannot override an ongoing prank with a single vm.prank. Use vm.startPrank to override the current prank.");
+    let prank = Prank::new(prank_caller, prank_origin, new_caller, new_origin, depth, true);
 
-    if let Some(Prank { used, single_call: current_single_call, .. }) = state.prank {
+    ensure!(
+        state.broadcast.is_none(),
+        "You cannot `prank` for a broadcasted transaction.\
+         Pass the desired tx.origin into the broadcast cheatcode call"
+    );
+
+    state.prank.push(prank);
+    Ok(Bytes::new())
+}
+
+fn add_multi_use_prank(
+    state: &mut Cheatcodes,
+    prank_caller: Address,
+    prank_origin: Address,
+    new_caller: Address,
+    new_origin: Option<Address>,
+    depth: u64,
+) -> Result {
+    let prank = Prank::new(prank_caller, prank_origin, new_caller, new_origin, depth, false);
+
+    // Ensure that we're not:
+    // overriding an unused single-use prank.
+    // overriding an unused multi-use prank.
+    if let Some(Prank { used, .. }) = state.prank.last() {
         ensure!(used, "You cannot overwrite `prank` until it is applied at least once");
-        // This case can only fail if the user calls `vm.startPrank` and then `vm.prank` later on.
-        // This should not be possible without first calling `stopPrank`
-        ensure!(single_call == current_single_call, "You cannot override an ongoing prank with a single vm.prank. Use vm.startPrank to override the current prank.");
     }
 
     ensure!(
@@ -174,7 +197,8 @@ fn prank(
          Pass the desired tx.origin into the broadcast cheatcode call"
     );
 
-    state.prank = Some(prank);
+    state.prank.push(prank);
+
     Ok(Bytes::new())
 }
 
@@ -204,7 +228,7 @@ fn prank(
 fn read_callers(state: &Cheatcodes, default_sender: Address) -> Bytes {
     let Cheatcodes { prank, broadcast, .. } = &state;
 
-    let data = if let Some(prank) = prank {
+    let data = if let Some(prank) = prank.last() {
         let caller_mode =
             if prank.single_call { CallerMode::Prank } else { CallerMode::RecurrentPrank };
 
@@ -412,45 +436,43 @@ pub fn apply<DB: DatabaseExt>(
             })?;
             Bytes::new()
         }
-        HEVMCalls::Prank0(inner) => prank(
+        HEVMCalls::Prank0(inner) => add_single_use_prank(
             state,
             caller,
             b160_to_h160(data.env.tx.caller),
             inner.0,
             None,
             data.journaled_state.depth(),
-            true,
         )?,
-        HEVMCalls::Prank1(inner) => prank(
+        HEVMCalls::Prank1(inner) => add_single_use_prank(
             state,
             caller,
             b160_to_h160(data.env.tx.caller),
             inner.0,
             Some(inner.1),
             data.journaled_state.depth(),
-            true,
         )?,
-        HEVMCalls::StartPrank0(inner) => prank(
+        HEVMCalls::StartPrank0(inner) => add_multi_use_prank(
             state,
             caller,
             b160_to_h160(data.env.tx.caller),
             inner.0,
             None,
             data.journaled_state.depth(),
-            false,
         )?,
-        HEVMCalls::StartPrank1(inner) => prank(
+        HEVMCalls::StartPrank1(inner) => add_multi_use_prank(
             state,
             caller,
             b160_to_h160(data.env.tx.caller),
             inner.0,
             Some(inner.1),
             data.journaled_state.depth(),
-            false,
         )?,
         HEVMCalls::StopPrank(_) => {
-            ensure!(state.prank.is_some(), "No prank in progress to stop");
-            state.prank = None;
+            ensure!(!state.prank.is_empty(), "No prank in progress to stop");
+            let prank = state.prank.pop().expect("Should have prank to unwrap");
+            ensure!(!prank.single_call, "Cannot stop a single-use prank");
+            let _ = state.prank.pop();
             Bytes::new()
         }
         HEVMCalls::ReadCallers(_) => read_callers(state, b160_to_h160(data.env.tx.caller)),

@@ -122,7 +122,7 @@ pub struct Cheatcodes {
     pub skip: bool,
 
     /// Prank information
-    pub prank: Option<Prank>,
+    pub prank: Vec<Prank>,
 
     /// Expected revert information
     pub expected_revert: Option<ExpectedRevert>,
@@ -639,7 +639,7 @@ where
             }
 
             // Apply our prank
-            if let Some(prank) = &self.prank {
+            if let Some(prank) = self.prank.last_mut() {
                 if data.journaled_state.depth() >= prank.depth &&
                     call.context.caller == h160_to_b160(prank.prank_caller)
                 {
@@ -659,9 +659,7 @@ where
 
                     // If prank applied for first time, then update
                     if prank_applied {
-                        if let Some(applied_prank) = prank.first_time_applied() {
-                            self.prank = Some(applied_prank);
-                        }
+                       prank.used = true; 
                     }
                 }
             }
@@ -768,12 +766,12 @@ where
         }
 
         // Clean up pranks
-        if let Some(prank) = &self.prank {
+        if let Some(prank) = self.prank.last() {
             if data.journaled_state.depth() == prank.depth {
                 data.env.tx.caller = h160_to_b160(prank.prank_origin);
             }
             if prank.single_call {
-                std::mem::take(&mut self.prank);
+                let _ = self.prank.pop();
             }
         }
 
@@ -966,7 +964,7 @@ where
         self.allow_cheatcodes_on_create(data, call);
 
         // Apply our prank
-        if let Some(prank) = &self.prank {
+        if let Some(prank) = &self.prank.last() {
             if data.journaled_state.depth() >= prank.depth &&
                 call.caller == h160_to_b160(prank.prank_caller)
             {
@@ -1053,12 +1051,12 @@ where
         retdata: bytes::Bytes,
     ) -> (InstructionResult, Option<B160>, Gas, bytes::Bytes) {
         // Clean up pranks
-        if let Some(prank) = &self.prank {
+        if let Some(prank) = self.prank.last() {
             if data.journaled_state.depth() == prank.depth {
                 data.env.tx.caller = h160_to_b160(prank.prank_origin);
             }
             if prank.single_call {
-                std::mem::take(&mut self.prank);
+                let _ = self.prank.pop();
             }
         }
 
