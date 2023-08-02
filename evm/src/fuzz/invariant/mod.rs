@@ -42,6 +42,7 @@ pub fn assert_invariants(
     executor: &Executor,
     calldata: &[BasicTxDetails],
     invariant_failures: &mut InvariantFailures,
+    shrink_sequence: bool,
 ) -> eyre::Result<BTreeMap<String, RawCallResult>> {
     let mut found_case = false;
     let mut inner_sequence = vec![];
@@ -95,7 +96,7 @@ pub fn assert_invariants(
                         calldata,
                         call_result,
                         &inner_sequence,
-                        true,
+                        shrink_sequence,
                     )),
                 );
                 found_case = true;
