@@ -421,7 +421,6 @@ fn key_exists(json_str: &str, key: &str) -> Result {
 /// Sleeps for a given amount of milliseconds.
 fn sleep(milliseconds: &U256) -> Result {
     let sleep_duration = std::time::Duration::from_millis(milliseconds.as_u64());
-    println!("Sleeping for {:?} milliseconds", sleep_duration);
     std::thread::sleep(sleep_duration);
 
     Ok(Default::default())
