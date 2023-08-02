@@ -83,8 +83,8 @@ pub struct TestArgs {
     pub fail_fast: bool,
 
     /// The Etherscan (or equivalent) API key
-    // #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
-    // etherscan_api_key: Option<String>,
+    #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
+    etherscan_api_key: Option<String>,
 
     /// List tests instead of running them
     #[clap(long, short, help_heading = "Display options")]
@@ -140,8 +140,8 @@ impl TestArgs {
         let mut project = config.project()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config, self.build_args().silent)
-            && config.auto_detect_remappings
+        if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
+            config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
@@ -294,9 +294,9 @@ impl Provider for TestArgs {
         }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
-        // if let Some(ref etherscan_api_key) = self.etherscan_api_key {
-        //     dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
-        // }
+        if let Some(ref etherscan_api_key) = self.etherscan_api_key {
+            dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
+        }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
@@ -376,7 +376,7 @@ impl TestOutcome {
     pub fn ensure_ok(&self) -> eyre::Result<()> {
         let failures = self.failures().count();
         if self.allow_failure || failures == 0 {
-            return Ok(());
+            return Ok(())
         }
 
         if !shell::verbosity().is_normal() {
@@ -389,7 +389,7 @@ impl TestOutcome {
         for (suite_name, suite) in self.results.iter() {
             let failures = suite.failures().count();
             if failures == 0 {
-                continue;
+                continue
             }
 
             let term = if failures > 1 { "tests" } else { "test" };
@@ -542,9 +542,9 @@ async fn test(
     } else {
         // Set up identifiers
         let mut local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
-        // let remote_chain_id = runner.evm_opts.get_remote_chain_id();
+        let remote_chain_id = runner.evm_opts.get_remote_chain_id();
         // Do not re-query etherscan for contracts that you've already queried today.
-        // let mut etherscan_identifier = EtherscanIdentifier::new(&config, remote_chain_id)?;
+        let mut etherscan_identifier = EtherscanIdentifier::new(&config, remote_chain_id)?;
 
         // Set up test reporter channel
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -579,7 +579,7 @@ async fn test(
 
                 // If the test failed, we want to stop processing the rest of the tests
                 if fail_fast && result.status == TestStatus::Failure {
-                    break 'outer;
+                    break 'outer
                 }
 
                 // We only display logs at level 2 and above
@@ -612,7 +612,7 @@ async fn test(
                     let mut decoded_traces = Vec::new();
                     for (kind, trace) in &mut result.traces {
                         decoder.identify(trace, &mut local_identifier);
-                        // decoder.identify(trace, &mut etherscan_identifier);
+                        decoder.identify(trace, &mut etherscan_identifier);
 
                         let should_include = match kind {
                             // At verbosity level 3, we only display traces for failed tests
@@ -620,12 +620,12 @@ async fn test(
                             // tests At verbosity level 5, we display
                             // all traces for all tests
                             TraceKind::Setup => {
-                                (verbosity >= 5)
-                                    || (verbosity == 4 && result.status == TestStatus::Failure)
+                                (verbosity >= 5) ||
+                                    (verbosity == 4 && result.status == TestStatus::Failure)
                             }
                             TraceKind::Execution => {
-                                verbosity > 3
-                                    || (verbosity == 3 && result.status == TestStatus::Failure)
+                                verbosity > 3 ||
+                                    (verbosity == 3 && result.status == TestStatus::Failure)
                             }
                             _ => false,
                         };
