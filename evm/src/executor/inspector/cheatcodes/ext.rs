@@ -194,16 +194,16 @@ fn value_to_token(value: &Value) -> Result<Token> {
                     let fallback_s = format!("{f}");
 
                     if let Ok(n) = U256::from_dec_str(&s) {
-                        return Ok(Token::Uint(n));
+                        return Ok(Token::Uint(n))
                     }
                     if let Ok(n) = I256::from_dec_str(&s) {
-                        return Ok(Token::Int(n.into_raw()));
+                        return Ok(Token::Int(n.into_raw()))
                     }
                     if let Ok(n) = U256::from_dec_str(&fallback_s) {
-                        return Ok(Token::Uint(n));
+                        return Ok(Token::Uint(n))
                     }
                     if let Ok(n) = I256::from_dec_str(&fallback_s) {
-                        return Ok(Token::Int(n.into_raw()));
+                        return Ok(Token::Int(n.into_raw()))
                     }
                 }
             }
@@ -305,7 +305,7 @@ fn parse_json(json_str: &str, key: &str, coerce: Option<ParamType>) -> Result {
                     util::parse_array(array.iter().map(to_string), &coercion_type)
                 } else {
                     util::parse(&to_string(values[0]), &coercion_type)
-                };
+                }
             }
 
             let res = parse_json_values(values, key)?;

@@ -7,7 +7,7 @@ pub use console::*;
     clippy::upper_case_acronyms,
     clippy::type_complexity,
     dead_code,
-    non_camel_case_types,
+    non_camel_case_types
 )]
 pub mod console {
     #[allow(deprecated)]
@@ -18,156 +18,126 @@ pub mod console {
             events: ::core::convert::From::from([
                 (
                     ::std::borrow::ToOwned::to_owned("log"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Event {
-                            name: ::std::borrow::ToOwned::to_owned("log"),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::string::String::new(),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
-                                    indexed: false,
-                                },
-                            ],
-                            anonymous: false,
-                        },
-                    ],
+                    ::std::vec![::ethers_core::abi::ethabi::Event {
+                        name: ::std::borrow::ToOwned::to_owned("log"),
+                        inputs: ::std::vec![::ethers_core::abi::ethabi::EventParam {
+                            name: ::std::string::String::new(),
+                            kind: ::ethers_core::abi::ethabi::ParamType::String,
+                            indexed: false,
+                        },],
+                        anonymous: false,
+                    },],
                 ),
                 (
                     ::std::borrow::ToOwned::to_owned("log_address"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Event {
-                            name: ::std::borrow::ToOwned::to_owned("log_address"),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::string::String::new(),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Address,
-                                    indexed: false,
-                                },
-                            ],
-                            anonymous: false,
-                        },
-                    ],
+                    ::std::vec![::ethers_core::abi::ethabi::Event {
+                        name: ::std::borrow::ToOwned::to_owned("log_address"),
+                        inputs: ::std::vec![::ethers_core::abi::ethabi::EventParam {
+                            name: ::std::string::String::new(),
+                            kind: ::ethers_core::abi::ethabi::ParamType::Address,
+                            indexed: false,
+                        },],
+                        anonymous: false,
+                    },],
                 ),
                 (
                     ::std::borrow::ToOwned::to_owned("log_array"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Event {
                             name: ::std::borrow::ToOwned::to_owned("log_array"),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("val"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Array(
-                                        ::std::boxed::Box::new(
-                                            ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
-                                        ),
+                            inputs: ::std::vec![::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("val"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::Array(
+                                    ::std::boxed::Box::new(
+                                        ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
                                     ),
-                                    indexed: false,
-                                },
-                            ],
+                                ),
+                                indexed: false,
+                            },],
                             anonymous: false,
                         },
                         ::ethers_core::abi::ethabi::Event {
                             name: ::std::borrow::ToOwned::to_owned("log_array"),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("val"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Array(
-                                        ::std::boxed::Box::new(
-                                            ::ethers_core::abi::ethabi::ParamType::Int(256usize),
-                                        ),
+                            inputs: ::std::vec![::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("val"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::Array(
+                                    ::std::boxed::Box::new(
+                                        ::ethers_core::abi::ethabi::ParamType::Int(256usize),
                                     ),
-                                    indexed: false,
-                                },
-                            ],
+                                ),
+                                indexed: false,
+                            },],
                             anonymous: false,
                         },
                         ::ethers_core::abi::ethabi::Event {
                             name: ::std::borrow::ToOwned::to_owned("log_array"),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("val"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Array(
-                                        ::std::boxed::Box::new(
-                                            ::ethers_core::abi::ethabi::ParamType::Address,
-                                        ),
+                            inputs: ::std::vec![::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("val"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::Array(
+                                    ::std::boxed::Box::new(
+                                        ::ethers_core::abi::ethabi::ParamType::Address,
                                     ),
-                                    indexed: false,
-                                },
-                            ],
+                                ),
+                                indexed: false,
+                            },],
                             anonymous: false,
                         },
                     ],
                 ),
                 (
                     ::std::borrow::ToOwned::to_owned("log_bytes"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Event {
-                            name: ::std::borrow::ToOwned::to_owned("log_bytes"),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::string::String::new(),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Bytes,
-                                    indexed: false,
-                                },
-                            ],
-                            anonymous: false,
-                        },
-                    ],
+                    ::std::vec![::ethers_core::abi::ethabi::Event {
+                        name: ::std::borrow::ToOwned::to_owned("log_bytes"),
+                        inputs: ::std::vec![::ethers_core::abi::ethabi::EventParam {
+                            name: ::std::string::String::new(),
+                            kind: ::ethers_core::abi::ethabi::ParamType::Bytes,
+                            indexed: false,
+                        },],
+                        anonymous: false,
+                    },],
                 ),
                 (
                     ::std::borrow::ToOwned::to_owned("log_bytes32"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Event {
-                            name: ::std::borrow::ToOwned::to_owned("log_bytes32"),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::string::String::new(),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::FixedBytes(
-                                        32usize,
-                                    ),
-                                    indexed: false,
-                                },
-                            ],
-                            anonymous: false,
-                        },
-                    ],
+                    ::std::vec![::ethers_core::abi::ethabi::Event {
+                        name: ::std::borrow::ToOwned::to_owned("log_bytes32"),
+                        inputs: ::std::vec![::ethers_core::abi::ethabi::EventParam {
+                            name: ::std::string::String::new(),
+                            kind: ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize,),
+                            indexed: false,
+                        },],
+                        anonymous: false,
+                    },],
                 ),
                 (
                     ::std::borrow::ToOwned::to_owned("log_int"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Event {
-                            name: ::std::borrow::ToOwned::to_owned("log_int"),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::string::String::new(),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Int(256usize),
-                                    indexed: false,
-                                },
-                            ],
-                            anonymous: false,
-                        },
-                    ],
+                    ::std::vec![::ethers_core::abi::ethabi::Event {
+                        name: ::std::borrow::ToOwned::to_owned("log_int"),
+                        inputs: ::std::vec![::ethers_core::abi::ethabi::EventParam {
+                            name: ::std::string::String::new(),
+                            kind: ::ethers_core::abi::ethabi::ParamType::Int(256usize),
+                            indexed: false,
+                        },],
+                        anonymous: false,
+                    },],
                 ),
                 (
                     ::std::borrow::ToOwned::to_owned("log_named_address"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Event {
-                            name: ::std::borrow::ToOwned::to_owned("log_named_address"),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("key"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
-                                    indexed: false,
-                                },
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("val"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Address,
-                                    indexed: false,
-                                },
-                            ],
-                            anonymous: false,
-                        },
-                    ],
+                    ::std::vec![::ethers_core::abi::ethabi::Event {
+                        name: ::std::borrow::ToOwned::to_owned("log_named_address"),
+                        inputs: ::std::vec![
+                            ::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("key"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                indexed: false,
+                            },
+                            ::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("val"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::Address,
+                                indexed: false,
+                            },
+                        ],
+                        anonymous: false,
+                    },],
                 ),
                 (
                     ::std::borrow::ToOwned::to_owned("log_named_array"),
@@ -236,214 +206,182 @@ pub mod console {
                 ),
                 (
                     ::std::borrow::ToOwned::to_owned("log_named_bytes"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Event {
-                            name: ::std::borrow::ToOwned::to_owned("log_named_bytes"),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("key"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
-                                    indexed: false,
-                                },
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("val"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Bytes,
-                                    indexed: false,
-                                },
-                            ],
-                            anonymous: false,
-                        },
-                    ],
+                    ::std::vec![::ethers_core::abi::ethabi::Event {
+                        name: ::std::borrow::ToOwned::to_owned("log_named_bytes"),
+                        inputs: ::std::vec![
+                            ::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("key"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                indexed: false,
+                            },
+                            ::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("val"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::Bytes,
+                                indexed: false,
+                            },
+                        ],
+                        anonymous: false,
+                    },],
                 ),
                 (
                     ::std::borrow::ToOwned::to_owned("log_named_bytes32"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Event {
-                            name: ::std::borrow::ToOwned::to_owned("log_named_bytes32"),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("key"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
-                                    indexed: false,
-                                },
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("val"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::FixedBytes(
-                                        32usize,
-                                    ),
-                                    indexed: false,
-                                },
-                            ],
-                            anonymous: false,
-                        },
-                    ],
+                    ::std::vec![::ethers_core::abi::ethabi::Event {
+                        name: ::std::borrow::ToOwned::to_owned("log_named_bytes32"),
+                        inputs: ::std::vec![
+                            ::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("key"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                indexed: false,
+                            },
+                            ::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("val"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize,),
+                                indexed: false,
+                            },
+                        ],
+                        anonymous: false,
+                    },],
                 ),
                 (
                     ::std::borrow::ToOwned::to_owned("log_named_decimal_int"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Event {
-                            name: ::std::borrow::ToOwned::to_owned(
-                                "log_named_decimal_int",
-                            ),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("key"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
-                                    indexed: false,
-                                },
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("val"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Int(256usize),
-                                    indexed: false,
-                                },
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("decimals"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
-                                    indexed: false,
-                                },
-                            ],
-                            anonymous: false,
-                        },
-                    ],
+                    ::std::vec![::ethers_core::abi::ethabi::Event {
+                        name: ::std::borrow::ToOwned::to_owned("log_named_decimal_int",),
+                        inputs: ::std::vec![
+                            ::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("key"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                indexed: false,
+                            },
+                            ::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("val"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::Int(256usize),
+                                indexed: false,
+                            },
+                            ::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("decimals"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                indexed: false,
+                            },
+                        ],
+                        anonymous: false,
+                    },],
                 ),
                 (
                     ::std::borrow::ToOwned::to_owned("log_named_decimal_uint"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Event {
-                            name: ::std::borrow::ToOwned::to_owned(
-                                "log_named_decimal_uint",
-                            ),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("key"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
-                                    indexed: false,
-                                },
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("val"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
-                                    indexed: false,
-                                },
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("decimals"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
-                                    indexed: false,
-                                },
-                            ],
-                            anonymous: false,
-                        },
-                    ],
+                    ::std::vec![::ethers_core::abi::ethabi::Event {
+                        name: ::std::borrow::ToOwned::to_owned("log_named_decimal_uint",),
+                        inputs: ::std::vec![
+                            ::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("key"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                indexed: false,
+                            },
+                            ::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("val"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                indexed: false,
+                            },
+                            ::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("decimals"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                indexed: false,
+                            },
+                        ],
+                        anonymous: false,
+                    },],
                 ),
                 (
                     ::std::borrow::ToOwned::to_owned("log_named_int"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Event {
-                            name: ::std::borrow::ToOwned::to_owned("log_named_int"),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("key"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
-                                    indexed: false,
-                                },
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("val"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Int(256usize),
-                                    indexed: false,
-                                },
-                            ],
-                            anonymous: false,
-                        },
-                    ],
+                    ::std::vec![::ethers_core::abi::ethabi::Event {
+                        name: ::std::borrow::ToOwned::to_owned("log_named_int"),
+                        inputs: ::std::vec![
+                            ::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("key"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                indexed: false,
+                            },
+                            ::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("val"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::Int(256usize),
+                                indexed: false,
+                            },
+                        ],
+                        anonymous: false,
+                    },],
                 ),
                 (
                     ::std::borrow::ToOwned::to_owned("log_named_string"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Event {
-                            name: ::std::borrow::ToOwned::to_owned("log_named_string"),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("key"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
-                                    indexed: false,
-                                },
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("val"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
-                                    indexed: false,
-                                },
-                            ],
-                            anonymous: false,
-                        },
-                    ],
+                    ::std::vec![::ethers_core::abi::ethabi::Event {
+                        name: ::std::borrow::ToOwned::to_owned("log_named_string"),
+                        inputs: ::std::vec![
+                            ::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("key"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                indexed: false,
+                            },
+                            ::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("val"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                indexed: false,
+                            },
+                        ],
+                        anonymous: false,
+                    },],
                 ),
                 (
                     ::std::borrow::ToOwned::to_owned("log_named_uint"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Event {
-                            name: ::std::borrow::ToOwned::to_owned("log_named_uint"),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("key"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
-                                    indexed: false,
-                                },
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::borrow::ToOwned::to_owned("val"),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
-                                    indexed: false,
-                                },
-                            ],
-                            anonymous: false,
-                        },
-                    ],
+                    ::std::vec![::ethers_core::abi::ethabi::Event {
+                        name: ::std::borrow::ToOwned::to_owned("log_named_uint"),
+                        inputs: ::std::vec![
+                            ::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("key"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                indexed: false,
+                            },
+                            ::ethers_core::abi::ethabi::EventParam {
+                                name: ::std::borrow::ToOwned::to_owned("val"),
+                                kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                indexed: false,
+                            },
+                        ],
+                        anonymous: false,
+                    },],
                 ),
                 (
                     ::std::borrow::ToOwned::to_owned("log_string"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Event {
-                            name: ::std::borrow::ToOwned::to_owned("log_string"),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::string::String::new(),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
-                                    indexed: false,
-                                },
-                            ],
-                            anonymous: false,
-                        },
-                    ],
+                    ::std::vec![::ethers_core::abi::ethabi::Event {
+                        name: ::std::borrow::ToOwned::to_owned("log_string"),
+                        inputs: ::std::vec![::ethers_core::abi::ethabi::EventParam {
+                            name: ::std::string::String::new(),
+                            kind: ::ethers_core::abi::ethabi::ParamType::String,
+                            indexed: false,
+                        },],
+                        anonymous: false,
+                    },],
                 ),
                 (
                     ::std::borrow::ToOwned::to_owned("log_uint"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Event {
-                            name: ::std::borrow::ToOwned::to_owned("log_uint"),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::string::String::new(),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
-                                    indexed: false,
-                                },
-                            ],
-                            anonymous: false,
-                        },
-                    ],
+                    ::std::vec![::ethers_core::abi::ethabi::Event {
+                        name: ::std::borrow::ToOwned::to_owned("log_uint"),
+                        inputs: ::std::vec![::ethers_core::abi::ethabi::EventParam {
+                            name: ::std::string::String::new(),
+                            kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                            indexed: false,
+                        },],
+                        anonymous: false,
+                    },],
                 ),
                 (
                     ::std::borrow::ToOwned::to_owned("logs"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Event {
-                            name: ::std::borrow::ToOwned::to_owned("logs"),
-                            inputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::EventParam {
-                                    name: ::std::string::String::new(),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Bytes,
-                                    indexed: false,
-                                },
-                            ],
-                            anonymous: false,
-                        },
-                    ],
+                    ::std::vec![::ethers_core::abi::ethabi::Event {
+                        name: ::std::borrow::ToOwned::to_owned("logs"),
+                        inputs: ::std::vec![::ethers_core::abi::ethabi::EventParam {
+                            name: ::std::string::String::new(),
+                            kind: ::ethers_core::abi::ethabi::ParamType::Bytes,
+                            indexed: false,
+                        },],
+                        anonymous: false,
+                    },],
                 ),
             ]),
             errors: ::std::collections::BTreeMap::new(),
@@ -452,9 +390,8 @@ pub mod console {
         }
     }
     ///The parsed human-readable ABI of the contract.
-    pub static CONSOLE_ABI: ::ethers_contract::Lazy<::ethers_core::abi::Abi> = ::ethers_contract::Lazy::new(
-        __abi,
-    );
+    pub static CONSOLE_ABI: ::ethers_contract::Lazy<::ethers_core::abi::Abi> =
+        ::ethers_contract::Lazy::new(__abi);
     pub struct Console<M>(::ethers_contract::Contract<M>);
     impl<M> ::core::clone::Clone for Console<M> {
         fn clone(&self) -> Self {
@@ -484,13 +421,7 @@ pub mod console {
             address: T,
             client: ::std::sync::Arc<M>,
         ) -> Self {
-            Self(
-                ::ethers_contract::Contract::new(
-                    address.into(),
-                    CONSOLE_ABI.clone(),
-                    client,
-                ),
-            )
+            Self(::ethers_contract::Contract::new(address.into(), CONSOLE_ABI.clone(), client))
         }
         ///Gets the contract's `log` event
         pub fn log_filter(
@@ -501,41 +432,25 @@ pub mod console {
         ///Gets the contract's `log_address` event
         pub fn log_address_filter(
             &self,
-        ) -> ::ethers_contract::builders::Event<
-            ::std::sync::Arc<M>,
-            M,
-            LogAddressFilter,
-        > {
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogAddressFilter> {
             self.0.event()
         }
         ///Gets the contract's `log_array` event
         pub fn log_array_1_filter(
             &self,
-        ) -> ::ethers_contract::builders::Event<
-            ::std::sync::Arc<M>,
-            M,
-            LogArray1Filter,
-        > {
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogArray1Filter> {
             self.0.event()
         }
         ///Gets the contract's `log_array` event
         pub fn log_array_2_filter(
             &self,
-        ) -> ::ethers_contract::builders::Event<
-            ::std::sync::Arc<M>,
-            M,
-            LogArray2Filter,
-        > {
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogArray2Filter> {
             self.0.event()
         }
         ///Gets the contract's `log_array` event
         pub fn log_array_3_filter(
             &self,
-        ) -> ::ethers_contract::builders::Event<
-            ::std::sync::Arc<M>,
-            M,
-            LogArray3Filter,
-        > {
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogArray3Filter> {
             self.0.event()
         }
         ///Gets the contract's `log_bytes` event
@@ -547,11 +462,7 @@ pub mod console {
         ///Gets the contract's `log_bytes32` event
         pub fn log_bytes_32_filter(
             &self,
-        ) -> ::ethers_contract::builders::Event<
-            ::std::sync::Arc<M>,
-            M,
-            LogBytes32Filter,
-        > {
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogBytes32Filter> {
             self.0.event()
         }
         ///Gets the contract's `log_int` event
@@ -563,121 +474,83 @@ pub mod console {
         ///Gets the contract's `log_named_address` event
         pub fn log_named_address_filter(
             &self,
-        ) -> ::ethers_contract::builders::Event<
-            ::std::sync::Arc<M>,
-            M,
-            LogNamedAddressFilter,
-        > {
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogNamedAddressFilter>
+        {
             self.0.event()
         }
         ///Gets the contract's `log_named_array` event
         pub fn log_named_array_1_filter(
             &self,
-        ) -> ::ethers_contract::builders::Event<
-            ::std::sync::Arc<M>,
-            M,
-            LogNamedArray1Filter,
-        > {
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogNamedArray1Filter>
+        {
             self.0.event()
         }
         ///Gets the contract's `log_named_array` event
         pub fn log_named_array_2_filter(
             &self,
-        ) -> ::ethers_contract::builders::Event<
-            ::std::sync::Arc<M>,
-            M,
-            LogNamedArray2Filter,
-        > {
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogNamedArray2Filter>
+        {
             self.0.event()
         }
         ///Gets the contract's `log_named_array` event
         pub fn log_named_array_3_filter(
             &self,
-        ) -> ::ethers_contract::builders::Event<
-            ::std::sync::Arc<M>,
-            M,
-            LogNamedArray3Filter,
-        > {
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogNamedArray3Filter>
+        {
             self.0.event()
         }
         ///Gets the contract's `log_named_bytes` event
         pub fn log_named_bytes_filter(
             &self,
-        ) -> ::ethers_contract::builders::Event<
-            ::std::sync::Arc<M>,
-            M,
-            LogNamedBytesFilter,
-        > {
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogNamedBytesFilter>
+        {
             self.0.event()
         }
         ///Gets the contract's `log_named_bytes32` event
         pub fn log_named_bytes_32_filter(
             &self,
-        ) -> ::ethers_contract::builders::Event<
-            ::std::sync::Arc<M>,
-            M,
-            LogNamedBytes32Filter,
-        > {
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogNamedBytes32Filter>
+        {
             self.0.event()
         }
         ///Gets the contract's `log_named_decimal_int` event
         pub fn log_named_decimal_int_filter(
             &self,
-        ) -> ::ethers_contract::builders::Event<
-            ::std::sync::Arc<M>,
-            M,
-            LogNamedDecimalIntFilter,
-        > {
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogNamedDecimalIntFilter>
+        {
             self.0.event()
         }
         ///Gets the contract's `log_named_decimal_uint` event
         pub fn log_named_decimal_uint_filter(
             &self,
-        ) -> ::ethers_contract::builders::Event<
-            ::std::sync::Arc<M>,
-            M,
-            LogNamedDecimalUintFilter,
-        > {
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogNamedDecimalUintFilter>
+        {
             self.0.event()
         }
         ///Gets the contract's `log_named_int` event
         pub fn log_named_int_filter(
             &self,
-        ) -> ::ethers_contract::builders::Event<
-            ::std::sync::Arc<M>,
-            M,
-            LogNamedIntFilter,
-        > {
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogNamedIntFilter> {
             self.0.event()
         }
         ///Gets the contract's `log_named_string` event
         pub fn log_named_string_filter(
             &self,
-        ) -> ::ethers_contract::builders::Event<
-            ::std::sync::Arc<M>,
-            M,
-            LogNamedStringFilter,
-        > {
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogNamedStringFilter>
+        {
             self.0.event()
         }
         ///Gets the contract's `log_named_uint` event
         pub fn log_named_uint_filter(
             &self,
-        ) -> ::ethers_contract::builders::Event<
-            ::std::sync::Arc<M>,
-            M,
-            LogNamedUintFilter,
-        > {
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogNamedUintFilter>
+        {
             self.0.event()
         }
         ///Gets the contract's `log_string` event
         pub fn log_string_filter(
             &self,
-        ) -> ::ethers_contract::builders::Event<
-            ::std::sync::Arc<M>,
-            M,
-            LogStringFilter,
-        > {
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogStringFilter> {
             self.0.event()
         }
         ///Gets the contract's `log_uint` event
@@ -699,8 +572,7 @@ pub mod console {
             self.0.event_with_filter(::core::default::Default::default())
         }
     }
-    impl<M: ::ethers_providers::Middleware> From<::ethers_contract::Contract<M>>
-    for Console<M> {
+    impl<M: ::ethers_providers::Middleware> From<::ethers_contract::Contract<M>> for Console<M> {
         fn from(contract: ::ethers_contract::Contract<M>) -> Self {
             Self::new(contract.address(), contract.client())
         }
@@ -713,7 +585,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log", abi = "log(string)")]
     pub struct LogFilter(pub ::std::string::String);
@@ -725,7 +597,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log_address", abi = "log_address(address)")]
     pub struct LogAddressFilter(pub ::ethers_core::types::Address);
@@ -737,7 +609,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log_array", abi = "log_array(uint256[])")]
     pub struct LogArray1Filter {
@@ -751,7 +623,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log_array", abi = "log_array(int256[])")]
     pub struct LogArray2Filter {
@@ -765,7 +637,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log_array", abi = "log_array(address[])")]
     pub struct LogArray3Filter {
@@ -779,7 +651,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log_bytes", abi = "log_bytes(bytes)")]
     pub struct LogBytesFilter(pub ::ethers_core::types::Bytes);
@@ -791,7 +663,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log_bytes32", abi = "log_bytes32(bytes32)")]
     pub struct LogBytes32Filter(pub [u8; 32]);
@@ -803,7 +675,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log_int", abi = "log_int(int256)")]
     pub struct LogIntFilter(pub ::ethers_core::types::I256);
@@ -815,7 +687,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log_named_address", abi = "log_named_address(string,address)")]
     pub struct LogNamedAddressFilter {
@@ -830,7 +702,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log_named_array", abi = "log_named_array(string,uint256[])")]
     pub struct LogNamedArray1Filter {
@@ -845,7 +717,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log_named_array", abi = "log_named_array(string,int256[])")]
     pub struct LogNamedArray2Filter {
@@ -860,7 +732,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log_named_array", abi = "log_named_array(string,address[])")]
     pub struct LogNamedArray3Filter {
@@ -875,7 +747,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log_named_bytes", abi = "log_named_bytes(string,bytes)")]
     pub struct LogNamedBytesFilter {
@@ -890,7 +762,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log_named_bytes32", abi = "log_named_bytes32(string,bytes32)")]
     pub struct LogNamedBytes32Filter {
@@ -905,7 +777,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(
         name = "log_named_decimal_int",
@@ -924,7 +796,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(
         name = "log_named_decimal_uint",
@@ -943,7 +815,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log_named_int", abi = "log_named_int(string,int256)")]
     pub struct LogNamedIntFilter {
@@ -958,7 +830,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log_named_string", abi = "log_named_string(string,string)")]
     pub struct LogNamedStringFilter {
@@ -973,7 +845,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log_named_uint", abi = "log_named_uint(string,uint256)")]
     pub struct LogNamedUintFilter {
@@ -988,7 +860,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log_string", abi = "log_string(string)")]
     pub struct LogStringFilter(pub ::std::string::String);
@@ -1000,7 +872,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "log_uint", abi = "log_uint(uint256)")]
     pub struct LogUintFilter(pub ::ethers_core::types::U256);
@@ -1012,7 +884,7 @@ pub mod console {
         Debug,
         PartialEq,
         Eq,
-        Hash
+        Hash,
     )]
     #[ethevent(name = "logs", abi = "logs(bytes)")]
     pub struct LogsFilter(pub ::ethers_core::types::Bytes);
@@ -1126,37 +998,17 @@ pub mod console {
                 Self::LogBytesFilter(element) => ::core::fmt::Display::fmt(element, f),
                 Self::LogBytes32Filter(element) => ::core::fmt::Display::fmt(element, f),
                 Self::LogIntFilter(element) => ::core::fmt::Display::fmt(element, f),
-                Self::LogNamedAddressFilter(element) => {
-                    ::core::fmt::Display::fmt(element, f)
-                }
-                Self::LogNamedArray1Filter(element) => {
-                    ::core::fmt::Display::fmt(element, f)
-                }
-                Self::LogNamedArray2Filter(element) => {
-                    ::core::fmt::Display::fmt(element, f)
-                }
-                Self::LogNamedArray3Filter(element) => {
-                    ::core::fmt::Display::fmt(element, f)
-                }
-                Self::LogNamedBytesFilter(element) => {
-                    ::core::fmt::Display::fmt(element, f)
-                }
-                Self::LogNamedBytes32Filter(element) => {
-                    ::core::fmt::Display::fmt(element, f)
-                }
-                Self::LogNamedDecimalIntFilter(element) => {
-                    ::core::fmt::Display::fmt(element, f)
-                }
-                Self::LogNamedDecimalUintFilter(element) => {
-                    ::core::fmt::Display::fmt(element, f)
-                }
+                Self::LogNamedAddressFilter(element) => ::core::fmt::Display::fmt(element, f),
+                Self::LogNamedArray1Filter(element) => ::core::fmt::Display::fmt(element, f),
+                Self::LogNamedArray2Filter(element) => ::core::fmt::Display::fmt(element, f),
+                Self::LogNamedArray3Filter(element) => ::core::fmt::Display::fmt(element, f),
+                Self::LogNamedBytesFilter(element) => ::core::fmt::Display::fmt(element, f),
+                Self::LogNamedBytes32Filter(element) => ::core::fmt::Display::fmt(element, f),
+                Self::LogNamedDecimalIntFilter(element) => ::core::fmt::Display::fmt(element, f),
+                Self::LogNamedDecimalUintFilter(element) => ::core::fmt::Display::fmt(element, f),
                 Self::LogNamedIntFilter(element) => ::core::fmt::Display::fmt(element, f),
-                Self::LogNamedStringFilter(element) => {
-                    ::core::fmt::Display::fmt(element, f)
-                }
-                Self::LogNamedUintFilter(element) => {
-                    ::core::fmt::Display::fmt(element, f)
-                }
+                Self::LogNamedStringFilter(element) => ::core::fmt::Display::fmt(element, f),
+                Self::LogNamedUintFilter(element) => ::core::fmt::Display::fmt(element, f),
                 Self::LogStringFilter(element) => ::core::fmt::Display::fmt(element, f),
                 Self::LogUintFilter(element) => ::core::fmt::Display::fmt(element, f),
                 Self::LogsFilter(element) => ::core::fmt::Display::fmt(element, f),
