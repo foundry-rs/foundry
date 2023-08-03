@@ -144,18 +144,10 @@ forgetest_init!(
         let foundry_toml = prj.root().join(Config::FILE_NAME);
         assert!(foundry_toml.exists());
 
-        let mut profile = Config::load_with_root(prj.root());
+        let profile = Config::load_with_root(prj.root());
         // ensure that the auto-generated internal remapping for forge-std's ds-test exists
         assert_eq!(profile.remappings.len(), 2);
-        pretty_eq!(
-            "lib/forge-std:ds-test/=lib/forge-std/lib/ds-test/src/",
-            profile.remappings[2].to_string()
-        );
-
-        // remove the auto-generated remapping to compare with `forge config` since `forge config`
-        // does not include the auto-generated remappings
-        profile.remappings.remove(2);
-        assert_eq!(profile.remappings.len(), 2);
+        pretty_eq!("ds-test/=lib/forge-std/lib/ds-test/src/", profile.remappings[0].to_string());
 
         // ensure remappings contain test
         pretty_eq!("ds-test/=lib/forge-std/lib/ds-test/src/", profile.remappings[0].to_string());
