@@ -165,16 +165,12 @@ impl<'a> RemappingsProvider<'a> {
                     }
                 }
 
-                let mut remappings = config
-                    .remappings
-                    .into_iter()
-                    .map(Remapping::from)
-                    .map(|mut r| {
-                        // todo: windows/mac/linux
-                        r.context = Some(lib.to_string_lossy().to_string());
-                        r
-                    })
-                    .collect::<Vec<Remapping>>();
+                // Eventually, we could set context for remappings at this location,
+                // taking into account the OS platform. We'll need to be able to handle nested
+                // contexts depending on dependencies for this to work.
+                // For now, we just leave the default context (none).
+                let mut remappings =
+                    config.remappings.into_iter().map(Remapping::from).collect::<Vec<Remapping>>();
 
                 if let Some(r) = src_remapping {
                     remappings.push(r);
