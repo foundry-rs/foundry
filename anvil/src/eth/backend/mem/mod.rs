@@ -2254,6 +2254,10 @@ pub fn transaction_build(
                 base_fee.checked_add(max_priority_fee_per_gas).unwrap_or_else(U256::max_value),
             );
         }
+    } else {
+        transaction.max_fee_per_gas = None;
+        transaction.max_priority_fee_per_gas = None;
+        transaction.transaction_type = None;
     }
 
     transaction.block_hash =
