@@ -981,7 +981,6 @@ impl EthApi {
                 pending.transaction,
                 None,
                 None,
-                true,
                 Some(self.backend.base_fee()),
             );
             // we set the from field here explicitly to the set sender of the pending transaction,
@@ -1907,7 +1906,6 @@ impl EthApi {
                 tx.pending_transaction.transaction.clone(),
                 None,
                 None,
-                true,
                 None,
             );
 
@@ -2256,7 +2254,6 @@ impl EthApi {
                 tx,
                 Some(&block),
                 Some(info),
-                true,
                 Some(base_fee),
             );
             block_transactions.push(tx);
