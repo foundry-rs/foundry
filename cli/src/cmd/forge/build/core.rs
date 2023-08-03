@@ -153,7 +153,7 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
         remappings
             .extend(figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default());
         remappings.sort_by(|a, b| a.name.cmp(&b.name));
-        remappings.dedup_by(|a, b| a.name.eq(&b.name));
+        remappings.dedup_by(|a, b| (&a.context, &a.name).eq(&(&b.context, &b.name)));
         figment.merge(("remappings", remappings)).merge(args)
     }
 }
