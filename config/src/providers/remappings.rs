@@ -165,11 +165,8 @@ impl<'a> RemappingsProvider<'a> {
                     }
                 }
 
-                let mut remappings = config
-                    .remappings
-                    .into_iter()
-                    .map(Remapping::from)
-                    .collect::<Vec<Remapping>>();
+                let mut remappings =
+                    config.remappings.into_iter().map(Remapping::from).collect::<Vec<Remapping>>();
 
                 if let Some(r) = src_remapping {
                     remappings.push(r);
