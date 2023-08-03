@@ -412,6 +412,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
         vec![
             // global
             "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
+            "lib/forge-std:ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
         ]
     );
@@ -430,6 +431,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
         vec![
             // global
             "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
+            "lib/forge-std:ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
             // remapping is local to the lib
@@ -455,6 +457,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
             "lib/nested-lib:another-lib/=lib/nested-lib/lib/another-lib/src/".parse().unwrap(),
             // global
             "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
+            "lib/forge-std:ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
             // remappings local to the lib
@@ -478,6 +481,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
                 .unwrap(),
             // global
             "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
+            "lib/forge-std:ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
             // remappings local to the lib
