@@ -169,11 +169,6 @@ impl<'a> RemappingsProvider<'a> {
                     .remappings
                     .into_iter()
                     .map(Remapping::from)
-                    .map(|mut r| {
-                        // todo: windows/mac/linux
-                        r.context = Some(lib.to_string_lossy().to_string());
-                        r
-                    })
                     .collect::<Vec<Remapping>>();
 
                 if let Some(r) = src_remapping {
