@@ -146,7 +146,7 @@ forgetest_init!(
 
         let mut profile = Config::load_with_root(prj.root());
         // ensure that the auto-generated internal remapping for forge-std's ds-test exists
-        assert_eq!(profile.remappings.len(), 3);
+        assert_eq!(profile.remappings.len(), 2);
         pretty_eq!(
             "lib/forge-std:ds-test/=lib/forge-std/lib/ds-test/src/",
             profile.remappings[2].to_string()
