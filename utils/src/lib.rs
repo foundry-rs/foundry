@@ -150,8 +150,12 @@ pub fn link_with_nonce_or_address<T, U>(
         .map(|(id, contract)| {
             let key = id.identifier();
             let version = id.version.to_string();
-            let version =
-                &version[..version.find("+").expect("Should have compiler version")].to_string();
+            // Check if the version has metadata appended to it, which will be after the semver
+            // version with a `+` separator. If so, strip it off.
+            let version = match version.find('+') {
+                Some(idx) => (version[..idx]).to_string(),
+                None => version,
+            };
             let references = contract
                 .all_link_references()
                 .iter()
