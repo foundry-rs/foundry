@@ -12,6 +12,35 @@ use std::{
 };
 use tracing::trace;
 
+/// Helper type for extendable remappings
+/// that can only be extended with remappings that don't overlap with existing ones.
+type Remappings = Vec<Remapping>;
+
+/// Helper trait for extendable remappings where the remappings can only be extended with
+/// remappings that don't overlap with existing ones.
+trait ExtendableRemappings {
+    fn extend_remappings<T>(&mut self, remappings: T)
+    where
+        T: IntoIterator<Item = Remapping>;
+}
+
+impl ExtendableRemappings for Remappings {
+    fn extend_remappings<T>(&mut self, remappings: T)
+    where
+        T: IntoIterator<Item = Remapping>,
+    {
+        let (uncontained_remappings, other): (Vec<_>, Vec<_>) =
+            remappings.into_iter().partition(|remapping| {
+                !self.iter().any(|existing_remapping| {
+                    existing_remapping.name.contains(&remapping.name) ||
+                        remapping.name.contains(&existing_remapping.name)
+                })
+            });
+        println!("{:?}", other);
+        self.extend(uncontained_remappings);
+    }
+}
+
 /// A figment provider that checks if the remappings were previously set and if they're unset looks
 /// up the fs via
 ///   - `DAPP_REMAPPINGS` || `FOUNDRY_REMAPPINGS` env var
@@ -73,8 +102,9 @@ impl<'a> RemappingsProvider<'a> {
         if let Some(env_remappings) = remappings_from_env_var("DAPP_REMAPPINGS")
             .or_else(|| remappings_from_env_var("FOUNDRY_REMAPPINGS"))
         {
-            new_remappings
-                .extend(env_remappings.map_err::<Error, _>(|err| err.to_string().into())?);
+            new_remappings.extend_remappings(
+                env_remappings.map_err::<Error, _>(|err| err.to_string().into())?,
+            );
         }
 
         // check remappings.txt file
@@ -83,11 +113,12 @@ impl<'a> RemappingsProvider<'a> {
             let content = fs::read_to_string(remappings_file).map_err(|err| err.to_string())?;
             let remappings_from_file: Result<Vec<_>, _> =
                 remappings_from_newline(&content).collect();
-            new_remappings
-                .extend(remappings_from_file.map_err::<Error, _>(|err| err.to_string().into())?);
+            new_remappings.extend_remappings(
+                remappings_from_file.map_err::<Error, _>(|err| err.to_string().into())?,
+            );
         }
 
-        new_remappings.extend(remappings);
+        new_remappings.extend_remappings(remappings);
 
         // scan all library dirs and autodetect remappings
         // todo: if a lib specifies contexts for remappings manually, we need to figure out how to
@@ -116,17 +147,18 @@ impl<'a> RemappingsProvider<'a> {
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
 
-            new_remappings.extend(lib_remappings.into_iter().flat_map(|(context, remappings)| {
-                remappings.into_iter().map(move |(name, path)| Remapping {
-                    context: context.clone(),
-                    name,
-                    path: path.to_string_lossy().into(),
-                })
-            }));
+            new_remappings.extend_remappings(lib_remappings.into_iter().flat_map(
+                |(context, remappings)| {
+                    remappings.into_iter().map(move |(name, path)| Remapping {
+                        context: context.clone(),
+                        name,
+                        path: path.to_string_lossy().into(),
+                    })
+                },
+            ));
         }
 
         // remove duplicates at this point
-        new_remappings.sort_by(|a, b| (&a.context, &a.name).cmp(&(&b.context, &b.name)));
         new_remappings.dedup_by(|a, b| (&a.context, &a.name).eq(&(&b.context, &b.name)));
 
         Ok(new_remappings)
