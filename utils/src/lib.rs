@@ -55,7 +55,7 @@ struct ArtifactDependencies {
 struct ArtifactDependency {
     file: String,
     key: String,
-    version: String
+    version: String,
 }
 
 struct ArtifactCode {
@@ -79,7 +79,10 @@ impl AllArtifactsBySlug {
     /// Finds the code for the target of the artifact and the matching key.
     fn find_code(&self, identifier: &String, version: &String) -> Option<CompactContractBytecode> {
         trace!(target : "forge::link", identifier, "fetching artifact by identifier");
-        let code = self.inner.get(identifier).or(self.inner.get(&format!("{}.{}", identifier, version)))?;
+        let code = self
+            .inner
+            .get(identifier)
+            .or(self.inner.get(&format!("{}.{}", identifier, version)))?;
 
         Some(code.code.clone())
     }
@@ -147,12 +150,17 @@ pub fn link_with_nonce_or_address<T, U>(
         .map(|(id, contract)| {
             let key = id.identifier();
             let version = id.version.to_string();
-            let version = &version[..version.find("+").expect("Should have compiler version")].to_string();
+            let version =
+                &version[..version.find("+").expect("Should have compiler version")].to_string();
             let references = contract
                 .all_link_references()
                 .iter()
                 .flat_map(|(file, link)| link.keys().map(|key| (file.to_string(), key.to_string())))
-                .map(|(file, key)| ArtifactDependency { file, key, version: version.clone().to_owned() })
+                .map(|(file, key)| ArtifactDependency {
+                    file,
+                    key,
+                    version: version.clone().to_owned(),
+                })
                 .collect();
 
             let references =
