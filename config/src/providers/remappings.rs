@@ -32,9 +32,7 @@ impl Remappings {
 
     /// Push an element ot the remappings vector, but only if it's not already present.
     pub fn push(&mut self, remapping: Remapping) {
-        if self.remappings.iter().any(|existing| {
-            existing.name.contains(&remapping.name)
-        }) {
+        if self.remappings.iter().any(|existing| existing.name.contains(&remapping.name)) {
         } else {
             self.remappings.push(remapping)
         }
