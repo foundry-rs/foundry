@@ -33,7 +33,10 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use foundry_evm::{
-    executor::{fork::{BlockchainDb, BlockchainDbMeta, SharedBackend}, inspector::DEFAULT_CREATE2_DEPLOYER},
+    executor::{
+        fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
+        inspector::DEFAULT_CREATE2_DEPLOYER,
+    },
     revm,
     revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv, U256 as rU256},
     utils::apply_chain_and_block_specific_env_changes,
@@ -1009,10 +1012,12 @@ latest block number: {latest_block}"
         )
         .await;
 
-        
+        // Writes the default create2 deployer to the backend,
+        // if the option is not disabled.
         if !self.disable_default_create2_deployer {
             backend
-                .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER).await
+                .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER)
+                .await
                 .expect("Failed to create default create2 deployer");
         }
 
