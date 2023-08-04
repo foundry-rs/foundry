@@ -6,7 +6,7 @@ use figment::{
 };
 use std::{
     borrow::Cow,
-    collections::{hash_map::Entry, HashMap},
+    collections::{btree_map::Entry, BTreeMap},
     fs,
     path::{Path, PathBuf},
 };
@@ -83,7 +83,7 @@ impl<'a> RemappingsProvider<'a> {
         ///   - ("a", "1/2") over ("a", "1/2/3")
         /// grouped by remapping context
         fn insert_closest(
-            mappings: &mut HashMap<Option<String>, HashMap<String, PathBuf>>,
+            mappings: &mut BTreeMap<Option<String>, BTreeMap<String, PathBuf>>,
             context: Option<String>,
             key: String,
             path: PathBuf,
@@ -127,7 +127,7 @@ impl<'a> RemappingsProvider<'a> {
         // todo: if a lib specifies contexts for remappings manually, we need to figure out how to
         // resolve that
         if self.auto_detect_remappings {
-            let mut lib_remappings = HashMap::new();
+            let mut lib_remappings = BTreeMap::new();
             // find all remappings of from libs that use a foundry.toml
             for r in self.lib_foundry_toml_remappings() {
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
