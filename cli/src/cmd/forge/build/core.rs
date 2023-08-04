@@ -13,6 +13,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Figment, Metadata, Profile, Provider,
     },
+    providers::remappings::Remappings,
     Config,
 };
 use serde::Serialize;
@@ -149,12 +150,12 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
         };
 
         // remappings should stack
-        let mut remappings = args.project_paths.get_remappings();
+        let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings());
         remappings
             .extend(figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default());
-        remappings.sort_by(|a, b| (&a.context, &a.name).cmp(&(&b.context, &b.name)));
-        remappings.dedup_by(|a, b| (&a.context, &a.name).eq(&(&b.context, &b.name)));
-        figment.merge(("remappings", remappings)).merge(args)
+        remappings.remappings.sort_by(|a, b| (&a.context, &a.name).cmp(&(&b.context, &b.name)));
+        remappings.remappings.dedup_by(|a, b| (&a.context, &a.name).eq(&(&b.context, &b.name)));
+        figment.merge(("remappings", remappings.remappings)).merge(args)
     }
 }
 
