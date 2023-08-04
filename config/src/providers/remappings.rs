@@ -32,8 +32,9 @@ impl Remappings {
 
     /// Push an element ot the remappings vector, but only if it's not already present.
     pub fn push(&mut self, remapping: Remapping) {
-        if self.remappings.iter().any(|existing| existing.name.contains(&remapping.name)) {
-        } else {
+        if !self.remappings.iter().any(|existing| {
+            existing.name.contains(&remapping.name) && existing.context == remapping.context
+        }) {
             self.remappings.push(remapping)
         }
     }
@@ -163,9 +164,6 @@ impl<'a> RemappingsProvider<'a> {
                     .collect(),
             );
         }
-
-        // remove duplicates at this point
-        new_remappings.remappings.dedup_by(|a, b| (&a.context, &a.name).eq(&(&b.context, &b.name)));
 
         Ok(new_remappings.remappings)
     }
