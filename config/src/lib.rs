@@ -2725,9 +2725,8 @@ mod tests {
                 vec![
                     // From environment
                     Remapping::from_str("ds-test=lib/ds-test/").unwrap().into(),
-                    // From remapping.txt
-                    Remapping::from_str("file-ds-test/=lib/ds-test/").unwrap().into(),
-                    Remapping::from_str("file-other/=lib/other/").unwrap().into(),
+                    // We won't get the remapping.txt remappings as they're essentially duplicates
+                    // of the environment ones, just with a different name.
                     // From environment
                     Remapping::from_str("other/=lib/other/").unwrap().into(),
                 ],
