@@ -236,7 +236,8 @@ impl SessionSource {
     ///
     /// A configured [ChiselRunner]
     async fn prepare_runner(&mut self, final_pc: usize) -> ChiselRunner {
-        let env = self.config.evm_opts.evm_env().await;
+        let env =
+            self.config.evm_opts.evm_env().await.expect("Could not instantiate fork environment");
 
         // Create an in-memory backend
         let backend = match self.config.backend.take() {

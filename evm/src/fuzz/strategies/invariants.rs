@@ -58,10 +58,10 @@ pub fn invariant_strat(
     senders: SenderFilters,
     contracts: FuzzRunIdentifiedContracts,
     dictionary_weight: u32,
-) -> BoxedStrategy<Vec<BasicTxDetails>> {
+) -> impl Strategy<Value = Vec<BasicTxDetails>> {
     // We only want to seed the first value, since we want to generate the rest as we mutate the
     // state
-    vec![generate_call(fuzz_state, senders, contracts, dictionary_weight); 1].boxed()
+    generate_call(fuzz_state, senders, contracts, dictionary_weight).prop_map(|x| vec![x])
 }
 
 /// Strategy to generate a transaction where the `sender`, `target` and `calldata` are all generated
@@ -95,7 +95,7 @@ fn select_random_sender(
     fuzz_state: EvmFuzzState,
     senders: Rc<SenderFilters>,
     dictionary_weight: u32,
-) -> impl Strategy<Value = Address> {
+) -> BoxedStrategy<Address> {
     let senders_ref = senders.clone();
     let fuzz_strategy = proptest::strategy::Union::new_weighted(vec![
         (
@@ -142,10 +142,7 @@ fn select_random_contract(
 ///
 /// If `targeted_functions` is not empty, select one from it. Otherwise, take any
 /// of the available abi functions.
-fn select_random_function(
-    abi: Abi,
-    targeted_functions: Vec<Function>,
-) -> impl Strategy<Value = Function> {
+fn select_random_function(abi: Abi, targeted_functions: Vec<Function>) -> BoxedStrategy<Function> {
     let selectors = any::<prop::sample::Selector>();
     let possible_funcs: Vec<ethers::abi::Function> = abi
         .functions()
@@ -182,11 +179,13 @@ pub fn fuzz_contract_with_calldata(
 ) -> impl Strategy<Value = (Address, Bytes)> {
     // We need to compose all the strategies generated for each parameter in all
     // possible combinations
-    let strats = proptest::strategy::Union::new_weighted(vec![
-        (60, fuzz_calldata(func.clone())),
-        (40, fuzz_calldata_from_state(func, fuzz_state)),
-    ]);
 
+    // `prop_oneof!` / `TupleUnion` `Arc`s for cheap cloning
+    #[allow(clippy::arc_with_non_send_sync)]
+    let strats = prop_oneof![
+        60 => fuzz_calldata(func.clone()),
+        40 => fuzz_calldata_from_state(func, fuzz_state),
+    ];
     strats.prop_map(move |calldata| {
         trace!(input = ?calldata);
         (contract, calldata)

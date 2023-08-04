@@ -40,12 +40,6 @@ pub struct AccessListArgs {
     )]
     data: Option<String>,
 
-    #[clap(flatten)]
-    tx: TransactionOpts,
-
-    #[clap(flatten)]
-    eth: EthereumOpts,
-
     /// The block height to query at.
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
@@ -55,6 +49,12 @@ pub struct AccessListArgs {
     /// Print the access list as JSON.
     #[clap(long, short, help_heading = "Display options")]
     json: bool,
+
+    #[clap(flatten)]
+    tx: TransactionOpts,
+
+    #[clap(flatten)]
+    eth: EthereumOpts,
 }
 
 impl AccessListArgs {

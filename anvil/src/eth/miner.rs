@@ -88,7 +88,7 @@ impl MinerInner {
         self.waker.wake();
     }
 
-    fn register(&self, cx: &mut Context<'_>) {
+    fn register(&self, cx: &Context<'_>) {
         self.waker.register(cx.waker());
     }
 }

@@ -18,11 +18,9 @@ use itertools::Itertools;
 
 use std::str::FromStr;
 
-/// CLI arguments for `cast access-list`.
+/// CLI arguments for `cast logs`.
 #[derive(Debug, Parser)]
 pub struct LogsArgs {
-    #[clap(flatten)]
-    eth: EthereumOpts,
     /// The block height to start query at.
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
@@ -55,6 +53,9 @@ pub struct LogsArgs {
     /// Print the logs as JSON.
     #[clap(long, short, help_heading = "Display options")]
     json: bool,
+
+    #[clap(flatten)]
+    eth: EthereumOpts,
 }
 
 impl LogsArgs {

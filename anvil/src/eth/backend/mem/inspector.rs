@@ -23,7 +23,7 @@ pub struct Inspector {
     pub gas: Option<Rc<RefCell<GasInspector>>>,
     pub tracer: Option<Tracer>,
     /// collects all `console.sol` logs
-    pub logs: LogCollector,
+    pub log_collector: LogCollector,
 }
 
 // === impl Inspector ===
@@ -33,7 +33,7 @@ impl Inspector {
     ///
     /// This will log all `console.sol` logs
     pub fn print_logs(&self) {
-        print_logs(&self.logs.logs)
+        print_logs(&self.log_collector.logs)
     }
 
     /// Configures the `Tracer` [`revm::Inspector`]
@@ -99,7 +99,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
             [
                 &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
                 &mut self.tracer,
-                Some(&mut self.logs)
+                Some(&mut self.log_collector)
             ],
             {
                 inspector.log(evm_data, address, topics, data);
@@ -135,7 +135,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
             [
                 &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
                 &mut self.tracer,
-                Some(&mut self.logs)
+                Some(&mut self.log_collector)
             ],
             {
                 inspector.call(data, call, is_static);

@@ -62,9 +62,6 @@ pub struct VerifyArgs {
     #[clap(long, visible_alias = "optimizer-runs", value_name = "NUM")]
     pub num_of_optimizations: Option<usize>,
 
-    #[clap(flatten)]
-    pub etherscan: EtherscanOpts,
-
     /// Flatten the source code before verifying.
     #[clap(long)]
     pub flatten: bool,
@@ -77,9 +74,6 @@ pub struct VerifyArgs {
     #[clap(long)]
     pub watch: bool,
 
-    #[clap(flatten)]
-    pub retry: RetryArgs,
-
     /// Set pre-linked libraries.
     #[clap(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
     pub libraries: Vec<String>,
@@ -91,15 +85,21 @@ pub struct VerifyArgs {
     #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     pub root: Option<PathBuf>,
 
-    #[clap(flatten)]
-    pub verifier: VerifierArgs,
-
     /// Prints the standard json compiler input.
     ///
     /// The standard json compiler input can be used to manually submit contract verification in
     /// the browser.
     #[clap(long, conflicts_with = "flatten")]
     pub show_standard_json_input: bool,
+
+    #[clap(flatten)]
+    pub etherscan: EtherscanOpts,
+
+    #[clap(flatten)]
+    pub retry: RetryArgs,
+
+    #[clap(flatten)]
+    pub verifier: VerifierArgs,
 }
 
 impl_figment_convert!(VerifyArgs);

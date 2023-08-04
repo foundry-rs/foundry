@@ -13,6 +13,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use semver::Version;
 use std::{
+    io::IsTerminal,
     path::{Path, PathBuf},
     str,
 };
@@ -44,15 +45,15 @@ pub struct InstallArgs {
     /// The dependency will installed to `lib/<alias>`.
     dependencies: Vec<Dependency>,
 
-    #[clap(flatten)]
-    opts: DependencyInstallOpts,
-
     /// The project's root path.
     ///
     /// By default root of the Git repository, if in one,
     /// or the current working directory.
     #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     pub root: Option<PathBuf>,
+
+    #[clap(flatten)]
+    opts: DependencyInstallOpts,
 }
 
 impl_figment_convert_basic!(InstallArgs);
@@ -316,7 +317,7 @@ impl Installer<'_> {
 
         let mut is_branch = false;
         // only try to match tag if current terminal is a tty
-        if is_terminal::is_terminal(std::io::stdout()) {
+        if std::io::stdout().is_terminal() {
             if tag.is_empty() {
                 tag = self.match_tag(&tag, path)?;
             } else if let Some(branch) = self.match_branch(&tag, path)? {
@@ -401,7 +402,7 @@ impl Installer<'_> {
             let n = if s.is_empty() { Ok(1) } else { s.parse() };
             // match user input, 0 indicates skipping and use original tag
             match n {
-                Ok(i) if i == 0 => return Ok(tag.into()),
+                Ok(0) => return Ok(tag.into()),
                 Ok(i) if (1..=n_candidates).contains(&i) => {
                     let c = &candidates[i];
                     println!("[{i}] {c} selected");
@@ -469,7 +470,7 @@ impl Installer<'_> {
 
         // match user input, 0 indicates skipping and use original tag
         match input.parse::<usize>() {
-            Ok(i) if i == 0 => Ok(Some(tag.into())),
+            Ok(0) => Ok(Some(tag.into())),
             Ok(i) if (1..=n_candidates).contains(&i) => {
                 let c = &candidates[i];
                 println!("[{i}] {c} selected");

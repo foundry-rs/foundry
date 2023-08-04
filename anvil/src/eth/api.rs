@@ -981,7 +981,6 @@ impl EthApi {
                 pending.transaction,
                 None,
                 None,
-                true,
                 Some(self.backend.base_fee()),
             );
             // we set the from field here explicitly to the set sender of the pending transaction,
@@ -1430,8 +1429,9 @@ impl EthApi {
         for _ in 0..blocks.as_u64() {
             self.mine_one().await;
 
+            // If we have an interval, jump forwards in time to the "next" timestamp
             if let Some(interval) = interval {
-                tokio::time::sleep(Duration::from_secs(interval)).await;
+                self.backend.time().increase_time(interval);
             }
         }
 
@@ -1906,7 +1906,6 @@ impl EthApi {
                 tx.pending_transaction.transaction.clone(),
                 None,
                 None,
-                true,
                 None,
             );
 
@@ -2052,7 +2051,7 @@ impl EthApi {
 
         // Exceptional case: init used too much gas, we need to increase the gas limit and try
         // again
-        if let Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh)) =
+        if let Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh(_))) =
             ethres
         {
             // if price or limit was included in the request then we can execute the request
@@ -2124,8 +2123,9 @@ impl EthApi {
 
             // Exceptional case: init used too much gas, we need to increase the gas limit and try
             // again
-            if let Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh)) =
-                ethres
+            if let Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh(
+                _,
+            ))) = ethres
             {
                 // increase the lowest gas limit
                 lowest_gas_limit = mid_gas_limit;
@@ -2254,7 +2254,6 @@ impl EthApi {
                 tx,
                 Some(&block),
                 Some(info),
-                true,
                 Some(base_fee),
             );
             block_transactions.push(tx);

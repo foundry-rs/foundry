@@ -78,7 +78,7 @@ where
 
 impl Fuzzer {
     /// Collects `stack` and `memory` values into the fuzz dictionary.
-    fn collect_data(&mut self, interpreter: &mut Interpreter) {
+    fn collect_data(&mut self, interpreter: &Interpreter) {
         let mut state = self.fuzz_state.write();
 
         for slot in interpreter.stack().data() {

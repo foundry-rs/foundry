@@ -802,7 +802,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
         current_step: usize,
         area: Rect,
         stack_labels: bool,
-        draw_memory: &mut DrawMemory,
+        draw_memory: &DrawMemory,
     ) {
         let stack = &debug_steps[current_step].stack;
         let stack_space =
@@ -874,7 +874,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
         current_step: usize,
         area: Rect,
         mem_utf8: bool,
-        draw_mem: &mut DrawMemory,
+        draw_mem: &DrawMemory,
     ) {
         let memory = &debug_steps[current_step].memory;
         let stack_space = Block::default()

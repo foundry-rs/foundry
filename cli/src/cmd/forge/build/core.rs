@@ -31,10 +31,6 @@ pub struct CoreBuildArgs {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub libraries: Vec<String>,
 
-    #[clap(flatten)]
-    #[serde(flatten)]
-    pub compiler: CompilerArgs,
-
     /// Ignore solc warnings by error code.
     #[clap(long, help_heading = "Compiler options", value_name = "ERROR_CODES")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -68,10 +64,6 @@ pub struct CoreBuildArgs {
     #[clap(long, help_heading = "Compiler options")]
     #[serde(skip)]
     pub via_ir: bool,
-
-    #[clap(flatten)]
-    #[serde(flatten)]
-    pub project_paths: ProjectPathsArgs,
 
     /// The path to the contract artifacts folder.
     #[clap(
@@ -112,6 +104,14 @@ pub struct CoreBuildArgs {
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_info_path: Option<PathBuf>,
+
+    #[clap(flatten)]
+    #[serde(flatten)]
+    pub compiler: CompilerArgs,
+
+    #[clap(flatten)]
+    #[serde(flatten)]
+    pub project_paths: ProjectPathsArgs,
 }
 
 impl CoreBuildArgs {
@@ -152,8 +152,8 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
         let mut remappings = args.project_paths.get_remappings();
         remappings
             .extend(figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default());
-        remappings.sort_by(|a, b| a.name.cmp(&b.name));
-        remappings.dedup_by(|a, b| a.name.eq(&b.name));
+        remappings.sort_by(|a, b| (&a.context, &a.name).cmp(&(&b.context, &b.name)));
+        remappings.dedup_by(|a, b| (&a.context, &a.name).eq(&(&b.context, &b.name)));
         figment.merge(("remappings", remappings)).merge(args)
     }
 }

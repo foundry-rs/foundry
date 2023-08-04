@@ -444,6 +444,7 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
     // add missing remappings
     if !settings.remappings.iter().any(|remapping| remapping.name.starts_with("@openzeppelin/")) {
         let oz = Remapping {
+            context: None,
             name: "@openzeppelin/".into(),
             path: sources_path.join("@openzeppelin").display().to_string(),
         };
@@ -454,9 +455,9 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
     //   ContractName/
     //     [source code]
     let paths = ProjectPathsConfig::builder()
-        .sources(sources_path)
+        .sources(sources_path.clone())
         .remappings(settings.remappings.clone())
-        .build_with_root(target_path);
+        .build_with_root(sources_path);
 
     let v = metadata.compiler_version()?;
     let v = format!("{}.{}.{}", v.major, v.minor, v.patch);
