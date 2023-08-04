@@ -10,7 +10,7 @@ use ethers::{
     },
     types::{
         transaction::{eip2718::TypedTransaction, eip712::Eip712},
-        Address, Signature,
+        Address, Signature, H256,
     },
 };
 use eyre::{bail, Result, WrapErr};
@@ -517,6 +517,25 @@ impl Signer for &WalletSigner {
     fn with_chain_id<T: Into<u64>>(self, chain_id: T) -> Self {
         let _ = chain_id;
         self
+    }
+}
+
+impl WalletSigner {
+    pub async fn sign_hash(&self, hash: H256) -> Result<Signature, WalletSignerError> {
+        match self {
+            Self::Local(inner) => inner.sign_hash(hash).map_err(Into::into),
+            // TODO: verify if Ledger & Trezor actually hashes the messages
+            Self::Ledger(inner) => inner.sign_message(hash).await.map_err(Into::into),
+            Self::Trezor(inner) => inner.sign_message(hash).await.map_err(Into::into),
+            Self::Aws(_) => todo!()
+            // Self::Aws(inner) => {
+            //     let sig = self.sign_digest(hash.into()).await.map_err(Into::into)?;
+            //     let mut sig =
+            //         sig_from_digest_bytes_trial_recovery(&sig, hash.into(), &self.pubkey);
+            //     sig.v = (self.chain_id() * 2 + 35) + sig.v;
+            //     Ok(sig)
+            // }
+        }
     }
 }
 

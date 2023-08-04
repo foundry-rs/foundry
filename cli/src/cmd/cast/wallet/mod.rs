@@ -11,7 +11,8 @@ use clap::Parser;
 use ethers::{
     core::rand::thread_rng,
     signers::{LocalWallet, Signer},
-    types::{transaction::eip712::TypedData, Address, Signature},
+    types::{transaction::eip712::TypedData, Address, Signature, H256},
+    utils::keccak256,
 };
 use eyre::Context;
 
@@ -62,15 +63,31 @@ pub enum WalletSubcommands {
         ///
         /// Messages starting with 0x are expected to be hex encoded,
         /// which get decoded before being signed.
-        /// The message will be prefixed with the Ethereum Signed Message header and hashed before
-        /// signing.
+        /// By default, the message will be prefixed with the Ethereum Signed Message header and
+        /// hashed before signing.
+        ///
+        /// Use --raw flag to denote the message as a string of a 256-bit hash.
+        /// The message will not be hashed before signing. This flag is unaffected by the --data
+        /// and --headerless flags.
+        ///
+        /// Use --headerless flag to denote the message to be signed without the Ethereum Signed
+        /// Message header. The message will not be hashed using the EIP712 specification.
         ///
         /// Typed data can be provided as a json string or a file name.
-        /// Use --data flag to denote the message is a string of typed data.
-        /// Use --data --from-file to denote the message is a file name containing typed data.
+        /// Use --data flag to denote the message as a string of typed data.
+        /// Use --data --from-file to denote the message as a file name containing typed data.
         /// The data will be combined and hashed using the EIP712 specification before signing.
         /// The data should be formatted as JSON.
         message: String,
+
+        /// If provided, the message will be treated as a 256-bit hash, and will not be hashed
+        /// again.
+        #[clap(long)]
+        raw: bool,
+
+        /// If provided, the message will not be hashed with the Ethereum Signed Message header.
+        #[clap(long)]
+        headerless: bool,
 
         /// If provided, the message will be treated as typed data.
         #[clap(long)]
@@ -97,6 +114,11 @@ pub enum WalletSubcommands {
         /// The address of the message signer.
         #[clap(long, short)]
         address: Address,
+
+        /// If provided, the message will be treated as a 256-bit hash, and will not be hashed when
+        /// verifying the signature.
+        #[clap(long)]
+        raw: bool,
     },
 }
 
@@ -144,9 +166,13 @@ impl WalletSubcommands {
                 let addr = wallet.address();
                 println!("{}", SimpleCast::to_checksum_address(&addr));
             }
-            WalletSubcommands::Sign { message, data, from_file, wallet } => {
+            WalletSubcommands::Sign { message, raw, headerless, data, from_file, wallet } => {
                 let wallet = wallet.signer(0).await?;
-                let sig = if data {
+                let sig = if raw {
+                    wallet.sign_hash(H256::from_slice(&hex::decode(&message)?)).await?
+                } else if headerless {
+                    wallet.sign_hash(H256(keccak256(Self::hex_str_to_bytes(&message)?))).await?
+                } else if data {
                     let typed_data: TypedData = if from_file {
                         // data is a file name, read json from file
                         foundry_common::fs::read_json_file(message.as_ref())?
@@ -160,8 +186,13 @@ impl WalletSubcommands {
                 };
                 println!("0x{sig}");
             }
-            WalletSubcommands::Verify { message, signature, address } => {
-                match signature.verify(Self::hex_str_to_bytes(&message)?, address) {
+            WalletSubcommands::Verify { message, signature, address, raw } => {
+                let result = if raw {
+                    signature.verify(H256::from_slice(&hex::decode(&message)?), address)
+                } else {
+                    signature.verify(Self::hex_str_to_bytes(&message)?, address)
+                };
+                match result {
                     Ok(_) => {
                         println!("Validation succeeded. Address {address} signed this message.")
                     }
@@ -191,8 +222,10 @@ mod tests {
     fn can_parse_wallet_sign_message() {
         let args = WalletSubcommands::parse_from(["foundry-cli", "sign", "deadbeef"]);
         match args {
-            WalletSubcommands::Sign { message, data, from_file, .. } => {
+            WalletSubcommands::Sign { message, raw, headerless, data, from_file, .. } => {
                 assert_eq!(message, "deadbeef".to_string());
+                assert!(!raw);
+                assert!(!headerless);
                 assert!(!data);
                 assert!(!from_file);
             }
@@ -204,8 +237,41 @@ mod tests {
     fn can_parse_wallet_sign_hex_message() {
         let args = WalletSubcommands::parse_from(["foundry-cli", "sign", "0xdeadbeef"]);
         match args {
-            WalletSubcommands::Sign { message, data, from_file, .. } => {
+            WalletSubcommands::Sign { message, raw, headerless, data, from_file, .. } => {
                 assert_eq!(message, "0xdeadbeef".to_string());
+                assert!(!raw);
+                assert!(!headerless);
+                assert!(!data);
+                assert!(!from_file);
+            }
+            _ => panic!("expected WalletSubcommands::Sign"),
+        }
+    }
+
+    #[test]
+    fn can_parse_wallet_sign_raw_message() {
+        let args = WalletSubcommands::parse_from(["foundry-cli", "sign", "--raw", "deadbeef"]);
+        match args {
+            WalletSubcommands::Sign { message, raw, headerless, data, from_file, .. } => {
+                assert_eq!(message, "deadbeef".to_string());
+                assert!(raw);
+                assert!(!headerless);
+                assert!(!data);
+                assert!(!from_file);
+            }
+            _ => panic!("expected WalletSubcommands::Sign"),
+        }
+    }
+
+    #[test]
+    fn can_parse_wallet_sign_headerless_message() {
+        let args =
+            WalletSubcommands::parse_from(["foundry-cli", "sign", "--headerless", "deadbeef"]);
+        match args {
+            WalletSubcommands::Sign { message, raw, headerless, data, from_file, .. } => {
+                assert_eq!(message, "deadbeef".to_string());
+                assert!(!raw);
+                assert!(headerless);
                 assert!(!data);
                 assert!(!from_file);
             }
@@ -217,8 +283,10 @@ mod tests {
     fn can_parse_wallet_sign_data() {
         let args = WalletSubcommands::parse_from(["foundry-cli", "sign", "--data", "{ ... }"]);
         match args {
-            WalletSubcommands::Sign { message, data, from_file, .. } => {
+            WalletSubcommands::Sign { message, raw, headerless, data, from_file, .. } => {
                 assert_eq!(message, "{ ... }".to_string());
+                assert!(!raw);
+                assert!(!headerless);
                 assert!(data);
                 assert!(!from_file);
             }
@@ -236,8 +304,10 @@ mod tests {
             "tests/data/typed_data.json",
         ]);
         match args {
-            WalletSubcommands::Sign { message, data, from_file, .. } => {
+            WalletSubcommands::Sign { message, raw, headerless, data, from_file, .. } => {
                 assert_eq!(message, "tests/data/typed_data.json".to_string());
+                assert!(!raw);
+                assert!(!headerless);
                 assert!(data);
                 assert!(from_file);
             }

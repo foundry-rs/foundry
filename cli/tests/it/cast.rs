@@ -111,6 +111,36 @@ casttest!(cast_wallet_sign_message_hex_data, |_: TestProject, mut cmd: TestComma
     assert_eq!(output.trim(), "0x23a42ca5616ee730ff3735890c32fc7b9491a9f633faca9434797f2c845f5abf4d9ba23bd7edb8577acebaa3644dc5a4995296db420522bb40060f1693c33c9b1c");
 });
 
+// tests that `cast wallet sign message` outputs the expected signature, given a raw 256-bit hash
+// message
+casttest!(cast_wallet_sign_message_raw_data, |_: TestProject, mut cmd: TestCommand| {
+    cmd.args([
+        "wallet",
+        "sign",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--raw",
+        "4a5c5d454721bbbb25540c3317521e71c373ae36458f960d2ad46ef088110e95",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim(), "0xfe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c");
+});
+
+// tests that `cast wallet sign message` outputs the expected signature, given a message that is not
+// prefixed with some header
+casttest!(cast_wallet_sign_message_headerless_data, |_: TestProject, mut cmd: TestCommand| {
+    cmd.args([
+        "wallet",
+        "sign",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--headerless",
+        "\x19Ethereum Signed Message:\n4test",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim(), "0xfe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c");
+});
+
 // tests that `cast wallet sign typed-data` outputs the expected signature, given a JSON string
 casttest!(cast_wallet_sign_typed_data_string, |_: TestProject, mut cmd: TestCommand| {
     cmd.args([
@@ -143,6 +173,21 @@ casttest!(cast_wallet_sign_typed_data_file, |_: TestProject, mut cmd: TestComman
     ]);
     let output = cmd.stdout_lossy();
     assert_eq!(output.trim(), "0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b");
+});
+
+// tests that `cast wallet verify message` verifies correctly, given a raw 256-bit hash message
+casttest!(cast_wallet_verify_message_raw_data, |_: TestProject, mut cmd: TestCommand| {
+    cmd.args([
+        "wallet",
+        "verify",
+        "--address",
+        "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+        "--raw",
+        "4a5c5d454721bbbb25540c3317521e71c373ae36458f960d2ad46ef088110e95",
+        "0xfe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c"
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim(), "Validation succeeded. Address 0x7e5f…5bdf signed this message.");
 });
 
 // tests that `cast estimate` is working correctly.
