@@ -35,7 +35,6 @@ impl Remappings {
         if self.remappings.iter().any(|existing| {
             existing.name.contains(&remapping.name) || remapping.name.contains(&existing.name)
         }) {
-            return
         } else {
             self.remappings.push(remapping)
         }
