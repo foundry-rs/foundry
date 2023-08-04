@@ -20,8 +20,14 @@ pub struct Remappings {
 }
 
 impl Remappings {
-    fn new() -> Self {
+    /// Create a new `Remappings` wrapper with an empty vector.
+    pub fn new() -> Self {
         Self { remappings: Vec::new() }
+    }
+
+    /// Create a new `Remappings` wrapper with a vector of remappings.
+    pub fn new_with_remappings(remappings: Vec<Remapping>) -> Self {
+        Self { remappings }
     }
 
     /// Push an element ot the remappings vector, but only if it's not already present.

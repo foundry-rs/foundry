@@ -77,7 +77,9 @@ pub mod fix;
 pub use figment;
 use tracing::warn;
 
-mod providers;
+/// config providers
+pub mod providers;
+
 use crate::{
     error::ExtractConfigError,
     etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig},
