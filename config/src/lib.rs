@@ -77,7 +77,9 @@ pub mod fix;
 pub use figment;
 use tracing::warn;
 
-mod providers;
+/// config providers
+pub mod providers;
+
 use crate::{
     error::ExtractConfigError,
     etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig},
@@ -2721,13 +2723,12 @@ mod tests {
             assert_eq!(
                 config.remappings,
                 vec![
-                    // From environment
+                    // From environment (should have precedence over remapping.txt)
                     Remapping::from_str("ds-test=lib/ds-test/").unwrap().into(),
-                    // From remapping.txt
+                    Remapping::from_str("other/=lib/other/").unwrap().into(),
+                    // From remapping.txt (should have less precedence than remapping.txt)
                     Remapping::from_str("file-ds-test/=lib/ds-test/").unwrap().into(),
                     Remapping::from_str("file-other/=lib/other/").unwrap().into(),
-                    // From environment
-                    Remapping::from_str("other/=lib/other/").unwrap().into(),
                 ],
             );
 

@@ -395,7 +395,7 @@ forgetest!(can_set_gas_price, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(config.gas_price, Some(300));
 });
 
-// test that optimizer runs works
+// test that we can detect remappings from foundry.toml
 forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCommand| {
     let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
@@ -407,6 +407,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
         ]
     );
+
     // create a new lib directly in the `lib` folder with a remapping
     let mut config = config;
     config.remappings = vec![Remapping::from_str("nested/=lib/nested").unwrap().into()];
@@ -420,11 +421,12 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
     pretty_assertions::assert_eq!(
         remappings,
         vec![
-            // global
+            // default
             "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
-            "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
             // remapping is local to the lib
+            "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            // global
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
