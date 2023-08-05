@@ -25,6 +25,7 @@ ui = { path = "../ui" }
 # eth
 ethers = { workspace = true, features = ["rustls"] }
 solang-parser.workspace = true
+eth-keystore = "0.5"
 
 # cli
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
@@ -76,6 +77,7 @@ strum = { version = "0.25", features = ["derive"] }
 thiserror = "1"
 indicatif = "0.17"
 parking_lot = "0.12"
+dirs = "5"
 
 [dev-dependencies]
 anvil = { path = "../anvil" }

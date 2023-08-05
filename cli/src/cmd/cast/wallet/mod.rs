@@ -2,6 +2,9 @@
 
 pub mod vanity;
 
+use std::path::Path;
+
+use foundry_common::fs;
 use crate::{
     cmd::{cast::wallet::vanity::VanityArgs, Cmd},
     opts::{Wallet, RawWallet},
@@ -98,6 +101,19 @@ pub enum WalletSubcommands {
         #[clap(long, short)]
         address: Address,
     },
+    /// Import a private key into an encrypted keystore.
+    #[clap(visible_alias = "i")]
+    Import {
+        #[clap(
+            help = "The name for the account in the keystore.",
+            value_name = "ACCOUNT_NAME"
+        )]
+        account_name: String,
+        #[clap(long, short)]
+        keystore_dir: Option<String>,
+        #[clap(flatten)]
+        raw_wallet_options: RawWallet,
+    }
 }
 
 impl WalletSubcommands {
@@ -169,6 +185,40 @@ impl WalletSubcommands {
                         println!("Validation failed. Address {address} did not sign this message.")
                     }
                 }
+            }
+            WalletSubcommands::Import { account_name, keystore_dir, raw_wallet_options } => {
+                // Set up keystore directory
+                let dir = if let Some(path) = keystore_dir {
+                    path
+                } else {
+                    let home_dir = dirs::home_dir().unwrap();
+                    home_dir.join(".foundry").join("keystores").to_string_lossy().to_string()
+                };
+
+                fs::create_dir_all(&dir)?;
+
+                // check if account exists already
+                let keystore_path = Path::new(&dir).join(&account_name);
+                if keystore_path.exists() {
+                    eyre::bail!("Keystore file already exists at {}", keystore_path.display());
+                }
+
+                // get wallet
+                let wallet: Wallet = raw_wallet_options.into();
+                let wallet = wallet.try_resolve_local_wallet()?.ok_or_else(
+                    || eyre::eyre!("\
+Did you set a private key or mnemonic?
+Run `cast wallet import --help` and use the corresponding CLI
+flag to set your key via:
+--private-key, --mnemonic-path or --interactive."
+                    ),
+                )?;
+
+                let private_key = wallet.signer().to_bytes();
+                let password= rpassword::prompt_password("Enter password: ")?;
+
+                let mut rng = thread_rng();
+                eth_keystore::encrypt_key(&dir, &mut rng, &private_key, &password, Some(&account_name))?;
             }
         };
 

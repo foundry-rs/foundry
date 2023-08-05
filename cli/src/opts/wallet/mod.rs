@@ -146,6 +146,15 @@ pub struct Wallet {
     pub aws: bool,
 }
 
+impl From<RawWallet> for Wallet {
+    fn from(options: RawWallet) -> Self {
+        Self {
+            raw: options,
+            ..Default::default()
+        }
+    }
+}
+
 impl Wallet {
     pub fn interactive(&self) -> Result<Option<LocalWallet>> {
         Ok(if self.raw.interactive { Some(self.get_from_interactive()?) } else { None })
@@ -191,7 +200,7 @@ impl Wallet {
 
     /// Tries to resolve a local wallet from the provided options.
     #[track_caller]
-    fn try_resolve_local_wallet(&self) -> Result<Option<LocalWallet>> {
+    pub fn try_resolve_local_wallet(&self) -> Result<Option<LocalWallet>> {
         self.private_key()
             .transpose()
             .or_else(|| self.interactive().transpose())
@@ -199,7 +208,6 @@ impl Wallet {
             .or_else(|| self.keystore().transpose())
             .transpose()
     }
-
     /// Returns a [Signer] corresponding to the provided private key, mnemonic or hardware signer.
     #[instrument(skip(self), level = "trace")]
     pub async fn signer(&self, chain_id: u64) -> eyre::Result<WalletSigner> {

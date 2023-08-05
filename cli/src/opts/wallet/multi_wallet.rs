@@ -187,6 +187,10 @@ pub struct MultiWallet {
     /// Use AWS Key Management Service.
     #[clap(long, help_heading = "Wallet options - remote")]
     pub aws: bool,
+
+    // Use a keystore file and ask for a password
+    #[clap(long, help_heading = "Wallet options - account")]
+    pub account: Option<String>,
 }
 
 impl WalletTrait for MultiWallet {
@@ -408,6 +412,19 @@ impl MultiWallet {
 
         trace!(?chain_id, "Creating new ledger signer");
         Ok(Some(Ledger::new(derivation, chain_id).await.wrap_err("Ledger device not available.")?))
+    }
+
+    pub async fn account(&self) -> Result<Option<LocalWallet>> {
+        // get a keystore with that name
+        if let Some(account) = &self.account {
+            // enter password to decrypt <WALLET_NAME>
+            let password = rpassword::prompt_password("Enter password: ").unwrap();
+            let wallet = self.get_from_keystore(Some(account), Some(&password), None)?.unwrap();
+            return Ok(Some(wallet))
+        } else {
+            Ok(None)
+        }
+
     }
 }
 
