@@ -53,6 +53,6 @@ impl DebugArgs {
             retry: RETRY_VERIFY_ON_CREATE,
             ..Default::default()
         };
-        script.run_script(breakpoints).await
+        script.run_script().await
     }
 }

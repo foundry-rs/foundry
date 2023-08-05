@@ -7,6 +7,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ethers::{solc::artifacts::ContractBytecodeSome, types::Address};
+use ethers_solc::ArtifactId;
 use eyre::Result;
 use forge::{
     debug::{DebugStep, Instruction},
@@ -52,7 +53,7 @@ pub struct Tui {
     current_step: usize,
     identified_contracts: HashMap<Address, String>,
     known_contracts: HashMap<String, ContractBytecodeSome>,
-    known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
+    known_contracts_sources: HashMap<String, BTreeMap<ArtifactId, String>>,
     /// A mapping of source -> (PC -> IC map for deploy code, PC -> IC map for runtime code)
     pc_ic_maps: BTreeMap<String, (PCICMap, PCICMap)>,
     breakpoints: Breakpoints,
@@ -66,7 +67,7 @@ impl Tui {
         current_step: usize,
         identified_contracts: HashMap<Address, String>,
         known_contracts: HashMap<String, ContractBytecodeSome>,
-        known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
+        known_contracts_sources: HashMap<String, BTreeMap<ArtifactId, String>>,
         breakpoints: Breakpoints,
     ) -> Result<Self> {
         enable_raw_mode()?;
@@ -133,7 +134,7 @@ impl Tui {
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
         pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
-        known_contracts_sources: &HashMap<String, BTreeMap<u32, String>>,
+        known_contracts_sources: &HashMap<String, BTreeMap<ArtifactId, String>>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
@@ -188,7 +189,7 @@ impl Tui {
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
         pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
-        known_contracts_sources: &HashMap<String, BTreeMap<u32, String>>,
+        known_contracts_sources: &HashMap<String, BTreeMap<ArtifactId, String>>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
@@ -268,7 +269,7 @@ impl Tui {
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
         pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
-        known_contracts_sources: &HashMap<String, BTreeMap<u32, String>>,
+        known_contracts_sources: &HashMap<String, BTreeMap<ArtifactId, String>>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
@@ -379,7 +380,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
         pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
-        known_contracts_sources: &HashMap<String, BTreeMap<u32, String>>,
+        known_contracts_sources: &HashMap<String, BTreeMap<ArtifactId, String>>,
         pc: usize,
         call_kind: CallKind,
         area: Rect,

@@ -7,7 +7,7 @@ use clap::Parser;
 use ethers::{
     abi::Address,
     prelude::{artifacts::ContractBytecodeSome, ArtifactId, Middleware},
-    solc::EvmVersion,
+    solc::{contracts::ArtifactContracts, EvmVersion},
     types::H160,
 };
 use eyre::WrapErr;
@@ -257,8 +257,15 @@ impl RunArgs {
 
         if self.debug {
             let (sources, bytecode) = etherscan_identifier.get_compiled_contracts().await?;
-            let debugger =
-                DebuggerArgs { success: result.success, debug: None, decoder: &decoder, sources };
+            let debugger = DebuggerArgs {
+                success: result.success,
+                debug: Some(vec![result.debug]),
+                decoder: &decoder,
+                sources,
+                highlevel_known_contracts: ArtifactContracts(bytecode),
+                project: Default::default(),
+                breakpoints: Default::default(),
+            };
             debugger.run()?;
         } else {
             print_traces(&mut result, decoder, self.verbose).await?;

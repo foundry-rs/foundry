@@ -32,7 +32,7 @@ fn main() -> eyre::Result<()> {
                 cmd.opts.args.silent,
                 cmd.json,
             ))?;
-            utils::block_on(cmd.run_script(Default::default()))
+            utils::block_on(cmd.run_script())
         }
         Subcommands::Coverage(cmd) => utils::block_on(cmd.run()),
         Subcommands::Bind(cmd) => cmd.run(),
