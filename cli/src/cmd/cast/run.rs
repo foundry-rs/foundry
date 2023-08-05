@@ -1,4 +1,4 @@
-use crate::{init_progress, opts::RpcOpts, update_progress, utils};
+use crate::{cmd::forge::debug::DebugArgs, init_progress, opts::RpcOpts, update_progress, utils};
 use cast::{
     executor::{EvmError, ExecutionErr},
     trace::{identifier::SignaturesIdentifier, CallTraceDecoder, Traces},
@@ -25,7 +25,10 @@ use foundry_config::{find_project_root_path, Config};
 use foundry_evm::utils::evm_spec;
 use std::{collections::BTreeMap, str::FromStr};
 use tracing::trace;
-use ui::{TUIExitReason, Tui, Ui};
+use ui::{
+    debugger::{DebuggerArgs, ExecutionResult},
+    TUIExitReason, Tui,
+};
 use yansi::Paint;
 
 const ARBITRUM_SENDER: H160 = H160([
@@ -254,7 +257,9 @@ impl RunArgs {
 
         if self.debug {
             let (sources, bytecode) = etherscan_identifier.get_compiled_contracts().await?;
-            run_debugger(result, decoder, bytecode, sources)?;
+            let debugger =
+                DebuggerArgs { success: result.success, debug: None, decoder: &decoder, sources };
+            debugger.run()?;
         } else {
             print_traces(&mut result, decoder, self.verbose).await?;
         }

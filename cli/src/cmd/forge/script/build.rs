@@ -31,7 +31,7 @@ impl ScriptArgs {
         let (project, output) = self.get_project_and_output(script_config)?;
         let output = output.with_stripped_file_prefixes(project.root());
 
-        let mut sources: BTreeMap<u32, String> = BTreeMap::new();
+        let mut sources: BTreeMap<ArtifactId, String> = BTreeMap::new();
 
         let contracts = output
             .into_artifacts()
@@ -40,7 +40,7 @@ impl ScriptArgs {
                 // something wrong with the build and/or artifacts.
                 if let Some(source) = artifact.source_file() {
                     sources.insert(
-                        source.id,
+                        id,
                         source
                             .ast
                             .ok_or(eyre::eyre!("Source from artifact has no AST."))?
@@ -263,10 +263,10 @@ impl ScriptArgs {
 /// sources we need. If it's a standalone script, don't filter anything out.
 pub fn filter_sources_and_artifacts(
     target: &str,
-    sources: BTreeMap<u32, String>,
+    sources: BTreeMap<ArtifactId, String>,
     highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     project: Project,
-) -> eyre::Result<(BTreeMap<u32, String>, HashMap<String, ContractBytecodeSome>)> {
+) -> eyre::Result<(BTreeMap<ArtifactId, String>, HashMap<String, ContractBytecodeSome>)> {
     // Find all imports
     let graph = Graph::resolve(&project.paths)?;
     let target_path = project.root().join(target);
@@ -344,5 +344,5 @@ pub struct BuildOutput {
     pub highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     pub libraries: Libraries,
     pub predeploy_libraries: Vec<ethers::types::Bytes>,
-    pub sources: BTreeMap<u32, String>,
+    pub sources: BTreeMap<ArtifactId, String>,
 }

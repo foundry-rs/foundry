@@ -47,22 +47,21 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     path::PathBuf,
 };
-use tracing::log::trace;
 use yansi::Paint;
 
 mod build;
-use build::{filter_sources_and_artifacts, BuildOutput};
+use build::BuildOutput;
 use foundry_common::{abi::encode_args, contracts::get_contract_name, errors::UnlinkedByteCode};
 use foundry_config::figment::{
     value::{Dict, Map},
     Metadata, Profile, Provider,
 };
+use ui::debugger::ExecutionResult;
 
 mod runner;
 use runner::ScriptRunner;
 
 mod broadcast;
-use ui::{TUIExitReason, Tui, Ui};
 
 mod artifacts;
 mod cmd;
@@ -437,49 +436,6 @@ impl ScriptArgs {
             .collect()
     }
 
-    fn run_debugger(
-        &self,
-        decoder: &CallTraceDecoder,
-        sources: BTreeMap<u32, String>,
-        result: ScriptResult,
-        project: Project,
-        highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
-        breakpoints: Breakpoints,
-    ) -> eyre::Result<()> {
-        trace!(target: "script", "debugging script");
-
-        let (sources, artifacts) = filter_sources_and_artifacts(
-            &self.path,
-            sources,
-            highlevel_known_contracts.clone(),
-            project,
-        )?;
-        let flattened = result
-            .debug
-            .and_then(|arena| arena.last().map(|arena| arena.flatten(0)))
-            .expect("We should have collected debug information");
-        let identified_contracts = decoder
-            .contracts
-            .iter()
-            .map(|(addr, identifier)| (*addr, get_contract_name(identifier).to_string()))
-            .collect();
-
-        let tui = Tui::new(
-            flattened,
-            0,
-            identified_contracts,
-            artifacts,
-            highlevel_known_contracts
-                .into_iter()
-                .map(|(id, _)| (id.name, sources.clone()))
-                .collect(),
-            breakpoints,
-        )?;
-        match tui.start().expect("Failed to start tui") {
-            TUIExitReason::CharExit => Ok(()),
-        }
-    }
-
     /// Returns the Function and calldata based on the signature
     ///
     /// If the `sig` is a valid human-readable function we find the corresponding function in the
@@ -653,6 +609,15 @@ pub struct ScriptResult {
     pub returned: bytes::Bytes,
     pub address: Option<Address>,
     pub script_wallets: Vec<LocalWallet>,
+    pub breakpoints: Breakpoints,
+}
+
+impl From<ScriptResult> for ExecutionResult {
+    fn from(value: ScriptResult) -> Self {
+        let ScriptResult { success, debug, address, breakpoints, .. } = value;
+
+        ExecutionResult { success, debug, address, breakpoints }
+    }
 }
 
 #[derive(Serialize, Deserialize)]

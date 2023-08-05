@@ -40,7 +40,7 @@ pub struct DebugArgs {
 }
 
 impl DebugArgs {
-    pub async fn debug(self, breakpoints: Breakpoints) -> eyre::Result<()> {
+    pub async fn run(self) -> eyre::Result<()> {
         let script = ScriptArgs {
             path: self.path.to_str().expect("Invalid path string.").to_string(),
             args: self.args,

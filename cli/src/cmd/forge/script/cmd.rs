@@ -10,6 +10,7 @@ use ethers::{
 use foundry_common::{contracts::flatten_contracts, try_get_http_provider};
 use std::sync::Arc;
 use tracing::trace;
+use ui::{DebuggerArgs, ExecutionResult};
 
 /// Helper alias type for the collection of data changed due to the new sender.
 type NewSenderChanges = (CallTraceDecoder, Libraries, ArtifactContracts<ContractBytecodeSome>);
@@ -85,14 +86,16 @@ impl ScriptArgs {
         let mut decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
 
         if self.debug {
-            return self.run_debugger(
-                &decoder,
-                sources,
-                result,
+            let ex_result: ExecutionResult = result.into();
+            let debugger = DebuggerArgs {
+                decoder: &decoder,
+                sources: sources.into(),
+                result: ex_result,
                 project,
                 highlevel_known_contracts,
                 breakpoints,
-            )
+            };
+            // return debugger.run()?;
         }
 
         if let Some((new_traces, updated_libraries, updated_contracts)) = self

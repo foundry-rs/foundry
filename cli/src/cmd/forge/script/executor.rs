@@ -128,7 +128,7 @@ impl ScriptArgs {
                         abi,
                         code,
                     };
-                    return Some((*addr, info))
+                    return Some((*addr, info));
                 }
                 None
             })
@@ -158,7 +158,7 @@ impl ScriptArgs {
                         .expect("Internal EVM error");
 
                     if !result.success || result.traces.is_empty() {
-                        return Ok((None, result.traces))
+                        return Ok((None, result.traces));
                     }
 
                     let created_contracts = result
@@ -171,7 +171,7 @@ impl ScriptArgs {
                                         opcode: node.kind(),
                                         address: node.trace.address,
                                         init_code: node.trace.data.to_raw(),
-                                    })
+                                    });
                                 }
                                 None
                             })
