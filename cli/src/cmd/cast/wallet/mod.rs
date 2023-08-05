@@ -4,7 +4,7 @@ pub mod vanity;
 
 use crate::{
     cmd::{cast::wallet::vanity::VanityArgs, Cmd},
-    opts::Wallet,
+    opts::{Wallet, RawWallet},
 };
 use cast::SimpleCast;
 use clap::Parser;
@@ -137,7 +137,7 @@ impl WalletSubcommands {
             }
             WalletSubcommands::Address { wallet, private_key_override } => {
                 let wallet = private_key_override
-                    .map(|pk| Wallet { private_key: Some(pk), ..Default::default() })
+                    .map(|pk| Wallet { raw: RawWallet {private_key: Some(pk), ..Default::default()}, ..Default::default() })
                     .unwrap_or(wallet)
                     .signer(0)
                     .await?;
