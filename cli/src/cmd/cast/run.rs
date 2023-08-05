@@ -193,7 +193,7 @@ impl RunArgs {
                     debug: run_debug,
                     exit_reason: _,
                     ..
-                } = executor.commit_tx_with_env(env).unwrap();
+                } = executor.commit_tx_with_env(env)?;
 
                 RunResult {
                     success: !reverted,
