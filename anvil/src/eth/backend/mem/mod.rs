@@ -2247,7 +2247,7 @@ pub fn transaction_build(
 ) -> Transaction {
     let mut transaction: Transaction = eth_transaction.clone().into();
 
-    if let TypedTransaction::EIP1559(_) = eth_transaction.as_ref() {
+    if eth_transaction.is_dynamic_fee() {
         if block.is_none() && info.is_none() {
             // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
             transaction.gas_price = transaction.max_fee_per_gas;
@@ -2264,7 +2264,6 @@ pub fn transaction_build(
     } else {
         transaction.max_fee_per_gas = None;
         transaction.max_priority_fee_per_gas = None;
-        transaction.transaction_type = None;
     }
 
     transaction.block_hash =
