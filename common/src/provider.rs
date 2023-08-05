@@ -124,6 +124,16 @@ impl ProviderBuilder {
         self
     }
 
+    /// Sets the number of assumed available compute units per second
+    ///
+    /// See also, <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
+    pub fn compute_units_per_second_opt(mut self, compute_units_per_second: Option<u64>) -> Self {
+        if let Some(cups) = compute_units_per_second {
+            self.compute_units_per_second = cups;
+        }
+        self
+    }
+
     /// Sets aggressive `max_retry` and `initial_backoff` values
     ///
     /// This is only recommend for local dev nodes
