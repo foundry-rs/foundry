@@ -113,7 +113,10 @@ pub enum WalletSubcommands {
         keystore_dir: Option<String>,
         #[clap(flatten)]
         raw_wallet_options: RawWallet,
-    }
+    },
+    /// List all the accounts in the keystore default directory
+    #[clap(visible_alias = "ls")]
+    List
 }
 
 impl WalletSubcommands {
@@ -219,6 +222,37 @@ flag to set your key via:
 
                 let mut rng = thread_rng();
                 eth_keystore::encrypt_key(&dir, &mut rng, &private_key, &password, Some(&account_name))?;
+            },
+            WalletSubcommands::List { } => {
+                let default_keystore_dir = dirs::home_dir().unwrap().join(".foundry").join("keystores");
+                // check if keystore directory exists
+                if !default_keystore_dir.exists() {
+                    eyre::bail!("Keystore directory does not exist at {}", default_keystore_dir.display());
+                }
+                // List all files in keystore directory
+                let keystore_files = std::fs::read_dir(default_keystore_dir)?
+                .filter_map(|entry| {
+                    let entry = entry.unwrap();
+                    let path = entry.path();
+                    if path.is_file() {
+                        Some(path)
+                    } else {
+                        None
+                    }
+                });
+                let keystore_files = keystore_files
+                    .filter(|path| {
+                        // Only files without extension
+                        path.extension().is_none()
+                    });
+                // Print the names of the keystore files
+                for file in keystore_files {
+                    if let Some(file_name) = file.file_name() {
+                        if let Some(name) = file_name.to_str() {
+                            println!("{}", name);
+                        }
+                    }
+                }
             }
         };
 
