@@ -110,6 +110,16 @@ pub struct Wallet {
     )]
     pub keystore_path: Option<String>,
 
+    // Use a keystore from the default folder by its name
+    #[clap(
+        long = "account",
+        help_heading = "Wallet options - keystore",
+        value_name = "ACCOUNT_NAME",
+        env = "ETH_KEYSTORE_ACCOUNT",
+        conflicts_with = "keystore_path"
+    )]
+    pub keystore_account_name: Option<String>,
+
     /// The keystore password.
     ///
     /// Used with --keystore.
@@ -169,8 +179,17 @@ impl Wallet {
     }
 
     pub fn keystore(&self) -> Result<Option<LocalWallet>> {
+        let default_keystore_dir = dirs::home_dir()
+        .ok_or_else(|| eyre::eyre!("Failed to get home directory"))?
+        .join(".foundry")
+        .join("keystores");
+    
+        // If keystore path is provided, use it, otherwise use default path + keystore account name
+        let keystore_path: Option<String> = self.keystore_path.clone()
+            .or_else(|| self.keystore_account_name.as_ref().map(|keystore_name| default_keystore_dir.join(keystore_name).to_string_lossy().into_owned()));
+
         self.get_from_keystore(
-            self.keystore_path.as_ref(),
+            keystore_path.as_ref(),
             self.keystore_password.as_ref(),
             self.keystore_password_file.as_ref(),
         )
@@ -366,6 +385,7 @@ pub trait WalletTrait {
         keystore_password_file: Option<&String>,
     ) -> Result<Option<LocalWallet>> {
         Ok(match (keystore_path, keystore_password, keystore_password_file) {
+            // Path and password provided
             (Some(path), Some(password), _) => {
                 let path = self.find_keystore_file(path)?;
                 Some(
@@ -373,18 +393,21 @@ pub trait WalletTrait {
                         .wrap_err_with(|| format!("Failed to decrypt keystore {path:?}"))?,
                 )
             }
-            (Some(path), _, Some(password_file)) => {
+            // Path and password file provided
+            (Some(path),  _, Some(password_file)) => {
                 let path = self.find_keystore_file(path)?;
                 Some(
                     LocalWallet::decrypt_keystore(&path, self.password_from_file(password_file)?)
                         .wrap_err_with(|| format!("Failed to decrypt keystore {path:?} with password file {password_file:?}"))?,
                 )
             }
+            // Only Path provided -> interactive
             (Some(path), None, None) => {
                 let path = self.find_keystore_file(path)?;
                 let password = rpassword::prompt_password("Enter keystore password:")?;
                 Some(LocalWallet::decrypt_keystore(path, password)?)
             }
+            // Nothing provided
             (None, _, _) => None,
         })
     }
@@ -574,6 +597,7 @@ mod tests {
             },
             from: None,
             keystore_path: None,
+            keystore_account_name: None,
             keystore_password: None,
             keystore_password_file: None,
             ledger: false,
