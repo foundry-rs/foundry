@@ -33,14 +33,16 @@ impl ScriptArgs {
 
         let mut sources: BTreeMap<ArtifactId, String> = BTreeMap::new();
 
-        let contracts = output
-            .into_artifacts()
+        let (artifacts, files) = output.into_artifacts_with_sources();
+
+        let contracts = artifacts
+            .into_iter()
             .map(|(id, artifact)| -> eyre::Result<_> {
                 // Sources are only required for the debugger, but it *might* mean that there's
                 // something wrong with the build and/or artifacts.
                 if let Some(source) = artifact.source_file() {
                     sources.insert(
-                        id,
+                        id.clone(),
                         source
                             .ast
                             .ok_or(eyre::eyre!("Source from artifact has no AST."))?
@@ -63,6 +65,7 @@ impl ScriptArgs {
 
         output.sources = sources;
         script_config.target_contract = Some(output.target.clone());
+        output.file_ids = files.into_ids().collect();
 
         Ok(output)
     }
@@ -196,6 +199,8 @@ impl ScriptArgs {
             sources: BTreeMap::new(),
             project,
             libraries: new_libraries,
+            // TODO
+            file_ids: Default::default(),
         })
     }
 
@@ -277,4 +282,5 @@ pub struct BuildOutput {
     pub libraries: Libraries,
     pub predeploy_libraries: Vec<ethers::types::Bytes>,
     pub sources: BTreeMap<ArtifactId, String>,
+    pub file_ids: BTreeMap<u32, String>,
 }

@@ -38,8 +38,6 @@ use std::{
 };
 use tracing::log::trace;
 
-pub struct ExecutionResult {}
-
 /// Standardized way of firing up the debugger
 pub struct DebuggerArgs<'a> {
     pub success: bool,
@@ -47,9 +45,11 @@ pub struct DebuggerArgs<'a> {
     pub path: PathBuf,
     pub decoder: &'a CallTraceDecoder,
     pub sources: BTreeMap<ArtifactId, String>,
-    pub project: Project,
+    pub project: &'a Project,
     pub highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     pub breakpoints: Breakpoints,
+    /// Map over file_id -> path
+    pub file_ids: BTreeMap<u32, String>,
 }
 
 impl DebuggerArgs<'_> {
@@ -74,15 +74,27 @@ impl DebuggerArgs<'_> {
             .map(|(addr, identifier)| (*addr, get_contract_name(identifier).to_string()))
             .collect();
 
-        let tui = Tui::new(
+        let known_contracts_sources = self
+            .highlevel_known_contracts
+            .iter()
+            .map(|(id, _)| {
+                let file_sources: BTreeMap<u32, String> = self
+                    .file_ids
+                    .iter()
+                    .map(|(id, path)| {
+                        (*id, fs::read_to_string(path).expect("failed to read source"))
+                    })
+                    .collect();
+                (id.name.clone(), file_sources)
+            })
+            .collect();
+
+        let mut tui = Tui::new(
             flattened,
             0,
             identified_contracts,
             artifacts,
-            self.highlevel_known_contracts
-                .iter()
-                .map(|(id, _)| (id.name.clone(), sources.clone()))
-                .collect(),
+            known_contracts_sources,
             self.breakpoints.clone(),
         )?;
 

@@ -52,6 +52,7 @@ pub struct Tui {
     current_step: usize,
     identified_contracts: HashMap<Address, String>,
     known_contracts: HashMap<String, ContractBytecodeSome>,
+    /// Source map of project's bytecodes (contract_name -> sources(file_id -> source_code))
     known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
     /// A mapping of source -> (PC -> IC map for deploy code, PC -> IC map for runtime code)
     pc_ic_maps: BTreeMap<String, (PCICMap, PCICMap)>,
@@ -107,7 +108,7 @@ impl Tui {
             .collect();
 
         Ok(Tui {
-            debug_arena,
+            debug_arena: debug_arena.clone(),
             terminal,
             key_buffer: String::new(),
             current_step,
@@ -117,7 +118,7 @@ impl Tui {
             pc_ic_maps,
             breakpoints,
             draw_memory: DrawMemory::default(),
-            opcode_list: debug_arena.clone()[0].1.iter().map(|step| step.pretty_opcode()).collect(),
+            opcode_list: debug_arena[0].1.iter().map(|step| step.pretty_opcode()).collect(),
             last_index: 0,
             mem_utf: false,
             stack_labels: false,
@@ -125,7 +126,7 @@ impl Tui {
         })
     }
 
-    fn launch(&self) -> eyre::Result<TUIExitReason> {
+    fn launch(&mut self) -> eyre::Result<TUIExitReason> {
         // If something panics inside here, we should do everything we can to
         // not corrupt the user's terminal.
         std::panic::set_hook(Box::new(|e| {

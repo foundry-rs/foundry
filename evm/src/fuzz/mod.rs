@@ -1,5 +1,6 @@
 use crate::{
     coverage::HitMaps,
+    debug::DebugArena,
     decode::{self, decode_console_logs},
     executor::{Executor, RawCallResult},
     trace::CallTraceArena,
@@ -10,7 +11,7 @@ use ethers::{
     types::{Address, Bytes, Log},
 };
 use eyre::Result;
-use foundry_common::{calc, contracts::ContractsByAddress};
+use foundry_common::{calc, contracts::ContractsByAddress, evm::Breakpoints};
 use foundry_config::FuzzConfig;
 pub use proptest::test_runner::Reason;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
@@ -182,6 +183,8 @@ impl<'a> FuzzedExecutor<'a> {
             labeled_addresses: call.labels,
             traces: if run_result.is_ok() { traces.into_inner() } else { call.traces.clone() },
             coverage: coverage.into_inner(),
+            debug: call.debug,
+            breakpoints: call.cheatcodes.map_or(Default::default(), |cheats| cheats.breakpoints),
         };
 
         match run_result {
@@ -339,6 +342,12 @@ pub struct FuzzTestResult {
 
     /// Raw coverage info
     pub coverage: Option<HitMaps>,
+
+    /// The debug nodes of the call
+    pub debug: Option<DebugArena>,
+
+    /// pc breakpoint char map
+    pub breakpoints: Breakpoints,
 }
 
 impl FuzzTestResult {

@@ -5,6 +5,7 @@ use ethers::prelude::Log;
 use foundry_common::evm::Breakpoints;
 use foundry_evm::{
     coverage::HitMaps,
+    debug::DebugArena,
     executor::EvmError,
     fuzz::{CounterExample, FuzzCase},
     trace::{TraceKind, Traces},
@@ -101,6 +102,9 @@ pub struct TestResult {
 
     /// Labeled addresses
     pub labeled_addresses: BTreeMap<Address, String>,
+
+    /// The debug nodes of the call
+    pub debug: Option<DebugArena>,
 
     /// pc breakpoint char map
     pub breakpoints: Breakpoints,

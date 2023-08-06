@@ -7,7 +7,7 @@ use clap::Parser;
 use ethers::{
     abi::Address,
     prelude::{artifacts::ContractBytecodeSome, ArtifactId, Middleware},
-    solc::{contracts::ArtifactContracts, EvmVersion},
+    solc::{contracts::ArtifactContracts, EvmVersion, Project, ProjectBuilder},
     types::H160,
 };
 use eyre::WrapErr;
@@ -25,10 +25,7 @@ use foundry_config::{find_project_root_path, Config};
 use foundry_evm::utils::evm_spec;
 use std::{collections::BTreeMap, str::FromStr};
 use tracing::trace;
-use ui::{
-    debugger::{DebuggerArgs, ExecutionResult},
-    TUIExitReason, Tui,
-};
+use ui::{debugger::DebuggerArgs, TUIExitReason, Tui};
 use yansi::Paint;
 
 const ARBITRUM_SENDER: H160 = H160([
@@ -264,7 +261,10 @@ impl RunArgs {
                 decoder: &decoder,
                 sources,
                 highlevel_known_contracts: ArtifactContracts(bytecode),
-                project: Default::default(),
+                // TODO
+                project: &ProjectBuilder::default().build().unwrap(),
+                // TODO
+                file_ids: Default::default(),
                 breakpoints: Default::default(),
             };
             debugger.run()?;

@@ -56,7 +56,6 @@ use foundry_config::figment::{
     value::{Dict, Map},
     Metadata, Profile, Provider,
 };
-use ui::debugger::ExecutionResult;
 
 mod runner;
 use runner::ScriptRunner;
@@ -610,14 +609,6 @@ pub struct ScriptResult {
     pub address: Option<Address>,
     pub script_wallets: Vec<LocalWallet>,
     pub breakpoints: Breakpoints,
-}
-
-impl From<ScriptResult> for ExecutionResult {
-    fn from(value: ScriptResult) -> Self {
-        let ScriptResult { success, debug, address, breakpoints, .. } = value;
-
-        ExecutionResult { success, debug, address, breakpoints }
-    }
 }
 
 #[derive(Serialize, Deserialize)]

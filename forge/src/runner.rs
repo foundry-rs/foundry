@@ -197,12 +197,8 @@ impl<'a> ContractRunner<'a> {
         if setup_fns.len() > 1 {
             return SuiteResult::new(
                 start.elapsed(),
-                [(
-                    "setUp()".to_string(),
-                    // TODO-f: get the breakpoints here
-                    TestResult::fail("Multiple setUp functions".to_string()),
-                )]
-                .into(),
+                [("setUp()".to_string(), TestResult::fail("Multiple setUp functions".to_string()))]
+                    .into(),
                 warnings,
             )
         }
@@ -235,6 +231,7 @@ impl<'a> ContractRunner<'a> {
                         coverage: None,
                         labeled_addresses: setup.labeled_addresses,
                         breakpoints: Default::default(),
+                        debug: Default::default(),
                     },
                 )]
                 .into(),
@@ -313,6 +310,7 @@ impl<'a> ContractRunner<'a> {
 
         // Run unit test
         let start = Instant::now();
+        let mut debug_arena = None;
         let (reverted, reason, gas, stipend, coverage, state_changeset, breakpoints) = match self
             .executor
             .execute_test::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), self.errors)
@@ -326,12 +324,15 @@ impl<'a> ContractRunner<'a> {
                 coverage,
                 labels: new_labels,
                 state_changeset,
+                debug,
                 breakpoints,
                 ..
             }) => {
                 traces.extend(execution_trace.map(|traces| (TraceKind::Execution, traces)));
                 labeled_addresses.extend(new_labels);
                 logs.extend(execution_logs);
+                dbg!(&debug);
+                debug_arena = debug;
                 (reverted, None, gas, stipend, coverage, state_changeset, breakpoints)
             }
             Err(EvmError::Execution(err)) => {
@@ -386,6 +387,8 @@ impl<'a> ContractRunner<'a> {
             %gas
         );
 
+        assert!(debug_arena.is_some(), "issues!");
+
         TestResult {
             status: match success {
                 true => TestStatus::Success,
@@ -399,6 +402,7 @@ impl<'a> ContractRunner<'a> {
             traces,
             coverage,
             labeled_addresses,
+            debug: debug_arena,
             breakpoints,
         }
     }
@@ -523,6 +527,7 @@ impl<'a> ContractRunner<'a> {
                     coverage: None, // TODO ?
                     traces,
                     labeled_addresses: labeled_addresses.clone(),
+                    debug: Default::default(),
                     breakpoints: Default::default(),
                 }
             })
@@ -590,7 +595,8 @@ impl<'a> ContractRunner<'a> {
             traces,
             coverage: result.coverage,
             labeled_addresses,
-            breakpoints: Default::default(),
+            debug: result.debug,
+            breakpoints: result.breakpoints,
         }
     }
 }

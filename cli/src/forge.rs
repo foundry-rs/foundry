@@ -43,7 +43,7 @@ fn main() -> eyre::Result<()> {
                 cmd.run().map(|_| ())
             }
         }
-        Subcommands::Debug(cmd) => utils::block_on(cmd.debug()),
+        Subcommands::Debug(cmd) => utils::block_on(cmd.run()),
         Subcommands::VerifyContract(args) => utils::block_on(args.run()),
         Subcommands::VerifyCheck(args) => utils::block_on(args.run()),
         Subcommands::Cache(cmd) => match cmd.sub {
