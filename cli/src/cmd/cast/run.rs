@@ -258,8 +258,9 @@ impl RunArgs {
         if self.debug {
             let (sources, bytecode) = etherscan_identifier.get_compiled_contracts().await?;
             let debugger = DebuggerArgs {
+                path: Default::default(),
                 success: result.success,
-                debug: Some(vec![result.debug]),
+                debug: vec![result.debug],
                 decoder: &decoder,
                 sources,
                 highlevel_known_contracts: ArtifactContracts(bytecode),
@@ -271,34 +272,6 @@ impl RunArgs {
             print_traces(&mut result, decoder, self.verbose).await?;
         }
         Ok(())
-    }
-}
-
-fn run_debugger(
-    result: RunResult,
-    decoder: CallTraceDecoder,
-    known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
-    sources: BTreeMap<ArtifactId, String>,
-) -> eyre::Result<()> {
-    let calls: Vec<DebugArena> = vec![result.debug];
-    let flattened = calls.last().expect("we should have collected debug info").flatten(0);
-    let tui = Tui::new(
-        flattened,
-        0,
-        decoder.contracts,
-        known_contracts.into_iter().map(|(id, artifact)| (id.name, artifact)).collect(),
-        sources
-            .into_iter()
-            .map(|(id, source)| {
-                let mut sources = BTreeMap::new();
-                sources.insert(0, source);
-                (id.name, sources)
-            })
-            .collect(),
-        Default::default(),
-    )?;
-    match tui.start().expect("Failed to start tui") {
-        TUIExitReason::CharExit => Ok(()),
     }
 }
 
