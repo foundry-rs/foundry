@@ -60,6 +60,21 @@ pub struct RunArgs {
     /// Overrides the version specified in the config.
     #[clap(long, short)]
     evm_version: Option<EvmVersion>,
+    /// Sets the number of assumed available compute units per second for this provider
+    ///
+    /// default value: 330
+    ///
+    /// See also, https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    #[clap(long, alias = "cups", value_name = "CUPS")]
+    pub compute_units_per_second: Option<u64>,
+
+    /// Disables rate limiting for this node's provider.
+    ///
+    /// default value: false
+    ///
+    /// See also, https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    #[clap(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
+    pub no_rate_limit: bool,
 }
 
 impl RunArgs {
@@ -74,7 +89,12 @@ impl RunArgs {
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment).sanitized();
 
-        let provider = utils::get_provider(&config)?;
+        let compute_units_per_second =
+            if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
+
+        let provider = utils::get_provider_builder(&config)?
+            .compute_units_per_second_opt(compute_units_per_second)
+            .build()?;
 
         let tx_hash = self.tx_hash.parse().wrap_err("invalid tx hash")?;
         let tx = provider

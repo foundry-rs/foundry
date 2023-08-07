@@ -6,11 +6,46 @@ use figment::{
 };
 use std::{
     borrow::Cow,
-    collections::{hash_map::Entry, HashMap},
+    collections::{btree_map::Entry, BTreeMap},
     fs,
     path::{Path, PathBuf},
 };
 use tracing::trace;
+
+/// Wrapper types over a `Vec<Remapping>` that only appends unique remappings.
+#[derive(Debug, Clone, Default)]
+pub struct Remappings {
+    /// Remappings.
+    pub remappings: Vec<Remapping>,
+}
+
+impl Remappings {
+    /// Create a new `Remappings` wrapper with an empty vector.
+    pub fn new() -> Self {
+        Self { remappings: Vec::new() }
+    }
+
+    /// Create a new `Remappings` wrapper with a vector of remappings.
+    pub fn new_with_remappings(remappings: Vec<Remapping>) -> Self {
+        Self { remappings }
+    }
+
+    /// Push an element ot the remappings vector, but only if it's not already present.
+    pub fn push(&mut self, remapping: Remapping) {
+        if !self.remappings.iter().any(|existing| {
+            existing.name.contains(&remapping.name) && existing.context == remapping.context
+        }) {
+            self.remappings.push(remapping)
+        }
+    }
+
+    /// Extend the remappings vector, leaving out the remappings that are already present.
+    pub fn extend(&mut self, remappings: Vec<Remapping>) {
+        for remapping in remappings {
+            self.push(remapping);
+        }
+    }
+}
 
 /// A figment provider that checks if the remappings were previously set and if they're unset looks
 /// up the fs via
@@ -49,7 +84,7 @@ impl<'a> RemappingsProvider<'a> {
         ///   - ("a", "1/2") over ("a", "1/2/3")
         /// grouped by remapping context
         fn insert_closest(
-            mappings: &mut HashMap<Option<String>, HashMap<String, PathBuf>>,
+            mappings: &mut BTreeMap<Option<String>, BTreeMap<String, PathBuf>>,
             context: Option<String>,
             key: String,
             path: PathBuf,
@@ -67,7 +102,7 @@ impl<'a> RemappingsProvider<'a> {
             }
         }
 
-        let mut new_remappings = Vec::new();
+        let mut new_remappings = Remappings::new();
 
         // check env var
         if let Some(env_remappings) = remappings_from_env_var("DAPP_REMAPPINGS")
@@ -93,7 +128,7 @@ impl<'a> RemappingsProvider<'a> {
         // todo: if a lib specifies contexts for remappings manually, we need to figure out how to
         // resolve that
         if self.auto_detect_remappings {
-            let mut lib_remappings = HashMap::new();
+            let mut lib_remappings = BTreeMap::new();
             // find all remappings of from libs that use a foundry.toml
             for r in self.lib_foundry_toml_remappings() {
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
@@ -116,20 +151,21 @@ impl<'a> RemappingsProvider<'a> {
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
 
-            new_remappings.extend(lib_remappings.into_iter().flat_map(|(context, remappings)| {
-                remappings.into_iter().map(move |(name, path)| Remapping {
-                    context: context.clone(),
-                    name,
-                    path: path.to_string_lossy().into(),
-                })
-            }));
+            new_remappings.extend(
+                lib_remappings
+                    .into_iter()
+                    .flat_map(|(context, remappings)| {
+                        remappings.into_iter().map(move |(name, path)| Remapping {
+                            context: context.clone(),
+                            name,
+                            path: path.to_string_lossy().into(),
+                        })
+                    })
+                    .collect(),
+            );
         }
 
-        // remove duplicates at this point
-        new_remappings.sort_by(|a, b| (&a.context, &a.name).cmp(&(&b.context, &b.name)));
-        new_remappings.dedup_by(|a, b| (&a.context, &a.name).eq(&(&b.context, &b.name)));
-
-        Ok(new_remappings)
+        Ok(new_remappings.remappings)
     }
 
     /// Returns all remappings declared in foundry.toml files of libraries
@@ -165,16 +201,12 @@ impl<'a> RemappingsProvider<'a> {
                     }
                 }
 
-                let mut remappings = config
-                    .remappings
-                    .into_iter()
-                    .map(Remapping::from)
-                    .map(|mut r| {
-                        // todo: windows/mac/linux
-                        r.context = Some(lib.to_string_lossy().to_string());
-                        r
-                    })
-                    .collect::<Vec<Remapping>>();
+                // Eventually, we could set context for remappings at this location,
+                // taking into account the OS platform. We'll need to be able to handle nested
+                // contexts depending on dependencies for this to work.
+                // For now, we just leave the default context (none).
+                let mut remappings =
+                    config.remappings.into_iter().map(Remapping::from).collect::<Vec<Remapping>>();
 
                 if let Some(r) = src_remapping {
                     remappings.push(r);

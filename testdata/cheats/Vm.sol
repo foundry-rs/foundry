@@ -183,6 +183,9 @@ interface Vm {
     // Skips a test.
     function skip(bool) external;
 
+    // Sleeps for a given number of milliseconds.
+    function sleep(uint256) external;
+
     // Expects an error on next call
     function expectRevert() external;
 

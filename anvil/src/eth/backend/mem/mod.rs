@@ -1364,7 +1364,7 @@ impl Backend {
             let info = storage.transactions.get(&hash)?.info.clone();
             let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
-            let tx = transaction_build(Some(hash), tx, Some(block), Some(info), true, base_fee);
+            let tx = transaction_build(Some(hash), tx, Some(block), Some(info), base_fee);
             transactions.push(tx);
         }
         Some(transactions)
@@ -1982,7 +1982,6 @@ impl Backend {
             tx,
             Some(&block),
             Some(info),
-            true,
             block.header.base_fee_per_gas,
         ))
     }
@@ -2018,7 +2017,6 @@ impl Backend {
             tx,
             Some(&block),
             Some(info),
-            true,
             block.header.base_fee_per_gas,
         ))
     }
@@ -2245,12 +2243,11 @@ pub fn transaction_build(
     eth_transaction: MaybeImpersonatedTransaction,
     block: Option<&Block>,
     info: Option<TransactionInfo>,
-    is_eip1559: bool,
     base_fee: Option<U256>,
 ) -> Transaction {
     let mut transaction: Transaction = eth_transaction.clone().into();
 
-    if let TypedTransaction::EIP1559(_) = eth_transaction.as_ref() {
+    if eth_transaction.is_dynamic_fee() {
         if block.is_none() && info.is_none() {
             // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
             transaction.gas_price = transaction.max_fee_per_gas;
@@ -2264,10 +2261,9 @@ pub fn transaction_build(
                 base_fee.checked_add(max_priority_fee_per_gas).unwrap_or_else(U256::max_value),
             );
         }
-    } else if !is_eip1559 {
+    } else {
         transaction.max_fee_per_gas = None;
         transaction.max_priority_fee_per_gas = None;
-        transaction.transaction_type = None;
     }
 
     transaction.block_hash =

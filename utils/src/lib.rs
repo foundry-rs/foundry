@@ -55,6 +55,7 @@ struct ArtifactDependencies {
 struct ArtifactDependency {
     file: String,
     key: String,
+    version: String,
 }
 
 struct ArtifactCode {
@@ -76,9 +77,12 @@ struct AllArtifactsBySlug {
 
 impl AllArtifactsBySlug {
     /// Finds the code for the target of the artifact and the matching key.
-    fn find_code(&self, identifier: &String) -> Option<CompactContractBytecode> {
+    fn find_code(&self, identifier: &String, version: &String) -> Option<CompactContractBytecode> {
         trace!(target : "forge::link", identifier, "fetching artifact by identifier");
-        let code = self.inner.get(identifier)?;
+        let code = self
+            .inner
+            .get(identifier)
+            .or(self.inner.get(&format!("{}.{}", identifier, version)))?;
 
         Some(code.code.clone())
     }
@@ -145,11 +149,22 @@ pub fn link_with_nonce_or_address<T, U>(
         .iter()
         .map(|(id, contract)| {
             let key = id.identifier();
+            let version = id.version.to_string();
+            // Check if the version has metadata appended to it, which will be after the semver
+            // version with a `+` separator. If so, strip it off.
+            let version = match version.find('+') {
+                Some(idx) => (version[..idx]).to_string(),
+                None => version,
+            };
             let references = contract
                 .all_link_references()
                 .iter()
                 .flat_map(|(file, link)| link.keys().map(|key| (file.to_string(), key.to_string())))
-                .map(|(file, key)| ArtifactDependency { file, key })
+                .map(|(file, key)| ArtifactDependency {
+                    file,
+                    key,
+                    version: version.clone().to_owned(),
+                })
                 .collect();
 
             let references =
@@ -265,13 +280,13 @@ fn recurse_link<'a>(
 
         // for each dependency, try to link
         dependencies.dependencies.iter().for_each(|dep| {
-            let ArtifactDependency {  file, key, .. } = dep;
+            let ArtifactDependency {  file, key, version } = dep;
             let next_target = format!("{file}:{key}");
             let root = PathBuf::from(root.as_ref().to_str().unwrap());
             // get the dependency
             trace!(target : "forge::link", dependency = next_target, file, key, version=?dependencies.artifact_id.version,  "get dependency");
             let  artifact = match artifacts
-                .find_code(&next_target) {
+                .find_code(&next_target, version) {
                     Some(artifact) => artifact,
                     None => {
                         // In some project setups, like JS-style workspaces, you might not have node_modules available at the root of the foundry project.
@@ -283,7 +298,7 @@ fn recurse_link<'a>(
 
                         trace!(target : "forge::link", fallback_dependency = fallback_target, file, key, version=?dependencies.artifact_id.version,  "get dependency with fallback path");
 
-                        match artifacts.find_code(&fallback_target) {
+                        match artifacts.find_code(&fallback_target, version) {
                         Some(artifact) => artifact,
                         None => panic!("No artifact for contract {next_target}"),
                     }},
