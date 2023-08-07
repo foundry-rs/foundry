@@ -225,7 +225,7 @@ flag to set your key via:
                 eth_keystore::encrypt_key(
                     &dir,
                     &mut rng,
-                    &private_key,
+                    private_key,
                     &password,
                     Some(&account_name),
                 )?;

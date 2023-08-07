@@ -448,7 +448,7 @@ impl MultiWallet {
             // enter password to decrypt <WALLET_NAME>
             let password = rpassword::prompt_password("Enter password: ").unwrap();
             let wallet = self.get_from_keystore(Some(account), Some(&password), None)?.unwrap();
-            return Ok(Some(wallet))
+            Ok(Some(wallet))
         } else {
             Ok(None)
         }
