@@ -105,6 +105,7 @@ pub enum OtsTraceType {
 
 impl OtsBlockDetails {
     pub async fn build(mut block: Block<Transaction>, backend: &Backend) -> Result<Self> {
+        // TODO: avoid unwrapping
         let receipts: Vec<TransactionReceipt> = join_all(
             block
                 .transactions
@@ -148,6 +149,7 @@ impl OtsBlockTransactions {
     ) -> Result<Self> {
         block.transactions =
             block.transactions.into_iter().skip(page * page_size).take(page_size).collect();
+        // TODO: avoid unwrapping
         let receipts: Vec<TransactionReceipt> = join_all(
             block
                 .transactions
