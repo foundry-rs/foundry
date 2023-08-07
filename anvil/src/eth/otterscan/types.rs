@@ -5,7 +5,10 @@ use ethers::types::{
 use futures::future::join_all;
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::eth::{backend::mem::Backend, error::Result};
+use crate::eth::{
+    backend::mem::Backend,
+    error::{BlockchainError, Result},
+};
 
 /// Patched Block struct, to include the additional `transactionCount` field expected by Otterscan
 #[derive(Debug, Serialize)]
@@ -157,6 +160,8 @@ impl OtsBlockTransactions {
                 .map(|tx| async { backend.transaction_receipt(tx.hash).await.unwrap().unwrap() }),
         )
         .await;
+        // .into_iter()
+        // .collect();
 
         let fullblock: OtsBlock<_> = block.into();
 
@@ -178,15 +183,21 @@ impl OtsSearchTransactions {
         )
         .await;
 
-        let receipts: Vec<OtsTransactionReceipt> = join_all(hashes.iter().map(|hash| async {
-            let receipt = backend.transaction_receipt(*hash).await.unwrap().unwrap();
-            let timestamp =
-                backend.get_block(receipt.block_number.unwrap()).unwrap().header.timestamp;
-            OtsTransactionReceipt { receipt, timestamp }
+        join_all(hashes.iter().map(|hash| async {
+            match backend.transaction_receipt(*hash).await {
+                Ok(Some(receipt)) => {
+                    let timestamp =
+                        backend.get_block(receipt.block_number.unwrap()).unwrap().header.timestamp;
+                    Ok(OtsTransactionReceipt { receipt, timestamp })
+                }
+                Ok(None) => Err(BlockchainError::DataUnavailable),
+                Err(e) => Err(e),
+            }
         }))
-        .await;
-
-        Ok(Self { txs, receipts, first_page, last_page })
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>>>()
+        .map(|receipts| Self { txs, receipts, first_page, last_page })
     }
 }
 
