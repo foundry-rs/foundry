@@ -235,34 +235,37 @@ flag to set your key via:
             WalletSubcommands::List => {
                 let default_keystore_dir = Config::foundry_keystores_dir()
                     .ok_or_else(|| eyre::eyre!("Could not find the default keystore directory."))?;
-                // check if keystore directory exists
-                if !default_keystore_dir.exists() {
-                    eyre::bail!(
-                        "Keystore directory does not exist at {}",
-                        default_keystore_dir.display()
-                    );
-                }
+                // Create the keystore directory if it doesn't exist
+                fs::create_dir_all(&default_keystore_dir)?;
                 // List all files in keystore directory
-                let keystore_files = std::fs::read_dir(default_keystore_dir)?.filter_map(|entry| {
-                    let entry = entry.unwrap();
-                    let path = entry.path();
-                    if path.is_file() {
-                        Some(path)
-                    } else {
-                        None
-                    }
-                });
-                let keystore_files = keystore_files.filter(|path| {
-                    // Only files without extension
-                    path.extension().is_none()
-                });
+                let keystore_files: Result<Vec<_>, eyre::Report> =
+                    std::fs::read_dir(&default_keystore_dir)
+                        .wrap_err("Failed to read the directory")?
+                        .filter_map(|entry| match entry {
+                            Ok(entry) => {
+                                let path = entry.path();
+                                if path.is_file() && path.extension().is_none() {
+                                    Some(Ok(path))
+                                } else {
+                                    None
+                                }
+                            }
+                            Err(e) => Some(Err(eyre::Report::from(e))),
+                        })
+                        .collect::<Result<Vec<_>, eyre::Report>>();
                 // Print the names of the keystore files
-                for file in keystore_files {
-                    if let Some(file_name) = file.file_name() {
-                        if let Some(name) = file_name.to_str() {
-                            println!("{}", name);
+                match keystore_files {
+                    Ok(files) => {
+                        // Print the names of the keystore files
+                        for file in files {
+                            if let Some(file_name) = file.file_name() {
+                                if let Some(name) = file_name.to_str() {
+                                    println!("{}", name);
+                                }
+                            }
                         }
                     }
+                    Err(e) => return Err(e),
                 }
             }
         };
