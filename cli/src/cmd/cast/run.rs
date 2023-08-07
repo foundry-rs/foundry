@@ -112,7 +112,8 @@ impl RunArgs {
         // tracing will be enabled only for the targeted transaction
         let builder = ExecutorBuilder::default()
             .with_config(env)
-            .with_spec(evm_spec(&self.evm_version.unwrap_or(config.evm_version)));
+            .with_spec(evm_spec(&self.evm_version.unwrap_or(config.evm_version)))
+            .set_debugger(self.debug);
 
         let mut executor = builder.build(db);
 
@@ -177,10 +178,7 @@ impl RunArgs {
 
         // Execute our transaction
         let mut result = {
-            executor
-                .set_tracing(true)
-                .set_debugger(self.debug)
-                .set_trace_printer(self.trace_printer);
+            executor.set_tracing(true).set_trace_printer(self.trace_printer);
 
             configure_tx_env(&mut env, &tx);
 

@@ -186,24 +186,41 @@ impl TestArgs {
         let evm_spec = evm_spec(&config.evm_version);
         let should_debug = self.debug.is_some();
 
-        let mut runner = MultiContractRunnerBuilder::default()
+        let mut runner_builder = MultiContractRunnerBuilder::default()
             .set_debug(should_debug)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(evm_spec)
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
-            .with_test_options(test_options.clone())
-            .build(project_root, output, env, evm_opts)?;
+            .with_test_options(test_options.clone());
+
+        let mut runner = runner_builder.clone().build(
+            project_root,
+            output.clone(),
+            env.clone(),
+            evm_opts.clone(),
+        )?;
 
         if should_debug {
             filter.args_mut().test_pattern = self.debug.clone();
             let n = runner.count_filtered_tests(&filter);
-            if n > 1 {
+            if n != 1 {
                 return Err(
                         eyre::eyre!("{n} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
                         \n
                         Use --match-contract and --match-path to further limit the search."));
+            }
+            let test_funcs = runner.get_typed_tests(&filter);
+            // if we debug a fuzz test, we should not collect data on the first run
+            if !test_funcs.get(0).unwrap().inputs.is_empty() {
+                runner_builder = runner_builder.set_debug(false);
+                runner = runner_builder.clone().build(
+                    project_root,
+                    output.clone(),
+                    env.clone(),
+                    evm_opts.clone(),
+                )?;
             }
         }
 
@@ -275,7 +292,15 @@ impl TestArgs {
         if should_debug {
             let mut tests = outcome.clone().into_tests();
             let test = tests.next().unwrap();
-            let result = test.result;
+            let mut result = test.result;
+            if result.is_fuzz() {
+                // rerun and collect debug information
+                runner_builder = runner_builder.set_debug(false);
+                runner = runner_builder.clone().build(project_root, output, env, evm_opts)?;
+                if let Some(counterexample) = result.counterexample {
+                } else {
+                }
+            }
             // Run the debugger
             let mut opts = self.opts.clone();
             opts.silent = true;
@@ -316,36 +341,6 @@ impl TestArgs {
             filter.args_mut().test_pattern = self.debug.clone();
             // Run the test
             let results = runner.test(&filter, None, test_options).await;
-
-            // Get the result of the single test
-            let (id, sig, test_kind, counterexample, breakpoints) = results
-                .iter()
-                .map(|(id, SuiteResult { test_results, .. })| {
-                    let (sig, result) = test_results.iter().next().unwrap();
-
-                    (
-                        id.clone(),
-                        sig.clone(),
-                        result.kind.clone(),
-                        result.counterexample.clone(),
-                        result.breakpoints.clone(),
-                    )
-                })
-                .next()
-                .unwrap();
-
-            // Build debugger args if this is a fuzz test
-            // TODO wat do ?
-            let sig = match test_kind {
-                TestKind::Fuzz { first_case, .. } => {
-                    if let Some(CounterExample::Single(counterexample)) = counterexample {
-                        counterexample.calldata.to_string()
-                    } else {
-                        first_case.calldata.to_string()
-                    }
-                }
-                _ => sig,
-            };
 
             Ok(TestOutcome::new(results, self.allow_failure))
         } else if self.list {

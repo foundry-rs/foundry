@@ -26,6 +26,7 @@ impl ScriptArgs {
             sender_nonce: U256::one(),
             config,
             evm_opts,
+            debug: self.debug,
             ..Default::default()
         };
 

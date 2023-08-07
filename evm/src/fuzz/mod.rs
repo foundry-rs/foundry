@@ -68,6 +68,9 @@ impl<'a> FuzzedExecutor<'a> {
         // Stores the first Fuzzcase
         let first_case: RefCell<Option<FuzzCase>> = RefCell::default();
 
+        // Debug nodes of the counter example, fallsback to first case
+        let debug_points: RefCell<(Option<DebugArena>, Breakpoints)> = RefCell::default();
+
         // gas usage per case
         let gas_by_case: RefCell<Vec<(u64, u64)>> = RefCell::default();
 
@@ -139,6 +142,10 @@ impl<'a> FuzzedExecutor<'a> {
                         gas: call.gas_used,
                         stipend: call.stipend,
                     });
+                    debug_points.replace((
+                        call.debug,
+                        call.cheatcodes.map_or(Default::default(), |cheats| cheats.breakpoints),
+                    ));
                 }
                 gas_by_case.borrow_mut().push((call.gas_used, call.stipend));
 
@@ -155,6 +162,10 @@ impl<'a> FuzzedExecutor<'a> {
                 Ok(())
             } else {
                 let status = call.exit_reason;
+                debug_points.replace((
+                    call.debug.clone(),
+                    call.cheatcodes.clone().map_or(Default::default(), |cheats| cheats.breakpoints),
+                ));
                 // We cannot use the calldata returned by the test runner in `TestError::Fail`,
                 // since that input represents the last run case, which may not correspond with our
                 // failure - when a fuzz case fails, proptest will try to run at least one more
@@ -172,6 +183,7 @@ impl<'a> FuzzedExecutor<'a> {
         });
 
         let (calldata, call) = counterexample.into_inner();
+        let (debug, breakpoints) = debug_points.take();
         let mut result = FuzzTestResult {
             first_case: first_case.take().unwrap_or_default(),
             gas_by_case: gas_by_case.take(),
@@ -183,8 +195,8 @@ impl<'a> FuzzedExecutor<'a> {
             labeled_addresses: call.labels,
             traces: if run_result.is_ok() { traces.into_inner() } else { call.traces.clone() },
             coverage: coverage.into_inner(),
-            debug: call.debug,
-            breakpoints: call.cheatcodes.map_or(Default::default(), |cheats| cheats.breakpoints),
+            debug,
+            breakpoints,
         };
 
         match run_result {

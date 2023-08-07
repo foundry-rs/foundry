@@ -1,6 +1,6 @@
 use crate::{result::SuiteResult, ContractRunner, TestFilter, TestOptions};
 use ethers::{
-    abi::Abi,
+    abi::{Abi, Function},
     prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
     solc::{contracts::ArtifactContracts, Artifact, ProjectCompileOutput},
     types::{Address, Bytes, U256},
@@ -85,6 +85,20 @@ impl MultiContractRunner {
             .collect()
     }
 
+    pub fn get_typed_tests(&self, filter: &impl TestFilter) -> Vec<Function> {
+        self.contracts
+            .iter()
+            .filter(|(id, _)| {
+                filter.matches_path(id.source.to_string_lossy()) &&
+                    filter.matches_contract(&id.name)
+            })
+            .flat_map(|(_, (abi, _, _))| {
+                abi.functions().map(|func| func.clone()).collect::<Vec<_>>()
+            })
+            .filter(|func| func.name.is_test())
+            .collect()
+    }
+
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
     pub fn list(
         &self,
@@ -148,6 +162,7 @@ impl MultiContractRunner {
                     .with_gas_limit(self.evm_opts.gas_limit())
                     .set_tracing(self.evm_opts.verbosity >= 3)
                     .set_coverage(self.coverage)
+                    .set_debugger(self.debug)
                     .build(db.clone());
                 let identifier = id.identifier();
                 trace!(contract=%identifier, "start executing all tests in contract");
@@ -196,32 +211,10 @@ impl MultiContractRunner {
         );
         runner.run_tests(filter, test_options, Some(&self.known_contracts))
     }
-
-    /// Lists all matching tests
-    fn list_tests(
-        &mut self,
-        filter: ProjectPathsAwareFilter,
-        json: bool,
-    ) -> eyre::Result<TestOutcome> {
-        let results = self.list(&filter);
-
-        if json {
-            println!("{}", serde_json::to_string(&results)?);
-        } else {
-            for (file, contracts) in results.iter() {
-                println!("{file}");
-                for (contract, tests) in contracts.iter() {
-                    println!("  {contract}");
-                    println!("    {}\n", tests.join("\n    "));
-                }
-            }
-        }
-        Ok(TestOutcome::new(BTreeMap::new(), false))
-    }
 }
 
 /// Builder used for instantiating the multi-contract runner
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct MultiContractRunnerBuilder {
     /// The address which will be used to deploy the initial contracts and send all
     /// transactions

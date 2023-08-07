@@ -331,7 +331,6 @@ impl<'a> ContractRunner<'a> {
                 traces.extend(execution_trace.map(|traces| (TraceKind::Execution, traces)));
                 labeled_addresses.extend(new_labels);
                 logs.extend(execution_logs);
-                dbg!(&debug);
                 debug_arena = debug;
                 (reverted, None, gas, stipend, coverage, state_changeset, breakpoints)
             }
@@ -386,8 +385,6 @@ impl<'a> ContractRunner<'a> {
             %success,
             %gas
         );
-
-        assert!(debug_arena.is_some(), "issues!");
 
         TestResult {
             status: match success {
@@ -527,6 +524,7 @@ impl<'a> ContractRunner<'a> {
                     coverage: None, // TODO ?
                     traces,
                     labeled_addresses: labeled_addresses.clone(),
+                    // TODO
                     debug: Default::default(),
                     breakpoints: Default::default(),
                 }
@@ -560,6 +558,8 @@ impl<'a> ContractRunner<'a> {
                 traces,
                 labeled_addresses,
                 kind: TestKind::Standard(0),
+                debug: result.debug,
+                breakpoints: result.breakpoints,
                 ..Default::default()
             }
         }

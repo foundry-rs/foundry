@@ -75,6 +75,7 @@ impl ScriptArgs {
             result.labeled_addresses.extend(script_result.labeled_addresses);
             result.returned = script_result.returned;
             result.script_wallets.extend(script_result.script_wallets);
+            result.breakpoints = script_result.breakpoints;
 
             match (&mut result.transactions, script_result.transactions) {
                 (Some(txs), Some(new_txs)) => {
@@ -128,7 +129,7 @@ impl ScriptArgs {
                         abi,
                         code,
                     };
-                    return Some((*addr, info));
+                    return Some((*addr, info))
                 }
                 None
             })
@@ -158,7 +159,7 @@ impl ScriptArgs {
                         .expect("Internal EVM error");
 
                     if !result.success || result.traces.is_empty() {
-                        return Ok((None, result.traces));
+                        return Ok((None, result.traces))
                     }
 
                     let created_contracts = result
@@ -171,7 +172,7 @@ impl ScriptArgs {
                                         opcode: node.kind(),
                                         address: node.trace.address,
                                         init_code: node.trace.data.to_raw(),
-                                    });
+                                    })
                                 }
                                 None
                             })
@@ -308,12 +309,12 @@ impl ScriptArgs {
             .with_config(env)
             .with_spec(evm_spec(&script_config.config.evm_version))
             .with_gas_limit(script_config.evm_opts.gas_limit())
+            .set_debugger(script_config.debug)
             // We need it enabled to decode contract names: local or external.
             .set_tracing(true);
 
         if let SimulationStage::Local = stage {
             builder = builder
-                .set_debugger(self.debug)
                 .with_cheatcodes(CheatsConfig::new(&script_config.config, &script_config.evm_opts));
         }
 

@@ -639,6 +639,8 @@ pub struct ScriptConfig {
     pub total_rpcs: HashSet<RpcUrl>,
     /// If true, one of the transactions did not have a rpc
     pub missing_rpc: bool,
+    /// Should return some debug information
+    pub debug: bool,
 }
 
 impl ScriptConfig {

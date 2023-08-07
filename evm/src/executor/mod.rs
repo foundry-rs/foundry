@@ -200,11 +200,6 @@ impl Executor {
         self
     }
 
-    pub fn set_debugger(&mut self, debugger: bool) -> &mut Self {
-        self.inspector_config.debugger = debugger;
-        self
-    }
-
     pub fn set_trace_printer(&mut self, trace_printer: bool) -> &mut Self {
         self.inspector_config.trace_printer = trace_printer;
         self
