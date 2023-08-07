@@ -293,13 +293,9 @@ impl MultiWallet {
     ///
     /// Returns `Ok(None)` if no keystore provided.
     pub fn keystores(&self) -> Result<Option<Vec<LocalWallet>>> {
-        let default_keystore_dir = dirs::home_dir()
-            .ok_or_else(|| eyre::eyre!("Failed to get home directory"))?
-            .join(".foundry")
-            .join("keystores");
-
-        // If keystore paths are provided, use them, otherwise use default path + keystore account
-        // names
+        let default_keystore_dir = Config::foundry_keystores_dir()
+            .ok_or_else(|| eyre::eyre!("Could not find the default keystore directory."))?;
+        // If keystore paths are provided, use them, else, use default path + keystore account names
         let keystore_paths = self.keystore_paths.clone().or_else(|| {
             self.keystore_account_names.as_ref().map(|keystore_names| {
                 keystore_names
