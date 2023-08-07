@@ -324,7 +324,8 @@ impl MultiWallet {
                 self.keystore_password_files.clone().unwrap_or_default().into_iter();
 
             for path in keystore_paths {
-                wallets.push(self.get_from_keystore(Some(&path), passwords_iter.next().as_ref(), password_files_iter.next().as_ref())?.wrap_err("Keystore paths do not have the same length as provided passwords or password files.")?);
+                let wallet = self.get_from_keystore(Some(&path), passwords_iter.next().as_ref(), password_files_iter.next().as_ref())?.wrap_err("Keystore paths do not have the same length as provided passwords or password files.")?;
+                wallets.push(wallet);
             }
             return Ok(Some(wallets))
         }
