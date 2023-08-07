@@ -57,26 +57,15 @@ pub struct RawWallet {
     /// The wallet derivation path.
     ///
     /// Works with both --mnemonic-path and hardware wallets.
-    #[clap(
-        long = "mnemonic-derivation-path",
-        alias = "hd-path",
-        value_name = "PATH"
-    )]
+    #[clap(long = "mnemonic-derivation-path", alias = "hd-path", value_name = "PATH")]
     pub hd_path: Option<String>,
 
     /// Use the private key from the given mnemonic index.
     ///
     /// Used with --mnemonic-path.
-    #[clap(
-        long,
-        conflicts_with = "hd_path",
-        default_value_t = 0,
-        value_name = "INDEX"
-    )]
+    #[clap(long, conflicts_with = "hd_path", default_value_t = 0, value_name = "INDEX")]
     pub mnemonic_index: u32,
 }
-
-
 
 /// The wallet options can either be:
 /// 1. Raw (via private key / mnemonic file, see RawWallet)
@@ -96,10 +85,9 @@ pub struct Wallet {
         env = "ETH_FROM"
     )]
     pub from: Option<Address>,
-    
+
     #[clap(flatten)]
     pub raw: RawWallet,
-
 
     /// Use the keystore in the given folder or file.
     #[clap(
@@ -158,10 +146,7 @@ pub struct Wallet {
 
 impl From<RawWallet> for Wallet {
     fn from(options: RawWallet) -> Self {
-        Self {
-            raw: options,
-            ..Default::default()
-        }
+        Self { raw: options, ..Default::default() }
     }
 }
 
@@ -180,13 +165,16 @@ impl Wallet {
 
     pub fn keystore(&self) -> Result<Option<LocalWallet>> {
         let default_keystore_dir = dirs::home_dir()
-        .ok_or_else(|| eyre::eyre!("Failed to get home directory"))?
-        .join(".foundry")
-        .join("keystores");
-    
+            .ok_or_else(|| eyre::eyre!("Failed to get home directory"))?
+            .join(".foundry")
+            .join("keystores");
+
         // If keystore path is provided, use it, otherwise use default path + keystore account name
-        let keystore_path: Option<String> = self.keystore_path.clone()
-            .or_else(|| self.keystore_account_name.as_ref().map(|keystore_name| default_keystore_dir.join(keystore_name).to_string_lossy().into_owned()));
+        let keystore_path: Option<String> = self.keystore_path.clone().or_else(|| {
+            self.keystore_account_name.as_ref().map(|keystore_name| {
+                default_keystore_dir.join(keystore_name).to_string_lossy().into_owned()
+            })
+        });
 
         self.get_from_keystore(
             keystore_path.as_ref(),
@@ -394,7 +382,7 @@ pub trait WalletTrait {
                 )
             }
             // Path and password file provided
-            (Some(path),  _, Some(password_file)) => {
+            (Some(path), _, Some(password_file)) => {
                 let path = self.find_keystore_file(path)?;
                 Some(
                     LocalWallet::decrypt_keystore(&path, self.password_from_file(password_file)?)

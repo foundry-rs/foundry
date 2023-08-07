@@ -4,10 +4,9 @@ pub mod vanity;
 
 use std::path::Path;
 
-use foundry_common::fs;
 use crate::{
     cmd::{cast::wallet::vanity::VanityArgs, Cmd},
-    opts::{Wallet, RawWallet},
+    opts::{RawWallet, Wallet},
 };
 use cast::SimpleCast;
 use clap::Parser;
@@ -17,6 +16,7 @@ use ethers::{
     types::{transaction::eip712::TypedData, Address, Signature},
 };
 use eyre::Context;
+use foundry_common::fs;
 
 /// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
@@ -104,10 +104,7 @@ pub enum WalletSubcommands {
     /// Import a private key into an encrypted keystore.
     #[clap(visible_alias = "i")]
     Import {
-        #[clap(
-            help = "The name for the account in the keystore.",
-            value_name = "ACCOUNT_NAME"
-        )]
+        #[clap(help = "The name for the account in the keystore.", value_name = "ACCOUNT_NAME")]
         account_name: String,
         #[clap(long, short)]
         keystore_dir: Option<String>,
@@ -116,7 +113,7 @@ pub enum WalletSubcommands {
     },
     /// List all the accounts in the keystore default directory
     #[clap(visible_alias = "ls")]
-    List
+    List,
 }
 
 impl WalletSubcommands {
@@ -156,7 +153,10 @@ impl WalletSubcommands {
             }
             WalletSubcommands::Address { wallet, private_key_override } => {
                 let wallet = private_key_override
-                    .map(|pk| Wallet { raw: RawWallet {private_key: Some(pk), ..Default::default()}, ..Default::default() })
+                    .map(|pk| Wallet {
+                        raw: RawWallet { private_key: Some(pk), ..Default::default() },
+                        ..Default::default()
+                    })
                     .unwrap_or(wallet)
                     .signer(0)
                     .await?;
@@ -208,30 +208,40 @@ impl WalletSubcommands {
 
                 // get wallet
                 let wallet: Wallet = raw_wallet_options.into();
-                let wallet = wallet.try_resolve_local_wallet()?.ok_or_else(
-                    || eyre::eyre!("\
+                let wallet = wallet.try_resolve_local_wallet()?.ok_or_else(|| {
+                    eyre::eyre!(
+                        "\
 Did you set a private key or mnemonic?
 Run `cast wallet import --help` and use the corresponding CLI
 flag to set your key via:
 --private-key, --mnemonic-path or --interactive."
-                    ),
-                )?;
+                    )
+                })?;
 
                 let private_key = wallet.signer().to_bytes();
-                let password= rpassword::prompt_password("Enter password: ")?;
+                let password = rpassword::prompt_password("Enter password: ")?;
 
                 let mut rng = thread_rng();
-                eth_keystore::encrypt_key(&dir, &mut rng, &private_key, &password, Some(&account_name))?;
-            },
-            WalletSubcommands::List { } => {
-                let default_keystore_dir = dirs::home_dir().unwrap().join(".foundry").join("keystores");
+                eth_keystore::encrypt_key(
+                    &dir,
+                    &mut rng,
+                    &private_key,
+                    &password,
+                    Some(&account_name),
+                )?;
+            }
+            WalletSubcommands::List {} => {
+                let default_keystore_dir =
+                    dirs::home_dir().unwrap().join(".foundry").join("keystores");
                 // check if keystore directory exists
                 if !default_keystore_dir.exists() {
-                    eyre::bail!("Keystore directory does not exist at {}", default_keystore_dir.display());
+                    eyre::bail!(
+                        "Keystore directory does not exist at {}",
+                        default_keystore_dir.display()
+                    );
                 }
                 // List all files in keystore directory
-                let keystore_files = std::fs::read_dir(default_keystore_dir)?
-                .filter_map(|entry| {
+                let keystore_files = std::fs::read_dir(default_keystore_dir)?.filter_map(|entry| {
                     let entry = entry.unwrap();
                     let path = entry.path();
                     if path.is_file() {
@@ -240,11 +250,10 @@ flag to set your key via:
                         None
                     }
                 });
-                let keystore_files = keystore_files
-                    .filter(|path| {
-                        // Only files without extension
-                        path.extension().is_none()
-                    });
+                let keystore_files = keystore_files.filter(|path| {
+                    // Only files without extension
+                    path.extension().is_none()
+                });
                 // Print the names of the keystore files
                 for file in keystore_files {
                     if let Some(file_name) = file.file_name() {

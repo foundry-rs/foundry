@@ -301,25 +301,18 @@ impl MultiWallet {
             .join(".foundry")
             .join("keystores");
 
-        // If keystore paths are provided, use them, otherwise use default path + keystore account names
-        let keystore_paths = self
-            .keystore_paths
-            .clone()
-            .or_else(|| {
-                self.keystore_account_names
-                    .as_ref()
-                    .map(|keystore_names| {
-                        keystore_names
-                            .iter()
-                            .map(|keystore_name| {
-                                default_keystore_dir
-                                    .join(keystore_name)
-                                    .to_string_lossy()
-                                    .into_owned()
-                            })
-                            .collect()
+        // If keystore paths are provided, use them, otherwise use default path + keystore account
+        // names
+        let keystore_paths = self.keystore_paths.clone().or_else(|| {
+            self.keystore_account_names.as_ref().map(|keystore_names| {
+                keystore_names
+                    .iter()
+                    .map(|keystore_name| {
+                        default_keystore_dir.join(keystore_name).to_string_lossy().into_owned()
                     })
-            });
+                    .collect()
+            })
+        });
 
         if let Some(keystore_paths) = keystore_paths {
             let mut wallets = Vec::with_capacity(keystore_paths.len());
@@ -459,7 +452,6 @@ impl MultiWallet {
         } else {
             Ok(None)
         }
-
     }
 }
 
