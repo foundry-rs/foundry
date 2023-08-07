@@ -209,7 +209,8 @@ impl OtsInternalOperation {
                         value,
                     }),
                     (Action::Suicide(Suicide { address, .. }), _) => {
-                        // can we correctly assume that any suicide has a parent trace?
+                        // TODO: maybe return Result<_> here instead?
+                        // this assumes a suicide trace always has a parent trace
                         let (from, value) =
                             Self::find_suicide_caller(&traces, &trace.trace_address).unwrap();
 
@@ -237,7 +238,7 @@ impl OtsInternalOperation {
 
                 Action::Create(Create { from, value, .. }) => (from, value),
 
-                // TODO can a suicide trace be parented by another suicide?
+                // we assume here a suicice trace can never be parented by another suicide trace
                 Action::Suicide(_) => Self::find_suicide_caller(traces, &t.trace_address).unwrap(),
 
                 Action::Reward(_) => unreachable!(),
