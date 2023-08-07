@@ -51,6 +51,8 @@ pub struct MultiContractRunner {
     pub cheats_config: CheatsConfig,
     /// Whether to collect coverage info
     pub coverage: bool,
+    /// Whether to collect debug info
+    pub debug: bool,
     /// Settings related to fuzz and/or invariant tests
     pub test_options: TestOptions,
 }
@@ -194,6 +196,28 @@ impl MultiContractRunner {
         );
         runner.run_tests(filter, test_options, Some(&self.known_contracts))
     }
+
+    /// Lists all matching tests
+    fn list_tests(
+        &mut self,
+        filter: ProjectPathsAwareFilter,
+        json: bool,
+    ) -> eyre::Result<TestOutcome> {
+        let results = self.list(&filter);
+
+        if json {
+            println!("{}", serde_json::to_string(&results)?);
+        } else {
+            for (file, contracts) in results.iter() {
+                println!("{file}");
+                for (contract, tests) in contracts.iter() {
+                    println!("  {contract}");
+                    println!("    {}\n", tests.join("\n    "));
+                }
+            }
+        }
+        Ok(TestOutcome::new(BTreeMap::new(), false))
+    }
 }
 
 /// Builder used for instantiating the multi-contract runner
@@ -212,6 +236,8 @@ pub struct MultiContractRunnerBuilder {
     pub cheats_config: Option<CheatsConfig>,
     /// Whether or not to collect coverage info
     pub coverage: bool,
+    /// Whether or not to collect debug info
+    pub debug: bool,
     /// Settings related to fuzz and/or invariant tests
     pub test_options: Option<TestOptions>,
 }
@@ -322,6 +348,7 @@ impl MultiContractRunnerBuilder {
             fork: self.fork,
             cheats_config: self.cheats_config.unwrap_or_default(),
             coverage: self.coverage,
+            debug: self.debug,
             test_options: self.test_options.unwrap_or_default(),
         })
     }
@@ -365,6 +392,12 @@ impl MultiContractRunnerBuilder {
     #[must_use]
     pub fn set_coverage(mut self, enable: bool) -> Self {
         self.coverage = enable;
+        self
+    }
+
+    #[must_use]
+    pub fn set_debug(mut self, enable: bool) -> Self {
+        self.debug = enable;
         self
     }
 }

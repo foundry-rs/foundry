@@ -182,11 +182,12 @@ impl TestArgs {
         }
 
         let env = evm_opts.evm_env().await?;
-
         // Prepare the test builder
         let evm_spec = evm_spec(&config.evm_version);
+        let should_debug = self.debug.is_some();
 
         let mut runner = MultiContractRunnerBuilder::default()
+            .set_debug(should_debug)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(evm_spec)
             .sender(evm_opts.sender)
@@ -195,7 +196,7 @@ impl TestArgs {
             .with_test_options(test_options.clone())
             .build(project_root, output, env, evm_opts)?;
 
-        if self.debug.is_some() {
+        if should_debug {
             filter.args_mut().test_pattern = self.debug.clone();
             let n = runner.count_filtered_tests(&filter);
             if n > 1 {
@@ -271,7 +272,7 @@ impl TestArgs {
             decoders.push(decoder);
         }
 
-        if self.debug.is_some() {
+        if should_debug {
             let mut tests = outcome.clone().into_tests();
             let test = tests.next().unwrap();
             let result = test.result;
