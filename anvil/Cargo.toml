@@ -12,12 +12,20 @@ path = "src/anvil.rs"
 required-features = ["cli"]
 
 [build-dependencies]
-vergen = { version = "8", default-features = false, features = ["build", "git", "git2"] }
+vergen = { version = "8", default-features = false, features = [
+  "build",
+  "git",
+  "git2",
+] }
 
 [dependencies]
 # foundry internal
 foundry-evm = { path = "../evm" }
-anvil-core = { path = "core", features = ["otterscan", "fastrlp", "serde", "impersonated-tx"] }
+anvil-core = { path = "core", features = [
+  "fastrlp",
+  "serde",
+  "impersonated-tx",
+] }
 anvil-rpc = { path = "rpc" }
 anvil-server = { path = "server" }
 foundry-utils = { path = "../utils" }
@@ -58,7 +66,11 @@ tempfile = "3"
 itertools = "0.10"
 
 # cli
-clap = { version = "4", features = ["derive", "env", "wrap_help"], optional = true }
+clap = { version = "4", features = [
+  "derive",
+  "env",
+  "wrap_help",
+], optional = true }
 clap_complete = { version = "4", optional = true }
 chrono = "0.4"
 auto_impl = "1"
@@ -76,7 +88,13 @@ tokio = { version = "1", features = ["full"] }
 crc = "3.0.1"
 
 [features]
-default = ["cli", "otterscan"]
-cmd = ["foundry-common", "forge", "clap", "clap_complete", "ctrlc", "anvil-server/clap"]
+default = ["cli"]
+cmd = [
+  "foundry-common",
+  "forge",
+  "clap",
+  "clap_complete",
+  "ctrlc",
+  "anvil-server/clap",
+]
 cli = ["tokio/full", "cmd", "fdlimit"]
-otterscan = []

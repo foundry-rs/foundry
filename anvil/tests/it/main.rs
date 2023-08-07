@@ -12,7 +12,6 @@ mod logs;
 mod proof;
 mod pubsub;
 // mod revert; // TODO uncomment <https://github.com/gakonst/ethers-rs/issues/2186>
-#[cfg(feature = "otterscan")]
 mod otterscan;
 mod sign;
 mod traces;

@@ -356,64 +356,38 @@ impl EthApi {
             EthRequest::TxPoolStatus(_) => self.txpool_status().await.to_rpc_result(),
             EthRequest::TxPoolInspect(_) => self.txpool_inspect().await.to_rpc_result(),
             EthRequest::TxPoolContent(_) => self.txpool_content().await.to_rpc_result(),
-
-            #[cfg(feature = "otterscan")]
             EthRequest::ErigonGetHeaderByNumber(num) => {
                 self.erigon_get_header_by_number(num).await.to_rpc_result()
             }
-
-            #[cfg(feature = "otterscan")]
             EthRequest::OtsGetApiLevel(_) => self.ots_get_api_level().await.to_rpc_result(),
-
-            #[cfg(feature = "otterscan")]
             EthRequest::OtsGetInternalOperations(hash) => {
                 self.ots_get_internal_operations(hash).await.to_rpc_result()
             }
-
-            #[cfg(feature = "otterscan")]
             EthRequest::OtsHasCode(addr, num) => self.ots_has_code(addr, num).await.to_rpc_result(),
-
-            #[cfg(feature = "otterscan")]
             EthRequest::OtsTraceTransaction(hash) => {
                 self.ots_trace_transaction(hash).await.to_rpc_result()
             }
-
-            #[cfg(feature = "otterscan")]
             EthRequest::OtsGetTransactionError(hash) => {
                 self.ots_get_transaction_error(hash).await.to_rpc_result()
             }
-
-            #[cfg(feature = "otterscan")]
             EthRequest::OtsGetBlockDetails(num) => {
                 self.ots_get_block_details(num).await.to_rpc_result()
             }
-
-            #[cfg(feature = "otterscan")]
             EthRequest::OtsGetBlockDetailsByHash(hash) => {
                 self.ots_get_block_details_by_hash(hash).await.to_rpc_result()
             }
-
-            #[cfg(feature = "otterscan")]
             EthRequest::OtsGetBlockTransactions(num, page, page_size) => {
                 self.ots_get_block_transactions(num, page, page_size).await.to_rpc_result()
             }
-
-            #[cfg(feature = "otterscan")]
             EthRequest::OtsSearchTransactionsBefore(address, num, page_size) => {
                 self.ots_search_transactions_before(address, num, page_size).await.to_rpc_result()
             }
-
-            #[cfg(feature = "otterscan")]
             EthRequest::OtsSearchTransactionsAfter(address, num, page_size) => {
                 self.ots_search_transactions_after(address, num, page_size).await.to_rpc_result()
             }
-
-            #[cfg(feature = "otterscan")]
             EthRequest::OtsGetTransactionBySenderAndNonce(address, nonce) => {
                 self.ots_get_transaction_by_sender_and_nonce(address, nonce).await.to_rpc_result()
             }
-
-            #[cfg(feature = "otterscan")]
             EthRequest::OtsGetContractCreator(address) => {
                 self.ots_get_contract_creator(address).await.to_rpc_result()
             }

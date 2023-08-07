@@ -1,5 +1,3 @@
-use std::ops::Mul;
-
 use ethers::types::{
     Action, Address, Block, Bytes, Call, CallType, Create, CreateResult, Res, Suicide, Trace,
     Transaction, TransactionReceipt, H256, U256,
