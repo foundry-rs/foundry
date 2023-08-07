@@ -17,6 +17,7 @@ use ethers::{
 };
 use eyre::Context;
 use foundry_common::fs;
+use foundry_config::Config;
 
 /// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
@@ -192,10 +193,11 @@ impl WalletSubcommands {
             WalletSubcommands::Import { account_name, keystore_dir, raw_wallet_options } => {
                 // Set up keystore directory
                 let dir = if let Some(path) = keystore_dir {
-                    path
+                    Path::new(&path).to_path_buf()
                 } else {
-                    let home_dir = dirs::home_dir().unwrap();
-                    home_dir.join(".foundry").join("keystores").to_string_lossy().to_string()
+                    Config::foundry_keystores_dir().ok_or_else(|| {
+                        eyre::eyre!("Could not find the default keystore directory.")
+                    })?
                 };
 
                 fs::create_dir_all(&dir)?;
@@ -230,9 +232,9 @@ flag to set your key via:
                     Some(&account_name),
                 )?;
             }
-            WalletSubcommands::List {} => {
-                let default_keystore_dir =
-                    dirs::home_dir().unwrap().join(".foundry").join("keystores");
+            WalletSubcommands::List => {
+                let default_keystore_dir = Config::foundry_keystores_dir()
+                    .ok_or_else(|| eyre::eyre!("Could not find the default keystore directory."))?;
                 // check if keystore directory exists
                 if !default_keystore_dir.exists() {
                     eyre::bail!(

@@ -1268,6 +1268,11 @@ impl Config {
         Some(Self::foundry_cache_dir()?.join("etherscan"))
     }
 
+    /// Returns the path to foundry's keystores dir `~/.foundry/keystores`
+    pub fn foundry_keystores_dir() -> Option<PathBuf> {
+        Some(Self::foundry_dir()?.join("keystores"))
+    }
+
     /// Returns the path to foundry's etherscan cache dir for `chain_id`
     /// `~/.foundry/cache/etherscan/<chain>`
     pub fn foundry_etherscan_chain_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {

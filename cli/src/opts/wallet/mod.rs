@@ -15,6 +15,7 @@ use ethers::{
 };
 use eyre::{bail, Result, WrapErr};
 use foundry_common::fs;
+use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -164,11 +165,8 @@ impl Wallet {
     }
 
     pub fn keystore(&self) -> Result<Option<LocalWallet>> {
-        let default_keystore_dir = dirs::home_dir()
-            .ok_or_else(|| eyre::eyre!("Failed to get home directory"))?
-            .join(".foundry")
-            .join("keystores");
-
+        let default_keystore_dir = Config::foundry_keystores_dir()
+            .ok_or_else(|| eyre::eyre!("Could not find the default keystore directory."))?;
         // If keystore path is provided, use it, otherwise use default path + keystore account name
         let keystore_path: Option<String> = self.keystore_path.clone().or_else(|| {
             self.keystore_account_name.as_ref().map(|keystore_name| {
