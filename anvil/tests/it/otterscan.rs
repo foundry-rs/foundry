@@ -64,9 +64,6 @@ async fn can_call_ots_get_internal_operations_contract_deploy() {
     );
 }
 
-// TODO: test ots_getInternalOperations for a regular contract call, and for a EOA-to-EOA value
-// transfer
-
 #[tokio::test(flavor = "multi_thread")]
 async fn can_call_ots_has_code() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -206,7 +203,7 @@ contract Contract {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_call_ots_get_transactionn_error() {
+async fn can_call_ots_get_transaction_error() {
     let prj = TempProject::dapptools().unwrap();
     prj.add_source(
         "Contract",
@@ -229,7 +226,7 @@ contract Contract {
     let contract = compiled.remove_first("Contract").unwrap();
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider().await;
 
     let wallet = handle.dev_wallets().next().unwrap();
@@ -241,17 +238,19 @@ contract Contract {
 
     let call = contract.method::<_, ()>("setNumber", U256::zero()).unwrap();
     let resp = call.send().await;
-    dbg!(&resp);
 
-    // TODO: resp is a Result<PendingTransaction>. How can I force it to be included in a block?
+    // TODO: resp is a Result<PendingTransaction>, but it's already an Err(_).
+    // How can I force it to be included in a block?
     // api.mine_one().await will still give out a block with no txs
     // resp.unwrap().await fails because the tx reverts
 
-    //let block = api.block_by_number_full(BlockNumber::Latest).await.unwrap().unwrap();
+    // let block = api.block_by_number_full(BlockNumber::Latest).await.unwrap().unwrap();
+    // dbg!(block);
     // let tx = block.transactions[0].hashVg
 
     //let res = api.ots_get_transaction_error(tx).await.unwrap().unwrap();
     // dbg!(&res);
+    panic!();
 }
 
 #[tokio::test(flavor = "multi_thread")]
