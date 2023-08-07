@@ -176,7 +176,7 @@ impl TestArgs {
             evm_opts.verbosity = 3;
         }
 
-        let env = evm_opts.evm_env().await;
+        let env = evm_opts.evm_env().await?;
 
         // Prepare the test builder
         let evm_spec = evm_spec(&config.evm_version);

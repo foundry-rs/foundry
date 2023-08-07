@@ -880,7 +880,9 @@ impl DatabaseExt for Backend {
         current: &mut Env,
     ) -> Option<JournaledState> {
         trace!(?id, "revert snapshot");
-        if let Some(mut snapshot) = self.inner.snapshots.remove(id) {
+        if let Some(mut snapshot) = self.inner.snapshots.remove_at(id) {
+            // Re-insert snapshot to persist it
+            self.inner.snapshots.insert_at(snapshot.clone(), id);
             // need to check whether there's a global failure which means an error occurred either
             // during the snapshot or even before
             if self.is_global_failure(current_state) {
