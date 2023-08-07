@@ -108,14 +108,19 @@ pub enum OtsTraceType {
 
 impl OtsBlockDetails {
     pub async fn build(mut block: Block<Transaction>, backend: &Backend) -> Result<Self> {
-        // TODO: avoid unwrapping
-        let receipts: Vec<TransactionReceipt> = join_all(
-            block
-                .transactions
-                .iter()
-                .map(|tx| async { backend.transaction_receipt(tx.hash).await.unwrap().unwrap() }),
-        )
-        .await;
+        let receipts_futs = block
+            .transactions
+            .iter()
+            .map(|tx| async { backend.transaction_receipt(tx.hash).await });
+
+        let receipts: Vec<TransactionReceipt> = join_all(receipts_futs)
+            .await
+            .into_iter()
+            .map(|r| match r {
+                Ok(Some(r)) => Ok(r),
+                _ => Err(BlockchainError::DataUnavailable),
+            })
+            .collect::<Result<_>>()?;
 
         let total_fees = receipts.iter().fold(U256::zero(), |acc, receipt| {
             acc + receipt.gas_used.unwrap() * (receipt.effective_gas_price.unwrap())
@@ -152,16 +157,20 @@ impl OtsBlockTransactions {
     ) -> Result<Self> {
         block.transactions =
             block.transactions.into_iter().skip(page * page_size).take(page_size).collect();
-        // TODO: avoid unwrapping
-        let receipts: Vec<TransactionReceipt> = join_all(
-            block
-                .transactions
-                .iter()
-                .map(|tx| async { backend.transaction_receipt(tx.hash).await.unwrap().unwrap() }),
-        )
-        .await;
-        // .into_iter()
-        // .collect();
+
+        let receipt_futs = block
+            .transactions
+            .iter()
+            .map(|tx| async { backend.transaction_receipt(tx.hash).await });
+
+        let receipts: Vec<TransactionReceipt> = join_all(receipt_futs)
+            .await
+            .into_iter()
+            .map(|r| match r {
+                Ok(Some(r)) => Ok(r),
+                _ => Err(BlockchainError::DataUnavailable),
+            })
+            .collect::<Result<_>>()?;
 
         let fullblock: OtsBlock<_> = block.into();
 
@@ -176,12 +185,16 @@ impl OtsSearchTransactions {
         first_page: bool,
         last_page: bool,
     ) -> Result<Self> {
-        let txs: Vec<Transaction> = join_all(
-            hashes
-                .iter()
-                .map(|hash| async { backend.transaction_by_hash(*hash).await.unwrap().unwrap() }),
-        )
-        .await;
+        let txs_futs = hashes.iter().map(|hash| async { backend.transaction_by_hash(*hash).await });
+
+        let txs: Vec<Transaction> = join_all(txs_futs)
+            .await
+            .into_iter()
+            .map(|t| match t {
+                Ok(Some(t)) => Ok(t),
+                _ => Err(BlockchainError::DataUnavailable),
+            })
+            .collect::<Result<_>>()?;
 
         join_all(hashes.iter().map(|hash| async {
             match backend.transaction_receipt(*hash).await {
@@ -220,7 +233,6 @@ impl OtsInternalOperation {
                         value,
                     }),
                     (Action::Suicide(Suicide { address, .. }), _) => {
-                        // TODO: maybe return Result<_> here instead?
                         // this assumes a suicide trace always has a parent trace
                         let (from, value) =
                             Self::find_suicide_caller(&traces, &trace.trace_address).unwrap();

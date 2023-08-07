@@ -226,7 +226,7 @@ contract Contract {
     let contract = compiled.remove_first("Contract").unwrap();
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider().await;
 
     let wallet = handle.dev_wallets().next().unwrap();
@@ -237,7 +237,7 @@ contract Contract {
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
     let call = contract.method::<_, ()>("setNumber", U256::zero()).unwrap();
-    let resp = call.send().await;
+    let _resp = call.send().await;
 
     // TODO: resp is a Result<PendingTransaction>, but it's already an Err(_).
     // How can I force it to be included in a block?
@@ -250,7 +250,6 @@ contract Contract {
 
     //let res = api.ots_get_transaction_error(tx).await.unwrap().unwrap();
     // dbg!(&res);
-    panic!();
 }
 
 #[tokio::test(flavor = "multi_thread")]
