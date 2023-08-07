@@ -77,7 +77,6 @@ strum = { version = "0.25", features = ["derive"] }
 thiserror = "1"
 indicatif = "0.17"
 parking_lot = "0.12"
-dirs = "5"
 
 [dev-dependencies]
 anvil = { path = "../anvil" }
