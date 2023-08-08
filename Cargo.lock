@@ -693,7 +693,6 @@ dependencies = [
  "foundry-utils",
  "futures",
  "hex",
- "num_cpus",
  "rayon",
  "rusoto_core",
  "rusoto_kms",
