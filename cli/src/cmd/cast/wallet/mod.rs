@@ -231,6 +231,15 @@ flag to set your key via:
                     &password,
                     Some(&account_name),
                 )?;
+                let address = wallet.address();
+                // Log that the keystore was saved successfully and the address of the account
+                println!(
+                    "\x1b[32m{}\x1b[0m",
+                    format!(
+                        "`{}` keystore was saved successfully. Address: {}",
+                        &account_name, address,
+                    )
+                );
             }
             WalletSubcommands::List => {
                 let default_keystore_dir = Config::foundry_keystores_dir()
