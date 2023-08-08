@@ -153,7 +153,7 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
         let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings());
         remappings
             .extend(figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default());
-        figment.merge(("remappings", remappings.remappings)).merge(args)
+        figment.merge(("remappings", remappings.into_inner())).merge(args)
     }
 }
 

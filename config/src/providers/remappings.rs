@@ -6,7 +6,7 @@ use figment::{
 };
 use std::{
     borrow::Cow,
-    collections::{btree_map::Entry, BTreeMap},
+    collections::{btree_map::Entry, BTreeMap, HashSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -16,7 +16,7 @@ use tracing::trace;
 #[derive(Debug, Clone, Default)]
 pub struct Remappings {
     /// Remappings.
-    pub remappings: Vec<Remapping>,
+    remappings: Vec<Remapping>,
 }
 
 impl Remappings {
@@ -30,10 +30,23 @@ impl Remappings {
         Self { remappings }
     }
 
+    /// Consumes the wrapper and returns the inner remappings vector.
+    pub fn into_inner(self) -> Vec<Remapping> {
+        let mut tmp = HashSet::new();
+        let remappings =
+            self.remappings.iter().filter(|r| tmp.insert(r.name.clone())).cloned().collect();
+        remappings
+    }
+
     /// Push an element ot the remappings vector, but only if it's not already present.
     pub fn push(&mut self, remapping: Remapping) {
         if !self.remappings.iter().any(|existing| {
-            existing.name.contains(&remapping.name) && existing.context == remapping.context
+            // What we're doing here is filtering for ambiguous paths. For example, if we have
+            // @prb/math/=node_modules/@prb/math/src/ as existing, and
+            // @prb/=node_modules/@prb/  as the one being checked,
+            // we want to keep the already existing one, which is the first one. This way we avoid
+            // having to deal with ambiguous paths which is unwanted when autodetecting remappings.
+            existing.name.starts_with(&remapping.name) && existing.context == remapping.context
         }) {
             self.remappings.push(remapping)
         }
@@ -102,13 +115,15 @@ impl<'a> RemappingsProvider<'a> {
             }
         }
 
-        let mut new_remappings = Remappings::new();
+        // Let's first just extend the remappings with the ones that were passed in,
+        // without any filtering.
+        let mut user_remappings = Vec::new();
 
-        // check env var
+        // check env vars
         if let Some(env_remappings) = remappings_from_env_var("DAPP_REMAPPINGS")
             .or_else(|| remappings_from_env_var("FOUNDRY_REMAPPINGS"))
         {
-            new_remappings
+            user_remappings
                 .extend(env_remappings.map_err::<Error, _>(|err| err.to_string().into())?);
         }
 
@@ -118,11 +133,14 @@ impl<'a> RemappingsProvider<'a> {
             let content = fs::read_to_string(remappings_file).map_err(|err| err.to_string())?;
             let remappings_from_file: Result<Vec<_>, _> =
                 remappings_from_newline(&content).collect();
-            new_remappings
+            user_remappings
                 .extend(remappings_from_file.map_err::<Error, _>(|err| err.to_string().into())?);
         }
 
-        new_remappings.extend(remappings);
+        user_remappings.extend(remappings);
+        // Let's now use the wrapper to conditionally extend the remappings with the autodetected
+        // ones. We want to avoid duplicates, and the wrapper will handle this for us.
+        let mut all_remappings = Remappings::new_with_remappings(user_remappings);
 
         // scan all library dirs and autodetect remappings
         // todo: if a lib specifies contexts for remappings manually, we need to figure out how to
@@ -151,7 +169,7 @@ impl<'a> RemappingsProvider<'a> {
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
 
-            new_remappings.extend(
+            all_remappings.extend(
                 lib_remappings
                     .into_iter()
                     .flat_map(|(context, remappings)| {
@@ -165,7 +183,7 @@ impl<'a> RemappingsProvider<'a> {
             );
         }
 
-        Ok(new_remappings.remappings)
+        Ok(all_remappings.into_inner())
     }
 
     /// Returns all remappings declared in foundry.toml files of libraries
