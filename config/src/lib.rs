@@ -574,9 +574,6 @@ impl Config {
                 r.path.path = r.path.path.to_slash_lossy().into_owned().into();
             });
         }
-        // remove any potential duplicates
-        self.remappings.sort_unstable();
-        self.remappings.dedup();
     }
 
     /// Returns the directory in which dependencies should be installed
