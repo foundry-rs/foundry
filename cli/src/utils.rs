@@ -480,6 +480,10 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
             .map(drop)
     }
 
+    pub fn rename_branch(self) -> Result<()> {
+        self.cmd().args(["branch", "-M", "main"]).exec().map(drop)
+    }
+
     pub fn submodule_update<I, S>(self, force: bool, remote: bool, paths: I) -> Result<()>
     where
         I: IntoIterator<Item = S>,

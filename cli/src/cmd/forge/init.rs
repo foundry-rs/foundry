@@ -74,6 +74,7 @@ impl Cmd for InitArgs {
             git.add(Some("--all"))?;
             let commit_msg = format!("chore: init from {template} at {commit_hash}");
             git.commit(&commit_msg)?;
+            git.rename_branch()?;
         } else {
             // if target is not empty
             if root.read_dir().map_or(false, |mut i| i.next().is_some()) {
@@ -185,6 +186,7 @@ fn init_git_repo(git: Git<'_>, no_commit: bool) -> eyre::Result<()> {
     if !no_commit {
         git.add(Some("--all"))?;
         git.commit("chore: forge init")?;
+        git.rename_branch()?;
     }
 
     Ok(())
