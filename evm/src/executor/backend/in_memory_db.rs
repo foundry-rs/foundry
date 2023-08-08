@@ -1,9 +1,8 @@
 //! The in memory DB
 use crate::executor::backend::error::DatabaseError;
-use hashbrown::HashMap as Map;
 use revm::{
     db::{CacheDB, DatabaseRef, EmptyDB},
-    primitives::{Account, AccountInfo, Bytecode, B160, B256, U256},
+    primitives::{Account, AccountInfo, Bytecode, B160, B256, U256, HashMap as Map},
     Database, DatabaseCommit,
 };
 

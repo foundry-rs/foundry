@@ -1,8 +1,8 @@
 //! Cache related abstraction
-use crate::{executor::backend::snapshot::StateSnapshot, HashMap as Map};
+use crate::executor::backend::snapshot::StateSnapshot;
 use parking_lot::RwLock;
 use revm::{
-    primitives::{Account, AccountInfo, B160, B256, KECCAK_EMPTY, U256},
+    primitives::{Account, AccountInfo, B160, B256, KECCAK_EMPTY, U256, HashMap as Map},
     DatabaseCommit,
 };
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
@@ -249,7 +249,7 @@ impl MemDb {
         let mut storage = self.storage.write();
         let mut accounts = self.accounts.write();
         for (add, mut acc) in changes {
-            if acc.is_empty() || acc.is_destroyed {
+            if acc.is_empty() || acc.is_selfdestructed() {
                 accounts.remove(&add);
                 storage.remove(&add);
             } else {

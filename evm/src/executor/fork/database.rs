@@ -9,11 +9,10 @@ use crate::{
     revm::db::CacheDB,
 };
 use ethers::{prelude::U256, types::BlockId};
-use hashbrown::HashMap as Map;
 use parking_lot::Mutex;
 use revm::{
     db::DatabaseRef,
-    primitives::{Account, AccountInfo, Bytecode, B160, B256, U256 as rU256},
+    primitives::{Account, AccountInfo, Bytecode, B160, B256, U256 as rU256, HashMap as Map},
     Database, DatabaseCommit,
 };
 use std::sync::Arc;
