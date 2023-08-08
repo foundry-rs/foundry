@@ -266,7 +266,7 @@ impl MemDb {
                 accounts.insert(add, acc.info);
 
                 let acc_storage = storage.entry(add).or_default();
-                if acc.status == AccountStatus::Created {
+                if acc.status.contains(AccountStatus::Created) {
                     acc_storage.clear();
                 }
                 for (index, value) in acc.storage {
