@@ -210,11 +210,10 @@ async fn can_call_ots_get_transaction_error() {
         r#"
 pragma solidity 0.8.13;
 contract Contract {
-    uint256 public number;
+    error CustomError(string msg);
 
-    function setNumber(uint256 num) public {
-        require(num != 0, "RevertStringFooBar");
-        number = num;
+    function trigger_revert() public {
+        revert CustomError("RevertStringFooBar"); 
     }
 }
 "#,
@@ -226,7 +225,7 @@ contract Contract {
     let contract = compiled.remove_first("Contract").unwrap();
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider().await;
 
     let wallet = handle.dev_wallets().next().unwrap();
@@ -236,20 +235,15 @@ contract Contract {
     let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
-    let call = contract.method::<_, ()>("setNumber", U256::zero()).unwrap();
-    let _resp = call.send().await;
+    let call = contract.method::<_, ()>("trigger_revert", ()).unwrap().gas(150_000u64);
+    let receipt = call.send().await.unwrap().await.unwrap().unwrap();
 
-    // TODO: resp is a Result<PendingTransaction>, but it's already an Err(_).
-    // How can I force it to be included in a block?
-    // api.mine_one().await will still give out a block with no txs
-    // resp.unwrap().await fails because the tx reverts
-
-    // let block = api.block_by_number_full(BlockNumber::Latest).await.unwrap().unwrap();
-    // dbg!(block);
+    let block = api.block_by_number_full(BlockNumber::Latest).await.unwrap().unwrap();
+    dbg!(block);
     // let tx = block.transactions[0].hashVg
 
-    //let res = api.ots_get_transaction_error(tx).await.unwrap().unwrap();
-    // dbg!(&res);
+    let res = api.ots_get_transaction_error(receipt.transaction_hash).await.unwrap().unwrap();
+    assert_eq!(res, Bytes::from_str("0x8d6ea8be00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000012526576657274537472696e67466f6f4261720000000000000000000000000000").unwrap());
 }
 
 #[tokio::test(flavor = "multi_thread")]
