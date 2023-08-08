@@ -57,7 +57,6 @@ use ethers::{
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use forge::{
     executor::inspector::AccessListTracer,
-    hashbrown,
     revm::{
         interpreter::{return_ok, InstructionResult},
         primitives::{BlockEnv, ExecutionResult},
@@ -707,7 +706,7 @@ impl Backend {
             Err(e) => return Err(e.into()),
         };
         let state = result_and_state.state;
-        let state: hashbrown::HashMap<H160, Account> =
+        let state: revm::primitives::HashMap<H160, Account> =
             state.into_iter().map(|kv| (kv.0.into(), kv.1)).collect();
         let (exit_reason, gas_used, out, logs) = match result_and_state.result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
@@ -1067,7 +1066,7 @@ impl Backend {
             },
         };
         let state = result_and_state.state;
-        let state: hashbrown::HashMap<H160, Account> =
+        let state: revm::primitives::HashMap<H160, Account> =
             state.into_iter().map(|kv| (kv.0.into(), kv.1)).collect();
         let (exit_reason, gas_used, out) = match result_and_state.result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
