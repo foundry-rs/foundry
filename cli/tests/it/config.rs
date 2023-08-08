@@ -198,7 +198,8 @@ forgetest_init!(
         assert_eq!(config.remappings.len(), 3);
         pretty_eq!(
             format!("other-key/={}/", prj.root().join("lib/other").to_slash_lossy()),
-            Remapping::from(config.remappings[2].clone()).to_string()
+            // As CLI has the higher priority, it'll be found at the first slot.
+            Remapping::from(config.remappings[0].clone()).to_string()
         );
 
         std::env::remove_var("DAPP_REMAPPINGS");
