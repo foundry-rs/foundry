@@ -3,7 +3,7 @@
 
 use crate::cache::StorageCachingConfig;
 use ethers_core::types::{Address, Chain::Mainnet, H160, H256, U256};
-pub use ethers_solc::artifacts::OptimizerDetails;
+pub use ethers_solc::{self, artifacts::OptimizerDetails};
 use ethers_solc::{
     artifacts::{
         output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
