@@ -28,10 +28,11 @@ pub use multi_wallet::*;
 
 pub mod error;
 
-// The raw wallet options can either be:
-// 1. Private Key (cleartext in CLI)
-// 2. Private Key (interactively via secure prompt)
-// 3. Mnemonic (via file path)
+/// A wrapper for the raw data options for `Wallet`, extracted to also be used standalone.
+/// The raw wallet options can either be:
+/// 1. Private Key (cleartext in CLI)
+/// 2. Private Key (interactively via secure prompt)
+/// 3. Mnemonic (via file path)
 #[derive(Parser, Debug, Default, Clone, Serialize)]
 #[clap(next_help_heading = "Wallet options - raw", about = None, long_about = None)]
 pub struct RawWallet {
@@ -69,7 +70,7 @@ pub struct RawWallet {
 }
 
 /// The wallet options can either be:
-/// 1. Raw (via private key / mnemonic file, see RawWallet)
+/// 1. Raw (via private key / mnemonic file, see `RawWallet`)
 /// 2. Ledger
 /// 3. Trezor
 /// 4. Keystore (via file path)
