@@ -36,16 +36,8 @@ impl Remappings {
         let remappings = self
             .remappings
             .iter()
-            .filter_map(|r| {
-                let r = r.to_owned();
-                // only insert if it's not already present
-                if tmp.insert(r.name.clone()) {
-                    Some(r)
-                } else {
-                    // ignore duplicates
-                    None
-                }
-            })
+            .filter(|r| tmp.insert(r.name.clone()))
+            .map(|r| r.to_owned())
             .collect();
         remappings
     }
@@ -53,6 +45,11 @@ impl Remappings {
     /// Push an element ot the remappings vector, but only if it's not already present.
     pub fn push(&mut self, remapping: Remapping) {
         if !self.remappings.iter().any(|existing| {
+            // What we're doing here is filtering for ambiguous paths. For example, if we have
+            // @prb/math/=node_modules/@prb/math/src/ as existing, and
+            // @prb/=node_modules/@prb/  as the one being checked,
+            // we want to keep the already existing one, which is the first one. This way we avoid
+            // having to deal with ambiguous paths which is unwanted when autodetecting remappings.
             existing.name.starts_with(&remapping.name) && existing.context == remapping.context
         }) {
             self.remappings.push(remapping)
