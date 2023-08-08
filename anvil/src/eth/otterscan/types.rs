@@ -107,12 +107,24 @@ pub enum OtsTraceType {
 }
 
 impl OtsBlockDetails {
+    /// The response for ots_getBlockDetails includes an `issuance` object that requires computing
+    /// the total gas spent in a given block.
+    /// The only way to do this with the existing API is to explicitly fetch all receipts, to get
+    /// their `gas_used`. This would be extremely inefficient in a real blockchain RPC, but we can
+    /// get away with that in this context.
+    ///
+    /// The [original spec](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_getblockdetails) also mentions we can hardcode `transactions` and `logsBloom` to an empty array to save bandwith, because fields weren't intended to be used in the Otterscan UI at this point. This has two problems though:
+    ///   - It makes the endpoint too specific to Otterscan's implementation
+    ///   - It breaks the abstraction built in `OtsBlock<TX>` which computes `transaction_count`
+    ///   based on the existing list.
+    /// Therefore we keep it simple by keeping the data in the response
     pub async fn build(mut block: Block<Transaction>, backend: &Backend) -> Result<Self> {
         let receipts_futs = block
             .transactions
             .iter()
             .map(|tx| async { backend.transaction_receipt(tx.hash).await });
 
+        // fetch all receipts
         let receipts: Vec<TransactionReceipt> = join_all(receipts_futs)
             .await
             .into_iter()
@@ -126,11 +138,6 @@ impl OtsBlockDetails {
             acc + receipt.gas_used.unwrap() * (receipt.effective_gas_price.unwrap())
         });
 
-        // Otterscan doesn't need logsBloom, so we can save some bandwidth
-        // it also doesn't need transactions, but we can't really empty that, since it would cause
-        // `transaction_count` to also end up as 0
-        block.logs_bloom = None;
-
         Ok(Self {
             block: block.into(),
             total_fees,
@@ -140,6 +147,8 @@ impl OtsBlockDetails {
     }
 }
 
+/// Converts a regular block into the patched OtsBlock format
+/// which includes the `transaction_count` field
 impl<TX> From<Block<TX>> for OtsBlock<TX> {
     fn from(block: Block<TX>) -> Self {
         let transaction_count = block.transactions.len();
@@ -149,6 +158,7 @@ impl<TX> From<Block<TX>> for OtsBlock<TX> {
 }
 
 impl OtsBlockTransactions {
+    /// Fetches all receipts for the blocks's transactions, as required by the [`ots_getBlockTransactions`](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_getblockdetails) endpoint spec, and returns the final response object.
     pub async fn build(
         mut block: Block<Transaction>,
         backend: &Backend,
@@ -179,6 +189,9 @@ impl OtsBlockTransactions {
 }
 
 impl OtsSearchTransactions {
+    /// Constructs the final response object for both [`ots_searchTransactionsBefore` and
+    /// `ots_searchTransactionsAfter`](lrequires not only the transactions, but also the
+    /// corresponding receipts, which are fetched here before constructing the final)
     pub async fn build(
         hashes: Vec<H256>,
         backend: &Backend,
@@ -215,6 +228,8 @@ impl OtsSearchTransactions {
 }
 
 impl OtsInternalOperation {
+    /// Converts a batch of traces into a batch of internal operations, to comply with the spec for
+    /// [`ots_getInternalOperations`](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_getinternaloperations)
     pub fn batch_build(traces: Vec<Trace>) -> Vec<OtsInternalOperation> {
         traces
             .iter()
@@ -250,7 +265,7 @@ impl OtsInternalOperation {
             .collect()
     }
 
-    // finds the trace that parents a given trace_address
+    /// finds the trace that parents a given trace_address
     fn find_suicide_caller(
         traces: &Vec<Trace>,
         suicide_address: &Vec<usize>,
@@ -271,6 +286,8 @@ impl OtsInternalOperation {
 }
 
 impl OtsTrace {
+    /// Converts the list of traces for a transaction into the expected Otterscan format, as
+    /// specified in the [`ots_traceTransaction`](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_tracetransaction) spec
     pub fn batch_build(traces: Vec<Trace>) -> Vec<Self> {
         traces
             .into_iter()

@@ -1355,7 +1355,7 @@ impl Backend {
         Some(self.convert_block(block))
     }
 
-    pub async fn mined_transactions_by_block_number(
+    pub(crate) async fn mined_transactions_by_block_number(
         &self,
         number: BlockNumber,
     ) -> Option<Vec<Transaction>> {
@@ -1366,7 +1366,7 @@ impl Backend {
     }
 
     /// Returns all transactions given a block
-    pub fn mined_transactions_in_block(&self, block: &Block) -> Option<Vec<Transaction>> {
+    pub(crate) fn mined_transactions_in_block(&self, block: &Block) -> Option<Vec<Transaction>> {
         let mut transactions = Vec::with_capacity(block.transactions.len());
         let base_fee = block.header.base_fee_per_gas;
         let storage = self.blockchain.storage.read();
@@ -1762,12 +1762,12 @@ impl Backend {
     }
 
     /// Returns the traces for the given transaction
-    pub fn mined_parity_trace_transaction(&self, hash: H256) -> Option<Vec<Trace>> {
+    pub(crate) fn mined_parity_trace_transaction(&self, hash: H256) -> Option<Vec<Trace>> {
         self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.parity_traces())
     }
 
     /// Returns the traces for the given block
-    pub fn mined_parity_trace_block(&self, block: u64) -> Option<Vec<Trace>> {
+    pub(crate) fn mined_parity_trace_block(&self, block: u64) -> Option<Vec<Trace>> {
         let block = self.get_block(block)?;
         let mut traces = vec![];
         let storage = self.blockchain.storage.read();
