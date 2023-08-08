@@ -302,7 +302,7 @@ where
     fn initialize_interp(
         &mut self,
         _: &mut Interpreter,
-        data: &mut EVMData<'_, DB>
+        data: &mut EVMData<'_, DB>,
     ) -> InstructionResult {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.

@@ -12,7 +12,7 @@ use ethers::{prelude::U256, types::BlockId};
 use parking_lot::Mutex;
 use revm::{
     db::DatabaseRef,
-    primitives::{Account, AccountInfo, Bytecode, B160, B256, U256 as rU256, HashMap as Map},
+    primitives::{Account, AccountInfo, Bytecode, HashMap as Map, B160, B256, U256 as rU256},
     Database, DatabaseCommit,
 };
 use std::sync::Arc;
