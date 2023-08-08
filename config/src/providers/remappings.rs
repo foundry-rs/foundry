@@ -37,7 +37,7 @@ impl Remappings {
             .remappings
             .iter()
             .filter(|r| tmp.insert(r.name.clone()))
-            .map(|r| r.to_owned())
+            .map(|r| r.clone())
             .collect();
         remappings
     }
