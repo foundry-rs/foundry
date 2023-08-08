@@ -88,6 +88,7 @@ pub enum OtsInternalOperationType {
     // The spec asks for a Create2 entry as well, but we don't have that info
 }
 
+/// Otterscan's representation of a trace
 #[derive(Serialize, Debug, PartialEq)]
 pub struct OtsTrace {
     pub r#type: OtsTraceType,
@@ -98,6 +99,8 @@ pub struct OtsTrace {
     pub input: Bytes,
 }
 
+/// The type of call being described by an Otterscan trace. Only CALL, STATICCALL and DELEGATECALL
+/// are represented
 #[derive(Serialize, Debug, PartialEq)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum OtsTraceType {
