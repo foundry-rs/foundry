@@ -118,7 +118,7 @@ impl OtsBlockDetails {
     ///   - It breaks the abstraction built in `OtsBlock<TX>` which computes `transaction_count`
     ///   based on the existing list.
     /// Therefore we keep it simple by keeping the data in the response
-    pub async fn build(mut block: Block<Transaction>, backend: &Backend) -> Result<Self> {
+    pub async fn build(block: Block<Transaction>, backend: &Backend) -> Result<Self> {
         let receipts_futs = block
             .transactions
             .iter()
