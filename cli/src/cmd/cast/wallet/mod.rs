@@ -250,7 +250,7 @@ flag to set your key via:
                                     None
                                 }
                             }
-                            Err(e) => Some(Err(eyre::Report::from(e))),
+                            Err(e) => Some(Err(e.into())),
                         })
                         .collect::<Result<Vec<_>, eyre::Report>>();
                 // Print the names of the keystore files
