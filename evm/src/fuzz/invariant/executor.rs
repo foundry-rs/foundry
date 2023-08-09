@@ -16,14 +16,12 @@ use crate::{
         },
         FuzzCase, FuzzedCases,
     },
-    trace::CallTraceArena,
     utils::{get_function, h160_to_b160},
     CALLER,
 };
 use ethers::{
     abi::{Abi, Address, Detokenize, FixedBytes, Function, Tokenizable, TokenizableItem},
     prelude::U256,
-    types::Log,
 };
 use eyre::ContextCompat;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
@@ -45,23 +43,15 @@ type InvariantPreparation =
 
 /// Enriched results of an invariant run check.
 ///
-/// Contains the call results, logs and traces of the last run along with the overall success
-/// condition.
+/// Contains the success condition and call results of the last run
 struct RichInvariantResults {
     success: bool,
     call_results: Option<BTreeMap<String, RawCallResult>>,
-    logs: Vec<Log>,
-    traces: Option<CallTraceArena>,
 }
 
 impl RichInvariantResults {
-    fn new(
-        success: bool,
-        call_results: Option<BTreeMap<String, RawCallResult>>,
-        logs: Vec<Log>,
-        traces: Option<CallTraceArena>,
-    ) -> Self {
-        Self { success, call_results, logs, traces }
+    fn new(success: bool, call_results: Option<BTreeMap<String, RawCallResult>>) -> Self {
+        Self { success, call_results }
     }
 }
 
@@ -131,8 +121,7 @@ impl<'a> InvariantExecutor<'a> {
             )
             .ok(),
         );
-        let last_run_logs = RefCell::new(vec![]);
-        let last_run_traces = RefCell::new(None);
+        let last_run_calldata: RefCell<Vec<BasicTxDetails>> = RefCell::new(vec![]);
         // Make sure invariants are sound even before starting to fuzz
         if last_call_results.borrow().is_none() {
             fuzz_cases.borrow_mut().push(FuzzedCases::new(vec![]));
@@ -209,12 +198,7 @@ impl<'a> InvariantExecutor<'a> {
                         stipend: call_result.stipend,
                     });
 
-                    let RichInvariantResults {
-                        success: can_continue,
-                        call_results,
-                        logs: call_result_logs,
-                        traces: call_result_traces,
-                    } = can_continue(
+                    let RichInvariantResults { success: can_continue, call_results } = can_continue(
                         &invariant_contract,
                         call_result,
                         &executor,
@@ -227,8 +211,7 @@ impl<'a> InvariantExecutor<'a> {
                     );
 
                     if !can_continue || current_run == self.config.depth - 1 {
-                        *last_run_logs.borrow_mut() = call_result_logs;
-                        *last_run_traces.borrow_mut() = call_result_traces;
+                        *last_run_calldata.borrow_mut() = inputs.clone();
                     }
 
                     if !can_continue {
@@ -269,9 +252,7 @@ impl<'a> InvariantExecutor<'a> {
             invariants,
             cases: fuzz_cases.into_inner(),
             reverts,
-            last_call_results: last_call_results.take(),
-            last_call_logs: last_run_logs.take(),
-            last_run_traces: last_run_traces.take(),
+            last_run_inputs: last_run_calldata.take(),
         })
     }
 
@@ -622,7 +603,7 @@ fn can_continue(
             assert_invariants(invariant_contract, executor, calldata, failures, shrink_sequence)
                 .ok();
         if call_results.is_none() {
-            return RichInvariantResults::new(false, None, call_result.logs, call_result.traces)
+            return RichInvariantResults::new(false, None)
         }
     } else {
         failures.reverts += 1;
@@ -630,9 +611,6 @@ fn can_continue(
         // The user might want to stop all execution if a revert happens to
         // better bound their testing space.
         if fail_on_revert {
-            let call_result_logs = call_result.logs.clone();
-            let call_result_traces = call_result.traces.clone();
-
             let error = InvariantFuzzError::new(
                 invariant_contract,
                 None,
@@ -646,13 +624,16 @@ fn can_continue(
 
             // Hacky to provide the full error to the user.
             for invariant in invariant_contract.invariant_functions.iter() {
-                failures.failed_invariants.insert(invariant.name.clone(), Some(error.clone()));
+                failures.failed_invariants.insert(
+                    invariant.name.clone(),
+                    (Some(error.clone()), invariant.to_owned().clone()),
+                );
             }
 
-            return RichInvariantResults::new(false, None, call_result_logs, call_result_traces)
+            return RichInvariantResults::new(false, None)
         }
     }
-    RichInvariantResults::new(true, call_results, call_result.logs, call_result.traces)
+    RichInvariantResults::new(true, call_results)
 }
 
 #[derive(Clone)]
@@ -665,7 +646,7 @@ pub struct InvariantFailures {
     /// How many different invariants have been broken.
     pub broken_invariants_count: usize,
     /// Maps a broken invariant to its specific error.
-    pub failed_invariants: BTreeMap<String, Option<InvariantFuzzError>>,
+    pub failed_invariants: BTreeMap<String, (Option<InvariantFuzzError>, Function)>,
 }
 
 impl InvariantFailures {
@@ -673,13 +654,16 @@ impl InvariantFailures {
         InvariantFailures {
             reverts: 0,
             broken_invariants_count: 0,
-            failed_invariants: invariants.iter().map(|f| (f.name.to_string(), None)).collect(),
+            failed_invariants: invariants
+                .iter()
+                .map(|f| (f.name.to_string(), (None, f.to_owned().clone())))
+                .collect(),
             revert_reason: None,
         }
     }
 
     /// Moves `reverts` and `failed_invariants` out of the struct.
-    fn into_inner(self) -> (usize, BTreeMap<String, Option<InvariantFuzzError>>) {
+    fn into_inner(self) -> (usize, BTreeMap<String, (Option<InvariantFuzzError>, Function)>) {
         (self.reverts, self.failed_invariants)
     }
 }

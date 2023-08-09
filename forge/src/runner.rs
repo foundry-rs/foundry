@@ -17,7 +17,8 @@ use foundry_evm::{
     executor::{CallResult, EvmError, ExecutionErr, Executor},
     fuzz::{
         invariant::{
-            InvariantContract, InvariantExecutor, InvariantFuzzError, InvariantFuzzTestResult,
+            replay_run, InvariantContract, InvariantExecutor, InvariantFuzzError,
+            InvariantFuzzTestResult,
         },
         FuzzedExecutor,
     },
@@ -449,21 +450,16 @@ impl<'a> ContractRunner<'a> {
         let invariant_contract =
             InvariantContract { address, invariant_functions: functions, abi: self.contract };
 
-        let Ok(InvariantFuzzTestResult {
-            invariants,
-            cases,
-            reverts,
-            mut last_call_results,
-            last_call_logs,
-            last_run_traces,
-        }) = evm.invariant_fuzz(invariant_contract)
+        let Ok(InvariantFuzzTestResult { invariants, cases, reverts, last_run_inputs }) =
+            evm.invariant_fuzz(invariant_contract.clone())
         else {
             return vec![]
         };
 
         invariants
             .into_iter()
-            .map(|(func_name, test_error)| {
+            .map(|(_, test_error)| {
+                let (test_error, invariant) = test_error;
                 let mut counterexample = None;
                 let mut logs = logs.clone();
                 let mut traces = traces.clone();
@@ -495,23 +491,19 @@ impl<'a> ContractRunner<'a> {
                             traces.push((TraceKind::Execution, error_traces));
                         }
                     }
-                    // If invariants ran successfully, collect last call logs and traces
                     _ => {
-                        if let Some(last_call_result) = last_call_results
-                            .as_mut()
-                            .and_then(|call_results| call_results.remove(&func_name))
-                        {
-                            logs.extend(last_call_result.logs);
-                            logs.extend(last_call_logs.clone());
-
-                            if let Some(last_call_traces) = last_call_result.traces {
-                                traces.push((TraceKind::Execution, last_call_traces));
-                            }
-
-                            if let Some(last_run_traces) = last_run_traces.clone() {
-                                traces.push((TraceKind::Execution, last_run_traces));
-                            }
-                        }
+                        // If invariants ran successfully, replay the last run to collect logs and
+                        // traces.
+                        replay_run(
+                            &invariant_contract.clone(),
+                            self.executor.clone(),
+                            known_contracts,
+                            identified_contracts.clone(),
+                            &mut logs,
+                            &mut traces,
+                            invariant,
+                            last_run_inputs.clone(),
+                        );
                     }
                 }
 
