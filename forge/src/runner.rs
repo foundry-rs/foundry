@@ -490,7 +490,6 @@ impl<'a> ContractRunner<'a> {
                         };
 
                         logs.extend(error.logs);
-                        logs.extend(last_call_logs.clone());
 
                         if let Some(error_traces) = error.traces {
                             traces.push((TraceKind::Execution, error_traces));
