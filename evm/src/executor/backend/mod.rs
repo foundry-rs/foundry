@@ -14,14 +14,13 @@ use ethers::{
     types::{Address, BlockNumber, Transaction, U64},
     utils::keccak256,
 };
-use hashbrown::HashMap as Map;
 pub use in_memory_db::MemDb;
 use revm::{
     db::{CacheDB, DatabaseRef},
     precompile::{Precompiles, SpecId},
     primitives::{
-        Account, AccountInfo, Bytecode, CreateScheme, Env, Log, ResultAndState, TransactTo, B160,
-        B256, KECCAK_EMPTY, U256 as rU256,
+        Account, AccountInfo, Bytecode, CreateScheme, Env, HashMap as Map, Log, ResultAndState,
+        TransactTo, B160, B256, KECCAK_EMPTY, U256 as rU256,
     },
     Database, DatabaseCommit, Inspector, JournaledState, EVM,
 };
@@ -880,7 +879,9 @@ impl DatabaseExt for Backend {
         current: &mut Env,
     ) -> Option<JournaledState> {
         trace!(?id, "revert snapshot");
-        if let Some(mut snapshot) = self.inner.snapshots.remove(id) {
+        if let Some(mut snapshot) = self.inner.snapshots.remove_at(id) {
+            // Re-insert snapshot to persist it
+            self.inner.snapshots.insert_at(snapshot.clone(), id);
             // need to check whether there's a global failure which means an error occurred either
             // during the snapshot or even before
             if self.is_global_failure(current_state) {
@@ -1098,7 +1099,7 @@ impl DatabaseExt for Backend {
                 // prevent issues in the new journalstate, e.g. assumptions that accounts are loaded
                 // if the account is not touched, we reload it, if it's touched we clone it
                 for (addr, acc) in journaled_state.state.iter() {
-                    if acc.is_touched {
+                    if acc.is_touched() {
                         merge_journaled_state_data(
                             b160_to_h160(*addr),
                             journaled_state,
@@ -1804,7 +1805,7 @@ fn commit_transaction(
 /// Applies the changeset of a transaction to the active journaled state and also commits it in the
 /// forked db
 fn apply_state_changeset(
-    state: hashbrown::HashMap<revm::primitives::Address, Account>,
+    state: Map<revm::primitives::Address, Account>,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
 ) {

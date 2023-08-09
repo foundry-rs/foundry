@@ -119,6 +119,11 @@ pub enum FeeHistoryError {
     InvalidBlockRange,
 }
 
+#[derive(Debug)]
+pub struct ErrDetail {
+    pub detail: String,
+}
+
 /// An error due to invalid transaction
 #[derive(thiserror::Error, Debug)]
 pub enum InvalidTransactionError {
@@ -150,8 +155,8 @@ pub enum InvalidTransactionError {
     #[error("intrinsic gas too low")]
     GasTooLow,
     /// returned if the transaction gas exceeds the limit
-    #[error("intrinsic gas too high")]
-    GasTooHigh,
+    #[error("intrinsic gas too high -- {}",.0.detail)]
+    GasTooHigh(ErrDetail),
     /// Thrown to ensure no one is able to specify a transaction with a tip higher than the total
     /// fee cap.
     #[error("max priority fee per gas higher than max fee per gas")]
@@ -174,6 +179,9 @@ pub enum InvalidTransactionError {
     /// Thrown when a legacy tx was signed for a different chain
     #[error("Incompatible EIP-155 transaction, signed for another chain")]
     IncompatibleEIP155,
+    /// Thrown when an access list is used before the berlin hard fork.
+    #[error("Access lists are not supported before the Berlin hardfork")]
+    AccessListNotSupported,
 }
 
 impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
@@ -185,10 +193,18 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
                 InvalidTransactionError::TipAboveFeeCap
             }
             InvalidTransaction::GasPriceLessThanBasefee => InvalidTransactionError::FeeCapTooLow,
-            InvalidTransaction::CallerGasLimitMoreThanBlock => InvalidTransactionError::GasTooHigh,
-            InvalidTransaction::CallGasCostMoreThanGasLimit => InvalidTransactionError::GasTooHigh,
+            InvalidTransaction::CallerGasLimitMoreThanBlock => {
+                InvalidTransactionError::GasTooHigh(ErrDetail {
+                    detail: String::from("CallerGasLimitMoreThanBlock"),
+                })
+            }
+            InvalidTransaction::CallGasCostMoreThanGasLimit => {
+                InvalidTransactionError::GasTooHigh(ErrDetail {
+                    detail: String::from("CallGasCostMoreThanGasLimit"),
+                })
+            }
             InvalidTransaction::RejectCallerWithCode => InvalidTransactionError::SenderNoEOA,
-            InvalidTransaction::LackOfFundForGasLimit { .. } => {
+            InvalidTransaction::LackOfFundForMaxFee { .. } => {
                 InvalidTransactionError::InsufficientFunds
             }
             InvalidTransaction::OverflowPaymentInTransaction => {
@@ -202,6 +218,9 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             }
             InvalidTransaction::NonceTooHigh { .. } => InvalidTransactionError::NonceTooHigh,
             InvalidTransaction::NonceTooLow { .. } => InvalidTransactionError::NonceTooLow,
+            InvalidTransaction::AccessListNotSupported => {
+                InvalidTransactionError::AccessListNotSupported
+            }
         }
     }
 }
@@ -272,7 +291,15 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                             data: serde_json::to_value(data).ok(),
                         }
                     }
-                    InvalidTransactionError::GasTooLow | InvalidTransactionError::GasTooHigh => {
+                    InvalidTransactionError::GasTooLow => {
+                        // <https://eips.ethereum.org/EIPS/eip-1898>
+                        RpcError {
+                            code: ErrorCode::ServerError(-32000),
+                            message: err.to_string().into(),
+                            data: None,
+                        }
+                    }
+                    InvalidTransactionError::GasTooHigh(_) => {
                         // <https://eips.ethereum.org/EIPS/eip-1898>
                         RpcError {
                             code: ErrorCode::ServerError(-32000),

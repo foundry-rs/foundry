@@ -1,6 +1,7 @@
 use self::{
     env::Broadcast,
     expect::{handle_expect_emit, handle_expect_revert, ExpectedCallType},
+    mapping::MappingSlots,
     util::{check_if_fixed_gas_limit, process_create, BroadcastableTransactions, MAGIC_SKIP_BYTES},
 };
 use crate::{
@@ -54,6 +55,8 @@ mod fork;
 mod fs;
 /// Cheatcodes that configure the fuzzer
 mod fuzz;
+/// Mapping related cheatcodes
+mod mapping;
 /// Snapshot related cheatcodes
 mod snapshot;
 /// Utility cheatcodes (`sign` etc.)
@@ -182,6 +185,10 @@ pub struct Cheatcodes {
     /// CREATE / CREATE2 frames. This is needed to make gas meter pausing work correctly when
     /// paused and creating new contracts.
     pub gas_metering_create: Option<Option<revm::interpreter::Gas>>,
+
+    /// Holds mapping slots info
+    pub mapping_slots: Option<BTreeMap<Address, MappingSlots>>,
+
     /// current program counter
     pub pc: usize,
     /// Breakpoints supplied by the `vm.breakpoint("<char>")` cheatcode
@@ -296,7 +303,6 @@ where
         &mut self,
         _: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
-        _: bool,
     ) -> InstructionResult {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
@@ -314,7 +320,6 @@ where
         &mut self,
         interpreter: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
-        _: bool,
     ) -> InstructionResult {
         self.pc = interpreter.program_counter();
 
@@ -515,7 +520,7 @@ where
                 (CALLCODE, 5, 6, true),
                 (STATICCALL, 4, 5, true),
                 (DELEGATECALL, 4, 5, true),
-                (SHA3, 0, 1, false),
+                (KECCAK256, 0, 1, false),
                 (LOG0, 0, 1, false),
                 (LOG1, 0, 1, false),
                 (LOG2, 0, 1, false),
@@ -526,6 +531,11 @@ where
                 (RETURN, 0, 1, false),
                 (REVERT, 0, 1, false)
             ])
+        }
+
+        // Record writes with sstore (and sha3) if `StartMappingRecording` has been called
+        if let Some(mapping_slots) = &mut self.mapping_slots {
+            mapping::on_evm_step(mapping_slots, interpreter, data)
         }
 
         InstructionResult::Continue
@@ -565,7 +575,6 @@ where
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
-        is_static: bool,
     ) -> (InstructionResult, Gas, bytes::Bytes) {
         if call.contract == h160_to_b160(CHEATCODE_ADDRESS) {
             let gas = Gas::new(call.gas_limit);
@@ -674,7 +683,7 @@ where
                     // because we only need the from, to, value, and data. We can later change this
                     // into 1559, in the cli package, relatively easily once we
                     // know the target chain supports EIP-1559.
-                    if !is_static {
+                    if !call.is_static {
                         if let Err(err) = data
                             .journaled_state
                             .load_account(h160_to_b160(broadcast.new_origin), data.db)
@@ -739,7 +748,6 @@ where
         remaining_gas: Gas,
         status: InstructionResult,
         retdata: bytes::Bytes,
-        _: bool,
     ) -> (InstructionResult, Gas, bytes::Bytes) {
         if call.contract == h160_to_b160(CHEATCODE_ADDRESS) ||
             call.contract == h160_to_b160(HARDHAT_CONSOLE_ADDRESS)

@@ -4,6 +4,7 @@ use crate::{
     executor::{
         backend::DatabaseExt,
         inspector::cheatcodes::{
+            mapping::{get_mapping_key_and_parent, get_mapping_length, get_mapping_slot_at},
             util::{is_potential_precompile, with_journaled_account},
             DealRecord,
         },
@@ -160,8 +161,11 @@ fn prank(
 ) -> Result {
     let prank = Prank::new(prank_caller, prank_origin, new_caller, new_origin, depth, single_call);
 
-    if let Some(Prank { used, .. }) = state.prank {
+    if let Some(Prank { used, single_call: current_single_call, .. }) = state.prank {
         ensure!(used, "You cannot overwrite `prank` until it is applied at least once");
+        // This case can only fail if the user calls `vm.startPrank` and then `vm.prank` later on.
+        // This should not be possible without first calling `stopPrank`
+        ensure!(single_call == current_single_call, "You cannot override an ongoing prank with a single vm.prank. Use vm.startPrank to override the current prank.");
     }
 
     ensure!(
@@ -640,6 +644,23 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::ResumeGasMetering(_) => {
             state.gas_metering = None;
             Bytes::new()
+        }
+        HEVMCalls::StartMappingRecording(_) => {
+            if state.mapping_slots.is_none() {
+                state.mapping_slots = Some(Default::default());
+            }
+            Bytes::new()
+        }
+        HEVMCalls::StopMappingRecording(_) => {
+            state.mapping_slots = None;
+            Bytes::new()
+        }
+        HEVMCalls::GetMappingLength(inner) => get_mapping_length(state, inner.0, inner.1.into()),
+        HEVMCalls::GetMappingSlotAt(inner) => {
+            get_mapping_slot_at(state, inner.0, inner.1.into(), inner.2)
+        }
+        HEVMCalls::GetMappingKeyAndParentOf(inner) => {
+            get_mapping_key_and_parent(state, inner.0, inner.1.into())
         }
         _ => return Ok(None),
     };

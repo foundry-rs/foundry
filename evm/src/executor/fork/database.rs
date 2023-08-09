@@ -9,11 +9,10 @@ use crate::{
     revm::db::CacheDB,
 };
 use ethers::{prelude::U256, types::BlockId};
-use hashbrown::HashMap as Map;
 use parking_lot::Mutex;
 use revm::{
     db::DatabaseRef,
-    primitives::{Account, AccountInfo, Bytecode, B160, B256, U256 as rU256},
+    primitives::{Account, AccountInfo, Bytecode, HashMap as Map, B160, B256, U256 as rU256},
     Database, DatabaseCommit,
 };
 use std::sync::Arc;
@@ -114,8 +113,9 @@ impl ForkedDatabase {
     }
 
     pub fn revert_snapshot(&mut self, id: U256) -> bool {
-        let snapshot = { self.snapshots().lock().remove(id) };
+        let snapshot = { self.snapshots().lock().remove_at(id) };
         if let Some(snapshot) = snapshot {
+            self.snapshots().lock().insert_at(snapshot.clone(), id);
             let ForkDbSnapshot {
                 local,
                 snapshot: StateSnapshot { accounts, storage, block_hashes },
@@ -200,7 +200,7 @@ impl DatabaseCommit for ForkedDatabase {
 /// Represents a snapshot of the database
 ///
 /// This mimics `revm::CacheDB`
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ForkDbSnapshot {
     pub local: CacheDB<SharedBackend>,
     pub snapshot: StateSnapshot,

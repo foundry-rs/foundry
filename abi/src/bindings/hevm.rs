@@ -1967,6 +1967,88 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("getMappingKeyAndParentOf"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned(
+                                "getMappingKeyAndParentOf",
+                            ),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Address,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::FixedBytes(
+                                        32usize,
+                                    ),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
+                    ::std::borrow::ToOwned::to_owned("getMappingLength"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("getMappingLength"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Address,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::FixedBytes(
+                                        32usize,
+                                    ),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
+                    ::std::borrow::ToOwned::to_owned("getMappingSlotAt"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("getMappingSlotAt"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Address,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::FixedBytes(
+                                        32usize,
+                                    ),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("getNonce"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -4258,6 +4340,24 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("sleep"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("sleep"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("snapshot"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -4314,6 +4414,20 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("startMappingRecording"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned(
+                                "startMappingRecording",
+                            ),
+                            inputs: ::std::vec![],
+                            outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("startPrank"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -4354,6 +4468,20 @@ pub mod hevm {
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
                             name: ::std::borrow::ToOwned::to_owned("stopBroadcast"),
+                            inputs: ::std::vec![],
+                            outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
+                    ::std::borrow::ToOwned::to_owned("stopMappingRecording"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned(
+                                "stopMappingRecording",
+                            ),
                             inputs: ::std::vec![],
                             outputs: ::std::vec![],
                             constant: ::core::option::Option::None,
@@ -5559,6 +5687,37 @@ pub mod hevm {
                 .method_hash([40, 162, 73, 176], p0)
                 .expect("method not found (this should never happen)")
         }
+        ///Calls the contract's `getMappingKeyAndParentOf` (0x876e24e6) function
+        pub fn get_mapping_key_and_parent_of(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: [u8; 32],
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([135, 110, 36, 230], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `getMappingLength` (0x2f2fd63f) function
+        pub fn get_mapping_length(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: [u8; 32],
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([47, 47, 214, 63], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `getMappingSlotAt` (0xebc73ab4) function
+        pub fn get_mapping_slot_at(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: [u8; 32],
+            p2: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([235, 199, 58, 180], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
         ///Calls the contract's `getNonce` (0x2d0335ab) function
         pub fn get_nonce(
             &self,
@@ -6463,6 +6622,15 @@ pub mod hevm {
                 .method_hash([221, 130, 209, 62], p0)
                 .expect("method not found (this should never happen)")
         }
+        ///Calls the contract's `sleep` (0xfa9d8713) function
+        pub fn sleep(
+            &self,
+            p0: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([250, 157, 135, 19], p0)
+                .expect("method not found (this should never happen)")
+        }
         ///Calls the contract's `snapshot` (0x9711715a) function
         pub fn snapshot(
             &self,
@@ -6497,6 +6665,14 @@ pub mod hevm {
                 .method_hash([206, 129, 125, 71], p0)
                 .expect("method not found (this should never happen)")
         }
+        ///Calls the contract's `startMappingRecording` (0x3e9705c0) function
+        pub fn start_mapping_recording(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([62, 151, 5, 192], ())
+                .expect("method not found (this should never happen)")
+        }
         ///Calls the contract's `startPrank` (0x06447d56) function
         pub fn start_prank_0(
             &self,
@@ -6522,6 +6698,14 @@ pub mod hevm {
         ) -> ::ethers_contract::builders::ContractCall<M, ()> {
             self.0
                 .method_hash([118, 234, 221, 54], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `stopMappingRecording` (0x0d4aae9b) function
+        pub fn stop_mapping_recording(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([13, 74, 174, 155], ())
                 .expect("method not found (this should never happen)")
         }
         ///Calls the contract's `stopPrank` (0x90c5013b) function
@@ -7826,6 +8010,58 @@ pub mod hevm {
     )]
     #[ethcall(name = "getLabel", abi = "getLabel(address)")]
     pub struct GetLabelCall(pub ::ethers_core::types::Address);
+    ///Container type for all input parameters for the `getMappingKeyAndParentOf` function with signature `getMappingKeyAndParentOf(address,bytes32)` and selector `0x876e24e6`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(
+        name = "getMappingKeyAndParentOf",
+        abi = "getMappingKeyAndParentOf(address,bytes32)"
+    )]
+    pub struct GetMappingKeyAndParentOfCall(
+        pub ::ethers_core::types::Address,
+        pub [u8; 32],
+    );
+    ///Container type for all input parameters for the `getMappingLength` function with signature `getMappingLength(address,bytes32)` and selector `0x2f2fd63f`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "getMappingLength", abi = "getMappingLength(address,bytes32)")]
+    pub struct GetMappingLengthCall(pub ::ethers_core::types::Address, pub [u8; 32]);
+    ///Container type for all input parameters for the `getMappingSlotAt` function with signature `getMappingSlotAt(address,bytes32,uint256)` and selector `0xebc73ab4`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(
+        name = "getMappingSlotAt",
+        abi = "getMappingSlotAt(address,bytes32,uint256)"
+    )]
+    pub struct GetMappingSlotAtCall(
+        pub ::ethers_core::types::Address,
+        pub [u8; 32],
+        pub ::ethers_core::types::U256,
+    );
     ///Container type for all input parameters for the `getNonce` function with signature `getNonce(address)` and selector `0x2d0335ab`
     #[derive(
         Clone,
@@ -9108,6 +9344,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "skip", abi = "skip(bool)")]
     pub struct SkipCall(pub bool);
+    ///Container type for all input parameters for the `sleep` function with signature `sleep(uint256)` and selector `0xfa9d8713`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "sleep", abi = "sleep(uint256)")]
+    pub struct SleepCall(pub ::ethers_core::types::U256);
     ///Container type for all input parameters for the `snapshot` function with signature `snapshot()` and selector `0x9711715a`
     #[derive(
         Clone,
@@ -9160,6 +9409,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "startBroadcast", abi = "startBroadcast(uint256)")]
     pub struct StartBroadcast2Call(pub ::ethers_core::types::U256);
+    ///Container type for all input parameters for the `startMappingRecording` function with signature `startMappingRecording()` and selector `0x3e9705c0`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "startMappingRecording", abi = "startMappingRecording()")]
+    pub struct StartMappingRecordingCall;
     ///Container type for all input parameters for the `startPrank` function with signature `startPrank(address)` and selector `0x06447d56`
     #[derive(
         Clone,
@@ -9202,6 +9464,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "stopBroadcast", abi = "stopBroadcast()")]
     pub struct StopBroadcastCall;
+    ///Container type for all input parameters for the `stopMappingRecording` function with signature `stopMappingRecording()` and selector `0x0d4aae9b`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "stopMappingRecording", abi = "stopMappingRecording()")]
+    pub struct StopMappingRecordingCall;
     ///Container type for all input parameters for the `stopPrank` function with signature `stopPrank()` and selector `0x90c5013b`
     #[derive(
         Clone,
@@ -9512,6 +9787,9 @@ pub mod hevm {
         GetCode(GetCodeCall),
         GetDeployedCode(GetDeployedCodeCall),
         GetLabel(GetLabelCall),
+        GetMappingKeyAndParentOf(GetMappingKeyAndParentOfCall),
+        GetMappingLength(GetMappingLengthCall),
+        GetMappingSlotAt(GetMappingSlotAtCall),
         GetNonce(GetNonceCall),
         GetRecordedLogs(GetRecordedLogsCall),
         IsPersistent(IsPersistentCall),
@@ -9600,13 +9878,16 @@ pub mod hevm {
         SetNonceUnsafe(SetNonceUnsafeCall),
         Sign(SignCall),
         Skip(SkipCall),
+        Sleep(SleepCall),
         Snapshot(SnapshotCall),
         StartBroadcast0(StartBroadcast0Call),
         StartBroadcast1(StartBroadcast1Call),
         StartBroadcast2(StartBroadcast2Call),
+        StartMappingRecording(StartMappingRecordingCall),
         StartPrank0(StartPrank0Call),
         StartPrank1(StartPrank1Call),
         StopBroadcast(StopBroadcastCall),
+        StopMappingRecording(StopMappingRecordingCall),
         StopPrank(StopPrankCall),
         Store(StoreCall),
         ToString0(ToString0Call),
@@ -9957,6 +10238,20 @@ pub mod hevm {
             if let Ok(decoded)
                 = <GetLabelCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::GetLabel(decoded));
+            }
+            if let Ok(decoded)
+                = <GetMappingKeyAndParentOfCall as ::ethers_core::abi::AbiDecode>::decode(
+                    data,
+                ) {
+                return Ok(Self::GetMappingKeyAndParentOf(decoded));
+            }
+            if let Ok(decoded)
+                = <GetMappingLengthCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::GetMappingLength(decoded));
+            }
+            if let Ok(decoded)
+                = <GetMappingSlotAtCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::GetMappingSlotAt(decoded));
             }
             if let Ok(decoded)
                 = <GetNonceCall as ::ethers_core::abi::AbiDecode>::decode(data) {
@@ -10339,6 +10634,10 @@ pub mod hevm {
                 return Ok(Self::Skip(decoded));
             }
             if let Ok(decoded)
+                = <SleepCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::Sleep(decoded));
+            }
+            if let Ok(decoded)
                 = <SnapshotCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::Snapshot(decoded));
             }
@@ -10355,6 +10654,12 @@ pub mod hevm {
                 return Ok(Self::StartBroadcast2(decoded));
             }
             if let Ok(decoded)
+                = <StartMappingRecordingCall as ::ethers_core::abi::AbiDecode>::decode(
+                    data,
+                ) {
+                return Ok(Self::StartMappingRecording(decoded));
+            }
+            if let Ok(decoded)
                 = <StartPrank0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::StartPrank0(decoded));
             }
@@ -10365,6 +10670,12 @@ pub mod hevm {
             if let Ok(decoded)
                 = <StopBroadcastCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::StopBroadcast(decoded));
+            }
+            if let Ok(decoded)
+                = <StopMappingRecordingCall as ::ethers_core::abi::AbiDecode>::decode(
+                    data,
+                ) {
+                return Ok(Self::StopMappingRecording(decoded));
             }
             if let Ok(decoded)
                 = <StopPrankCall as ::ethers_core::abi::AbiDecode>::decode(data) {
@@ -10615,6 +10926,15 @@ pub mod hevm {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
                 Self::GetLabel(element) => ::ethers_core::abi::AbiEncode::encode(element),
+                Self::GetMappingKeyAndParentOf(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
+                Self::GetMappingLength(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
+                Self::GetMappingSlotAt(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
                 Self::GetNonce(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::GetRecordedLogs(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
@@ -10835,6 +11155,7 @@ pub mod hevm {
                 }
                 Self::Sign(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::Skip(element) => ::ethers_core::abi::AbiEncode::encode(element),
+                Self::Sleep(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::Snapshot(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::StartBroadcast0(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
@@ -10845,6 +11166,9 @@ pub mod hevm {
                 Self::StartBroadcast2(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
+                Self::StartMappingRecording(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
                 Self::StartPrank0(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
@@ -10852,6 +11176,9 @@ pub mod hevm {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
                 Self::StopBroadcast(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
+                Self::StopMappingRecording(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
                 Self::StopPrank(element) => {
@@ -10988,6 +11315,11 @@ pub mod hevm {
                 Self::GetCode(element) => ::core::fmt::Display::fmt(element, f),
                 Self::GetDeployedCode(element) => ::core::fmt::Display::fmt(element, f),
                 Self::GetLabel(element) => ::core::fmt::Display::fmt(element, f),
+                Self::GetMappingKeyAndParentOf(element) => {
+                    ::core::fmt::Display::fmt(element, f)
+                }
+                Self::GetMappingLength(element) => ::core::fmt::Display::fmt(element, f),
+                Self::GetMappingSlotAt(element) => ::core::fmt::Display::fmt(element, f),
                 Self::GetNonce(element) => ::core::fmt::Display::fmt(element, f),
                 Self::GetRecordedLogs(element) => ::core::fmt::Display::fmt(element, f),
                 Self::IsPersistent(element) => ::core::fmt::Display::fmt(element, f),
@@ -11088,13 +11420,20 @@ pub mod hevm {
                 Self::SetNonceUnsafe(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Sign(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Skip(element) => ::core::fmt::Display::fmt(element, f),
+                Self::Sleep(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Snapshot(element) => ::core::fmt::Display::fmt(element, f),
                 Self::StartBroadcast0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::StartBroadcast1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::StartBroadcast2(element) => ::core::fmt::Display::fmt(element, f),
+                Self::StartMappingRecording(element) => {
+                    ::core::fmt::Display::fmt(element, f)
+                }
                 Self::StartPrank0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::StartPrank1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::StopBroadcast(element) => ::core::fmt::Display::fmt(element, f),
+                Self::StopMappingRecording(element) => {
+                    ::core::fmt::Display::fmt(element, f)
+                }
                 Self::StopPrank(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Store(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ToString0(element) => ::core::fmt::Display::fmt(element, f),
@@ -11508,6 +11847,21 @@ pub mod hevm {
     impl ::core::convert::From<GetLabelCall> for HEVMCalls {
         fn from(value: GetLabelCall) -> Self {
             Self::GetLabel(value)
+        }
+    }
+    impl ::core::convert::From<GetMappingKeyAndParentOfCall> for HEVMCalls {
+        fn from(value: GetMappingKeyAndParentOfCall) -> Self {
+            Self::GetMappingKeyAndParentOf(value)
+        }
+    }
+    impl ::core::convert::From<GetMappingLengthCall> for HEVMCalls {
+        fn from(value: GetMappingLengthCall) -> Self {
+            Self::GetMappingLength(value)
+        }
+    }
+    impl ::core::convert::From<GetMappingSlotAtCall> for HEVMCalls {
+        fn from(value: GetMappingSlotAtCall) -> Self {
+            Self::GetMappingSlotAt(value)
         }
     }
     impl ::core::convert::From<GetNonceCall> for HEVMCalls {
@@ -11950,6 +12304,11 @@ pub mod hevm {
             Self::Skip(value)
         }
     }
+    impl ::core::convert::From<SleepCall> for HEVMCalls {
+        fn from(value: SleepCall) -> Self {
+            Self::Sleep(value)
+        }
+    }
     impl ::core::convert::From<SnapshotCall> for HEVMCalls {
         fn from(value: SnapshotCall) -> Self {
             Self::Snapshot(value)
@@ -11970,6 +12329,11 @@ pub mod hevm {
             Self::StartBroadcast2(value)
         }
     }
+    impl ::core::convert::From<StartMappingRecordingCall> for HEVMCalls {
+        fn from(value: StartMappingRecordingCall) -> Self {
+            Self::StartMappingRecording(value)
+        }
+    }
     impl ::core::convert::From<StartPrank0Call> for HEVMCalls {
         fn from(value: StartPrank0Call) -> Self {
             Self::StartPrank0(value)
@@ -11983,6 +12347,11 @@ pub mod hevm {
     impl ::core::convert::From<StopBroadcastCall> for HEVMCalls {
         fn from(value: StopBroadcastCall) -> Self {
             Self::StopBroadcast(value)
+        }
+    }
+    impl ::core::convert::From<StopMappingRecordingCall> for HEVMCalls {
+        fn from(value: StopMappingRecordingCall) -> Self {
+            Self::StopMappingRecording(value)
         }
     }
     impl ::core::convert::From<StopPrankCall> for HEVMCalls {

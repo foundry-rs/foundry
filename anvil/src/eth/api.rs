@@ -82,7 +82,7 @@ pub struct EthApi {
     pool: Arc<Pool>,
     /// Holds all blockchain related data
     /// In-Memory only for now
-    backend: Arc<backend::mem::Backend>,
+    pub(super) backend: Arc<backend::mem::Backend>,
     /// Whether this node is mining
     is_mining: bool,
     /// available signers
@@ -356,6 +356,41 @@ impl EthApi {
             EthRequest::TxPoolStatus(_) => self.txpool_status().await.to_rpc_result(),
             EthRequest::TxPoolInspect(_) => self.txpool_inspect().await.to_rpc_result(),
             EthRequest::TxPoolContent(_) => self.txpool_content().await.to_rpc_result(),
+            EthRequest::ErigonGetHeaderByNumber(num) => {
+                self.erigon_get_header_by_number(num).await.to_rpc_result()
+            }
+            EthRequest::OtsGetApiLevel(_) => self.ots_get_api_level().await.to_rpc_result(),
+            EthRequest::OtsGetInternalOperations(hash) => {
+                self.ots_get_internal_operations(hash).await.to_rpc_result()
+            }
+            EthRequest::OtsHasCode(addr, num) => self.ots_has_code(addr, num).await.to_rpc_result(),
+            EthRequest::OtsTraceTransaction(hash) => {
+                self.ots_trace_transaction(hash).await.to_rpc_result()
+            }
+            EthRequest::OtsGetTransactionError(hash) => {
+                self.ots_get_transaction_error(hash).await.to_rpc_result()
+            }
+            EthRequest::OtsGetBlockDetails(num) => {
+                self.ots_get_block_details(num).await.to_rpc_result()
+            }
+            EthRequest::OtsGetBlockDetailsByHash(hash) => {
+                self.ots_get_block_details_by_hash(hash).await.to_rpc_result()
+            }
+            EthRequest::OtsGetBlockTransactions(num, page, page_size) => {
+                self.ots_get_block_transactions(num, page, page_size).await.to_rpc_result()
+            }
+            EthRequest::OtsSearchTransactionsBefore(address, num, page_size) => {
+                self.ots_search_transactions_before(address, num, page_size).await.to_rpc_result()
+            }
+            EthRequest::OtsSearchTransactionsAfter(address, num, page_size) => {
+                self.ots_search_transactions_after(address, num, page_size).await.to_rpc_result()
+            }
+            EthRequest::OtsGetTransactionBySenderAndNonce(address, nonce) => {
+                self.ots_get_transaction_by_sender_and_nonce(address, nonce).await.to_rpc_result()
+            }
+            EthRequest::OtsGetContractCreator(address) => {
+                self.ots_get_contract_creator(address).await.to_rpc_result()
+            }
         }
     }
 
@@ -981,7 +1016,6 @@ impl EthApi {
                 pending.transaction,
                 None,
                 None,
-                true,
                 Some(self.backend.base_fee()),
             );
             // we set the from field here explicitly to the set sender of the pending transaction,
@@ -1907,7 +1941,6 @@ impl EthApi {
                 tx.pending_transaction.transaction.clone(),
                 None,
                 None,
-                true,
                 None,
             );
 
@@ -2053,7 +2086,7 @@ impl EthApi {
 
         // Exceptional case: init used too much gas, we need to increase the gas limit and try
         // again
-        if let Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh)) =
+        if let Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh(_))) =
             ethres
         {
             // if price or limit was included in the request then we can execute the request
@@ -2125,8 +2158,9 @@ impl EthApi {
 
             // Exceptional case: init used too much gas, we need to increase the gas limit and try
             // again
-            if let Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh)) =
-                ethres
+            if let Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh(
+                _,
+            ))) = ethres
             {
                 // increase the lowest gas limit
                 lowest_gas_limit = mid_gas_limit;
@@ -2255,7 +2289,6 @@ impl EthApi {
                 tx,
                 Some(&block),
                 Some(info),
-                true,
                 Some(base_fee),
             );
             block_transactions.push(tx);
