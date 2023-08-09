@@ -2901,6 +2901,39 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("parseJsonKeys"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("parseJsonKeys"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Array(
+                                        ::std::boxed::Box::new(
+                                            ::ethers_core::abi::ethabi::ParamType::String,
+                                        ),
+                                    ),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("parseJsonString"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -6050,6 +6083,19 @@ pub mod hevm {
                 .method_hash([153, 131, 194, 138], (p0, p1))
                 .expect("method not found (this should never happen)")
         }
+        ///Calls the contract's `parseJsonKeys` (0x213e4198) function
+        pub fn parse_json_keys(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<::std::string::String>,
+        > {
+            self.0
+                .method_hash([33, 62, 65, 152], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
         ///Calls the contract's `parseJsonString` (0x49c4fac8) function
         pub fn parse_json_string(
             &self,
@@ -8533,6 +8579,19 @@ pub mod hevm {
         pub ::std::string::String,
         pub ::std::string::String,
     );
+    ///Container type for all input parameters for the `parseJsonKeys` function with signature `parseJsonKeys(string,string)` and selector `0x213e4198`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "parseJsonKeys", abi = "parseJsonKeys(string,string)")]
+    pub struct ParseJsonKeysCall(pub ::std::string::String, pub ::std::string::String);
     ///Container type for all input parameters for the `parseJsonString` function with signature `parseJsonString(string,string)` and selector `0x49c4fac8`
     #[derive(
         Clone,
@@ -9822,6 +9881,7 @@ pub mod hevm {
         ParseJsonBytesArray(ParseJsonBytesArrayCall),
         ParseJsonInt(ParseJsonIntCall),
         ParseJsonIntArray(ParseJsonIntArrayCall),
+        ParseJsonKeys(ParseJsonKeysCall),
         ParseJsonString(ParseJsonStringCall),
         ParseJsonStringArray(ParseJsonStringArrayCall),
         ParseJsonUint(ParseJsonUintCall),
@@ -10390,6 +10450,10 @@ pub mod hevm {
                     data,
                 ) {
                 return Ok(Self::ParseJsonIntArray(decoded));
+            }
+            if let Ok(decoded)
+                = <ParseJsonKeysCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::ParseJsonKeys(decoded));
             }
             if let Ok(decoded)
                 = <ParseJsonStringCall as ::ethers_core::abi::AbiDecode>::decode(data) {
@@ -11021,6 +11085,9 @@ pub mod hevm {
                 Self::ParseJsonIntArray(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
+                Self::ParseJsonKeys(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
                 Self::ParseJsonString(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
@@ -11360,6 +11427,7 @@ pub mod hevm {
                 }
                 Self::ParseJsonInt(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ParseJsonIntArray(element) => ::core::fmt::Display::fmt(element, f),
+                Self::ParseJsonKeys(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ParseJsonString(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ParseJsonStringArray(element) => {
                     ::core::fmt::Display::fmt(element, f)
@@ -12022,6 +12090,11 @@ pub mod hevm {
     impl ::core::convert::From<ParseJsonIntArrayCall> for HEVMCalls {
         fn from(value: ParseJsonIntArrayCall) -> Self {
             Self::ParseJsonIntArray(value)
+        }
+    }
+    impl ::core::convert::From<ParseJsonKeysCall> for HEVMCalls {
+        fn from(value: ParseJsonKeysCall) -> Self {
+            Self::ParseJsonKeys(value)
         }
     }
     impl ::core::convert::From<ParseJsonStringCall> for HEVMCalls {
@@ -13238,6 +13311,18 @@ pub mod hevm {
         Hash
     )]
     pub struct ParseJsonIntArrayReturn(pub ::std::vec::Vec<::ethers_core::types::I256>);
+    ///Container type for all return fields from the `parseJsonKeys` function with signature `parseJsonKeys(string,string)` and selector `0x213e4198`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct ParseJsonKeysReturn(pub ::std::vec::Vec<::std::string::String>);
     ///Container type for all return fields from the `parseJsonString` function with signature `parseJsonString(string,string)` and selector `0x49c4fac8`
     #[derive(
         Clone,
