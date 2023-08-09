@@ -4,6 +4,7 @@ use figment::{
     Error, Figment, Metadata, Profile, Provider,
 };
 
+/// Remappings provider
 pub mod remappings;
 
 /// Generate warnings for unknown sections and deprecated keys
@@ -16,6 +17,7 @@ pub struct WarningsProvider<P> {
 impl<P> WarningsProvider<P> {
     const WARNINGS_KEY: &'static str = "__warnings";
 
+    /// Creates a new warnings provider.
     pub fn new(
         provider: P,
         profile: impl Into<Profile>,
@@ -24,6 +26,7 @@ impl<P> WarningsProvider<P> {
         Self { provider, profile: profile.into(), old_warnings }
     }
 
+    /// Creates a new figment warnings provider.
     pub fn for_figment(provider: P, figment: &Figment) -> Self {
         let old_warnings = {
             let warnings_res = figment.extract_inner(Self::WARNINGS_KEY);
@@ -38,6 +41,7 @@ impl<P> WarningsProvider<P> {
 }
 
 impl<P: Provider> WarningsProvider<P> {
+    /// Collects all warnings.
     pub fn collect_warnings(&self) -> Result<Vec<Warning>, Error> {
         let mut out = self.old_warnings.clone()?;
         // add warning for unknown sections
@@ -103,6 +107,7 @@ pub struct FallbackProfileProvider<P> {
 }
 
 impl<P> FallbackProfileProvider<P> {
+    /// Creates a new fallback profile provider.
     pub fn new(provider: P, profile: impl Into<Profile>, fallback: impl Into<Profile>) -> Self {
         FallbackProfileProvider { provider, profile: profile.into(), fallback: fallback.into() }
     }

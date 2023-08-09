@@ -59,11 +59,11 @@ impl EvmOpts {
     ///
     /// If a `fork_url` is set, it gets configured with settings fetched from the endpoint (chain
     /// id, )
-    pub async fn evm_env(&self) -> revm::primitives::Env {
+    pub async fn evm_env(&self) -> eyre::Result<revm::primitives::Env> {
         if let Some(ref fork_url) = self.fork_url {
-            self.fork_evm_env(fork_url).await.expect("Could not instantiate forked environment").0
+            Ok(self.fork_evm_env(fork_url).await?.0)
         } else {
-            self.local_evm_env()
+            Ok(self.local_evm_env())
         }
     }
 

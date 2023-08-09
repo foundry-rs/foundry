@@ -246,7 +246,9 @@ fn canonicalize_json_key(key: &str) -> String {
 
 /// Encodes a vector of [`Token`] into a vector of bytes.
 fn encode_abi_values(values: Vec<Token>) -> Vec<u8> {
-    if values.len() == 1 {
+    if values.is_empty() {
+        abi::encode(&[Token::Bytes(Vec::new())])
+    } else if values.len() == 1 {
         abi::encode(&[Token::Bytes(abi::encode(&values))])
     } else {
         abi::encode(&[Token::Bytes(abi::encode(&[Token::Array(values)]))])
@@ -414,6 +416,14 @@ fn key_exists(json_str: &str, key: &str) -> Result {
     let values = jsonpath_lib::select(&json, &canonicalize_json_key(key))?;
     let exists = util::parse(&(!values.is_empty()).to_string(), &ParamType::Bool)?;
     Ok(exists)
+}
+
+/// Sleeps for a given amount of milliseconds.
+fn sleep(milliseconds: &U256) -> Result {
+    let sleep_duration = std::time::Duration::from_millis(milliseconds.as_u64());
+    std::thread::sleep(sleep_duration);
+
+    Ok(Default::default())
 }
 
 #[instrument(level = "error", name = "ext", target = "evm::cheatcodes", skip_all)]
@@ -590,6 +600,7 @@ pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
         HEVMCalls::SerializeBytes1(inner) => {
             serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
         }
+        HEVMCalls::Sleep(inner) => sleep(&inner.0),
         HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
         HEVMCalls::WriteJson1(inner) => write_json(state, &inner.0, &inner.1, Some(&inner.2)),
         HEVMCalls::KeyExists(inner) => key_exists(&inner.0, &inner.1),

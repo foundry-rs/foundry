@@ -1801,7 +1801,7 @@ impl SimpleCast {
             eyre::bail!("Invalid signature");
         };
 
-        let num_threads = num_cpus::get();
+        let num_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
         let found = AtomicBool::new(false);
 
         let result: Option<(u32, String, String)> =

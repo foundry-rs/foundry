@@ -202,11 +202,7 @@ impl CallTraceDecoder {
 
                 // Flatten errors from all ABIs
                 abi.errors().for_each(|error| {
-                    let entry = self
-                        .errors
-                        .errors
-                        .entry(error.name.clone())
-                        .or_insert_with(Default::default);
+                    let entry = self.errors.errors.entry(error.name.clone()).or_default();
                     entry.push(error.clone());
                 });
 

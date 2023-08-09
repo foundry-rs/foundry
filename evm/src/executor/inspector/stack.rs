@@ -52,7 +52,7 @@ pub struct InspectorData {
 #[derive(Default)]
 pub struct InspectorStack {
     pub tracer: Option<Tracer>,
-    pub logs: Option<LogCollector>,
+    pub log_collector: Option<LogCollector>,
     pub cheatcodes: Option<Cheatcodes>,
     pub gas: Option<Rc<RefCell<GasInspector>>>,
     pub debugger: Option<Debugger>,
@@ -65,7 +65,7 @@ pub struct InspectorStack {
 impl InspectorStack {
     pub fn collect_inspector_states(self) -> InspectorData {
         InspectorData {
-            logs: self.logs.map(|logs| logs.logs).unwrap_or_default(),
+            logs: self.log_collector.map(|logs| logs.logs).unwrap_or_default(),
             labels: self
                 .cheatcodes
                 .as_ref()
@@ -92,7 +92,6 @@ impl InspectorStack {
         remaining_gas: Gas,
         status: InstructionResult,
         retdata: Bytes,
-        is_static: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         call_inspectors!(
             inspector,
@@ -102,19 +101,13 @@ impl InspectorStack {
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
-                &mut self.logs,
+                &mut self.log_collector,
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
             {
-                let (new_status, new_gas, new_retdata) = inspector.call_end(
-                    data,
-                    call,
-                    remaining_gas,
-                    status,
-                    retdata.clone(),
-                    is_static,
-                );
+                let (new_status, new_gas, new_retdata) =
+                    inspector.call_end(data, call, remaining_gas, status, retdata.clone());
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
@@ -138,7 +131,6 @@ where
         &mut self,
         interpreter: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
-        is_static: bool,
     ) -> InstructionResult {
         call_inspectors!(
             inspector,
@@ -147,12 +139,12 @@ where
                 &mut self.debugger,
                 &mut self.coverage,
                 &mut self.tracer,
-                &mut self.logs,
+                &mut self.log_collector,
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
             {
-                let status = inspector.initialize_interp(interpreter, data, is_static);
+                let status = inspector.initialize_interp(interpreter, data);
 
                 // Allow inspectors to exit early
                 if status != InstructionResult::Continue {
@@ -168,7 +160,6 @@ where
         &mut self,
         interpreter: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
-        is_static: bool,
     ) -> InstructionResult {
         call_inspectors!(
             inspector,
@@ -178,12 +169,12 @@ where
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
-                &mut self.logs,
+                &mut self.log_collector,
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
             {
-                let status = inspector.step(interpreter, data, is_static);
+                let status = inspector.step(interpreter, data);
 
                 // Allow inspectors to exit early
                 if status != InstructionResult::Continue {
@@ -204,7 +195,7 @@ where
     ) {
         call_inspectors!(
             inspector,
-            [&mut self.tracer, &mut self.logs, &mut self.cheatcodes, &mut self.printer],
+            [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
             {
                 inspector.log(evm_data, address, topics, data);
             }
@@ -215,7 +206,6 @@ where
         &mut self,
         interpreter: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
-        is_static: bool,
         status: InstructionResult,
     ) -> InstructionResult {
         call_inspectors!(
@@ -224,13 +214,13 @@ where
                 &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
                 &mut self.debugger,
                 &mut self.tracer,
-                &mut self.logs,
+                &mut self.log_collector,
                 &mut self.cheatcodes,
                 &mut self.printer,
                 &mut self.chisel_state
             ],
             {
-                let status = inspector.step_end(interpreter, data, is_static, status);
+                let status = inspector.step_end(interpreter, data, status);
 
                 // Allow inspectors to exit early
                 if status != InstructionResult::Continue {
@@ -246,7 +236,6 @@ where
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
-        is_static: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         call_inspectors!(
             inspector,
@@ -256,12 +245,12 @@ where
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
-                &mut self.logs,
+                &mut self.log_collector,
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
             {
-                let (status, gas, retdata) = inspector.call(data, call, is_static);
+                let (status, gas, retdata) = inspector.call(data, call);
 
                 // Allow inspectors to exit early
                 if status != InstructionResult::Continue {
@@ -280,9 +269,8 @@ where
         remaining_gas: Gas,
         status: InstructionResult,
         retdata: Bytes,
-        is_static: bool,
     ) -> (InstructionResult, Gas, Bytes) {
-        let res = self.do_call_end(data, call, remaining_gas, status, retdata, is_static);
+        let res = self.do_call_end(data, call, remaining_gas, status, retdata);
 
         if matches!(res.0, return_revert!()) {
             // Encountered a revert, since cheatcodes may have altered the evm state in such a way
@@ -308,7 +296,7 @@ where
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
-                &mut self.logs,
+                &mut self.log_collector,
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
@@ -341,7 +329,7 @@ where
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
-                &mut self.logs,
+                &mut self.log_collector,
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
@@ -370,7 +358,7 @@ where
             [
                 &mut self.debugger,
                 &mut self.tracer,
-                &mut self.logs,
+                &mut self.log_collector,
                 &mut self.cheatcodes,
                 &mut self.printer,
                 &mut self.chisel_state
