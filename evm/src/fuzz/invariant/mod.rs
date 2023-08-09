@@ -135,6 +135,7 @@ pub fn assert_invariants(
 }
 
 /// Replays the provided invariant run for collecting the logs and traces from all depths.
+#[allow(clippy::too_many_arguments)]
 pub fn replay_run(
     invariant_contract: &InvariantContract,
     mut executor: Executor,
