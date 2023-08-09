@@ -7,6 +7,7 @@ use clap::Parser;
 use ethers::{
     abi::Address,
     prelude::{artifacts::ContractBytecodeSome, ArtifactId, Middleware},
+    solc::EvmVersion,
     types::H160,
 };
 use eyre::WrapErr;
@@ -64,6 +65,27 @@ pub struct RunArgs {
 
     #[clap(flatten)]
     rpc: RpcOpts,
+
+    /// The evm version to use.
+    ///
+    /// Overrides the version specified in the config.
+    #[clap(long, short)]
+    evm_version: Option<EvmVersion>,
+    /// Sets the number of assumed available compute units per second for this provider
+    ///
+    /// default value: 330
+    ///
+    /// See also, https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    #[clap(long, alias = "cups", value_name = "CUPS")]
+    pub compute_units_per_second: Option<u64>,
+
+    /// Disables rate limiting for this node's provider.
+    ///
+    /// default value: false
+    ///
+    /// See also, https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    #[clap(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
+    pub no_rate_limit: bool,
 }
 
 impl RunArgs {
@@ -73,10 +95,17 @@ impl RunArgs {
     ///
     /// Note: This executes the transaction(s) as is: Cheatcodes are disabled
     pub async fn run(self) -> eyre::Result<()> {
-        let figment = Config::figment_with_root(find_project_root_path().unwrap()).merge(self.rpc);
+        let figment =
+            Config::figment_with_root(find_project_root_path(None).unwrap()).merge(self.rpc);
         let mut evm_opts = figment.extract::<EvmOpts>()?;
         let config = Config::from_provider(figment).sanitized();
-        let provider = utils::get_provider(&config)?;
+
+        let compute_units_per_second =
+            if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
+
+        let provider = utils::get_provider_builder(&config)?
+            .compute_units_per_second_opt(compute_units_per_second)
+            .build()?;
 
         let tx_hash = self.tx_hash.parse().wrap_err("invalid tx hash")?;
         let tx = provider
@@ -94,7 +123,7 @@ impl RunArgs {
         evm_opts.fork_block_number = Some(tx_block_number - 1);
 
         // Set up the execution environment
-        let mut env = evm_opts.evm_env().await;
+        let mut env = evm_opts.evm_env().await?;
         // can safely disable base fee checks on replaying txs because can
         // assume those checks already passed on confirmed txs
         env.cfg.disable_base_fee = true;
@@ -102,8 +131,9 @@ impl RunArgs {
 
         // configures a bare version of the evm executor: no cheatcode inspector is enabled,
         // tracing will be enabled only for the targeted transaction
-        let builder =
-            ExecutorBuilder::default().with_config(env).with_spec(evm_spec(&config.evm_version));
+        let builder = ExecutorBuilder::default()
+            .with_config(env)
+            .with_spec(evm_spec(&self.evm_version.unwrap_or(config.evm_version)));
 
         let mut executor = builder.build(db);
 
@@ -148,9 +178,17 @@ impl RunArgs {
                         })?;
                     } else {
                         trace!(tx=?tx.hash, "executing previous create transaction");
-                        executor.deploy_with_env(env.clone(), None).wrap_err_with(|| {
-                            format!("Failed to deploy transaction: {:?}", tx.hash())
-                        })?;
+                        if let Err(error) = executor.deploy_with_env(env.clone(), None) {
+                            match error {
+                                // Reverted transactions should be skipped
+                                EvmError::Execution(_) => (),
+                                error => {
+                                    return Err(error).wrap_err_with(|| {
+                                        format!("Failed to deploy transaction: {:?}", tx.hash())
+                                    })
+                                }
+                            }
+                        }
                     }
 
                     update_progress!(pb, index);
@@ -176,7 +214,7 @@ impl RunArgs {
                     debug: run_debug,
                     exit_reason: _,
                     ..
-                } = executor.commit_tx_with_env(env).unwrap();
+                } = executor.commit_tx_with_env(env)?;
 
                 RunResult {
                     success: !reverted,

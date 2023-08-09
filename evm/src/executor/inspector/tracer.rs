@@ -92,7 +92,7 @@ impl Tracer {
         }
     }
 
-    fn start_step<DB: Database>(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>) {
+    fn start_step<DB: Database>(&mut self, interp: &Interpreter, data: &EVMData<'_, DB>) {
         let trace_idx =
             *self.trace_stack.last().expect("can't start step without starting a trace first");
         let trace = &mut self.traces.arena[trace_idx];
@@ -118,8 +118,8 @@ impl Tracer {
 
     fn fill_step<DB: Database>(
         &mut self,
-        interp: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
+        interp: &Interpreter,
+        data: &EVMData<'_, DB>,
         status: InstructionResult,
     ) {
         let (trace_idx, step_idx) =
@@ -162,12 +162,7 @@ impl<DB> Inspector<DB> for Tracer
 where
     DB: Database,
 {
-    fn step(
-        &mut self,
-        interp: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-        _is_static: bool,
-    ) -> InstructionResult {
+    fn step(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>) -> InstructionResult {
         if !self.record_steps {
             return InstructionResult::Continue
         }
@@ -188,7 +183,6 @@ where
         &mut self,
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
-        _is_static: bool,
         status: InstructionResult,
     ) -> InstructionResult {
         if !self.record_steps {
@@ -204,7 +198,6 @@ where
         &mut self,
         data: &mut EVMData<'_, DB>,
         inputs: &mut CallInputs,
-        _is_static: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         let (from, to) = match inputs.context.scheme {
             CallScheme::DelegateCall | CallScheme::CallCode => {
@@ -232,7 +225,6 @@ where
         gas: Gas,
         status: InstructionResult,
         retdata: Bytes,
-        _is_static: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         self.fill_trace(
             status,

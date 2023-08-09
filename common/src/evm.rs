@@ -101,11 +101,6 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub verbosity: u8,
 
-    /// All ethereum environment related arguments
-    #[clap(flatten)]
-    #[serde(flatten)]
-    pub env: EnvArgs,
-
     /// Sets the number of assumed available compute units per second for this provider
     ///
     /// default value: 330
@@ -132,6 +127,11 @@ pub struct EvmArgs {
     )]
     #[serde(skip)]
     pub no_rpc_rate_limit: bool,
+
+    /// All ethereum environment related arguments
+    #[clap(flatten)]
+    #[serde(flatten)]
+    pub env: EnvArgs,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`

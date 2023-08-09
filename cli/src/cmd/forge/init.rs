@@ -22,9 +22,6 @@ pub struct InitArgs {
     #[clap(long, short)]
     template: Option<String>,
 
-    #[clap(flatten)]
-    opts: DependencyInstallOpts,
-
     /// Do not install dependencies from the network.
     #[clap(long, conflicts_with = "template", visible_alias = "no-deps")]
     offline: bool,
@@ -37,6 +34,9 @@ pub struct InitArgs {
     /// file.
     #[clap(long, conflicts_with = "template")]
     vscode: bool,
+
+    #[clap(flatten)]
+    opts: DependencyInstallOpts,
 }
 
 impl Cmd for InitArgs {
@@ -113,6 +113,9 @@ impl Cmd for InitArgs {
             // write the script
             let contract_path = script.join("Counter.s.sol");
             fs::write(contract_path, include_str!("../../../assets/CounterTemplate.s.sol"))?;
+            // Write the default README file
+            let readme_path = root.join("README.md");
+            fs::write(readme_path, include_str!("../../../assets/README.md"))?;
 
             // write foundry.toml, if it doesn't exist already
             let dest = root.join(Config::FILE_NAME);

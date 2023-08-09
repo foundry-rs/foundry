@@ -145,25 +145,27 @@ forgetest_init!(
         assert!(foundry_toml.exists());
 
         let profile = Config::load_with_root(prj.root());
+        // ensure that the auto-generated internal remapping for forge-std's ds-test exists
+        assert_eq!(profile.remappings.len(), 2);
+        pretty_eq!("ds-test/=lib/forge-std/lib/ds-test/src/", profile.remappings[0].to_string());
 
         // ensure remappings contain test
-        assert_eq!(profile.remappings.len(), 2);
-        assert_eq!("ds-test/=lib/forge-std/lib/ds-test/src/", profile.remappings[0].to_string());
+        pretty_eq!("ds-test/=lib/forge-std/lib/ds-test/src/", profile.remappings[0].to_string());
         // the loaded config has resolved, absolute paths
-        assert_eq!(
+        pretty_eq!(
             "ds-test/=lib/forge-std/lib/ds-test/src/",
             Remapping::from(profile.remappings[0].clone()).to_string()
         );
 
         cmd.arg("config");
         let expected = profile.to_string_pretty().unwrap();
-        assert_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+        pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
 
         // remappings work
         let remappings_txt =
             prj.create_file("remappings.txt", "ds-test/=lib/forge-std/lib/ds-test/from-file/");
         let config = forge_utils::load_config_with_root(Some(prj.root().into()));
-        assert_eq!(
+        pretty_eq!(
             format!(
                 "ds-test/={}/",
                 prj.root().join("lib/forge-std/lib/ds-test/from-file").to_slash_lossy()
@@ -174,7 +176,7 @@ forgetest_init!(
         // env vars work
         std::env::set_var("DAPP_REMAPPINGS", "ds-test/=lib/forge-std/lib/ds-test/from-env/");
         let config = forge_utils::load_config_with_root(Some(prj.root().into()));
-        assert_eq!(
+        pretty_eq!(
             format!(
                 "ds-test/={}/",
                 prj.root().join("lib/forge-std/lib/ds-test/from-env").to_slash_lossy()
@@ -184,7 +186,7 @@ forgetest_init!(
 
         let config =
             prj.config_from_output(["--remappings", "ds-test/=lib/forge-std/lib/ds-test/from-cli"]);
-        assert_eq!(
+        pretty_eq!(
             format!(
                 "ds-test/={}/",
                 prj.root().join("lib/forge-std/lib/ds-test/from-cli").to_slash_lossy()
@@ -194,12 +196,69 @@ forgetest_init!(
 
         let config = prj.config_from_output(["--remappings", "other-key/=lib/other/"]);
         assert_eq!(config.remappings.len(), 3);
-        assert_eq!(
+        pretty_eq!(
             format!("other-key/={}/", prj.root().join("lib/other").to_slash_lossy()),
-            Remapping::from(config.remappings[2].clone()).to_string()
+            // As CLI has the higher priority, it'll be found at the first slot.
+            Remapping::from(config.remappings[0].clone()).to_string()
         );
 
         std::env::remove_var("DAPP_REMAPPINGS");
+        pretty_err(&remappings_txt, fs::remove_file(&remappings_txt));
+
+        cmd.set_cmd(prj.forge_bin()).args(["config", "--basic"]);
+        let expected = profile.into_basic().to_string_pretty().unwrap();
+        pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+    }
+);
+
+forgetest_init!(
+    #[serial_test::serial]
+    can_parse_remappings_correctly,
+    |prj: TestProject, mut cmd: TestCommand| {
+        cmd.set_current_dir(prj.root());
+        let foundry_toml = prj.root().join(Config::FILE_NAME);
+        assert!(foundry_toml.exists());
+
+        let profile = Config::load_with_root(prj.root());
+        // ensure that the auto-generated internal remapping for forge-std's ds-test exists
+        assert_eq!(profile.remappings.len(), 2);
+        pretty_eq!("ds-test/=lib/forge-std/lib/ds-test/src/", profile.remappings[0].to_string());
+
+        // ensure remappings contain test
+        pretty_eq!("ds-test/=lib/forge-std/lib/ds-test/src/", profile.remappings[0].to_string());
+        // the loaded config has resolved, absolute paths
+        pretty_eq!(
+            "ds-test/=lib/forge-std/lib/ds-test/src/",
+            Remapping::from(profile.remappings[0].clone()).to_string()
+        );
+
+        cmd.arg("config");
+        let expected = profile.to_string_pretty().unwrap();
+        pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+
+        let install = |cmd: &mut TestCommand, dep: &str| {
+            cmd.forge_fuse().args(["install", dep, "--no-commit"]);
+            cmd.assert_non_empty_stdout();
+        };
+
+        install(&mut cmd, "transmissions11/solmate");
+        let profile = Config::load_with_root(prj.root());
+        // remappings work
+        let remappings_txt = prj.create_file(
+            "remappings.txt",
+            "solmate/=lib/solmate/src/\nsolmate-contracts/=lib/solmate/src/",
+        );
+        let config = forge_utils::load_config_with_root(Some(prj.root().into()));
+        pretty_eq!(
+            format!("solmate/={}", prj.root().join("lib/solmate/src/").to_slash_lossy()),
+            Remapping::from(config.remappings[0].clone()).to_string()
+        );
+        // As this is an user-generated remapping, it is not removed, even if it points to the same
+        // location.
+        pretty_eq!(
+            format!("solmate-contracts/={}", prj.root().join("lib/solmate/src/").to_slash_lossy()),
+            Remapping::from(config.remappings[1].clone()).to_string()
+        );
         pretty_err(&remappings_txt, fs::remove_file(&remappings_txt));
 
         cmd.set_cmd(prj.forge_bin()).args(["config", "--basic"]);
@@ -393,18 +452,20 @@ forgetest!(can_set_gas_price, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(config.gas_price, Some(300));
 });
 
-// test that optimizer runs works
+// test that we can detect remappings from foundry.toml
 forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCommand| {
     let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
     pretty_assertions::assert_eq!(
         remappings,
         vec![
+            // global
             "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
         ]
     );
-    // create a new lib directly in the `lib` folder
+
+    // create a new lib directly in the `lib` folder with a remapping
     let mut config = config;
     config.remappings = vec![Remapping::from_str("nested/=lib/nested").unwrap().into()];
     let nested = prj.paths().libraries[0].join("nested-lib");
@@ -417,9 +478,12 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
     pretty_assertions::assert_eq!(
         remappings,
         vec![
+            // default
             "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
+            // remapping is local to the lib
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            // global
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
@@ -438,10 +502,13 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
     pretty_assertions::assert_eq!(
         remappings,
         vec![
+            // local to the lib
             "another-lib/=lib/nested-lib/lib/another-lib/src/".parse().unwrap(),
+            // global
             "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            // remappings local to the lib
             "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
@@ -454,10 +521,13 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
     pretty_assertions::assert_eq!(
         remappings,
         vec![
+            // local to the lib
             "another-lib/=lib/nested-lib/lib/another-lib/custom-source-dir/".parse().unwrap(),
+            // global
             "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            // remappings local to the lib
             "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]

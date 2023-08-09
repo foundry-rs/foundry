@@ -8,7 +8,7 @@ use once_cell::sync::Lazy;
 use semver::Version;
 use std::{
     io,
-    io::prelude::*,
+    io::{prelude::*, IsTerminal},
     path::{Path, PathBuf},
     sync::{
         mpsc::{self, TryRecvError},
@@ -36,13 +36,9 @@ pub struct TermSettings {
 }
 
 impl TermSettings {
-    #[allow(missing_docs)]
+    /// Returns a new [`TermSettings`], configured from the current environment.
     pub fn from_env() -> TermSettings {
-        if is_terminal::is_terminal(&std::io::stdout()) {
-            TermSettings { indicate_progress: true }
-        } else {
-            TermSettings { indicate_progress: false }
-        }
+        TermSettings { indicate_progress: std::io::stdout().is_terminal() }
     }
 }
 

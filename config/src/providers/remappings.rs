@@ -6,11 +6,59 @@ use figment::{
 };
 use std::{
     borrow::Cow,
-    collections::{hash_map::Entry, HashMap},
+    collections::{btree_map::Entry, BTreeMap, HashSet},
     fs,
     path::{Path, PathBuf},
 };
 use tracing::trace;
+
+/// Wrapper types over a `Vec<Remapping>` that only appends unique remappings.
+#[derive(Debug, Clone, Default)]
+pub struct Remappings {
+    /// Remappings.
+    remappings: Vec<Remapping>,
+}
+
+impl Remappings {
+    /// Create a new `Remappings` wrapper with an empty vector.
+    pub fn new() -> Self {
+        Self { remappings: Vec::new() }
+    }
+
+    /// Create a new `Remappings` wrapper with a vector of remappings.
+    pub fn new_with_remappings(remappings: Vec<Remapping>) -> Self {
+        Self { remappings }
+    }
+
+    /// Consumes the wrapper and returns the inner remappings vector.
+    pub fn into_inner(self) -> Vec<Remapping> {
+        let mut tmp = HashSet::new();
+        let remappings =
+            self.remappings.iter().filter(|r| tmp.insert(r.name.clone())).cloned().collect();
+        remappings
+    }
+
+    /// Push an element ot the remappings vector, but only if it's not already present.
+    pub fn push(&mut self, remapping: Remapping) {
+        if !self.remappings.iter().any(|existing| {
+            // What we're doing here is filtering for ambiguous paths. For example, if we have
+            // @prb/math/=node_modules/@prb/math/src/ as existing, and
+            // @prb/=node_modules/@prb/  as the one being checked,
+            // we want to keep the already existing one, which is the first one. This way we avoid
+            // having to deal with ambiguous paths which is unwanted when autodetecting remappings.
+            existing.name.starts_with(&remapping.name) && existing.context == remapping.context
+        }) {
+            self.remappings.push(remapping)
+        }
+    }
+
+    /// Extend the remappings vector, leaving out the remappings that are already present.
+    pub fn extend(&mut self, remappings: Vec<Remapping>) {
+        for remapping in remappings {
+            self.push(remapping);
+        }
+    }
+}
 
 /// A figment provider that checks if the remappings were previously set and if they're unset looks
 /// up the fs via
@@ -47,8 +95,15 @@ impl<'a> RemappingsProvider<'a> {
         trace!("get all remappings from {:?}", self.root);
         /// prioritizes remappings that are closer: shorter `path`
         ///   - ("a", "1/2") over ("a", "1/2/3")
-        fn insert_closest(mappings: &mut HashMap<String, PathBuf>, key: String, path: PathBuf) {
-            match mappings.entry(key) {
+        /// grouped by remapping context
+        fn insert_closest(
+            mappings: &mut BTreeMap<Option<String>, BTreeMap<String, PathBuf>>,
+            context: Option<String>,
+            key: String,
+            path: PathBuf,
+        ) {
+            let context_mappings = mappings.entry(context).or_default();
+            match context_mappings.entry(key) {
                 Entry::Occupied(mut e) => {
                     if e.get().components().count() > path.components().count() {
                         e.insert(path);
@@ -60,13 +115,15 @@ impl<'a> RemappingsProvider<'a> {
             }
         }
 
-        let mut new_remappings = Vec::new();
+        // Let's first just extend the remappings with the ones that were passed in,
+        // without any filtering.
+        let mut user_remappings = Vec::new();
 
-        // check env var
+        // check env vars
         if let Some(env_remappings) = remappings_from_env_var("DAPP_REMAPPINGS")
             .or_else(|| remappings_from_env_var("FOUNDRY_REMAPPINGS"))
         {
-            new_remappings
+            user_remappings
                 .extend(env_remappings.map_err::<Error, _>(|err| err.to_string().into())?);
         }
 
@@ -76,18 +133,23 @@ impl<'a> RemappingsProvider<'a> {
             let content = fs::read_to_string(remappings_file).map_err(|err| err.to_string())?;
             let remappings_from_file: Result<Vec<_>, _> =
                 remappings_from_newline(&content).collect();
-            new_remappings
+            user_remappings
                 .extend(remappings_from_file.map_err::<Error, _>(|err| err.to_string().into())?);
         }
 
-        new_remappings.extend(remappings);
+        user_remappings.extend(remappings);
+        // Let's now use the wrapper to conditionally extend the remappings with the autodetected
+        // ones. We want to avoid duplicates, and the wrapper will handle this for us.
+        let mut all_remappings = Remappings::new_with_remappings(user_remappings);
 
         // scan all library dirs and autodetect remappings
+        // todo: if a lib specifies contexts for remappings manually, we need to figure out how to
+        // resolve that
         if self.auto_detect_remappings {
-            let mut lib_remappings = HashMap::new();
+            let mut lib_remappings = BTreeMap::new();
             // find all remappings of from libs that use a foundry.toml
             for r in self.lib_foundry_toml_remappings() {
-                insert_closest(&mut lib_remappings, r.name, r.path.into());
+                insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
             // use auto detection for all libs
             for r in self
@@ -101,23 +163,27 @@ impl<'a> RemappingsProvider<'a> {
             {
                 // this is an additional safety check for weird auto-detected remappings
                 if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
+                    println!("- skipping the remapping");
                     continue
                 }
-                insert_closest(&mut lib_remappings, r.name, r.path.into());
+                insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
 
-            new_remappings.extend(
+            all_remappings.extend(
                 lib_remappings
                     .into_iter()
-                    .map(|(name, path)| Remapping { name, path: path.to_string_lossy().into() }),
+                    .flat_map(|(context, remappings)| {
+                        remappings.into_iter().map(move |(name, path)| Remapping {
+                            context: context.clone(),
+                            name,
+                            path: path.to_string_lossy().into(),
+                        })
+                    })
+                    .collect(),
             );
         }
 
-        // remove duplicates at this point
-        new_remappings.sort_by(|a, b| a.name.cmp(&b.name));
-        new_remappings.dedup_by(|a, b| a.name.eq(&b.name));
-
-        Ok(new_remappings)
+        Ok(all_remappings.into_inner())
     }
 
     /// Returns all remappings declared in foundry.toml files of libraries
@@ -142,6 +208,7 @@ impl<'a> RemappingsProvider<'a> {
                 {
                     if let Some(name) = lib.file_name().and_then(|s| s.to_str()) {
                         let mut r = Remapping {
+                            context: None,
                             name: format!("{name}/"),
                             path: format!("{}", lib.join(&config.src).display()),
                         };
@@ -152,8 +219,12 @@ impl<'a> RemappingsProvider<'a> {
                     }
                 }
 
+                // Eventually, we could set context for remappings at this location,
+                // taking into account the OS platform. We'll need to be able to handle nested
+                // contexts depending on dependencies for this to work.
+                // For now, we just leave the default context (none).
                 let mut remappings =
-                    config.remappings.into_iter().map(|m| m.into()).collect::<Vec<Remapping>>();
+                    config.remappings.into_iter().map(Remapping::from).collect::<Vec<Remapping>>();
 
                 if let Some(r) = src_remapping {
                     remappings.push(r);

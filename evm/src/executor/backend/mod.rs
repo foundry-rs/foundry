@@ -14,14 +14,13 @@ use ethers::{
     types::{Address, BlockNumber, Transaction, U64},
     utils::keccak256,
 };
-use hashbrown::HashMap as Map;
 pub use in_memory_db::MemDb;
 use revm::{
     db::{CacheDB, DatabaseRef},
     precompile::{Precompiles, SpecId},
     primitives::{
-        Account, AccountInfo, Bytecode, CreateScheme, Env, Log, ResultAndState, TransactTo, B160,
-        B256, KECCAK_EMPTY, U256 as rU256,
+        Account, AccountInfo, Bytecode, CreateScheme, Env, HashMap as Map, Log, ResultAndState,
+        TransactTo, B160, B256, KECCAK_EMPTY, U256 as rU256,
     },
     Database, DatabaseCommit, Inspector, JournaledState, EVM,
 };
@@ -64,6 +63,10 @@ type ForkLookupIndex = usize;
 /// All accounts that will have persistent storage across fork swaps. See also [`clone_data()`]
 const DEFAULT_PERSISTENT_ACCOUNTS: [H160; 3] =
     [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
+
+/// Slot corresponding to "failed" in bytes on the cheatcodes (HEVM) address.
+const GLOBAL_FAILURE_SLOT: &str =
+    "0x6661696c65640000000000000000000000000000000000000000000000000000";
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut, Box)]
@@ -467,6 +470,24 @@ impl Backend {
         }
     }
 
+    /// Inserts a value on an account's storage without overriding account info
+    pub fn insert_account_storage(
+        &mut self,
+        address: H160,
+        slot: U256,
+        value: U256,
+    ) -> Result<(), DatabaseError> {
+        let ret = if let Some(db) = self.active_fork_db_mut() {
+            db.insert_account_storage(h160_to_b160(address), slot.into(), value.into())
+        } else {
+            self.mem_db.insert_account_storage(h160_to_b160(address), slot.into(), value.into())
+        };
+
+        debug_assert!(self.storage(h160_to_b160(address), slot.into()).unwrap() == value.into());
+
+        ret
+    }
+
     /// Returns all snapshots created in this backend
     pub fn snapshots(&self) -> &Snapshots<BackendSnapshot<BackendDatabaseSnapshot>> {
         &self.inner.snapshots
@@ -584,11 +605,15 @@ impl Backend {
     /// In addition to the `_failed` variable, `DSTest::fail()` stores a failure
     /// in "failed"
     /// See <https://github.com/dapphub/ds-test/blob/9310e879db8ba3ea6d5c6489a579118fd264a3f5/src/test.sol#L66-L72>
-    pub fn is_global_failure(&self) -> bool {
-        let index = U256::from(&b"failed"[..]);
-        self.storage(h160_to_b160(CHEATCODE_ADDRESS), index.into())
-            .map(|value| value == revm::primitives::U256::from(1))
-            .unwrap_or_default()
+    pub fn is_global_failure(&self, current_state: &JournaledState) -> bool {
+        let index: rU256 =
+            U256::from_str_radix(GLOBAL_FAILURE_SLOT, 16).expect("This is a bug.").into();
+        if let Some(account) = current_state.state.get(&h160_to_b160(CHEATCODE_ADDRESS)) {
+            let value = account.storage.get(&index).cloned().unwrap_or_default().present_value();
+            return value == revm::primitives::U256::from(1)
+        }
+
+        false
     }
 
     /// When creating or switching forks, we update the AccountInfo of the contract
@@ -655,7 +680,7 @@ impl Backend {
     }
 
     /// Returns the currently active `ForkDB`, if any
-    fn active_fork_db_mut(&mut self) -> Option<&mut ForkDB> {
+    pub fn active_fork_db_mut(&mut self) -> Option<&mut ForkDB> {
         self.active_fork_mut().map(|f| &mut f.db)
     }
 
@@ -854,14 +879,12 @@ impl DatabaseExt for Backend {
         current: &mut Env,
     ) -> Option<JournaledState> {
         trace!(?id, "revert snapshot");
-        if let Some(mut snapshot) = self.inner.snapshots.remove(id) {
-            // need to check whether DSTest's `failed` variable is set to `true` which means an
-            // error occurred either during the snapshot or even before
-            if self
-                .test_contract_address()
-                .map(|addr| self.is_failed_test_contract_state(addr, current_state))
-                .unwrap_or_default()
-            {
+        if let Some(mut snapshot) = self.inner.snapshots.remove_at(id) {
+            // Re-insert snapshot to persist it
+            self.inner.snapshots.insert_at(snapshot.clone(), id);
+            // need to check whether there's a global failure which means an error occurred either
+            // during the snapshot or even before
+            if self.is_global_failure(current_state) {
                 self.inner.has_snapshot_failure.store(true, Ordering::Relaxed);
             }
 
@@ -1076,7 +1099,7 @@ impl DatabaseExt for Backend {
                 // prevent issues in the new journalstate, e.g. assumptions that accounts are loaded
                 // if the account is not touched, we reload it, if it's touched we clone it
                 for (addr, acc) in journaled_state.state.iter() {
-                    if acc.is_touched {
+                    if acc.is_touched() {
                         merge_journaled_state_data(
                             b160_to_h160(*addr),
                             journaled_state,
@@ -1782,7 +1805,7 @@ fn commit_transaction(
 /// Applies the changeset of a transaction to the active journaled state and also commits it in the
 /// forked db
 fn apply_state_changeset(
-    state: hashbrown::HashMap<revm::primitives::Address, Account>,
+    state: Map<revm::primitives::Address, Account>,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
 ) {

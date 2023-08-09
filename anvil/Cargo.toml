@@ -55,6 +55,7 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 yansi = "0.5"
 tempfile = "3"
+itertools = "0.10"
 
 # cli
 clap = { version = "4", features = ["derive", "env", "wrap_help"], optional = true }

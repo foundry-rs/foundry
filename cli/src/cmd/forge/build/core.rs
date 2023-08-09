@@ -13,6 +13,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Figment, Metadata, Profile, Provider,
     },
+    providers::remappings::Remappings,
     Config,
 };
 use serde::Serialize;
@@ -30,10 +31,6 @@ pub struct CoreBuildArgs {
     #[clap(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub libraries: Vec<String>,
-
-    #[clap(flatten)]
-    #[serde(flatten)]
-    pub compiler: CompilerArgs,
 
     /// Ignore solc warnings by error code.
     #[clap(long, help_heading = "Compiler options", value_name = "ERROR_CODES")]
@@ -68,10 +65,6 @@ pub struct CoreBuildArgs {
     #[clap(long, help_heading = "Compiler options")]
     #[serde(skip)]
     pub via_ir: bool,
-
-    #[clap(flatten)]
-    #[serde(flatten)]
-    pub project_paths: ProjectPathsArgs,
 
     /// The path to the contract artifacts folder.
     #[clap(
@@ -112,6 +105,14 @@ pub struct CoreBuildArgs {
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_info_path: Option<PathBuf>,
+
+    #[clap(flatten)]
+    #[serde(flatten)]
+    pub compiler: CompilerArgs,
+
+    #[clap(flatten)]
+    #[serde(flatten)]
+    pub project_paths: ProjectPathsArgs,
 }
 
 impl CoreBuildArgs {
@@ -149,12 +150,10 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
         };
 
         // remappings should stack
-        let mut remappings = args.project_paths.get_remappings();
+        let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings());
         remappings
             .extend(figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default());
-        remappings.sort_by(|a, b| a.name.cmp(&b.name));
-        remappings.dedup_by(|a, b| a.name.eq(&b.name));
-        figment.merge(("remappings", remappings)).merge(args)
+        figment.merge(("remappings", remappings.into_inner())).merge(args)
     }
 }
 

@@ -27,7 +27,6 @@ where
         &mut self,
         interpreter: &mut Interpreter,
         _: &mut EVMData<'_, DB>,
-        _is_static: bool,
     ) -> InstructionResult {
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
@@ -41,7 +40,6 @@ where
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
-        _: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         // We don't want to override the very first call made to the test contract.
         if self.call_generator.is_some() && data.env.tx.caller != call.context.caller {
@@ -62,7 +60,6 @@ where
         remaining_gas: Gas,
         status: InstructionResult,
         retdata: Bytes,
-        _: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         if let Some(ref mut call_generator) = self.call_generator {
             call_generator.used = false;
@@ -78,7 +75,7 @@ where
 
 impl Fuzzer {
     /// Collects `stack` and `memory` values into the fuzz dictionary.
-    fn collect_data(&mut self, interpreter: &mut Interpreter) {
+    fn collect_data(&mut self, interpreter: &Interpreter) {
         let mut state = self.fuzz_state.write();
 
         for slot in interpreter.stack().data() {

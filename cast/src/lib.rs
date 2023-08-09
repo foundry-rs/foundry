@@ -657,7 +657,7 @@ where
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let tx = cast.transaction(tx_hash.to_string(), None, false).await?;
+    /// let tx = cast.transaction(tx_hash.to_string(), None, false, false).await?;
     /// println!("{}", tx);
     /// # Ok(())
     /// # }
@@ -666,6 +666,7 @@ where
         &self,
         tx_hash: String,
         field: Option<String>,
+        raw: bool,
         to_json: bool,
     ) -> Result<String> {
         let tx_hash = H256::from_str(&tx_hash).wrap_err("invalid tx hash")?;
@@ -675,9 +676,11 @@ where
             .await?
             .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
-        Ok(if let Some(ref field) = field {
-            get_pretty_tx_attr(&tx, field)
-                .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field))?
+        Ok(if raw {
+            format!("0x{}", hex::encode(tx.rlp()))
+        } else if let Some(field) = field {
+            get_pretty_tx_attr(&tx, field.as_str())
+                .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
         } else if to_json {
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()
@@ -1798,7 +1801,7 @@ impl SimpleCast {
             eyre::bail!("Invalid signature");
         };
 
-        let num_threads = num_cpus::get();
+        let num_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
         let found = AtomicBool::new(false);
 
         let result: Option<(u32, String, String)> =

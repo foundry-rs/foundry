@@ -10,6 +10,7 @@ use eyre::WrapErr;
 use foundry_config::Config;
 use std::str::FromStr;
 
+/// CLI arguments for `cast call`.
 #[derive(Debug, Parser)]
 pub struct CallArgs {
     /// The destination of the transaction.
@@ -30,12 +31,6 @@ pub struct CallArgs {
     )]
     data: Option<String>,
 
-    #[clap(flatten)]
-    tx: TransactionOpts,
-
-    #[clap(flatten)]
-    eth: EthereumOpts,
-
     /// The block height to query at.
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
@@ -45,6 +40,12 @@ pub struct CallArgs {
     /// Simulate a contract deployment.
     #[clap(subcommand)]
     command: Option<CallSubcommands>,
+
+    #[clap(flatten)]
+    tx: TransactionOpts,
+
+    #[clap(flatten)]
+    eth: EthereumOpts,
 }
 
 #[derive(Debug, Parser)]

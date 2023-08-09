@@ -5,7 +5,7 @@ import "ds-test/test.sol";
 import "./Vm.sol";
 import "../logs/console.sol";
 
-contract ParseJson is DSTest {
+contract ParseJsonTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     string json;
 
@@ -101,7 +101,11 @@ contract ParseJson is DSTest {
         vm.expectRevert(
             "You can only coerce values or arrays, not JSON objects. The key '.nestedObject' returns an object"
         );
-        uint256 number = vm.parseJsonUint(json, ".nestedObject");
+        uint256 number = this.parseJsonUint(json, ".nestedObject");
+    }
+
+    function parseJsonUint(string memory json, string memory path) public returns (uint256) {
+        uint256 data = vm.parseJsonUint(json, path);
     }
 
     function test_coercionUint() public {
@@ -144,9 +148,41 @@ contract ParseJson is DSTest {
         string memory decodedData = abi.decode(data, (string));
         assertEq("hai", decodedData);
     }
+
+    function test_nonExistentKey() public {
+        bytes memory data = vm.parseJson(json, ".thisKeyDoesNotExist");
+        assertEq(0, data.length);
+
+        data = vm.parseJson(json, ".this.path.does.n.0.t.exist");
+        assertEq(0, data.length);
+
+        data = vm.parseJson("", ".");
+        assertEq(0, data.length);
+    }
+
+    function test_parseJsonKeys() public {
+        string memory jsonString =
+            '{"some_key_to_value": "some_value", "some_key_to_array": [1, 2, 3], "some_key_to_object": {"key1": "value1", "key2": 2}}';
+        string[] memory keys = vm.parseJsonKeys(jsonString, "$");
+        assertEq(abi.encode(keys), abi.encode(["some_key_to_value", "some_key_to_array", "some_key_to_object"]));
+
+        keys = vm.parseJsonKeys(jsonString, ".some_key_to_object");
+        assertEq(abi.encode(keys), abi.encode(["key1", "key2"]));
+
+        vm.expectRevert("You can only get keys for JSON-object. The key '.some_key_to_array' does not return an object");
+        vm.parseJsonKeys(jsonString, ".some_key_to_array");
+
+        vm.expectRevert("You can only get keys for JSON-object. The key '.some_key_to_value' does not return an object");
+        vm.parseJsonKeys(jsonString, ".some_key_to_value");
+
+        vm.expectRevert(
+            "You can only get keys for a single JSON-object. The key '.*' returns a value or an array of JSON-objects"
+        );
+        vm.parseJsonKeys(jsonString, ".*");
+    }
 }
 
-contract WriteJson is DSTest {
+contract WriteJsonTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     string json1;
@@ -232,6 +268,29 @@ contract WriteJson is DSTest {
         string memory json = vm.readFile(path);
         bytes memory data = vm.parseJson(json);
         notSimpleJson memory decodedData = abi.decode(data, (notSimpleJson));
+    }
+
+    function test_retrieveEntireJson() public {
+        string memory path = "../testdata/fixtures/Json/write_complex_test.json";
+        string memory json = vm.readFile(path);
+        bytes memory data = vm.parseJson(json, ".");
+        notSimpleJson memory decodedData = abi.decode(data, (notSimpleJson));
+        console.log(decodedData.a);
+        assertEq(decodedData.a, 123);
+    }
+
+    function test_checkKeyExists() public {
+        string memory path = "../testdata/fixtures/Json/write_complex_test.json";
+        string memory json = vm.readFile(path);
+        bool exists = vm.keyExists(json, "a");
+        assertTrue(exists);
+    }
+
+    function test_checkKeyDoesNotExist() public {
+        string memory path = "../testdata/fixtures/Json/write_complex_test.json";
+        string memory json = vm.readFile(path);
+        bool exists = vm.keyExists(json, "d");
+        assertTrue(!exists);
     }
 
     function test_writeJson() public {

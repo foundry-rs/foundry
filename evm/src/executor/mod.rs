@@ -21,7 +21,6 @@ use ethers::{
     types::Log,
 };
 use foundry_common::{abi::IntoFunction, evm::Breakpoints};
-use hashbrown::HashMap;
 use revm::primitives::hex_literal::hex;
 /// Reexport commonly used revm types
 pub use revm::primitives::{Env, SpecId};
@@ -29,8 +28,8 @@ pub use revm::{
     db::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, CreateScheme, InstructionResult, Memory, Stack},
     primitives::{
-        Account, BlockEnv, Bytecode, ExecutionResult, Output, ResultAndState, TransactTo, TxEnv,
-        B160, U256 as rU256,
+        Account, BlockEnv, Bytecode, ExecutionResult, HashMap, Output, ResultAndState, TransactTo,
+        TxEnv, B160, U256 as rU256,
     },
 };
 use std::collections::BTreeMap;

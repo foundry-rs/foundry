@@ -67,7 +67,7 @@ impl ProjectPathsArgs {
     ///
     /// This will be the `--root` argument if provided, otherwise see [find_project_root_path()]
     pub fn project_root(&self) -> PathBuf {
-        self.root.clone().unwrap_or_else(|| find_project_root_path().unwrap())
+        self.root.clone().unwrap_or_else(|| find_project_root_path(None).unwrap())
     }
 
     /// Returns the remappings to add to the config

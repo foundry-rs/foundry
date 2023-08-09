@@ -206,6 +206,9 @@ interface Vm {
     // Skips a test.
     function skip(bool) external;
 
+    // Sleeps for a given number of milliseconds.
+    function sleep(uint256) external;
+
     // Expects an error on next call
     function expectRevert() external;
 
@@ -545,6 +548,8 @@ interface Vm {
 
     function parseJson(string calldata) external returns (bytes memory);
 
+    function parseJsonKeys(string calldata, string calldata) external returns (string[] memory);
+
     function parseJsonUint(string calldata, string calldata) external returns (uint256);
 
     function parseJsonUintArray(string calldata, string calldata) external returns (uint256[] memory);
@@ -605,9 +610,27 @@ interface Vm {
 
     function writeJson(string calldata, string calldata, string calldata) external;
 
+    // Checks if a key exists in the given json string
+    function keyExists(string calldata, string calldata) external returns (bool);
+
     // Pauses gas metering (gas usage will not be counted)
     function pauseGasMetering() external;
 
     // Resumes gas metering from where it left off
     function resumeGasMetering() external;
+
+    // Starts recording all map SSTOREs for later retrieval.
+    function startMappingRecording() external;
+
+    // Stops recording all map SSTOREs for later retrieval and clears the recorded data.
+    function stopMappingRecording() external;
+
+    // Gets the length of a mapping at a given slot, for a given address.
+    function getMappingLength(address target, bytes32 slot) external returns (uint256);
+
+    // Gets the element at index idx of a mapping at a given slot, for a given address.
+    function getMappingSlotAt(address target, bytes32 slot, uint256 idx) external returns (bytes32);
+
+    // Gets the map key and parent of a mapping at a given slot, for a given address.
+    function getMappingKeyAndParentOf(address target, bytes32 slot) external returns (bool, bytes32, bytes32);
 }
