@@ -147,10 +147,9 @@ impl InvariantFuzzError {
 
                 traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
 
+                logs.extend(error_call_result.logs);
                 if error_call_result.reverted {
                     break
-                } else {
-                    logs.extend(error_call_result.logs);
                 }
             }
         }
