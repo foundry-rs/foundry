@@ -1,6 +1,5 @@
-use hashbrown::HashMap as Map;
 use revm::{
-    primitives::{AccountInfo, Env, B160, B256, U256},
+    primitives::{AccountInfo, Env, HashMap as Map, B160, B256, U256},
     JournaledState,
 };
 use serde::{Deserialize, Serialize};

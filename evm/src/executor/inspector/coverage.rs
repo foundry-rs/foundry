@@ -22,7 +22,6 @@ where
         &mut self,
         interpreter: &mut Interpreter,
         _: &mut EVMData<'_, DB>,
-        _: bool,
     ) -> InstructionResult {
         self.maps.entry(b256_to_h256(interpreter.contract.bytecode.hash())).or_insert_with(|| {
             HitMap::new(Bytes::copy_from_slice(
@@ -37,7 +36,6 @@ where
         &mut self,
         interpreter: &mut Interpreter,
         _: &mut EVMData<'_, DB>,
-        _is_static: bool,
     ) -> InstructionResult {
         self.maps
             .entry(b256_to_h256(interpreter.contract.bytecode.hash()))
