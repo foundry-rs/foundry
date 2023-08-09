@@ -456,7 +456,9 @@ impl<'a> ContractRunner<'a> {
             return vec![]
         };
 
-        invariants.into_values().map(|test_error| {
+        invariants
+            .into_values()
+            .map(|test_error| {
                 let (test_error, invariant) = test_error;
                 let mut counterexample = None;
                 let mut logs = logs.clone();
