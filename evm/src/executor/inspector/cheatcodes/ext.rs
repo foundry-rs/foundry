@@ -339,7 +339,7 @@ fn parse_json_keys(json_str: &str, key: &str) -> Result {
 
     let res = value
         .as_object()
-        .ok_or(eyre::eyre!("Unexpected error while etracting JSON-object"))?
+        .ok_or(eyre::eyre!("Unexpected error while extracting JSON-object"))?
         .keys()
         .map(|key| Token::String(key.to_owned()))
         .collect::<Vec<Token>>();
