@@ -28,37 +28,83 @@ resolver = "2"
 # and we don't rely on it for debugging that much
 debug = 0
 
-# These speed up local tests
-[profile.dev.package.ethers-solc]
-opt-level = 3
+# Speed up tests and dev build
+[profile.dev.package]
+revm.opt-level = 3
+revm-primitives.opt-level = 3
+revm-interpreter.opt-level = 3
+revm-precompile.opt-level = 3
 
-[profile.dev.package.revm]
-opt-level = 3
+ruint.opt-level = 3
+primitive-types.opt-level = 3
 
-# These speed up all forge script related integration tests
-[profile.test.package.axum]
-opt-level = 3
-
-# Local "release" mode, more optimized than dev but much faster to compile than release
-[profile.local]
-inherits = "dev"
-opt-level = 3
-# Set this to 1 or 2 to get more useful backtraces
-debug = 0
-panic = 'unwind'
-# better recompile times
-incremental = true
-codegen-units = 16
+axum.opt-level = 3
 
 [profile.release]
-# Optimize for binary size, but keep loop vectorization
 opt-level = "s"
-# Performance optimizations
 lto = "fat"
-debug = 0
 strip = true
 panic = "abort"
 codegen-units = 1
+
+[profile.release.package]
+# Optimize all non-workspace packages for speed
+"*".opt-level = 3
+
+# Package overrides
+foundry-evm.opt-level = 3
+
+ethers-solc.opt-level = 1
+foundry-abi.opt-level = 1
+mdbook.opt-level = 1
+protobuf.opt-level = 1
+rusoto_core.opt-level = 1
+rusoto_credential.opt-level = 1
+rusoto_kms.opt-level = 1
+toml_edit.opt-level = 1
+trezor-client.opt-level = 1
+
+# Given that the `"*"` above takes precedence over the defaults for build scripts and macros, we
+# have to override all of them to reduce compile times
+syn.opt-level = 0
+prettyplease.opt-level = 0
+lalrpop.opt-level = 0
+
+ethers-contract-abigen.opt-level = 0
+ethers-contract-abigen-derive.opt-level = 0
+async-recursion.opt-level = 0
+miette-derive.opt-level = 0
+strum_macros.opt-level = 0
+enumn.opt-level = 0
+clap_derive.opt-level = 0
+serde_derive.opt-level = 0
+pear_codegen.opt-level = 0
+num_enum_derive.opt-level = 0
+scale-info-derive.opt-level = 0
+parity-scale-codec-derive.opt-level = 0
+time-macros.opt-level = 0
+phf_macros.opt-level = 0
+pin-project-internal.opt-level = 0
+auto_impl.opt-level = 0
+derive_more.opt-level = 0
+rlp-derive.opt-level = 0
+impl-trait-for-tuples.opt-level = 0
+async-trait.opt-level = 0
+tokio-macros.opt-level = 0
+tracing-attributes.opt-level = 0
+futures-macro.opt-level = 0
+thiserror-impl.opt-level = 0
+wasm-bindgen-macro-support.opt-level = 0
+wasm-bindgen-backend.opt-level = 0
+
+# Local "release" mode, more optimized than dev but much faster to compile than release
+[profile.local]
+inherits = "release"
+opt-level = 1
+lto = "none"
+codegen-units = 16
+# Empty, clears `profile.release.package`
+package = {}
 
 [workspace.dependencies]
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
