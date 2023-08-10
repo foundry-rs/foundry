@@ -176,6 +176,8 @@ pub struct ScriptArgs {
     pub slow: bool,
 
     /// Disables interactive prompts that might appear when deploying big contracts.
+    ///
+    /// For more info on the contract size limit, see EIP-170: <https://eips.ethereum.org/EIPS/eip-170>
     #[clap(long)]
     pub non_interactive: bool,
 
