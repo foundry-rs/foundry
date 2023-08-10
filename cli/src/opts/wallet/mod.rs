@@ -15,6 +15,7 @@ use ethers::{
 };
 use eyre::{bail, Result, WrapErr};
 use foundry_common::fs;
+use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -27,14 +28,53 @@ pub use multi_wallet::*;
 
 pub mod error;
 
-/// The wallet options can either be:
-/// 1. Ledger
-/// 2. Trezor
+/// A wrapper for the raw data options for `Wallet`, extracted to also be used standalone.
+/// The raw wallet options can either be:
+/// 1. Private Key (cleartext in CLI)
+/// 2. Private Key (interactively via secure prompt)
 /// 3. Mnemonic (via file path)
+#[derive(Parser, Debug, Default, Clone, Serialize)]
+#[clap(next_help_heading = "Wallet options - raw", about = None, long_about = None)]
+pub struct RawWallet {
+    /// Open an interactive prompt to enter your private key.
+    #[clap(long, short)]
+    pub interactive: bool,
+
+    /// Use the provided private key.
+    #[clap(
+        long,
+        value_name = "RAW_PRIVATE_KEY",
+        value_parser = foundry_common::clap_helpers::strip_0x_prefix
+    )]
+    pub private_key: Option<String>,
+
+    /// Use the mnemonic phrase of mnemonic file at the specified path.
+    #[clap(long, alias = "mnemonic-path")]
+    pub mnemonic: Option<String>,
+
+    /// Use a BIP39 passphrase for the mnemonic.
+    #[clap(long, value_name = "PASSPHRASE")]
+    pub mnemonic_passphrase: Option<String>,
+
+    /// The wallet derivation path.
+    ///
+    /// Works with both --mnemonic-path and hardware wallets.
+    #[clap(long = "mnemonic-derivation-path", alias = "hd-path", value_name = "PATH")]
+    pub hd_path: Option<String>,
+
+    /// Use the private key from the given mnemonic index.
+    ///
+    /// Used with --mnemonic-path.
+    #[clap(long, conflicts_with = "hd_path", default_value_t = 0, value_name = "INDEX")]
+    pub mnemonic_index: u32,
+}
+
+/// The wallet options can either be:
+/// 1. Raw (via private key / mnemonic file, see `RawWallet`)
+/// 2. Ledger
+/// 3. Trezor
 /// 4. Keystore (via file path)
-/// 5. Private Key (cleartext in CLI)
-/// 6. Private Key (interactively via secure prompt)
-/// 7. AWS KMS
+/// 5. AWS KMS
 #[derive(Parser, Debug, Default, Clone, Serialize)]
 #[clap(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct Wallet {
@@ -42,55 +82,14 @@ pub struct Wallet {
     #[clap(
         long,
         short,
-        help_heading = "Wallet options - raw",
         value_name = "ADDRESS",
+        help_heading = "Wallet options - raw",
         env = "ETH_FROM"
     )]
     pub from: Option<Address>,
 
-    /// Open an interactive prompt to enter your private key.
-    #[clap(long, short, help_heading = "Wallet options - raw")]
-    pub interactive: bool,
-
-    /// Use the provided private key.
-    #[clap(
-        long,
-        help_heading = "Wallet options - raw",
-        value_name = "RAW_PRIVATE_KEY",
-        value_parser = foundry_common::clap_helpers::strip_0x_prefix
-    )]
-    pub private_key: Option<String>,
-
-    /// Use the mnemonic phrase of mnemonic file at the specified path.
-    #[clap(long, alias = "mnemonic-path", help_heading = "Wallet options - raw")]
-    pub mnemonic: Option<String>,
-
-    /// Use a BIP39 passphrase for the mnemonic.
-    #[clap(long, help_heading = "Wallet options - raw", value_name = "PASSPHRASE")]
-    pub mnemonic_passphrase: Option<String>,
-
-    /// The wallet derivation path.
-    ///
-    /// Works with both --mnemonic-path and hardware wallets.
-    #[clap(
-        long = "mnemonic-derivation-path",
-        alias = "hd-path",
-        help_heading = "Wallet options - raw",
-        value_name = "PATH"
-    )]
-    pub hd_path: Option<String>,
-
-    /// Use the private key from the given mnemonic index.
-    ///
-    /// Used with --mnemonic-path.
-    #[clap(
-        long,
-        conflicts_with = "hd_path",
-        help_heading = "Wallet options - raw",
-        default_value_t = 0,
-        value_name = "INDEX"
-    )]
-    pub mnemonic_index: u32,
+    #[clap(flatten)]
+    pub raw: RawWallet,
 
     /// Use the keystore in the given folder or file.
     #[clap(
@@ -100,6 +99,16 @@ pub struct Wallet {
         env = "ETH_KEYSTORE"
     )]
     pub keystore_path: Option<String>,
+
+    // Use a keystore from the default folder by its name
+    #[clap(
+        long = "account",
+        help_heading = "Wallet options - keystore",
+        value_name = "ACCOUNT_NAME",
+        env = "ETH_KEYSTORE_ACCOUNT",
+        conflicts_with = "keystore_path"
+    )]
+    pub keystore_account_name: Option<String>,
 
     /// The keystore password.
     ///
@@ -137,13 +146,19 @@ pub struct Wallet {
     pub aws: bool,
 }
 
+impl From<RawWallet> for Wallet {
+    fn from(options: RawWallet) -> Self {
+        Self { raw: options, ..Default::default() }
+    }
+}
+
 impl Wallet {
     pub fn interactive(&self) -> Result<Option<LocalWallet>> {
-        Ok(if self.interactive { Some(self.get_from_interactive()?) } else { None })
+        Ok(if self.raw.interactive { Some(self.get_from_interactive()?) } else { None })
     }
 
     pub fn private_key(&self) -> Result<Option<LocalWallet>> {
-        Ok(if let Some(ref private_key) = self.private_key {
+        Ok(if let Some(ref private_key) = self.raw.private_key {
             Some(self.get_from_private_key(private_key)?)
         } else {
             None
@@ -151,20 +166,29 @@ impl Wallet {
     }
 
     pub fn keystore(&self) -> Result<Option<LocalWallet>> {
+        let default_keystore_dir = Config::foundry_keystores_dir()
+            .ok_or_else(|| eyre::eyre!("Could not find the default keystore directory."))?;
+        // If keystore path is provided, use it, otherwise use default path + keystore account name
+        let keystore_path: Option<String> = self.keystore_path.clone().or_else(|| {
+            self.keystore_account_name.as_ref().map(|keystore_name| {
+                default_keystore_dir.join(keystore_name).to_string_lossy().into_owned()
+            })
+        });
+
         self.get_from_keystore(
-            self.keystore_path.as_ref(),
+            keystore_path.as_ref(),
             self.keystore_password.as_ref(),
             self.keystore_password_file.as_ref(),
         )
     }
 
     pub fn mnemonic(&self) -> Result<Option<LocalWallet>> {
-        Ok(if let Some(ref mnemonic) = self.mnemonic {
+        Ok(if let Some(ref mnemonic) = self.raw.mnemonic {
             Some(self.get_from_mnemonic(
                 mnemonic,
-                self.mnemonic_passphrase.as_ref(),
-                self.hd_path.as_ref(),
-                self.mnemonic_index,
+                self.raw.mnemonic_passphrase.as_ref(),
+                self.raw.hd_path.as_ref(),
+                self.raw.mnemonic_index,
             )?)
         } else {
             None
@@ -182,7 +206,7 @@ impl Wallet {
 
     /// Tries to resolve a local wallet from the provided options.
     #[track_caller]
-    fn try_resolve_local_wallet(&self) -> Result<Option<LocalWallet>> {
+    pub fn try_resolve_local_wallet(&self) -> Result<Option<LocalWallet>> {
         self.private_key()
             .transpose()
             .or_else(|| self.interactive().transpose())
@@ -190,16 +214,15 @@ impl Wallet {
             .or_else(|| self.keystore().transpose())
             .transpose()
     }
-
     /// Returns a [Signer] corresponding to the provided private key, mnemonic or hardware signer.
     #[instrument(skip(self), level = "trace")]
     pub async fn signer(&self, chain_id: u64) -> eyre::Result<WalletSigner> {
         trace!("start finding signer");
 
         if self.ledger {
-            let derivation = match self.hd_path.as_ref() {
+            let derivation = match self.raw.hd_path.as_ref() {
                 Some(hd_path) => LedgerHDPath::Other(hd_path.clone()),
-                None => LedgerHDPath::LedgerLive(self.mnemonic_index as usize),
+                None => LedgerHDPath::LedgerLive(self.raw.mnemonic_index as usize),
             };
             let ledger = Ledger::new(derivation, chain_id).await.wrap_err_with(|| {
                 "\
@@ -209,9 +232,9 @@ Make sure it's connected and unlocked, with no other desktop wallet apps open."
 
             Ok(WalletSigner::Ledger(ledger))
         } else if self.trezor {
-            let derivation = match self.hd_path.as_ref() {
+            let derivation = match self.raw.hd_path.as_ref() {
                 Some(hd_path) => TrezorHDPath::Other(hd_path.clone()),
-                None => TrezorHDPath::TrezorLive(self.mnemonic_index as usize),
+                None => TrezorHDPath::TrezorLive(self.raw.mnemonic_index as usize),
             };
 
             // cached to ~/.ethers-rs/trezor/cache/trezor.session
@@ -349,6 +372,7 @@ pub trait WalletTrait {
         keystore_password_file: Option<&String>,
     ) -> Result<Option<LocalWallet>> {
         Ok(match (keystore_path, keystore_password, keystore_password_file) {
+            // Path and password provided
             (Some(path), Some(password), _) => {
                 let path = self.find_keystore_file(path)?;
                 Some(
@@ -356,6 +380,7 @@ pub trait WalletTrait {
                         .wrap_err_with(|| format!("Failed to decrypt keystore {path:?}"))?,
                 )
             }
+            // Path and password file provided
             (Some(path), _, Some(password_file)) => {
                 let path = self.find_keystore_file(path)?;
                 Some(
@@ -363,11 +388,13 @@ pub trait WalletTrait {
                         .wrap_err_with(|| format!("Failed to decrypt keystore {path:?} with password file {password_file:?}"))?,
                 )
             }
+            // Only Path provided -> interactive
             (Some(path), None, None) => {
                 let path = self.find_keystore_file(path)?;
                 let password = rpassword::prompt_password("Enter keystore password:")?;
                 Some(LocalWallet::decrypt_keystore(path, password)?)
             }
+            // Nothing provided
             (None, _, _) => None,
         })
     }
@@ -547,19 +574,22 @@ mod tests {
     #[test]
     fn illformed_private_key_generates_user_friendly_error() {
         let wallet = Wallet {
+            raw: RawWallet {
+                interactive: false,
+                private_key: Some("123".to_string()),
+                mnemonic: None,
+                mnemonic_passphrase: None,
+                hd_path: None,
+                mnemonic_index: 0,
+            },
             from: None,
-            interactive: false,
-            private_key: Some("123".to_string()),
             keystore_path: None,
+            keystore_account_name: None,
             keystore_password: None,
             keystore_password_file: None,
-            mnemonic: None,
-            mnemonic_passphrase: None,
             ledger: false,
             trezor: false,
             aws: false,
-            hd_path: None,
-            mnemonic_index: 0,
         };
         match wallet.private_key() {
             Ok(_) => {

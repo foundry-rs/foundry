@@ -153,6 +153,17 @@ pub struct MultiWallet {
     )]
     pub keystore_paths: Option<Vec<String>>,
 
+    // Use a keystore from the default folder by its name
+    #[clap(
+        long = "account",
+        visible_alias = "accounts",
+        help_heading = "Wallet options - keystore",
+        value_name = "ACCOUNT_NAMES",
+        env = "ETH_KEYSTORE_ACCOUNT",
+        conflicts_with = "keystore_paths"
+    )]
+    pub keystore_account_names: Option<Vec<String>>,
+
     /// The keystore password.
     ///
     /// Used with --keystore.
@@ -282,7 +293,21 @@ impl MultiWallet {
     ///
     /// Returns `Ok(None)` if no keystore provided.
     pub fn keystores(&self) -> Result<Option<Vec<LocalWallet>>> {
-        if let Some(keystore_paths) = &self.keystore_paths {
+        let default_keystore_dir = Config::foundry_keystores_dir()
+            .ok_or_else(|| eyre::eyre!("Could not find the default keystore directory."))?;
+        // If keystore paths are provided, use them, else, use default path + keystore account names
+        let keystore_paths = self.keystore_paths.clone().or_else(|| {
+            self.keystore_account_names.as_ref().map(|keystore_names| {
+                keystore_names
+                    .iter()
+                    .map(|keystore_name| {
+                        default_keystore_dir.join(keystore_name).to_string_lossy().into_owned()
+                    })
+                    .collect()
+            })
+        });
+
+        if let Some(keystore_paths) = keystore_paths {
             let mut wallets = Vec::with_capacity(keystore_paths.len());
 
             let mut passwords_iter =
@@ -292,7 +317,8 @@ impl MultiWallet {
                 self.keystore_password_files.clone().unwrap_or_default().into_iter();
 
             for path in keystore_paths {
-                wallets.push(self.get_from_keystore(Some(path), passwords_iter.next().as_ref(), password_files_iter.next().as_ref())?.wrap_err("Keystore paths do not have the same length as provided passwords or password files.")?);
+                let wallet = self.get_from_keystore(Some(&path), passwords_iter.next().as_ref(), password_files_iter.next().as_ref())?.wrap_err("Keystore paths do not have the same length as provided passwords or password files.")?;
+                wallets.push(wallet);
             }
             return Ok(Some(wallets))
         }

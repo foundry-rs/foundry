@@ -2448,6 +2448,7 @@ dependencies = [
  "dialoguer",
  "dotenvy",
  "dunce",
+ "eth-keystore",
  "ethers",
  "eyre",
  "forge",

@@ -25,6 +25,7 @@ ui = { path = "../ui" }
 # eth
 ethers = { workspace = true, features = ["rustls"] }
 solang-parser.workspace = true
+eth-keystore = "0.5"
 
 # cli
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }

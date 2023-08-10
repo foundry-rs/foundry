@@ -2,9 +2,11 @@
 
 pub mod vanity;
 
+use std::path::Path;
+
 use crate::{
     cmd::{cast::wallet::vanity::VanityArgs, Cmd},
-    opts::Wallet,
+    opts::{RawWallet, Wallet},
 };
 use cast::SimpleCast;
 use clap::Parser;
@@ -14,6 +16,9 @@ use ethers::{
     types::{transaction::eip712::TypedData, Address, Signature},
 };
 use eyre::Context;
+use foundry_common::fs;
+use foundry_config::Config;
+use yansi::Paint;
 
 /// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
@@ -98,6 +103,19 @@ pub enum WalletSubcommands {
         #[clap(long, short)]
         address: Address,
     },
+    /// Import a private key into an encrypted keystore.
+    #[clap(visible_alias = "i")]
+    Import {
+        #[clap(help = "The name for the account in the keystore.", value_name = "ACCOUNT_NAME")]
+        account_name: String,
+        #[clap(long, short)]
+        keystore_dir: Option<String>,
+        #[clap(flatten)]
+        raw_wallet_options: RawWallet,
+    },
+    /// List all the accounts in the keystore default directory
+    #[clap(visible_alias = "ls")]
+    List,
 }
 
 impl WalletSubcommands {
@@ -137,7 +155,10 @@ impl WalletSubcommands {
             }
             WalletSubcommands::Address { wallet, private_key_override } => {
                 let wallet = private_key_override
-                    .map(|pk| Wallet { private_key: Some(pk), ..Default::default() })
+                    .map(|pk| Wallet {
+                        raw: RawWallet { private_key: Some(pk), ..Default::default() },
+                        ..Default::default()
+                    })
                     .unwrap_or(wallet)
                     .signer(0)
                     .await?;
@@ -168,6 +189,90 @@ impl WalletSubcommands {
                     Err(_) => {
                         println!("Validation failed. Address {address} did not sign this message.")
                     }
+                }
+            }
+            WalletSubcommands::Import { account_name, keystore_dir, raw_wallet_options } => {
+                // Set up keystore directory
+                let dir = if let Some(path) = keystore_dir {
+                    Path::new(&path).to_path_buf()
+                } else {
+                    Config::foundry_keystores_dir().ok_or_else(|| {
+                        eyre::eyre!("Could not find the default keystore directory.")
+                    })?
+                };
+
+                fs::create_dir_all(&dir)?;
+
+                // check if account exists already
+                let keystore_path = Path::new(&dir).join(&account_name);
+                if keystore_path.exists() {
+                    eyre::bail!("Keystore file already exists at {}", keystore_path.display());
+                }
+
+                // get wallet
+                let wallet: Wallet = raw_wallet_options.into();
+                let wallet = wallet.try_resolve_local_wallet()?.ok_or_else(|| {
+                    eyre::eyre!(
+                        "\
+Did you set a private key or mnemonic?
+Run `cast wallet import --help` and use the corresponding CLI
+flag to set your key via:
+--private-key, --mnemonic-path or --interactive."
+                    )
+                })?;
+
+                let private_key = wallet.signer().to_bytes();
+                let password = rpassword::prompt_password("Enter password: ")?;
+
+                let mut rng = thread_rng();
+                eth_keystore::encrypt_key(
+                    &dir,
+                    &mut rng,
+                    private_key,
+                    &password,
+                    Some(&account_name),
+                )?;
+                let address = wallet.address();
+                let success_message = format!(
+                    "`{}` keystore was saved successfully. Address: {}",
+                    &account_name, address,
+                );
+                println!("{}", Paint::green(success_message));
+            }
+            WalletSubcommands::List => {
+                let default_keystore_dir = Config::foundry_keystores_dir()
+                    .ok_or_else(|| eyre::eyre!("Could not find the default keystore directory."))?;
+                // Create the keystore directory if it doesn't exist
+                fs::create_dir_all(&default_keystore_dir)?;
+                // List all files in keystore directory
+                let keystore_files: Result<Vec<_>, eyre::Report> =
+                    std::fs::read_dir(&default_keystore_dir)
+                        .wrap_err("Failed to read the directory")?
+                        .filter_map(|entry| match entry {
+                            Ok(entry) => {
+                                let path = entry.path();
+                                if path.is_file() && path.extension().is_none() {
+                                    Some(Ok(path))
+                                } else {
+                                    None
+                                }
+                            }
+                            Err(e) => Some(Err(e.into())),
+                        })
+                        .collect::<Result<Vec<_>, eyre::Report>>();
+                // Print the names of the keystore files
+                match keystore_files {
+                    Ok(files) => {
+                        // Print the names of the keystore files
+                        for file in files {
+                            if let Some(file_name) = file.file_name() {
+                                if let Some(name) = file_name.to_str() {
+                                    println!("{}", name);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => return Err(e),
                 }
             }
         };
