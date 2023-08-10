@@ -5326,9 +5326,11 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "3.3.0"
-source = "git+https://github.com/bluealloy/revm/?rev=14787244394c46e49ca59e32d7de1ebc95e66892#14787244394c46e49ca59e32d7de1ebc95e66892"
+source = "git+https://github.com/bluealloy/revm/?rev=bc4d203bf0b5f5c01868477c8e98d3abd6bb92ab#bc4d203bf0b5f5c01868477c8e98d3abd6bb92ab"
 dependencies = [
  "auto_impl",
+ "once_cell",
+ "rayon",
  "revm-interpreter",
  "revm-precompile",
  "serde",
@@ -5338,7 +5340,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "1.1.2"
-source = "git+https://github.com/bluealloy/revm/?rev=14787244394c46e49ca59e32d7de1ebc95e66892#14787244394c46e49ca59e32d7de1ebc95e66892"
+source = "git+https://github.com/bluealloy/revm/?rev=bc4d203bf0b5f5c01868477c8e98d3abd6bb92ab#bc4d203bf0b5f5c01868477c8e98d3abd6bb92ab"
 dependencies = [
  "derive_more",
  "enumn",
@@ -5350,7 +5352,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "2.0.3"
-source = "git+https://github.com/bluealloy/revm/?rev=14787244394c46e49ca59e32d7de1ebc95e66892#14787244394c46e49ca59e32d7de1ebc95e66892"
+source = "git+https://github.com/bluealloy/revm/?rev=bc4d203bf0b5f5c01868477c8e98d3abd6bb92ab#bc4d203bf0b5f5c01868477c8e98d3abd6bb92ab"
 dependencies = [
  "k256",
  "num",
@@ -5366,7 +5368,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "1.1.2"
-source = "git+https://github.com/bluealloy/revm/?rev=14787244394c46e49ca59e32d7de1ebc95e66892#14787244394c46e49ca59e32d7de1ebc95e66892"
+source = "git+https://github.com/bluealloy/revm/?rev=bc4d203bf0b5f5c01868477c8e98d3abd6bb92ab#bc4d203bf0b5f5c01868477c8e98d3abd6bb92ab"
 dependencies = [
  "auto_impl",
  "bitflags 2.3.3",
@@ -5383,6 +5385,7 @@ dependencies = [
  "ruint",
  "serde",
  "sha3",
+ "to-binary",
 ]
 
 [[package]]
@@ -6610,6 +6613,15 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
+
+[[package]]
+name = "to-binary"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4424552bc848fd1afbcd81f0e8a54b7401b90fd81bb418655ad6dc6d0823bbe3"
+dependencies = [
+ "hex",
+]
 
 [[package]]
 name = "tokio"

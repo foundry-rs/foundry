@@ -133,7 +133,7 @@ mod tests {
         let f = "function testArray(uint64[2] calldata values)";
         let func = HumanReadableParser::parse_function(f).unwrap();
 
-        let db = CacheDB::new(EmptyDB());
+        let db = CacheDB::new(EmptyDB::default());
         let state = build_initial_state(&db, &FuzzDictionaryConfig::default());
 
         let strat = proptest::strategy::Union::new_weighted(vec![

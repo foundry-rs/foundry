@@ -146,7 +146,7 @@ impl From<GenesisAccount> for AccountInfo {
         AccountInfo {
             balance: balance.into(),
             nonce: nonce.unwrap_or_default(),
-            code_hash: code.as_ref().map(|code| code.hash()).unwrap_or(KECCAK_EMPTY),
+            code_hash: code.as_ref().map(|code| code.hash_slow()).unwrap_or(KECCAK_EMPTY),
             code,
         }
     }
