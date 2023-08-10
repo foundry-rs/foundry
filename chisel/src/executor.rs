@@ -183,7 +183,7 @@ impl SessionSource {
 
         let (contract_expr, ty) = if let Some(function_call_return_type) = function_call_return_type
         {
-            (contract_expr.unwrap(), function_call_return_type)
+            (function_call_return_type.0, function_call_return_type.1)
         } else {
             match contract_expr.and_then(|e| {
                 Type::ethabi(e, Some(&generated_output.intermediate)).map(|ty| (e, ty))
@@ -998,10 +998,10 @@ impl Type {
             .and_then(|ty| ty.try_as_ethabi(intermediate))
     }
 
-    fn get_function_return_type(
-        contract_expr: Option<&pt::Expression>,
+    fn get_function_return_type<'a>(
+        contract_expr: Option<&'a pt::Expression>,
         intermediate: &IntermediateOutput,
-    ) -> Option<ParamType> {
+    ) -> Option<(&'a pt::Expression, ParamType)> {
         let pt::Expression::FunctionCall(_, function_call, _) = contract_expr? else { return None };
         let pt::Expression::MemberAccess(_, contract_name, function_name) = function_call.as_ref()
         else {
@@ -1021,6 +1021,7 @@ impl Type {
             .get(&function_name.name)?;
         let return_parameter = contract.as_ref().returns.first()?.to_owned().1?;
         Type::ethabi(&return_parameter.ty, Some(intermediate))
+            .and_then(|p| Some((contract_expr.unwrap(), p)))
     }
 
     /// Inverts Int to Uint and viceversa.
