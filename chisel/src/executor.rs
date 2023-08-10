@@ -181,8 +181,9 @@ impl SessionSource {
         let function_call_return_type =
             Type::get_function_return_type(contract_expr, &generated_output.intermediate);
 
-        let (contract_expr, ty) = if function_call_return_type.is_some() {
-            (contract_expr.unwrap(), function_call_return_type.unwrap())
+        let (contract_expr, ty) = if let Some(function_call_return_type) = function_call_return_type
+        {
+            (contract_expr.unwrap(), function_call_return_type)
         } else {
             match contract_expr.and_then(|e| {
                 Type::ethabi(e, Some(&generated_output.intermediate)).map(|ty| (e, ty))
@@ -1001,36 +1002,25 @@ impl Type {
         contract_expr: Option<&pt::Expression>,
         intermediate: &IntermediateOutput,
     ) -> Option<ParamType> {
-        let Some(pt::Expression::FunctionCall(_, function_call, _)) = contract_expr else {
-            return None
-        };
-
+        let pt::Expression::FunctionCall(_, function_call, _) = contract_expr? else { return None };
         let pt::Expression::MemberAccess(_, contract_name, function_name) = function_call.as_ref()
         else {
             return None
         };
-
         let pt::Expression::Variable(contract_name) = contract_name.as_ref() else { return None };
-
-        let Some(pt::Expression::Variable(contract_name)) =
-            intermediate.repl_contract_expressions.get(&contract_name.name)
+        let pt::Expression::Variable(contract_name) =
+            intermediate.repl_contract_expressions.get(&contract_name.name)?
         else {
             return None
         };
 
-        let Some(contract) = intermediate
+        let contract = intermediate
             .intermediate_contracts
-            .get(&contract_name.name)
-            .unwrap()
+            .get(&contract_name.name)?
             .function_definitions
-            .get(&function_name.name)
-        else {
-            return None
-        };
-
-        let Some(returns) = contract.as_ref().returns.first() else { return None };
-        let Some(return_parameter) = returns.to_owned().1 else { return None };
-        Type::ethabi(&return_parameter.ty, Some(&intermediate))
+            .get(&function_name.name)?;
+        let return_parameter = contract.as_ref().returns.first()?.to_owned().1?;
+        Type::ethabi(&return_parameter.ty, Some(intermediate))
     }
 
     /// Inverts Int to Uint and viceversa.
