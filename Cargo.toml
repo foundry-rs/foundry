@@ -118,6 +118,7 @@ ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", default-feat
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 solang-parser = "=0.3.1"
 
 #[patch."https://github.com/gakonst/ethers-rs"]
@@ -133,4 +134,4 @@ solang-parser = "=0.3.1"
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-revm = { git = "https://github.com/bluealloy/revm/" }
+revm = { git = "https://github.com/bluealloy/revm/", rev = "14787244394c46e49ca59e32d7de1ebc95e66892" }
