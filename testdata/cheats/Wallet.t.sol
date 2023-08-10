@@ -9,6 +9,9 @@ contract Foo {}
 contract WalletTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
+    uint internal constant Q =
+        0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141;
+
     function addressOf(uint256 x, uint256 y) internal pure returns (address) {
         return address(uint160(uint256(keccak256(abi.encode(x, y)))));
     }
@@ -29,10 +32,11 @@ contract WalletTest is DSTest {
         assertEq(label, string(privKey), "labelled address != wallet.addr");
     }
 
-    function testCreateWalletPrivKeyNoLabel(uint248 pk) public {
-        vm.assume(pk != 0);
+    function testCreateWalletPrivKeyNoLabel(uint256 pkSeed) public {
+        vm.assume(pkSeed != 0);
+        uint256 pk = bound(pkSeed, 1, Q - 1);
 
-        Vm.Wallet memory wallet = vm.createWallet(uint256(pk));
+        Vm.Wallet memory wallet = vm.createWallet(pk);
 
         // check wallet.addr against recovered address using private key
         address expectedAddr = vm.addr(wallet.privateKey);
@@ -43,10 +47,12 @@ contract WalletTest is DSTest {
         assertEq(expectedAddr, wallet.addr);
     }
 
-    function testCreateWalletPrivKeyWithLabel(uint248 pk) public {
+    function testCreateWalletPrivKeyWithLabel(uint256 pkSeed) public {
         string memory label = "labelled wallet";
 
-        vm.assume(pk != 0);
+        vm.assume(pkSeed != 0);
+        uint256 pk = bound(pkSeed, 1, Q - 1);
+
         Vm.Wallet memory wallet = vm.createWallet(pk, label);
 
         // check wallet.addr against recovered address using private key
@@ -61,9 +67,11 @@ contract WalletTest is DSTest {
         assertEq(expectedLabel, label, "labelled address != wallet.addr");
     }
 
-    function testSignWithWalletDigest(uint248 pk, bytes32 digest) public {
-        vm.assume(pk != 0);
-        Vm.Wallet memory wallet = vm.createWallet(uint256(pk));
+    function testSignWithWalletDigest(uint256 pkSeed, bytes32 digest) public {
+        vm.assume(pkSeed != 0);
+        uint256 pk = bound(pkSeed, 1, Q - 1);
+
+        Vm.Wallet memory wallet = vm.createWallet(pk);
 
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(wallet, digest);
 
@@ -71,13 +79,18 @@ contract WalletTest is DSTest {
         assertEq(recovered, wallet.addr);
     }
 
-    function testSignWithWalletMessage(uint248 pk, bytes memory message) public {
+    function testSignWithWalletMessage(
+        uint256 pkSeed,
+        bytes memory message
+    ) public {
         testSignWithWalletDigest(pk, keccak256(message));
     }
 
-    function testGetNonceWallet(uint248 pk) public {
-        vm.assume(pk != 0);
-        Vm.Wallet memory wallet = vm.createWallet(uint256(pk));
+    function testGetNonceWallet(uint256 pk) public {
+        vm.assume(pkSeed != 0);
+        uint256 pk = bound(pkSeed, 1, Q - 1);
+
+        Vm.Wallet memory wallet = vm.createWallet(pk);
 
         uint64 nonce1 = vm.getNonce(wallet);
 
