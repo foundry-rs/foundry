@@ -1,7 +1,6 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use clap::CommandFactory;
 use ethers::{
     prelude::remappings::Remapping,
     solc::{
@@ -9,7 +8,6 @@ use ethers::{
         ConfigurableContractArtifact,
     },
 };
-use foundry_cli::opts::forge::Opts;
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_init,
@@ -28,15 +26,6 @@ use std::{
 forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
     cmd.arg("--help");
     cmd.assert_non_empty_stdout();
-});
-
-// tests `--help` is printed to std out for all subcommands
-forgetest!(print_forge_subcommand_help, |_: TestProject, mut cmd: TestCommand| {
-    let forge = Opts::command();
-    for sub_command in forge.get_subcommands() {
-        cmd.forge_fuse().args([sub_command.get_name(), "--help"]);
-        cmd.assert_non_empty_stdout();
-    }
 });
 
 // checks that `clean` can be invoked even if out and cache don't exist

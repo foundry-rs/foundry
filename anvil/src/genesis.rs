@@ -224,10 +224,7 @@ pub struct CliqueConfig {
 
 pub mod secret_key {
     use ethers::{core::k256::SecretKey, signers::LocalWallet, types::Bytes};
-    use serde::{
-        de::{self},
-        Deserialize, Deserializer, Serialize, Serializer,
-    };
+    use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S>(value: &Option<LocalWallet>, serializer: S) -> Result<S::Ok, S::Error>
     where

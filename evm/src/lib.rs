@@ -28,7 +28,7 @@ pub mod utils;
 
 // Re-exports
 pub use ethers::types::Address;
-pub use hashbrown::{self};
+pub use hashbrown;
 use revm::interpreter::{CallScheme, CreateScheme};
 pub use revm::{self, primitives::HashMap};
 use serde::{Deserialize, Serialize};

@@ -9,8 +9,8 @@ use chisel::{
 };
 use clap::Parser;
 use foundry_cli::{
-    cmd::{forge::build::BuildArgs, LoadConfig},
-    utils,
+    cmd::forge::build::BuildArgs,
+    utils::{self, LoadConfig},
 };
 use foundry_common::evm::EvmArgs;
 use foundry_config::{

@@ -24,7 +24,7 @@ mod verify;
 
 // import forge utils as mod
 #[allow(unused)]
-#[path = "../../src/utils.rs"]
+#[path = "../../src/utils/mod.rs"]
 pub(crate) mod forge_utils;
 
 #[cfg(feature = "external-integration-tests")]
