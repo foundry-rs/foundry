@@ -17,9 +17,9 @@ use std::cmp::Ordering;
 /// Solidity will see a successful call and attempt to decode the return data. Therefore, we need
 /// to populate the return with dummy bytes so the decode doesn't fail.
 ///
-/// 512 bytes was arbitrarily chosen because it is long enough for return values up to 16 words in
+/// 8912 bytes was arbitrarily chosen because it is long enough for return values up to 256 words in
 /// size.
-static DUMMY_CALL_OUTPUT: Lazy<[u8; 8192]> = Lazy::new(|| [0u8; 8192]);
+static DUMMY_CALL_OUTPUT: Lazy<Bytes> = Lazy::new(|| Bytes::from_static(&[0u8; 8192]));
 
 /// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
 static DUMMY_CREATE_ADDRESS: Address =
@@ -59,7 +59,7 @@ pub fn handle_expect_revert(
                 (Some(DUMMY_CREATE_ADDRESS), Bytes::new())
             } else {
                 trace!("successfully handled expected revert");
-                (None, DUMMY_CALL_OUTPUT.to_vec().into())
+                (None, DUMMY_CALL_OUTPUT.clone())
             })
         };
     }
