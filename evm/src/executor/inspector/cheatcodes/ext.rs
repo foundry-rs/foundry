@@ -246,7 +246,9 @@ fn canonicalize_json_key(key: &str) -> String {
 
 /// Encodes a vector of [`Token`] into a vector of bytes.
 fn encode_abi_values(values: Vec<Token>) -> Vec<u8> {
-    if values.len() == 1 {
+    if values.is_empty() {
+        abi::encode(&[Token::Bytes(Vec::new())])
+    } else if values.len() == 1 {
         abi::encode(&[Token::Bytes(abi::encode(&values))])
     } else {
         abi::encode(&[Token::Bytes(abi::encode(&[Token::Array(values)]))])
@@ -315,6 +317,36 @@ fn parse_json(json_str: &str, key: &str, coerce: Option<ParamType>) -> Result {
             Ok(abi_encoded.into())
         }
     }
+}
+
+// returns JSON keys of given object as a string array
+fn parse_json_keys(json_str: &str, key: &str) -> Result {
+    let json = serde_json::from_str(json_str)?;
+    let values = jsonpath_lib::select(&json, &canonicalize_json_key(key))?;
+
+    // We need to check that values contains just one JSON-object and not an array of objects
+    ensure!(
+        values.len() == 1,
+        "You can only get keys for a single JSON-object. The key '{key}' returns a value or an array of JSON-objects",
+    );
+
+    let value = values[0];
+
+    ensure!(
+        value.is_object(),
+        "You can only get keys for JSON-object. The key '{key}' does not return an object",
+    );
+
+    let res = value
+        .as_object()
+        .ok_or(eyre::eyre!("Unexpected error while extracting JSON-object"))?
+        .keys()
+        .map(|key| Token::String(key.to_owned()))
+        .collect::<Vec<Token>>();
+
+    // encode the bytes as the 'bytes' solidity type
+    let abi_encoded = abi::encode(&[Token::Array(res)]);
+    Ok(abi_encoded.into())
 }
 
 /// Serializes a key:value pair to a specific object. By calling this function multiple times,
@@ -416,6 +448,14 @@ fn key_exists(json_str: &str, key: &str) -> Result {
     Ok(exists)
 }
 
+/// Sleeps for a given amount of milliseconds.
+fn sleep(milliseconds: &U256) -> Result {
+    let sleep_duration = std::time::Duration::from_millis(milliseconds.as_u64());
+    std::thread::sleep(sleep_duration);
+
+    Ok(Default::default())
+}
+
 #[instrument(level = "error", name = "ext", target = "evm::cheatcodes", skip_all)]
 pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
     Some(match call {
@@ -513,6 +553,7 @@ pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
         HEVMCalls::ParseJson0(inner) => parse_json(&inner.0, "$", None),
         HEVMCalls::ParseJson1(inner) => parse_json(&inner.0, &inner.1, None),
         HEVMCalls::ParseJsonBool(inner) => parse_json(&inner.0, &inner.1, Some(ParamType::Bool)),
+        HEVMCalls::ParseJsonKeys(inner) => parse_json_keys(&inner.0, &inner.1),
         HEVMCalls::ParseJsonBoolArray(inner) => {
             parse_json(&inner.0, &inner.1, Some(ParamType::Bool))
         }
@@ -590,6 +631,7 @@ pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
         HEVMCalls::SerializeBytes1(inner) => {
             serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
         }
+        HEVMCalls::Sleep(inner) => sleep(&inner.0),
         HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
         HEVMCalls::WriteJson1(inner) => write_json(state, &inner.0, &inner.1, Some(&inner.2)),
         HEVMCalls::KeyExists(inner) => key_exists(&inner.0, &inner.1),

@@ -93,9 +93,16 @@ pub fn parse_u256(s: &str) -> Result<U256> {
 ///
 /// Defaults to `http://localhost:8545` and `Mainnet`.
 pub fn get_provider(config: &Config) -> Result<foundry_common::RetryProvider> {
+    get_provider_builder(config)?.build()
+}
+/// Returns a [ProviderBuilder](foundry_common::ProviderBuilder) instantiated using [Config]'s RPC
+/// URL and chain.
+///
+/// Defaults to `http://localhost:8545` and `Mainnet`.
+pub fn get_provider_builder(config: &Config) -> Result<foundry_common::ProviderBuilder> {
     let url = config.get_rpc_url_or_localhost_http()?;
     let chain = config.chain_id.unwrap_or_default();
-    foundry_common::ProviderBuilder::new(url.as_ref()).chain(chain).build()
+    Ok(foundry_common::ProviderBuilder::new(url.as_ref()).chain(chain))
 }
 
 pub async fn get_chain<M>(chain: Option<Chain>, provider: M) -> Result<Chain>

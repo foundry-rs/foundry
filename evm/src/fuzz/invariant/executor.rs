@@ -26,13 +26,15 @@ use ethers::{
 use eyre::ContextCompat;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::{FuzzDictionaryConfig, InvariantConfig};
-use hashbrown::HashMap;
 use parking_lot::{Mutex, RwLock};
 use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
-use revm::{primitives::B160, DatabaseCommit};
+use revm::{
+    primitives::{HashMap, B160},
+    DatabaseCommit,
+};
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 
 /// Alias for (Dictionary for fuzzing, initial contracts to fuzz and an InvariantStrategy).
@@ -101,6 +103,7 @@ impl<'a> InvariantExecutor<'a> {
                 &blank_executor.borrow(),
                 &[],
                 &mut failures.borrow_mut(),
+                self.config.shrink_sequence,
             )
             .ok(),
         );
@@ -576,7 +579,9 @@ fn can_continue(
 
     // Assert invariants IFF the call did not revert and the handlers did not fail.
     if !call_result.reverted && !handlers_failed {
-        call_results = assert_invariants(invariant_contract, executor, calldata, failures).ok();
+        call_results =
+            assert_invariants(invariant_contract, executor, calldata, failures, shrink_sequence)
+                .ok();
         if call_results.is_none() {
             return (false, None)
         }

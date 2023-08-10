@@ -3,7 +3,7 @@
 
 use crate::cache::StorageCachingConfig;
 use ethers_core::types::{Address, Chain::Mainnet, H160, H256, U256};
-pub use ethers_solc::artifacts::OptimizerDetails;
+pub use ethers_solc::{self, artifacts::OptimizerDetails};
 use ethers_solc::{
     artifacts::{
         output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
@@ -77,7 +77,9 @@ pub mod fix;
 pub use figment;
 use tracing::warn;
 
-mod providers;
+/// config providers
+pub mod providers;
+
 use crate::{
     error::ExtractConfigError,
     etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig},
@@ -572,9 +574,6 @@ impl Config {
                 r.path.path = r.path.path.to_slash_lossy().into_owned().into();
             });
         }
-        // remove any potential duplicates
-        self.remappings.sort_unstable();
-        self.remappings.dedup();
     }
 
     /// Returns the directory in which dependencies should be installed
@@ -2726,13 +2725,12 @@ mod tests {
             assert_eq!(
                 config.remappings,
                 vec![
-                    // From environment
+                    // From environment (should have precedence over remapping.txt)
                     Remapping::from_str("ds-test=lib/ds-test/").unwrap().into(),
-                    // From remapping.txt
+                    Remapping::from_str("other/=lib/other/").unwrap().into(),
+                    // From remapping.txt (should have less precedence than remapping.txt)
                     Remapping::from_str("file-ds-test/=lib/ds-test/").unwrap().into(),
                     Remapping::from_str("file-other/=lib/other/").unwrap().into(),
-                    // From environment
-                    Remapping::from_str("other/=lib/other/").unwrap().into(),
                 ],
             );
 
