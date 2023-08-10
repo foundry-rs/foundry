@@ -256,8 +256,12 @@ impl MemDb {
                 storage.remove(&add);
             } else {
                 // insert account
-                if let Some(code_hash) =
-                    acc.info.code.as_ref().filter(|code| !code.is_empty()).map(|code| code.hash())
+                if let Some(code_hash) = acc
+                    .info
+                    .code
+                    .as_ref()
+                    .filter(|code| !code.is_empty())
+                    .map(|code| code.hash_slow())
                 {
                     acc.info.code_hash = code_hash;
                 } else if acc.info.code_hash.is_zero() {

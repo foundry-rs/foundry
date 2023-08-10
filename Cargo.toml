@@ -134,4 +134,4 @@ solang-parser = "=0.3.1"
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-revm = { git = "https://github.com/bluealloy/revm/", rev = "14787244394c46e49ca59e32d7de1ebc95e66892" }
+revm = { git = "https://github.com/bluealloy/revm/", rev = "bc4d203bf0b5f5c01868477c8e98d3abd6bb92ab" }
