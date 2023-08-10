@@ -628,7 +628,9 @@ impl ScriptArgs {
             }
         }
 
-        if prompt_user && !self.non_interactive &&
+        // Only prompt if we're broadcasting and we've not disabled interactivity.
+        if prompt_user &&
+            !self.non_interactive &&
             !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()?
         {
             eyre::bail!("User canceled the script.");
