@@ -2,6 +2,7 @@ use super::{bail, ensure, fmt_err, Cheatcodes, Result};
 use crate::{abi::HEVMCalls, executor::backend::DatabaseExt, utils::h160_to_b160};
 use ethers::{
     abi::{AbiDecode, RawLog},
+    contract::Lazy,
     types::{Address, Bytes, H160, U256},
 };
 use foundry_utils::error::{ERROR_PREFIX, REVERT_PREFIX};
@@ -16,9 +17,9 @@ use std::cmp::Ordering;
 /// Solidity will see a successful call and attempt to decode the return data. Therefore, we need
 /// to populate the return with dummy bytes so the decode doesn't fail.
 ///
-/// 512 bytes was arbitrarily chosen because it is long enough for return values up to 16 words in
+/// 8912 bytes was arbitrarily chosen because it is long enough for return values up to 256 words in
 /// size.
-static DUMMY_CALL_OUTPUT: [u8; 1024] = [0u8; 1024];
+static DUMMY_CALL_OUTPUT: Lazy<Bytes> = Lazy::new(|| Bytes::from_static(&[0u8; 8192]));
 
 /// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
 static DUMMY_CREATE_ADDRESS: Address =
@@ -58,7 +59,7 @@ pub fn handle_expect_revert(
                 (Some(DUMMY_CREATE_ADDRESS), Bytes::new())
             } else {
                 trace!("successfully handled expected revert");
-                (None, DUMMY_CALL_OUTPUT.to_vec().into())
+                (None, DUMMY_CALL_OUTPUT.clone())
             })
         };
     }
