@@ -998,16 +998,26 @@ impl Type {
             .and_then(|ty| ty.try_as_ethabi(intermediate))
     }
 
+    /// Get the return type of a function call expression.
     fn get_function_return_type<'a>(
         contract_expr: Option<&'a pt::Expression>,
         intermediate: &IntermediateOutput,
     ) -> Option<(&'a pt::Expression, ParamType)> {
-        let pt::Expression::FunctionCall(_, function_call, _) = contract_expr? else { return None };
-        let pt::Expression::MemberAccess(_, contract_name, function_name) = function_call.as_ref()
-        else {
-            return None
+        let function_call = match contract_expr? {
+            pt::Expression::FunctionCall(_, function_call, _) => function_call,
+            _ => return None,
         };
-        let pt::Expression::Variable(contract_name) = contract_name.as_ref() else { return None };
+        let (contract_name, function_name) = match function_call.as_ref() {
+            pt::Expression::MemberAccess(_, contract_name, function_name) => {
+                (contract_name, function_name)
+            }
+            _ => return None,
+        };
+        let contract_name = match contract_name.as_ref() {
+            pt::Expression::Variable(contract_name) => contract_name.to_owned(),
+            _ => return None,
+        };
+
         let pt::Expression::Variable(contract_name) =
             intermediate.repl_contract_expressions.get(&contract_name.name)?
         else {
