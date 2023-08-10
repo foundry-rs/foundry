@@ -3,6 +3,7 @@ use crate::{abi::HEVMCalls, executor::backend::DatabaseExt, utils::h160_to_b160}
 use ethers::{
     abi::{AbiDecode, RawLog},
     types::{Address, Bytes, H160, U256},
+    contract::Lazy,
 };
 use foundry_utils::error::{ERROR_PREFIX, REVERT_PREFIX};
 use revm::{
@@ -18,7 +19,7 @@ use std::cmp::Ordering;
 ///
 /// 512 bytes was arbitrarily chosen because it is long enough for return values up to 16 words in
 /// size.
-static DUMMY_CALL_OUTPUT: [u8; 1024] = [0u8; 1024];
+static DUMMY_CALL_OUTPUT: Lazy<[u8; 8192]> = Lazy::new(|| [0u8; 8192]);
 
 /// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
 static DUMMY_CREATE_ADDRESS: Address =
