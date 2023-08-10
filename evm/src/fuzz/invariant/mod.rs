@@ -1,11 +1,16 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
-use crate::{fuzz::*, CALLER};
+use crate::{
+    fuzz::*,
+    trace::{load_contracts, TraceKind, Traces},
+    CALLER,
+};
 mod error;
 pub use error::InvariantFuzzError;
 mod filters;
 pub use filters::{ArtifactFilters, SenderFilters};
 mod call_override;
 pub use call_override::{set_up_inner_replay, RandomCallGenerator};
+use foundry_common::ContractsByArtifact;
 mod executor;
 use crate::executor::Executor;
 use ethers::{
@@ -87,17 +92,20 @@ pub fn assert_invariants(
                 .expect("to have been initialized.");
 
             // We only care about invariants which we haven't broken yet.
-            if invariant_error.is_none() {
+            if invariant_error.0.is_none() {
                 invariant_failures.failed_invariants.insert(
                     broken_invariant.name.clone(),
-                    Some(InvariantFuzzError::new(
-                        invariant_contract,
-                        Some(broken_invariant),
-                        calldata,
-                        call_result,
-                        &inner_sequence,
-                        shrink_sequence,
-                    )),
+                    (
+                        Some(InvariantFuzzError::new(
+                            invariant_contract,
+                            Some(broken_invariant),
+                            calldata,
+                            call_result,
+                            &inner_sequence,
+                            shrink_sequence,
+                        )),
+                        broken_invariant.clone().to_owned(),
+                    ),
                 );
                 found_case = true;
             } else {
@@ -114,7 +122,7 @@ pub fn assert_invariants(
         invariant_failures.broken_invariants_count = invariant_failures
             .failed_invariants
             .iter()
-            .filter(|(_function, error)| error.is_some())
+            .filter(|(_function, error)| error.0.is_some())
             .count();
 
         eyre::bail!(
@@ -126,14 +134,64 @@ pub fn assert_invariants(
     Ok(call_results)
 }
 
+/// Replays the provided invariant run for collecting the logs and traces from all depths.
+#[allow(clippy::too_many_arguments)]
+pub fn replay_run(
+    invariant_contract: &InvariantContract,
+    mut executor: Executor,
+    known_contracts: Option<&ContractsByArtifact>,
+    mut ided_contracts: ContractsByAddress,
+    logs: &mut Vec<Log>,
+    traces: &mut Traces,
+    func: Function,
+    inputs: Vec<BasicTxDetails>,
+) {
+    // We want traces for a failed case.
+    executor.set_tracing(true);
+
+    // set_up_inner_replay(&mut executor, &inputs);
+
+    // Replay each call from the sequence until we break the invariant.
+    for (sender, (addr, bytes)) in inputs.iter() {
+        let call_result = executor
+            .call_raw_committing(*sender, *addr, bytes.0.clone(), U256::zero())
+            .expect("bad call to evm");
+
+        logs.extend(call_result.logs);
+        traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
+
+        // Identify newly generated contracts, if they exist.
+        ided_contracts.extend(load_contracts(
+            vec![(TraceKind::Execution, call_result.traces.clone().unwrap())],
+            known_contracts,
+        ));
+
+        // Checks the invariant.
+        let error_call_result = executor
+            .call_raw(
+                CALLER,
+                invariant_contract.address,
+                func.encode_input(&[]).expect("invariant should have no inputs").into(),
+                U256::zero(),
+            )
+            .expect("bad call to evm");
+
+        traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
+
+        logs.extend(error_call_result.logs);
+    }
+}
+
 /// The outcome of an invariant fuzz test
 #[derive(Debug)]
 pub struct InvariantFuzzTestResult {
-    pub invariants: BTreeMap<String, Option<InvariantFuzzError>>,
+    pub invariants: BTreeMap<String, (Option<InvariantFuzzError>, Function)>,
     /// Every successful fuzz test case
     pub cases: Vec<FuzzedCases>,
     /// Number of reverted fuzz calls
     pub reverts: usize,
 
-    pub last_call_results: Option<BTreeMap<String, RawCallResult>>,
+    /// The entire inputs of the last run of the invariant campaign, used for
+    /// replaying the run for collecting traces.
+    pub last_run_inputs: Vec<BasicTxDetails>,
 }

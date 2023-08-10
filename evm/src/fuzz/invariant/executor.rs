@@ -41,6 +41,20 @@ use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 type InvariantPreparation =
     (EvmFuzzState, FuzzRunIdentifiedContracts, BoxedStrategy<Vec<BasicTxDetails>>);
 
+/// Enriched results of an invariant run check.
+///
+/// Contains the success condition and call results of the last run
+struct RichInvariantResults {
+    success: bool,
+    call_results: Option<BTreeMap<String, RawCallResult>>,
+}
+
+impl RichInvariantResults {
+    fn new(success: bool, call_results: Option<BTreeMap<String, RawCallResult>>) -> Self {
+        Self { success, call_results }
+    }
+}
+
 /// Wrapper around any [`Executor`] implementor which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
 ///
 /// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contracts with
@@ -107,6 +121,7 @@ impl<'a> InvariantExecutor<'a> {
             )
             .ok(),
         );
+        let last_run_calldata: RefCell<Vec<BasicTxDetails>> = RefCell::new(vec![]);
         // Make sure invariants are sound even before starting to fuzz
         if last_call_results.borrow().is_none() {
             fuzz_cases.borrow_mut().push(FuzzedCases::new(vec![]));
@@ -142,7 +157,7 @@ impl<'a> InvariantExecutor<'a> {
                 // Created contracts during a run.
                 let mut created_contracts = vec![];
 
-                'fuzz_run: for _ in 0..self.config.depth {
+                'fuzz_run: for current_run in 0..self.config.depth {
                     let (sender, (address, calldata)) =
                         inputs.last().expect("to have the next randomly generated input.");
 
@@ -183,7 +198,7 @@ impl<'a> InvariantExecutor<'a> {
                         stipend: call_result.stipend,
                     });
 
-                    let (can_continue, call_results) = can_continue(
+                    let RichInvariantResults { success: can_continue, call_results } = can_continue(
                         &invariant_contract,
                         call_result,
                         &executor,
@@ -194,6 +209,10 @@ impl<'a> InvariantExecutor<'a> {
                         self.config.fail_on_revert,
                         self.config.shrink_sequence,
                     );
+
+                    if !can_continue || current_run == self.config.depth - 1 {
+                        *last_run_calldata.borrow_mut() = inputs.clone();
+                    }
 
                     if !can_continue {
                         break 'fuzz_run
@@ -233,7 +252,7 @@ impl<'a> InvariantExecutor<'a> {
             invariants,
             cases: fuzz_cases.into_inner(),
             reverts,
-            last_call_results: last_call_results.take(),
+            last_run_inputs: last_run_calldata.take(),
         })
     }
 
@@ -556,7 +575,8 @@ fn collect_data(
 }
 
 /// Verifies that the invariant run execution can continue.
-/// Returns the mapping of (Invariant Function Name -> Call Result) if invariants were asserted.
+/// Returns the mapping of (Invariant Function Name -> Call Result, Logs, Traces) if invariants were
+/// asserted.
 #[allow(clippy::too_many_arguments)]
 fn can_continue(
     invariant_contract: &InvariantContract,
@@ -568,7 +588,7 @@ fn can_continue(
     state_changeset: StateChangeset,
     fail_on_revert: bool,
     shrink_sequence: bool,
-) -> (bool, Option<BTreeMap<String, RawCallResult>>) {
+) -> RichInvariantResults {
     let mut call_results = None;
 
     // Detect handler assertion failures first.
@@ -583,7 +603,7 @@ fn can_continue(
             assert_invariants(invariant_contract, executor, calldata, failures, shrink_sequence)
                 .ok();
         if call_results.is_none() {
-            return (false, None)
+            return RichInvariantResults::new(false, None)
         }
     } else {
         failures.reverts += 1;
@@ -604,13 +624,16 @@ fn can_continue(
 
             // Hacky to provide the full error to the user.
             for invariant in invariant_contract.invariant_functions.iter() {
-                failures.failed_invariants.insert(invariant.name.clone(), Some(error.clone()));
+                failures.failed_invariants.insert(
+                    invariant.name.clone(),
+                    (Some(error.clone()), invariant.to_owned().clone()),
+                );
             }
 
-            return (false, None)
+            return RichInvariantResults::new(false, None)
         }
     }
-    (true, call_results)
+    RichInvariantResults::new(true, call_results)
 }
 
 #[derive(Clone)]
@@ -623,7 +646,7 @@ pub struct InvariantFailures {
     /// How many different invariants have been broken.
     pub broken_invariants_count: usize,
     /// Maps a broken invariant to its specific error.
-    pub failed_invariants: BTreeMap<String, Option<InvariantFuzzError>>,
+    pub failed_invariants: BTreeMap<String, (Option<InvariantFuzzError>, Function)>,
 }
 
 impl InvariantFailures {
@@ -631,13 +654,16 @@ impl InvariantFailures {
         InvariantFailures {
             reverts: 0,
             broken_invariants_count: 0,
-            failed_invariants: invariants.iter().map(|f| (f.name.to_string(), None)).collect(),
+            failed_invariants: invariants
+                .iter()
+                .map(|f| (f.name.to_string(), (None, f.to_owned().clone())))
+                .collect(),
             revert_reason: None,
         }
     }
 
     /// Moves `reverts` and `failed_invariants` out of the struct.
-    fn into_inner(self) -> (usize, BTreeMap<String, Option<InvariantFuzzError>>) {
+    fn into_inner(self) -> (usize, BTreeMap<String, (Option<InvariantFuzzError>, Function)>) {
         (self.reverts, self.failed_invariants)
     }
 }

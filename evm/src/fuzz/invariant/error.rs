@@ -145,6 +145,9 @@ impl InvariantFuzzError {
                     .call_raw(CALLER, self.addr, func.0.clone(), U256::zero())
                     .expect("bad call to evm");
 
+                traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
+
+                logs.extend(error_call_result.logs);
                 if error_call_result.reverted {
                     break
                 }
