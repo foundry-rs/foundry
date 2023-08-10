@@ -113,8 +113,12 @@ impl ScriptArgs {
                             TypedTransaction::Eip1559(ref mut inner) => {
                                 let eip1559_fees =
                                     eip1559_fees.expect("Could not get eip1559 fee estimation.");
+                                if let Some(priority_gas_price) = self.priority_gas_price {
+                                    inner.max_priority_fee_per_gas = Some(priority_gas_price);
+                                } else {
+                                    inner.max_priority_fee_per_gas = Some(eip1559_fees.1);
+                                }
                                 inner.max_fee_per_gas = Some(eip1559_fees.0);
-                                inner.max_priority_fee_per_gas = Some(eip1559_fees.1);
                             }
                         }
                     }

@@ -116,6 +116,15 @@ pub struct ScriptArgs {
     )]
     pub sig: String,
 
+    /// Max priority fee per gas for EIP1559 transactions.
+    #[clap(
+        long,
+        env = "ETH_PRIORITY_GAS_PRICE",
+        value_parser = parse_ether_value,
+        value_name = "PRICE"
+    )]
+    pub priority_gas_price: Option<U256>,
+
     /// Use legacy transactions instead of EIP1559 ones.
     ///
     /// This is auto-enabled for common networks without EIP1559.
