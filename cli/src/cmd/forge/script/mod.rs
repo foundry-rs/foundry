@@ -175,6 +175,10 @@ pub struct ScriptArgs {
     #[clap(long)]
     pub slow: bool,
 
+    /// Disables interactive prompts that might appear when deploying big contracts.
+    #[clap(long)]
+    pub non_interactive: bool,
+
     /// The Etherscan (or equivalent) API key
     #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     pub etherscan_api_key: Option<String>,
@@ -624,7 +628,7 @@ impl ScriptArgs {
             }
         }
 
-        if prompt_user &&
+        if prompt_user && !self.non_interactive &&
             !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()?
         {
             eyre::bail!("User canceled the script.");
