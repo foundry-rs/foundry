@@ -296,7 +296,7 @@ of a configuration value as the value of the parameter as the value itself. But 
 corresponding [dapptools](https://github.com/dapphub/dapptools/tree/master/src/dapp#configuration) config vars are also
 supported, this means that `FOUNDRY_SRC` and `DAPP_SRC` are equivalent.
 
-Some exceptions to the above are [explicitly ignored](https://github.com/foundry-rs/foundry/blob/master/config/src/lib.rs#L1539-L1552) due to security concerns.
+Some exceptions to the above are [explicitly ignored](https://github.com/foundry-rs/foundry/blob/10440422e63aae660104e079dfccd5b0ae5fd720/config/src/lib.rs#L1539-L15522) due to security concerns.
 
 Environment variables take precedence over values in `foundry.toml`. Values are parsed as loose form of TOML syntax.
 Consider the following examples:
