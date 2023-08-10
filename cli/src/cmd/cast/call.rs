@@ -167,7 +167,7 @@ impl CallArgs {
 
                     handle_traces(trace, &config, chain, labels, verbose, debug).await?;
 
-                    return Ok(());
+                    return Ok(())
                 }
 
                 // fill the builder after the conditional so we dont move values
@@ -201,7 +201,7 @@ impl CallArgs {
 
                     handle_traces(trace, &config, chain, labels, verbose, debug).await?;
 
-                    return Ok(());
+                    return Ok(())
                 }
             }
         };

@@ -150,7 +150,7 @@ impl CallTraceArena {
             .map(|node| {
                 if node.trace.created() {
                     if let RawOrDecodedReturnData::Raw(ref bytes) = node.trace.output {
-                        return (&node.trace.address, Some(bytes.as_ref()));
+                        return (&node.trace.address, Some(bytes.as_ref()))
                     }
                 }
 
@@ -224,7 +224,7 @@ impl CallTraceArena {
         opts: GethDebugTracingOptions,
     ) -> DefaultFrame {
         if self.arena.is_empty() {
-            return Default::default();
+            return Default::default()
         }
 
         let mut storage = HashMap::new();

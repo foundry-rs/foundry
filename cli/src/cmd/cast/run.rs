@@ -139,10 +139,10 @@ impl RunArgs {
                     // and gas limit 0 which causes reverts, so we skip it
                     if tx.from == ARBITRUM_SENDER {
                         update_progress!(pb, index);
-                        continue;
+                        continue
                     }
                     if tx.hash().eq(&tx_hash) {
-                        break;
+                        break
                     }
 
                     configure_tx_env(&mut env, &tx);
