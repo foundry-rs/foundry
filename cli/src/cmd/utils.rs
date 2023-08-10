@@ -3,19 +3,28 @@ use ethers::{
     abi::Abi,
     core::types::Chain,
     solc::{
-        artifacts::{CompactBytecode, CompactDeployedBytecode},
+        artifacts::{CompactBytecode, CompactDeployedBytecode, ContractBytecodeSome},
         cache::{CacheEntry, SolFilesCache},
         info::ContractInfo,
         utils::read_json_file,
-        Artifact, ProjectCompileOutput,
+        Artifact, ArtifactId, ProjectCompileOutput,
     },
 };
 use eyre::WrapErr;
 use forge::executor::opts::EvmOpts;
 use foundry_common::{cli_warn, fs, TestFunctionExt};
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain as ConfigChain, Config};
-use std::{fmt::Write, path::PathBuf};
+use foundry_evm::{
+    debug::DebugArena,
+    executor::{DeployResult, EvmError, ExecutionErr, RawCallResult},
+    trace::{
+        identifier::{EtherscanIdentifier, SignaturesIdentifier},
+        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
+    },
+};
+use std::{collections::BTreeMap, fmt::Write, path::PathBuf, str::FromStr};
 use tracing::trace;
+use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
 
 /// Common trait for all cli commands
@@ -298,4 +307,160 @@ pub fn read_constructor_args_file(constructor_args_path: PathBuf) -> eyre::Resul
         fs::read_to_string(constructor_args_path)?.split_whitespace().map(str::to_string).collect()
     };
     Ok(args)
+}
+
+/// A slimmed down return from the executor used for returning minimal trace + gas metering info
+pub struct TraceResult {
+    pub success: bool,
+    pub traces: Traces,
+    pub debug: DebugArena,
+    pub gas_used: u64,
+}
+
+impl From<RawCallResult> for TraceResult {
+    fn from(result: RawCallResult) -> Self {
+        let RawCallResult { gas_used, traces, reverted, debug, .. } = result;
+
+        Self {
+            success: !reverted,
+            traces: vec![(TraceKind::Execution, traces.expect("traces is None"))],
+            debug: debug.unwrap_or_default(),
+            gas_used,
+        }
+    }
+}
+
+impl From<DeployResult> for TraceResult {
+    fn from(result: DeployResult) -> Self {
+        let DeployResult { gas_used, traces, debug, .. } = result;
+
+        Self {
+            success: true,
+            traces: vec![(TraceKind::Execution, traces.expect("traces is None"))],
+            debug: debug.unwrap_or_default(),
+            gas_used,
+        }
+    }
+}
+
+impl TryFrom<EvmError> for TraceResult {
+    type Error = EvmError;
+
+    fn try_from(err: EvmError) -> Result<Self, Self::Error> {
+        match err {
+            EvmError::Execution(err) => {
+                let ExecutionErr { reverted, gas_used, traces, debug: run_debug, .. } = *err;
+                Ok(TraceResult {
+                    success: !reverted,
+                    traces: vec![(TraceKind::Execution, traces.expect("traces is None"))],
+                    debug: run_debug.unwrap_or_default(),
+                    gas_used,
+                })
+            }
+            _ => Err(err),
+        }
+    }
+}
+
+/// labels the traces, conditionally prints them or opens the debugger
+pub async fn handle_traces(
+    mut result: TraceResult,
+    config: &Config,
+    chain: Option<ethers::types::Chain>,
+    labels: Vec<String>,
+    verbose: bool,
+    debug: bool,
+) -> eyre::Result<()> {
+    let mut etherscan_identifier = EtherscanIdentifier::new(config, chain)?;
+
+    let labeled_addresses = labels.iter().filter_map(|label_str| {
+        let mut iter = label_str.split(':');
+
+        if let Some(addr) = iter.next() {
+            if let (Ok(address), Some(label)) =
+                (ethers::types::Address::from_str(addr), iter.next())
+            {
+                return Some((address, label.to_string()))
+            }
+        }
+        None
+    });
+
+    let mut decoder = CallTraceDecoderBuilder::new().with_labels(labeled_addresses).build();
+
+    decoder.add_signature_identifier(SignaturesIdentifier::new(
+        Config::foundry_cache_dir(),
+        config.offline,
+    )?);
+
+    for (_, trace) in &mut result.traces {
+        decoder.identify(trace, &mut etherscan_identifier);
+    }
+
+    if debug {
+        let (sources, bytecode) = etherscan_identifier.get_compiled_contracts().await?;
+        run_debugger(result, decoder, bytecode, sources)?;
+    } else {
+        print_traces(&mut result, decoder, verbose).await?;
+    }
+
+    Ok(())
+}
+
+pub async fn print_traces(
+    result: &mut TraceResult,
+    decoder: CallTraceDecoder,
+    verbose: bool,
+) -> eyre::Result<()> {
+    if result.traces.is_empty() {
+        panic!("No traces found")
+    }
+
+    println!("Traces:");
+    for (_, trace) in &mut result.traces {
+        decoder.decode(trace).await;
+        if !verbose {
+            println!("{trace}");
+        } else {
+            println!("{trace:#}");
+        }
+    }
+    println!();
+
+    if result.success {
+        println!("{}", Paint::green("Transaction successfully executed."));
+    } else {
+        println!("{}", Paint::red("Transaction failed."));
+    }
+
+    println!("Gas used: {}", result.gas_used);
+    Ok(())
+}
+
+pub fn run_debugger(
+    result: TraceResult,
+    decoder: CallTraceDecoder,
+    known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
+    sources: BTreeMap<ArtifactId, String>,
+) -> eyre::Result<()> {
+    let calls: Vec<DebugArena> = vec![result.debug];
+    let flattened = calls.last().expect("we should have collected debug info").flatten(0);
+    let tui = Tui::new(
+        flattened,
+        0,
+        decoder.contracts,
+        known_contracts.into_iter().map(|(id, artifact)| (id.name, artifact)).collect(),
+        sources
+            .into_iter()
+            .map(|(id, source)| {
+                let mut sources = BTreeMap::new();
+                sources.insert(0, source);
+                (id.name, sources)
+            })
+            .collect(),
+        Default::default(),
+    )?;
+    match tui.start().expect("Failed to start tui") {
+        TUIExitReason::CharExit => Ok(()),
+    }
 }

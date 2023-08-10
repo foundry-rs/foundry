@@ -7,6 +7,7 @@ use ethers::{
     core::utils::to_checksum,
     types::{Bytes, DefaultFrame, GethDebugTracingOptions, StructLog, H256, U256},
 };
+pub use executor::TracingExecutor;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use hashbrown::HashMap;
 use node::CallTraceNode;
@@ -24,8 +25,9 @@ use yansi::{Color, Paint};
 pub mod identifier;
 
 mod decoder;
+mod executor;
 pub mod node;
-mod utils;
+pub mod utils;
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
