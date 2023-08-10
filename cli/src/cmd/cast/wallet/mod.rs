@@ -18,6 +18,7 @@ use ethers::{
 use eyre::Context;
 use foundry_common::fs;
 use foundry_config::Config;
+use yansi::Paint;
 
 /// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
@@ -232,14 +233,11 @@ flag to set your key via:
                     Some(&account_name),
                 )?;
                 let address = wallet.address();
-                // Log that the keystore was saved successfully and the address of the account
-                println!(
-                    "\x1b[32m{}\x1b[0m",
-                    format!(
-                        "`{}` keystore was saved successfully. Address: {}",
-                        &account_name, address,
-                    )
+                let success_message = format!(
+                    "`{}` keystore was saved successfully. Address: {}",
+                    &account_name, address,
                 );
+                println!("{}", Paint::green(success_message));
             }
             WalletSubcommands::List => {
                 let default_keystore_dir = Config::foundry_keystores_dir()
