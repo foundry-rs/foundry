@@ -64,6 +64,8 @@ pub struct CallArgs {
     labels: Vec<String>,
 
     /// Can only be used with "--trace"
+    ///
+    /// The EVM Version to use.
     #[clap(long, requires = "trace")]
     evm_version: Option<EvmVersion>,
 
