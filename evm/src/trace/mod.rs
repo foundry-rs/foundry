@@ -1,31 +1,21 @@
 use crate::{
-    abi::CHEATCODE_ADDRESS,
-    debug::Instruction,
-    executor::{fork::CreateFork, opts::EvmOpts, Backend, Executor, ExecutorBuilder},
-    trace::identifier::LocalTraceIdentifier,
-    utils::evm_spec,
-    CallKind,
+    abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier, CallKind,
 };
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{
     abi::{ethereum_types::BigEndianHash, Address, RawLog},
     core::utils::to_checksum,
-    solc::EvmVersion,
     types::{Bytes, DefaultFrame, GethDebugTracingOptions, StructLog, H256, U256},
 };
+pub use executor::TracingExecutor;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
-use foundry_config::Config;
 use hashbrown::HashMap;
 use node::CallTraceNode;
-use revm::{
-    interpreter::{opcode, CallContext, InstructionResult, Memory, Stack},
-    primitives::Env,
-};
+use revm::interpreter::{opcode, CallContext, InstructionResult, Memory, Stack};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
     fmt::{self, Write},
-    ops::{Deref, DerefMut},
 };
 use yansi::{Color, Paint};
 
@@ -35,65 +25,9 @@ use yansi::{Color, Paint};
 pub mod identifier;
 
 mod decoder;
+mod executor;
 pub mod node;
 pub mod utils;
-
-/// A default executor with tracing enabled
-pub struct TracingExecutor {
-    executor: Executor,
-}
-
-impl TracingExecutor {
-    pub async fn new(
-        env: revm::primitives::Env,
-        fork: Option<CreateFork>,
-        version: Option<EvmVersion>,
-        debug: bool,
-    ) -> Self {
-        let db = Backend::spawn(fork).await;
-
-        // configures a bare version of the evm executor: no cheatcode inspector is enabled,
-        // tracing will be enabled only for the targeted transaction
-        let builder = ExecutorBuilder::default()
-            .with_config(env)
-            .with_spec(evm_spec(&version.unwrap_or_default()));
-
-        let mut executor = builder.build(db);
-
-        executor.set_tracing(true).set_debugger(debug);
-
-        Self { executor }
-    }
-
-    /// uses the fork block number from the config
-    pub async fn get_fork_material(
-        config: &Config,
-        mut evm_opts: EvmOpts,
-    ) -> eyre::Result<(Env, Option<CreateFork>, Option<ethers::types::Chain>)> {
-        evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
-        evm_opts.fork_block_number = config.fork_block_number;
-
-        let env = evm_opts.evm_env().await?;
-
-        let fork = evm_opts.get_fork(config, env.clone());
-
-        Ok((env, fork, evm_opts.get_remote_chain_id()))
-    }
-}
-
-impl Deref for TracingExecutor {
-    type Target = Executor;
-
-    fn deref(&self) -> &Self::Target {
-        &self.executor
-    }
-}
-
-impl DerefMut for TracingExecutor {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.executor
-    }
-}
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
