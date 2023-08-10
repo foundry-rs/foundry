@@ -1020,8 +1020,7 @@ impl Type {
             .function_definitions
             .get(&function_name.name)?;
         let return_parameter = contract.as_ref().returns.first()?.to_owned().1?;
-        Type::ethabi(&return_parameter.ty, Some(intermediate))
-            .and_then(|p| Some((contract_expr.unwrap(), p)))
+        Type::ethabi(&return_parameter.ty, Some(intermediate)).map(|p| (contract_expr.unwrap(), p))
     }
 
     /// Inverts Int to Uint and viceversa.
