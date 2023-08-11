@@ -3,7 +3,7 @@ use crate::executor::backend::snapshot::StateSnapshot;
 use parking_lot::RwLock;
 use revm::{
     primitives::{
-        Account, AccountInfo, AccountStatus, HashMap as Map, B160, B256, KECCAK_EMPTY, U256,
+        Account, AccountInfo, HashMap as Map, B160, B256, KECCAK_EMPTY, U256,
     },
     DatabaseCommit,
 };
@@ -280,9 +280,6 @@ impl MemDb {
                     acc_storage.clear();
                 }
                 acc_storage.extend(acc.storage.into_iter().map(|(k, v)| (k, v.present_value())));
-                // if acc_storage.is_empty() {
-                //     storage.remove(&add);
-                // }
             }
         }
     }
