@@ -1,4 +1,4 @@
-use super::{build::CoreBuildArgs, install, test::FilterArgs};
+use super::{install, test::FilterArgs};
 use clap::{Parser, ValueEnum};
 use ethers::{
     abi::Address,
@@ -21,6 +21,7 @@ use forge::{
     MultiContractRunnerBuilder, TestOptions,
 };
 use foundry_cli::{
+    opts::CoreBuildArgs,
     p_println,
     utils::{LoadConfig, STATIC_FUZZ_SEED},
 };

@@ -1,5 +1,3 @@
-use super::build::CoreBuildArgs;
-use crate::opts::CompilerArgs;
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
 use ethers::{
@@ -16,7 +14,10 @@ use ethers::{
         utils::canonicalize,
     },
 };
-use foundry_cli::utils::Cmd;
+use foundry_cli::{
+    opts::{CompilerArgs, CoreBuildArgs},
+    utils::Cmd,
+};
 use foundry_common::compile;
 use serde_json::{to_value, Value};
 use std::fmt;

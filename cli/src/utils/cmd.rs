@@ -1,4 +1,3 @@
-use crate::suggestions;
 use ethers::{
     abi::Abi,
     core::types::Chain,
@@ -45,7 +44,7 @@ pub fn remove_contract(
     } else {
         let mut err = format!("could not find artifact: `{}`", info.name);
         if let Some(suggestion) =
-            suggestions::did_you_mean(&info.name, output.artifacts().map(|(name, _)| name)).pop()
+            super::did_you_mean(&info.name, output.artifacts().map(|(name, _)| name)).pop()
         {
             if suggestion != info.name {
                 err = format!(
@@ -107,7 +106,7 @@ pub fn get_cached_entry_by_name(
     }
 
     let mut err = format!("could not find artifact: `{name}`");
-    if let Some(suggestion) = suggestions::did_you_mean(name, &alternatives).pop() {
+    if let Some(suggestion) = super::did_you_mean(name, &alternatives).pop() {
         err = format!(
             r#"{err}
 

@@ -9,7 +9,7 @@ use chisel::{
 };
 use clap::Parser;
 use foundry_cli::{
-    cmd::forge::build::BuildArgs,
+    opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
 use foundry_common::evm::EvmArgs;
@@ -44,7 +44,7 @@ pub struct ChiselParser {
     pub sub: Option<ChiselParserSub>,
 
     #[clap(flatten)]
-    pub opts: BuildArgs,
+    pub opts: CoreBuildArgs,
 
     #[clap(flatten)]
     pub evm_opts: EvmArgs,

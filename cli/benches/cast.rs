@@ -1,7 +1,11 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use foundry_cli::cmd::cast::wallet::vanity::*;
 use rayon::prelude::*;
 use std::{hint::black_box, time::Duration};
+
+#[path = "../src/cast/cmd/wallet/mod.rs"]
+#[allow(unused)]
+mod wallet;
+use wallet::vanity::*;
 
 /// Benches `cast wallet vanity`
 ///

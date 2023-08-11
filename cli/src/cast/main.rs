@@ -19,8 +19,8 @@ use foundry_common::{
 use foundry_config::Config;
 use std::time::Instant;
 
-mod cmd;
-mod opts;
+pub mod cmd;
+pub mod opts;
 
 use opts::{Opts, Subcommands, ToBaseArgs};
 

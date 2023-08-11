@@ -1,6 +1,8 @@
-use super::build::{CoreBuildArgs, ProjectPathsArgs};
 use clap::{Parser, ValueHint};
-use foundry_cli::utils::{Cmd, LoadConfig};
+use foundry_cli::{
+    opts::{CoreBuildArgs, ProjectPathsArgs},
+    utils::{Cmd, LoadConfig},
+};
 use foundry_common::fs;
 use std::path::PathBuf;
 

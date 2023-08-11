@@ -1,7 +1,4 @@
-use super::{
-    build::CoreBuildArgs, debug::DebugArgs, install, test::filter::ProjectPathsAwareFilter,
-    watch::WatchArgs,
-};
+use super::{debug::DebugArgs, install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use cast::fuzz::CounterExample;
 use clap::Parser;
 use ethers::types::U256;
@@ -17,7 +14,7 @@ use forge::{
     MultiContractRunner, MultiContractRunnerBuilder, TestOptions, TestOptionsBuilder,
 };
 use foundry_cli::{
-    suggestions,
+    opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
 use foundry_common::{
@@ -530,7 +527,7 @@ async fn test(
             if let Some(ref test_pattern) = filter.args().test_pattern {
                 let test_name = test_pattern.as_str();
                 let candidates = runner.get_tests(&filter);
-                if let Some(suggestion) = suggestions::did_you_mean(test_name, candidates).pop() {
+                if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
                     println!("\nDid you mean `{suggestion}`?");
                 }
             }

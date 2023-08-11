@@ -1,7 +1,9 @@
-use super::build::CoreBuildArgs;
 use clap::{Parser, ValueHint};
 use ethers::contract::{Abigen, ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts};
-use foundry_cli::utils::{Cmd, LoadConfig};
+use foundry_cli::{
+    opts::CoreBuildArgs,
+    utils::{Cmd, LoadConfig},
+};
 use foundry_common::{compile, fs::json_files};
 use foundry_config::impl_figment_convert;
 use std::{

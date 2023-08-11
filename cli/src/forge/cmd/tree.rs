@@ -1,10 +1,12 @@
-use super::build::ProjectPathsArgs;
 use clap::Parser;
 use ethers::solc::{
     resolver::{Charset, TreeOptions},
     Graph,
 };
-use foundry_cli::utils::{Cmd, LoadConfig};
+use foundry_cli::{
+    opts::ProjectPathsArgs,
+    utils::{Cmd, LoadConfig},
+};
 
 /// CLI arguments for `forge tree`.
 #[derive(Debug, Clone, Parser)]

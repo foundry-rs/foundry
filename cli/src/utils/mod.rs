@@ -23,6 +23,9 @@ use yansi::Paint;
 mod cmd;
 pub use cmd::*;
 
+mod suggestions;
+pub use suggestions::*;
+
 // reexport all `foundry_config::utils`
 #[doc(hidden)]
 pub use foundry_config::utils::*;

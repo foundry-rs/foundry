@@ -217,14 +217,14 @@ fn build_filter_topics(topics: Vec<String>) -> Result<TopicFilter, eyre::Error> 
 
 #[cfg(test)]
 mod tests {
-    use ethers::types::H160;
-
     use super::*;
+    use ethers::types::H160;
 
     const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
     const TRANSFER_SIG: &str = "Transfer(address indexed,address indexed,uint256)";
     const TRANSFER_TOPIC: &str =
         "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
     #[test]
     fn test_build_filter_basic() {
         let from_block = Some(BlockNumber::from(1337));

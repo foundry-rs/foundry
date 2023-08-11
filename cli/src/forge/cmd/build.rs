@@ -1,7 +1,10 @@
 use super::{install, watch::WatchArgs};
 use clap::Parser;
 use ethers::solc::{Project, ProjectCompileOutput};
-use foundry_cli::utils::{Cmd, LoadConfig};
+use foundry_cli::{
+    opts::CoreBuildArgs,
+    utils::{Cmd, LoadConfig},
+};
 use foundry_common::{
     compile,
     compile::{ProjectCompiler, SkipBuildFilter},
@@ -17,12 +20,6 @@ use foundry_config::{
 };
 use serde::Serialize;
 use watchexec::config::{InitConfig, RuntimeConfig};
-
-mod core;
-pub use self::core::CoreBuildArgs;
-
-mod paths;
-pub use self::paths::ProjectPathsArgs;
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 

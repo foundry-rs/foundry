@@ -1,5 +1,4 @@
 use crate::cmd::{
-    build::ProjectPathsArgs,
     retry::RetryArgs,
     verify::{VerifierArgs, VerifyArgs},
 };
@@ -7,7 +6,7 @@ use ethers::{
     abi::Address,
     solc::{info::ContractInfo, Project},
 };
-use foundry_cli::opts::EtherscanOpts;
+use foundry_cli::opts::{EtherscanOpts, ProjectPathsArgs};
 use foundry_common::ContractsByArtifact;
 use foundry_config::{Chain, Config};
 use semver::Version;

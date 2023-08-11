@@ -1,4 +1,4 @@
-use super::{build::CoreBuildArgs, retry::RetryArgs, verify};
+use super::{retry::RetryArgs, verify};
 use cast::SimpleCast;
 use clap::{Parser, ValueHint};
 use ethers::{
@@ -9,7 +9,7 @@ use ethers::{
 };
 use eyre::Context;
 use foundry_cli::{
-    opts::{EthereumOpts, EtherscanOpts, TransactionOpts},
+    opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
 use foundry_common::{abi::parse_tokens, compile, estimate_eip1559_fees};

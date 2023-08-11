@@ -8,8 +8,7 @@ use ethers::{
 };
 use eyre::Result;
 use foundry_cli::{
-    cmd::forge::build,
-    opts::{EtherscanOpts, RpcOpts},
+    opts::{CoreBuildArgs, EtherscanOpts, RpcOpts},
     utils,
 };
 use foundry_common::{
@@ -54,7 +53,7 @@ pub struct StorageArgs {
     etherscan: EtherscanOpts,
 
     #[clap(flatten)]
-    build: build::CoreBuildArgs,
+    build: CoreBuildArgs,
 }
 
 impl_figment_convert_cast!(StorageArgs);

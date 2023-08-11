@@ -1,9 +1,10 @@
-use super::build::{CoreBuildArgs, ProjectPathsArgs};
-use crate::opts::CompilerArgs;
 use clap::Parser;
 use comfy_table::Table;
 use ethers::prelude::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
-use foundry_cli::utils::FoundryPathExt;
+use foundry_cli::{
+    opts::{CompilerArgs, CoreBuildArgs, ProjectPathsArgs},
+    utils::FoundryPathExt,
+};
 use foundry_common::{
     compile,
     selectors::{import_selectors, SelectorImportData},

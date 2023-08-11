@@ -1,22 +1,21 @@
-use crate::{
-    cmd::{
-        access_list::AccessListArgs, bind::BindArgs, call::CallArgs, create2::Create2Args,
-        estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs,
-        logs::LogsArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
-        wallet::WalletSubcommands,
-    },
-    utils::parse_u256,
+use crate::cmd::{
+    access_list::AccessListArgs, bind::BindArgs, call::CallArgs, create2::Create2Args,
+    estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
+    rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs, wallet::WalletSubcommands,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use ethers::{
     abi::ethabi::ethereum_types::BigEndianHash,
     types::{serde_helpers::Numeric, Address, BlockId, NameOrAddress, H256, U256},
 };
-use foundry_cli::opts::{EtherscanOpts, RpcOpts};
+use foundry_cli::{
+    opts::{EtherscanOpts, RpcOpts},
+    utils::parse_u256,
+};
 use std::{path::PathBuf, str::FromStr};
 
 #[derive(Debug, Parser)]
-#[clap(name = "cast", version = crate::utils::VERSION_MESSAGE)]
+#[clap(name = "cast", version = foundry_cli::utils::VERSION_MESSAGE)]
 pub struct Opts {
     #[clap(subcommand)]
     pub sub: Subcommands,

@@ -1,10 +1,9 @@
 use super::ProjectPathsArgs;
-use crate::opts::CompilerArgs;
+use crate::{opts::CompilerArgs, utils::LoadConfig};
 use clap::{Parser, ValueHint};
 use ethers::solc::{
     artifacts::RevertStrings, remappings::Remapping, utils::canonicalized, Project,
 };
-use foundry_cli::utils::LoadConfig;
 use foundry_config::{
     figment,
     figment::{
