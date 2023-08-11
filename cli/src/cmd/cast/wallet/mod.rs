@@ -106,8 +106,11 @@ pub enum WalletSubcommands {
     /// Import a private key into an encrypted keystore.
     #[clap(visible_alias = "i")]
     Import {
-        #[clap(help = "The name for the account in the keystore.", value_name = "ACCOUNT_NAME")]
+        /// The name for the account in the keystore.
+        #[clap(value_name = "ACCOUNT_NAME")]
         account_name: String,
+        /// If provided, keystore will be saved here instead of the default keystores directory
+        /// (~/.foundry/keystores)
         #[clap(long, short)]
         keystore_dir: Option<String>,
         #[clap(flatten)]
