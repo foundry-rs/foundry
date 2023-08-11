@@ -70,12 +70,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "allocator-api2"
-version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0942ffc6dcaadf03badf6e6a2d0228460359d5e34b57ccdc720b7382dfbd5ec5"
-
-[[package]]
 name = "alloy-rlp"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -643,9 +637,6 @@ name = "bitflags"
 version = "2.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "630be753d4e58660abd17930c71b647fe46c27ea6b63cc59e1e3851406972e42"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "bitvec"
@@ -3219,11 +3210,6 @@ name = "hashbrown"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c6201b9ff9fd90a5a3bac2e56a830d0caa509576f0e503818ee82c181b3437a"
-dependencies = [
- "ahash 0.8.3",
- "allocator-api2",
- "serde",
-]
 
 [[package]]
 name = "hashers"
@@ -5336,11 +5322,9 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "3.3.0"
-source = "git+https://github.com/bluealloy/revm/?rev=bc4d203bf0b5f5c01868477c8e98d3abd6bb92ab#bc4d203bf0b5f5c01868477c8e98d3abd6bb92ab"
+source = "git+https://github.com/bluealloy/revm/?branch=release/v25#88337924f4d16ed1f5e4cde12a03d0cb755cd658"
 dependencies = [
  "auto_impl",
- "once_cell",
- "rayon",
  "revm-interpreter",
  "revm-precompile",
  "serde",
@@ -5350,7 +5334,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "1.1.2"
-source = "git+https://github.com/bluealloy/revm/?rev=bc4d203bf0b5f5c01868477c8e98d3abd6bb92ab#bc4d203bf0b5f5c01868477c8e98d3abd6bb92ab"
+source = "git+https://github.com/bluealloy/revm/?branch=release/v25#88337924f4d16ed1f5e4cde12a03d0cb755cd658"
 dependencies = [
  "derive_more",
  "enumn",
@@ -5362,7 +5346,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "2.0.3"
-source = "git+https://github.com/bluealloy/revm/?rev=bc4d203bf0b5f5c01868477c8e98d3abd6bb92ab#bc4d203bf0b5f5c01868477c8e98d3abd6bb92ab"
+source = "git+https://github.com/bluealloy/revm/?branch=release/v25#88337924f4d16ed1f5e4cde12a03d0cb755cd658"
 dependencies = [
  "k256",
  "num",
@@ -5378,16 +5362,15 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "1.1.2"
-source = "git+https://github.com/bluealloy/revm/?rev=bc4d203bf0b5f5c01868477c8e98d3abd6bb92ab#bc4d203bf0b5f5c01868477c8e98d3abd6bb92ab"
+source = "git+https://github.com/bluealloy/revm/?branch=release/v25#88337924f4d16ed1f5e4cde12a03d0cb755cd658"
 dependencies = [
  "auto_impl",
- "bitflags 2.3.3",
  "bitvec 1.0.1",
  "bytes",
  "derive_more",
  "enumn",
  "fixed-hash",
- "hashbrown 0.14.0",
+ "hashbrown 0.13.2",
  "hex",
  "hex-literal",
  "primitive-types",
@@ -5395,7 +5378,6 @@ dependencies = [
  "ruint",
  "serde",
  "sha3",
- "to-binary",
 ]
 
 [[package]]
@@ -6623,15 +6605,6 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
-
-[[package]]
-name = "to-binary"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4424552bc848fd1afbcd81f0e8a54b7401b90fd81bb418655ad6dc6d0823bbe3"
-dependencies = [
- "hex",
-]
 
 [[package]]
 name = "tokio"

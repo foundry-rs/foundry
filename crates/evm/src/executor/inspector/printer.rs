@@ -16,14 +16,20 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         &mut self,
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
+        is_static: bool,
     ) -> InstructionResult {
-        self.gas_inspector.initialize_interp(interp, data);
+        self.gas_inspector.initialize_interp(interp, data, is_static);
         InstructionResult::Continue
     }
 
     // get opcode by calling `interp.contract.opcode(interp.program_counter())`.
     // all other information can be obtained from interp.
-    fn step(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>) -> InstructionResult {
+    fn step(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        is_static: bool,
+    ) -> InstructionResult {
         let opcode = interp.current_opcode();
         let opcode_str = opcode::OPCODE_JUMPMAP[opcode as usize];
 
@@ -44,7 +50,7 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
             hex::encode(interp.memory.data()),
         );
 
-        self.gas_inspector.step(interp, data);
+        self.gas_inspector.step(interp, data, is_static);
 
         InstructionResult::Continue
     }
@@ -53,9 +59,10 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         &mut self,
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
+        is_static: bool,
         eval: InstructionResult,
     ) -> InstructionResult {
-        self.gas_inspector.step_end(interp, data, eval);
+        self.gas_inspector.step_end(interp, data, is_static, eval);
         InstructionResult::Continue
     }
 
@@ -63,12 +70,13 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         &mut self,
         _data: &mut EVMData<'_, DB>,
         inputs: &mut CallInputs,
+        is_static: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         println!(
             "SM CALL:   {:?},context:{:?}, is_static:{:?}, transfer:{:?}, input_size:{:?}",
             inputs.contract,
             inputs.context,
-            inputs.is_static,
+            is_static,
             inputs.transfer,
             inputs.input.len(),
         );
@@ -82,8 +90,9 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         remaining_gas: Gas,
         ret: InstructionResult,
         out: Bytes,
+        is_static: bool,
     ) -> (InstructionResult, Gas, Bytes) {
-        self.gas_inspector.call_end(data, inputs, remaining_gas, ret, out.clone());
+        self.gas_inspector.call_end(data, inputs, remaining_gas, ret, out.clone(), is_static);
         (ret, remaining_gas, out)
     }
 

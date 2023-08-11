@@ -1099,7 +1099,7 @@ impl DatabaseExt for Backend {
                 // prevent issues in the new journalstate, e.g. assumptions that accounts are loaded
                 // if the account is not touched, we reload it, if it's touched we clone it
                 for (addr, acc) in journaled_state.state.iter() {
-                    if acc.is_touched() {
+                    if acc.is_touched {
                         merge_journaled_state_data(
                             b160_to_h160(*addr),
                             journaled_state,

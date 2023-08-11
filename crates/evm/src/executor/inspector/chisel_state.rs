@@ -26,6 +26,7 @@ where
         &mut self,
         interp: &mut Interpreter,
         _: &mut revm::EVMData<'_, DB>,
+        _: bool,
         eval: InstructionResult,
     ) -> InstructionResult {
         // If we are at the final pc of the REPL contract execution, set the state.

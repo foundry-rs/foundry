@@ -22,8 +22,9 @@ where
         &mut self,
         interpreter: &mut Interpreter,
         _: &mut EVMData<'_, DB>,
+        _: bool,
     ) -> InstructionResult {
-        let hash = b256_to_h256(interpreter.contract.bytecode.clone().unlock().hash_slow());
+        let hash = b256_to_h256(interpreter.contract.bytecode.hash());
         self.maps.entry(hash).or_insert_with(|| {
             HitMap::new(Bytes::copy_from_slice(
                 interpreter.contract.bytecode.original_bytecode_slice(),
@@ -37,8 +38,9 @@ where
         &mut self,
         interpreter: &mut Interpreter,
         _: &mut EVMData<'_, DB>,
+        _: bool,
     ) -> InstructionResult {
-        let hash = b256_to_h256(interpreter.contract.bytecode.clone().unlock().hash_slow());
+        let hash = b256_to_h256(interpreter.contract.bytecode.hash());
         self.maps.entry(hash).and_modify(|map| map.hit(interpreter.program_counter()));
 
         InstructionResult::Continue
