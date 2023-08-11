@@ -710,8 +710,8 @@ forgetest_async!(
         // Uncomment to recreate the broadcast log
         // std::fs::copy(
         //     "broadcast/Broadcast.t.sol/31337/run-latest.json",
-        //     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/fixtures/broadcast.log.
-        // json" ), );
+        //     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/fixtures/broadcast.
+        // log. json" ), );
 
         // Check broadcast logs
         // Ignore timestamp, blockHash, blockNumber, cumulativeGasUsed, effectiveGasPrice,
@@ -720,7 +720,7 @@ forgetest_async!(
 
         let fixtures_log = std::fs::read_to_string(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../testdata/fixtures/broadcast.log.json"),
+                .join("../../testdata/fixtures/broadcast.log.json"),
         )
         .unwrap();
         let _fixtures_log = re.replace_all(&fixtures_log, "");
@@ -735,7 +735,7 @@ forgetest_async!(
         // std::fs::copy(
         //     "cache/Broadcast.t.sol/31337/run-latest.json",
         //     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        //         .join("../testdata/fixtures/broadcast.sensitive.log.json"),
+        //         .join("../../testdata/fixtures/broadcast.sensitive.log.json"),
         // );
 
         // Check sensitive logs
@@ -744,7 +744,7 @@ forgetest_async!(
 
         let fixtures_log = std::fs::read_to_string(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../testdata/fixtures/broadcast.sensitive.log.json"),
+                .join("../../testdata/fixtures/broadcast.sensitive.log.json"),
         )
         .unwrap();
         let fixtures_log = re.replace_all(&fixtures_log, "");

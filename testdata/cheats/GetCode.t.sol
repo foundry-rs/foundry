@@ -8,7 +8,7 @@ contract GetCodeTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testGetCode() public {
-        bytes memory fullPath = vm.getCode("../testdata/fixtures/GetCode/WorkingContract.json");
+        bytes memory fullPath = vm.getCode("fixtures/GetCode/WorkingContract.json");
         //bytes memory fileOnly = vm.getCode("WorkingContract.sol");
         //bytes memory fileAndContractName = vm.getCode("WorkingContract.sol:WorkingContract");
 
@@ -33,7 +33,7 @@ contract GetCodeTest is DSTest {
     }
 
     function testGetCodeHardhatArtifact() public {
-        bytes memory fullPath = vm.getCode("../testdata/fixtures/GetCode/HardhatWorkingContract.json");
+        bytes memory fullPath = vm.getCode("fixtures/GetCode/HardhatWorkingContract.json");
 
         string memory expected = string(
             bytes(
@@ -44,7 +44,7 @@ contract GetCodeTest is DSTest {
     }
 
     function testGetCodeHuffArtifact() public {
-        string memory path = "../testdata/fixtures/GetCode/HuffWorkingContract.json";
+        string memory path = "fixtures/GetCode/HuffWorkingContract.json";
         bytes memory bytecode = vm.getCode(path);
         string memory expected = string(
             bytes(

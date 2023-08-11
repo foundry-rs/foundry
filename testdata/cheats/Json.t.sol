@@ -10,7 +10,7 @@ contract ParseJsonTest is DSTest {
     string json;
 
     function setUp() public {
-        string memory path = "../testdata/fixtures/Json/test.json";
+        string memory path = "fixtures/Json/test.json";
         json = vm.readFile(path);
     }
 
@@ -85,7 +85,7 @@ contract ParseJsonTest is DSTest {
 
     function test_wholeObject() public {
         // we need to make the path relative to the crate that's running tests for it (forge crate)
-        string memory path = "../testdata/fixtures/Json/wholeJson.json";
+        string memory path = "fixtures/Json/wholeJson.json";
         console.log(path);
         json = vm.readFile(path);
         bytes memory data = vm.parseJson(json);
@@ -219,7 +219,7 @@ contract WriteJsonTest is DSTest {
         data3[2] = bytes("fpovhpgjaiosfjhapiufpsdf");
         string memory finalJson = vm.serializeBytes(json1, "array3", data3);
 
-        string memory path = "../testdata/fixtures/Json/write_test_array.json";
+        string memory path = "fixtures/Json/write_test_array.json";
         vm.writeJson(finalJson, path);
 
         string memory json = vm.readFile(path);
@@ -259,7 +259,7 @@ contract WriteJsonTest is DSTest {
 
     function test_serializeNotSimpleJson() public {
         string memory json3 = "json3";
-        string memory path = "../testdata/fixtures/Json/write_complex_test.json";
+        string memory path = "fixtures/Json/write_complex_test.json";
         vm.serializeUint(json3, "a", uint256(123));
         string memory semiFinal = vm.serializeString(json3, "b", "test");
         string memory finalJson = vm.serializeString(json3, "c", semiFinal);
@@ -271,7 +271,7 @@ contract WriteJsonTest is DSTest {
     }
 
     function test_retrieveEntireJson() public {
-        string memory path = "../testdata/fixtures/Json/write_complex_test.json";
+        string memory path = "fixtures/Json/write_complex_test.json";
         string memory json = vm.readFile(path);
         bytes memory data = vm.parseJson(json, ".");
         notSimpleJson memory decodedData = abi.decode(data, (notSimpleJson));
@@ -280,14 +280,14 @@ contract WriteJsonTest is DSTest {
     }
 
     function test_checkKeyExists() public {
-        string memory path = "../testdata/fixtures/Json/write_complex_test.json";
+        string memory path = "fixtures/Json/write_complex_test.json";
         string memory json = vm.readFile(path);
         bool exists = vm.keyExists(json, "a");
         assertTrue(exists);
     }
 
     function test_checkKeyDoesNotExist() public {
-        string memory path = "../testdata/fixtures/Json/write_complex_test.json";
+        string memory path = "fixtures/Json/write_complex_test.json";
         string memory json = vm.readFile(path);
         bool exists = vm.keyExists(json, "d");
         assertTrue(!exists);
@@ -295,7 +295,7 @@ contract WriteJsonTest is DSTest {
 
     function test_writeJson() public {
         string memory json3 = "json3";
-        string memory path = "../testdata/fixtures/Json/write_test.json";
+        string memory path = "fixtures/Json/write_test.json";
         vm.serializeUint(json3, "a", uint256(123));
         string memory finalJson = vm.serializeString(json3, "b", "test");
         vm.writeJson(finalJson, path);

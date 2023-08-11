@@ -19,7 +19,7 @@ use std::{collections::HashMap, fs, path::PathBuf};
 use yansi::Paint;
 
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
-static VM_SOURCE: &str = include_str!("../../testdata/cheats/Vm.sol");
+static VM_SOURCE: &str = include_str!("../../../testdata/cheats/Vm.sol");
 
 /// Intermediate output for the compiled [SessionSource]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
