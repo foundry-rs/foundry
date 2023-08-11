@@ -92,7 +92,7 @@ impl ScriptTester {
 
     /// Returns the path to the dir that contains testdata
     fn testdata_path() -> String {
-        format!("{}/../../testdata", env!("CARGO_MANIFEST_DIR"))
+        format!("{}/../../../testdata", env!("CARGO_MANIFEST_DIR"))
     }
 
     /// Initialises the test contracts by copying them into the workspace

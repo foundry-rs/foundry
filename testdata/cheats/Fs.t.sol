@@ -70,7 +70,7 @@ contract FsTest is DSTest {
     function testReadFile() public {
         fsProxy = new FsProxy();
 
-        string memory path = "../testdata/fixtures/File/read.txt";
+        string memory path = "fixtures/File/read.txt";
 
         assertEq(vm.readFile(path), "hello readable world\nthis is the second line!");
 
@@ -84,7 +84,7 @@ contract FsTest is DSTest {
     function testReadLine() public {
         fsProxy = new FsProxy();
 
-        string memory path = "../testdata/fixtures/File/read.txt";
+        string memory path = "fixtures/File/read.txt";
 
         assertEq(vm.readLine(path), "hello readable world");
         assertEq(vm.readLine(path), "this is the second line!");
@@ -97,7 +97,7 @@ contract FsTest is DSTest {
     function testWriteFile() public {
         fsProxy = new FsProxy();
 
-        string memory path = "../testdata/fixtures/File/write_file.txt";
+        string memory path = "fixtures/File/write_file.txt";
         string memory data = "hello writable world";
         vm.writeFile(path, data);
 
@@ -114,7 +114,7 @@ contract FsTest is DSTest {
     function testWriteLine() public {
         fsProxy = new FsProxy();
 
-        string memory path = "../testdata/fixtures/File/write_line.txt";
+        string memory path = "fixtures/File/write_line.txt";
 
         string memory line1 = "first line";
         vm.writeLine(path, line1);
@@ -131,7 +131,7 @@ contract FsTest is DSTest {
     }
 
     function testCloseFile() public {
-        string memory path = "../testdata/fixtures/File/read.txt";
+        string memory path = "fixtures/File/read.txt";
 
         assertEq(vm.readLine(path), "hello readable world");
         vm.closeFile(path);
@@ -141,7 +141,7 @@ contract FsTest is DSTest {
     function testRemoveFile() public {
         fsProxy = new FsProxy();
 
-        string memory path = "../testdata/fixtures/File/remove_file.txt";
+        string memory path = "fixtures/File/remove_file.txt";
         string memory data = "hello writable world";
 
         vm.writeFile(path, data);
@@ -198,7 +198,7 @@ contract FsTest is DSTest {
     function testReadDir() public {
         fsProxy = new FsProxy();
 
-        string memory path = "../testdata/fixtures/Dir";
+        string memory path = "fixtures/Dir";
 
         {
             Vm.DirEntry[] memory entries = vm.readDir(path);
@@ -235,7 +235,7 @@ contract FsTest is DSTest {
     function testCreateRemoveDir() public {
         fsProxy = new FsProxy();
 
-        string memory path = "../testdata/fixtures/Dir/remove_dir";
+        string memory path = "fixtures/Dir/remove_dir";
         string memory child = string.concat(path, "/child");
 
         vm.createDir(path, false);
@@ -263,7 +263,7 @@ contract FsTest is DSTest {
     function testFsMetadata() public {
         fsProxy = new FsProxy();
 
-        string memory path = "../testdata/fixtures/File";
+        string memory path = "fixtures/File";
         Vm.FsMetadata memory metadata = vm.fsMetadata(path);
         assertEq(metadata.isDir, true);
         assertEq(metadata.isSymlink, false);
@@ -274,11 +274,11 @@ contract FsTest is DSTest {
         // assertGt(metadata.accessed, 0);
         // assertGt(metadata.created, 0);
 
-        path = "../testdata/fixtures/File/read.txt";
+        path = "fixtures/File/read.txt";
         metadata = vm.fsMetadata(path);
         assertEq(metadata.isDir, false);
 
-        path = "../testdata/fixtures/File/symlink";
+        path = "fixtures/File/symlink";
         metadata = vm.fsMetadata(path);
         assertEq(metadata.isSymlink, false);
 
