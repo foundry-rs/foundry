@@ -428,22 +428,35 @@ impl<'a> InvariantExecutor<'a> {
             ["targetSenders", "excludeSenders", "targetContracts", "excludeContracts"]
                 .map(|method| self.get_list::<Address>(invariant_address, abi, method));
 
-        let proxies = self.get_list::<(Address, String)>(invariant_address, abi, "targetProxies");
+        let interfaces =
+            self.get_list::<(Address, Vec<String>)>(invariant_address, abi, "targetInterfaces");
 
+        // `combined` is a BTreeMap that will store contracts mapped by their target address.
+        // This map is used to merge functions of the specified interfaces for the same address.
         let mut combined: TargetedContracts = BTreeMap::new();
 
-        for (key, identifier) in &proxies {
-            // Borrow proxies to avoid taking ownership
-            if let Some((_, (abi, _))) =
-                self.project_contracts.find_by_name_or_identifier(identifier)?
-            {
-                // Merge the functions of multiple contracts with the same address
-                combined
-                    .entry(*key)
-                    .or_insert_with(|| (identifier.clone(), abi.clone(), vec![]))
-                    .1
-                    .functions
-                    .extend(abi.functions.clone());
+        // Loop through each address and its associated artifact identifiers.
+        // We're borrowing the interfaces here to avoid taking full ownership of them.
+        for (key, identifiers) in &interfaces {
+            // Identifiers are specified as an array, so we loop through them.
+            for identifier in identifiers {
+                // Try to find the contract by name or identifier in the project's contracts.
+                if let Some((_, (abi, _))) =
+                    self.project_contracts.find_by_name_or_identifier(identifier)?
+                {
+                    combined
+                        // Check if there's an entry for the given key in the 'combined' map.
+                        .entry(*key)
+                        // If the entry exists, modify its ABI to extend its functions list.
+                        .and_modify(|entry| {
+                            let (_, contract_abi, _) = entry;
+
+                            // Extend the ABI's function list with the new functions.
+                            contract_abi.functions.extend(abi.functions.clone());
+                        })
+                        // Otherwise insert it into the map.
+                        .or_insert_with(|| (identifier.clone(), abi.clone(), vec![]));
+                }
             }
         }
 

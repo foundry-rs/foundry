@@ -3,9 +3,9 @@ pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
 
-struct FuzzTarget {
+struct FuzzInterface {
     address target;
-    string abiPath;
+    string[] artifacts;
 }
 
 abstract contract BaseHello {
@@ -62,16 +62,16 @@ contract BaseTest is DSTest {
         proxy = new HelloProxy(address(hello));
     }
 
-    function targetProxies() public returns (FuzzTarget[] memory) {
-        FuzzTarget[] memory proxies = new FuzzTarget[](2);
+    function targetInterfaces() public returns (FuzzInterface[] memory) {
+        FuzzInterface[] memory targets = new FuzzInterface[](1);
 
-        proxies[0].target = address(proxy);
-        proxies[0].abiPath = "Hello1";
+        string[] memory artifacts = new string[](2);
+        artifacts[0] = "Hello1";
+        artifacts[1] = "Hello2";
 
-        proxies[1].target = address(proxy);
-        proxies[1].abiPath = "Hello2";
+        targets[0] = FuzzInterface(address(proxy), artifacts);
 
-        return proxies;
+        return targets;
     }
 }
 
