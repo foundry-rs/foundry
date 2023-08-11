@@ -60,9 +60,6 @@ contract BaseTest is DSTest {
     function setUp() public {
         FullHello hello = new FullHello();
         proxy = new HelloProxy(address(hello));
-
-        Hello1(address(hello)).changeWorld();
-        Hello2(address(hello)).changeWater();
     }
 
     function targetProxies() public returns (FuzzTarget[] memory) {
