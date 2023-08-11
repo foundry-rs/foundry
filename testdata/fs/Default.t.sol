@@ -57,24 +57,24 @@ contract DefaultAccessTest is DSTest {
     FsProxy public fsProxy;
 
     bytes constant FOUNDRY_WRITE_ERR =
-        "The path \"../testdata/fixtures/File/write_file.txt\" is not allowed to be accessed for write operations.";
+        "The path \"fixtures/File/write_file.txt\" is not allowed to be accessed for write operations.";
 
     function testReadFile() public {
-        string memory path = "../testdata/fixtures/File/read.txt";
+        string memory path = "fixtures/File/read.txt";
         vm.readFile(path);
 
         vm.readFileBinary(path);
     }
 
     function testReadLine() public {
-        string memory path = "../testdata/fixtures/File/read.txt";
+        string memory path = "fixtures/File/read.txt";
         vm.readLine(path);
     }
 
     function testWriteFile() public {
         fsProxy = new FsProxy();
 
-        string memory path = "../testdata/fixtures/File/write_file.txt";
+        string memory path = "fixtures/File/write_file.txt";
         string memory data = "hello writable world";
 
         vm.expectRevert(FOUNDRY_WRITE_ERR);
@@ -87,7 +87,7 @@ contract DefaultAccessTest is DSTest {
     function testWriteLine() public {
         fsProxy = new FsProxy();
 
-        string memory path = "../testdata/fixtures/File/write_file.txt";
+        string memory path = "fixtures/File/write_file.txt";
         string memory data = "hello writable world";
 
         vm.expectRevert(FOUNDRY_WRITE_ERR);
@@ -97,7 +97,7 @@ contract DefaultAccessTest is DSTest {
     function testRemoveFile() public {
         fsProxy = new FsProxy();
 
-        string memory path = "../testdata/fixtures/File/write_file.txt";
+        string memory path = "fixtures/File/write_file.txt";
 
         vm.expectRevert(FOUNDRY_WRITE_ERR);
         fsProxy.removeFile(path);

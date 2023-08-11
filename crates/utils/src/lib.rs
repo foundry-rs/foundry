@@ -528,8 +528,8 @@ mod tests {
         fn new(path: impl Into<PathBuf>) -> Self {
             let path = path.into();
             let paths = ProjectPathsConfig::builder()
-                .root("../testdata/linking")
-                .lib("../testdata/lib")
+                .root("../../testdata/linking")
+                .lib("../../testdata/lib")
                 .sources(path.clone())
                 .tests(path)
                 .build()
@@ -608,7 +608,7 @@ mod tests {
 
     #[test]
     fn link_simple() {
-        LinkerTest::new("../testdata/linking/simple")
+        LinkerTest::new("../../testdata/linking/simple")
             .assert_dependencies("simple/Simple.t.sol:Lib".to_string(), vec![])
             .assert_dependencies(
                 "simple/Simple.t.sol:LibraryConsumer".to_string(),
@@ -631,7 +631,7 @@ mod tests {
 
     #[test]
     fn link_nested() {
-        LinkerTest::new("../testdata/linking/nested")
+        LinkerTest::new("../../testdata/linking/nested")
             .assert_dependencies("nested/Nested.t.sol:Lib".to_string(), vec![])
             .assert_dependencies(
                 "nested/Nested.t.sol:NestedLib".to_string(),
@@ -699,7 +699,7 @@ mod tests {
     /// increment larger than the previous largest nonce.
     #[test]
     fn link_duplicate() {
-        LinkerTest::new("../testdata/linking/duplicate")
+        LinkerTest::new("../../testdata/linking/duplicate")
             .assert_dependencies("duplicate/Duplicate.t.sol:A".to_string(), vec![])
             .assert_dependencies("duplicate/Duplicate.t.sol:B".to_string(), vec![])
             .assert_dependencies(
