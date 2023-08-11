@@ -71,7 +71,7 @@ prettyplease.opt-level = 0
 lalrpop.opt-level = 0
 
 ethers-contract-abigen.opt-level = 0
-ethers-contract-abigen-derive.opt-level = 0
+ethers-contract-derive.opt-level = 0
 async-recursion.opt-level = 0
 miette-derive.opt-level = 0
 strum_macros.opt-level = 0

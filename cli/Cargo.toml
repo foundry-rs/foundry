@@ -98,12 +98,12 @@ external-integration-tests = []
 
 [[bin]]
 name = "cast"
-path = "src/cast.rs"
+path = "src/cast/main.rs"
 doc = false
 
 [[bin]]
 name = "forge"
-path = "src/forge.rs"
+path = "src/forge/main.rs"
 doc = false
 
 [[bench]]
