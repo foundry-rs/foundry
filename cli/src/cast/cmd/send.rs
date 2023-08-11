@@ -1,4 +1,3 @@
-// cast send subcommands
 use cast::{Cast, TxBuilder};
 use clap::Parser;
 use ethers::{
