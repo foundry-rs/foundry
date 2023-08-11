@@ -507,6 +507,7 @@ pub fn apply<DB: DatabaseExt>(
                 Ok(Bytes::new())
             },
         )??,
+        // [function getNonce(address)] returns the current nonce of a given ETH address
         HEVMCalls::GetNonce1(inner) => {
             correct_sender_nonce(
                 b160_to_h160(data.env.tx.caller),
@@ -523,6 +524,7 @@ pub fn apply<DB: DatabaseExt>(
             let account = data.journaled_state.state().get(&h160_to_b160(inner.0)).unwrap();
             abi::encode(&[Token::Uint(account.info.nonce.into())]).into()
         }
+        // [function getNonce(Wallet)] returns the current nonce of the Wallet's ETH address
         HEVMCalls::GetNonce0(inner) => {
             correct_sender_nonce(
                 b160_to_h160(data.env.tx.caller),

@@ -124,6 +124,10 @@ fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result {
     Ok((sig.v, r_bytes, s_bytes).encode().into())
 }
 
+/// Using a given private key, return its public ETH address, its public key affine x and y
+/// coodinates, and its private key (see the 'Wallet' struct)
+///
+/// If 'label' is set to 'Some()', assign that label to the associated ETH address in state
 fn create_wallet(private_key: U256, label: Option<String>, state: &mut Cheatcodes) -> Result {
     let key = parse_private_key(private_key)?;
     let addr = utils::secret_key_to_address(&key);
@@ -244,12 +248,20 @@ pub fn apply<DB: Database>(
 ) -> Option<Result> {
     Some(match call {
         HEVMCalls::Addr(inner) => addr(inner.0),
+        // [function sign(uint256,bytes32)] Used to sign bytes32 digests using the given private key
         HEVMCalls::Sign0(inner) => sign(inner.0, inner.1.into(), data.env.cfg.chain_id.into()),
+        // [function createWallet(string)] Used to derive private key and label the wallet with the
+        // same string
         HEVMCalls::CreateWallet0(inner) => {
             create_wallet(U256::from(keccak256(&inner.0)), Some(inner.0.clone()), state)
         }
+        // [function createWallet(uint256)] creates a new wallet with the given private key
         HEVMCalls::CreateWallet1(inner) => create_wallet(inner.0, None, state),
+        // [function createWallet(uint256,string)] creates a new wallet with the given private key
+        // and labels it with the given string
         HEVMCalls::CreateWallet2(inner) => create_wallet(inner.0, Some(inner.1.clone()), state),
+        // [function sign(uint256,bytes32)] Used to sign bytes32 digests using the given Wallet's
+        // private key
         HEVMCalls::Sign1(inner) => {
             sign(inner.0.private_key, inner.1.into(), data.env.cfg.chain_id.into())
         }
