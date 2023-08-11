@@ -20,11 +20,10 @@ ethers-providers = { workspace = true }
 ethers-signers = { workspace = true }
 futures = "0.3"
 eyre = "0.6"
-rustc-hex = "2"
 serde = "1"
 serde_json = "1"
 chrono.workspace = true
-hex = "0.4"
+hex.workspace = true
 rayon = "1"
 
 # aws

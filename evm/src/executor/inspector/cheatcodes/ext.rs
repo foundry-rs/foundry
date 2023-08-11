@@ -7,10 +7,9 @@ use ethers::{
 };
 use foundry_common::{fmt::*, fs, get_artifact_path};
 use foundry_config::fs_permissions::FsAccessKind;
-use hex::FromHex;
 use serde::Deserialize;
 use serde_json::Value;
-use std::{collections::BTreeMap, env, path::Path, process::Command, str::FromStr};
+use std::{collections::BTreeMap, env, path::Path, process::Command};
 
 /// Invokes a `Command` with the given args and returns the abi encoded response
 ///
@@ -211,22 +210,18 @@ fn value_to_token(value: &Value) -> Result<Token> {
             Err(fmt_err!("Unsupported value: {number:?}"))
         }
         Value::String(string) => {
-            if let Some(val) = string.strip_prefix("0x") {
-                // If it can decoded as an address, it's an address
-                if let Ok(addr) = H160::from_str(string) {
-                    Ok(Token::Address(addr))
-                } else if hex::decode(val).is_ok() {
-                    // if length == 32 bytes, then encode as Bytes32, else Bytes
-                    Ok(if val.len() == 64 {
-                        Token::FixedBytes(Vec::from_hex(val).unwrap())
-                    } else {
-                        Token::Bytes(Vec::from_hex(val).unwrap())
-                    })
-                } else {
-                    // If incorrect length, pad 0 at the beginning
-                    let arr = format!("0{val}");
-                    Ok(Token::Bytes(Vec::from_hex(arr).unwrap()))
+            if let Some(mut val) = string.strip_prefix("0x") {
+                let s;
+                if val.len() % 2 != 0 {
+                    s = format!("0{}", val);
+                    val = &s[..];
                 }
+                let bytes = hex::decode(val)?;
+                Ok(match bytes.len() {
+                    20 => Token::Address(Address::from_slice(&bytes)),
+                    32 => Token::FixedBytes(bytes),
+                    _ => Token::Bytes(bytes),
+                })
             } else {
                 Ok(Token::String(string.to_owned()))
             }
