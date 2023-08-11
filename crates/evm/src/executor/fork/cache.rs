@@ -1,13 +1,11 @@
 //! Cache related abstraction
 use crate::executor::backend::snapshot::StateSnapshot;
+use hashbrown::HashMap as Map;
 use parking_lot::RwLock;
 use revm::{
-    primitives::{
-        Account, AccountInfo, B160, B256, KECCAK_EMPTY, U256,
-    },
+    primitives::{Account, AccountInfo, B160, B256, KECCAK_EMPTY, U256},
     DatabaseCommit,
 };
-use hashbrown::HashMap as Map;
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::BTreeSet, fs, io::BufWriter, path::PathBuf, sync::Arc};
 
@@ -257,12 +255,8 @@ impl MemDb {
                 storage.remove(&add);
             } else {
                 // insert account
-                if let Some(code_hash) = acc
-                    .info
-                    .code
-                    .as_ref()
-                    .filter(|code| !code.is_empty())
-                    .map(|code| code.hash)
+                if let Some(code_hash) =
+                    acc.info.code.as_ref().filter(|code| !code.is_empty()).map(|code| code.hash)
                 {
                     acc.info.code_hash = code_hash;
                 } else if acc.info.code_hash.is_zero() {

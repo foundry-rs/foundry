@@ -71,7 +71,12 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         InstructionResult::Continue
     }
 
-    fn step(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>, is_static: bool) -> InstructionResult {
+    fn step(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        is_static: bool,
+    ) -> InstructionResult {
         call_inspectors!(
             inspector,
             [&mut self.gas.as_deref().map(|gas| gas.borrow_mut()), &mut self.tracer],

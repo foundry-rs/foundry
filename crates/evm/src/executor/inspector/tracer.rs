@@ -162,7 +162,12 @@ impl<DB> Inspector<DB> for Tracer
 where
     DB: Database,
 {
-    fn step(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>, _is_static: bool) -> InstructionResult {
+    fn step(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        _is_static: bool,
+    ) -> InstructionResult {
         if !self.record_steps {
             return InstructionResult::Continue
         }
