@@ -24,7 +24,6 @@ use foundry_utils::Retry;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use rustc_hex::ToHex;
 use semver::{BuildMetadata, Version};
 use std::{
     fmt::Debug,
@@ -432,8 +431,8 @@ impl EtherscanVerificationProvider {
             let encoded_args = encode_args(
                 &func,
                 &read_constructor_args_file(constructor_args_path.to_path_buf())?,
-            )?
-            .to_hex::<String>();
+            )?;
+            let encoded_args = hex::encode(encoded_args);
             return Ok(Some(encoded_args[8..].into()))
         }
 

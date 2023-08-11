@@ -119,6 +119,7 @@ ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-featu
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+hex = { package = "const-hex", version = "1.6", features = ["hex"] }
 solang-parser = "=0.3.1"
 
 #[patch."https://github.com/gakonst/ethers-rs"]

@@ -28,7 +28,6 @@ pub use rusoto_core::{
     request::HttpClient as AwsHttpClient, Client as AwsClient,
 };
 pub use rusoto_kms::KmsClient;
-use rustc_hex::{FromHexIter, ToHex};
 use std::{
     path::PathBuf,
     str::FromStr,
@@ -915,8 +914,7 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn from_utf8(s: &str) -> String {
-        let s: String = s.as_bytes().to_hex();
-        format!("0x{s}")
+        hex::encode_prefixed(s)
     }
 
     /// Converts hex data into text data
@@ -935,13 +933,11 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_ascii(hex: &str) -> Result<String> {
-        let hex_trimmed = hex.trim_start_matches("0x");
-        let iter = FromHexIter::new(hex_trimmed);
-        let mut ascii = String::new();
-        for letter in iter.collect::<Vec<_>>() {
-            ascii.push(letter? as char);
+        let bytes = hex::decode(hex)?;
+        if !bytes.iter().all(u8::is_ascii) {
+            return Err(eyre::eyre!("Invalid ASCII bytes"))
         }
-        Ok(ascii)
+        Ok(String::from_utf8(bytes).unwrap())
     }
 
     /// Converts fixed point number into specified number of decimals
@@ -1457,7 +1453,7 @@ impl SimpleCast {
             }
         };
         let calldata = match encode_args(&func, args) {
-            Ok(res) => res.to_hex::<String>(),
+            Ok(res) => hex::encode(res),
             Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
         };
         let encoded = &calldata[8..];
@@ -1482,7 +1478,7 @@ impl SimpleCast {
     pub fn calldata_encode(sig: impl AsRef<str>, args: &[impl AsRef<str>]) -> Result<String> {
         let func = HumanReadableParser::parse_function(sig.as_ref())?;
         let calldata = encode_args(&func, args)?;
-        Ok(format!("0x{}", calldata.to_hex::<String>()))
+        Ok(hex::encode_prefixed(calldata))
     }
 
     /// Generates an interface in solidity from either a local file ABI or a verified contract on
@@ -1609,8 +1605,7 @@ impl SimpleCast {
             }
         }
 
-        let namehash: String = node.to_hex();
-        Ok(format!("0x{namehash}"))
+        Ok(hex::encode_prefixed(node))
     }
 
     /// Keccak-256 hashes arbitrary data

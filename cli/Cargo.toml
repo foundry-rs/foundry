@@ -60,12 +60,11 @@ tempfile = "3"
 # misc
 eyre = "0.6"
 color-eyre = "0.6"
-rustc-hex = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 regex = { version = "1", default-features = false }
 rpassword = "7"
-hex = "0.4"
+hex = { workspace = true, features = ["serde"] }
 itertools = "0.10"
 proptest = "1"
 semver = "1"
