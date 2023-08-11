@@ -251,10 +251,16 @@ impl MemDb {
         let mut storage = self.storage.write();
         let mut accounts = self.accounts.write();
         for (add, mut acc) in changes {
-            if acc.is_empty() || acc.is_selfdestructed() {
-                accounts.remove(&add);
-                storage.remove(&add);
+            if !acc.is_touched() {
+                continue
+            }
+            if acc.is_selfdestructed() {
+                let acc_storage = storage.entry(add).or_default();
+                acc_storage.clear();
+                let acc_info = Default::default();
+                accounts.insert(add, acc_info);
             } else {
+                let is_newly_created = acc.is_created();
                 // insert account
                 if let Some(code_hash) = acc
                     .info
@@ -267,22 +273,16 @@ impl MemDb {
                 } else if acc.info.code_hash.is_zero() {
                     acc.info.code_hash = KECCAK_EMPTY;
                 }
-                accounts.insert(add, acc.info);
+                accounts.insert(add, acc.info.clone());
 
                 let acc_storage = storage.entry(add).or_default();
-                if acc.status.contains(AccountStatus::Created) {
+                if is_newly_created {
                     acc_storage.clear();
                 }
-                for (index, value) in acc.storage {
-                    if value.present_value() == U256::from(0) {
-                        acc_storage.remove(&index);
-                    } else {
-                        acc_storage.insert(index, value.present_value());
-                    }
-                }
-                if acc_storage.is_empty() {
-                    storage.remove(&add);
-                }
+                acc_storage.extend(acc.storage.into_iter().map(|(k, v)| (k, v.present_value())));
+                // if acc_storage.is_empty() {
+                //     storage.remove(&add);
+                // }
             }
         }
     }
