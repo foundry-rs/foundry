@@ -428,6 +428,25 @@ impl<'a> InvariantExecutor<'a> {
             ["targetSenders", "excludeSenders", "targetContracts", "excludeContracts"]
                 .map(|method| self.get_list::<Address>(invariant_address, abi, method));
 
+        let proxies = self.get_list::<(Address, String)>(invariant_address, abi, "targetProxies");
+
+        let mut combined: TargetedContracts = BTreeMap::new();
+
+        for (key, identifier) in &proxies {
+            // Borrow proxies to avoid taking ownership
+            if let Some((_, (abi, _))) =
+                self.project_contracts.find_by_name_or_identifier(identifier)?
+            {
+                // Merge the functions of multiple contracts with the same address
+                combined
+                    .entry(*key)
+                    .or_insert_with(|| (identifier.clone(), abi.clone(), vec![]))
+                    .1
+                    .functions
+                    .extend(abi.functions.clone());
+            }
+        }
+
         let mut contracts: TargetedContracts = self
             .setup_contracts
             .clone()
@@ -444,6 +463,7 @@ impl<'a> InvariantExecutor<'a> {
                         !self.artifact_filters.excluded.contains(identifier))
             })
             .map(|(addr, (identifier, abi))| (addr, (identifier, abi, vec![])))
+            .chain(combined)
             .collect();
 
         self.select_selectors(invariant_address, abi, &mut contracts)?;
