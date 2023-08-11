@@ -330,12 +330,11 @@ impl JsonBlockCacheDB {
     pub fn load(path: impl Into<PathBuf>) -> eyre::Result<Self> {
         let path = path.into();
         trace!(target : "cache", ?path, "reading json cache");
-        let file = fs::File::open(&path).map_err(|err| {
+        let contents = std::fs::read_to_string(&path).map_err(|err| {
             warn!(?err, ?path, "Failed to read cache file");
             err
         })?;
-        let file = std::io::BufReader::new(file);
-        let data = serde_json::from_reader(file).map_err(|err| {
+        let data = serde_json::from_str(&contents).map_err(|err| {
             warn!(target : "cache", ?err, ?path, "Failed to deserialize cache data");
             err
         })?;
