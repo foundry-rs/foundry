@@ -162,7 +162,7 @@ impl<DB> Inspector<DB> for Tracer
 where
     DB: Database,
 {
-    fn step(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>) -> InstructionResult {
+    fn step(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>, _is_static: bool) -> InstructionResult {
         if !self.record_steps {
             return InstructionResult::Continue
         }
@@ -183,6 +183,7 @@ where
         &mut self,
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
+        _: bool,
         status: InstructionResult,
     ) -> InstructionResult {
         if !self.record_steps {
@@ -198,6 +199,7 @@ where
         &mut self,
         data: &mut EVMData<'_, DB>,
         inputs: &mut CallInputs,
+        _: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         let (from, to) = match inputs.context.scheme {
             CallScheme::DelegateCall | CallScheme::CallCode => {
@@ -225,6 +227,7 @@ where
         gas: Gas,
         status: InstructionResult,
         retdata: Bytes,
+        _: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         self.fill_trace(
             status,

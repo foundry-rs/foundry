@@ -92,6 +92,7 @@ impl InspectorStack {
         remaining_gas: Gas,
         status: InstructionResult,
         retdata: Bytes,
+        is_static: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         call_inspectors!(
             inspector,
@@ -107,7 +108,7 @@ impl InspectorStack {
             ],
             {
                 let (new_status, new_gas, new_retdata) =
-                    inspector.call_end(data, call, remaining_gas, status, retdata.clone());
+                    inspector.call_end(data, call, remaining_gas, status, retdata.clone(), is_static);
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
@@ -131,6 +132,7 @@ where
         &mut self,
         interpreter: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
+        is_static: bool,
     ) -> InstructionResult {
         call_inspectors!(
             inspector,
@@ -144,7 +146,7 @@ where
                 &mut self.printer
             ],
             {
-                let status = inspector.initialize_interp(interpreter, data);
+                let status = inspector.initialize_interp(interpreter, data, is_static);
 
                 // Allow inspectors to exit early
                 if status != InstructionResult::Continue {
@@ -160,6 +162,7 @@ where
         &mut self,
         interpreter: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
+        is_static: bool,
     ) -> InstructionResult {
         call_inspectors!(
             inspector,
@@ -174,7 +177,7 @@ where
                 &mut self.printer
             ],
             {
-                let status = inspector.step(interpreter, data);
+                let status = inspector.step(interpreter, data, is_static);
 
                 // Allow inspectors to exit early
                 if status != InstructionResult::Continue {
@@ -206,6 +209,7 @@ where
         &mut self,
         interpreter: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
+        is_static: bool,
         status: InstructionResult,
     ) -> InstructionResult {
         call_inspectors!(
@@ -220,7 +224,7 @@ where
                 &mut self.chisel_state
             ],
             {
-                let status = inspector.step_end(interpreter, data, status);
+                let status = inspector.step_end(interpreter, data, is_static, status);
 
                 // Allow inspectors to exit early
                 if status != InstructionResult::Continue {
@@ -236,6 +240,7 @@ where
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
+        is_static: bool
     ) -> (InstructionResult, Gas, Bytes) {
         call_inspectors!(
             inspector,
@@ -250,7 +255,7 @@ where
                 &mut self.printer
             ],
             {
-                let (status, gas, retdata) = inspector.call(data, call);
+                let (status, gas, retdata) = inspector.call(data, call, is_static);
 
                 // Allow inspectors to exit early
                 if status != InstructionResult::Continue {
@@ -269,8 +274,9 @@ where
         remaining_gas: Gas,
         status: InstructionResult,
         retdata: Bytes,
+        is_static: bool,
     ) -> (InstructionResult, Gas, Bytes) {
-        let res = self.do_call_end(data, call, remaining_gas, status, retdata);
+        let res = self.do_call_end(data, call, remaining_gas, status, retdata, is_static);
 
         if matches!(res.0, return_revert!()) {
             // Encountered a revert, since cheatcodes may have altered the evm state in such a way
