@@ -100,7 +100,7 @@ pub struct Wallet {
     )]
     pub keystore_path: Option<String>,
 
-    // Use a keystore from the default folder by its name
+    /// Use a keystore from the default keystores folder (~/.foundry/keystores) by its filename
     #[clap(
         long = "account",
         help_heading = "Wallet options - keystore",

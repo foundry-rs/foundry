@@ -153,7 +153,7 @@ pub struct MultiWallet {
     )]
     pub keystore_paths: Option<Vec<String>>,
 
-    // Use a keystore from the default folder by its name
+    /// Use a keystore from the default keystores folder (~/.foundry/keystores) by its filename
     #[clap(
         long = "account",
         visible_alias = "accounts",
