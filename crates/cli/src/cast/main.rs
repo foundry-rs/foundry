@@ -7,7 +7,8 @@ use ethers::{
     types::Address,
     utils::keccak256,
 };
-use foundry_cli::{handler, prompt, stdin, utils, utils::Cmd};
+use eyre::Result;
+use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
     abi::{format_tokens, get_event},
     fs,
@@ -25,7 +26,7 @@ pub mod opts;
 use opts::{Opts, Subcommands, ToBaseArgs};
 
 #[tokio::main]
-async fn main() -> eyre::Result<()> {
+async fn main() -> Result<()> {
     utils::load_dotenv();
     handler::install()?;
     utils::subscriber();

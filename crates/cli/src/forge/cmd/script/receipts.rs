@@ -4,6 +4,7 @@ use ethers::{
     providers::Middleware,
     types::TransactionReceipt,
 };
+use eyre::Result;
 use foundry_cli::{init_progress, update_progress, utils::print_receipt};
 use foundry_common::RetryProvider;
 use futures::StreamExt;
@@ -33,7 +34,7 @@ impl From<TransactionReceipt> for TxStatus {
 pub async fn wait_for_pending(
     provider: Arc<RetryProvider>,
     deployment_sequence: &mut ScriptSequence,
-) -> eyre::Result<()> {
+) -> Result<()> {
     if deployment_sequence.pending.is_empty() {
         return Ok(())
     }
@@ -56,7 +57,7 @@ pub async fn clear_pendings(
     provider: Arc<RetryProvider>,
     deployment_sequence: &mut ScriptSequence,
     tx_hashes: Option<Vec<TxHash>>,
-) -> eyre::Result<()> {
+) -> Result<()> {
     let to_query = tx_hashes.unwrap_or_else(|| deployment_sequence.pending.clone());
 
     let count = deployment_sequence.pending.len();

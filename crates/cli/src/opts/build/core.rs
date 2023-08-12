@@ -4,6 +4,7 @@ use clap::{Parser, ValueHint};
 use ethers::solc::{
     artifacts::RevertStrings, remappings::Remapping, utils::canonicalized, Project,
 };
+use eyre::Result;
 use foundry_config::{
     figment,
     figment::{
@@ -119,7 +120,7 @@ impl CoreBuildArgs {
     /// This loads the `foundry_config::Config` for the current workspace (see
     /// [`utils::find_project_root_path`] and merges the cli `BuildArgs` into it before returning
     /// [`foundry_config::Config::project()`]
-    pub fn project(&self) -> eyre::Result<Project> {
+    pub fn project(&self) -> Result<Project> {
         let config = self.try_load_config_emit_warnings()?;
         Ok(config.project()?)
     }

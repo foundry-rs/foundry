@@ -5,11 +5,8 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{transaction::eip712::TypedData, Address, Signature},
 };
-use eyre::Context;
-use foundry_cli::{
-    opts::{RawWallet, Wallet},
-    utils::Cmd,
-};
+use eyre::{Context, Result};
+use foundry_cli::opts::{RawWallet, Wallet};
 use foundry_common::fs;
 use foundry_config::Config;
 use std::path::Path;
@@ -120,7 +117,7 @@ pub enum WalletSubcommands {
 }
 
 impl WalletSubcommands {
-    pub async fn run(self) -> eyre::Result<()> {
+    pub async fn run(self) -> Result<()> {
         match self {
             WalletSubcommands::New { path, unsafe_password, .. } => {
                 let mut rng = thread_rng();
@@ -281,7 +278,7 @@ flag to set your key via:
         Ok(())
     }
 
-    fn hex_str_to_bytes(s: &str) -> eyre::Result<Vec<u8>> {
+    fn hex_str_to_bytes(s: &str) -> Result<Vec<u8>> {
         Ok(match s.strip_prefix("0x") {
             Some(data) => hex::decode(data).wrap_err("Could not decode 0x-prefixed string.")?,
             None => s.as_bytes().to_vec(),

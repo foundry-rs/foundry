@@ -9,7 +9,7 @@ use std::{
 
 /// Prints a message to [`stdout`][io::stdout] and [reads a line from stdin into a String](read).
 ///
-/// Returns `eyre::Result<T>`, so sometimes `T` must be explicitly specified, like in `str::parse`.
+/// Returns `Result<T>`, so sometimes `T` must be explicitly specified, like in `str::parse`.
 ///
 /// # Examples
 ///
@@ -39,7 +39,7 @@ macro_rules! prompt {
 }
 
 /// Unwraps the given `Option<T>` or [reads stdin into a String](read) and parses it as `T`.
-pub fn unwrap<T>(value: Option<T>, read_line: bool) -> eyre::Result<T>
+pub fn unwrap<T>(value: Option<T>, read_line: bool) -> Result<T>
 where
     T: FromStr,
     T::Err: StdError + Send + Sync + 'static,
@@ -66,7 +66,7 @@ where
 
 /// [Reads stdin into a String](read) and parses it as `Vec<T>` using whitespaces as delimiters if
 /// the given `Vec<T>` is empty.
-pub fn unwrap_vec<T>(mut value: Vec<T>) -> eyre::Result<Vec<T>>
+pub fn unwrap_vec<T>(mut value: Vec<T>) -> Result<Vec<T>>
 where
     T: FromStr,
     T::Err: StdError + Send + Sync + 'static,
@@ -81,7 +81,7 @@ where
 
 /// Short-hand for `unwrap(value, true)`.
 #[inline]
-pub fn unwrap_line<T>(value: Option<T>) -> eyre::Result<T>
+pub fn unwrap_line<T>(value: Option<T>) -> Result<T>
 where
     T: FromStr,
     T::Err: StdError + Send + Sync + 'static,

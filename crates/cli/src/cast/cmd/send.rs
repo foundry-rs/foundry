@@ -3,6 +3,7 @@ use clap::Parser;
 use ethers::{
     prelude::MiddlewareBuilder, providers::Middleware, signers::Signer, types::NameOrAddress,
 };
+use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
@@ -73,7 +74,7 @@ pub enum SendTxSubcommands {
 }
 
 impl SendTxArgs {
-    pub async fn run(self) -> eyre::Result<()> {
+    pub async fn run(self) -> Result<()> {
         let SendTxArgs {
             eth,
             to,
@@ -208,7 +209,7 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
     cast_async: bool,
     confs: usize,
     to_json: bool,
-) -> eyre::Result<()>
+) -> Result<()>
 where
     M::Error: 'static,
 {

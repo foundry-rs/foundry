@@ -1,7 +1,7 @@
 use clap::{Parser, ValueHint};
 use ethers::solc::Graph;
-use eyre::WrapErr;
-use foundry_cli::utils::{Cmd, LoadConfig};
+use eyre::{Result, WrapErr};
+use foundry_cli::utils::LoadConfig;
 use foundry_config::{impl_figment_convert_basic, Config};
 use itertools::Itertools;
 use rayon::prelude::*;
@@ -57,7 +57,7 @@ pub struct GeigerArgs {
 impl_figment_convert_basic!(GeigerArgs);
 
 impl GeigerArgs {
-    pub fn sources(&self, config: &Config) -> eyre::Result<Vec<PathBuf>> {
+    pub fn sources(&self, config: &Config) -> Result<Vec<PathBuf>> {
         let cwd = std::env::current_dir()?;
 
         let mut sources: Vec<PathBuf> = {
@@ -85,12 +85,8 @@ impl GeigerArgs {
 
         Ok(sources)
     }
-}
 
-impl Cmd for GeigerArgs {
-    type Output = usize;
-
-    fn run(self) -> eyre::Result<Self::Output> {
+    pub fn run(self) -> Result<usize> {
         let config = self.try_load_config_emit_warnings()?;
         let sources = self.sources(&config).wrap_err("Failed to resolve files")?;
 

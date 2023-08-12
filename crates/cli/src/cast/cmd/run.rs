@@ -1,6 +1,6 @@
 use clap::Parser;
 use ethers::{prelude::Middleware, solc::EvmVersion, types::H160};
-use eyre::WrapErr;
+use eyre::{Result, WrapErr};
 use forge::{
     executor::{inspector::cheatcodes::util::configure_tx_env, opts::EvmOpts},
     revm::primitives::U256 as rU256,
@@ -82,7 +82,7 @@ impl RunArgs {
     /// This replays the entire block the transaction was mined in unless `quick` is set to true
     ///
     /// Note: This executes the transaction(s) as is: Cheatcodes are disabled
-    pub async fn run(self) -> eyre::Result<()> {
+    pub async fn run(self) -> Result<()> {
         let figment =
             Config::figment_with_root(find_project_root_path(None).unwrap()).merge(self.rpc);
         let evm_opts = figment.extract::<EvmOpts>()?;

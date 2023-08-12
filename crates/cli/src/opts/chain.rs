@@ -1,5 +1,6 @@
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use ethers::types::Chain as NamedChain;
+use eyre::Result;
 use foundry_config::Chain;
 use std::ffi::OsStr;
 use strum::VariantNames;

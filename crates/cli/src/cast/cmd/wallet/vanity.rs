@@ -6,7 +6,8 @@ use ethers::{
     types::{H160, U256},
     utils::{get_contract_address, secret_key_to_address},
 };
-use foundry_cli::utils::Cmd;
+use eyre::Result;
+
 use rayon::iter::{self, ParallelIterator};
 use regex::Regex;
 use std::time::Instant;
@@ -37,10 +38,8 @@ pub struct VanityArgs {
     pub nonce: Option<u64>,
 }
 
-impl Cmd for VanityArgs {
-    type Output = LocalWallet;
-
-    fn run(self) -> eyre::Result<Self::Output> {
+impl VanityArgs {
+    pub fn run(self) -> Result<LocalWallet> {
         let Self { starts_with, ends_with, nonce } = self;
         let mut left_exact_hex = None;
         let mut left_regex = None;

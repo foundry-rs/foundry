@@ -1,6 +1,7 @@
 use clap::{Parser, ValueHint};
+use eyre::Result;
 use forge_fmt::{format, parse, print_diagnostics_report};
-use foundry_cli::utils::{Cmd, FoundryPathExt, LoadConfig};
+use foundry_cli::utils::{FoundryPathExt, LoadConfig};
 use foundry_common::{fs, term::cli_warn};
 use foundry_config::impl_figment_convert_basic;
 use foundry_utils::glob::expand_globs;
@@ -45,10 +46,8 @@ impl_figment_convert_basic!(FmtArgs);
 
 // === impl FmtArgs ===
 
-impl Cmd for FmtArgs {
-    type Output = ();
-
-    fn run(self) -> eyre::Result<Self::Output> {
+impl FmtArgs {
+    pub fn run(self) -> Result<()> {
         let config = self.try_load_config_emit_warnings()?;
 
         // Expand ignore globs and canonicalize from the get go
@@ -95,7 +94,7 @@ impl Cmd for FmtArgs {
             }
         };
 
-        let format = |source: String, path: Option<&Path>| -> eyre::Result<_> {
+        let format = |source: String, path: Option<&Path>| -> Result<_> {
             let name = match path {
                 Some(path) => {
                     path.strip_prefix(&config.__root.0).unwrap_or(path).display().to_string()

@@ -3,7 +3,7 @@ use eyre::{Context, Result};
 use foundry_cli::{
     opts::Dependency,
     p_println, prompt,
-    utils::{Cmd, CommandUtils, Git, LoadConfig},
+    utils::{CommandUtils, Git, LoadConfig},
 };
 use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
@@ -56,10 +56,8 @@ pub struct InstallArgs {
 
 impl_figment_convert_basic!(InstallArgs);
 
-impl Cmd for InstallArgs {
-    type Output = ();
-
-    fn run(self) -> Result<Self::Output> {
+impl InstallArgs {
+    pub fn run(self) -> Result<()> {
         let mut config = self.try_load_config_emit_warnings()?;
         self.opts.install(&mut config, self.dependencies)
     }

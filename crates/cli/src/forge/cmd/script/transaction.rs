@@ -6,7 +6,7 @@ use ethers::{
     prelude::{NameOrAddress, H256 as TxHash},
     types::transaction::eip2718::TypedTransaction,
 };
-use eyre::{ContextCompat, WrapErr};
+use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{abi::format_token_raw, RpcUrl, SELECTOR_LEN};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -69,7 +69,7 @@ impl TransactionWithMetadata {
         decoder: &CallTraceDecoder,
         additional_contracts: Vec<AdditionalContract>,
         is_fixed_gas_limit: bool,
-    ) -> eyre::Result<Self> {
+    ) -> Result<Self> {
         let mut metadata = Self { transaction, rpc, is_fixed_gas_limit, ..Default::default() };
 
         // Specify if any contract was directly created with this transaction
@@ -123,7 +123,7 @@ impl TransactionWithMetadata {
         address: Address,
         contracts: &BTreeMap<Address, ArtifactInfo>,
         decoder: &CallTraceDecoder,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         if is_create2 {
             self.opcode = CallKind::Create2;
         } else {
@@ -201,7 +201,7 @@ impl TransactionWithMetadata {
         target: Address,
         local_contracts: &BTreeMap<Address, ArtifactInfo>,
         decoder: &CallTraceDecoder,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         self.opcode = CallKind::Call;
 
         if let Some(data) = self.transaction.data() {

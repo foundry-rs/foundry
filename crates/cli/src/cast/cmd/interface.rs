@@ -1,5 +1,6 @@
 use cast::{AbiPath, SimpleCast};
 use clap::Parser;
+use eyre::Result;
 use foundry_cli::opts::EtherscanOpts;
 use foundry_common::fs;
 use foundry_config::Config;
@@ -37,7 +38,7 @@ pub struct InterfaceArgs {
 }
 
 impl InterfaceArgs {
-    pub async fn run(self) -> eyre::Result<()> {
+    pub async fn run(self) -> Result<()> {
         let InterfaceArgs { path_or_address, name, pragma, output: output_location, etherscan } =
             self;
         let config = Config::from(&etherscan);

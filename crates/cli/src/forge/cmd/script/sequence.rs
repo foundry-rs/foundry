@@ -12,7 +12,7 @@ use ethers::{
     prelude::{artifacts::Libraries, ArtifactId, TransactionReceipt, TxHash},
     types::transaction::eip2718::TypedTransaction,
 };
-use eyre::{ContextCompat, WrapErr};
+use eyre::{ContextCompat, Result, WrapErr};
 use foundry_cli::utils::now;
 use foundry_common::{fs, shell, SELECTOR_LEN};
 use foundry_config::Config;
@@ -81,7 +81,7 @@ impl ScriptSequence {
         config: &Config,
         broadcasted: bool,
         is_multi: bool,
-    ) -> eyre::Result<Self> {
+    ) -> Result<Self> {
         let chain = config.chain_id.unwrap_or_default().id();
 
         let (path, sensitive_path) = ScriptSequence::get_paths(
@@ -117,7 +117,7 @@ impl ScriptSequence {
         target: &ArtifactId,
         chain_id: u64,
         broadcasted: bool,
-    ) -> eyre::Result<Self> {
+    ) -> Result<Self> {
         let (path, sensitive_path) = ScriptSequence::get_paths(
             &config.broadcast,
             &config.cache_path,
@@ -148,7 +148,7 @@ impl ScriptSequence {
     }
 
     /// Saves the transactions as file if it's a standalone deployment.
-    pub fn save(&mut self) -> eyre::Result<()> {
+    pub fn save(&mut self) -> Result<()> {
         if self.multi || self.transactions.is_empty() {
             return Ok(())
         }
@@ -221,7 +221,7 @@ impl ScriptSequence {
         target: &ArtifactId,
         chain_id: u64,
         broadcasted: bool,
-    ) -> eyre::Result<(PathBuf, PathBuf)> {
+    ) -> Result<(PathBuf, PathBuf)> {
         let mut broadcast = broadcast.to_path_buf();
         let mut cache = cache.to_path_buf();
         let mut common = PathBuf::new();
@@ -254,7 +254,7 @@ impl ScriptSequence {
         &mut self,
         config: &Config,
         mut verify: VerifyBundle,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         trace!(target: "script", "verifying {} contracts [{}]", verify.known_contracts.len(), self.chain);
 
         verify.set_chain(config, self.chain.into());

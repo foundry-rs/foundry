@@ -6,7 +6,6 @@ use ethers::{
     utils::{get_create2_address_from_hash, keccak256},
 };
 use eyre::{Result, WrapErr};
-use foundry_cli::utils::Cmd;
 use rayon::prelude::*;
 use regex::RegexSetBuilder;
 use std::{str::FromStr, time::Instant};
@@ -59,16 +58,8 @@ pub struct Create2Output {
     pub salt: U256,
 }
 
-impl Cmd for Create2Args {
-    type Output = Create2Output;
-
-    fn run(self) -> eyre::Result<Self::Output> {
-        Create2Args::generate_address(self)
-    }
-}
-
 impl Create2Args {
-    fn generate_address(self) -> Result<Create2Output> {
+    pub fn run(self) -> Result<Create2Output> {
         let Create2Args {
             starts_with,
             ends_with,

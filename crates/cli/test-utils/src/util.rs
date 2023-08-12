@@ -3,7 +3,7 @@ use ethers_solc::{
     project_util::{copy_dir, TempProject},
     ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig, Solc,
 };
-use eyre::WrapErr;
+use eyre::{Result, WrapErr};
 use foundry_config::Config;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -148,7 +148,7 @@ pub fn setup_forge_remote(prj: impl Into<RemoteProject>) -> (TestProject, TestCo
 /// Same as `setup_forge_remote` but not panicing
 pub fn try_setup_forge_remote(
     config: impl Into<RemoteProject>,
-) -> eyre::Result<(TestProject, TestCommand)> {
+) -> Result<(TestProject, TestCommand)> {
     let config = config.into();
     let mut tmp = TempProject::checkout(&config.id).wrap_err("failed to checkout project")?;
     tmp.project_mut().paths = config.path_style.paths(tmp.root())?;
@@ -620,7 +620,7 @@ impl TestCommand {
 
     /// Executes command and expects an successful result
     #[track_caller]
-    pub fn ensure_execute_success(&mut self) -> eyre::Result<process::Output> {
+    pub fn ensure_execute_success(&mut self) -> Result<process::Output> {
         let out = self.try_execute()?;
         self.ensure_success(out)
     }
@@ -735,7 +735,7 @@ impl TestCommand {
     }
 
     #[track_caller]
-    pub fn ensure_success(&self, out: process::Output) -> eyre::Result<process::Output> {
+    pub fn ensure_success(&self, out: process::Output) -> Result<process::Output> {
         if !out.status.success() {
             let suggest = if out.stderr.is_empty() {
                 "\n\nDid your forge command end up with no output?".to_string()

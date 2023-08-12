@@ -14,10 +14,8 @@ use ethers::{
         utils::canonicalize,
     },
 };
-use foundry_cli::{
-    opts::{CompilerArgs, CoreBuildArgs},
-    utils::Cmd,
-};
+use eyre::Result;
+use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
 use foundry_common::compile;
 use serde_json::{to_value, Value};
 use std::fmt;
@@ -42,10 +40,8 @@ pub struct InspectArgs {
     build: CoreBuildArgs,
 }
 
-impl Cmd for InspectArgs {
-    type Output = ();
-
-    fn run(self) -> eyre::Result<Self::Output> {
+impl InspectArgs {
+    pub fn run(self) -> Result<()> {
         let InspectArgs { mut contract, field, build, pretty } = self;
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
@@ -207,7 +203,7 @@ impl Cmd for InspectArgs {
     }
 }
 
-pub fn print_abi(abi: &LosslessAbi, pretty: bool) -> eyre::Result<()> {
+pub fn print_abi(abi: &LosslessAbi, pretty: bool) -> Result<()> {
     let abi_json = to_value(abi)?;
     if !pretty {
         println!("{}", serde_json::to_string_pretty(&abi_json)?);
@@ -221,10 +217,7 @@ pub fn print_abi(abi: &LosslessAbi, pretty: bool) -> eyre::Result<()> {
     Ok(())
 }
 
-pub fn print_storage_layout(
-    storage_layout: &Option<StorageLayout>,
-    pretty: bool,
-) -> eyre::Result<()> {
+pub fn print_storage_layout(storage_layout: &Option<StorageLayout>, pretty: bool) -> Result<()> {
     if storage_layout.is_none() {
         eyre::bail!("Could not get storage layout")
     }

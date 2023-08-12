@@ -2,6 +2,7 @@ use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
 use async_trait::async_trait;
 use cast::SimpleCast;
 use ethers::solc::ConfigurableContractArtifact;
+use eyre::Result;
 use foundry_cli::utils::{get_cached_entry_by_name, LoadConfig};
 use foundry_common::fs;
 use foundry_utils::Retry;
@@ -19,12 +20,12 @@ pub struct SourcifyVerificationProvider;
 
 #[async_trait]
 impl VerificationProvider for SourcifyVerificationProvider {
-    async fn preflight_check(&mut self, args: VerifyArgs) -> eyre::Result<()> {
+    async fn preflight_check(&mut self, args: VerifyArgs) -> Result<()> {
         let _ = self.prepare_request(&args)?;
         Ok(())
     }
 
-    async fn verify(&mut self, args: VerifyArgs) -> eyre::Result<()> {
+    async fn verify(&mut self, args: VerifyArgs) -> Result<()> {
         let body = self.prepare_request(&args)?;
 
         trace!("submitting verification request {:?}", body);
@@ -71,7 +72,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
         Ok(())
     }
 
-    async fn check(&self, args: VerifyCheckArgs) -> eyre::Result<()> {
+    async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
         let retry: Retry = args.retry.into();
         let resp = retry
             .run_async(|| {
@@ -105,7 +106,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
 
 impl SourcifyVerificationProvider {
     /// Configures the API request to the sourcify API using the given [`VerifyArgs`].
-    fn prepare_request(&self, args: &VerifyArgs) -> eyre::Result<SourcifyVerifyRequest> {
+    fn prepare_request(&self, args: &VerifyArgs) -> Result<SourcifyVerifyRequest> {
         let mut config = args.try_load_config_emit_warnings()?;
         config.libraries.extend(args.libraries.clone());
 

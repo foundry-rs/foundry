@@ -1,4 +1,5 @@
 use super::{error::ScanFileError, visitor::CheatcodeVisitor};
+use eyre::Result;
 use forge_fmt::{offset_to_line_column, parse, Visitable};
 use foundry_common::fs;
 use solang_parser::{diagnostics::Diagnostic, pt::Loc};

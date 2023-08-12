@@ -1,5 +1,6 @@
 use super::*;
 use ethers::types::{Address, Bytes, NameOrAddress, U256};
+use eyre::Result;
 use forge::{
     executor::{CallResult, DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     revm::interpreter::{return_ok, InstructionResult},
@@ -36,7 +37,7 @@ impl ScriptRunner {
         sender_nonce: U256,
         is_broadcast: bool,
         need_create2_deployer: bool,
-    ) -> eyre::Result<(Address, ScriptResult)> {
+    ) -> Result<(Address, ScriptResult)> {
         trace!(target: "script", "executing setUP()");
 
         if !is_broadcast {
@@ -177,7 +178,7 @@ impl ScriptRunner {
         &mut self,
         sender_initial_nonce: U256,
         libraries_len: usize,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         if let Some(ref cheatcodes) = self.executor.inspector_config().cheatcodes {
             if !cheatcodes.corrected_nonce {
                 self.executor
@@ -194,7 +195,7 @@ impl ScriptRunner {
     }
 
     /// Executes the method that will collect all broadcastable transactions.
-    pub fn script(&mut self, address: Address, calldata: Bytes) -> eyre::Result<ScriptResult> {
+    pub fn script(&mut self, address: Address, calldata: Bytes) -> Result<ScriptResult> {
         self.call(self.sender, address, calldata, U256::zero(), false)
     }
 
@@ -205,7 +206,7 @@ impl ScriptRunner {
         to: Option<NameOrAddress>,
         calldata: Option<Bytes>,
         value: Option<U256>,
-    ) -> eyre::Result<ScriptResult> {
+    ) -> Result<ScriptResult> {
         if let Some(NameOrAddress::Address(to)) = to {
             self.call(from, to, calldata.unwrap_or_default(), value.unwrap_or(U256::zero()), true)
         } else if to.is_none() {
@@ -263,7 +264,7 @@ impl ScriptRunner {
         calldata: Bytes,
         value: U256,
         commit: bool,
-    ) -> eyre::Result<ScriptResult> {
+    ) -> Result<ScriptResult> {
         let mut res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
         let mut gas_used = res.gas_used;
 
@@ -322,7 +323,7 @@ impl ScriptRunner {
         to: Address,
         calldata: &Bytes,
         value: U256,
-    ) -> eyre::Result<u64> {
+    ) -> Result<u64> {
         let mut gas_used = res.gas_used;
         if matches!(res.exit_reason, return_ok!()) {
             // store the current gas limit and reset it later
