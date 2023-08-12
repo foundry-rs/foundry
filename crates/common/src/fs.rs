@@ -3,6 +3,7 @@ use crate::errors::FsPathError;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     fs::{self, File},
+    io::{BufWriter, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -43,21 +44,29 @@ pub fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T> {
     // https://github.com/serde-rs/json/issues/160
     let bytes = read(path)?;
     serde_json::from_slice(&bytes)
-        .map_err(|source| FsPathError::ReadJson { source, path: path.to_path_buf() })
+        .map_err(|source| FsPathError::ReadJson { source, path: path.into() })
 }
 
 /// Writes the object as a JSON object.
 pub fn write_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
     let file = create_file(path)?;
-    let file = std::io::BufWriter::new(file);
-    serde_json::to_writer(file, obj)
-        .map_err(|source| FsPathError::WriteJson { source, path: path.to_path_buf() })
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer(&mut writer, obj)
+        .map_err(|source| FsPathError::WriteJson { source, path: path.into() })?;
+    writer.flush().map_err(|e| FsPathError::write(e, path))
 }
 
 /// Wrapper for `std::fs::write`
 pub fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<()> {
     let path = path.as_ref();
     fs::write(path, contents).map_err(|err| FsPathError::write(err, path))
+}
+
+/// Wrapper for `std::fs::copy`
+pub fn copy(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<u64> {
+    let from = from.as_ref();
+    let to = to.as_ref();
+    fs::copy(from, to).map_err(|err| FsPathError::copy(err, from, to))
 }
 
 /// Wrapper for `std::fs::create_dir`

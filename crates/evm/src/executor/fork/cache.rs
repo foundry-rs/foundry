@@ -7,7 +7,13 @@ use revm::{
     DatabaseCommit,
 };
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
-use std::{collections::BTreeSet, fs, io::BufWriter, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    fs,
+    io::{BufWriter, Write},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use url::Url;
 
@@ -351,22 +357,30 @@ impl JsonBlockCacheDB {
         self.cache_path.is_none()
     }
 
-    /// Flushes the DB to disk if caching is enabled
+    /// Flushes the DB to disk if caching is enabled.
+    #[tracing::instrument(level = "warn", skip_all, fields(path = ?self.cache_path))]
     pub fn flush(&self) {
-        // writes the data to a json file
-        if let Some(ref path) = self.cache_path {
-            trace!(target: "cache", "saving json cache path={:?}", path);
-            if let Some(parent) = path.parent() {
-                let _ = fs::create_dir_all(parent);
-            }
-            let _ = fs::File::create(path)
-                .map_err(|e| warn!(target: "cache", "Failed to open json cache for writing: {}", e))
-                .and_then(|f| {
-                    serde_json::to_writer(BufWriter::new(f), &self.data)
-                        .map_err(|e| warn!(target: "cache" ,"Failed to write to json cache: {}", e))
-                });
-            trace!(target: "cache", "saved json cache path={:?}", path);
+        let Some(path) = &self.cache_path else { return };
+        trace!(target: "cache", "saving json cache");
+
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
         }
+
+        let file = match fs::File::create(path) {
+            Ok(file) => file,
+            Err(e) => return warn!(target: "cache", %e, "Failed to open json cache for writing"),
+        };
+
+        let mut writer = BufWriter::new(file);
+        if let Err(e) = serde_json::to_writer(&mut writer, &self.data) {
+            return warn!(target: "cache", %e, "Failed to write to json cache")
+        }
+        if let Err(e) = writer.flush() {
+            return warn!(target: "cache", %e, "Failed to flush to json cache")
+        }
+
+        trace!(target: "cache", "saved json cache");
     }
 }
 

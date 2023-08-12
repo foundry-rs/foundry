@@ -14,7 +14,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     str::FromStr,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tracing_error::ErrorLayer;
 use tracing_subscriber::prelude::*;
@@ -151,6 +151,11 @@ pub fn parse_delay(delay: &str) -> Result<Duration> {
         Duration::from_millis(delay as u64)
     };
     Ok(delay)
+}
+
+/// Returns the current time as a [`Duration`] since the Unix epoch.
+pub fn now() -> Duration {
+    SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards")
 }
 
 /// Runs the `future` in a new [`tokio::runtime::Runtime`]
