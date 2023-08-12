@@ -356,6 +356,12 @@ interface Vm {
     // (path, data) => ()
     function writeLine(string calldata, string calldata) external;
 
+    // Copies the contents of one file to another. This function will **overwrite** the contents of `to`.
+    // On success, the total number of bytes copied is returned and it is equal to the length of the `to` file as reported by `metadata`.
+    // Both `from` and `to` are relative to the project root.
+    // (from, to) => (copied)
+    function copyFile(string calldata, string calldata) external returns (uint64);
+
     // Closes file for reading, resetting the offset and allowing to read it from beginning with readLine.
     // `path` is relative to the project root.
     // (path) => ()

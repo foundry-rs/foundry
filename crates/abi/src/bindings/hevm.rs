@@ -271,6 +271,29 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("copyFile"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("copyFile"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("createDir"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -5018,6 +5041,16 @@ pub mod hevm {
                 .method_hash([255, 72, 60, 84], p0)
                 .expect("method not found (this should never happen)")
         }
+        ///Calls the contract's `copyFile` (0xa54a87d8) function
+        pub fn copy_file(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([165, 74, 135, 216], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
         ///Calls the contract's `createDir` (0x168b64d3) function
         pub fn create_dir(
             &self,
@@ -7102,6 +7135,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "coinbase", abi = "coinbase(address)")]
     pub struct CoinbaseCall(pub ::ethers_core::types::Address);
+    ///Container type for all input parameters for the `copyFile` function with signature `copyFile(string,string)` and selector `0xa54a87d8`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "copyFile", abi = "copyFile(string,string)")]
+    pub struct CopyFileCall(pub ::std::string::String, pub ::std::string::String);
     ///Container type for all input parameters for the `createDir` function with signature `createDir(string,bool)` and selector `0x168b64d3`
     #[derive(
         Clone,
@@ -9781,6 +9827,7 @@ pub mod hevm {
         ClearMockedCalls(ClearMockedCallsCall),
         CloseFile(CloseFileCall),
         Coinbase(CoinbaseCall),
+        CopyFile(CopyFileCall),
         CreateDir(CreateDirCall),
         CreateFork1(CreateFork1Call),
         CreateFork2(CreateFork2Call),
@@ -10026,6 +10073,10 @@ pub mod hevm {
             if let Ok(decoded)
                 = <CoinbaseCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::Coinbase(decoded));
+            }
+            if let Ok(decoded)
+                = <CopyFileCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::CopyFile(decoded));
             }
             if let Ok(decoded)
                 = <CreateDirCall as ::ethers_core::abi::AbiDecode>::decode(data) {
@@ -10847,6 +10898,7 @@ pub mod hevm {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
                 Self::Coinbase(element) => ::ethers_core::abi::AbiEncode::encode(element),
+                Self::CopyFile(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::CreateDir(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
@@ -11315,6 +11367,7 @@ pub mod hevm {
                 Self::ClearMockedCalls(element) => ::core::fmt::Display::fmt(element, f),
                 Self::CloseFile(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Coinbase(element) => ::core::fmt::Display::fmt(element, f),
+                Self::CopyFile(element) => ::core::fmt::Display::fmt(element, f),
                 Self::CreateDir(element) => ::core::fmt::Display::fmt(element, f),
                 Self::CreateFork1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::CreateFork2(element) => ::core::fmt::Display::fmt(element, f),
@@ -11590,6 +11643,11 @@ pub mod hevm {
     impl ::core::convert::From<CoinbaseCall> for HEVMCalls {
         fn from(value: CoinbaseCall) -> Self {
             Self::Coinbase(value)
+        }
+    }
+    impl ::core::convert::From<CopyFileCall> for HEVMCalls {
+        fn from(value: CopyFileCall) -> Self {
+            Self::CopyFile(value)
         }
     }
     impl ::core::convert::From<CreateDirCall> for HEVMCalls {

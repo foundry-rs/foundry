@@ -93,6 +93,15 @@ fn write_line(state: &Cheatcodes, path: impl AsRef<Path>, line: &str) -> Result 
     Ok(Bytes::new())
 }
 
+fn copy_file(state: &Cheatcodes, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result {
+    let from = state.config.ensure_path_allowed(from, FsAccessKind::Read)?;
+    let to = state.config.ensure_path_allowed(to, FsAccessKind::Write)?;
+    state.config.ensure_not_foundry_toml(&to)?;
+
+    let n = fs::copy(from, to)?;
+    Ok(abi::encode(&[Token::Uint(n.into())]).into())
+}
+
 fn close_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result {
     let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
@@ -251,6 +260,7 @@ pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
         HEVMCalls::WriteFile(inner) => write_file(state, &inner.0, &inner.1),
         HEVMCalls::WriteFileBinary(inner) => write_file(state, &inner.0, &inner.1),
         HEVMCalls::WriteLine(inner) => write_line(state, &inner.0, &inner.1),
+        HEVMCalls::CopyFile(inner) => copy_file(state, &inner.0, &inner.1),
         HEVMCalls::CloseFile(inner) => close_file(state, &inner.0),
         HEVMCalls::RemoveFile(inner) => remove_file(state, &inner.0),
         HEVMCalls::FsMetadata(inner) => fs_metadata(state, &inner.0),
