@@ -1,0 +1,43 @@
+[package]
+name = "cast"
+version = "0.2.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/foundry-rs/foundry"
+keywords = ["ethereum", "web3"]
+
+[dependencies]
+foundry-utils = { path = "../utils" }
+foundry-evm = { path = "./../evm" }
+foundry-config = { path = "./../config" }
+foundry-common = { path = "./../common" }
+
+ethers-etherscan = { workspace = true }
+ethers-contract = { workspace = true, features = ["abigen"] }
+ethers-core = { workspace = true }
+ethers-providers = { workspace = true }
+ethers-signers = { workspace = true }
+futures = "0.3"
+eyre = "0.6"
+serde = "1"
+serde_json = "1"
+chrono.workspace = true
+hex.workspace = true
+rayon = "1"
+
+# aws
+rusoto_core = { version = "0.48", default-features = false, optional = true }
+rusoto_kms = { version = "0.48", default-features = false, optional = true }
+evm-disassembler = "0.2"
+
+[dev-dependencies]
+async-trait = "0.1"
+tokio = "1"
+thiserror = "1"
+
+[features]
+default = ["ledger", "trezor", "aws"]
+ledger = ["ethers-signers/ledger"]
+trezor = ["ethers-signers/trezor"]
+aws = ["ethers-signers/aws", "rusoto_core/rustls", "rusoto_kms/rustls"]
