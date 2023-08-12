@@ -5,7 +5,6 @@ use clap::{
 };
 use ethers::prelude::Chain;
 use eyre::Result;
-use foundry_cli::utils::Cmd;
 use foundry_config::{cache, Chain as FoundryConfigChain, Config};
 use std::{ffi::OsStr, str::FromStr};
 use strum::VariantNames;
@@ -56,10 +55,8 @@ pub struct CleanArgs {
     etherscan: bool,
 }
 
-impl Cmd for CleanArgs {
-    type Output = ();
-
-    fn run(self) -> Result<Self::Output> {
+impl CleanArgs {
+    pub fn run(self) -> Result<()> {
         let CleanArgs { chains, blocks, etherscan } = self;
 
         for chain_or_all in chains {
@@ -92,10 +89,8 @@ pub struct LsArgs {
     chains: Vec<ChainOrAll>,
 }
 
-impl Cmd for LsArgs {
-    type Output = ();
-
-    fn run(self) -> Result<Self::Output> {
+impl LsArgs {
+    pub fn run(self) -> Result<()> {
         let LsArgs { chains } = self;
         let mut cache = Cache::default();
         for chain_or_all in chains {

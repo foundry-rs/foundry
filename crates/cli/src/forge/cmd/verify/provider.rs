@@ -3,6 +3,7 @@ use super::{
     VerifyCheckArgs,
 };
 use async_trait::async_trait;
+use eyre::Result;
 use std::{fmt, str::FromStr};
 
 /// An abstraction for various verification providers such as etherscan, sourcify, blockscout
@@ -15,13 +16,13 @@ pub trait VerificationProvider {
     /// [`VerifyArgs`] are valid to begin with. This should prevent situations where there's a
     /// contract deployment that's executed before the verify request and the subsequent verify task
     /// fails due to misconfiguration.
-    async fn preflight_check(&mut self, args: VerifyArgs) -> eyre::Result<()>;
+    async fn preflight_check(&mut self, args: VerifyArgs) -> Result<()>;
 
     /// Sends the actual verify request for the targeted contract.
-    async fn verify(&mut self, args: VerifyArgs) -> eyre::Result<()>;
+    async fn verify(&mut self, args: VerifyArgs) -> Result<()>;
 
     /// Checks whether the contract is verified.
-    async fn check(&self, args: VerifyCheckArgs) -> eyre::Result<()>;
+    async fn check(&self, args: VerifyCheckArgs) -> Result<()>;
 }
 
 impl FromStr for VerificationProviderType {
@@ -64,7 +65,7 @@ pub enum VerificationProviderType {
 
 impl VerificationProviderType {
     /// Returns the corresponding `VerificationProvider` for the key
-    pub fn client(&self, key: &Option<String>) -> eyre::Result<Box<dyn VerificationProvider>> {
+    pub fn client(&self, key: &Option<String>) -> Result<Box<dyn VerificationProvider>> {
         match self {
             VerificationProviderType::Etherscan => {
                 if key.as_ref().map_or(true, |key| key.is_empty()) {

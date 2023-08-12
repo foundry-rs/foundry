@@ -26,7 +26,7 @@ use ethers::{
         TransactionRequest, U256,
     },
 };
-use eyre::{ContextCompat, WrapErr};
+use eyre::{ContextCompat, Result, WrapErr};
 use forge::{
     debug::DebugArena,
     decode::decode_console_logs,
@@ -228,7 +228,7 @@ impl ScriptArgs {
         script_config: &ScriptConfig,
         result: &mut ScriptResult,
         known_contracts: &ContractsByArtifact,
-    ) -> eyre::Result<CallTraceDecoder> {
+    ) -> Result<CallTraceDecoder> {
         let verbosity = script_config.evm_opts.verbosity;
         let mut etherscan_identifier = EtherscanIdentifier::new(
             &script_config.config,
@@ -264,7 +264,7 @@ impl ScriptArgs {
         &self,
         script_config: &ScriptConfig,
         returned: &bytes::Bytes,
-    ) -> eyre::Result<HashMap<String, NestedValue>> {
+    ) -> Result<HashMap<String, NestedValue>> {
         let func = script_config.called_function.as_ref().expect("There should be a function.");
         let mut returns = HashMap::new();
 
@@ -301,7 +301,7 @@ impl ScriptArgs {
         script_config: &ScriptConfig,
         decoder: &CallTraceDecoder,
         result: &mut ScriptResult,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         let verbosity = script_config.evm_opts.verbosity;
         let func = script_config.called_function.as_ref().expect("There should be a function.");
 
@@ -378,11 +378,7 @@ impl ScriptArgs {
         Ok(())
     }
 
-    pub fn show_json(
-        &self,
-        script_config: &ScriptConfig,
-        result: &ScriptResult,
-    ) -> eyre::Result<()> {
+    pub fn show_json(&self, script_config: &ScriptConfig, result: &ScriptResult) -> Result<()> {
         let returns = self.get_returns(script_config, &result.returned)?;
 
         let console_logs = decode_console_logs(&result.logs);
@@ -402,7 +398,7 @@ impl ScriptArgs {
         evm_opts: &EvmOpts,
         transactions: Option<&BroadcastableTransactions>,
         predeploy_libraries: &[Bytes],
-    ) -> eyre::Result<Option<Address>> {
+    ) -> Result<Option<Address>> {
         let mut new_sender = None;
 
         if let Some(txs) = transactions {
@@ -462,7 +458,7 @@ impl ScriptArgs {
         project: Project,
         highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
         breakpoints: Breakpoints,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         trace!(target: "script", "debugging script");
 
         let (sources, artifacts) = filter_sources_and_artifacts(
@@ -504,7 +500,7 @@ impl ScriptArgs {
     /// corresponding function by matching the selector, first 4 bytes in the calldata.
     ///
     /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
-    pub fn get_method_and_calldata(&self, abi: &Abi) -> eyre::Result<(Function, Bytes)> {
+    pub fn get_method_and_calldata(&self, abi: &Abi) -> Result<(Function, Bytes)> {
         let (func, data) = if let Ok(func) = HumanReadableParser::parse_function(&self.sig) {
             (
                 abi.functions()
@@ -543,7 +539,7 @@ impl ScriptArgs {
         &self,
         result: &ScriptResult,
         known_contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         // (name, &init, &deployed)[]
         let mut bytecodes: Vec<(String, &[u8], &[u8])> = vec![];
 
@@ -722,7 +718,7 @@ impl ScriptConfig {
 
     /// Certain features are disabled for multi chain deployments, and if tried, will return
     /// error. [library support]
-    fn check_multi_chain_constraints(&self, libraries: &Libraries) -> eyre::Result<()> {
+    fn check_multi_chain_constraints(&self, libraries: &Libraries) -> Result<()> {
         if self.has_multiple_rpcs() || (self.missing_rpc && !self.total_rpcs.is_empty()) {
             shell::eprintln(format!(
                 "{}",
@@ -746,7 +742,7 @@ impl ScriptConfig {
 
     /// Checks if the RPCs used point to chains that support EIP-3855.
     /// If not, warns the user.
-    async fn check_shanghai_support(&self) -> eyre::Result<()> {
+    async fn check_shanghai_support(&self) -> Result<()> {
         let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
             if let Ok(provider) = ethers::providers::Provider::<Http>::try_from(rpc) {
                 match provider.get_chainid().await {

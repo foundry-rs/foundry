@@ -1,4 +1,4 @@
-use eyre::EyreHandler;
+use eyre::{EyreHandler, Result};
 use std::error::Error;
 use tracing::error;
 use yansi::Paint;
@@ -49,7 +49,7 @@ impl EyreHandler for Handler {
 ///
 /// Panics are always caught by the more debug-centric handler.
 #[cfg_attr(windows, inline(never))]
-pub fn install() -> eyre::Result<()> {
+pub fn install() -> Result<()> {
     let debug_enabled = std::env::var("FOUNDRY_DEBUG").is_ok();
 
     if debug_enabled {

@@ -8,6 +8,7 @@ use ethers::{
     abi::ethabi::ethereum_types::BigEndianHash,
     types::{serde_helpers::Numeric, Address, BlockId, NameOrAddress, H256, U256},
 };
+use eyre::Result;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::parse_u256,
@@ -862,7 +863,7 @@ pub struct ToBaseArgs {
     pub base_in: Option<String>,
 }
 
-pub fn parse_slot(s: &str) -> eyre::Result<H256> {
+pub fn parse_slot(s: &str) -> Result<H256> {
     Numeric::from_str(s)
         .map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))
         .map(|n| H256::from_uint(&n.into()))

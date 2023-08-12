@@ -1,5 +1,6 @@
 //! CLI dependency parsing
 
+use eyre::Result;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::str::FromStr;
@@ -129,7 +130,7 @@ impl Dependency {
     }
 
     /// Returns the URL of the dependency if it exists, or an error if not.
-    pub fn require_url(&self) -> eyre::Result<&str> {
+    pub fn require_url(&self) -> Result<&str> {
         self.url.as_deref().ok_or_else(|| eyre::eyre!("dependency {} has no url", self.name()))
     }
 }

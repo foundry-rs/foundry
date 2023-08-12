@@ -8,7 +8,7 @@ use ethers::{
     prelude::{artifacts::Libraries, ArtifactId},
     signers::LocalWallet,
 };
-use eyre::{ContextCompat, WrapErr};
+use eyre::{ContextCompat, Result, WrapErr};
 use foundry_cli::utils::now;
 use foundry_common::{fs, get_http_provider};
 use foundry_config::Config;
@@ -43,7 +43,7 @@ impl MultiChainSequence {
         target: &ArtifactId,
         log_folder: &Path,
         broadcasted: bool,
-    ) -> eyre::Result<Self> {
+    ) -> Result<Self> {
         let path =
             MultiChainSequence::get_path(&log_folder.join("multi"), sig, target, broadcasted)?;
 
@@ -56,7 +56,7 @@ impl MultiChainSequence {
         sig: &str,
         target: &ArtifactId,
         broadcasted: bool,
-    ) -> eyre::Result<PathBuf> {
+    ) -> Result<PathBuf> {
         let mut out = out.to_path_buf();
 
         if !broadcasted {
@@ -82,13 +82,13 @@ impl MultiChainSequence {
     }
 
     /// Loads the sequences for the multi chain deployment.
-    pub fn load(log_folder: &Path, sig: &str, target: &ArtifactId) -> eyre::Result<Self> {
+    pub fn load(log_folder: &Path, sig: &str, target: &ArtifactId) -> Result<Self> {
         let path = MultiChainSequence::get_path(&log_folder.join("multi"), sig, target, true)?;
         ethers::solc::utils::read_json_file(path).wrap_err("Multi-chain deployment not found.")
     }
 
     /// Saves the transactions as file if it's a standalone deployment.
-    pub fn save(&mut self) -> eyre::Result<()> {
+    pub fn save(&mut self) -> Result<()> {
         self.timestamp = now().as_secs();
 
         //../Contract-latest/run.json
@@ -118,7 +118,7 @@ impl ScriptArgs {
         config: &Config,
         script_wallets: Vec<LocalWallet>,
         verify: VerifyBundle,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         if !libraries.is_empty() {
             eyre::bail!("Libraries are currently not supported on multi deployment setups.");
         }

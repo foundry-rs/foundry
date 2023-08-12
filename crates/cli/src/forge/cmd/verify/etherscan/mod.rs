@@ -11,7 +11,7 @@ use ethers::{
     prelude::errors::EtherscanError,
     solc::{artifacts::CompactContract, cache::CacheEntry, Project, Solc},
 };
-use eyre::{eyre, Context};
+use eyre::{eyre, Context, Result};
 use foundry_cli::utils::{get_cached_entry_by_name, read_constructor_args_file, LoadConfig};
 use foundry_common::abi::encode_args;
 use foundry_config::{Chain, Config, SolcReq};
@@ -49,17 +49,17 @@ trait EtherscanSourceProvider: Send + Sync + Debug {
         project: &Project,
         target: &Path,
         version: &Version,
-    ) -> eyre::Result<(String, String, CodeFormat)>;
+    ) -> Result<(String, String, CodeFormat)>;
 }
 
 #[async_trait::async_trait]
 impl VerificationProvider for EtherscanVerificationProvider {
-    async fn preflight_check(&mut self, args: VerifyArgs) -> eyre::Result<()> {
+    async fn preflight_check(&mut self, args: VerifyArgs) -> Result<()> {
         let _ = self.prepare_request(&args).await?;
         Ok(())
     }
 
-    async fn verify(&mut self, args: VerifyArgs) -> eyre::Result<()> {
+    async fn verify(&mut self, args: VerifyArgs) -> Result<()> {
         let (etherscan, verify_args) = self.prepare_request(&args).await?;
 
         if self.is_contract_verified(&etherscan, &verify_args).await? {
@@ -140,7 +140,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
     }
 
     /// Executes the command to check verification status on Etherscan
-    async fn check(&self, args: VerifyCheckArgs) -> eyre::Result<()> {
+    async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
         let config = args.try_load_config_emit_warnings()?;
         let etherscan = self.client(
             args.etherscan.chain.unwrap_or_default(),
@@ -211,7 +211,7 @@ impl EtherscanVerificationProvider {
         &mut self,
         project: &Project,
         contract_name: &str,
-    ) -> eyre::Result<&(PathBuf, CacheEntry, CompactContract)> {
+    ) -> Result<&(PathBuf, CacheEntry, CompactContract)> {
         if let Some(ref entry) = self.cached_entry {
             return Ok(entry)
         }
@@ -223,10 +223,7 @@ impl EtherscanVerificationProvider {
     }
 
     /// Configures the API request to the etherscan API using the given [`VerifyArgs`].
-    async fn prepare_request(
-        &mut self,
-        args: &VerifyArgs,
-    ) -> eyre::Result<(Client, VerifyContract)> {
+    async fn prepare_request(&mut self, args: &VerifyArgs) -> Result<(Client, VerifyContract)> {
         let config = args.try_load_config_emit_warnings()?;
         let etherscan = self.client(
             args.etherscan.chain.unwrap_or_default(),
@@ -244,7 +241,7 @@ impl EtherscanVerificationProvider {
         &self,
         etherscan: &Client,
         verify_contract: &VerifyContract,
-    ) -> eyre::Result<bool> {
+    ) -> Result<bool> {
         let check = etherscan.contract_abi(verify_contract.address).await;
 
         if let Err(err) = check {
@@ -264,7 +261,7 @@ impl EtherscanVerificationProvider {
         verifier_url: Option<&str>,
         etherscan_key: Option<&str>,
         config: &Config,
-    ) -> eyre::Result<Client> {
+    ) -> Result<Client> {
         let etherscan_config = config.get_etherscan_config_with_chain(Some(chain))?;
 
         let api_url =
@@ -299,7 +296,7 @@ impl EtherscanVerificationProvider {
         &mut self,
         args: &VerifyArgs,
         config: Option<Config>,
-    ) -> eyre::Result<VerifyContract> {
+    ) -> Result<VerifyContract> {
         let mut config =
             if let Some(config) = config { config } else { args.try_load_config_emit_warnings()? };
 
@@ -334,7 +331,7 @@ impl EtherscanVerificationProvider {
 
     /// Get the target contract path. If it wasn't provided, attempt a lookup
     /// in cache. Validate the path indeed exists on disk.
-    fn contract_path(&mut self, args: &VerifyArgs, project: &Project) -> eyre::Result<PathBuf> {
+    fn contract_path(&mut self, args: &VerifyArgs, project: &Project) -> Result<PathBuf> {
         let path = match args.contract.path.as_ref() {
             Some(path) => project.root().join(path),
             None => {
@@ -363,7 +360,7 @@ impl EtherscanVerificationProvider {
         args: &VerifyArgs,
         config: &Config,
         project: &Project,
-    ) -> eyre::Result<Version> {
+    ) -> Result<Version> {
         if let Some(ref version) = args.compiler_version {
             return Ok(version.trim_start_matches('v').parse()?)
         }
@@ -405,11 +402,7 @@ impl EtherscanVerificationProvider {
     /// Return the optional encoded constructor arguments. If the path to
     /// constructor arguments was provided, read them and encode. Otherwise,
     /// return whatever was set in the [VerifyArgs] args.
-    fn constructor_args(
-        &mut self,
-        args: &VerifyArgs,
-        project: &Project,
-    ) -> eyre::Result<Option<String>> {
+    fn constructor_args(&mut self, args: &VerifyArgs, project: &Project) -> Result<Option<String>> {
         if let Some(ref constructor_args_path) = args.constructor_args_path {
             let (_, _, contract) = self.cache_entry(project, &args.contract.name).wrap_err(
                 "Cache must be enabled in order to use the `--constructor-args-path` option",
@@ -448,7 +441,7 @@ impl EtherscanVerificationProvider {
 /// let version = ensure_solc_build_metadata(version).await?;
 /// assert_ne!(version.build, BuildMetadata::EMPTY);
 /// ```
-async fn ensure_solc_build_metadata(version: Version) -> eyre::Result<Version> {
+async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
     if version.build != BuildMetadata::EMPTY {
         Ok(version)
     } else {

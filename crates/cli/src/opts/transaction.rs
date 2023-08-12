@@ -2,6 +2,7 @@ use crate::utils::{parse_ether_value, parse_u256};
 use clap::Parser;
 use ethers::types::U256;
 use serde::Serialize;
+
 #[derive(Parser, Debug, Clone, Serialize)]
 #[clap(next_help_heading = "Transaction options")]
 pub struct TransactionOpts {

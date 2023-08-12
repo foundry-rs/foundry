@@ -6,7 +6,7 @@ use ethers::{
         AggregatedCompilerOutput, CompilerInput, Project, Solc,
     },
 };
-use eyre::Context;
+use eyre::{Context, Result};
 use semver::{BuildMetadata, Version};
 use std::{collections::BTreeMap, path::Path};
 
@@ -19,7 +19,7 @@ impl EtherscanSourceProvider for EtherscanFlattenedSource {
         project: &Project,
         target: &Path,
         version: &Version,
-    ) -> eyre::Result<(String, String, CodeFormat)> {
+    ) -> Result<(String, String, CodeFormat)> {
         let metadata = project.solc_config.settings.metadata.as_ref();
         let bch = metadata.and_then(|m| m.bytecode_hash).unwrap_or_default();
 
@@ -67,7 +67,7 @@ impl EtherscanFlattenedSource {
         content: impl Into<String>,
         version: &Version,
         contract_path: &Path,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         let version = strip_build_meta(version.clone());
         let solc = Solc::find_svm_installed_version(version.to_string())?
             .unwrap_or(Solc::blocking_install(&version)?);

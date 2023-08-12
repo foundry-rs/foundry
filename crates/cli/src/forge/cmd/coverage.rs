@@ -8,7 +8,7 @@ use ethers::{
     },
     solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap},
 };
-use eyre::Context;
+use eyre::{Context, Result};
 use forge::{
     coverage::{
         analysis::SourceAnalyzer, anchors::find_anchors, ContractId, CoverageReport,
@@ -32,6 +32,9 @@ use semver::Version;
 use std::{collections::HashMap, sync::mpsc::channel};
 use tracing::trace;
 use yansi::Paint;
+
+/// A map, keyed by contract ID, to a tuple of the deployment source map and the runtime source map.
+type SourceMaps = HashMap<ContractId, (SourceMap, SourceMap)>;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(CoverageArgs, opts, evm_opts);
@@ -63,12 +66,7 @@ pub struct CoverageArgs {
 }
 
 impl CoverageArgs {
-    /// Returns the flattened [`CoreBuildArgs`]
-    pub fn build_args(&self) -> &CoreBuildArgs {
-        &self.opts
-    }
-
-    pub async fn run(self) -> eyre::Result<()> {
+    pub async fn run(self) -> Result<()> {
         let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
         // install missing dependencies
@@ -89,15 +87,9 @@ impl CoverageArgs {
         p_println!(!self.opts.silent => "Running tests...");
         self.collect(project, output, report, config, evm_opts).await
     }
-}
 
-/// A map, keyed by contract ID, to a tuple of the deployment source map and the runtime source map.
-type SourceMaps = HashMap<ContractId, (SourceMap, SourceMap)>;
-
-// The main flow of the command itself
-impl CoverageArgs {
     /// Builds the project.
-    fn build(&self, config: &Config) -> eyre::Result<(Project, ProjectCompileOutput)> {
+    fn build(&self, config: &Config) -> Result<(Project, ProjectCompileOutput)> {
         // Set up the project
         let project = {
             let mut project = config.ephemeral_no_artifacts_project()?;
@@ -150,11 +142,7 @@ impl CoverageArgs {
 
     /// Builds the coverage report.
     #[tracing::instrument(name = "prepare coverage", skip_all)]
-    fn prepare(
-        &self,
-        config: &Config,
-        output: ProjectCompileOutput,
-    ) -> eyre::Result<CoverageReport> {
+    fn prepare(&self, config: &Config, output: ProjectCompileOutput) -> Result<CoverageReport> {
         let project_paths = config.project_paths();
 
         // Extract artifacts
@@ -294,7 +282,7 @@ impl CoverageArgs {
         mut report: CoverageReport,
         config: Config,
         evm_opts: EvmOpts,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         let root = project.paths.root;
 
         // Build the contract runner
@@ -363,6 +351,11 @@ impl CoverageArgs {
             }?;
         }
         Ok(())
+    }
+
+    /// Returns the flattened [`CoreBuildArgs`]
+    pub fn build_args(&self) -> &CoreBuildArgs {
+        &self.opts
     }
 }
 

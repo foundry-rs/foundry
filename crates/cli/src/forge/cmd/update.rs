@@ -2,7 +2,7 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::{
     opts::Dependency,
-    utils::{Cmd, Git, LoadConfig},
+    utils::{Git, LoadConfig},
 };
 use foundry_config::{impl_figment_convert_basic, Config};
 use std::path::PathBuf;
@@ -26,10 +26,8 @@ pub struct UpdateArgs {
 }
 impl_figment_convert_basic!(UpdateArgs);
 
-impl Cmd for UpdateArgs {
-    type Output = ();
-
-    fn run(self) -> Result<Self::Output> {
+impl UpdateArgs {
+    pub fn run(self) -> Result<()> {
         let config = self.try_load_config_emit_warnings()?;
         let (root, paths) = dependencies_paths(&self.dependencies, &config)?;
         Git::new(&root).submodule_update(self.force, true, paths)

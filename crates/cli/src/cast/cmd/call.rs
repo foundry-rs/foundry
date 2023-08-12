@@ -4,7 +4,7 @@ use ethers::{
     solc::EvmVersion,
     types::{BlockId, NameOrAddress, U256},
 };
-use eyre::WrapErr;
+use eyre::{Result, WrapErr};
 use forge::executor::opts::EvmOpts;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
@@ -108,7 +108,7 @@ pub enum CallSubcommands {
 }
 
 impl CallArgs {
-    pub async fn run(self) -> eyre::Result<()> {
+    pub async fn run(self) -> Result<()> {
         let CallArgs {
             to,
             sig,
@@ -224,7 +224,7 @@ async fn fill_create(
     code: String,
     sig: Option<String>,
     args: Vec<String>,
-) -> eyre::Result<()> {
+) -> Result<()> {
     builder.value(value);
 
     let mut data = hex::decode(code.strip_prefix("0x").unwrap_or(&code))?;
@@ -246,7 +246,7 @@ async fn fill_tx(
     sig: Option<String>,
     args: Vec<String>,
     data: Option<String>,
-) -> eyre::Result<()> {
+) -> Result<()> {
     builder.value(value);
 
     if let Some(sig) = sig {

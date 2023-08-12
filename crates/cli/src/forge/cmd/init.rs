@@ -1,10 +1,8 @@
 use super::install::DependencyInstallOpts;
 use clap::{Parser, ValueHint};
 use ethers::solc::remappings::Remapping;
-use foundry_cli::{
-    p_println,
-    utils::{Cmd, Git},
-};
+use eyre::Result;
+use foundry_cli::{p_println, utils::Git};
 use foundry_common::fs;
 use foundry_config::Config;
 use std::path::{Path, PathBuf};
@@ -38,10 +36,8 @@ pub struct InitArgs {
     opts: DependencyInstallOpts,
 }
 
-impl Cmd for InitArgs {
-    type Output = ();
-
-    fn run(self) -> eyre::Result<Self::Output> {
+impl InitArgs {
+    pub fn run(self) -> Result<()> {
         let InitArgs { root, template, opts, offline, force, vscode } = self;
         let DependencyInstallOpts { shallow, no_git, no_commit, quiet } = opts;
 
@@ -161,7 +157,7 @@ pub fn get_commit_hash(root: &Path) -> Option<String> {
 /// Creates `.gitignore` and `.github/workflows/test.yml`, if they don't exist already.
 ///
 /// Commits everything in `root` if `no_commit` is false.
-fn init_git_repo(git: Git<'_>, no_commit: bool) -> eyre::Result<()> {
+fn init_git_repo(git: Git<'_>, no_commit: bool) -> Result<()> {
     // git init
     if !git.is_in_repo()? {
         git.init()?;
@@ -190,7 +186,7 @@ fn init_git_repo(git: Git<'_>, no_commit: bool) -> eyre::Result<()> {
 }
 
 /// initializes the `.vscode/settings.json` file
-fn init_vscode(root: &Path) -> eyre::Result<()> {
+fn init_vscode(root: &Path) -> Result<()> {
     let remappings_file = root.join("remappings.txt");
     if !remappings_file.exists() {
         let mut remappings = Remapping::find_many(root.join("lib"))

@@ -2,6 +2,7 @@ use super::{debug::DebugArgs, install, test::filter::ProjectPathsAwareFilter, wa
 use cast::fuzz::CounterExample;
 use clap::Parser;
 use ethers::types::U256;
+use eyre::Result;
 use forge::{
     decode::decode_console_logs,
     executor::inspector::CheatsConfig,
@@ -115,7 +116,7 @@ impl TestArgs {
         &self.opts
     }
 
-    pub async fn run(self) -> eyre::Result<TestOutcome> {
+    pub async fn run(self) -> Result<TestOutcome> {
         trace!(target: "forge::test", "executing test command");
         shell::set_shell(shell::Shell::from_args(self.opts.silent, self.json))?;
         self.execute_tests().await
@@ -127,7 +128,7 @@ impl TestArgs {
     /// configured filter will be executed
     ///
     /// Returns the test results for all matching tests.
-    pub async fn execute_tests(self) -> eyre::Result<TestOutcome> {
+    pub async fn execute_tests(self) -> Result<TestOutcome> {
         // Merge all configs
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
@@ -268,7 +269,7 @@ impl TestArgs {
 
     /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
-    pub(crate) fn watchexec_config(&self) -> eyre::Result<(InitConfig, RuntimeConfig)> {
+    pub(crate) fn watchexec_config(&self) -> Result<(InitConfig, RuntimeConfig)> {
         self.watch.watchexec_config(|| {
             let config = Config::from(self);
             vec![config.src, config.test]
@@ -372,7 +373,7 @@ impl TestOutcome {
     }
 
     /// Checks if there are any failures and failures are disallowed
-    pub fn ensure_ok(&self) -> eyre::Result<()> {
+    pub fn ensure_ok(&self) -> Result<()> {
         let failures = self.failures().count();
         if self.allow_failure || failures == 0 {
             return Ok(())
@@ -483,7 +484,7 @@ fn list(
     runner: MultiContractRunner,
     filter: ProjectPathsAwareFilter,
     json: bool,
-) -> eyre::Result<TestOutcome> {
+) -> Result<TestOutcome> {
     let results = runner.list(&filter);
 
     if json {
@@ -512,7 +513,7 @@ async fn test(
     test_options: TestOptions,
     gas_reporting: bool,
     fail_fast: bool,
-) -> eyre::Result<TestOutcome> {
+) -> Result<TestOutcome> {
     trace!(target: "forge::test", "running all tests");
     if runner.count_filtered_tests(&filter) == 0 {
         let filter_str = filter.to_string();

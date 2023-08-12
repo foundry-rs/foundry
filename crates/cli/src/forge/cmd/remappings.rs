@@ -1,7 +1,8 @@
 use cast::HashMap;
 use clap::{Parser, ValueHint};
 use ethers::solc::remappings::RelativeRemapping;
-use foundry_cli::utils::{Cmd, LoadConfig};
+use eyre::Result;
+use foundry_cli::utils::LoadConfig;
 use foundry_config::impl_figment_convert_basic;
 use std::path::PathBuf;
 
@@ -20,11 +21,9 @@ pub struct RemappingArgs {
 }
 impl_figment_convert_basic!(RemappingArgs);
 
-impl Cmd for RemappingArgs {
-    type Output = ();
-
+impl RemappingArgs {
     // TODO: Do people use `forge remappings >> file`?
-    fn run(self) -> eyre::Result<Self::Output> {
+    pub fn run(self) -> Result<()> {
         let config = self.try_load_config_emit_warnings()?;
 
         if self.pretty {

@@ -4,7 +4,7 @@ use ethers::{
     providers::Middleware,
     types::{BlockId, NameOrAddress},
 };
-use eyre::WrapErr;
+use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
@@ -57,7 +57,7 @@ pub struct AccessListArgs {
 }
 
 impl AccessListArgs {
-    pub async fn run(self) -> eyre::Result<()> {
+    pub async fn run(self) -> Result<()> {
         let AccessListArgs { to, sig, args, data, tx, eth, block, json: to_json } = self;
 
         let config = Config::from(&eth);
@@ -82,7 +82,7 @@ async fn access_list<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddres
     chain: Chain,
     block: Option<BlockId>,
     to_json: bool,
-) -> eyre::Result<()>
+) -> Result<()>
 where
     M::Error: 'static,
 {

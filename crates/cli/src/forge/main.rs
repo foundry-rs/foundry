@@ -1,6 +1,7 @@
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use foundry_cli::{handler, utils, utils::Cmd};
+use eyre::Result;
+use foundry_cli::{handler, utils};
 
 mod cmd;
 mod opts;
@@ -8,7 +9,7 @@ mod opts;
 use cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch};
 use opts::{Opts, Subcommands};
 
-fn main() -> eyre::Result<()> {
+fn main() -> Result<()> {
     utils::load_dotenv();
     handler::install()?;
     utils::subscriber();

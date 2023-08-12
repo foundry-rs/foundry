@@ -1,6 +1,7 @@
 use super::retry::RetryArgs;
 use clap::{Parser, ValueHint};
 use ethers::{abi::Address, solc::info::ContractInfo};
+use eyre::Result;
 use foundry_cli::{opts::EtherscanOpts, utils::LoadConfig};
 use foundry_config::{figment, impl_figment_convert, impl_figment_convert_cast, Config};
 use provider::VerificationProviderType;
@@ -124,7 +125,7 @@ impl figment::Provider for VerifyArgs {
 
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
-    pub async fn run(mut self) -> eyre::Result<()> {
+    pub async fn run(mut self) -> Result<()> {
         let config = self.load_config_emit_warnings();
         let chain = config.chain_id.unwrap_or_default();
         self.etherscan.chain = Some(chain);
@@ -162,7 +163,7 @@ impl VerifyArgs {
     }
 
     /// Returns the configured verification provider
-    pub fn verification_provider(&self) -> eyre::Result<Box<dyn VerificationProvider>> {
+    pub fn verification_provider(&self) -> Result<Box<dyn VerificationProvider>> {
         self.verifier.verifier.client(&self.etherscan.key)
     }
 }
@@ -191,7 +192,7 @@ impl_figment_convert_cast!(VerifyCheckArgs);
 
 impl VerifyCheckArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
-    pub async fn run(self) -> eyre::Result<()> {
+    pub async fn run(self) -> Result<()> {
         println!("Checking verification status on {}", self.etherscan.chain.unwrap_or_default());
         self.verifier.verifier.client(&self.etherscan.key)?.check(self).await
     }

@@ -1,4 +1,5 @@
 use super::find::UnsafeCheatcodes;
+use eyre::Result;
 use forge_fmt::{Visitable, Visitor};
 use solang_parser::pt::{
     ContractDefinition, Expression, FunctionDefinition, IdentifierPath, Loc, Parameter, SourceUnit,
