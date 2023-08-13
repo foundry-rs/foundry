@@ -46,7 +46,7 @@ impl NatSpec {
 
     /// Returns a string describing the natspec
     /// context, for debugging purposes 🐞
-    /// i.e. `test/Counter.t.sol:CounterTest:testSetNumber`
+    /// i.e. `test/Counter.t.sol:CounterTest:testFuzz_SetNumber`
     pub fn debug_context(&self) -> String {
         format!("{}:{}", self.contract, self.function)
     }
