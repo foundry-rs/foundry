@@ -1,27 +1,16 @@
 [workspace]
-members = [
-    "crates/anvil",
-    "crates/anvil/core",
-    "crates/anvil/rpc",
-    "crates/anvil/server",
-    "crates/abi",
-    "crates/binder",
-    "crates/cast",
-    "crates/chisel",
-    "crates/cli",
-    "crates/cli/test-utils",
-    "crates/common",
-    "crates/config",
-    "crates/doc",
-    "crates/evm",
-    "crates/fmt",
-    "crates/forge",
-    "crates/macros",
-    "crates/macros/impl",
-    "crates/ui",
-    "crates/utils",
-]
+members = ["crates/*"]
 resolver = "2"
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.71"
+authors = ["Foundry Contributors"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/foundry-rs/foundry"
+repository = "https://github.com/foundry-rs/foundry"
+exclude = ["benches/", "tests/", "test-data/", "testdata/"]
 
 [profile.dev]
 # Disabling debug info speeds up builds a bunch,
@@ -107,6 +96,22 @@ codegen-units = 16
 package = {}
 
 [workspace.dependencies]
+foundry-abi = { path = "crates/abi" }
+anvil = { path = "crates/anvil" }
+foundry-binder = { path = "crates/binder" }
+cast = { path = "crates/cast" }
+chisel = { path = "crates/chisel" }
+foundry-cli = { path = "crates/cli" }
+foundry-common = { path = "crates/common" }
+foundry-config = { path = "crates/config" }
+forge-doc = { path = "crates/doc" }
+foundry-evm = { path = "crates/evm" }
+forge-fmt = { path = "crates/fmt" }
+forge = { path = "crates/forge" }
+foundry-macros = { path = "crates/macros" }
+ui = { path = "crates/ui" }
+foundry-utils = { path = "crates/utils" }
+
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }

@@ -14,10 +14,10 @@
 
 Foundry consists of:
 
--   [**Forge**](./forge): Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   [**Cast**](./cast): Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   [**Anvil**](./anvil): Local Ethereum node, akin to Ganache, Hardhat Network.
--   [**Chisel**](./chisel): Fast, utilitarian, and verbose solidity REPL.
+-   [**Forge**](./crates/forge): Ethereum testing framework (like Truffle, Hardhat and DappTools).
+-   [**Cast**](./crates/cast): Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
+-   [**Anvil**](./crates/anvil): Local Ethereum node, akin to Ganache, Hardhat Network.
+-   [**Chisel**](./crates/chisel): Fast, utilitarian, and verbose solidity REPL.
 
 **Need help getting started with Foundry? Read the [📖 Foundry Book][foundry-book] (WIP)!**
 
@@ -73,15 +73,15 @@ _Note: In the above benchmarks, compilation was always skipped_
 
 Cast is a swiss army knife for interacting with Ethereum applications from the command line.
 
-More documentation can be found in the [cast package](./cast).
+More documentation can be found in the [cast package](./crates/cast).
 
 ## Configuration
 
 ### Using `foundry.toml`
 
-Foundry is designed to be very configurable. You can configure Foundry using a file called [`foundry.toml`](./config) in the root of your project, or any other parent directory. See [config package](./config/README.md#all-options) for all available options.
+Foundry is designed to be very configurable. You can configure Foundry using a file called [`foundry.toml`](./crates/config) in the root of your project, or any other parent directory. See [config package](./crates/config/README.md#all-options) for all available options.
 
-Configuration can be arbitrarily namespaced by profiles. The default profile is named `default` (see ["Default Profile"](./config/README.md#default-profile)).
+Configuration can be arbitrarily namespaced by profiles. The default profile is named `default` (see ["Default Profile"](./crates/config/README.md#default-profile)).
 
 You can select another profile using the `FOUNDRY_PROFILE` environment variable. You can also override parts of your configuration using `FOUNDRY_` or `DAPP_` prefixed environment variables, like `FOUNDRY_SRC`.
 

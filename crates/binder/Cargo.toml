@@ -1,15 +1,17 @@
 [package]
 name = "foundry-binder"
-version = "0.1.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
-readme = "./README.md"
 description = "Generate rust bindings for solidity projects"
-repository = "https://github.com/foundry-rs/foundry"
-keywords = ["ethereum", "web3", "solidity"]
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 
 [dependencies]
-foundry-config = { path = "../config" }
+foundry-config.workspace = true
 ethers-solc = { workspace = true, features = ["async", "svm-solc", "project-util"] }
 ethers-contract = { workspace = true, features = ["abigen"] }
 curl = { version = "0.4", default-features = false, features = ["http2"] }

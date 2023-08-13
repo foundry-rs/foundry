@@ -165,7 +165,7 @@ dependencies = [
 
 [[package]]
 name = "anvil"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anvil-core",
  "anvil-rpc",
@@ -213,7 +213,7 @@ dependencies = [
 
 [[package]]
 name = "anvil-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "ethers-core",
@@ -231,7 +231,7 @@ dependencies = [
 
 [[package]]
 name = "anvil-rpc"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rand 0.8.5",
  "serde",
@@ -240,7 +240,7 @@ dependencies = [
 
 [[package]]
 name = "anvil-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anvil-rpc",
  "async-trait",
@@ -852,7 +852,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "chisel"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "clap 4.3.21",
@@ -2352,7 +2352,7 @@ dependencies = [
 
 [[package]]
 name = "forge-doc"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "auto_impl",
  "clap 4.3.21",
@@ -2407,7 +2407,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-abi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ethers-contract",
  "ethers-contract-abigen",
@@ -2420,7 +2420,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-binder"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "curl",
  "ethers-contract",
@@ -2500,7 +2500,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-cli-test-utils"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ethers",
  "ethers-solc",
@@ -2518,7 +2518,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-common"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "auto_impl",
  "clap 4.3.21",
@@ -2625,7 +2625,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-macros-impl"
-version = "0.0.0"
+version = "0.2.0"
 dependencies = [
  "proc-macro2",
  "quote",

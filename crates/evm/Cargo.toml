@@ -1,18 +1,20 @@
 [package]
 name = "foundry-evm"
-version = "0.2.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
-readme = "../README.md"
-repository = "https://github.com/foundry-rs/foundry"
-keywords = ["ethereum", "web3", "evm"]
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 
 [dependencies]
-foundry-abi = { path = "../abi" }
-foundry-utils = { path = "../utils" }
-foundry-common = { path = "../common" }
-foundry-config = { path = "../config" }
-foundry-macros = { path = "../macros" }
+foundry-abi.workspace = true
+foundry-utils.workspace = true
+foundry-common.workspace = true
+foundry-config.workspace = true
+foundry-macros.workspace = true
 
 ethers = { workspace = true, features = ["ethers-solc"] }
 
@@ -64,5 +66,5 @@ walkdir = "2"
 semver = "1"
 
 [dev-dependencies]
-foundry-utils = { path = "../utils" }
+foundry-utils.workspace = true
 tempfile = "3"
