@@ -1,23 +1,17 @@
 [package]
 name = "chisel"
-version = "0.1.0"
-edition = "2021"
 authors = [
   "clabby <https://github.com/clabby>",
   "asnared <https://github.com/abigger87>",
 ]
 description = "Solidity REPL"
-repository = "https://github.com/foundry-rs/foundry/tree/main/chisel"
-license = "MIT"
-keywords = [
-  "Rust",
-  "Ethereum",
-  "Foundry",
-  "Chisel",
-  "REPL",
-  "Solidity",
-  "Solang",
-]
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 
 [lib]
 name = "chisel"

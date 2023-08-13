@@ -23,6 +23,16 @@ members = [
 ]
 resolver = "2"
 
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.71"
+authors = ["Foundry Contributors"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/foundry-rs/foundry"
+repository = "https://github.com/foundry-rs/foundry"
+exclude = ["benches/", "tests/", "test-data/", "testdata/"]
+
 [profile.dev]
 # Disabling debug info speeds up builds a bunch,
 # and we don't rely on it for debugging that much
