@@ -1,22 +1,24 @@
 [package]
 name = "foundry-common"
-version = "0.1.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
-readme = "README.md"
-description = "Common utilities for Foundry's tools"
-repository = "https://github.com/foundry-rs/foundry"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 
 [dependencies]
 # foundry internal
-foundry-config = { path = "../config" }
-foundry-macros = { path = "../macros" }
+foundry-config.workspace = true
+foundry-macros.workspace = true
 
 # eth
-ethers-core = { workspace = true }
-ethers-solc = { workspace = true }
-ethers-providers = { workspace = true }
-ethers-middleware = { workspace = true }
+ethers-core.workspace = true
+ethers-solc.workspace = true
+ethers-providers.workspace = true
+ethers-middleware.workspace = true
 ethers-etherscan = { workspace = true, features = ["ethers-solc"] }
 
 # io

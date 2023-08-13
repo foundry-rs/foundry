@@ -1,16 +1,20 @@
 [package]
 name = "foundry-cli-test-utils"
-version = "0.1.0"
 description = "Foundry CLI testing utilities"
-edition = "2021"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/foundry-rs/foundry"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 
 [dependencies]
-foundry-config = { path = "../../config" }
-foundry-common = { path = "../../common" }
+foundry-config.workspace = true
+foundry-common.workspace = true
 
-ethers = { workspace = true }
+ethers.workspace = true
 ethers-solc = { workspace = true, features = ["project-util"] }
 
 eyre = "0.6"

@@ -1,23 +1,25 @@
 [package]
 name = "cast"
-version = "0.2.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
-readme = "README.md"
-repository = "https://github.com/foundry-rs/foundry"
-keywords = ["ethereum", "web3"]
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 
 [dependencies]
-foundry-utils = { path = "../utils" }
-foundry-evm = { path = "./../evm" }
-foundry-config = { path = "./../config" }
-foundry-common = { path = "./../common" }
+foundry-utils.workspace = true
+foundry-evm.workspace = true
+foundry-config.workspace = true
+foundry-common.workspace = true
 
-ethers-etherscan = { workspace = true }
+ethers-etherscan.workspace = true
 ethers-contract = { workspace = true, features = ["abigen"] }
-ethers-core = { workspace = true }
-ethers-providers = { workspace = true }
-ethers-signers = { workspace = true }
+ethers-core.workspace = true
+ethers-providers.workspace = true
+ethers-signers.workspace = true
 futures = "0.3"
 eyre = "0.6"
 serde = "1"

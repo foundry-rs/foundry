@@ -1,14 +1,17 @@
 [package]
 name = "foundry-macros"
-version = "0.2.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
-readme = "README.md"
-repository = "https://github.com/foundry-rs/foundry"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 
 [dependencies]
-foundry-macros-impl = { path = "./impl" }
+foundry-macros-impl.path = "impl"
 
-ethers-core = { workspace = true }
+ethers-core.workspace = true
 serde = "1.0"
 serde_json = "1.0"
