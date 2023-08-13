@@ -14,7 +14,7 @@ repository.workspace = true
 foundry-config = { path = "../config" }
 
 # ethers
-ethers-core = { workspace = true }
+ethers-core.workspace = true
 
 # parser
 solang-parser.workspace = true

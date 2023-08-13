@@ -15,11 +15,11 @@ foundry-evm = { path = "./../evm" }
 foundry-config = { path = "./../config" }
 foundry-common = { path = "./../common" }
 
-ethers-etherscan = { workspace = true }
+ethers-etherscan.workspace = true
 ethers-contract = { workspace = true, features = ["abigen"] }
-ethers-core = { workspace = true }
-ethers-providers = { workspace = true }
-ethers-signers = { workspace = true }
+ethers-core.workspace = true
+ethers-providers.workspace = true
+ethers-signers.workspace = true
 futures = "0.3"
 eyre = "0.6"
 serde = "1"

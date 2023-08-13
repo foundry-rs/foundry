@@ -13,7 +13,7 @@ repository.workspace = true
 forge = { path = "../forge" }
 foundry-common = { path = "../common" }
 
-ethers = { workspace = true }
+ethers.workspace = true
 
 crossterm = "0.26"
 eyre = "0.6"

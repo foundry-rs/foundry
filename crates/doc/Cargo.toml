@@ -19,7 +19,7 @@ foundry-utils = { path = "../utils" }
 
 # ethers
 ethers-solc = { workspace = true, features = ["async"] }
-ethers-core = { workspace = true }
+ethers-core.workspace = true
 
 # cli
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }

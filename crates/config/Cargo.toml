@@ -12,9 +12,9 @@ repository.workspace = true
 
 [dependencies]
 # eth
-ethers-core = { workspace = true }
+ethers-core.workspace = true
 ethers-solc = { workspace = true, features = ["async", "svm-solc"] }
-ethers-etherscan = { workspace = true }
+ethers-etherscan.workspace = true
 
 # formats
 Inflector = "0.11"

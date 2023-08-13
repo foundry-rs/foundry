@@ -15,10 +15,10 @@ foundry-config = { path = "../config" }
 foundry-macros = { path = "../macros" }
 
 # eth
-ethers-core = { workspace = true }
-ethers-solc = { workspace = true }
-ethers-providers = { workspace = true }
-ethers-middleware = { workspace = true }
+ethers-core.workspace = true
+ethers-solc.workspace = true
+ethers-providers.workspace = true
+ethers-middleware.workspace = true
 ethers-etherscan = { workspace = true, features = ["ethers-solc"] }
 
 # io

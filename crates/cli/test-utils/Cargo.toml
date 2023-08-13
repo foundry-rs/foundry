@@ -14,7 +14,7 @@ repository.workspace = true
 foundry-config = { path = "../../config" }
 foundry-common = { path = "../../common" }
 
-ethers = { workspace = true }
+ethers.workspace = true
 ethers-solc = { workspace = true, features = ["project-util"] }
 
 eyre = "0.6"

@@ -32,7 +32,7 @@ foundry-common = { path = "../common" }
 forge-fmt = { path = "../fmt" }
 
 # ethers
-ethers = { workspace = true }
+ethers.workspace = true
 ethers-solc = { workspace = true, features = ["project-util", "full"] }
 
 # async

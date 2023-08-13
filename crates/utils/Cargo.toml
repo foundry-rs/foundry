@@ -12,12 +12,12 @@ repository.workspace = true
 [dependencies]
 forge-fmt = { path = "../fmt" }
 
-ethers-core = { workspace = true }
+ethers-core.workspace = true
 ethers-contract = { workspace = true, features = ["abigen"] }
-ethers-etherscan = { workspace = true }
-ethers-addressbook = { workspace = true }
-ethers-providers = { workspace = true }
-ethers-solc = { workspace = true }
+ethers-etherscan.workspace = true
+ethers-addressbook.workspace = true
+ethers-providers.workspace = true
+ethers-solc.workspace = true
 
 eyre = { version = "0.6", default-features = false }
 futures = "0.3"
