@@ -31,7 +31,8 @@ impl ScriptArgs {
         let (project, output) = self.get_project_and_output(script_config)?;
         let output = output.with_stripped_file_prefixes(project.root());
 
-        let mut sources: BTreeMap<ArtifactId, String> = BTreeMap::new();
+        let mut sources: HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>> =
+            HashMap::new();
 
         let contracts = output
             .into_artifacts()
@@ -39,13 +40,21 @@ impl ScriptArgs {
                 // Sources are only required for the debugger, but it *might* mean that there's
                 // something wrong with the build and/or artifacts.
                 if let Some(source) = artifact.source_file() {
-                    sources.insert(
-                        id.clone(),
-                        source
-                            .ast
-                            .ok_or(eyre::eyre!("Source from artifact has no AST."))?
-                            .absolute_path,
-                    );
+                    let inner_map = sources.entry(id.clone().name).or_insert_with(HashMap::new);
+                    let abs_path = source
+                        .ast
+                        .ok_or(eyre::eyre!("Source from artifact has no AST."))?
+                        .absolute_path;
+                    let source_code = fs::read_to_string(abs_path).unwrap();
+                    let contract = artifact.clone().into_contract_bytecode();
+                    // TODO factor this unwrap in a nicer function
+                    // NOTE crates/common/src/compile.rs
+                    let source_contract = ContractBytecodeSome {
+                        abi: contract.abi.unwrap(),
+                        bytecode: contract.bytecode.unwrap().into(),
+                        deployed_bytecode: contract.deployed_bytecode.unwrap().into(),
+                    };
+                    inner_map.insert(source.id, (source_code, source_contract));
                 } else {
                     warn!("source not found for artifact={:?}", id);
                 }
@@ -63,7 +72,6 @@ impl ScriptArgs {
 
         output.sources = sources;
         script_config.target_contract = Some(output.target.clone());
-        // output.file_ids = files.into_ids().collect();
 
         Ok(output)
     }
@@ -194,11 +202,10 @@ impl ScriptArgs {
             known_contracts: contracts,
             highlevel_known_contracts: ArtifactContracts(highlevel_known_contracts),
             predeploy_libraries,
-            sources: BTreeMap::new(),
+            // TODO
+            sources: HashMap::new(),
             project,
             libraries: new_libraries,
-            // TODO
-            file_ids: Default::default(),
         })
     }
 
@@ -347,6 +354,5 @@ pub struct BuildOutput {
     pub highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     pub libraries: Libraries,
     pub predeploy_libraries: Vec<ethers::types::Bytes>,
-    pub sources: BTreeMap<ArtifactId, String>,
-    pub file_ids: BTreeMap<u32, String>,
+    pub sources: HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>,
 }

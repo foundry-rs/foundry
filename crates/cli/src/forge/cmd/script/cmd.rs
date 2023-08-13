@@ -86,16 +86,10 @@ impl ScriptArgs {
 
         if self.debug {
             let debugger = DebuggerArgs {
-                success: result.success,
                 debug: result.debug.clone().unwrap_or(vec![]),
-                // TODO
-                path: Default::default(),
                 decoder: &decoder,
-                sources: sources.into(),
-                project: &project,
-                highlevel_known_contracts: highlevel_known_contracts.clone(),
+                sources,
                 breakpoints: result.breakpoints.clone(),
-                file_ids: build_output.file_ids,
             };
             debugger.run()?;
         }

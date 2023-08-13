@@ -401,7 +401,7 @@ pub fn compile_target_with_filter(
 /// Creates and compiles a project from an Etherscan source.
 pub async fn compile_from_source(
     metadata: &Metadata,
-) -> Result<(ArtifactId, ContractBytecodeSome)> {
+) -> Result<(ArtifactId, u32, ContractBytecodeSome)> {
     let root = tempfile::tempdir()?;
     let root_path = root.path();
     let project = etherscan_project(metadata, root_path)?;
@@ -412,10 +412,14 @@ pub async fn compile_from_source(
         eyre::bail!(project_output.to_string())
     }
 
-    let (artifact_id, contract) = project_output
-        .into_contract_bytecodes()
+    let (artifact_id, file_id, contract) = project_output
+        .into_artifacts()
         .find(|(artifact_id, _)| artifact_id.name == metadata.contract_name)
+        .map(|(aid, art)| {
+            (aid, art.source_file().expect("no source file").id, art.into_contract_bytecode())
+        })
         .expect("there should be a contract with bytecode");
+    // TODO factor this unwrap in a nicer function
     let bytecode = ContractBytecodeSome {
         abi: contract.abi.unwrap(),
         bytecode: contract.bytecode.unwrap().into(),
@@ -424,7 +428,7 @@ pub async fn compile_from_source(
 
     root.close()?;
 
-    Ok((artifact_id, bytecode))
+    Ok((artifact_id, file_id, bytecode))
 }
 
 /// Creates a [Project] from an Etherscan source.

@@ -30,43 +30,56 @@ use foundry_common::get_contract_name;
 use std::{
     collections::{BTreeMap, HashMap},
     convert::From,
-    fs, io,
+    fs,
     path::PathBuf,
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
 };
 use tracing::log::trace;
 
+/// Map over debugger contract sources name -> file_id -> (source, contract)
+pub type ContractSources = HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>;
+
 /// Standardized way of firing up the debugger
 pub struct DebuggerArgs<'a> {
-    pub success: bool,
+    /// debug traces returned from the execution
     pub debug: Vec<DebugArena>,
-    pub path: PathBuf,
+    /// trace decoder
     pub decoder: &'a CallTraceDecoder,
-    pub sources: BTreeMap<ArtifactId, String>,
-    pub project: &'a Project,
-    pub highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
+    /// map of source files
+    pub sources: ContractSources,
+    /// map of the debugger breakpoints
     pub breakpoints: Breakpoints,
-    /// Map over file_id -> path
-    pub file_ids: BTreeMap<u32, String>,
+    // /// target path of the contract to debug in the project (should remove)
+    // pub path: PathBuf,
 }
 
 impl DebuggerArgs<'_> {
     pub fn run(&self) -> eyre::Result<TUIExitReason> {
-        // trace!(target: "debugger", "running debugger");
+        trace!(target: "debugger", "running debugger");
 
-        let (sources, artifacts) = filter_sources_and_artifacts(
-            self.path.as_os_str().to_str().unwrap(),
-            self.sources.clone(),
-            self.highlevel_known_contracts.clone(),
-            &self.project,
-        )?;
+        // let known_contracts = self
+        //     .sources
+        //     .iter()
+        //     .map(|((aid, _, _, bytecode))| (aid.name.clone(), bytecode.clone()))
+        //     .collect();
+
+        // let known_contracts = self
+        //     .highlevel_known_contracts
+        //     .iter()
+        //     .map(|(aid, bytecode)| (aid.name.clone(), bytecode.clone()))
+        //     .collect();
+
+        // let (sources, known_contracts) = filter_sources_and_artifacts(
+        //     self.path.as_os_str().to_str().unwrap(),
+        //     self.sources.clone(),
+        //     self.highlevel_known_contracts.clone(),
+        //     &self.project,
+        // )?;
         let flattened = self
             .debug
             .last()
             .map(|arena| arena.flatten(0))
             .expect("We should have collected debug information");
+
         let identified_contracts = self
             .decoder
             .contracts
@@ -74,27 +87,13 @@ impl DebuggerArgs<'_> {
             .map(|(addr, identifier)| (*addr, get_contract_name(identifier).to_string()))
             .collect();
 
-        let known_contracts_sources = self
-            .highlevel_known_contracts
-            .iter()
-            .map(|(id, _)| {
-                let file_sources: BTreeMap<u32, String> = self
-                    .file_ids
-                    .iter()
-                    .map(|(id, path)| {
-                        (*id, fs::read_to_string(path).expect("failed to read source"))
-                    })
-                    .collect();
-                (id.name.clone(), file_sources)
-            })
-            .collect();
+        let contract_sources = self.sources.clone();
 
         let mut tui = Tui::new(
             flattened,
             0,
             identified_contracts,
-            artifacts,
-            known_contracts_sources,
+            contract_sources,
             self.breakpoints.clone(),
         )?;
 

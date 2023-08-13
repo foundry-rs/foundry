@@ -3,7 +3,7 @@ use cast::fuzz::CounterExample;
 use clap::Parser;
 use ethers::{
     prelude::artifacts::ContractBytecodeSome,
-    solc::{contracts::ArtifactContracts, ArtifactId},
+    solc::{contracts::ArtifactContracts, Artifact, ArtifactId},
     types::U256,
 };
 use eyre::Result;
@@ -37,7 +37,13 @@ use foundry_config::{
 };
 use foundry_evm::utils::evm_spec;
 use regex::Regex;
-use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs,
+    path::PathBuf,
+    sync::mpsc::channel,
+    time::Duration,
+};
 use tracing::trace;
 use ui::debugger::DebuggerArgs;
 use watchexec::config::{InitConfig, RuntimeConfig};
@@ -286,6 +292,7 @@ impl TestArgs {
                 }
             }
 
+            dbg!(&decoder.contracts);
             decoders.push(decoder);
         }
 
@@ -296,7 +303,8 @@ impl TestArgs {
             if result.is_fuzz() {
                 // rerun and collect debug information
                 runner_builder = runner_builder.set_debug(false);
-                runner = runner_builder.clone().build(project_root, output, env, evm_opts)?;
+                runner =
+                    runner_builder.clone().build(project_root, output.clone(), env, evm_opts)?;
                 if let Some(counterexample) = result.counterexample {
                 } else {
                 }
@@ -305,29 +313,37 @@ impl TestArgs {
             let mut opts = self.opts.clone();
             opts.silent = true;
 
-            // TODO
-            let highlevel_known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome> =
-                BTreeMap::new();
-            let file_ids = BTreeMap::new();
-            let sources = BTreeMap::new();
+            let mut sources = HashMap::new();
+            output.into_artifacts().for_each(|(id, artifact)| {
+                // Sources are only required for the debugger, but it *might* mean that there's
+                // something wrong with the build and/or artifacts.
+                if let Some(source) = artifact.source_file() {
+                    let inner_map = sources.entry(id.clone().name).or_insert_with(HashMap::new);
+                    let abs_path = source.ast.unwrap().absolute_path;
+                    let source_code = fs::read_to_string(abs_path).unwrap();
+                    let contract = artifact.clone().into_contract_bytecode();
+                    // TODO factor this unwrap in a nicer function
+                    // NOTE crates/common/src/compile.rs
+                    let source_contract = ContractBytecodeSome {
+                        abi: contract.abi.unwrap(),
+                        bytecode: contract.bytecode.unwrap().into(),
+                        deployed_bytecode: contract.deployed_bytecode.unwrap().into(),
+                    };
+                    inner_map.insert(source.id, (source_code, source_contract));
+                }
+            });
 
             let debugger = DebuggerArgs {
-                success: result.status == TestStatus::Success,
                 debug: result.debug.map_or(vec![], |debug| vec![debug]),
-                path: PathBuf::from(source_paths.get(&test.artifact_id).unwrap()),
-                decoder: decoders.get(0).unwrap(),
+                // path: PathBuf::from(source_paths.get(&test.artifact_id).unwrap()),
+                decoder: decoders.first().unwrap(),
                 sources,
-                project: &project,
-                highlevel_known_contracts: ArtifactContracts(highlevel_known_contracts),
-                file_ids,
                 breakpoints: result.breakpoints,
             };
             debugger.run()?;
-
-            Ok(outcome)
-        } else {
-            Ok(outcome)
         }
+
+        Ok(outcome)
     }
 
     pub async fn run_tests(
@@ -339,7 +355,8 @@ impl TestArgs {
     ) -> eyre::Result<TestOutcome> {
         if self.debug.is_some() {
             filter.args_mut().test_pattern = self.debug.clone();
-            // Run the test
+            runner.evm_opts.verbosity = 3; // enable tracing
+                                           // Run the test
             let results = runner.test(&filter, None, test_options).await;
 
             Ok(TestOutcome::new(results, self.allow_failure))

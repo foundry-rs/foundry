@@ -4,9 +4,10 @@ use ethers::{
     solc::{
         artifacts::{CompactBytecode, CompactDeployedBytecode, ContractBytecodeSome},
         cache::{CacheEntry, SolFilesCache},
+        contracts::ArtifactContracts,
         info::ContractInfo,
         utils::read_json_file,
-        Artifact, ArtifactId, ProjectCompileOutput,
+        Artifact, ArtifactId, ProjectBuilder, ProjectCompileOutput,
     },
 };
 use eyre::{Result, WrapErr};
@@ -23,7 +24,7 @@ use foundry_evm::{
 };
 use std::{collections::BTreeMap, fmt::Write, path::PathBuf, str::FromStr};
 use tracing::trace;
-use ui::{TUIExitReason, Tui};
+use ui::{debugger::DebuggerArgs, TUIExitReason, Tui};
 use yansi::Paint;
 
 /// Given a `Project`'s output, removes the matching ABI, Bytecode and
@@ -391,8 +392,14 @@ pub async fn handle_traces(
     }
 
     if debug {
-        let (sources, bytecode) = etherscan_identifier.get_compiled_contracts().await?;
-        run_debugger(result, decoder, bytecode, sources)?;
+        let (sources, compiled_contracts) = etherscan_identifier.get_compiled_contracts().await?;
+        let debugger = DebuggerArgs {
+            debug: vec![result.debug],
+            decoder: &decoder,
+            sources,
+            breakpoints: Default::default(),
+        };
+        debugger.run()?;
     } else {
         print_traces(&mut result, decoder, verbose).await?;
     }
@@ -427,34 +434,5 @@ pub async fn print_traces(
     }
 
     println!("Gas used: {}", result.gas_used);
-    Ok(())
-}
-
-pub fn run_debugger(
-    result: TraceResult,
-    decoder: CallTraceDecoder,
-    known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
-    sources: BTreeMap<ArtifactId, String>,
-) -> Result<()> {
-    // let calls: Vec<DebugArena> = vec![result.debug];
-    // let flattened = calls.last().expect("we should have collected debug info").flatten(0);
-    // let tui = Tui::new(
-    //     flattened,
-    //     0,
-    //     decoder.contracts,
-    //     known_contracts.into_iter().map(|(id, artifact)| (id.name, artifact)).collect(),
-    //     sources
-    //         .into_iter()
-    //         .map(|(id, source)| {
-    //             let mut sources = BTreeMap::new();
-    //             sources.insert(0, source);
-    //             (id.name, sources)
-    //         })
-    //         .collect(),
-    //     Default::default(),
-    // )?;
-    // match tui.start().expect("Failed to start tui") {
-    //     TUIExitReason::CharExit => Ok(()),
-    // }
     Ok(())
 }
