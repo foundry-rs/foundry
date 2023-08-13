@@ -14,7 +14,7 @@ repository.workspace = true
 foundry-evm = { path = "../../evm" }
 revm = { version = "3", default-features = false, features = ["std", "serde", "memory_limit"] }
 
-ethers-core = { workspace = true }
+ethers-core.workspace = true
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = "1"
 bytes = { version = "1.4" }

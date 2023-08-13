@@ -10,8 +10,8 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-forge = { path = "../forge" }
-foundry-common = { path = "../common" }
+forge.workspace = true
+foundry-common.workspace = true
 
 ethers.workspace = true
 

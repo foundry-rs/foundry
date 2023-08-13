@@ -11,10 +11,10 @@ repository.workspace = true
 exclude.workspace = true
 
 [dependencies]
-foundry-utils = { path = "./../utils" }
-foundry-common = { path = "./../common" }
-foundry-config = { path = "./../config" }
-foundry-evm = { path = "./../evm" }
+foundry-utils.workspace = true
+foundry-common.workspace = true
+foundry-config.workspace = true
+foundry-evm.workspace = true
 
 # TODO: Trim down
 ethers = { workspace = true, features = ["solc-full"] }
@@ -39,4 +39,4 @@ yansi = "0.5"
 
 [dev-dependencies]
 ethers = { workspace = true, features = ["solc-full", "solc-tests", "rustls"] }
-foundry-utils = { path = "./../utils" }
+foundry-utils.workspace = true

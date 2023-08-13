@@ -17,7 +17,7 @@ eyre = "0.6"
 syn = "2.0"
 
 [dependencies]
-foundry-macros = { path = "../macros" }
+foundry-macros.workspace = true
 
 ethers-core.workspace = true
 ethers-contract = { workspace = true, features = ["abigen"] }

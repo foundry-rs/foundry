@@ -11,7 +11,7 @@ repository.workspace = true
 
 [dependencies]
 # foundry dep
-foundry-config = { path = "../config" }
+foundry-config.workspace = true
 
 # ethers
 ethers-core.workspace = true

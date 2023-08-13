@@ -11,8 +11,8 @@ repository.workspace = true
 
 [dependencies]
 # foundry internal
-foundry-config = { path = "../config" }
-foundry-macros = { path = "../macros" }
+foundry-config.workspace = true
+foundry-macros.workspace = true
 
 # eth
 ethers-core.workspace = true

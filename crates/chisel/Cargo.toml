@@ -13,23 +13,18 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
-[lib]
-name = "chisel"
-path = "src/lib.rs"
-doctest = false
-
 [[bin]]
 name = "chisel"
 path = "src/bin/chisel.rs"
 
 [dependencies]
 # forge
-foundry-evm = { path = "../evm" }
-forge = { path = "../forge" }
-foundry-config = { path = "../config" }
-foundry-cli = { path = "../cli" }
-foundry-common = { path = "../common" }
-forge-fmt = { path = "../fmt" }
+foundry-evm.workspace = true
+forge.workspace = true
+foundry-config.workspace = true
+foundry-cli.workspace = true
+foundry-common.workspace = true
+forge-fmt.workspace = true
 
 # ethers
 ethers.workspace = true

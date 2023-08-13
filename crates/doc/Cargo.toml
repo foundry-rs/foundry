@@ -12,10 +12,10 @@ repository.workspace = true
 
 [dependencies]
 # foundry internal
-foundry-common = { path = "../common" }
-forge-fmt = { path = "../fmt" }
-foundry-config = { path = "../config" }
-foundry-utils = { path = "../utils" }
+foundry-common.workspace = true
+forge-fmt.workspace = true
+foundry-config.workspace = true
+foundry-utils.workspace = true
 
 # ethers
 ethers-solc = { workspace = true, features = ["async"] }

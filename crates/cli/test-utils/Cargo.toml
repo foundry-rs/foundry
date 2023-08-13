@@ -11,8 +11,8 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-foundry-config = { path = "../../config" }
-foundry-common = { path = "../../common" }
+foundry-config.workspace = true
+foundry-common.workspace = true
 
 ethers.workspace = true
 ethers-solc = { workspace = true, features = ["project-util"] }

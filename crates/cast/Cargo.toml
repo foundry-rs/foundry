@@ -10,10 +10,10 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-foundry-utils = { path = "../utils" }
-foundry-evm = { path = "./../evm" }
-foundry-config = { path = "./../config" }
-foundry-common = { path = "./../common" }
+foundry-utils.workspace = true
+foundry-evm.workspace = true
+foundry-config.workspace = true
+foundry-common.workspace = true
 
 ethers-etherscan.workspace = true
 ethers-contract = { workspace = true, features = ["abigen"] }
