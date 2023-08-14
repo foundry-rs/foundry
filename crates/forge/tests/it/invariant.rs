@@ -54,12 +54,8 @@ async fn test_invariant() {
                 vec![("invariantTrueWorld()", false, Some("false world.".into()), None, None)],
             ),
             (
-                "fuzz/invariant/target/TargetInterfaces.t.sol:TargetWorldProxies",
+                "fuzz/invariant/target/TargetInterfaces.t.sol:TargetWorldInterfaces",
                 vec![("invariantTrueWorld()", false, Some("false world.".into()), None, None)],
-            ),
-            (
-                "fuzz/invariant/target/TargetInterfaces.t.sol:TargetWaterProxies",
-                vec![("invariantTrueWater()", false, Some("false water.".into()), None, None)],
             ),
             (
                 "fuzz/invariant/target/ExcludeSenders.t.sol:ExcludeSenders",

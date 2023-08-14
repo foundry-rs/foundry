@@ -8,25 +8,18 @@ struct FuzzInterface {
     string[] artifacts;
 }
 
-abstract contract BaseHello {
-    // Default false
-    bool public world; // slot 0
-    bool public water; // slot 1
-}
+contract Hello {
+    bool public world; 
 
-contract Hello1 is BaseHello {
-    function changeWorld() public {
+    function changeWorld() external {
         world = true;
     }
 }
 
-contract Hello2 is BaseHello {
-    function changeWater() public {
-        water = true;
-    }
+interface IHello {
+    function world() external view returns (bool);
+    function changeWorld() external;
 }
-
-contract FullHello is Hello1, Hello2 {}
 
 contract HelloProxy {
     address internal immutable _implementation;
@@ -54,35 +47,26 @@ contract HelloProxy {
     }
 }
 
-contract BaseTest is DSTest {
-    HelloProxy proxy;
+contract TargetWorldInterfaces is DSTest {
+    IHello proxy;
 
     function setUp() public {
-        FullHello hello = new FullHello();
-        proxy = new HelloProxy(address(hello));
+        Hello hello = new Hello();
+        proxy = IHello(address(new HelloProxy(address(hello))));
     }
 
     function targetInterfaces() public returns (FuzzInterface[] memory) {
         FuzzInterface[] memory targets = new FuzzInterface[](1);
 
-        string[] memory artifacts = new string[](2);
-        artifacts[0] = "Hello1";
-        artifacts[1] = "Hello2";
+        string[] memory artifacts = new string[](1);
+        artifacts[0] = "IHello";
 
         targets[0] = FuzzInterface(address(proxy), artifacts);
 
         return targets;
     }
-}
 
-contract TargetWorldProxies is BaseTest {
     function invariantTrueWorld() public {
-        require(BaseHello(address(proxy)).world() == false, "false world.");
-    }
-}
-
-contract TargetWaterProxies is BaseTest {
-    function invariantTrueWater() public {
-        require(BaseHello(address(proxy)).water() == false, "false water.");
+        require(proxy.world() == false, "false world.");
     }
 }

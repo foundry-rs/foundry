@@ -275,15 +275,21 @@ impl MultiContractRunnerBuilder {
                 } = post_link_input;
                 let dependencies = unique_deps(dependencies);
 
-                // get bytes
-                let bytecode =
-                    if let Some(b) = contract.bytecode.expect("No bytecode").object.into_bytes() {
-                        b
-                    } else {
-                        return Ok(())
-                    };
-
                 let abi = contract.abi.expect("We should have an abi by now");
+
+                // get bytes if deployable, else add to known contracts and return
+                let bytecode = if let Some(bytecode) = contract.bytecode {
+                    if let Some(bytes) = bytecode.object.into_bytes() {
+                        bytes
+                    } else {
+                        known_contracts.insert(id.clone(), (abi, vec![]));
+                        return Ok(())
+                    }
+                } else {
+                    known_contracts.insert(id.clone(), (abi, vec![]));
+                    return Ok(())
+                };
+
                 // if it's a test, add it to deployable contracts
                 if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
                     abi.functions()

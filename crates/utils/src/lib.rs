@@ -225,7 +225,22 @@ pub fn link_with_nonce_or_address<T, U>(
                 }
                 BytecodeObject::Bytecode(ref bytes) => {
                     if bytes.as_ref().is_empty() {
-                        // abstract, skip
+                        // Handle case where bytecode bytes are empty
+                        let tc = CompactContractBytecode {
+                            abi: Some(abi.clone()),
+                            bytecode: None,
+                            deployed_bytecode: None,
+                        };
+
+                        let post_link_input = PostLinkInput {
+                            contract: tc,
+                            known_contracts,
+                            id,
+                            extra,
+                            dependencies,
+                        };
+
+                        post_link(post_link_input)?;
                         continue
                     }
                 }
