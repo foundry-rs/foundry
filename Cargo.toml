@@ -1,27 +1,16 @@
 [workspace]
-members = [
-    "anvil",
-    "anvil/core",
-    "anvil/rpc",
-    "anvil/server",
-    "abi",
-    "binder",
-    "cast",
-    "chisel",
-    "cli",
-    "cli/test-utils",
-    "common",
-    "config",
-    "doc",
-    "evm",
-    "fmt",
-    "forge",
-    "macros",
-    "macros/impl",
-    "ui",
-    "utils",
-]
+members = ["crates/*"]
 resolver = "2"
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.71"
+authors = ["Foundry Contributors"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/foundry-rs/foundry"
+repository = "https://github.com/foundry-rs/foundry"
+exclude = ["benches/", "tests/", "test-data/", "testdata/"]
 
 [profile.dev]
 # Disabling debug info speeds up builds a bunch,
@@ -71,7 +60,7 @@ prettyplease.opt-level = 0
 lalrpop.opt-level = 0
 
 ethers-contract-abigen.opt-level = 0
-ethers-contract-abigen-derive.opt-level = 0
+ethers-contract-derive.opt-level = 0
 async-recursion.opt-level = 0
 miette-derive.opt-level = 0
 strum_macros.opt-level = 0
@@ -107,6 +96,22 @@ codegen-units = 16
 package = {}
 
 [workspace.dependencies]
+foundry-abi = { path = "crates/abi" }
+anvil = { path = "crates/anvil" }
+foundry-binder = { path = "crates/binder" }
+cast = { path = "crates/cast" }
+chisel = { path = "crates/chisel" }
+foundry-cli = { path = "crates/cli" }
+foundry-common = { path = "crates/common" }
+foundry-config = { path = "crates/config" }
+forge-doc = { path = "crates/doc" }
+foundry-evm = { path = "crates/evm" }
+forge-fmt = { path = "crates/fmt" }
+forge = { path = "crates/forge" }
+foundry-macros = { path = "crates/macros" }
+ui = { path = "crates/ui" }
+foundry-utils = { path = "crates/utils" }
+
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
@@ -119,6 +124,7 @@ ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-featu
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+hex = { package = "const-hex", version = "1.6", features = ["hex"] }
 solang-parser = "=0.3.1"
 
 #[patch."https://github.com/gakonst/ethers-rs"]
@@ -134,4 +140,4 @@ solang-parser = "=0.3.1"
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-revm = { git = "https://github.com/bluealloy/revm/", rev = "14787244394c46e49ca59e32d7de1ebc95e66892" }
+revm = { git = "https://github.com/bluealloy/revm/", branch = "release/v25" }
