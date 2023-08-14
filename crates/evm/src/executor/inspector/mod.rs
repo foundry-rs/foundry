@@ -54,7 +54,7 @@ pub struct InspectorStackConfig {
     pub gas_price: U256,
     /// Whether tracing is enabled
     pub tracing: bool,
-    /// Whether the debugger is enabled
+    /// Whether the debugger should be fired on
     pub debugger: bool,
     /// The fuzzer inspector and its state, if it exists.
     pub fuzzer: Option<Fuzzer>,

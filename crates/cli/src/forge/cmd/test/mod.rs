@@ -305,10 +305,17 @@ impl TestArgs {
                 runner_builder = runner_builder.set_debug(false);
                 runner =
                     runner_builder.clone().build(project_root, output.clone(), env, evm_opts)?;
-                if let Some(counterexample) = result.counterexample {
+                let to_send = if let Some(counterexample) = result.counterexample {
                 } else {
-                }
-            }
+                    // run on first input
+                };
+
+                let outcome =
+                    self.run_tests(runner, &config, filter.clone(), test_options.clone()).await?;
+                let mut tests = outcome.clone().into_tests();
+
+                result = tests.next().unwrap().result;
+            };
             // Run the debugger
             let mut opts = self.opts.clone();
             opts.silent = true;
@@ -335,7 +342,6 @@ impl TestArgs {
 
             let debugger = DebuggerArgs {
                 debug: result.debug.map_or(vec![], |debug| vec![debug]),
-                // path: PathBuf::from(source_paths.get(&test.artifact_id).unwrap()),
                 decoder: decoders.first().unwrap(),
                 sources,
                 breakpoints: result.breakpoints,
@@ -355,8 +361,7 @@ impl TestArgs {
     ) -> eyre::Result<TestOutcome> {
         if self.debug.is_some() {
             filter.args_mut().test_pattern = self.debug.clone();
-            runner.evm_opts.verbosity = 3; // enable tracing
-                                           // Run the test
+            // Run the test
             let results = runner.test(&filter, None, test_options).await;
 
             Ok(TestOutcome::new(results, self.allow_failure))
