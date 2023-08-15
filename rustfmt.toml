@@ -9,4 +9,4 @@ trailing_semicolon = false
 use_field_init_shorthand = true
 
 # Ignore automatically-generated code.
-ignore = ["abi/src/bindings"]
+ignore = ["crates/abi/src/bindings"]

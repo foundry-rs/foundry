@@ -57,28 +57,28 @@ contract DisabledTest is DSTest {
     FsProxy public fsProxy;
 
     bytes constant FOUNDRY_READ_ERR =
-        "The path \"../testdata/fixtures/File/read.txt\" is not allowed to be accessed for read operations.";
+        "The path \"fixtures/File/read.txt\" is not allowed to be accessed for read operations.";
     bytes constant FOUNDRY_WRITE_ERR =
-        "The path \"../testdata/fixtures/File/write_file.txt\" is not allowed to be accessed for write operations.";
+        "The path \"fixtures/File/write_file.txt\" is not allowed to be accessed for write operations.";
 
     function testReadFile() public {
         fsProxy = new FsProxy();
 
-        string memory path = "../testdata/fixtures/File/read.txt";
+        string memory path = "fixtures/File/read.txt";
         vm.expectRevert(FOUNDRY_READ_ERR);
         fsProxy.readFile(path);
     }
 
     function testReadLine() public {
         fsProxy = new FsProxy();
-        string memory path = "../testdata/fixtures/File/read.txt";
+        string memory path = "fixtures/File/read.txt";
         vm.expectRevert(FOUNDRY_READ_ERR);
         fsProxy.readLine(path);
     }
 
     function testWriteFile() public {
         fsProxy = new FsProxy();
-        string memory path = "../testdata/fixtures/File/write_file.txt";
+        string memory path = "fixtures/File/write_file.txt";
         string memory data = "hello writable world";
         vm.expectRevert(FOUNDRY_WRITE_ERR);
         fsProxy.writeFile(path, data);
@@ -86,7 +86,7 @@ contract DisabledTest is DSTest {
 
     function testWriteLine() public {
         fsProxy = new FsProxy();
-        string memory path = "../testdata/fixtures/File/write_file.txt";
+        string memory path = "fixtures/File/write_file.txt";
         string memory data = "hello writable world";
         vm.expectRevert(FOUNDRY_WRITE_ERR);
         fsProxy.writeLine(path, data);
@@ -94,7 +94,7 @@ contract DisabledTest is DSTest {
 
     function testRemoveFile() public {
         fsProxy = new FsProxy();
-        string memory path = "../testdata/fixtures/File/write_file.txt";
+        string memory path = "fixtures/File/write_file.txt";
         vm.expectRevert(FOUNDRY_WRITE_ERR);
         fsProxy.removeFile(path);
     }

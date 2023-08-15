@@ -16,7 +16,7 @@ contract DeriveTest is DSTest {
         uint256 privateKeyDerivationPathChanged = vm.deriveKey(mnemonic, "m/44'/60'/0'/1/", 0);
         assertEq(privateKeyDerivationPathChanged, 0x6abb89895f93b02c1b9470db0fa675297f6cca832a5fc66d5dfd7661a42b37be);
 
-        uint256 privateKeyFile = vm.deriveKey("../testdata/fixtures/Derive/mnemonic_english.txt", 2);
+        uint256 privateKeyFile = vm.deriveKey("fixtures/Derive/mnemonic_english.txt", 2);
         assertEq(privateKeyFile, 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a);
     }
 
@@ -94,7 +94,7 @@ contract DeriveTest is DSTest {
             uint256 privateKeyDerivationPathChanged = vm.deriveKey(mnemonic, "m/44'/60'/0'/1/", 0, language);
             assertEq(privateKeyDerivationPathChanged, privateKeysDerivationPathChanged[i]);
 
-            string memory prefix = "../testdata/fixtures/Derive/mnemonic_";
+            string memory prefix = "fixtures/Derive/mnemonic_";
             string memory postfix = ".txt";
             string memory mnemonicPath = string(abi.encodePacked(prefix, language, postfix));
             uint256 privateKeyFile = vm.deriveKey(mnemonicPath, 2, language);
