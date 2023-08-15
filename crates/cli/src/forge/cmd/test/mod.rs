@@ -292,34 +292,10 @@ impl TestArgs {
                 }
             }
 
-            dbg!(&decoder.contracts);
             decoders.push(decoder);
         }
 
         if should_debug {
-            let mut tests = outcome.clone().into_tests();
-            let test = tests.next().unwrap();
-            let mut result = test.result;
-            if result.is_fuzz() {
-                // rerun and collect debug information
-                runner_builder = runner_builder.set_debug(false);
-                runner =
-                    runner_builder.clone().build(project_root, output.clone(), env, evm_opts)?;
-                let to_send = if let Some(counterexample) = result.counterexample {
-                } else {
-                    // run on first input
-                };
-
-                let outcome =
-                    self.run_tests(runner, &config, filter.clone(), test_options.clone()).await?;
-                let mut tests = outcome.clone().into_tests();
-
-                result = tests.next().unwrap().result;
-            };
-            // Run the debugger
-            let mut opts = self.opts.clone();
-            opts.silent = true;
-
             let mut sources = HashMap::new();
             output.into_artifacts().for_each(|(id, artifact)| {
                 // Sources are only required for the debugger, but it *might* mean that there's
@@ -340,6 +316,10 @@ impl TestArgs {
                 }
             });
 
+            let test = outcome.clone().into_tests().next().unwrap();
+            let result = test.result;
+
+            // Run the debugger
             let debugger = DebuggerArgs {
                 debug: result.debug.map_or(vec![], |debug| vec![debug]),
                 decoder: decoders.first().unwrap(),

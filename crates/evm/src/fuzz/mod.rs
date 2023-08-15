@@ -28,20 +28,20 @@ pub mod invariant;
 pub mod strategies;
 
 pub struct CaseOutcome {
-    case: FuzzCase,
-    gas_used: u64,
-    stipend: u64,
-    traces: Option<CallTraceArena>,
-    coverage: Option<HitMaps>,
-    debug: Option<DebugArena>,
-    breakpoints: Breakpoints,
+    pub case: FuzzCase,
+    pub gas_used: u64,
+    pub stipend: u64,
+    pub traces: Option<CallTraceArena>,
+    pub coverage: Option<HitMaps>,
+    pub debug: Option<DebugArena>,
+    pub breakpoints: Breakpoints,
 }
 
 pub struct CounterExampleOutcome {
-    counterexample: (ethers::types::Bytes, RawCallResult),
-    exit_reason: InstructionResult,
-    debug: Option<DebugArena>,
-    breakpoints: Breakpoints,
+    pub counterexample: (ethers::types::Bytes, RawCallResult),
+    pub exit_reason: InstructionResult,
+    pub debug: Option<DebugArena>,
+    pub breakpoints: Breakpoints,
 }
 
 pub enum FuzzOutcome {
@@ -167,36 +167,7 @@ impl<'a> FuzzedExecutor<'a> {
             }
         });
 
-        // TODO the inspector debugger should still be disabled but we should now enable it so it
-        // can get the debugger traces if we should use the debugger, collect debug traces but the
-        // executor is not mutable and it's a mess to do so !
-        let (debug, breakpoints, calldata) = if self.executor.inspector_config().debugger &&
-            run_result.is_ok()
-        {
-            let counter_ref = counterexample.borrow();
-            let calldata = if let Some((calldata, _)) = counter_ref.deref() {
-                calldata.clone()
-            } else {
-                first_case.borrow_mut().as_mut().unwrap().calldata.clone()
-            };
-
-            let (debug, breakpoints) = match self
-                .single_fuzz(&state, address, should_fail, calldata.clone())
-                .unwrap()
-            {
-                FuzzOutcome::Case(CaseOutcome { debug, breakpoints, .. }) => (debug, breakpoints),
-                FuzzOutcome::CounterExample(CounterExampleOutcome {
-                    debug, breakpoints, ..
-                }) => (debug, breakpoints),
-            };
-
-            (debug, breakpoints, calldata)
-        } else {
-            Default::default()
-        };
-
-        let (_, call) = counterexample.into_inner().unwrap_or_default();
-        // let (debug, breakpoints) = debug_points.take();
+        let (calldata, call) = counterexample.into_inner().unwrap_or_default();
         let mut result = FuzzTestResult {
             first_case: first_case.take().unwrap_or_default(),
             gas_by_case: gas_by_case.take(),
@@ -208,8 +179,9 @@ impl<'a> FuzzedExecutor<'a> {
             labeled_addresses: call.labels,
             traces: if run_result.is_ok() { traces.into_inner() } else { call.traces.clone() },
             coverage: coverage.into_inner(),
-            debug,
-            breakpoints,
+            state,
+            debug: Default::default(),
+            breakpoints: Default::default(),
         };
 
         match run_result {
@@ -422,6 +394,8 @@ pub struct FuzzTestResult {
 
     /// Raw coverage info
     pub coverage: Option<HitMaps>,
+
+    pub state: EvmFuzzState,
 
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,

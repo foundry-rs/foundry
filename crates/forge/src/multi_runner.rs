@@ -198,6 +198,7 @@ impl MultiContractRunner {
             self.sender,
             self.errors.as_ref(),
             libs,
+            self.debug,
         );
         runner.run_tests(filter, test_options, Some(&self.known_contracts))
     }
