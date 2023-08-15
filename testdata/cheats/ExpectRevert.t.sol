@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "./Cheats.sol";
+import "./Vm.sol";
 
 contract Reverter {
     error CustomError();
@@ -68,109 +68,121 @@ contract Dummy {
 }
 
 contract ExpectRevertTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function shouldRevert() internal {
+        revert();
+    }
 
     function testExpectRevertString() public {
         Reverter reverter = new Reverter();
-        cheats.expectRevert("revert");
+        vm.expectRevert("revert");
         reverter.revertWithMessage("revert");
     }
 
+    function testFailRevertNotOnImmediateNextCall() public {
+        Reverter reverter = new Reverter();
+        // expectRevert should only work for the next call. However,
+        // we do not inmediately revert, so,
+        // we fail.
+        vm.expectRevert("revert");
+        reverter.doNotRevert();
+        reverter.revertWithMessage("revert");
+    }
+
+    function testFailDanglingOnInternalCall() public {
+        vm.expectRevert();
+        shouldRevert();
+    }
+
     function testExpectRevertConstructor() public {
-        cheats.expectRevert("constructor revert");
+        vm.expectRevert("constructor revert");
         new ConstructorReverter("constructor revert");
     }
 
     function testExpectRevertBuiltin() public {
         Reverter reverter = new Reverter();
-        cheats.expectRevert(abi.encodeWithSignature("Panic(uint256)", 0x11));
+        vm.expectRevert(abi.encodeWithSignature("Panic(uint256)", 0x11));
         reverter.panic();
     }
 
     function testExpectRevertCustomError() public {
         Reverter reverter = new Reverter();
-        cheats.expectRevert(abi.encodePacked(Reverter.CustomError.selector));
+        vm.expectRevert(abi.encodePacked(Reverter.CustomError.selector));
         reverter.revertWithCustomError();
     }
 
     function testExpectRevertNested() public {
         Reverter reverter = new Reverter();
         Reverter inner = new Reverter();
-        cheats.expectRevert("nested revert");
+        vm.expectRevert("nested revert");
         reverter.nestedRevert(inner, "nested revert");
     }
 
     function testExpectRevertCallsThenReverts() public {
         Reverter reverter = new Reverter();
         Dummy dummy = new Dummy();
-        cheats.expectRevert("called a function and then reverted");
+        vm.expectRevert("called a function and then reverted");
         reverter.callThenRevert(dummy, "called a function and then reverted");
     }
 
     function testDummyReturnDataForBigType() public {
         Dummy dummy = new Dummy();
-        cheats.expectRevert("reverted with large return type");
+        vm.expectRevert("reverted with large return type");
         dummy.largeReturnType();
     }
 
     function testFailExpectRevertErrorDoesNotMatch() public {
         Reverter reverter = new Reverter();
-        cheats.expectRevert("should revert with this message");
+        vm.expectRevert("should revert with this message");
         reverter.revertWithMessage("but reverts with this message");
     }
 
     function testFailExpectRevertDidNotRevert() public {
         Reverter reverter = new Reverter();
-        cheats.expectRevert("does not revert, but we think it should");
+        vm.expectRevert("does not revert, but we think it should");
         reverter.doNotRevert();
     }
 
     function testExpectRevertNoReason() public {
         Reverter reverter = new Reverter();
-        cheats.expectRevert(bytes(""));
+        vm.expectRevert(bytes(""));
         reverter.revertWithoutReason();
     }
 
     function testExpectRevertAnyRevert() public {
-        cheats.expectRevert();
+        vm.expectRevert();
         new ConstructorReverter("hello this is a revert message");
 
         Reverter reverter = new Reverter();
-        cheats.expectRevert();
+        vm.expectRevert();
         reverter.revertWithMessage("this is also a revert message");
 
-        cheats.expectRevert();
+        vm.expectRevert();
         reverter.panic();
 
-        cheats.expectRevert();
+        vm.expectRevert();
         reverter.revertWithCustomError();
 
         Reverter reverter2 = new Reverter();
-        cheats.expectRevert();
+        vm.expectRevert();
         reverter.nestedRevert(reverter2, "this too is a revert message");
 
         Dummy dummy = new Dummy();
-        cheats.expectRevert();
+        vm.expectRevert();
         reverter.callThenRevert(dummy, "revert message 4 i ran out of synonims for also");
 
-        cheats.expectRevert();
+        vm.expectRevert();
         reverter.revertWithoutReason();
     }
 
     function testFailExpectRevertAnyRevertDidNotRevert() public {
         Reverter reverter = new Reverter();
-        cheats.expectRevert();
+        vm.expectRevert();
         reverter.doNotRevert();
     }
 
     function testFailExpectRevertDangling() public {
-        cheats.expectRevert("dangling");
-    }
-
-    function testExpectRevertInvalidEnv() public {
-        cheats.expectRevert(
-            "Failed to get environment variable `_testExpectRevertInvalidEnv` as type `string`: environment variable not found"
-        );
-        string memory val = cheats.envString("_testExpectRevertInvalidEnv");
+        vm.expectRevert("dangling");
     }
 }

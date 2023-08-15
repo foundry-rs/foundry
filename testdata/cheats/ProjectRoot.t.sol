@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "./Cheats.sol";
+import "./Vm.sol";
 
 contract ProjectRootTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testProjectRoot() public {
-        bytes memory manifestDirBytes = bytes(cheats.envString("CARGO_MANIFEST_DIR"));
+        bytes memory manifestDirBytes = bytes(vm.envString("CARGO_MANIFEST_DIR"));
 
         // replace "forge" suffix with "testdata" suffix to get expected project root from manifest dir
         bytes memory expectedRootSuffix = bytes("testd");
@@ -17,6 +17,6 @@ contract ProjectRootTest is DSTest {
         }
         bytes memory expectedRootDir = abi.encodePacked(manifestDirBytes, "ata");
 
-        assertEq(cheats.projectRoot(), string(expectedRootDir));
+        assertEq(vm.projectRoot(), string(expectedRootDir));
     }
 }

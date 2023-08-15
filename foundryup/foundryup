@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
-FOUNDRY_DIR=${FOUNDRY_DIR-"$HOME/.foundry"}
+BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
+FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 
@@ -70,11 +71,11 @@ main() {
     exit 0
   fi
 
-  FOUNDRYUP_REPO=${FOUNDRYUP_REPO-foundry-rs/foundry}
+  FOUNDRYUP_REPO=${FOUNDRYUP_REPO:-foundry-rs/foundry}
 
   # Install by downloading binaries
   if [[ "$FOUNDRYUP_REPO" == "foundry-rs/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
-    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION-nightly}
+    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-nightly}
     FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
 
     # Normalize versions (handle channels, versions without v prefix
@@ -180,7 +181,7 @@ EOF
   # Install by cloning the repo with the provided branch/tag
   else
     need_cmd cargo
-    FOUNDRYUP_BRANCH=${FOUNDRYUP_BRANCH-master}
+    FOUNDRYUP_BRANCH=${FOUNDRYUP_BRANCH:-master}
     REPO_PATH="$FOUNDRY_DIR/$FOUNDRYUP_REPO"
 
     # If repo path does not exist, grab the author from the repo, make a directory in .foundry, cd to it and clone.

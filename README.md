@@ -14,10 +14,10 @@
 
 Foundry consists of:
 
--   [**Forge**](./forge): Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   [**Cast**](./cast): Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   [**Anvil**](./anvil): Local Ethereum node, akin to Ganache, Hardhat Network.
--   [**Chisel**](./chisel): Fast, utilitarian, and verbose solidity REPL.
+-   [**Forge**](./crates/forge): Ethereum testing framework (like Truffle, Hardhat and DappTools).
+-   [**Cast**](./crates/cast): Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
+-   [**Anvil**](./crates/anvil): Local Ethereum node, akin to Ganache, Hardhat Network.
+-   [**Chisel**](./crates/chisel): Fast, utilitarian, and verbose solidity REPL.
 
 **Need help getting started with Foundry? Read the [📖 Foundry Book][foundry-book] (WIP)!**
 
@@ -25,69 +25,9 @@ Foundry consists of:
 
 ## Installation
 
-_Having issues? See the [troubleshooting section](#troubleshooting-installation)_.
+See the [installation guide](https://book.getfoundry.sh/getting-started/installation) in the book.
 
-First run the command below to get `foundryup`, the Foundry toolchain installer:
-
-```sh
-curl -L https://foundry.paradigm.xyz | bash
-```
-
-If you do not want to use the redirect, feel free to manually download the
-foundryup installation script from [here](./foundryup/install).
-
-Then, run `foundryup` in a new terminal session or after reloading your `PATH`.
-
-Other ways to use `foundryup`, and other documentation, can be found [here](./foundryup). Happy forging!
-
-### Installing from Source
-
-For people that want to install from source, you can do so like below:
-
-```sh
-git clone https://github.com/foundry-rs/foundry
-cd foundry
-# install cast + forge
-cargo install --path ./cli --profile local --bins --locked --force
-# install anvil
-cargo install --path ./anvil --profile local --locked --force
-# install chisel
-cargo install --path ./chisel --profile local --locked --force
-```
-
-Or via `cargo install --git https://github.com/foundry-rs/foundry --profile local --locked foundry-cli anvil chisel`.
-
-### Installing for CI in Github Action
-
-See [https://github.com/foundry-rs/foundry-toolchain](https://github.com/foundry-rs/foundry-toolchain) GitHub Action.
-
-### Installing via Docker
-
-Foundry maintains a [Docker image repository](https://github.com/foundry-rs/foundry/pkgs/container/foundry).
-
-You can pull the latest release image like so:
-
-```sh
-docker pull ghcr.io/foundry-rs/foundry:latest
-```
-
-For examples and guides on using this image, see the [Docker section](https://book.getfoundry.sh/tutorials/foundry-docker.html) in the book.
-
-### Installing on Windows
-
-If you encounter issues installing Foundry on Windows, we recommend trying
-to use [Windows Subsystem for Linux][wsl] (WSL) as an alternative.
-WSL allows you to run Linux applications directly on Windows, which can help
-avoid some common installation problems.
-
-You can follow the instructions provided by Microsoft to install WSL on your
-Windows machine [here][wsl].
-
-[wsl]: https://learn.microsoft.com/en-us/windows/wsl/install
-
-### Manual Download
-
-You can manually download nightly releases [here](https://github.com/foundry-rs/foundry/releases).
+If you're experiencing any issues while installing, check out [Getting Help](#getting-help) and the [FAQ](https://book.getfoundry.sh/faq).
 
 ## Forge
 
@@ -133,15 +73,15 @@ _Note: In the above benchmarks, compilation was always skipped_
 
 Cast is a swiss army knife for interacting with Ethereum applications from the command line.
 
-More documentation can be found in the [cast package](./cast).
+More documentation can be found in the [cast package](./crates/cast).
 
 ## Configuration
 
 ### Using `foundry.toml`
 
-Foundry is designed to be very configurable. You can configure Foundry using a file called [`foundry.toml`](./config) in the root of your project, or any other parent directory. See [config package](./config/README.md#all-options) for all available options.
+Foundry is designed to be very configurable. You can configure Foundry using a file called [`foundry.toml`](./crates/config) in the root of your project, or any other parent directory. See [config package](./crates/config/README.md#all-options) for all available options.
 
-Configuration can be arbitrarily namespaced by profiles. The default profile is named `default` (see ["Default Profile"](./config/README.md#default-profile)).
+Configuration can be arbitrarily namespaced by profiles. The default profile is named `default` (see ["Default Profile"](./crates/config/README.md#default-profile)).
 
 You can select another profile using the `FOUNDRY_PROFILE` environment variable. You can also override parts of your configuration using `FOUNDRY_` or `DAPP_` prefixed environment variables, like `FOUNDRY_SRC`.
 
@@ -153,7 +93,7 @@ By default `forge config` shows the currently selected foundry profile and its v
 
 ### DappTools Compatibility
 
-You can re-use your `.dapprc` environment variables by running `source .dapprc` beforehand using a Foundry tool.
+You can re-use your `.dapprc` environment variables by running `source .dapprc` before using a Foundry tool.
 
 ### Additional Configuration
 
@@ -161,35 +101,6 @@ You can find additional setup and configurations guides in the [Foundry Book][fo
 
 -   [Setting up VSCode][vscode-setup]
 -   [Shell autocompletions][shell-setup]
-
-### Troubleshooting Installation
-
-#### `libusb` Error When Running `forge`/`cast`
-
-If you are using the binaries as released, you may see the following error on MacOS:
-
-```sh
-dyld: Library not loaded: /usr/local/opt/libusb/lib/libusb-1.0.0.dylib
-```
-
-In order to fix this, you must install `libusb` like so:
-
-```sh
-brew install libusb
-```
-
-#### Out of Date `GLIBC` Error When Running `forge` From Default `foundryup` Install:
-
-If you run into an error resembling the following when using `foundryup`:
-
-```sh
-forge: /lib/x86_64-linux-gnu/libc.so.6: version 'GLIBC_2.29' not found (required by forge)
-```
-
-There are 2 workarounds:
-
-1. Building from source: `foundryup -b master`
-2. [Using Docker](https://book.getfoundry.sh/getting-started/installation.html#using-with-docker)
 
 ## Contributing
 

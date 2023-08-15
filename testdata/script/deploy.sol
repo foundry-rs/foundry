@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+pragma solidity 0.8.18;
 
 import {DSTest} from "../lib/ds-test/src/test.sol";
-import {Cheats} from "../cheats/Cheats.sol";
+import {Vm} from "../cheats/Vm.sol";
 
 contract Greeter {
     string name;
@@ -23,16 +23,16 @@ contract Greeter {
 }
 
 contract Deploy is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     Greeter greeter;
     string greeting;
 
     function run() external {
-        cheats.startBroadcast();
+        vm.startBroadcast();
         greeter = new Greeter();
         greeting = greeter.greeting("john");
         greeter.setAge(123);
-        cheats.stopBroadcast();
+        vm.stopBroadcast();
     }
 }

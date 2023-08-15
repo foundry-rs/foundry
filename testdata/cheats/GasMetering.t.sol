@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "./Cheats.sol";
+import "./Vm.sol";
 
 contract B {
     function a() public returns (uint256) {
@@ -11,7 +11,7 @@ contract B {
 }
 
 contract GasMeteringTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testGasMetering() public {
         uint256 gas_start = gasleft();
@@ -20,13 +20,13 @@ contract GasMeteringTest is DSTest {
 
         uint256 gas_end_normal = gas_start - gasleft();
 
-        cheats.pauseGasMetering();
+        vm.pauseGasMetering();
         uint256 gas_start_not_metered = gasleft();
 
         addInLoop();
 
         uint256 gas_end_not_metered = gas_start_not_metered - gasleft();
-        cheats.resumeGasMetering();
+        vm.resumeGasMetering();
 
         uint256 gas_start_metered = gasleft();
 
@@ -46,13 +46,13 @@ contract GasMeteringTest is DSTest {
 
         uint256 gas_end_normal = gas_start - gasleft();
 
-        cheats.pauseGasMetering();
+        vm.pauseGasMetering();
         uint256 gas_start_not_metered = gasleft();
 
         b.a();
 
         uint256 gas_end_not_metered = gas_start_not_metered - gasleft();
-        cheats.resumeGasMetering();
+        vm.resumeGasMetering();
 
         uint256 gas_start_metered = gasleft();
 
@@ -65,13 +65,13 @@ contract GasMeteringTest is DSTest {
     }
 
     function testGasMeteringContractCreate() public {
-        cheats.pauseGasMetering();
+        vm.pauseGasMetering();
         uint256 gas_start_not_metered = gasleft();
 
         B b = new B();
 
         uint256 gas_end_not_metered = gas_start_not_metered - gasleft();
-        cheats.resumeGasMetering();
+        vm.resumeGasMetering();
 
         assertEq(gas_end_not_metered, 0);
     }

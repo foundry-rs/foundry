@@ -7,3 +7,6 @@ binop_separator = "Back"
 trailing_comma = "Vertical"
 trailing_semicolon = false
 use_field_init_shorthand = true
+
+# Ignore automatically-generated code.
+ignore = ["crates/abi/src/bindings"]
