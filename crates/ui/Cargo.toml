@@ -10,7 +10,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-forge.workspace = true
+foundry-evm.workspace = true
 foundry-common.workspace = true
 
 ethers.workspace = true

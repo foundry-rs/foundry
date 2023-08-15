@@ -2,7 +2,7 @@
 
 use anvil_core::eth::transaction::IMPERSONATED_SIGNATURE;
 use ethers::types::{Address, Signature};
-use forge::hashbrown::HashSet;
+use foundry_evm::hashbrown::HashSet;
 use parking_lot::RwLock;
 use std::sync::Arc;
 use tracing::trace;

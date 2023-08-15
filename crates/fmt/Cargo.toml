@@ -21,13 +21,13 @@ solang-parser.workspace = true
 
 # misc
 semver = "1"
-itertools = "0.10"
+itertools.workspace = true
 thiserror = "1"
 ariadne = "0.2"
 tracing = "0.1"
 
 [dev-dependencies]
 pretty_assertions = "1"
-itertools = "0.10"
+itertools.workspace = true
 toml = "0.7"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -9,9 +9,9 @@ use ethers_solc::{
     CompilerInput, CompilerOutput, EvmVersion, Solc,
 };
 use eyre::Result;
-use forge::executor::{opts::EvmOpts, Backend};
 use forge_fmt::solang_ext::SafeUnwrap;
 use foundry_config::{Config, SolcReq};
+use foundry_evm::executor::{opts::EvmOpts, Backend};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt;

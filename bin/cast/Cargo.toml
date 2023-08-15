@@ -1,5 +1,6 @@
 [package]
-name = "foundry-cli"
+name = "cast"
+description = "Command-line tool for performing Ethereum RPC calls"
 
 version.workspace = true
 edition.workspace = true
@@ -17,11 +18,11 @@ vergen = { version = "8", default-features = false, features = ["build", "git", 
 forge-fmt.workspace = true
 forge-doc.workspace = true
 foundry-utils.workspace = true
-# forge.workspace = true
+forge.workspace = true
 foundry-config.workspace = true
 foundry-common.workspace = true
 foundry-evm.workspace = true
-# cast.workspace = true
+cast.workspace = true
 ui.workspace = true
 
 # eth
@@ -40,9 +41,9 @@ tracing = "0.1"
 watchexec = "2"
 comfy-table = "6"
 reqwest = { version = "0.11", default-features = false, features = [
-  "json",
-  "rustls",
-  "rustls-tls-native-roots",
+    "json",
+    "rustls",
+    "rustls-tls-native-roots",
 ] }
 dotenvy = "0.15"
 dialoguer = { version = "0.10", default-features = false }
@@ -95,5 +96,37 @@ default = ["rustls"]
 rustls = ["ethers/rustls"]
 openssl = ["ethers/openssl"]
 
-# feature for integration tests that test external projects
-external-integration-tests = []
+[[bench]]
+name = "vanity"
+harness = false
+
+### STANDALONE
+
+[dependencies]
+foundry-utils.workspace = true
+foundry-evm.workspace = true
+foundry-config.workspace = true
+foundry-common.workspace = true
+
+ethers-etherscan.workspace = true
+ethers-contract = { workspace = true, features = ["abigen"] }
+ethers-core.workspace = true
+ethers-providers.workspace = true
+ethers-signers.workspace = true
+futures = "0.3"
+eyre = "0.6"
+serde = "1"
+serde_json = "1"
+chrono.workspace = true
+hex.workspace = true
+rayon = "1"
+
+# aws
+rusoto_core = { version = "0.48", default-features = false, optional = true }
+rusoto_kms = { version = "0.48", default-features = false, optional = true }
+evm-disassembler = "0.2"
+
+[dev-dependencies]
+async-trait = "0.1"
+tokio = "1"
+thiserror = "1"

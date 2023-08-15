@@ -8,17 +8,13 @@ use ethers::{
     types::H256,
     utils::{rlp, rlp::RlpStream},
 };
-use forge::{
-    executor::DatabaseRef,
+use foundry_evm::{
+    executor::{backend::DatabaseError, DatabaseRef},
     revm::{
         db::{CacheDB, DbAccount},
-        primitives::{Bytecode, B160, U256 as rU256},
+        primitives::{AccountInfo, Bytecode, Log, B160, U256 as rU256},
     },
     utils::{b160_to_h160, b256_to_h256, ru256_to_u256, u256_to_ru256},
-};
-use foundry_evm::{
-    executor::backend::DatabaseError,
-    revm::primitives::{AccountInfo, Log},
     HashMap as Map,
 };
 use memory_db::HashKey;

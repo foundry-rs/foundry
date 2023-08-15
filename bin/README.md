@@ -8,7 +8,7 @@ See [Installation](../README.md#Installation).
 
 ## Usage
 
-Read the [📖 Foundry Book][foundry-book]
+Read the [📖 Foundry Book][foundry-book].
 
 ## Debugging
 

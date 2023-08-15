@@ -36,7 +36,7 @@ pub(crate) const VERSION_MESSAGE: &str = concat!(
     ")"
 );
 
-/// Chisel is a fast, utilitarian, and verbose solidity REPL.
+/// Fast, utilitarian, and verbose Solidity REPL.
 #[derive(Debug, Parser)]
 #[clap(name = "chisel", version = VERSION_MESSAGE)]
 pub struct ChiselParser {

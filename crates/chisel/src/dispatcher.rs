@@ -8,15 +8,15 @@ use crate::prelude::{
     SolidityHelper,
 };
 use ethers::{abi::ParamType, contract::Lazy, types::Address, utils::hex};
-use forge::{
+use forge_fmt::FormatterConfig;
+use foundry_config::{Config, RpcEndpoint};
+use foundry_evm::{
     decode::decode_console_logs,
     trace::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-use forge_fmt::FormatterConfig;
-use foundry_config::{Config, RpcEndpoint};
 use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
