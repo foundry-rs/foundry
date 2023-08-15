@@ -77,16 +77,6 @@ fn expect_revert(state: &mut Cheatcodes, reason: Option<Bytes>, depth: u64) -> R
     Ok(Bytes::new())
 }
 
-fn expect_emit(
-    state: &mut Cheatcodes,
-    address: Option<H160>,
-    depth: u64,
-    checks: [bool; 4],
-) -> Result {
-    state.expected_emits.push_back(ExpectedEmit { depth, address, checks, ..Default::default() });
-    Ok(Bytes::new())
-}
-
 macro_rules! success_return {
     ($is_create:expr) => {
         Ok(if $is_create {
