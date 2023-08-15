@@ -256,11 +256,14 @@ fn create_fork_request<DB: DatabaseExt>(
     Ok(fork)
 }
 
+/// Retrieve the logs specified for the current fork.
+/// Equivalent to eth_getLogs but on a cheatcode.
 fn eth_getlogs<DB: DatabaseExt>(data: &mut EVMData<DB>, inner: &EthGetLogsCall) -> Result {
     let url = data.db.active_fork_url().ok_or(fmt_err!("No active fork url found"))?;
     if inner.0 > U256::from(u64::MAX) || inner.1 > U256::from(u64::MAX) {
         return Err(fmt_err!("Blocks in block range must be less than 2^64 - 1"))
     }
+    // Cannot possibly have more than 4 topics in the topics array.
     if inner.3.len() > 4 {
         return Err(fmt_err!("Topics array must be less than 4 elements"))
     }
