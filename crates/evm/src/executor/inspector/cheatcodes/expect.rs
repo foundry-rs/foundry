@@ -52,7 +52,7 @@ pub struct ExpectedRevertWithAddress {
 impl ExpectedRevertWithAddress {
     pub fn compare_revert(&mut self, other: H160, data: Bytes) -> bool {
         if self.address != other {
-            return false;
+            return false
         }
 
         if let Some(ref expected_data) = self.reason {
@@ -61,7 +61,7 @@ impl ExpectedRevertWithAddress {
 
             self.captured_revert_data = Some(raw_error_data);
 
-            return check;
+            return check
         }
 
         true
@@ -101,7 +101,7 @@ fn stringify(data: &[u8]) -> String {
 fn get_raw_error(data: Bytes) -> Bytes {
     if data.len() >= 4 && matches!(data[..4].try_into(), Ok(ERROR_PREFIX | REVERT_PREFIX)) {
         if let Ok(bytes) = Bytes::decode(&data[4..]) {
-            return bytes;
+            return bytes
         }
     }
 
@@ -184,7 +184,7 @@ pub fn handle_expected_reverts_with_address(
 ) {
     // If this is empty we don't need to match any revert
     if state.expected_reverts_with_address.is_empty() {
-        return;
+        return
     }
 
     // Take the first expected revert and...
@@ -243,7 +243,7 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address
     // This allows a contract to arbitrarily emit more events than expected (additive behavior),
     // as long as all the previous events were matched in the order they were expected to be.
     if state.expected_emits.iter().all(|expected| expected.found) {
-        return;
+        return
     }
 
     // if there's anything to fill, we need to pop back.
@@ -620,7 +620,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::MockCall0(inner) => {
             // TODO: Does this increase gas usage?
             if let Err(err) = data.journaled_state.load_account(h160_to_b160(inner.0), data.db) {
-                return Some(Err(err.into()));
+                return Some(Err(err.into()))
             }
 
             // Etches a single byte onto the account if it is empty to circumvent the `extcodesize`
@@ -644,7 +644,7 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::MockCall1(inner) => {
             if let Err(err) = data.journaled_state.load_account(h160_to_b160(inner.0), data.db) {
-                return Some(Err(err.into()));
+                return Some(Err(err.into()))
             }
 
             state.mocked_calls.entry(inner.0).or_default().insert(
