@@ -31,7 +31,7 @@ use foundry_config::{
     },
     get_available_profiles, Config,
 };
-use foundry_evm::utils::evm_spec;
+use foundry_evm::{trace::decoder::default_precompiles, utils::evm_spec};
 use regex::Regex;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -562,7 +562,13 @@ async fn test(
         let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
         let sig_identifier =
             SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
-        let precompiles: HashMap<_, _> = config.precompiles.into_iter().collect();
+        // Set up precompiles
+        // If empty, we wanna use the default precompiles.
+        let precompiles: HashMap<_, _> = match config.precompiles.len() {
+            0 => default_precompiles(),
+            // Else, we assume the user has specified the precompiles they want to use.
+            _ => config.precompiles.into_iter().collect(),
+        };
 
         let mut total_passed = 0;
         let mut total_failed = 0;

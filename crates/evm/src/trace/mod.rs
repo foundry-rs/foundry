@@ -24,7 +24,7 @@ use yansi::{Color, Paint};
 /// Identifiers figure out what ABIs and labels belong to all the addresses of the trace.
 pub mod identifier;
 
-mod decoder;
+pub mod decoder;
 mod executor;
 pub mod node;
 pub mod utils;
