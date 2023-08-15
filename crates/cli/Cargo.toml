@@ -25,7 +25,8 @@ foundry-evm.workspace = true
 ui.workspace = true
 
 # eth
-ethers = { workspace = true, features = ["rustls"] }
+ethers = { workspace = true, features = ["ledger", "trezor"] }
+ethers-signers = { workspace = true, features = ["aws"] }
 solang-parser.workspace = true
 eth-keystore = "0.5"
 
@@ -59,6 +60,10 @@ dunce = "1"
 path-slash = "0.2"
 tempfile = "3"
 
+# aws
+rusoto_core = { version = "0.48", default-features = false }
+rusoto_kms = { version = "0.48", default-features = false }
+
 # misc
 eyre = "0.6"
 color-eyre = "0.6"
@@ -82,7 +87,6 @@ parking_lot = "0.12"
 [dev-dependencies]
 anvil.workspace = true
 foundry-utils.workspace = true
-foundry-cli-test-utils.path = "test-utils"
 pretty_assertions = "1"
 toml = "0.7"
 serial_test = "2"

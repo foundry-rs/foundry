@@ -9,11 +9,11 @@ use ethers::{
     solc::{artifacts::BytecodeHash, remappings::Remapping},
     types::Address,
 };
-use foundry_cli_test_utils::{
+use foundry_config::Config;
+use foundry_tests::{
     forgetest, forgetest_async,
     util::{OutputExt, TestCommand, TestProject},
 };
-use foundry_config::Config;
 use std::{path::PathBuf, str::FromStr};
 
 /// This will insert _dummy_ contract that uses a library

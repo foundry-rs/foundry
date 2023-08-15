@@ -5,15 +5,15 @@ use ethers::{
     solc::artifacts::RevertStrings,
     types::{Address, H256, U256},
 };
-use forge::executor::opts::EvmOpts;
-use foundry_cli_test_utils::{
-    ethers_solc::{remappings::Remapping, EvmVersion},
-    forgetest, forgetest_init, pretty_eq,
-    util::{pretty_err, OutputExt, TestCommand, TestProject},
-};
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     Config, FuzzConfig, InvariantConfig, OptimizerDetails, SolcReq,
+};
+use foundry_evm::executor::opts::EvmOpts;
+use foundry_tests::{
+    ethers_solc::{remappings::Remapping, EvmVersion},
+    forgetest, forgetest_init, pretty_eq,
+    util::{pretty_err, OutputExt, TestCommand, TestProject},
 };
 use path_slash::PathBufExt;
 use std::{fs, path::PathBuf, str::FromStr};

@@ -1,6 +1,6 @@
 //! Contains various tests for checking cast commands
 
-use foundry_cli_test_utils::{
+use foundry_tests::{
     casttest,
     util::{OutputExt, TestCommand, TestProject},
 };

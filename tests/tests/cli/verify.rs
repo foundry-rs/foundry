@@ -2,7 +2,7 @@
 //! and sourcify
 
 use crate::utils::{self, EnvExternalities};
-use foundry_cli_test_utils::{
+use foundry_tests::{
     forgetest,
     util::{TestCommand, TestProject},
 };

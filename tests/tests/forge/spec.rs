@@ -1,5 +1,5 @@
 use crate::{config::*, test_helpers::filter::Filter};
-use forge::revm::primitives::SpecId;
+use foundry_evm::revm::primitives::SpecId;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_shanghai_compat() {

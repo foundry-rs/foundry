@@ -1,9 +1,9 @@
 //! Contains various tests for checking `forge test`
-use foundry_cli_test_utils::{
+use foundry_config::Config;
+use foundry_tests::{
     forgetest, forgetest_init,
     util::{OutputExt, TestCommand, TestProject},
 };
-use foundry_config::Config;
 use foundry_utils::rpc;
 use std::{path::PathBuf, str::FromStr};
 

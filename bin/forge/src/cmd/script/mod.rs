@@ -785,7 +785,7 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855"#,
 mod tests {
     use super::*;
     use foundry_cli::utils::LoadConfig;
-    use foundry_cli_test_utils::tempfile::tempdir;
+    use foundry_tests::tempfile::tempdir;
     use foundry_config::UnresolvedEnvVarError;
     use std::fs;
 

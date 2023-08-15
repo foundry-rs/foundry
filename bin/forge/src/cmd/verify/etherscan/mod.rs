@@ -454,7 +454,7 @@ mod tests {
     use super::*;
     use clap::Parser;
     use foundry_cli::utils::LoadConfig;
-    use foundry_cli_test_utils::tempfile::tempdir;
+    use foundry_tests::tempfile::tempdir;
     use foundry_common::fs;
 
     #[test]

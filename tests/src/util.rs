@@ -322,13 +322,13 @@ impl TestProject {
 
     /// Adds DSTest as a source under "test.sol"
     pub fn insert_ds_test(&self) -> PathBuf {
-        let s = include_str!("../../../../testdata/lib/ds-test/src/test.sol");
+        let s = include_str!("../../testdata/lib/ds-test/src/test.sol");
         self.inner().add_source("test.sol", s).unwrap()
     }
 
     /// Adds `console.sol` as a source under "console.sol"
     pub fn insert_console(&self) -> PathBuf {
-        let s = include_str!("../../../../testdata/logs/console.sol");
+        let s = include_str!("../../testdata/logs/console.sol");
         self.inner().add_source("console.sol", s).unwrap()
     }
 

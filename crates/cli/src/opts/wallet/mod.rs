@@ -1,6 +1,5 @@
 use crate::opts::error::PrivateKeyError;
 use async_trait::async_trait;
-use cast::{AwsChainProvider, AwsClient, AwsHttpClient, AwsRegion, KmsClient};
 use clap::Parser;
 use ethers::{
     signers::{
@@ -16,6 +15,11 @@ use ethers::{
 use eyre::{bail, Result, WrapErr};
 use foundry_common::fs;
 use foundry_config::Config;
+use rusoto_core::{
+    credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
+    request::HttpClient as AwsHttpClient, Client as AwsClient,
+};
+use rusoto_kms::KmsClient;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},

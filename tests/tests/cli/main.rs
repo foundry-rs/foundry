@@ -22,14 +22,11 @@ mod utils;
 #[cfg(not(feature = "external-integration-tests"))]
 mod verify;
 
-// import forge utils as mod
 #[allow(unused)]
-#[path = "../../src/utils/mod.rs"]
+#[path = "../../../crates/cli/src/utils/mod.rs"]
 pub(crate) mod forge_utils;
 
 #[cfg(feature = "external-integration-tests")]
 mod integration;
 
 pub mod constants;
-
-fn main() {}

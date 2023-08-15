@@ -83,7 +83,6 @@ parking_lot = "0.12"
 [dev-dependencies]
 anvil.workspace = true
 foundry-utils.workspace = true
-foundry-cli-test-utils.path = "test-utils"
 pretty_assertions = "1"
 toml = "0.7"
 serial_test = "2"

@@ -1,6 +1,6 @@
 //! svm sanity checks
 
-use foundry_cli_test_utils::{forgetest_init, TestCommand, TestProject};
+use foundry_tests::{forgetest_init, TestCommand, TestProject};
 use semver::Version;
 use svm::{self, Platform};
 

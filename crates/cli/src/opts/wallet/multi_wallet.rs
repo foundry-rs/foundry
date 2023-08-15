@@ -1,5 +1,4 @@
 use super::{WalletSigner, WalletTrait};
-use cast::{AwsChainProvider, AwsClient, AwsHttpClient, AwsRegion, KmsClient};
 use clap::Parser;
 use ethers::{
     prelude::{Middleware, Signer},
@@ -10,6 +9,11 @@ use eyre::{Context, ContextCompat, Result};
 use foundry_common::RetryProvider;
 use foundry_config::Config;
 use itertools::izip;
+use rusoto_core::{
+    credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
+    request::HttpClient as AwsHttpClient, Client as AwsClient,
+};
+use rusoto_kms::KmsClient;
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},

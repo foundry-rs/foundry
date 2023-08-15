@@ -1,14 +1,13 @@
 //! Contains various tests related to forge script
 use crate::constants::TEMPLATE_CONTRACT;
 use anvil::{spawn, NodeConfig};
-use cast::SimpleCast;
 use ethers::abi::Address;
-use foundry_cli_test_utils::{
+use foundry_config::Config;
+use foundry_tests::{
     forgetest, forgetest_async, forgetest_init,
     util::{OutputExt, TestCommand, TestProject},
     ScriptOutcome, ScriptTester,
 };
-use foundry_config::Config;
 use foundry_utils::rpc;
 use regex::Regex;
 use serde_json::Value;
@@ -129,7 +128,7 @@ contract Demo {
 forgetest_async!(
     can_execute_script_command_with_manual_gas_limit_unlocked,
     |prj: TestProject, mut cmd: TestCommand| async move {
-        foundry_cli_test_utils::util::initialize(prj.root());
+        foundry_tests::util::initialize(prj.root());
         let deploy_script = prj
             .inner()
             .add_source(
@@ -189,7 +188,7 @@ contract DeployScript is Script {
 forgetest_async!(
     can_execute_script_command_with_manual_gas_limit,
     |prj: TestProject, mut cmd: TestCommand| async move {
-        foundry_cli_test_utils::util::initialize(prj.root());
+        foundry_tests::util::initialize(prj.root());
         let deploy_script = prj
             .inner()
             .add_source(
@@ -302,7 +301,7 @@ contract Demo {
 forgetest_async!(
     can_broadcast_script_skipping_simulation,
     |prj: TestProject, mut cmd: TestCommand| async move {
-        foundry_cli_test_utils::util::initialize(prj.root());
+        foundry_tests::util::initialize(prj.root());
         // This example script would fail in on-chain simulation
         let deploy_script = prj
             .inner()
@@ -367,11 +366,9 @@ contract DeployScript is Script {
         let run_log =
             std::fs::read_to_string("broadcast/DeployScript.sol/1/run-latest.json").unwrap();
         let run_object: Value = serde_json::from_str(&run_log).unwrap();
-        let contract_address = SimpleCast::to_checksum_address(
-            &ethers::prelude::H160::from_str(
-                run_object["receipts"][0]["contractAddress"].as_str().unwrap(),
-            )
-            .unwrap(),
+        let contract_address = ethers::utils::to_checksum(
+            &run_object["receipts"][0]["contractAddress"].as_str().unwrap().parse().unwrap(),
+            None,
         );
 
         let run_code = r#"
