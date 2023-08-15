@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "../cheats/Cheats.sol";
+import "../cheats/Vm.sol";
 
 // https://github.com/foundry-rs/foundry/issues/2629
 contract Issue2629Test is DSTest {
-    Cheats constant vm = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testSelectFork() public {
         address coinbase = 0x0193d941b50d91BE6567c7eE1C0Fe7AF498b4137;

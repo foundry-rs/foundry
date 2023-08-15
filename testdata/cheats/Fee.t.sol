@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "./Cheats.sol";
+import "./Vm.sol";
 
 contract FeeTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testFee() public {
-        cheats.fee(10);
+        vm.fee(10);
         assertEq(block.basefee, 10, "fee failed");
     }
 
     function testFeeFuzzed(uint256 fee) public {
-        cheats.fee(fee);
+        vm.fee(fee);
         assertEq(block.basefee, fee, "fee failed");
     }
 }

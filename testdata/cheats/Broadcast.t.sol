@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "./Cheats.sol";
+import "./Vm.sol";
+
+library F {
+    function t2() public pure returns (uint256) {
+        return 1;
+    }
+}
 
 contract Test is DSTest {
     uint256 public changed = 0;
@@ -27,14 +33,8 @@ contract Test is DSTest {
     }
 }
 
-library F {
-    function t2() public pure returns (uint256) {
-        return 1;
-    }
-}
-
 contract BroadcastTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     // 1st anvil account
     address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
@@ -42,59 +42,59 @@ contract BroadcastTest is DSTest {
     address public ACCOUNT_B = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
 
     function deploy() public {
-        cheats.broadcast(ACCOUNT_A);
+        vm.broadcast(ACCOUNT_A);
         Test test = new Test();
 
         // this wont generate tx to sign
         uint256 b = test.t(4);
 
         // this will
-        cheats.broadcast(ACCOUNT_B);
+        vm.broadcast(ACCOUNT_B);
         test.t(2);
     }
 
     function deployPrivateKey() public {
         string memory mnemonic = "test test test test test test test test test test test junk";
 
-        uint256 privateKey = cheats.deriveKey(mnemonic, 3);
+        uint256 privateKey = vm.deriveKey(mnemonic, 3);
         assertEq(privateKey, 0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6);
 
-        cheats.broadcast(privateKey);
+        vm.broadcast(privateKey);
         Test test = new Test();
 
-        cheats.startBroadcast(privateKey);
+        vm.startBroadcast(privateKey);
         Test test2 = new Test();
-        cheats.stopBroadcast();
+        vm.stopBroadcast();
     }
 
     function deployRememberKey() public {
         string memory mnemonic = "test test test test test test test test test test test junk";
 
-        uint256 privateKey = cheats.deriveKey(mnemonic, 3);
+        uint256 privateKey = vm.deriveKey(mnemonic, 3);
         assertEq(privateKey, 0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6);
 
-        address thisAddress = cheats.rememberKey(privateKey);
+        address thisAddress = vm.rememberKey(privateKey);
         assertEq(thisAddress, 0x90F79bf6EB2c4f870365E785982E1f101E93b906);
 
-        cheats.broadcast(thisAddress);
+        vm.broadcast(thisAddress);
         Test test = new Test();
     }
 
     function deployRememberKeyResume() public {
-        cheats.broadcast(ACCOUNT_A);
+        vm.broadcast(ACCOUNT_A);
         Test test = new Test();
 
         string memory mnemonic = "test test test test test test test test test test test junk";
 
-        uint256 privateKey = cheats.deriveKey(mnemonic, 3);
-        address thisAddress = cheats.rememberKey(privateKey);
+        uint256 privateKey = vm.deriveKey(mnemonic, 3);
+        address thisAddress = vm.rememberKey(privateKey);
 
-        cheats.broadcast(thisAddress);
+        vm.broadcast(thisAddress);
         Test test2 = new Test();
     }
 
     function deployOther() public {
-        cheats.startBroadcast(ACCOUNT_A);
+        vm.startBroadcast(ACCOUNT_A);
         Test tmptest = new Test();
         Test test = new Test();
 
@@ -110,22 +110,22 @@ contract BroadcastTest is DSTest {
         // will trigger a transaction
         test.inc();
 
-        cheats.stopBroadcast();
+        vm.stopBroadcast();
 
         require(test.echoSender() == address(this));
 
-        cheats.broadcast(ACCOUNT_B);
+        vm.broadcast(ACCOUNT_B);
         Test tmptest2 = new Test();
 
-        cheats.broadcast(ACCOUNT_B);
+        vm.broadcast(ACCOUNT_B);
         // will trigger a transaction
         test.t(2);
 
-        cheats.broadcast(ACCOUNT_B);
+        vm.broadcast(ACCOUNT_B);
         // will trigger a transaction from B
         payable(ACCOUNT_A).transfer(2);
 
-        cheats.broadcast(ACCOUNT_B);
+        vm.broadcast(ACCOUNT_B);
         // will trigger a transaction
         test.inc();
 
@@ -133,31 +133,30 @@ contract BroadcastTest is DSTest {
     }
 
     function deployPanics() public {
-        cheats.broadcast(address(0x1337));
+        vm.broadcast(address(0x1337));
         Test test = new Test();
 
         // This panics because this would cause an additional relinking that isnt conceptually correct
         // from a solidity standpoint. Basically, this contract `BroadcastTest`, injects the code of
         // `Test` *into* its code. So it isn't reasonable to break solidity to our will of having *two*
         // versions of `Test` based on the sender/linker.
-        cheats.broadcast(address(0x1338));
+        vm.broadcast(address(0x1338));
         new Test();
 
-        cheats.broadcast(address(0x1338));
+        vm.broadcast(address(0x1338));
         test.t(0);
     }
 
     function deployNoArgs() public {
-        cheats.broadcast();
+        vm.startBroadcast();
         Test test1 = new Test();
 
-        cheats.startBroadcast();
         Test test2 = new Test();
-        cheats.stopBroadcast();
+        vm.stopBroadcast();
     }
 
     function testFailNoBroadcast() public {
-        cheats.stopBroadcast();
+        vm.stopBroadcast();
     }
 }
 
@@ -181,7 +180,7 @@ interface INoLink {
 }
 
 contract BroadcastTestNoLinking is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     // ganache-cli -d 1st
     address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
@@ -190,47 +189,47 @@ contract BroadcastTestNoLinking is DSTest {
     address public ACCOUNT_B = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
 
     function deployDoesntPanic() public {
-        cheats.broadcast(address(ACCOUNT_A));
+        vm.broadcast(address(ACCOUNT_A));
         NoLink test = new NoLink();
 
-        cheats.broadcast(address(ACCOUNT_B));
+        vm.broadcast(address(ACCOUNT_B));
         new NoLink();
 
-        cheats.broadcast(address(ACCOUNT_B));
+        vm.broadcast(address(ACCOUNT_B));
         test.t(0);
     }
 
     function deployMany() public {
-        assert(cheats.getNonce(msg.sender) == 0);
+        assert(vm.getNonce(msg.sender) == 0);
 
-        cheats.startBroadcast();
+        vm.startBroadcast();
 
         for (uint256 i; i < 25; i++) {
             NoLink test9 = new NoLink();
         }
 
-        cheats.stopBroadcast();
+        vm.stopBroadcast();
     }
 
     function deployCreate2() public {
-        cheats.startBroadcast();
+        vm.startBroadcast();
         NoLink test_c2 = new NoLink{salt: bytes32(uint256(1337))}();
         assert(test_c2.view_me() == 1337);
         NoLink test2 = new NoLink();
-        cheats.stopBroadcast();
+        vm.stopBroadcast();
     }
 
     function errorStaticCall() public {
-        cheats.broadcast();
+        vm.broadcast();
         NoLink test11 = new NoLink();
 
-        cheats.broadcast();
+        vm.broadcast();
         test11.view_me();
     }
 }
 
 contract BroadcastMix is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     // ganache-cli -d 1st
     address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
@@ -239,7 +238,7 @@ contract BroadcastMix is DSTest {
     address public ACCOUNT_B = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
 
     function more() internal {
-        cheats.broadcast();
+        vm.broadcast();
         NoLink test11 = new NoLink();
     }
 
@@ -249,38 +248,38 @@ contract BroadcastMix is DSTest {
 
         NoLink no = new NoLink();
 
-        cheats.startBroadcast();
+        vm.startBroadcast();
         NoLink test1 = new NoLink();
         test1.t(2);
         NoLink test2 = new NoLink();
         test2.t(2);
-        cheats.stopBroadcast();
+        vm.stopBroadcast();
 
-        cheats.startBroadcast(user);
+        vm.startBroadcast(user);
         NoLink test3 = new NoLink();
         NoLink test4 = new NoLink();
         test4.t(2);
-        cheats.stopBroadcast();
+        vm.stopBroadcast();
 
-        cheats.broadcast();
+        vm.broadcast();
         test4.t(2);
 
-        cheats.broadcast();
+        vm.broadcast();
         NoLink test5 = new NoLink();
 
-        cheats.broadcast();
+        vm.broadcast();
         INoLink test6 = INoLink(address(new NoLink()));
 
-        cheats.broadcast();
+        vm.broadcast();
         NoLink test7 = new NoLink();
 
-        cheats.broadcast(user);
+        vm.broadcast(user);
         NoLink test8 = new NoLink();
 
-        cheats.broadcast();
+        vm.broadcast();
         NoLink test9 = new NoLink();
 
-        cheats.broadcast(user);
+        vm.broadcast(user);
         NoLink test10 = new NoLink();
 
         more();
@@ -288,40 +287,40 @@ contract BroadcastMix is DSTest {
 }
 
 contract BroadcastTestSetup is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function setUp() public {
         // It predeployed a library first
-        assert(cheats.getNonce(msg.sender) == 1);
+        assert(vm.getNonce(msg.sender) == 1);
 
-        cheats.broadcast();
+        vm.broadcast();
         Test t = new Test();
 
-        cheats.broadcast();
+        vm.broadcast();
         t.t(2);
     }
 
     function run() public {
-        cheats.broadcast();
+        vm.broadcast();
         new NoLink();
 
-        cheats.broadcast();
+        vm.broadcast();
         Test t = new Test();
 
-        cheats.broadcast();
+        vm.broadcast();
         t.t(3);
     }
 }
 
 contract BroadcastTestLog is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function run() public {
         uint256[] memory arr = new uint256[](2);
         arr[0] = 3;
         arr[1] = 4;
 
-        cheats.startBroadcast();
+        vm.startBroadcast();
         {
             Test c1 = new Test();
             Test c2 = new Test{salt: bytes32(uint256(1337))}();
@@ -332,12 +331,12 @@ contract BroadcastTestLog is DSTest {
 
             payable(address(0x1337)).transfer(0.0001 ether);
         }
-        cheats.stopBroadcast();
+        vm.stopBroadcast();
     }
 }
 
 contract TestInitialBalance is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function runCustomSender() public {
         // Make sure we're testing a different caller than the default one.
@@ -346,7 +345,7 @@ contract TestInitialBalance is DSTest {
         // NodeConfig::test() sets the balance of the address used in this test to 100 ether.
         assert(msg.sender.balance == 100 ether);
 
-        cheats.broadcast();
+        vm.broadcast();
         new NoLink();
     }
 
@@ -356,13 +355,13 @@ contract TestInitialBalance is DSTest {
 
         assert(msg.sender.balance == type(uint256).max);
 
-        cheats.broadcast();
+        vm.broadcast();
         new NoLink();
     }
 }
 
 contract MultiChainBroadcastNoLink is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     // ganache-cli -d 1st
     address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
@@ -371,43 +370,43 @@ contract MultiChainBroadcastNoLink is DSTest {
     address public ACCOUNT_B = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
 
     function deploy(string memory sforkA, string memory sforkB) public {
-        uint256 forkA = cheats.createFork(sforkA);
-        uint256 forkB = cheats.createFork(sforkB);
+        uint256 forkA = vm.createFork(sforkA);
+        uint256 forkB = vm.createFork(sforkB);
 
-        cheats.selectFork(forkA);
-        cheats.broadcast(address(ACCOUNT_A));
+        vm.selectFork(forkA);
+        vm.broadcast(address(ACCOUNT_A));
         new NoLink();
-        cheats.broadcast(address(ACCOUNT_B));
+        vm.broadcast(address(ACCOUNT_B));
         new NoLink();
-        cheats.selectFork(forkB);
-        cheats.startBroadcast(address(ACCOUNT_B));
+        vm.selectFork(forkB);
+        vm.startBroadcast(address(ACCOUNT_B));
         new NoLink();
         new NoLink();
         new NoLink();
-        cheats.stopBroadcast();
-        cheats.startBroadcast(address(ACCOUNT_A));
+        vm.stopBroadcast();
+        vm.startBroadcast(address(ACCOUNT_A));
         new NoLink();
         new NoLink();
     }
 
     function deployError(string memory sforkA, string memory sforkB) public {
-        uint256 forkA = cheats.createFork(sforkA);
-        uint256 forkB = cheats.createFork(sforkB);
+        uint256 forkA = vm.createFork(sforkA);
+        uint256 forkB = vm.createFork(sforkB);
 
-        cheats.selectFork(forkA);
-        cheats.broadcast(address(ACCOUNT_A));
+        vm.selectFork(forkA);
+        vm.broadcast(address(ACCOUNT_A));
         new NoLink();
-        cheats.startBroadcast(address(ACCOUNT_B));
+        vm.startBroadcast(address(ACCOUNT_B));
         new NoLink();
 
-        cheats.selectFork(forkB);
-        cheats.broadcast(address(ACCOUNT_B));
+        vm.selectFork(forkB);
+        vm.broadcast(address(ACCOUNT_B));
         new NoLink();
     }
 }
 
 contract MultiChainBroadcastLink is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     // ganache-cli -d 1st
     address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
@@ -416,26 +415,26 @@ contract MultiChainBroadcastLink is DSTest {
     address public ACCOUNT_B = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
 
     function deploy(string memory sforkA, string memory sforkB) public {
-        uint256 forkA = cheats.createFork(sforkA);
-        uint256 forkB = cheats.createFork(sforkB);
+        uint256 forkA = vm.createFork(sforkA);
+        uint256 forkB = vm.createFork(sforkB);
 
-        cheats.selectFork(forkA);
-        cheats.broadcast(address(ACCOUNT_B));
+        vm.selectFork(forkA);
+        vm.broadcast(address(ACCOUNT_B));
         new Test();
 
-        cheats.selectFork(forkB);
-        cheats.broadcast(address(ACCOUNT_B));
+        vm.selectFork(forkB);
+        vm.broadcast(address(ACCOUNT_B));
         new Test();
     }
 }
 
 contract BroadcastEmptySetUp is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function setUp() public {}
 
     function run() public {
-        cheats.broadcast();
+        vm.broadcast();
         new Test();
     }
 }
@@ -471,7 +470,7 @@ contract ContractB {
 }
 
 contract CheckOverrides is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function run() external {
         // `script_caller` can be set by `--private-key ...` or `--sender ...`
@@ -481,7 +480,7 @@ contract CheckOverrides is DSTest {
         require(tx.origin == script_caller);
 
         // startBroadcast(script_caller)
-        cheats.startBroadcast();
+        vm.startBroadcast();
         require(tx.origin == script_caller);
         require(msg.sender == script_caller);
 
@@ -493,10 +492,10 @@ contract CheckOverrides is DSTest {
         require(tx.origin == script_caller);
         require(msg.sender == script_caller);
 
-        cheats.stopBroadcast();
+        vm.stopBroadcast();
 
         // startBroadcast(msg.sender)
-        cheats.startBroadcast(address(0x1337));
+        vm.startBroadcast(address(0x1337));
         require(tx.origin == script_caller);
         require(msg.sender == script_caller);
         require(msg.sender != address(0x1337));
@@ -509,6 +508,6 @@ contract CheckOverrides is DSTest {
         require(tx.origin == script_caller);
         require(msg.sender == script_caller);
 
-        cheats.stopBroadcast();
+        vm.stopBroadcast();
     }
 }
