@@ -566,6 +566,7 @@ interface Vm {
     // Gets all the logs according to specified filter
     function eth_getLogs(uint256, uint256, address, bytes32[] memory) external returns (EthGetLogs[] memory);
 
+    // Generic rpc call function
     function rpc(string calldata, string calldata) external returns(bytes memory);
 
     function parseJson(string calldata, string calldata) external returns (bytes memory);
