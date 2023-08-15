@@ -97,7 +97,7 @@ openssl = ["ethers/openssl"]
 external-integration-tests = []
 
 # feature for maple integration test
-maple-integration-test = []
+heavy-integration-tests = []
 
 [[bin]]
 name = "cast"
