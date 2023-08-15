@@ -30,6 +30,9 @@ pub(crate) mod forge_utils;
 #[cfg(feature = "external-integration-tests")]
 mod integration;
 
+#[cfg(feature = "maple-integration-test")]
+mod maple;
+
 pub mod constants;
 
 fn main() {}
