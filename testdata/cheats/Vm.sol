@@ -25,7 +25,7 @@ interface Vm {
     }
 
     // Used in eth_getLogs
-    struct EthGetLogs { 
+    struct EthGetLogs {
         address emitter;
         bytes32[] topics;
         bytes data;
@@ -567,7 +567,7 @@ interface Vm {
     function eth_getLogs(uint256, uint256, address, bytes32[] memory) external returns (EthGetLogs[] memory);
 
     // Generic rpc call function
-    function rpc(string calldata, string calldata) external returns(bytes memory);
+    function rpc(string calldata, string calldata) external returns (bytes memory);
 
     function parseJson(string calldata, string calldata) external returns (bytes memory);
 

@@ -175,8 +175,8 @@ contract ForkTest is DSTest {
         bytes logIndex; // Should be uint256, but is returned from RPC in 0x... format
         bool removed;
         bytes32[] topics;
-        bytes32 transactionHash; 
-        bytes transactionIndex;  // Should be uint256, but is returned from RPC in 0x... format
+        bytes32 transactionHash;
+        bytes transactionIndex; // Should be uint256, but is returned from RPC in 0x... format
     }
 
     function testEthGetLogs() public {
@@ -225,7 +225,7 @@ contract ForkTest is DSTest {
         string memory path = "../testdata/fixtures/Rpc/balance_params.json";
         string memory file = vm.readFile(path);
         bytes memory result = vm.rpc("eth_getBalance", file);
-        assertEq(result, hex'03202879715fd8');
+        assertEq(result, hex"03202879715fd8");
     }
 }
 
