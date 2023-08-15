@@ -58,6 +58,10 @@ pub struct NodeArgs {
     #[clap(long)]
     pub silent: bool,
 
+    // Print hardhat console.logs as they are generated
+    #[clap(long)]
+    pub inline_logs: bool,
+
     /// The EVM hardfork to use.
     ///
     /// Choose the hardfork by name, e.g. `shanghai`, `paris`, `london`, etc...
@@ -210,6 +214,7 @@ impl NodeArgs {
             .set_pruned_history(self.prune_history)
             .with_init_state(self.load_state.or_else(|| self.state.and_then(|s| s.state)))
             .with_transaction_block_keeper(self.transaction_block_keeper)
+            .set_inline_logs(self.inline_logs)
     }
 
     fn account_generator(&self) -> AccountGenerator {

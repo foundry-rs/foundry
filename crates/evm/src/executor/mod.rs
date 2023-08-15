@@ -1,4 +1,5 @@
 use self::inspector::{cheatcodes::util::BroadcastableTransactions, Cheatcodes, InspectorData};
+pub use self::inspector::{EvmEventLogger, OnLog, Tracer};
 use crate::{
     debug::DebugArena,
     decode,
@@ -30,7 +31,7 @@ pub use revm::{
         TxEnv, B160, U256 as rU256,
     },
 };
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, marker::PhantomData};
 
 /// ABIs used internally in the executor
 pub mod abi;
@@ -75,9 +76,9 @@ pub const DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE: &[u8] = &hex!("7fffffffffffffff
 ///  - `committing`: any state changes made during the call are recorded and are persisting
 ///  - `raw`: state changes only exist for the duration of the call and are discarded afterwards, in
 ///    other words: the state of the underlying database remains unchanged.
-#[derive(Debug, Clone)]
-pub struct Executor {
-    /// The underlying `revm::Database` that contains the EVM storage.
+#[derive(Debug)]
+pub struct Executor<ONLOG: OnLog> {
+    /// The underlying `revm::Database` that contains the EVM storage
     // Note: We do not store an EVM here, since we are really
     // only interested in the database. REVM's `EVM` is a thin
     // wrapper around spawning a new EVM on every call anyway,
@@ -86,18 +87,38 @@ pub struct Executor {
     /// The EVM environment.
     pub env: Env,
     /// The Revm inspector stack.
-    pub inspector: InspectorStack,
+    pub inspector: InspectorStack<ONLOG>,
     /// The gas limit for calls and deployments. This is different from the gas limit imposed by
     /// the passed in environment, as those limits are used by the EVM for certain opcodes like
     /// `gaslimit`.
     gas_limit: U256,
+    _marker: std::marker::PhantomData<ONLOG>,
 }
 
 // === impl Executor ===
 
-impl Executor {
+// Clone is coded by hand (no macro) because otherwise the macro derivation ends up producing errors
+// elsewhere: "expected Executor but got &Executor"
+impl<ONLOG: OnLog> Clone for Executor<ONLOG> {
+    fn clone(&self) -> Self {
+        Executor {
+            backend: self.backend.clone(),
+            env: self.env.clone(),
+            inspector: self.inspector.clone(),
+            gas_limit: self.gas_limit,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<ONLOG: OnLog> Executor<ONLOG> {
     #[inline]
-    pub fn new(mut backend: Backend, env: Env, inspector: InspectorStack, gas_limit: U256) -> Self {
+    pub fn new(
+        mut backend: Backend,
+        env: Env,
+        inspector: InspectorStack<ONLOG>,
+        gas_limit: U256,
+    ) -> Self {
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // does not fail
         backend.insert_account_info(
@@ -108,7 +129,26 @@ impl Executor {
             },
         );
 
-        Executor { backend, env, inspector, gas_limit }
+        Executor { backend, env, inspector, gas_limit, _marker: PhantomData }
+    }
+
+    /// Returns a reference to the Env
+    pub fn env(&self) -> &Env {
+        &self.env
+    }
+
+    /// Returns a mutable reference to the Env
+    pub fn env_mut(&mut self) -> &mut Env {
+        &mut self.env
+    }
+
+    /// Returns a mutable reference to the Backend
+    pub fn backend_mut(&mut self) -> &mut Backend {
+        &mut self.backend
+    }
+
+    pub fn backend(&self) -> &Backend {
+        &self.backend
     }
 
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
@@ -535,8 +575,12 @@ impl Executor {
         // for the contract's `failed` variable and the `globalFailure` flag in the state of the
         // cheatcode address which are both read when call `"failed()(bool)"` in the next step
         backend.commit(state_changeset);
-        let executor =
-            Executor::new(backend, self.env.clone(), self.inspector.clone(), self.gas_limit);
+        let executor = Executor::<ONLOG>::new(
+            backend,
+            self.env.clone(),
+            self.inspector.clone(),
+            self.gas_limit,
+        );
 
         let mut success = !reverted;
         if success {
@@ -756,9 +800,9 @@ fn calc_stipend(calldata: &[u8], spec: SpecId) -> u64 {
 }
 
 /// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`
-fn convert_executed_result(
+fn convert_executed_result<ONLOG: OnLog>(
     env: Env,
-    inspector: InspectorStack,
+    inspector: InspectorStack<ONLOG>,
     result: ResultAndState,
 ) -> eyre::Result<RawCallResult> {
     let ResultAndState { result: exec_result, state: state_changeset } = result;

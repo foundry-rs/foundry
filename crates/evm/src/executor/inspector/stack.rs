@@ -1,5 +1,6 @@
 use super::{
-    Cheatcodes, CheatsConfig, ChiselState, Debugger, Fuzzer, LogCollector, TracePrinter, Tracer,
+    Cheatcodes, CheatsConfig, ChiselState, Debugger, EvmEventLogger, Fuzzer, OnLog, TracePrinter,
+    Tracer,
 };
 use crate::{
     coverage::HitMaps,
@@ -42,7 +43,7 @@ pub struct InspectorStackBuilder {
     pub trace: Option<bool>,
     /// Whether to enable the debugger.
     pub debug: Option<bool>,
-    /// Whether logs should be collected.
+    /// Whether logs should be inspected.
     pub logs: Option<bool>,
     /// Whether coverage info should be collected.
     pub coverage: Option<bool>,
@@ -132,7 +133,7 @@ impl InspectorStackBuilder {
     /// Builds the stack of inspectors to use when transacting/committing on the EVM.
     ///
     /// See also [`revm::Evm::inspect_ref`] and [`revm::Evm::commit_ref`].
-    pub fn build(self) -> InspectorStack {
+    pub fn build<ONLOG: OnLog>(self) -> InspectorStack<ONLOG> {
         let Self {
             block,
             gas_price,
@@ -202,19 +203,48 @@ pub struct InspectorData {
 ///
 /// If a call to an inspector returns a value other than [InstructionResult::Continue] (or
 /// equivalent) the remaining inspectors are not called.
-#[derive(Debug, Clone, Default)]
-pub struct InspectorStack {
+#[derive(Debug)]
+pub struct InspectorStack<ONLOG: OnLog> {
     pub cheatcodes: Option<Cheatcodes>,
     pub chisel_state: Option<ChiselState>,
     pub coverage: Option<CoverageCollector>,
     pub debugger: Option<Debugger>,
     pub fuzzer: Option<Fuzzer>,
-    pub log_collector: Option<LogCollector>,
+    pub logger: Option<EvmEventLogger<ONLOG>>,
     pub printer: Option<TracePrinter>,
     pub tracer: Option<Tracer>,
 }
 
-impl InspectorStack {
+impl<ONLOG: OnLog> Clone for InspectorStack<ONLOG> {
+    fn clone(&self) -> Self {
+        Self {
+            cheatcodes: self.cheatcodes.clone(),
+            chisel_state: self.chisel_state.clone(),
+            coverage: self.coverage.clone(),
+            debugger: self.debugger.clone(),
+            fuzzer: self.fuzzer.clone(),
+            logger: self.logger.clone(),
+            printer: self.printer.clone(),
+            tracer: self.tracer.clone(),
+        }
+    }
+}
+impl<ONLOG: OnLog> Default for InspectorStack<ONLOG> {
+    fn default() -> Self {
+        Self {
+            cheatcodes: Option::<Cheatcodes>::default(),
+            chisel_state: Option::<ChiselState>::default(),
+            coverage: Option::<CoverageCollector>::default(),
+            debugger: Option::<Debugger>::default(),
+            fuzzer: Option::<Fuzzer>::default(),
+            logger: Option::<EvmEventLogger<ONLOG>>::default(),
+            printer: Option::<TracePrinter>::default(),
+            tracer: Option::<Tracer>::default(),
+        }
+    }
+}
+
+impl<ONLOG: OnLog> InspectorStack<ONLOG> {
     /// Creates a new inspector stack.
     ///
     /// Note that the stack is empty by default, and you must add inspectors to it.
@@ -281,7 +311,7 @@ impl InspectorStack {
     /// Set whether to enable the log collector.
     #[inline]
     pub fn collect_logs(&mut self, yes: bool) {
-        self.log_collector = yes.then(Default::default);
+        self.logger = yes.then(Default::default);
     }
 
     /// Set whether to enable the trace printer.
@@ -300,7 +330,7 @@ impl InspectorStack {
     #[inline]
     pub fn collect(self) -> InspectorData {
         InspectorData {
-            logs: self.log_collector.map(|logs| logs.logs).unwrap_or_default(),
+            logs: self.logger.map(|logs| logs.logs).unwrap_or_default(),
             labels: self
                 .cheatcodes
                 .as_ref()
@@ -333,7 +363,7 @@ impl InspectorStack {
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
-                &mut self.log_collector,
+                &mut self.logger,
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
@@ -355,7 +385,7 @@ impl InspectorStack {
     }
 }
 
-impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
+impl<DB: DatabaseExt, ONLOG: OnLog> Inspector<DB> for InspectorStack<ONLOG> {
     fn initialize_interp(
         &mut self,
         interpreter: &mut Interpreter,
@@ -366,7 +396,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.debugger,
                 &mut self.coverage,
                 &mut self.tracer,
-                &mut self.log_collector,
+                &mut self.logger,
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
@@ -394,7 +424,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
-                &mut self.log_collector,
+                &mut self.logger,
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
@@ -419,7 +449,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
         data: &Bytes,
     ) {
         call_inspectors!(
-            [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
+            [&mut self.tracer, &mut self.logger, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
                 inspector.log(evm_data, address, topics, data);
             }
@@ -436,7 +466,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
             [
                 &mut self.debugger,
                 &mut self.tracer,
-                &mut self.log_collector,
+                &mut self.logger,
                 &mut self.cheatcodes,
                 &mut self.printer,
                 &mut self.chisel_state
@@ -465,7 +495,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
-                &mut self.log_collector,
+                &mut self.logger,
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
@@ -514,7 +544,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
-                &mut self.log_collector,
+                &mut self.logger,
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
@@ -545,7 +575,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
-                &mut self.log_collector,
+                &mut self.logger,
                 &mut self.cheatcodes,
                 &mut self.printer
             ],
@@ -573,7 +603,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
             [
                 &mut self.debugger,
                 &mut self.tracer,
-                &mut self.log_collector,
+                &mut self.logger,
                 &mut self.cheatcodes,
                 &mut self.printer,
                 &mut self.chisel_state

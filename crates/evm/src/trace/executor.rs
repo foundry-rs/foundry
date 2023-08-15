@@ -1,5 +1,5 @@
 use crate::{
-    executor::{fork::CreateFork, opts::EvmOpts, Backend, Executor, ExecutorBuilder},
+    executor::{fork::CreateFork, opts::EvmOpts, Backend, Executor, ExecutorBuilder, OnLog},
     utils::evm_spec,
 };
 use ethers::solc::EvmVersion;
@@ -7,12 +7,14 @@ use foundry_config::Config;
 use revm::primitives::Env;
 use std::ops::{Deref, DerefMut};
 
+pub type TracingExecutor = GenTracingExecutor<()>;
+
 /// A default executor with tracing enabled
-pub struct TracingExecutor {
-    executor: Executor,
+pub struct GenTracingExecutor<ONLOG: OnLog> {
+    executor: Executor<ONLOG>,
 }
 
-impl TracingExecutor {
+impl<ONLOG: OnLog> GenTracingExecutor<ONLOG> {
     pub async fn new(
         env: revm::primitives::Env,
         fork: Option<CreateFork>,
@@ -46,15 +48,15 @@ impl TracingExecutor {
     }
 }
 
-impl Deref for TracingExecutor {
-    type Target = Executor;
+impl<ONLOG: OnLog> Deref for GenTracingExecutor<ONLOG> {
+    type Target = Executor<ONLOG>;
 
     fn deref(&self) -> &Self::Target {
         &self.executor
     }
 }
 
-impl DerefMut for TracingExecutor {
+impl<ONLOG: OnLog> DerefMut for GenTracingExecutor<ONLOG> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.executor
     }

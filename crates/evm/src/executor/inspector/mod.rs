@@ -1,6 +1,9 @@
 #[macro_use]
 mod utils;
 
+mod logs;
+pub use logs::{EvmEventLogger, OnLog};
+
 mod access_list;
 pub use access_list::AccessListTracer;
 
@@ -18,9 +21,6 @@ pub use debugger::Debugger;
 
 mod fuzzer;
 pub use fuzzer::Fuzzer;
-
-mod logs;
-pub use logs::LogCollector;
 
 mod printer;
 pub use printer::TracePrinter;

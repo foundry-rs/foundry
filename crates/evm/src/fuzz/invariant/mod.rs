@@ -1,7 +1,7 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
 
 use crate::{
-    executor::Executor,
+    executor::{Executor, OnLog},
     fuzz::*,
     trace::{load_contracts, TraceKind, Traces},
     CALLER,
@@ -48,9 +48,9 @@ pub struct InvariantContract<'a> {
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
 /// external `invariant_failures.failed_invariant` map and returns a generic error.
 /// Returns the mapping of (Invariant Function Name -> Call Result).
-pub fn assert_invariants(
+pub fn assert_invariants<ONLOG: OnLog>(
     invariant_contract: &InvariantContract,
-    executor: &Executor,
+    executor: &Executor<ONLOG>,
     calldata: &[BasicTxDetails],
     invariant_failures: &mut InvariantFailures,
     shrink_sequence: bool,
@@ -101,9 +101,9 @@ pub fn assert_invariants(
 
 /// Replays the provided invariant run for collecting the logs and traces from all depths.
 #[allow(clippy::too_many_arguments)]
-pub fn replay_run(
+pub fn replay_run<ONLOG: OnLog>(
     invariant_contract: &InvariantContract,
-    mut executor: Executor,
+    mut executor: Executor<ONLOG>,
     known_contracts: Option<&ContractsByArtifact>,
     mut ided_contracts: ContractsByAddress,
     logs: &mut Vec<Log>,

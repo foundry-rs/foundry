@@ -5,8 +5,8 @@ use bytes::Bytes;
 use ethers::types::Log;
 use foundry_evm::{
     call_inspectors,
-    decode::decode_console_logs,
-    executor::inspector::{LogCollector, Tracer},
+    decode::{decode_console_log, decode_console_logs},
+    executor::{EvmEventLogger, OnLog, Tracer},
     revm,
     revm::{
         interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
@@ -20,17 +20,29 @@ use foundry_evm::{
 pub struct Inspector {
     pub tracer: Option<Tracer>,
     /// collects all `console.sol` logs
-    pub log_collector: LogCollector,
+    pub logger: EvmEventLogger<InlineLogs>,
 }
 
 // === impl Inspector ===
+
+#[derive(Debug, Clone, Default)]
+pub struct InlineLogs;
+
+impl OnLog for InlineLogs {
+    type OnLogState = bool;
+    fn on_log(inline_logs_enabled: &mut Self::OnLogState, log_entry: &Log) {
+        if *inline_logs_enabled {
+            node_info!("{}", decode_console_log(log_entry).unwrap_or(format!("{:?}", log_entry)));
+        }
+    }
+}
 
 impl Inspector {
     /// Called after the inspecting the evm
     ///
     /// This will log all `console.sol` logs
     pub fn print_logs(&self) {
-        print_logs(&self.log_collector.logs)
+        print_logs(&self.logger.logs)
     }
 
     /// Configures the `Tracer` [`revm::Inspector`]
@@ -38,6 +50,15 @@ impl Inspector {
         self.tracer = Some(Default::default());
         self
     }
+
+    /// Configures the `Executor` to emit logs and events as they are executed
+    pub fn with_inline_logs(mut self) -> Self {
+        self.logger.on_log_state = true;
+        self
+    }
+
+    /// Enables steps recording for `Tracer` and attaches `GasInspector` to it
+    /// If `Tracer` wasn't configured before, configures it automatically
 
     /// Enables steps recording for `Tracer`.
     pub fn with_steps_tracing(mut self) -> Self {
@@ -76,7 +97,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         topics: &[B256],
         data: &Bytes,
     ) {
-        call_inspectors!([&mut self.tracer, Some(&mut self.log_collector)], |inspector| {
+        call_inspectors!([&mut self.tracer, Some(&mut self.logger)], |inspector| {
             inspector.log(evm_data, address, topics, data);
         });
     }
@@ -100,7 +121,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
-        call_inspectors!([&mut self.tracer, Some(&mut self.log_collector)], |inspector| {
+        call_inspectors!([&mut self.tracer, Some(&mut self.logger)], |inspector| {
             inspector.call(data, call);
         });
 

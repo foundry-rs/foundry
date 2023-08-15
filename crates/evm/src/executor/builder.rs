@@ -1,4 +1,4 @@
-use super::{inspector::InspectorStackBuilder, Executor};
+use super::{inspector::InspectorStackBuilder, Executor, OnLog};
 use crate::executor::backend::Backend;
 use ethers::types::U256;
 use revm::primitives::{Env, SpecId};
@@ -63,7 +63,7 @@ impl ExecutorBuilder {
 
     /// Builds the executor as configured.
     #[inline]
-    pub fn build(self, mut env: Env, db: Backend) -> Executor {
+    pub fn build<ONLOG: OnLog>(self, mut env: Env, db: Backend) -> Executor<ONLOG> {
         let Self { mut stack, gas_limit, spec_id } = self;
         env.cfg.spec_id = spec_id;
         stack.block = Some(env.block.clone());

@@ -10,7 +10,7 @@ use foundry_common::{ContractsByArtifact, TestFunctionExt};
 use foundry_evm::{
     executor::{
         backend::Backend, fork::CreateFork, inspector::CheatsConfig, opts::EvmOpts, Executor,
-        ExecutorBuilder,
+        ExecutorBuilder, OnLog,
     },
     revm,
 };
@@ -139,7 +139,7 @@ impl MultiContractRunner {
             })
             .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
             .map_with(stream_result, |stream_result, (id, (abi, deploy_code, libs))| {
-                let executor = ExecutorBuilder::new()
+                let executor: Executor<()> = ExecutorBuilder::new()
                     .inspectors(|stack| {
                         stack
                             .cheatcodes(self.cheats_config.clone())
@@ -174,11 +174,11 @@ impl MultiContractRunner {
 
     #[instrument(skip_all, fields(name = %name))]
     #[allow(clippy::too_many_arguments)]
-    fn run_tests(
+    fn run_tests<ONLOG: OnLog + Sync>(
         &self,
         name: &str,
         contract: &Abi,
-        executor: Executor,
+        executor: Executor<ONLOG>,
         deploy_code: Bytes,
         libs: &[Bytes],
         filter: impl TestFilter,

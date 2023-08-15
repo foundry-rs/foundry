@@ -18,13 +18,13 @@ pub enum SimulationStage {
 /// Drives script execution
 #[derive(Debug)]
 pub struct ScriptRunner {
-    pub executor: Executor,
+    pub executor: Executor<()>,
     pub initial_balance: U256,
     pub sender: Address,
 }
 
 impl ScriptRunner {
-    pub fn new(executor: Executor, initial_balance: U256, sender: Address) -> Self {
+    pub fn new(executor: Executor<()>, initial_balance: U256, sender: Address) -> Self {
         Self { executor, initial_balance, sender }
     }
 

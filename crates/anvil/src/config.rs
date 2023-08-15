@@ -120,6 +120,8 @@ pub struct NodeConfig {
     pub max_transactions: usize,
     /// don't print anything on startup
     pub silent: bool,
+    /// print console.logs as they are generated
+    pub inline_logs: bool,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
     /// pins the block number for the state fork
@@ -379,6 +381,7 @@ impl Default for NodeConfig {
             // TODO make this something dependent on block capacity
             max_transactions: 1_000,
             silent: false,
+            inline_logs: false,
             eth_rpc_url: None,
             fork_block_number: None,
             account_generator: None,
@@ -605,6 +608,15 @@ impl NodeConfig {
     #[must_use]
     pub fn set_silent(mut self, silent: bool) -> Self {
         self.silent = silent;
+        self
+    }
+
+    /// If set, console.log() calls and emit events will be logged to the console as they are
+    /// executed This can be helpful when debugging anvil itself, or when something terminates
+    /// anvil early
+    #[must_use]
+    pub fn set_inline_logs(mut self, inline_logs: bool) -> Self {
+        self.inline_logs = inline_logs;
         self
     }
 
@@ -1006,6 +1018,7 @@ latest block number: {latest_block}"
             fees,
             fork,
             self.enable_steps_tracing,
+            self.inline_logs,
             self.prune_history,
             self.transaction_block_keeper,
             self.block_time,

@@ -104,6 +104,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> 
     /// Cumulative gas used by all executed transactions
     pub gas_used: U256,
     pub enable_steps_tracing: bool,
+    pub inline_logs: bool,
 }
 
 impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'a, DB, Validator> {
@@ -260,6 +261,10 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         let mut inspector = Inspector::default().with_tracing();
         if self.enable_steps_tracing {
             inspector = inspector.with_steps_tracing();
+        }
+
+        if self.inline_logs {
+            inspector = inspector.with_inline_logs();
         }
 
         trace!(target: "backend", "[{:?}] executing", transaction.hash());

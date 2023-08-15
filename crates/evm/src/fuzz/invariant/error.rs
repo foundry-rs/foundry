@@ -1,7 +1,7 @@
 use super::{BasicTxDetails, InvariantContract};
 use crate::{
     decode::decode_revert,
-    executor::{Executor, RawCallResult},
+    executor::{Executor, OnLog, RawCallResult},
     fuzz::{invariant::set_up_inner_replay, *},
     trace::{load_contracts, TraceKind, Traces},
     CALLER,
@@ -79,9 +79,9 @@ impl InvariantFuzzError {
     }
 
     /// Replays the error case and collects all necessary traces.
-    pub fn replay(
+    pub fn replay<ONLOG: OnLog>(
         &self,
-        mut executor: Executor,
+        mut executor: Executor<ONLOG>,
         known_contracts: Option<&ContractsByArtifact>,
         mut ided_contracts: ContractsByAddress,
         logs: &mut Vec<Log>,
@@ -151,9 +151,9 @@ impl InvariantFuzzError {
     }
 
     /// Tests that the modified sequence of calls successfully reverts on the error function.
-    fn fails_successfully<'a>(
+    fn fails_successfully<'a, ONLOG: OnLog>(
         &self,
-        mut executor: Executor,
+        mut executor: Executor<ONLOG>,
         calls: &'a [BasicTxDetails],
         anchor: usize,
         removed_calls: &[usize],
@@ -198,10 +198,10 @@ impl InvariantFuzzError {
     /// same process again.
     ///
     /// Returns the smallest sequence found.
-    fn try_shrinking<'a>(
+    fn try_shrinking<'a, ONLOG: OnLog>(
         &self,
         calls: &'a [BasicTxDetails],
-        executor: &Executor,
+        executor: &Executor<ONLOG>,
     ) -> Vec<&'a BasicTxDetails> {
         let mut anchor = 0;
         let mut removed_calls = vec![];
@@ -210,16 +210,20 @@ impl InvariantFuzzError {
 
         while anchor != calls.len() {
             // Get the latest removed element, so we know which one to remove next.
-            let removed =
-                match self.fails_successfully(executor.clone(), calls, anchor, &removed_calls) {
-                    Ok(new_sequence) => {
-                        if shrunk.len() > new_sequence.len() {
-                            shrunk = new_sequence;
-                        }
-                        removed_calls.last().cloned()
+            let removed = match self.fails_successfully::<ONLOG>(
+                executor.clone(),
+                calls,
+                anchor,
+                &removed_calls,
+            ) {
+                Ok(new_sequence) => {
+                    if shrunk.len() > new_sequence.len() {
+                        shrunk = new_sequence;
                     }
-                    Err(_) => removed_calls.pop(),
-                };
+                    removed_calls.last().cloned()
+                }
+                Err(_) => removed_calls.pop(),
+            };
 
             if let Some(last_removed) = removed {
                 // If we haven't reached the end of the sequence, then remove the next element.
