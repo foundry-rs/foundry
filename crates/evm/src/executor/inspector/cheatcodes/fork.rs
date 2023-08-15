@@ -258,7 +258,7 @@ fn create_fork_request<DB: DatabaseExt>(
 
 /// Retrieve the logs specified for the current fork.
 /// Equivalent to eth_getLogs but on a cheatcode.
-fn eth_getlogs<DB: DatabaseExt>(data: &mut EVMData<DB>, inner: &EthGetLogsCall) -> Result {
+fn eth_getlogs<DB: DatabaseExt>(data: &EVMData<DB>, inner: &EthGetLogsCall) -> Result {
     let url = data.db.active_fork_url().ok_or(fmt_err!("No active fork url found"))?;
     if inner.0 > U256::from(u64::MAX) || inner.1 > U256::from(u64::MAX) {
         return Err(fmt_err!("Blocks in block range must be less than 2^64 - 1"))
@@ -287,7 +287,7 @@ fn eth_getlogs<DB: DatabaseExt>(data: &mut EVMData<DB>, inner: &EthGetLogsCall) 
         .block_on(provider.get_logs(&filter))
         .map_err(|_| fmt_err!("Error in calling eth_getLogs"))?;
 
-    if logs.len() == 0 {
+    if logs.is_empty() {
         let empty: Bytes = abi::encode(&[Token::Array(vec![])]).into();
         return Ok(empty)
     }
@@ -335,7 +335,7 @@ fn eth_getlogs<DB: DatabaseExt>(data: &mut EVMData<DB>, inner: &EthGetLogsCall) 
     Ok(result)
 }
 
-fn rpc<DB: DatabaseExt>(data: &mut EVMData<DB>, inner: &RpcCall) -> Result {
+fn rpc<DB: DatabaseExt>(data: &EVMData<DB>, inner: &RpcCall) -> Result {
     let url = data.db.active_fork_url().ok_or(fmt_err!("No active fork url found"))?;
     let provider = ProviderBuilder::new(url).build()?;
 
@@ -350,15 +350,12 @@ fn rpc<DB: DatabaseExt>(data: &mut EVMData<DB>, inner: &RpcCall) -> Result {
     let result_as_tokens =
         value_to_token(&result).map_err(|err| fmt_err!("Failed to parse result: {err}"))?;
 
-    let abi_encoded: Vec<u8>;
-    match result_as_tokens {
-        Token::Tuple(vec) | Token::Array(vec) | Token::FixedArray(vec) => {
-            abi_encoded = abi::encode(&vec);
-        }
+    let abi_encoded: Vec<u8> = match result_as_tokens {
+        Token::Tuple(vec) | Token::Array(vec) | Token::FixedArray(vec) => abi::encode(&vec),
         _ => {
             let vec = vec![result_as_tokens];
-            abi_encoded = abi::encode(&vec);
+            abi::encode(&vec)
         }
-    }
+    };
     Ok(abi_encoded.into())
 }
