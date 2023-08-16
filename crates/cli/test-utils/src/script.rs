@@ -4,6 +4,7 @@ use ethers::{
     prelude::{Middleware, NameOrAddress, U256},
     utils::hex,
 };
+use eyre::Result;
 use foundry_common::{get_http_provider, RetryProvider};
 use std::{collections::BTreeMap, path::Path, str::FromStr};
 
@@ -96,7 +97,7 @@ impl ScriptTester {
     }
 
     /// Initialises the test contracts by copying them into the workspace
-    fn copy_testdata(current_dir: &Path) -> eyre::Result<()> {
+    fn copy_testdata(current_dir: &Path) -> Result<()> {
         let testdata = Self::testdata_path();
         std::fs::copy(testdata.clone() + "/cheats/Vm.sol", current_dir.join("src/Vm.sol"))?;
         std::fs::copy(testdata + "/lib/ds-test/src/test.sol", current_dir.join("lib/test.sol"))?;

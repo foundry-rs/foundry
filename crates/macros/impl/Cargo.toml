@@ -1,10 +1,14 @@
 [package]
 name = "foundry-macros-impl"
-version = "0.0.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/foundry-rs/foundry"
 publish = false
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 
 [lib]
 proc-macro = true

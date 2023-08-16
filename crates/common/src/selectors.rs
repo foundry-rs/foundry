@@ -190,7 +190,8 @@ impl SignEthClient {
             .get(selector)
             .ok_or(eyre::eyre!("No signature found"))?
             .iter()
-            .filter_map(|d| (!d.filtered).then(|| d.name.clone()))
+            .filter(|&d| !d.filtered)
+            .map(|d| d.name.clone())
             .collect::<Vec<String>>())
     }
 

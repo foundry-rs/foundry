@@ -2,7 +2,7 @@ use super::{EtherscanSourceProvider, VerifyArgs};
 use ethers::{
     etherscan::verify::CodeFormat, prelude::artifacts::StandardJsonCompilerInput, solc::Project,
 };
-use eyre::Context;
+use eyre::{Context, Result};
 use semver::Version;
 use std::path::Path;
 use tracing::trace;
@@ -16,7 +16,7 @@ impl EtherscanSourceProvider for EtherscanStandardJsonSource {
         project: &Project,
         target: &Path,
         version: &Version,
-    ) -> eyre::Result<(String, String, CodeFormat)> {
+    ) -> Result<(String, String, CodeFormat)> {
         let mut input: StandardJsonCompilerInput = project
             .standard_json_input(target)
             .wrap_err("Failed to get standard json input")?

@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use eyre::Result;
 use foundry_common::fs;
 use std::path::Path;
 use yansi::Paint;
@@ -24,7 +25,7 @@ pub struct GenerateTestArgs {
 }
 
 impl GenerateTestArgs {
-    pub fn run(self) -> eyre::Result<()> {
+    pub fn run(self) -> Result<()> {
         let contract_name = format_identifier(&self.contract_name, true);
         let instance_name = format_identifier(&self.contract_name, false);
 

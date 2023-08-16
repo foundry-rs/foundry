@@ -1,10 +1,8 @@
 use super::{install, watch::WatchArgs};
 use clap::Parser;
 use ethers::solc::{Project, ProjectCompileOutput};
-use foundry_cli::{
-    opts::CoreBuildArgs,
-    utils::{Cmd, LoadConfig},
-};
+use eyre::Result;
+use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{
     compile,
     compile::{ProjectCompiler, SkipBuildFilter},
@@ -73,10 +71,8 @@ pub struct BuildArgs {
     pub watch: WatchArgs,
 }
 
-impl Cmd for BuildArgs {
-    type Output = ProjectCompileOutput;
-
-    fn run(self) -> eyre::Result<Self::Output> {
+impl BuildArgs {
+    pub fn run(self) -> Result<ProjectCompileOutput> {
         let mut config = self.try_load_config_emit_warnings()?;
         let mut project = config.project()?;
 
@@ -97,15 +93,13 @@ impl Cmd for BuildArgs {
             compiler.compile(&project)
         }
     }
-}
 
-impl BuildArgs {
     /// Returns the `Project` for the current workspace
     ///
     /// This loads the `foundry_config::Config` for the current workspace (see
     /// [`utils::find_project_root_path`] and merges the cli `BuildArgs` into it before returning
     /// [`foundry_config::Config::project()`]
-    pub fn project(&self) -> eyre::Result<Project> {
+    pub fn project(&self) -> Result<Project> {
         self.args.project()
     }
 
@@ -116,7 +110,7 @@ impl BuildArgs {
 
     /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
-    pub(crate) fn watchexec_config(&self) -> eyre::Result<(InitConfig, RuntimeConfig)> {
+    pub(crate) fn watchexec_config(&self) -> Result<(InitConfig, RuntimeConfig)> {
         // use the path arguments or if none where provided the `src` dir
         self.watch.watchexec_config(|| {
             let config = Config::from(self);

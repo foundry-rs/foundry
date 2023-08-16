@@ -2439,7 +2439,7 @@ impl BasicConfig {
             "\
 [profile.{}]
 {s}
-# See more config options https://github.com/foundry-rs/foundry/tree/master/config\n",
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n",
             self.profile
         ))
     }
@@ -4139,7 +4139,7 @@ mod tests {
             out = 'out'
             libs = ['lib']
 
-            # See more config options https://github.com/foundry-rs/foundry/tree/master/config
+            # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
         "#;
         assert_eq!(
             parse_with_profile::<BasicConfig>(foundry_str).unwrap().unwrap(),

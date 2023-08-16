@@ -8,6 +8,7 @@ use ethers::{
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
 };
+use eyre::Result;
 use forge::{
     executor::{
         inspector::{cheatcodes::util::BroadcastableTransactions, CheatsConfig},
@@ -37,7 +38,7 @@ impl ScriptArgs {
         contract: CompactContractBytecode,
         sender: Address,
         predeploy_libraries: &[ethers::types::Bytes],
-    ) -> eyre::Result<ScriptResult> {
+    ) -> Result<ScriptResult> {
         trace!(target: "script", "start executing script");
 
         let CompactContractBytecode { abi, bytecode, .. } = contract;
@@ -95,7 +96,7 @@ impl ScriptArgs {
         script_config: &ScriptConfig,
         decoder: &CallTraceDecoder,
         contracts: &ContractsByArtifact,
-    ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
+    ) -> Result<VecDeque<TransactionWithMetadata>> {
         trace!(target: "script", "executing onchain simulation");
 
         let runners = Arc::new(
@@ -210,7 +211,7 @@ impl ScriptArgs {
         let mut abort = false;
         for res in join_all(futs).await {
             // type hint
-            let res: eyre::Result<RunnerResult> = res;
+            let res: Result<RunnerResult> = res;
 
             let (tx, mut traces) = res?;
 

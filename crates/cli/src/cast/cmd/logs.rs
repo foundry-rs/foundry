@@ -5,13 +5,11 @@ use ethers::{
     providers::Middleware,
     types::{BlockId, BlockNumber, Filter, FilterBlockOption, NameOrAddress, ValueOrArray, H256},
 };
+use eyre::Result;
 use foundry_cli::{opts::EthereumOpts, utils};
-
 use foundry_common::abi::{get_event, parse_tokens};
 use foundry_config::Config;
-
 use itertools::Itertools;
-
 use std::str::FromStr;
 
 /// CLI arguments for `cast logs`.
@@ -55,7 +53,7 @@ pub struct LogsArgs {
 }
 
 impl LogsArgs {
-    pub async fn run(self) -> eyre::Result<()> {
+    pub async fn run(self) -> Result<()> {
         let LogsArgs {
             from_block, to_block, address, topics_or_args, sig_or_topic, json, eth, ..
         } = self;

@@ -11,7 +11,7 @@ use ethers::{
     },
     types::{Address, U256},
 };
-use eyre::{Context, ContextCompat};
+use eyre::{Context, ContextCompat, Result};
 use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::compile;
 use foundry_utils::{PostLinkInput, ResolvedDependency};
@@ -20,14 +20,14 @@ use tracing::{trace, warn};
 
 impl ScriptArgs {
     /// Compiles the file or project and the verify metadata.
-    pub fn compile(&mut self, script_config: &mut ScriptConfig) -> eyre::Result<BuildOutput> {
+    pub fn compile(&mut self, script_config: &mut ScriptConfig) -> Result<BuildOutput> {
         trace!(target: "script", "compiling script");
 
         self.build(script_config)
     }
 
     /// Compiles the file with auto-detection and compiler params.
-    pub fn build(&mut self, script_config: &mut ScriptConfig) -> eyre::Result<BuildOutput> {
+    pub fn build(&mut self, script_config: &mut ScriptConfig) -> Result<BuildOutput> {
         let (project, output) = self.get_project_and_output(script_config)?;
         let output = output.with_stripped_file_prefixes(project.root());
 
@@ -35,7 +35,7 @@ impl ScriptArgs {
 
         let contracts = output
             .into_artifacts()
-            .map(|(id, artifact)| -> eyre::Result<_> {
+            .map(|(id, artifact)| -> Result<_> {
                 // Sources are only required for the debugger, but it *might* mean that there's
                 // something wrong with the build and/or artifacts.
                 if let Some(source) = artifact.source_file() {
@@ -51,7 +51,7 @@ impl ScriptArgs {
                 }
                 Ok((id, artifact))
             })
-            .collect::<eyre::Result<ArtifactContracts>>()?;
+            .collect::<Result<ArtifactContracts>>()?;
 
         let mut output = self.link(
             project,
@@ -74,7 +74,7 @@ impl ScriptArgs {
         libraries_addresses: Libraries,
         sender: Address,
         nonce: U256,
-    ) -> eyre::Result<BuildOutput> {
+    ) -> Result<BuildOutput> {
         let mut run_dependencies = vec![];
         let mut contract = CompactContractBytecode::default();
         let mut highlevel_known_contracts = BTreeMap::new();
@@ -202,7 +202,7 @@ impl ScriptArgs {
     pub fn get_project_and_output(
         &mut self,
         script_config: &ScriptConfig,
-    ) -> eyre::Result<(Project, ProjectCompileOutput)> {
+    ) -> Result<(Project, ProjectCompileOutput)> {
         let project = script_config.config.project()?;
 
         let filters = self.opts.skip.clone().unwrap_or_default();
@@ -266,7 +266,7 @@ pub fn filter_sources_and_artifacts(
     sources: BTreeMap<u32, String>,
     highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     project: Project,
-) -> eyre::Result<(BTreeMap<u32, String>, HashMap<String, ContractBytecodeSome>)> {
+) -> Result<(BTreeMap<u32, String>, HashMap<String, ContractBytecodeSome>)> {
     // Find all imports
     let graph = Graph::resolve(&project.paths)?;
     let target_path = project.root().join(target);

@@ -1,5 +1,6 @@
 use super::{build::BuildArgs, retry::RETRY_VERIFY_ON_CREATE, script::ScriptArgs};
 use clap::{Parser, ValueHint};
+use eyre::Result;
 use foundry_cli::opts::CoreBuildArgs;
 use foundry_common::evm::{Breakpoints, EvmArgs};
 use std::path::PathBuf;
@@ -40,7 +41,7 @@ pub struct DebugArgs {
 }
 
 impl DebugArgs {
-    pub async fn debug(self, breakpoints: Breakpoints) -> eyre::Result<()> {
+    pub async fn debug(self, breakpoints: Breakpoints) -> Result<()> {
         let script = ScriptArgs {
             path: self.path.to_str().expect("Invalid path string.").to_string(),
             args: self.args,

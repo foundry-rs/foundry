@@ -8,16 +8,16 @@ use ethers::{
     prelude::{artifacts::Libraries, ArtifactId},
     signers::LocalWallet,
 };
-use eyre::{ContextCompat, WrapErr};
+use eyre::{ContextCompat, Result, WrapErr};
+use foundry_cli::utils::now;
 use foundry_common::{fs, get_http_provider};
 use foundry_config::Config;
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::{
-    io::BufWriter,
+    io::{BufWriter, Write},
     path::{Path, PathBuf},
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
 };
 use tracing::log::trace;
 
@@ -31,11 +31,8 @@ pub struct MultiChainSequence {
 
 impl Drop for MultiChainSequence {
     fn drop(&mut self) {
-        self.deployments.iter_mut().for_each(|sequence| {
-            sequence.sort_receipts();
-        });
-
-        self.save().expect("not able to save multi deployment sequence");
+        self.deployments.iter_mut().for_each(|sequence| sequence.sort_receipts());
+        self.save().expect("could not save multi deployment sequence");
     }
 }
 
@@ -46,18 +43,11 @@ impl MultiChainSequence {
         target: &ArtifactId,
         log_folder: &Path,
         broadcasted: bool,
-    ) -> eyre::Result<Self> {
+    ) -> Result<Self> {
         let path =
             MultiChainSequence::get_path(&log_folder.join("multi"), sig, target, broadcasted)?;
 
-        Ok(MultiChainSequence {
-            deployments,
-            path,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("Wrong system time.")
-                .as_secs(),
-        })
+        Ok(MultiChainSequence { deployments, path, timestamp: now().as_secs() })
     }
 
     /// Saves to ./broadcast/multi/contract_filename[-timestamp]/sig.json
@@ -66,7 +56,7 @@ impl MultiChainSequence {
         sig: &str,
         target: &ArtifactId,
         broadcasted: bool,
-    ) -> eyre::Result<PathBuf> {
+    ) -> Result<PathBuf> {
         let mut out = out.to_path_buf();
 
         if !broadcasted {
@@ -85,35 +75,34 @@ impl MultiChainSequence {
         let filename = sig
             .split_once('(')
             .wrap_err_with(|| format!("Failed to compute file name: Signature {sig} is invalid."))?
-            .0
-            .to_string();
+            .0;
         out.push(format!("{filename}.json"));
 
         Ok(out)
     }
 
     /// Loads the sequences for the multi chain deployment.
-    pub fn load(log_folder: &Path, sig: &str, target: &ArtifactId) -> eyre::Result<Self> {
+    pub fn load(log_folder: &Path, sig: &str, target: &ArtifactId) -> Result<Self> {
         let path = MultiChainSequence::get_path(&log_folder.join("multi"), sig, target, true)?;
         ethers::solc::utils::read_json_file(path).wrap_err("Multi-chain deployment not found.")
     }
 
     /// Saves the transactions as file if it's a standalone deployment.
-    pub fn save(&mut self) -> eyre::Result<()> {
-        self.timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        let path = self.path.to_string_lossy();
+    pub fn save(&mut self) -> Result<()> {
+        self.timestamp = now().as_secs();
 
         //../Contract-latest/run.json
-        serde_json::to_writer_pretty(BufWriter::new(fs::create_file(&self.path)?), &self)?;
+        let mut writer = BufWriter::new(fs::create_file(&self.path)?);
+        serde_json::to_writer_pretty(&mut writer, &self)?;
+        writer.flush()?;
 
         //../Contract-[timestamp]/run.json
+        let path = self.path.to_string_lossy();
         let file = PathBuf::from(&path.replace("-latest", &format!("-{}", self.timestamp)));
+        fs::create_dir_all(file.parent().unwrap())?;
+        fs::copy(&self.path, &file)?;
 
-        fs::create_dir_all(file.parent().expect("to have a file."))?;
-
-        serde_json::to_writer_pretty(BufWriter::new(fs::create_file(file)?), &self)?;
-
-        println!("\nTransactions saved to: {path}\n");
+        println!("\nTransactions saved to: {}\n", self.path.display());
 
         Ok(())
     }
@@ -129,7 +118,7 @@ impl ScriptArgs {
         config: &Config,
         script_wallets: Vec<LocalWallet>,
         verify: VerifyBundle,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         if !libraries.is_empty() {
             eyre::bail!("Libraries are currently not supported on multi deployment setups.");
         }

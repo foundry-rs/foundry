@@ -179,9 +179,6 @@ pub enum InvalidTransactionError {
     /// Thrown when a legacy tx was signed for a different chain
     #[error("Incompatible EIP-155 transaction, signed for another chain")]
     IncompatibleEIP155,
-    /// Thrown when an access list is used before the berlin hard fork.
-    #[error("Access lists are not supported before the Berlin hardfork")]
-    AccessListNotSupported,
 }
 
 impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
@@ -204,7 +201,7 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
                 })
             }
             InvalidTransaction::RejectCallerWithCode => InvalidTransactionError::SenderNoEOA,
-            InvalidTransaction::LackOfFundForMaxFee { .. } => {
+            InvalidTransaction::LackOfFundForGasLimit { .. } => {
                 InvalidTransactionError::InsufficientFunds
             }
             InvalidTransaction::OverflowPaymentInTransaction => {
@@ -218,9 +215,6 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             }
             InvalidTransaction::NonceTooHigh { .. } => InvalidTransactionError::NonceTooHigh,
             InvalidTransaction::NonceTooLow { .. } => InvalidTransactionError::NonceTooLow,
-            InvalidTransaction::AccessListNotSupported => {
-                InvalidTransactionError::AccessListNotSupported
-            }
         }
     }
 }

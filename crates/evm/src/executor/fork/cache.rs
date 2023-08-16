@@ -1,14 +1,25 @@
 //! Cache related abstraction
 use crate::executor::backend::snapshot::StateSnapshot;
+use hashbrown::HashMap as Map;
 use parking_lot::RwLock;
 use revm::{
+<<<<<<< HEAD
     primitives::{
         Account, AccountInfo, HashMap as Map, B160, B256, KECCAK_EMPTY, U256,
     },
+=======
+    primitives::{Account, AccountInfo, B160, B256, KECCAK_EMPTY, U256},
+>>>>>>> master
     DatabaseCommit,
 };
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
-use std::{collections::BTreeSet, fs, io::BufWriter, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    fs,
+    io::{BufWriter, Write},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use url::Url;
 
@@ -254,20 +265,14 @@ impl MemDb {
             if !acc.is_touched() {
                 continue
             }
-            if acc.is_selfdestructed() {
-                let acc_storage = storage.entry(add).or_default();
-                acc_storage.clear();
-                let acc_info = Default::default();
-                accounts.insert(add, acc_info);
+            if acc.is_empty() || acc.is_destroyed {
+                accounts.remove(&add);
+                storage.remove(&add);
             } else {
                 let is_newly_created = acc.is_created();
                 // insert account
-                if let Some(code_hash) = acc
-                    .info
-                    .code
-                    .as_ref()
-                    .filter(|code| !code.is_empty())
-                    .map(|code| code.hash_slow())
+                if let Some(code_hash) =
+                    acc.info.code.as_ref().filter(|code| !code.is_empty()).map(|code| code.hash)
                 {
                     acc.info.code_hash = code_hash;
                 } else if acc.info.code_hash.is_zero() {
@@ -279,7 +284,16 @@ impl MemDb {
                 if is_newly_created {
                     acc_storage.clear();
                 }
-                acc_storage.extend(acc.storage.into_iter().map(|(k, v)| (k, v.present_value())));
+                for (index, value) in acc.storage {
+                    if value.present_value() == U256::from(0) {
+                        acc_storage.remove(&index);
+                    } else {
+                        acc_storage.insert(index, value.present_value());
+                    }
+                }
+                if acc_storage.is_empty() {
+                    storage.remove(&add);
+                }
             }
         }
     }
@@ -353,22 +367,30 @@ impl JsonBlockCacheDB {
         self.cache_path.is_none()
     }
 
-    /// Flushes the DB to disk if caching is enabled
+    /// Flushes the DB to disk if caching is enabled.
+    #[tracing::instrument(level = "warn", skip_all, fields(path = ?self.cache_path))]
     pub fn flush(&self) {
-        // writes the data to a json file
-        if let Some(ref path) = self.cache_path {
-            trace!(target: "cache", "saving json cache path={:?}", path);
-            if let Some(parent) = path.parent() {
-                let _ = fs::create_dir_all(parent);
-            }
-            let _ = fs::File::create(path)
-                .map_err(|e| warn!(target: "cache", "Failed to open json cache for writing: {}", e))
-                .and_then(|f| {
-                    serde_json::to_writer(BufWriter::new(f), &self.data)
-                        .map_err(|e| warn!(target: "cache" ,"Failed to write to json cache: {}", e))
-                });
-            trace!(target: "cache", "saved json cache path={:?}", path);
+        let Some(path) = &self.cache_path else { return };
+        trace!(target: "cache", "saving json cache");
+
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
         }
+
+        let file = match fs::File::create(path) {
+            Ok(file) => file,
+            Err(e) => return warn!(target: "cache", %e, "Failed to open json cache for writing"),
+        };
+
+        let mut writer = BufWriter::new(file);
+        if let Err(e) = serde_json::to_writer(&mut writer, &self.data) {
+            return warn!(target: "cache", %e, "Failed to write to json cache")
+        }
+        if let Err(e) = writer.flush() {
+            return warn!(target: "cache", %e, "Failed to flush to json cache")
+        }
+
+        trace!(target: "cache", "saved json cache");
     }
 }
 

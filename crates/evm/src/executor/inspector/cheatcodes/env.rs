@@ -333,7 +333,9 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::Difficulty(inner) => {
             ensure!(
                 data.env.cfg.spec_id < SpecId::MERGE,
-                "Difficulty is not supported after the Paris hard fork. Please use vm.prevrandao instead. For more information, please see https://eips.ethereum.org/EIPS/eip-4399"
+                "`difficulty` is not supported after the Paris hard fork, \
+                 use `prevrandao` instead. \
+                 For more information, please see https://eips.ethereum.org/EIPS/eip-4399"
             );
             data.env.block.difficulty = inner.0.into();
             Bytes::new()
@@ -341,7 +343,9 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::Prevrandao(inner) => {
             ensure!(
                 data.env.cfg.spec_id >= SpecId::MERGE,
-                "Prevrandao is not supported before the Paris hard fork. Please use vm.difficulty instead. For more information, please see https://eips.ethereum.org/EIPS/eip-4399"
+                "`prevrandao` is not supported before the Paris hard fork, \
+                 use `difficulty` instead. \
+                 For more information, please see https://eips.ethereum.org/EIPS/eip-4399"
             );
             data.env.block.prevrandao = Some(B256::from(inner.0));
             Bytes::new()
@@ -507,7 +511,8 @@ pub fn apply<DB: DatabaseExt>(
                 Ok(Bytes::new())
             },
         )??,
-        HEVMCalls::GetNonce(inner) => {
+        // [function getNonce(address)] returns the current nonce of a given ETH address
+        HEVMCalls::GetNonce1(inner) => {
             correct_sender_nonce(
                 b160_to_h160(data.env.tx.caller),
                 &mut data.journaled_state,
@@ -521,6 +526,23 @@ pub fn apply<DB: DatabaseExt>(
 
             // we can safely unwrap because `load_account` insert inner.0 to DB.
             let account = data.journaled_state.state().get(&h160_to_b160(inner.0)).unwrap();
+            abi::encode(&[Token::Uint(account.info.nonce.into())]).into()
+        }
+        // [function getNonce(Wallet)] returns the current nonce of the Wallet's ETH address
+        HEVMCalls::GetNonce0(inner) => {
+            correct_sender_nonce(
+                b160_to_h160(data.env.tx.caller),
+                &mut data.journaled_state,
+                &mut data.db,
+                state,
+            )?;
+
+            // TODO:  this is probably not a good long-term solution since it might mess up the gas
+            // calculations
+            data.journaled_state.load_account(h160_to_b160(inner.0.addr), data.db)?;
+
+            // we can safely unwrap because `load_account` insert inner.0 to DB.
+            let account = data.journaled_state.state().get(&h160_to_b160(inner.0.addr)).unwrap();
             abi::encode(&[Token::Uint(account.info.nonce.into())]).into()
         }
         HEVMCalls::ChainId(inner) => {

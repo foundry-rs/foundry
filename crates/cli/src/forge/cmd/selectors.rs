@@ -1,6 +1,7 @@
 use clap::Parser;
 use comfy_table::Table;
 use ethers::prelude::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
+use eyre::Result;
 use foundry_cli::{
     opts::{CompilerArgs, CoreBuildArgs, ProjectPathsArgs},
     utils::FoundryPathExt,
@@ -53,7 +54,7 @@ pub enum SelectorsSubcommands {
 }
 
 impl SelectorsSubcommands {
-    pub async fn run(self) -> eyre::Result<()> {
+    pub async fn run(self) -> Result<()> {
         match self {
             SelectorsSubcommands::Upload { contract, all, project_paths } => {
                 let build_args = CoreBuildArgs {

@@ -9,7 +9,7 @@ use ethers::{
         Artifact, ArtifactId, ProjectCompileOutput,
     },
 };
-use eyre::WrapErr;
+use eyre::{Result, WrapErr};
 use forge::executor::opts::EvmOpts;
 use foundry_common::{cli_warn, fs, TestFunctionExt};
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain as ConfigChain, Config};
@@ -26,19 +26,13 @@ use tracing::trace;
 use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
 
-/// Common trait for all cli commands
-pub trait Cmd: clap::Parser + Sized {
-    type Output;
-    fn run(self) -> eyre::Result<Self::Output>;
-}
-
 /// Given a `Project`'s output, removes the matching ABI, Bytecode and
 /// Runtime Bytecode of the given contract.
 #[track_caller]
 pub fn remove_contract(
     output: &mut ProjectCompileOutput,
     info: &ContractInfo,
-) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
+) -> Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
     let contract = if let Some(contract) = output.remove_contract(info) {
         contract
     } else {
@@ -81,7 +75,7 @@ pub fn remove_contract(
 pub fn get_cached_entry_by_name(
     cache: &SolFilesCache,
     name: &str,
-) -> eyre::Result<(PathBuf, CacheEntry)> {
+) -> Result<(PathBuf, CacheEntry)> {
     let mut cached_entry = None;
     let mut alternatives = Vec::new();
 
@@ -117,7 +111,7 @@ pub fn get_cached_entry_by_name(
 }
 
 /// Returns error if constructor has arguments.
-pub fn ensure_clean_constructor(abi: &Abi) -> eyre::Result<()> {
+pub fn ensure_clean_constructor(abi: &Abi) -> Result<()> {
     if let Some(constructor) = &abi.constructor {
         if !constructor.inputs.is_empty() {
             eyre::bail!("Contract constructor should have no arguments. Add those arguments to  `run(...)` instead, and call it with `--sig run(...)`.");
@@ -203,7 +197,7 @@ pub trait LoadConfig {
     /// Load and sanitize the [`Config`] based on the options provided in self
     fn load_config(self) -> Config;
     /// Load and sanitize the [`Config`], as well as extract [`EvmOpts`] from self
-    fn load_config_and_evm_opts(self) -> eyre::Result<(Config, EvmOpts)>;
+    fn load_config_and_evm_opts(self) -> Result<(Config, EvmOpts)>;
     /// Load [`Config`] but do not sanitize. See [`Config::sanitized`] for more information
     fn load_config_unsanitized(self) -> Config;
     /// Load [`Config`] but do not sanitize. See [`Config::sanitized`] for more information.
@@ -217,7 +211,7 @@ pub trait LoadConfig {
     /// Returns an error if loading failed
     fn try_load_config_emit_warnings(self) -> Result<Config, ExtractConfigError>;
     /// Same as [`LoadConfig::load_config_and_evm_opts`] but also emits warnings generated
-    fn load_config_and_evm_opts_emit_warnings(self) -> eyre::Result<(Config, EvmOpts)>;
+    fn load_config_and_evm_opts_emit_warnings(self) -> Result<(Config, EvmOpts)>;
     /// Same as [`LoadConfig::load_config_unsanitized`] but also emits warnings generated
     fn load_config_unsanitized_emit_warnings(self) -> Config;
     fn try_load_config_unsanitized_emit_warnings(self) -> Result<Config, ExtractConfigError>;
@@ -236,7 +230,7 @@ where
         self.into()
     }
 
-    fn load_config_and_evm_opts(self) -> eyre::Result<(Config, EvmOpts)> {
+    fn load_config_and_evm_opts(self) -> Result<(Config, EvmOpts)> {
         let figment: Figment = self.into();
 
         let mut evm_opts = figment.extract::<EvmOpts>().map_err(ExtractConfigError::new)?;
@@ -273,7 +267,7 @@ where
         Ok(config)
     }
 
-    fn load_config_and_evm_opts_emit_warnings(self) -> eyre::Result<(Config, EvmOpts)> {
+    fn load_config_and_evm_opts_emit_warnings(self) -> Result<(Config, EvmOpts)> {
         let (config, evm_opts) = self.load_config_and_evm_opts()?;
         config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
         Ok((config, evm_opts))
@@ -293,7 +287,7 @@ where
 }
 
 /// Read contract constructor arguments from the given file.
-pub fn read_constructor_args_file(constructor_args_path: PathBuf) -> eyre::Result<Vec<String>> {
+pub fn read_constructor_args_file(constructor_args_path: PathBuf) -> Result<Vec<String>> {
     if !constructor_args_path.exists() {
         eyre::bail!("Constructor args file \"{}\" not found", constructor_args_path.display());
     }
@@ -369,7 +363,7 @@ pub async fn handle_traces(
     labels: Vec<String>,
     verbose: bool,
     debug: bool,
-) -> eyre::Result<()> {
+) -> Result<()> {
     let mut etherscan_identifier = EtherscanIdentifier::new(config, chain)?;
 
     let labeled_addresses = labels.iter().filter_map(|label_str| {
@@ -410,7 +404,7 @@ pub async fn print_traces(
     result: &mut TraceResult,
     decoder: CallTraceDecoder,
     verbose: bool,
-) -> eyre::Result<()> {
+) -> Result<()> {
     if result.traces.is_empty() {
         panic!("No traces found")
     }
@@ -441,7 +435,7 @@ pub fn run_debugger(
     decoder: CallTraceDecoder,
     known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
     sources: BTreeMap<ArtifactId, String>,
-) -> eyre::Result<()> {
+) -> Result<()> {
     let calls: Vec<DebugArena> = vec![result.debug];
     let flattened = calls.last().expect("we should have collected debug info").flatten(0);
     let tui = Tui::new(

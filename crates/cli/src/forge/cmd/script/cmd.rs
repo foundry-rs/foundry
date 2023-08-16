@@ -3,6 +3,7 @@ use ethers::{
     prelude::{Middleware, Signer},
     types::{transaction::eip2718::TypedTransaction, U256},
 };
+use eyre::Result;
 use foundry_cli::utils::LoadConfig;
 use foundry_common::{contracts::flatten_contracts, try_get_http_provider};
 use std::sync::Arc;
@@ -13,7 +14,7 @@ type NewSenderChanges = (CallTraceDecoder, Libraries, ArtifactContracts<Contract
 
 impl ScriptArgs {
     /// Executes the script
-    pub async fn run_script(mut self, breakpoints: Breakpoints) -> eyre::Result<()> {
+    pub async fn run_script(mut self, breakpoints: Breakpoints) -> Result<()> {
         trace!(target: "script", "executing script command");
 
         let (config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
@@ -129,7 +130,7 @@ impl ScriptArgs {
         default_known_contracts: ArtifactContracts,
         predeploy_libraries: Vec<Bytes>,
         result: &mut ScriptResult,
-    ) -> eyre::Result<Option<NewSenderChanges>> {
+    ) -> Result<Option<NewSenderChanges>> {
         if let Some(new_sender) = self.maybe_new_sender(
             &script_config.evm_opts,
             result.transactions.as_ref(),
@@ -186,7 +187,7 @@ impl ScriptArgs {
         libraries: Libraries,
         result: ScriptResult,
         verify: VerifyBundle,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         if self.multi {
             return self
                 .multi_chain_deployment(
@@ -223,7 +224,7 @@ impl ScriptArgs {
         default_known_contracts: ArtifactContracts,
         result: ScriptResult,
         mut verify: VerifyBundle,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         trace!(target: "script", "resuming single deployment");
 
         let fork_url = script_config
@@ -292,7 +293,7 @@ impl ScriptArgs {
         new_sender: Address,
         first_run_result: &mut ScriptResult,
         default_known_contracts: ArtifactContracts,
-    ) -> eyre::Result<(Libraries, ArtifactContracts<ContractBytecodeSome>)> {
+    ) -> Result<(Libraries, ArtifactContracts<ContractBytecodeSome>)> {
         // if we had a new sender that requires relinking, we need to
         // get the nonce mainnet for accurate addresses for predeploy libs
         let nonce = foundry_utils::next_nonce(
@@ -342,7 +343,7 @@ impl ScriptArgs {
 
     /// In case the user has loaded *only* one private-key, we can assume that he's using it as the
     /// `--sender`
-    fn maybe_load_private_key(&mut self, script_config: &mut ScriptConfig) -> eyre::Result<()> {
+    fn maybe_load_private_key(&mut self, script_config: &mut ScriptConfig) -> Result<()> {
         if let Some(ref private_key) = self.wallets.private_key {
             self.wallets.private_keys = Some(vec![private_key.clone()]);
         }

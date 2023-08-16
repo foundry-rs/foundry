@@ -216,7 +216,7 @@ impl Wallet {
     }
     /// Returns a [Signer] corresponding to the provided private key, mnemonic or hardware signer.
     #[instrument(skip(self), level = "trace")]
-    pub async fn signer(&self, chain_id: u64) -> eyre::Result<WalletSigner> {
+    pub async fn signer(&self, chain_id: u64) -> Result<WalletSigner> {
         trace!("start finding signer");
 
         if self.ledger {

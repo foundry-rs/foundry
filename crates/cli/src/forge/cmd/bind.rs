@@ -1,9 +1,7 @@
 use clap::{Parser, ValueHint};
 use ethers::contract::{Abigen, ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts};
-use foundry_cli::{
-    opts::CoreBuildArgs,
-    utils::{Cmd, LoadConfig},
-};
+use eyre::Result;
+use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{compile, fs::json_files};
 use foundry_config::impl_figment_convert;
 use std::{
@@ -121,7 +119,7 @@ impl BindArgs {
     }
 
     /// Instantiate the multi-abigen
-    fn get_multi(&self, artifacts: impl AsRef<Path>) -> eyre::Result<MultiAbigen> {
+    fn get_multi(&self, artifacts: impl AsRef<Path>) -> Result<MultiAbigen> {
         let abigens = json_files(artifacts.as_ref())
             .into_iter()
             .filter_map(|path| {
@@ -147,7 +145,7 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
     }
 
     /// Check that the existing bindings match the expected abigen output
-    fn check_existing_bindings(&self, artifacts: impl AsRef<Path>) -> eyre::Result<()> {
+    fn check_existing_bindings(&self, artifacts: impl AsRef<Path>) -> Result<()> {
         let bindings = self.get_multi(&artifacts)?.build()?;
         println!("Checking bindings for {} contracts.", bindings.len());
         if !self.module {
@@ -166,7 +164,7 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
     }
 
     /// Generate the bindings
-    fn generate_bindings(&self, artifacts: impl AsRef<Path>) -> eyre::Result<()> {
+    fn generate_bindings(&self, artifacts: impl AsRef<Path>) -> Result<()> {
         let bindings = self.get_multi(&artifacts)?.build()?;
         println!("Generating bindings for {} contracts", bindings.len());
         if !self.module {
@@ -181,12 +179,8 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
         }
         Ok(())
     }
-}
 
-impl Cmd for BindArgs {
-    type Output = ();
-
-    fn run(self) -> eyre::Result<Self::Output> {
+    pub fn run(self) -> Result<()> {
         if !self.skip_build {
             // run `forge build`
             let project = self.build_args.project()?;

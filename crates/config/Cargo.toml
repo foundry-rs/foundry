@@ -1,17 +1,20 @@
 [package]
 name = "foundry-config"
-version = "0.2.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
 description = "Foundry configuration"
-repository = "https://github.com/foundry-rs/foundry"
-readme = "README.md"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 
 [dependencies]
 # eth
-ethers-core = { workspace = true }
+ethers-core.workspace = true
 ethers-solc = { workspace = true, features = ["async", "svm-solc"] }
-ethers-etherscan = { workspace = true }
+ethers-etherscan.workspace = true
 
 # formats
 Inflector = "0.11"

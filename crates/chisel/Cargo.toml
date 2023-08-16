@@ -1,28 +1,17 @@
 [package]
 name = "chisel"
-version = "0.1.0"
-edition = "2021"
 authors = [
   "clabby <https://github.com/clabby>",
   "asnared <https://github.com/abigger87>",
 ]
 description = "Solidity REPL"
-repository = "https://github.com/foundry-rs/foundry/tree/main/chisel"
-license = "MIT"
-keywords = [
-  "Rust",
-  "Ethereum",
-  "Foundry",
-  "Chisel",
-  "REPL",
-  "Solidity",
-  "Solang",
-]
 
-[lib]
-name = "chisel"
-path = "src/lib.rs"
-doctest = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 
 [[bin]]
 name = "chisel"
@@ -30,15 +19,15 @@ path = "src/bin/chisel.rs"
 
 [dependencies]
 # forge
-foundry-evm = { path = "../evm" }
-forge = { path = "../forge" }
-foundry-config = { path = "../config" }
-foundry-cli = { path = "../cli" }
-foundry-common = { path = "../common" }
-forge-fmt = { path = "../fmt" }
+foundry-evm.workspace = true
+forge.workspace = true
+foundry-config.workspace = true
+foundry-cli.workspace = true
+foundry-common.workspace = true
+forge-fmt.workspace = true
 
 # ethers
-ethers = { workspace = true }
+ethers.workspace = true
 ethers-solc = { workspace = true, features = ["project-util", "full"] }
 
 # async

@@ -4,7 +4,7 @@ use super::{
 };
 use clap::{builder::RangedU64ValueParser, Parser, ValueHint};
 use ethers::types::U256;
-use eyre::Context;
+use eyre::{Context, Result};
 use forge::result::TestKindReport;
 use foundry_cli::utils::STATIC_FUZZ_SEED;
 use once_cell::sync::Lazy;
@@ -92,11 +92,11 @@ impl SnapshotArgs {
 
     /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
-    pub(crate) fn watchexec_config(&self) -> eyre::Result<(InitConfig, RuntimeConfig)> {
+    pub(crate) fn watchexec_config(&self) -> Result<(InitConfig, RuntimeConfig)> {
         self.test.watchexec_config()
     }
 
-    pub async fn run(mut self) -> eyre::Result<()> {
+    pub async fn run(mut self) -> Result<()> {
         // Set fuzz seed so gas snapshots are deterministic
         self.test.fuzz_seed = Some(U256::from_big_endian(&STATIC_FUZZ_SEED));
 
@@ -258,7 +258,7 @@ impl FromStr for SnapshotEntry {
 }
 
 /// Reads a list of snapshot entries from a snapshot file
-fn read_snapshot(path: impl AsRef<Path>) -> eyre::Result<Vec<SnapshotEntry>> {
+fn read_snapshot(path: impl AsRef<Path>) -> Result<Vec<SnapshotEntry>> {
     let path = path.as_ref();
     let mut entries = Vec::new();
     for line in io::BufReader::new(
@@ -277,7 +277,7 @@ fn write_to_snapshot_file(
     tests: &[Test],
     path: impl AsRef<Path>,
     _format: Option<Format>,
-) -> eyre::Result<()> {
+) -> Result<()> {
     let mut reports = tests
         .iter()
         .map(|test| {
@@ -352,7 +352,7 @@ fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>, tolerance: Option<u32>) ->
 }
 
 /// Compare the set of tests with an existing snapshot
-fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
+fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> Result<()> {
     let snaps = snaps
         .into_iter()
         .map(|s| ((s.contract_name, s.signature), s.gas_used))

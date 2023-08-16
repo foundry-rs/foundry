@@ -1,5 +1,5 @@
 use ethers::prelude::{Http, Middleware, Provider, RetryClient, U256};
-use eyre::WrapErr;
+use eyre::{Result, WrapErr};
 use foundry_common::{get_http_provider, RpcUrl};
 use foundry_config::Chain;
 use std::{
@@ -20,7 +20,7 @@ impl ProvidersManager {
         &mut self,
         rpc: &str,
         is_legacy: bool,
-    ) -> eyre::Result<&ProviderInfo> {
+    ) -> Result<&ProviderInfo> {
         Ok(match self.inner.entry(rpc.to_string()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
@@ -51,12 +51,12 @@ pub struct ProviderInfo {
 /// Represents the outcome of a gas price request
 #[derive(Debug)]
 pub enum GasPrice {
-    Legacy(eyre::Result<U256>),
-    EIP1559(eyre::Result<(U256, U256)>),
+    Legacy(Result<U256>),
+    EIP1559(Result<(U256, U256)>),
 }
 
 impl ProviderInfo {
-    pub async fn new(rpc: &str, mut is_legacy: bool) -> eyre::Result<ProviderInfo> {
+    pub async fn new(rpc: &str, mut is_legacy: bool) -> Result<ProviderInfo> {
         let provider = Arc::new(get_http_provider(rpc));
         let chain = provider.get_chainid().await?.as_u64();
 
@@ -78,7 +78,7 @@ impl ProviderInfo {
     }
 
     /// Returns the gas price to use
-    pub fn gas_price(&self) -> eyre::Result<U256> {
+    pub fn gas_price(&self) -> Result<U256> {
         let res = match &self.gas_price {
             GasPrice::Legacy(res) => res.as_ref(),
             GasPrice::EIP1559(res) => res.as_ref().map(|res| &res.0),

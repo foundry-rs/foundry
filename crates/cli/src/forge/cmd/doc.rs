@@ -1,6 +1,7 @@
 use clap::{Parser, ValueHint};
+use eyre::Result;
 use forge_doc::{ContractInheritance, Deployments, DocBuilder, GitSource, Inheritdoc, Server};
-use foundry_cli::{opts::GH_REPO_PREFIX_REGEX, utils::Cmd};
+use foundry_cli::opts::GH_REPO_PREFIX_REGEX;
 use foundry_config::{find_project_root_path, load_config_with_root};
 use std::{path::PathBuf, process::Command};
 
@@ -46,10 +47,8 @@ pub struct DocArgs {
     deployments: Option<Option<PathBuf>>,
 }
 
-impl Cmd for DocArgs {
-    type Output = ();
-
-    fn run(self) -> eyre::Result<Self::Output> {
+impl DocArgs {
+    pub fn run(self) -> Result<()> {
         let root = self.root.clone().unwrap_or(find_project_root_path(None)?);
         let config = load_config_with_root(Some(root.clone()));
 

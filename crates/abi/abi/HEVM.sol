@@ -2,6 +2,7 @@ struct Log { bytes32[] topics; bytes data; }
 struct Rpc { string name; string url; }
 struct DirEntry { string errorMessage; string path; uint64 depth; bool isDir; bool isSymlink; }
 struct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created; }
+struct Wallet { address addr; uint256 publicKeyX; uint256 publicKeyY; uint256 privateKey; }
 
 allowCheatcodes(address)
 
@@ -56,6 +57,12 @@ deriveKey(string,string,uint32)(uint256)
 deriveKey(string,uint32,string)(uint256)
 deriveKey(string,string,uint32,string)(uint256)
 rememberKey(uint256)(address)
+
+createWallet(string)(Wallet)
+createWallet(uint256)(Wallet)
+createWallet(uint256,string)(Wallet)
+sign(Wallet,bytes32)(uint8,bytes32,bytes32)
+getNonce(Wallet)(uint64)
 
 prank(address)
 prank(address,address)
@@ -119,13 +126,14 @@ startBroadcast(uint256)
 stopBroadcast()
 
 projectRoot()(string)
+openFile(string)
 readFile(string)(string)
 readFileBinary(string)(bytes)
+readLine(string)(string)
 writeFile(string,string)
 writeFileBinary(string,bytes)
-openFile(string)
-readLine(string)(string)
 writeLine(string,string)
+copyFile(string,string)
 closeFile(string)
 removeFile(string)
 createDir(string, bool)

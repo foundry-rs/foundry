@@ -12,15 +12,15 @@ use ethers::{
     prelude::{artifacts::Libraries, ArtifactId, TransactionReceipt, TxHash},
     types::transaction::eip2718::TypedTransaction,
 };
-use eyre::{ContextCompat, WrapErr};
+use eyre::{ContextCompat, Result, WrapErr};
+use foundry_cli::utils::now;
 use foundry_common::{fs, shell, SELECTOR_LEN};
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
-    io::BufWriter,
+    io::{BufWriter, Write},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 use tracing::trace;
 use yansi::Paint;
@@ -81,7 +81,7 @@ impl ScriptSequence {
         config: &Config,
         broadcasted: bool,
         is_multi: bool,
-    ) -> eyre::Result<Self> {
+    ) -> Result<Self> {
         let chain = config.chain_id.unwrap_or_default().id();
 
         let (path, sensitive_path) = ScriptSequence::get_paths(
@@ -102,10 +102,7 @@ impl ScriptSequence {
             pending: vec![],
             path,
             sensitive_path,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("Wrong system time.")
-                .as_secs(),
+            timestamp: now().as_secs(),
             libraries: vec![],
             chain,
             multi: is_multi,
@@ -120,7 +117,7 @@ impl ScriptSequence {
         target: &ArtifactId,
         chain_id: u64,
         broadcasted: bool,
-    ) -> eyre::Result<Self> {
+    ) -> Result<Self> {
         let (path, sensitive_path) = ScriptSequence::get_paths(
             &config.broadcast,
             &config.cache_path,
@@ -151,43 +148,34 @@ impl ScriptSequence {
     }
 
     /// Saves the transactions as file if it's a standalone deployment.
-    pub fn save(&mut self) -> eyre::Result<()> {
-        if !self.multi && !self.transactions.is_empty() {
-            self.timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-
-            let sensitive_script_sequence: SensitiveScriptSequence = self.into();
-
-            let path = self.path.to_string_lossy();
-            let sensitive_path = self.sensitive_path.to_string_lossy();
-
-            // broadcast folder writes
-            //../run-latest.json
-            serde_json::to_writer_pretty(BufWriter::new(fs::create_file(&self.path)?), &self)?;
-            //../run-[timestamp].json
-            serde_json::to_writer_pretty(
-                BufWriter::new(fs::create_file(
-                    path.replace("latest.json", &format!("{}.json", self.timestamp)),
-                )?),
-                &self,
-            )?;
-
-            // cache folder writes
-            //../run-latest.json
-            serde_json::to_writer_pretty(
-                BufWriter::new(fs::create_file(&self.sensitive_path)?),
-                &sensitive_script_sequence,
-            )?;
-            //../run-[timestamp].json
-            serde_json::to_writer_pretty(
-                BufWriter::new(fs::create_file(
-                    sensitive_path.replace("latest.json", &format!("{}.json", self.timestamp)),
-                )?),
-                &sensitive_script_sequence,
-            )?;
-
-            shell::println(format!("\nTransactions saved to: {path}\n"))?;
-            shell::println(format!("Sensitive values saved to: {sensitive_path}\n"))?;
+    pub fn save(&mut self) -> Result<()> {
+        if self.multi || self.transactions.is_empty() {
+            return Ok(())
         }
+
+        self.timestamp = now().as_secs();
+        let ts_name = format!("run-{}.json", self.timestamp);
+
+        let sensitive_script_sequence: SensitiveScriptSequence = self.into();
+
+        // broadcast folder writes
+        //../run-latest.json
+        let mut writer = BufWriter::new(fs::create_file(&self.path)?);
+        serde_json::to_writer_pretty(&mut writer, &self)?;
+        writer.flush()?;
+        //../run-[timestamp].json
+        fs::copy(&self.path, self.path.with_file_name(&ts_name))?;
+
+        // cache folder writes
+        //../run-latest.json
+        let mut writer = BufWriter::new(fs::create_file(&self.sensitive_path)?);
+        serde_json::to_writer_pretty(&mut writer, &sensitive_script_sequence)?;
+        writer.flush()?;
+        //../run-[timestamp].json
+        fs::copy(&self.sensitive_path, self.sensitive_path.with_file_name(&ts_name))?;
+
+        shell::println(format!("\nTransactions saved to: {}\n", self.path.display()))?;
+        shell::println(format!("Sensitive values saved to: {}\n", self.sensitive_path.display()))?;
 
         Ok(())
     }
@@ -233,7 +221,7 @@ impl ScriptSequence {
         target: &ArtifactId,
         chain_id: u64,
         broadcasted: bool,
-    ) -> eyre::Result<(PathBuf, PathBuf)> {
+    ) -> Result<(PathBuf, PathBuf)> {
         let mut broadcast = broadcast.to_path_buf();
         let mut cache = cache.to_path_buf();
         let mut common = PathBuf::new();
@@ -266,7 +254,7 @@ impl ScriptSequence {
         &mut self,
         config: &Config,
         mut verify: VerifyBundle,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         trace!(target: "script", "verifying {} contracts [{}]", verify.known_contracts.len(), self.chain);
 
         verify.set_chain(config, self.chain.into());

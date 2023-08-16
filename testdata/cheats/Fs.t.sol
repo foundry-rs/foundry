@@ -111,6 +111,15 @@ contract FsTest is DSTest {
         fsProxy.writeFileBinary("/etc/hosts", "malicious stuff");
     }
 
+    function testCopyFile() public {
+        string memory from = "fixtures/File/read.txt";
+        string memory to = "fixtures/File/copy.txt";
+        uint64 copied = vm.copyFile(from, to);
+        assertEq(vm.fsMetadata(to).length, uint256(copied));
+        assertEq(vm.readFile(from), vm.readFile(to));
+        vm.removeFile(to);
+    }
+
     function testWriteLine() public {
         fsProxy = new FsProxy();
 

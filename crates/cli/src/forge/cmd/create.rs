@@ -7,7 +7,7 @@ use ethers::{
     solc::{info::ContractInfo, utils::canonicalized},
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
-use eyre::Context;
+use eyre::{Context, Result};
 use foundry_cli::{
     opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
@@ -69,7 +69,7 @@ pub struct CreateArgs {
 
 impl CreateArgs {
     /// Executes the command to create a contract
-    pub async fn run(mut self) -> eyre::Result<()> {
+    pub async fn run(mut self) -> Result<()> {
         // Find Project & Compile
         let project = self.opts.project()?;
         let mut output = if self.json || self.opts.silent {
@@ -141,7 +141,7 @@ impl CreateArgs {
         &self,
         constructor_args: Option<String>,
         chain: u64,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         // NOTE: this does not represent the same `VerifyArgs` that would be sent after deployment,
         // since we don't know the address yet.
         let verify = verify::VerifyArgs {
@@ -176,7 +176,7 @@ impl CreateArgs {
         args: Vec<Token>,
         provider: M,
         chain: u64,
-    ) -> eyre::Result<()> {
+    ) -> Result<()> {
         let deployer_address =
             provider.default_sender().expect("no sender address set for provider");
         let bin = bin.into_bytes().unwrap_or_else(|| {
@@ -315,7 +315,7 @@ impl CreateArgs {
         &self,
         constructor: &Constructor,
         constructor_args: &[String],
-    ) -> eyre::Result<Vec<Token>> {
+    ) -> Result<Vec<Token>> {
         let params = constructor
             .inputs
             .iter()

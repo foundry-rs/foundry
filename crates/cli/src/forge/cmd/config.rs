@@ -1,6 +1,7 @@
 use super::build::BuildArgs;
 use clap::Parser;
-use foundry_cli::utils::{Cmd, LoadConfig};
+use eyre::Result;
+use foundry_cli::utils::LoadConfig;
 use foundry_common::{evm::EvmArgs, term::cli_warn};
 use foundry_config::fix::fix_tomls;
 
@@ -29,10 +30,8 @@ pub struct ConfigArgs {
     evm_opts: EvmArgs,
 }
 
-impl Cmd for ConfigArgs {
-    type Output = ();
-
-    fn run(self) -> eyre::Result<Self::Output> {
+impl ConfigArgs {
+    pub fn run(self) -> Result<()> {
         if self.fix {
             for warning in fix_tomls() {
                 cli_warn!("{warning}");

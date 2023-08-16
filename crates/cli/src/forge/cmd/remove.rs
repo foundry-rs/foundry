@@ -1,7 +1,8 @@
 use clap::{Parser, ValueHint};
+use eyre::Result;
 use foundry_cli::{
     opts::Dependency,
-    utils::{Cmd, Git, LoadConfig},
+    utils::{Git, LoadConfig},
 };
 use foundry_config::impl_figment_convert_basic;
 use std::path::PathBuf;
@@ -25,10 +26,8 @@ pub struct RemoveArgs {
 }
 impl_figment_convert_basic!(RemoveArgs);
 
-impl Cmd for RemoveArgs {
-    type Output = ();
-
-    fn run(self) -> eyre::Result<Self::Output> {
+impl RemoveArgs {
+    pub fn run(self) -> Result<()> {
         let config = self.try_load_config_emit_warnings()?;
         let (root, paths) = super::update::dependencies_paths(&self.dependencies, &config)?;
         let git_modules = root.join(".git/modules");

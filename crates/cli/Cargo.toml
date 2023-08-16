@@ -1,26 +1,28 @@
 [package]
 name = "foundry-cli"
-version = "0.2.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
-readme = "README.md"
-repository = "https://github.com/foundry-rs/foundry"
-keywords = ["ethereum", "web3"]
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 
 [build-dependencies]
 vergen = { version = "8", default-features = false, features = ["build", "git", "git2"] }
 
 [dependencies]
 # foundry internal
-forge-fmt = { path = "../fmt" }
-forge-doc = { path = "../doc" }
-foundry-utils = { path = "../utils" }
-forge = { path = "../forge" }
-foundry-config = { path = "../config" }
-foundry-common = { path = "../common" }
-foundry-evm = { path = "../evm" }
-cast = { path = "../cast" }
-ui = { path = "../ui" }
+forge-fmt.workspace = true
+forge-doc.workspace = true
+foundry-utils.workspace = true
+forge.workspace = true
+foundry-config.workspace = true
+foundry-common.workspace = true
+foundry-evm.workspace = true
+cast.workspace = true
+ui.workspace = true
 
 # eth
 ethers = { workspace = true, features = ["rustls"] }
@@ -78,9 +80,9 @@ indicatif = "0.17"
 parking_lot = "0.12"
 
 [dev-dependencies]
-anvil = { path = "../anvil" }
-foundry-utils = { path = "./../utils" }
-foundry-cli-test-utils = { path = "./test-utils" }
+anvil.workspace = true
+foundry-utils.workspace = true
+foundry-cli-test-utils.path = "test-utils"
 pretty_assertions = "1"
 toml = "0.7"
 serial_test = "2"
@@ -95,6 +97,9 @@ openssl = ["ethers/openssl"]
 
 # feature for integration tests that test external projects
 external-integration-tests = []
+
+# feature for heavy (long-running) integration tests
+heavy-integration-tests = []
 
 [[bin]]
 name = "cast"

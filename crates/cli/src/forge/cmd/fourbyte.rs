@@ -1,5 +1,6 @@
 use clap::Parser;
 use ethers::prelude::artifacts::output_selection::ContractOutputSelection;
+use eyre::Result;
 use foundry_cli::{
     opts::{CompilerArgs, CoreBuildArgs, ProjectPathsArgs},
     utils::FoundryPathExt,
@@ -28,7 +29,7 @@ pub struct UploadSelectorsArgs {
 
 impl UploadSelectorsArgs {
     /// Builds a contract and uploads the ABI to selector database
-    pub async fn run(self) -> eyre::Result<()> {
+    pub async fn run(self) -> Result<()> {
         shell::println(Paint::yellow("Warning! This command is deprecated and will be removed in v1, use `forge selectors upload` instead"))?;
 
         let UploadSelectorsArgs { contract, all, project_paths } = self;

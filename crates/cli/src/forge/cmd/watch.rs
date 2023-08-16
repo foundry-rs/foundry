@@ -1,5 +1,6 @@
 use super::{build::BuildArgs, snapshot::SnapshotArgs, test::TestArgs};
 use clap::Parser;
+use eyre::Result;
 use foundry_cli::utils::{self, FoundryPathExt};
 use foundry_config::Config;
 use std::{collections::HashSet, convert::Infallible, path::PathBuf, sync::Arc};
@@ -64,7 +65,7 @@ impl WatchArgs {
     pub fn watchexec_config(
         &self,
         f: impl FnOnce() -> Vec<PathBuf>,
-    ) -> eyre::Result<(InitConfig, RuntimeConfig)> {
+    ) -> Result<(InitConfig, RuntimeConfig)> {
         let init = init()?;
         let mut runtime = runtime(self)?;
 
@@ -81,7 +82,7 @@ impl WatchArgs {
 
 /// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
 /// build`
-pub async fn watch_build(args: BuildArgs) -> eyre::Result<()> {
+pub async fn watch_build(args: BuildArgs) -> Result<()> {
     let (init, mut runtime) = args.watchexec_config()?;
     let cmd = cmd_args(args.watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default());
 
@@ -100,7 +101,7 @@ pub async fn watch_build(args: BuildArgs) -> eyre::Result<()> {
 
 /// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
 /// snapshot`
-pub async fn watch_snapshot(args: SnapshotArgs) -> eyre::Result<()> {
+pub async fn watch_snapshot(args: SnapshotArgs) -> Result<()> {
     let (init, mut runtime) = args.watchexec_config()?;
     let cmd = cmd_args(args.test.watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default());
 
@@ -119,7 +120,7 @@ pub async fn watch_snapshot(args: SnapshotArgs) -> eyre::Result<()> {
 
 /// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
 /// test`
-pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
+pub async fn watch_test(args: TestArgs) -> Result<()> {
     let (init, mut runtime) = args.watchexec_config()?;
     let cmd = cmd_args(args.watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default());
     trace!("watch test cmd={:?}", cmd);
@@ -272,7 +273,7 @@ fn cmd_args(num: usize) -> Vec<String> {
 }
 
 /// Returns the Initialisation configuration for [`Watchexec`].
-pub fn init() -> eyre::Result<InitConfig> {
+pub fn init() -> Result<InitConfig> {
     let mut config = InitConfig::default();
     config.on_error(SyncFnHandler::from(|data| -> std::result::Result<(), Infallible> {
         trace!("[[{:?}]]", data);
@@ -390,7 +391,7 @@ fn on_action<F, T>(
 }
 
 /// Returns the Runtime configuration for [`Watchexec`].
-pub fn runtime(args: &WatchArgs) -> eyre::Result<RuntimeConfig> {
+pub fn runtime(args: &WatchArgs) -> Result<RuntimeConfig> {
     let mut config = RuntimeConfig::default();
 
     config.pathset(args.watch.clone().unwrap_or_default());
