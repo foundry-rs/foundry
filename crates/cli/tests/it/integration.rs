@@ -34,5 +34,4 @@ mod fork_integration {
     forgetest_external!(gunilev, "hexonaut/guni-lev", 13633752);
     forgetest_external!(convex, "mds1/convex-shutdown-simulation", 14445961);
     forgetest_external!(sparklend, "marsfoundation/sparklend");
-    forgetest_external!(maple, "maple-labs/maple-core-v2");
 }

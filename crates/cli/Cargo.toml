@@ -96,7 +96,7 @@ openssl = ["ethers/openssl"]
 # feature for integration tests that test external projects
 external-integration-tests = []
 
-# feature for maple integration test
+# feature for heavy (long-running) integration tests
 heavy-integration-tests = []
 
 [[bin]]
