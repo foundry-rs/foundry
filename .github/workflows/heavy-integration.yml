@@ -90,3 +90,14 @@ jobs:
                   # see https://github.com/foundry-rs/foundry/pull/3959
                   export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
                   cargo nextest run --retries 3 --archive-file heavy-integration.tar.zst -E '${{ matrix.job.filter }}'
+
+            # If any of the steps fail, this will create a high-priority issue
+            # to signal so.
+            - uses: JasonEtco/create-an-issue@v2
+              if: ${{ failure() }}
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+              with:
+                  update_existing: true
+                  filename: .github/INTEGRATION_FAILURE.md
