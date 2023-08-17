@@ -563,7 +563,8 @@ mod tests {
 
     #[test]
     fn find_keystore() {
-        let keystore = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/keystore");
+        let keystore =
+            Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../cast/tests/fixtures/keystore"));
         let keystore_file = keystore
             .join("UTC--2022-10-30T06-51-20.130356000Z--560d246fcddc9ea98a8b032c9a2f474efb493c28");
         let wallet: Wallet = Wallet::parse_from([
@@ -610,9 +611,7 @@ mod tests {
 
     #[test]
     fn gets_password_from_file() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/keystore/password")
-            .into_os_string();
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../cast/tests/fixtures/keystore/password");
         let wallet: Wallet = Wallet::parse_from(["foundry-cli"]);
         let password = wallet.password_from_file(path).unwrap();
         assert_eq!(password, "this is keystore password")

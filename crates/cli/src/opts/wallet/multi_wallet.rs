@@ -444,7 +444,7 @@ impl MultiWallet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::path::Path;
 
     #[test]
     fn parse_keystore_args() {
@@ -461,13 +461,12 @@ mod tests {
 
     #[test]
     fn parse_keystore_password_file() {
-        let keystore = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/keystore");
+        let keystore =
+            Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../cast/tests/fixtures/keystore"));
         let keystore_file = keystore
             .join("UTC--2022-12-20T10-30-43.591916000Z--ec554aeafe75601aaab43bd4621a22284db566c2");
 
-        let keystore_password_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/keystore/password-ec554")
-            .into_os_string();
+        let keystore_password_file = keystore.join("password-ec554").into_os_string();
 
         let args: MultiWallet = MultiWallet::parse_from([
             "foundry-cli",
