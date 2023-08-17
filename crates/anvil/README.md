@@ -13,7 +13,7 @@
 
 ## Installation
 
-`anvil` binary is available via [`foundryup`](../README.md#installation).
+`anvil` binary is available via [`foundryup`](../../README.md#installation).
 
 ### Installing from source
 
