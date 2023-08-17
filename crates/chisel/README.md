@@ -43,7 +43,7 @@ simple as installing Chisel via `foundryup`. For information on features, usage,
 
 To install `chisel`, simply run `foundryup`!
 
-If you do not have `foundryup` installed, reference the Foundry [installation guide](../README.md#installation).
+If you do not have `foundryup` installed, reference the Foundry [installation guide](../../README.md#installation).
 
 ## Usage
 

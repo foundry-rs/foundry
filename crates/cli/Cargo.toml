@@ -54,6 +54,3 @@ tempfile = "3.7"
 default = ["rustls"]
 rustls = ["ethers/rustls", "rusoto_core/rustls"]
 openssl = ["ethers/openssl", "rusoto_core/native-tls"]
-
-# feature for integration tests that test external projects
-external-integration-tests = []

@@ -44,6 +44,14 @@ interface Vm {
         uint256 created;
     }
 
+    // Returned by 'createWallet'. Used with 'sign' and 'getNonce'
+    struct Wallet {
+        address addr;
+        uint256 publicKeyX;
+        uint256 publicKeyY;
+        uint256 privateKey;
+    }
+
     // Set block.timestamp (newTimestamp)
     function warp(uint256) external;
 
@@ -89,6 +97,21 @@ interface Vm {
 
     // Adds a private key to the local forge wallet and returns the address
     function rememberKey(uint256) external returns (address);
+
+    // Derives a private key from the name, labels the account with that name, and returns the wallet
+    function createWallet(string calldata) external returns (Wallet memory);
+
+    // Generates a wallet from the private key and returns the wallet
+    function createWallet(uint256) external returns (Wallet memory);
+
+    // Generates a wallet from the private key, labels the account with that name, and returns the wallet
+    function createWallet(uint256, string calldata) external returns (Wallet memory);
+
+    // Signs data, (Wallet, digest) => (v, r, s)
+    function sign(Wallet calldata, bytes32) external returns (uint8, bytes32, bytes32);
+
+    // Get nonce for a Wallet
+    function getNonce(Wallet calldata) external returns (uint64);
 
     // Performs a foreign function call via terminal, (stringInputs) => (result)
     function ffi(string[] calldata) external returns (bytes memory);
