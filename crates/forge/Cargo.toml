@@ -53,11 +53,7 @@ itertools.workspace = true
 once_cell = "1"
 parking_lot = "0.12"
 regex = { version = "1", default-features = false }
-reqwest = { version = "0.11", default-features = false, features = [
-    "json",
-    "rustls",
-    "rustls-tls-native-roots",
-] }
+reqwest = { version = "0.11", default-features = false, features = ["json"] }
 semver = "1"
 serde_json = "1"
 similar = { version = "2", features = ["inline"] }
@@ -80,8 +76,8 @@ svm = { package = "svm-rs", version = "0.3", default-features = false, features 
 
 [features]
 default = ["rustls"]
-rustls = ["foundry-cli/rustls"]
-openssl = ["foundry-cli/openssl"]
+rustls = ["foundry-cli/rustls", "reqwest/rustls-tls", "reqwest/rustls-tls-native-roots"]
+openssl = ["foundry-cli/openssl", "reqwest/default-tls"]
 
 # feature for integration tests that test external projects
 external-integration-tests = []

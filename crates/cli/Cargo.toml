@@ -50,4 +50,4 @@ tempfile = "3.7"
 [features]
 default = ["rustls"]
 rustls = ["ethers/rustls", "rusoto_core/rustls"]
-openssl = ["ethers/openssl", "rusoto_core/native-tls"]
+openssl = ["ethers/openssl"]

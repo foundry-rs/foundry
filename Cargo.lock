@@ -5474,7 +5474,6 @@ dependencies = [
  "http",
  "hyper",
  "hyper-rustls 0.23.2",
- "hyper-tls",
  "lazy_static",
  "log",
  "rusoto_credential",
