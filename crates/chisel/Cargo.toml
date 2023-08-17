@@ -12,7 +12,7 @@ repository.workspace = true
 
 [[bin]]
 name = "chisel"
-path = "bin/chisel.rs"
+path = "bin/main.rs"
 
 [dependencies]
 # forge

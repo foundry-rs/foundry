@@ -23,8 +23,17 @@ use crate::cmd::{
 use clap::{Parser, Subcommand, ValueHint};
 use std::path::PathBuf;
 
+const VERSION_MESSAGE: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("VERGEN_GIT_SHA"),
+    " ",
+    env!("VERGEN_BUILD_TIMESTAMP"),
+    ")"
+);
+
 #[derive(Debug, Parser)]
-#[clap(name = "forge", version = foundry_cli::utils::VERSION_MESSAGE)]
+#[clap(name = "forge", version = VERSION_MESSAGE)]
 pub struct Opts {
     #[clap(subcommand)]
     pub sub: Subcommands,

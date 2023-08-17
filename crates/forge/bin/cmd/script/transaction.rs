@@ -1,5 +1,4 @@
 use super::{artifacts::ArtifactInfo, ScriptResult};
-use cast::{executor::inspector::DEFAULT_CREATE2_DEPLOYER, trace::CallTraceDecoder, CallKind};
 use ethers::{
     abi,
     abi::Address,
@@ -8,6 +7,9 @@ use ethers::{
 };
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{abi::format_token_raw, RpcUrl, SELECTOR_LEN};
+use foundry_evm::{
+    executor::inspector::DEFAULT_CREATE2_DEPLOYER, trace::CallTraceDecoder, CallKind,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tracing::error;

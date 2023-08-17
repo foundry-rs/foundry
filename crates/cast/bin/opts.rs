@@ -15,8 +15,17 @@ use foundry_cli::{
 };
 use std::{path::PathBuf, str::FromStr};
 
+const VERSION_MESSAGE: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("VERGEN_GIT_SHA"),
+    " ",
+    env!("VERGEN_BUILD_TIMESTAMP"),
+    ")"
+);
+
 #[derive(Debug, Parser)]
-#[clap(name = "cast", version = foundry_cli::utils::VERSION_MESSAGE)]
+#[clap(name = "cast", version = VERSION_MESSAGE)]
 pub struct Opts {
     #[clap(subcommand)]
     pub sub: Subcommands,

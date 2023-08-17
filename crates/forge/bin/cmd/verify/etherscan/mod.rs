@@ -1,6 +1,5 @@
 use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
 use crate::cmd::retry::RETRY_CHECK_ON_VERIFY;
-use cast::SimpleCast;
 use ethers::{
     abi::Function,
     etherscan::{
@@ -10,6 +9,7 @@ use ethers::{
     },
     prelude::errors::EtherscanError,
     solc::{artifacts::CompactContract, cache::CacheEntry, Project, Solc},
+    utils::to_checksum,
 };
 use eyre::{eyre, Context, Result};
 use foundry_cli::utils::{get_cached_entry_by_name, read_constructor_args_file, LoadConfig};
@@ -66,7 +66,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             println!(
                 "\nContract [{}] {:?} is already verified. Skipping verification.",
                 verify_args.contract_name,
-                SimpleCast::to_checksum_address(&verify_args.address)
+                to_checksum(&verify_args.address, None)
             );
 
             return Ok(())
@@ -77,7 +77,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
         let retry: Retry = args.retry.into();
         let resp = retry.run_async(|| {
             async {
-                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, SimpleCast::to_checksum_address(&verify_args.address));
+                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, to_checksum(&verify_args.address, None));
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await
@@ -454,8 +454,8 @@ mod tests {
     use super::*;
     use clap::Parser;
     use foundry_cli::utils::LoadConfig;
-    use foundry_tests::tempfile::tempdir;
     use foundry_common::fs;
+    use foundry_tests::tempfile::tempdir;
 
     #[test]
     fn can_extract_etherscan_verify_config() {

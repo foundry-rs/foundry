@@ -1,5 +1,4 @@
 use super::{debug::DebugArgs, install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
-use cast::fuzz::CounterExample;
 use clap::Parser;
 use ethers::types::U256;
 use eyre::Result;
@@ -31,7 +30,7 @@ use foundry_config::{
     },
     get_available_profiles, Config,
 };
-use foundry_evm::utils::evm_spec;
+use foundry_evm::{fuzz::CounterExample, utils::evm_spec};
 use regex::Regex;
 use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, time::Duration};
 use tracing::trace;

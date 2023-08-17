@@ -1,9 +1,9 @@
-use cast::HashMap;
 use clap::{Parser, ValueHint};
 use ethers::solc::remappings::RelativeRemapping;
 use eyre::Result;
 use foundry_cli::utils::LoadConfig;
 use foundry_config::impl_figment_convert_basic;
+use foundry_evm::HashMap;
 use std::path::PathBuf;
 
 /// CLI arguments for `forge remappings`.

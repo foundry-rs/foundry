@@ -1,11 +1,6 @@
 use clap::Parser;
 use ethers::{prelude::Middleware, solc::EvmVersion, types::H160};
 use eyre::{Result, WrapErr};
-use forge::{
-    executor::{inspector::cheatcodes::util::configure_tx_env, opts::EvmOpts},
-    revm::primitives::U256 as rU256,
-    utils::h256_to_b256,
-};
 use foundry_cli::{
     init_progress,
     opts::RpcOpts,
@@ -13,7 +8,12 @@ use foundry_cli::{
     utils::{handle_traces, TraceResult},
 };
 use foundry_config::{find_project_root_path, Config};
-use foundry_evm::{executor::EvmError, trace::TracingExecutor};
+use foundry_evm::{
+    executor::{inspector::cheatcodes::util::configure_tx_env, opts::EvmOpts, EvmError},
+    revm::primitives::U256 as rU256,
+    trace::TracingExecutor,
+    utils::h256_to_b256,
+};
 use tracing::trace;
 
 const ARBITRUM_SENDER: H160 = H160([

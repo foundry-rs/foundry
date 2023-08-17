@@ -1,11 +1,11 @@
 use super::{retry::RetryArgs, verify};
-use cast::SimpleCast;
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Middleware, MiddlewareBuilder},
     solc::{info::ContractInfo, utils::canonicalized},
     types::{transaction::eip2718::TypedTransaction, Chain},
+    utils::to_checksum,
 };
 use eyre::{Context, Result};
 use foundry_cli::{
@@ -271,14 +271,14 @@ impl CreateArgs {
         let address = deployed_contract.address();
         if self.json {
             let output = json!({
-                "deployer": SimpleCast::to_checksum_address(&deployer_address),
-                "deployedTo": SimpleCast::to_checksum_address(&address),
+                "deployer": to_checksum(&deployer_address, None),
+                "deployedTo": to_checksum(&address, None),
                 "transactionHash": receipt.transaction_hash
             });
             println!("{output}");
         } else {
-            println!("Deployer: {}", SimpleCast::to_checksum_address(&deployer_address));
-            println!("Deployed to: {}", SimpleCast::to_checksum_address(&address));
+            println!("Deployer: {}", to_checksum(&deployer_address, None));
+            println!("Deployed to: {}", to_checksum(&address, None));
             println!("Transaction hash: {:?}", receipt.transaction_hash);
         };
 

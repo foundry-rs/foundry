@@ -30,7 +30,7 @@ impl GenerateTestArgs {
         let instance_name = format_identifier(&self.contract_name, false);
 
         // Create the test file content.
-        let test_content = include_str!("../../../../assets/generated/TestTemplate.t.sol");
+        let test_content = include_str!("../../../assets/generated/TestTemplate.t.sol");
         let test_content = test_content
             .replace("{contract_name}", &contract_name)
             .replace("{instance_name}", &instance_name);

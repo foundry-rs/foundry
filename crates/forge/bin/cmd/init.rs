@@ -101,16 +101,16 @@ impl InitArgs {
 
             // write the contract file
             let contract_path = src.join("Counter.sol");
-            fs::write(contract_path, include_str!("../../../assets/CounterTemplate.sol"))?;
+            fs::write(contract_path, include_str!("../../assets/CounterTemplate.sol"))?;
             // write the tests
             let contract_path = test.join("Counter.t.sol");
-            fs::write(contract_path, include_str!("../../../assets/CounterTemplate.t.sol"))?;
+            fs::write(contract_path, include_str!("../../assets/CounterTemplate.t.sol"))?;
             // write the script
             let contract_path = script.join("Counter.s.sol");
-            fs::write(contract_path, include_str!("../../../assets/CounterTemplate.s.sol"))?;
+            fs::write(contract_path, include_str!("../../assets/CounterTemplate.s.sol"))?;
             // Write the default README file
             let readme_path = root.join("README.md");
-            fs::write(readme_path, include_str!("../../../assets/README.md"))?;
+            fs::write(readme_path, include_str!("../../assets/README.md"))?;
 
             // write foundry.toml, if it doesn't exist already
             let dest = root.join(Config::FILE_NAME);
@@ -166,14 +166,14 @@ fn init_git_repo(git: Git<'_>, no_commit: bool) -> Result<()> {
     // .gitignore
     let gitignore = git.root.join(".gitignore");
     if !gitignore.exists() {
-        fs::write(gitignore, include_str!("../../../assets/.gitignoreTemplate"))?;
+        fs::write(gitignore, include_str!("../../assets/.gitignoreTemplate"))?;
     }
 
     // github workflow
     let workflow = git.root.join(".github/workflows/test.yml");
     if !workflow.exists() {
         fs::create_dir_all(workflow.parent().unwrap())?;
-        fs::write(workflow, include_str!("../../../assets/workflowTemplate.yml"))?;
+        fs::write(workflow, include_str!("../../assets/workflowTemplate.yml"))?;
     }
 
     // commit everything

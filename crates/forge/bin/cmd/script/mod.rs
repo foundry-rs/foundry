@@ -3,13 +3,6 @@ use self::{
     runner::ScriptRunner,
 };
 use super::{build::BuildArgs, retry::RetryArgs};
-use cast::{
-    decode,
-    executor::inspector::{
-        cheatcodes::{util::BroadcastableTransactions, BroadcastableTransaction},
-        DEFAULT_CREATE2_DEPLOYER,
-    },
-};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers::{
@@ -53,6 +46,13 @@ use foundry_config::{
         Metadata, Profile, Provider,
     },
     Config,
+};
+use foundry_evm::{
+    decode,
+    executor::inspector::{
+        cheatcodes::{util::BroadcastableTransactions, BroadcastableTransaction},
+        DEFAULT_CREATE2_DEPLOYER,
+    },
 };
 use futures::future;
 use serde::{Deserialize, Serialize};
@@ -785,8 +785,8 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855"#,
 mod tests {
     use super::*;
     use foundry_cli::utils::LoadConfig;
-    use foundry_tests::tempfile::tempdir;
     use foundry_config::UnresolvedEnvVarError;
+    use foundry_tests::tempfile::tempdir;
     use std::fs;
 
     #[test]
