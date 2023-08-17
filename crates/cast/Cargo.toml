@@ -71,8 +71,8 @@ criterion = "0.5"
 
 [features]
 default = ["rustls"]
-rustls = ["ethers/rustls"]
-openssl = ["ethers/openssl"]
+rustls = ["foundry-cli/rustls"]
+openssl = ["foundry-cli/openssl"]
 
 [[bench]]
 name = "vanity"

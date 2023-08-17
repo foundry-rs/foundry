@@ -80,8 +80,8 @@ svm = { package = "svm-rs", version = "0.3", default-features = false, features 
 
 [features]
 default = ["rustls"]
-rustls = ["ethers/rustls"]
-openssl = ["ethers/openssl"]
+rustls = ["foundry-cli/rustls"]
+openssl = ["foundry-cli/openssl"]
 
 # feature for integration tests that test external projects
 external-integration-tests = []

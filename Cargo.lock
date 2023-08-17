@@ -2470,7 +2470,6 @@ dependencies = [
  "tracing-error",
  "tracing-subscriber",
  "ui",
- "vergen",
  "yansi 0.5.1",
 ]
 
