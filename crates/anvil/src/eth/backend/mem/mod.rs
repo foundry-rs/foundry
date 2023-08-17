@@ -70,7 +70,7 @@ use foundry_evm::{
     decode::{decode_custom_error_args, decode_revert},
     executor::{
         backend::{DatabaseError, DatabaseResult},
-        DEFAULT_CREATE2_DEPLOYER_CODE,
+        DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     },
     revm::{
         self,
@@ -243,7 +243,7 @@ impl Backend {
 
     /// Writes the CREATE2 deployer code directly to the database at the address provided.
     pub async fn set_create2_deployer(&self, address: Address) -> DatabaseResult<()> {
-        self.set_code(address, Bytes::from_static(DEFAULT_CREATE2_DEPLOYER_CODE)).await?;
+        self.set_code(address, Bytes::from_static(DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE)).await?;
 
         Ok(())
     }

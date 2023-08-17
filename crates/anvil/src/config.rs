@@ -1013,8 +1013,8 @@ latest block number: {latest_block}"
         .await;
 
         // Writes the default create2 deployer to the backend,
-        // if the option is not disabled.
-        if !self.disable_default_create2_deployer {
+        // if the option is not disabled and we are not forking.
+        if !self.disable_default_create2_deployer && self.eth_rpc_url.is_none() {
             backend
                 .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER)
                 .await
