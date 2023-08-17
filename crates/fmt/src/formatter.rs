@@ -2429,7 +2429,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     let mut base_or_modifier =
                         self.visit_to_chunk(loc.start(), Some(loc.end()), base)?;
                     if base_or_modifier.content.ends_with("()") {
-                        base_or_modifier.content.truncate(base_or_modifier.content.len() - 2);
+                        if self.config.empty_function_modifier_calls.is_never() {
+                            base_or_modifier.content.truncate(base_or_modifier.content.len() - 2);
+                        }
+                    } else if base.args.as_ref().map_or(true, |args| args.is_empty()) &&
+                        self.config.empty_function_modifier_calls.is_always()
+                    {
+                        base_or_modifier.content.push_str("()");
                     }
                     self.write_chunk(&base_or_modifier)?;
                 }

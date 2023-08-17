@@ -29,6 +29,8 @@ pub struct FormatterConfig {
     pub ignore: Vec<String>,
     /// Add new line at start and end of contract declarations
     pub contract_new_lines: bool,
+    /// How to format empty function modifiers
+    pub empty_function_modifier_calls: FunctionModifierEmptyArgsStyle,
 }
 
 /// Style of uint/int256 types
@@ -54,6 +56,29 @@ pub enum NumberUnderscore {
     Thousands,
     /// Use the underscores defined in the source code
     Preserve,
+}
+
+/// Style of function modifiers
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FunctionModifierEmptyArgsStyle {
+    /// Always strip `()` from modifiers without arguments
+    #[default]
+    Never,
+    /// Always add `()` to modifiers without arguments
+    Always,
+}
+
+impl FunctionModifierEmptyArgsStyle {
+    /// Whether to always format ()
+    pub fn is_always(&self) -> bool {
+        matches!(self, FunctionModifierEmptyArgsStyle::Always)
+    }
+
+    /// Whether to never format ()
+    pub fn is_never(&self) -> bool {
+        matches!(self, FunctionModifierEmptyArgsStyle::Never)
+    }
 }
 
 /// Style of string quotes
@@ -119,6 +144,7 @@ impl Default for FormatterConfig {
             wrap_comments: false,
             ignore: vec![],
             contract_new_lines: false,
+            empty_function_modifier_calls: Default::default(),
         }
     }
 }
