@@ -64,7 +64,10 @@ pub use builder::ExecutorBuilder;
 /// A mapping of addresses to their changed state.
 pub type StateChangeset = HashMap<B160, Account>;
 
+/// The initcode of the default create2 deployer.
 pub const DEFAULT_CREATE2_DEPLOYER_CODE: &[u8] = &hex!("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3");
+/// The runtime code of the default create2 deployer.
+pub const DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE: &[u8] = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3");
 
 /// A type that can execute calls
 ///
