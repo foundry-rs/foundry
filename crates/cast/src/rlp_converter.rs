@@ -87,7 +87,6 @@ impl Display for Item {
     }
 }
 
-#[macro_use]
 #[cfg(test)]
 mod test {
     use crate::rlp_converter::Item;

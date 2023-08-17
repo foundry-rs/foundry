@@ -46,7 +46,7 @@ revm = { version = "3", default-features = false, features = [
   "memory_limit",
   "optional_eip3607",
   "optional_block_gas_limit",
-  "optional_no_base_fee"
+  "optional_no_base_fee",
 ] }
 
 # Fuzzer
@@ -58,7 +58,7 @@ yansi = "0.5"
 # Misc
 url = "2"
 auto_impl = "1"
-itertools = "0.10"
+itertools.workspace = true
 ordered-float = "3"
 walkdir = "2"
 

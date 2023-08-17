@@ -1,3 +1,5 @@
+#![warn(unused_crate_dependencies)]
+
 mod console_fmt;
 mod utils;
 

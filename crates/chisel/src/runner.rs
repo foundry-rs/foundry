@@ -8,7 +8,7 @@ use ethers::{
     types::{Bytes, Log},
 };
 use eyre::Result;
-use forge::{
+use foundry_evm::{
     executor::{DeployResult, Executor, RawCallResult},
     trace::{CallTraceArena, TraceKind},
 };

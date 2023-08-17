@@ -13,7 +13,7 @@ use ethers::{
 };
 use ethers_solc::Artifact;
 use eyre::{Result, WrapErr};
-use forge::{
+use foundry_evm::{
     decode::decode_console_logs,
     executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
     utils::ru256_to_u256,

@@ -18,7 +18,7 @@ jobs:
                 archive:
                     - name: heavy-integration-tests
                       file: heavy-integration.tar.zst
-                      flags: -p foundry-cli --features heavy-integration-tests
+                      flags: -p forge --features heavy-integration-tests
         steps:
             - uses: actions/checkout@v3
             - uses: dtolnay/rust-toolchain@stable
@@ -75,7 +75,7 @@ jobs:
               if: matrix.job.name != 'non-forking'
               with:
                   path: "$HOME/.foundry/cache"
-                  key: rpc-cache-${{ hashFiles('cli/tests/rpc-cache-keyfile') }}
+                  key: rpc-cache-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
 
             - name: Setup git config
               run: |

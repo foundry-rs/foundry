@@ -1,3 +1,5 @@
+#![warn(unused_crate_dependencies)]
+
 #[macro_use]
 extern crate tracing;
 

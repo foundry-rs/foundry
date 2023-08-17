@@ -10,12 +10,11 @@ use ethers::{
     },
 };
 use eyre::{Result, WrapErr};
-use forge::executor::opts::EvmOpts;
 use foundry_common::{cli_warn, fs, TestFunctionExt};
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain as ConfigChain, Config};
 use foundry_evm::{
     debug::DebugArena,
-    executor::{DeployResult, EvmError, ExecutionErr, RawCallResult},
+    executor::{opts::EvmOpts, DeployResult, EvmError, ExecutionErr, RawCallResult},
     trace::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,

@@ -24,7 +24,7 @@ jobs:
                       flags: --workspace
                     - name: external-integration-tests
                       file: nextest-external-integration.tar.zst
-                      flags: -p foundry-cli --features external-integration-tests
+                      flags: -p forge --features external-integration-tests
         steps:
             - uses: actions/checkout@v3
             - uses: dtolnay/rust-toolchain@stable
@@ -110,7 +110,7 @@ jobs:
               if: matrix.job.name != 'issue-repros'
               with:
                   path: "$HOME/.foundry/cache"
-                  key: rpc-cache-${{ hashFiles('cli/tests/rpc-cache-keyfile') }}
+                  key: rpc-cache-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
             - name: Setup git config
               run: |
                   git config --global user.name "GitHub Actions Bot"
@@ -147,7 +147,7 @@ jobs:
               if: matrix.job.name != 'forge-std-test'
               with:
                   path: "$HOME/.foundry/cache"
-                  key: rpc-cache-${{ hashFiles('cli/tests/rpc-cache-keyfile') }}
+                  key: rpc-cache-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
             - name: Setup git config
               run: |
                   git config --global user.name "GitHub Actions Bot"
@@ -187,7 +187,7 @@ jobs:
               if: matrix.job.name != 'non-forking'
               with:
                   path: "$HOME/.foundry/cache"
-                  key: rpc-cache-${{ hashFiles('cli/tests/rpc-cache-keyfile') }}
+                  key: rpc-cache-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
             - name: Setup git config
               run: |
                   git config --global user.name "GitHub Actions Bot"
@@ -226,7 +226,7 @@ jobs:
               if: matrix.job.name != 'non-forking'
               with:
                   path: "$HOME/.foundry/cache"
-                  key: rpc-cache-${{ hashFiles('cli/tests/rpc-cache-keyfile') }}
+                  key: rpc-cache-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
 
             - name: Setup git config
               run: |

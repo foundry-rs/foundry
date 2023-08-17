@@ -4,11 +4,11 @@ use ethers::{
     signers::LocalWallet,
     types::{serde_helpers::*, Address, Bytes, H256, U256},
 };
-use forge::{
+use foundry_common::errors::FsPathError;
+use foundry_evm::{
     revm::primitives::{Bytecode, Env, KECCAK_EMPTY, U256 as rU256},
     utils::h160_to_b160,
 };
-use foundry_common::errors::FsPathError;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},

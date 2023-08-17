@@ -3,7 +3,6 @@
 use crate::{eth::macros::node_info, revm::Database};
 use bytes::Bytes;
 use ethers::types::Log;
-use forge::revm::primitives::{B160, B256};
 use foundry_evm::{
     call_inspectors,
     decode::decode_console_logs,
@@ -12,6 +11,7 @@ use foundry_evm::{
     revm::{
         inspectors::GasInspector,
         interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
+        primitives::{B160, B256},
         EVMData,
     },
 };

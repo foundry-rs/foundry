@@ -1,5 +1,6 @@
-//! foundry configuration.
-#![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
+//! Foundry configuration.
+
+#![warn(missing_docs, unused_crate_dependencies)]
 
 use crate::cache::StorageCachingConfig;
 use ethers_core::types::{Address, Chain::Mainnet, H160, H256, U256};
