@@ -153,8 +153,7 @@ macro_rules! test_directories {
 }
 
 test_directories! {
-    ConstructorCallWithArgsAlways,
-    ConstructorCallWithArgsNever,
+    ConstructorCallWithArgs,
     ConstructorDefinition,
     ContractDefinition,
     DocComments,
