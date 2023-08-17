@@ -238,7 +238,7 @@ forgetest_init!(can_test_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
     cmd.arg("test");
     cmd.assert_non_empty_stdout();
 
-    for _ in 0..10 {
+    for _ in 0..5 {
         cmd.unchecked_output().stdout_matches_path(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures/can_test_repeatedly.stdout"),

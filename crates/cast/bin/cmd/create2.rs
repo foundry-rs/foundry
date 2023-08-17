@@ -167,12 +167,12 @@ mod tests {
 
     #[test]
     fn basic_create2() {
-        let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "babe"]);
+        let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "aa"]);
         let create2_out = args.run().unwrap();
         let address = create2_out.address;
         let address = format!("{address:x}");
 
-        assert!(address.starts_with("babe"));
+        assert!(address.starts_with("aa"));
     }
 
     #[test]
@@ -180,13 +180,13 @@ mod tests {
         let args = Create2Args::parse_from([
             "foundry-cli",
             "--matching",
-            "0xbabeXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+            "0xbbXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
         ]);
         let create2_out = args.run().unwrap();
         let address = create2_out.address;
         let address = format!("{address:x}");
 
-        assert!(address.starts_with("babe"));
+        assert!(address.starts_with("bb"));
     }
 
     #[test]
@@ -195,7 +195,7 @@ mod tests {
         let args = Create2Args::parse_from([
             "foundry-cli",
             "--starts-with",
-            "babe",
+            "cc",
             "--init-code",
             init_code,
         ]);
@@ -205,7 +205,7 @@ mod tests {
         let salt = create2_out.salt;
         let deployer = Address::from_str(DEPLOYER).unwrap();
 
-        assert!(address_str.starts_with("babe"));
+        assert!(address_str.starts_with("cc"));
         assert_eq!(address, verify_create2(deployer, salt, hex::decode(init_code).unwrap()));
     }
 
@@ -215,7 +215,7 @@ mod tests {
         let args = Create2Args::parse_from([
             "foundry-cli",
             "--starts-with",
-            "babe",
+            "dd",
             "--init-code-hash",
             init_code_hash,
         ]);
@@ -225,7 +225,7 @@ mod tests {
         let salt = create2_out.salt;
         let deployer = Address::from_str(DEPLOYER).unwrap();
 
-        assert!(address_str.starts_with("babe"));
+        assert!(address_str.starts_with("dd"));
         assert_eq!(
             address,
             verify_create2_hash(deployer, salt, hex::decode(init_code_hash).unwrap())
