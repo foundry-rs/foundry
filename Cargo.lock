@@ -801,6 +801,78 @@ checksum = "df8670b8c7b9dae1793364eafadf7239c40d669904660c5960d74cfd80b46a53"
 
 [[package]]
 name = "cast"
+version = "0.2.0"
+dependencies = [
+ "anvil",
+ "async-trait",
+ "bytes",
+ "chrono",
+ "clap 4.3.21",
+ "clap_complete",
+ "clap_complete_fig",
+ "color-eyre",
+ "comfy-table",
+ "const-hex",
+ "criterion",
+ "dialoguer",
+ "dotenvy",
+ "dunce",
+ "eth-keystore",
+ "ethers",
+ "ethers-contract",
+ "ethers-core",
+ "ethers-etherscan",
+ "ethers-providers",
+ "ethers-signers",
+ "evm-disassembler",
+ "eyre",
+ "forge-doc",
+ "forge-fmt",
+ "foundry-cli",
+ "foundry-common",
+ "foundry-config",
+ "foundry-evm",
+ "foundry-utils",
+ "futures",
+ "globset",
+ "indicatif",
+ "itertools 0.11.0",
+ "once_cell",
+ "parking_lot",
+ "path-slash",
+ "pretty_assertions",
+ "proptest",
+ "rayon",
+ "regex",
+ "reqwest",
+ "rpassword",
+ "rusoto_core",
+ "rusoto_kms",
+ "semver 1.0.18",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "similar",
+ "solang-parser",
+ "strsim",
+ "strum 0.25.0",
+ "svm-rs",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "toml 0.7.6",
+ "tracing",
+ "tracing-error",
+ "tracing-subscriber",
+ "ui",
+ "vergen",
+ "walkdir",
+ "watchexec",
+ "yansi 0.5.1",
+]
+
+[[package]]
+name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
@@ -1261,7 +1333,7 @@ checksum = "e7c76e09c1aae2bc52b3d2f29e13c6572553b30c4aa1b8a49fd70de6412654cb"
 dependencies = [
  "anes",
  "atty",
- "cast",
+ "cast 0.3.0",
  "ciborium",
  "clap 3.2.25",
  "criterion-plot",
@@ -1287,7 +1359,7 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b50826342786a51a89e2da3a28f1c32b06e387201bc2d19791f622c673706b1"
 dependencies = [
- "cast",
+ "cast 0.3.0",
  "itertools 0.10.5",
 ]
 
@@ -2136,6 +2208,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0206175f82b8d6bf6652ff7d71a1e27fd2e4efde587fd368662814d6ec1d9ce0"
 
 [[package]]
+name = "evm-disassembler"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "584e7334177d2dc76c4d618967e5ef102be68c35f454ac363d88b72b854db4a9"
+dependencies = [
+ "eyre",
+ "hex",
+]
+
+[[package]]
 name = "eyre"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2281,6 +2363,72 @@ name = "foreign-types-shared"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
+
+[[package]]
+name = "forge"
+version = "0.2.0"
+dependencies = [
+ "anvil",
+ "async-trait",
+ "bytes",
+ "clap 4.3.21",
+ "clap_complete",
+ "clap_complete_fig",
+ "color-eyre",
+ "comfy-table",
+ "const-hex",
+ "criterion",
+ "dialoguer",
+ "dotenvy",
+ "dunce",
+ "eth-keystore",
+ "ethers",
+ "eyre",
+ "forge-doc",
+ "forge-fmt",
+ "foundry-cli",
+ "foundry-common",
+ "foundry-config",
+ "foundry-evm",
+ "foundry-tests",
+ "foundry-utils",
+ "futures",
+ "glob",
+ "globset",
+ "indicatif",
+ "itertools 0.11.0",
+ "once_cell",
+ "parking_lot",
+ "path-slash",
+ "pretty_assertions",
+ "proptest",
+ "rayon",
+ "regex",
+ "reqwest",
+ "rlp",
+ "rpassword",
+ "semver 1.0.18",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "similar",
+ "solang-parser",
+ "strsim",
+ "strum 0.25.0",
+ "svm-rs",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "toml 0.7.6",
+ "tracing",
+ "tracing-error",
+ "tracing-subscriber",
+ "ui",
+ "vergen",
+ "walkdir",
+ "watchexec",
+ "yansi 0.5.1",
+]
 
 [[package]]
 name = "forge-doc"
@@ -2553,6 +2701,7 @@ dependencies = [
  "anvil",
  "async-trait",
  "bytes",
+ "cast 0.2.0",
  "clap 4.3.21",
  "clap_complete",
  "clap_complete_fig",
@@ -2568,6 +2717,7 @@ dependencies = [
  "ethers-signers",
  "ethers-solc",
  "eyre",
+ "forge",
  "forge-doc",
  "forge-fmt",
  "foundry-common",

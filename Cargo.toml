@@ -97,17 +97,23 @@ package = {}
 
 [workspace.dependencies]
 anvil = { path = "crates/anvil" }
+cast = { path = "crates/cast" }
+chisel = { path = "crates/chisel" }
+forge = { path = "crates/forge" }
+
+forge-doc = { path = "crates/doc" }
+forge-fmt = { path = "crates/fmt" }
 foundry-abi = { path = "crates/abi" }
 foundry-binder = { path = "crates/binder" }
 foundry-cli = { path = "crates/cli" }
 foundry-common = { path = "crates/common" }
 foundry-config = { path = "crates/config" }
-forge-doc = { path = "crates/doc" }
 foundry-evm = { path = "crates/evm" }
-forge-fmt = { path = "crates/fmt" }
 foundry-macros = { path = "crates/macros" }
-ui = { path = "crates/ui" }
 foundry-utils = { path = "crates/utils" }
+ui = { path = "crates/ui" }
+
+foundry-tests = { path = "tests" }
 
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false }

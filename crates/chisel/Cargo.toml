@@ -1,7 +1,7 @@
 [package]
 name = "chisel"
 authors = ["clabby <https://github.com/clabby>", "asnared <https://github.com/abigger87>"]
-description = "Solidity REPL"
+description = "Fast, utilitarian, and verbose Solidity REPL"
 
 version.workspace = true
 edition.workspace = true
@@ -12,7 +12,7 @@ repository.workspace = true
 
 [[bin]]
 name = "chisel"
-path = "src/bin/chisel.rs"
+path = "bin/chisel.rs"
 
 [dependencies]
 # forge

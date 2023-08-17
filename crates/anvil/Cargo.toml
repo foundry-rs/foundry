@@ -1,6 +1,6 @@
 [package]
 name = "anvil"
-description = "Foundry's local ethereum node"
+description = "Local ethereum node"
 
 version.workspace = true
 edition.workspace = true

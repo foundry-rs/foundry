@@ -32,11 +32,11 @@ walkdir = "2"
 forge-fmt.workspace = true
 forge-doc.workspace = true
 foundry-utils.workspace = true
-# forge.workspace = true
+forge.workspace = true
 foundry-config.workspace = true
 foundry-common.workspace = true
 foundry-evm.workspace = true
-# cast.workspace = true
+cast.workspace = true
 ui.workspace = true
 
 # eth
@@ -110,11 +110,3 @@ globset = "0.4"
 [features]
 # feature for integration tests that test external projects
 external-integration-tests = []
-
-[[bench]]
-name = "cast_vanity"
-harness = false
-
-[[bench]]
-name = "forge_test"
-harness = false

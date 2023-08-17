@@ -14,15 +14,35 @@ repository.workspace = true
 vergen = { version = "8", default-features = false, features = ["build", "git", "git2"] }
 
 [dependencies]
+# lib
+foundry-utils.workspace = true
+foundry-evm.workspace = true
+foundry-config.workspace = true
+foundry-common.workspace = true
+foundry-cli.workspace = true
+
+ethers-etherscan.workspace = true
+ethers-contract = { workspace = true, features = ["abigen"] }
+ethers-core.workspace = true
+ethers-providers.workspace = true
+ethers-signers.workspace = true
+futures = "0.3"
+eyre = "0.6"
+serde = "1"
+serde_json = "1"
+chrono.workspace = true
+hex.workspace = true
+rayon = "1"
+
+# aws
+rusoto_core = { version = "0.48", default-features = false }
+rusoto_kms = { version = "0.48", default-features = false }
+evm-disassembler = "0.2"
+
+# bin
 # foundry internal
 forge-fmt.workspace = true
 forge-doc.workspace = true
-foundry-utils.workspace = true
-forge.workspace = true
-foundry-config.workspace = true
-foundry-common.workspace = true
-foundry-evm.workspace = true
-cast.workspace = true
 ui.workspace = true
 
 # eth
@@ -50,8 +70,8 @@ dialoguer = { version = "0.10", default-features = false }
 
 # async / parallel
 tokio = { version = "1", features = ["macros"] }
-futures = "0.3"
-rayon = "1"
+# futures = "0.3"
+# rayon = "1"
 async-trait = "0.1"
 
 # disk / paths
@@ -61,13 +81,13 @@ path-slash = "0.2"
 tempfile = "3"
 
 # misc
-eyre = "0.6"
+# eyre = "0.6"
 color-eyre = "0.6"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# serde = { version = "1", features = ["derive"] }
+# serde_json = "1"
 regex = { version = "1", default-features = false }
 rpassword = "7"
-hex = { workspace = true, features = ["serde"] }
+# hex = { workspace = true, features = ["serde"] }
 itertools.workspace = true
 proptest = "1"
 semver = "1"
@@ -83,6 +103,9 @@ parking_lot = "0.12"
 [dev-dependencies]
 anvil.workspace = true
 foundry-utils.workspace = true
+async-trait = "0.1"
+tokio = "1"
+thiserror = "1"
 pretty_assertions = "1"
 toml = "0.7"
 serial_test = "2"
@@ -98,34 +121,3 @@ openssl = ["ethers/openssl"]
 [[bench]]
 name = "vanity"
 harness = false
-
-### STANDALONE
-
-[dependencies]
-foundry-utils.workspace = true
-foundry-evm.workspace = true
-foundry-config.workspace = true
-foundry-common.workspace = true
-
-ethers-etherscan.workspace = true
-ethers-contract = { workspace = true, features = ["abigen"] }
-ethers-core.workspace = true
-ethers-providers.workspace = true
-ethers-signers.workspace = true
-futures = "0.3"
-eyre = "0.6"
-serde = "1"
-serde_json = "1"
-chrono.workspace = true
-hex.workspace = true
-rayon = "1"
-
-# aws
-rusoto_core = { version = "0.48", default-features = false, optional = true }
-rusoto_kms = { version = "0.48", default-features = false, optional = true }
-evm-disassembler = "0.2"
-
-[dev-dependencies]
-async-trait = "0.1"
-tokio = "1"
-thiserror = "1"

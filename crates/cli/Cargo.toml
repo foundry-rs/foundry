@@ -17,11 +17,9 @@ vergen = { version = "8", default-features = false, features = ["build", "git", 
 forge-fmt.workspace = true
 forge-doc.workspace = true
 foundry-utils.workspace = true
-# forge.workspace = true
 foundry-config.workspace = true
 foundry-common.workspace = true
 foundry-evm.workspace = true
-# cast.workspace = true
 ui.workspace = true
 
 # eth
