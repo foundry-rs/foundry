@@ -175,7 +175,7 @@ dependencies = [
  "axum",
  "bytes",
  "chrono",
- "clap 4.3.21",
+ "clap",
  "clap_complete",
  "clap_complete_fig",
  "crc 3.0.1",
@@ -185,7 +185,6 @@ dependencies = [
  "ethers-solc",
  "fdlimit",
  "flate2",
- "forge",
  "foundry-common",
  "foundry-config",
  "foundry-evm",
@@ -193,7 +192,7 @@ dependencies = [
  "futures",
  "hash-db",
  "hyper",
- "itertools",
+ "itertools 0.11.0",
  "memory-db",
  "parking_lot",
  "pretty_assertions",
@@ -246,7 +245,7 @@ dependencies = [
  "async-trait",
  "axum",
  "bytes",
- "clap 4.3.21",
+ "clap",
  "futures",
  "hyper",
  "parity-tokio-ipc",
@@ -306,7 +305,7 @@ dependencies = [
  "ark-std 0.4.0",
  "derivative",
  "digest 0.10.7",
- "itertools",
+ "itertools 0.10.5",
  "num-bigint",
  "num-traits",
  "paste",
@@ -477,17 +476,6 @@ name = "atomic-take"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8ab6b55fe97976e46f91ddbed8d147d966475dc29b2032757ba47e02376fbc3"
-
-[[package]]
-name = "atty"
-version = "0.2.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9b39be18770d11421cdb1b9947a45dd3f37e93092cbf377614828a319d5fee8"
-dependencies = [
- "hermit-abi 0.1.19",
- "libc",
- "winapi",
-]
 
 [[package]]
 name = "auto_impl"
@@ -805,27 +793,44 @@ name = "cast"
 version = "0.2.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "chrono",
+ "clap",
+ "clap_complete",
+ "clap_complete_fig",
+ "comfy-table",
  "const-hex",
- "ethers-contract",
+ "criterion",
+ "dunce",
+ "eth-keystore",
+ "ethers",
  "ethers-core",
  "ethers-etherscan",
  "ethers-providers",
- "ethers-signers",
  "evm-disassembler",
  "eyre",
+ "foundry-cli",
  "foundry-common",
  "foundry-config",
  "foundry-evm",
+ "foundry-test-utils",
  "foundry-utils",
  "futures",
+ "indicatif",
+ "itertools 0.11.0",
  "rayon",
+ "regex",
+ "rpassword",
  "rusoto_core",
  "rusoto_kms",
+ "semver 1.0.18",
  "serde",
  "serde_json",
- "thiserror",
+ "tempfile",
  "tokio",
+ "tracing",
+ "vergen",
+ "yansi 0.5.1",
 ]
 
 [[package]]
@@ -855,13 +860,12 @@ name = "chisel"
 version = "0.2.0"
 dependencies = [
  "bytes",
- "clap 4.3.21",
+ "clap",
  "criterion",
  "dirs 5.0.1",
  "ethers",
  "ethers-solc",
  "eyre",
- "forge",
  "forge-fmt",
  "foundry-cli",
  "foundry-common",
@@ -936,18 +940,6 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "3.2.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ea181bf566f71cb9a5d17a59e1871af638180a18fb0035c92ae62b705207123"
-dependencies = [
- "bitflags 1.3.2",
- "clap_lex 0.2.4",
- "indexmap 1.9.3",
- "textwrap",
-]
-
-[[package]]
-name = "clap"
 version = "4.3.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c27cdf28c0f604ba3f512b0c9a409f8de8513e4816705deb0498b627e7c3a3fd"
@@ -965,7 +957,7 @@ checksum = "08a9f1ab5e9f01a9b81f202e8562eb9a10de70abf9eaeac1be465c28b75aa4aa"
 dependencies = [
  "anstream",
  "anstyle",
- "clap_lex 0.5.0",
+ "clap_lex",
  "once_cell",
  "strsim",
  "terminal_size",
@@ -979,7 +971,7 @@ version = "4.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5fc443334c81a804575546c5a8a79b4913b50e28d69232903604cada1de817ce"
 dependencies = [
- "clap 4.3.21",
+ "clap",
 ]
 
 [[package]]
@@ -988,7 +980,7 @@ version = "4.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "99fee1d30a51305a6c2ed3fc5709be3c8af626c9c958e04dd9ae94e27bcbce9f"
 dependencies = [
- "clap 4.3.21",
+ "clap",
  "clap_complete",
 ]
 
@@ -1002,15 +994,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.28",
-]
-
-[[package]]
-name = "clap_lex"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2850f2f5a82cbf437dd5af4d49848fbdfc27c157c3d010345776f952765261c5"
-dependencies = [
- "os_str_bytes",
 ]
 
 [[package]]
@@ -1285,20 +1268,20 @@ dependencies = [
 
 [[package]]
 name = "criterion"
-version = "0.4.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7c76e09c1aae2bc52b3d2f29e13c6572553b30c4aa1b8a49fd70de6412654cb"
+checksum = "f2b12d017a929603d80db1831cd3a24082f8137ce19c69e6447f54f5fc8d692f"
 dependencies = [
  "anes",
- "atty",
  "cast 0.3.0",
  "ciborium",
- "clap 3.2.25",
+ "clap",
  "criterion-plot",
  "futures",
- "itertools",
- "lazy_static",
+ "is-terminal",
+ "itertools 0.10.5",
  "num-traits",
+ "once_cell",
  "oorandom",
  "plotters",
  "rayon",
@@ -1318,7 +1301,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b50826342786a51a89e2da3a28f1c32b06e387201bc2d19791f622c673706b1"
 dependencies = [
  "cast 0.3.0",
- "itertools",
+ "itertools 0.10.5",
 ]
 
 [[package]]
@@ -1907,7 +1890,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#50a684ce47dd31d597d55546548acc76fc3d4074"
+source = "git+https://github.com/gakonst/ethers-rs#fa3017715a298728d9fb341933818a5d0d84c2dc"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1922,7 +1905,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#50a684ce47dd31d597d55546548acc76fc3d4074"
+source = "git+https://github.com/gakonst/ethers-rs#fa3017715a298728d9fb341933818a5d0d84c2dc"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1933,7 +1916,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#50a684ce47dd31d597d55546548acc76fc3d4074"
+source = "git+https://github.com/gakonst/ethers-rs#fa3017715a298728d9fb341933818a5d0d84c2dc"
 dependencies = [
  "const-hex",
  "ethers-contract-abigen",
@@ -1952,7 +1935,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#50a684ce47dd31d597d55546548acc76fc3d4074"
+source = "git+https://github.com/gakonst/ethers-rs#fa3017715a298728d9fb341933818a5d0d84c2dc"
 dependencies = [
  "Inflector",
  "const-hex",
@@ -1975,7 +1958,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#50a684ce47dd31d597d55546548acc76fc3d4074"
+source = "git+https://github.com/gakonst/ethers-rs#fa3017715a298728d9fb341933818a5d0d84c2dc"
 dependencies = [
  "Inflector",
  "const-hex",
@@ -1990,7 +1973,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#50a684ce47dd31d597d55546548acc76fc3d4074"
+source = "git+https://github.com/gakonst/ethers-rs#fa3017715a298728d9fb341933818a5d0d84c2dc"
 dependencies = [
  "arrayvec",
  "bytes",
@@ -2019,7 +2002,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#50a684ce47dd31d597d55546548acc76fc3d4074"
+source = "git+https://github.com/gakonst/ethers-rs#fa3017715a298728d9fb341933818a5d0d84c2dc"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -2034,7 +2017,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#50a684ce47dd31d597d55546548acc76fc3d4074"
+source = "git+https://github.com/gakonst/ethers-rs#fa3017715a298728d9fb341933818a5d0d84c2dc"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -2060,7 +2043,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#50a684ce47dd31d597d55546548acc76fc3d4074"
+source = "git+https://github.com/gakonst/ethers-rs#fa3017715a298728d9fb341933818a5d0d84c2dc"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -2098,7 +2081,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#50a684ce47dd31d597d55546548acc76fc3d4074"
+source = "git+https://github.com/gakonst/ethers-rs#fa3017715a298728d9fb341933818a5d0d84c2dc"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -2125,7 +2108,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#50a684ce47dd31d597d55546548acc76fc3d4074"
+source = "git+https://github.com/gakonst/ethers-rs#fa3017715a298728d9fb341933818a5d0d84c2dc"
 dependencies = [
  "cfg-if",
  "const-hex",
@@ -2326,27 +2309,53 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 name = "forge"
 version = "0.2.0"
 dependencies = [
+ "anvil",
+ "async-trait",
+ "bytes",
+ "clap",
+ "clap_complete",
+ "clap_complete_fig",
  "comfy-table",
  "const-hex",
+ "criterion",
+ "dialoguer",
+ "dunce",
  "ethers",
  "eyre",
+ "forge-doc",
+ "forge-fmt",
+ "foundry-cli",
  "foundry-common",
  "foundry-config",
  "foundry-evm",
+ "foundry-test-utils",
  "foundry-utils",
- "glob",
+ "futures",
+ "globset",
+ "indicatif",
+ "itertools 0.11.0",
  "once_cell",
  "parking_lot",
+ "path-slash",
+ "pretty_assertions",
  "proptest",
  "rayon",
  "regex",
- "rlp",
+ "reqwest",
  "semver 1.0.18",
  "serde",
  "serde_json",
+ "serial_test",
+ "similar",
+ "solang-parser",
+ "strum 0.25.0",
+ "svm-rs",
+ "thiserror",
  "tokio",
  "tracing",
- "tracing-subscriber",
+ "ui",
+ "vergen",
+ "watchexec",
  "yansi 0.5.1",
 ]
 
@@ -2355,17 +2364,15 @@ name = "forge-doc"
 version = "0.2.0"
 dependencies = [
  "auto_impl",
- "clap 4.3.21",
  "derive_more",
  "ethers-core",
  "ethers-solc",
  "eyre",
  "forge-fmt",
- "foundry-common",
  "foundry-config",
  "foundry-utils",
  "futures-util",
- "itertools",
+ "itertools 0.11.0",
  "mdbook",
  "once_cell",
  "rayon",
@@ -2386,9 +2393,8 @@ dependencies = [
  "ariadne",
  "ethers-core",
  "foundry-config",
- "itertools",
+ "itertools 0.11.0",
  "pretty_assertions",
- "semver 1.0.18",
  "solang-parser",
  "thiserror",
  "toml 0.7.6",
@@ -2437,83 +2443,34 @@ dependencies = [
 name = "foundry-cli"
 version = "0.2.0"
 dependencies = [
- "anvil",
  "async-trait",
- "bytes",
- "cast 0.2.0",
- "clap 4.3.21",
- "clap_complete",
- "clap_complete_fig",
+ "clap",
  "color-eyre",
- "comfy-table",
  "const-hex",
- "criterion",
- "dialoguer",
  "dotenvy",
- "dunce",
- "eth-keystore",
  "ethers",
  "eyre",
- "forge",
- "forge-doc",
- "forge-fmt",
- "foundry-cli-test-utils",
  "foundry-common",
  "foundry-config",
  "foundry-evm",
- "foundry-utils",
- "futures",
- "globset",
  "indicatif",
- "itertools",
+ "itertools 0.11.0",
  "once_cell",
- "parking_lot",
- "path-slash",
- "pretty_assertions",
- "proptest",
- "rayon",
  "regex",
- "reqwest",
  "rpassword",
- "semver 1.0.18",
+ "rusoto_core",
+ "rusoto_kms",
  "serde",
- "serde_json",
- "serial_test",
- "similar",
- "solang-parser",
  "strsim",
  "strum 0.25.0",
- "svm-rs",
  "tempfile",
  "thiserror",
  "tokio",
- "toml 0.7.6",
  "tracing",
  "tracing-error",
  "tracing-subscriber",
  "ui",
- "vergen",
- "walkdir",
- "watchexec",
  "yansi 0.5.1",
-]
-
-[[package]]
-name = "foundry-cli-test-utils"
-version = "0.2.0"
-dependencies = [
- "ethers",
- "ethers-solc",
- "eyre",
- "foundry-common",
- "foundry-config",
- "once_cell",
- "parking_lot",
- "pretty_assertions",
- "regex",
- "serde_json",
- "tempfile",
- "walkdir",
 ]
 
 [[package]]
@@ -2521,7 +2478,7 @@ name = "foundry-common"
 version = "0.2.0"
 dependencies = [
  "auto_impl",
- "clap 4.3.21",
+ "clap",
  "comfy-table",
  "dunce",
  "ethers-core",
@@ -2594,7 +2551,7 @@ dependencies = [
  "foundry-utils",
  "futures",
  "hashbrown 0.13.2",
- "itertools",
+ "itertools 0.11.0",
  "jsonpath_lib",
  "once_cell",
  "ordered-float",
@@ -2633,6 +2590,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "foundry-test-utils"
+version = "0.2.0"
+dependencies = [
+ "ethers",
+ "ethers-solc",
+ "eyre",
+ "foundry-common",
+ "foundry-config",
+ "once_cell",
+ "parking_lot",
+ "pretty_assertions",
+ "regex",
+ "serde_json",
+ "tempfile",
+ "walkdir",
+]
+
+[[package]]
 name = "foundry-utils"
 version = "0.2.0"
 dependencies = [
@@ -2641,7 +2616,6 @@ dependencies = [
  "ethers-addressbook",
  "ethers-contract",
  "ethers-core",
- "ethers-etherscan",
  "ethers-providers",
  "ethers-solc",
  "eyre",
@@ -2652,11 +2626,7 @@ dependencies = [
  "once_cell",
  "pretty_assertions",
  "rand 0.8.5",
- "reqwest",
- "rlp",
- "serde",
  "serde_json",
- "tokio",
  "tracing",
 ]
 
@@ -3253,15 +3223,6 @@ checksum = "95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8"
 
 [[package]]
 name = "hermit-abi"
-version = "0.1.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62b467343b94ba476dcb2500d242dadbb39557df889310ac77c5d99100aaac33"
-dependencies = [
- "libc",
-]
-
-[[package]]
-name = "hermit-abi"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "443144c8cdadd93ebf52ddb4056d257f5b52c04d3c804e657d19eb73fc33668b"
@@ -3642,7 +3603,7 @@ version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eae7b9aee968036d54dce06cebaefd919e4472e753296daccd6d344e3e2df0c2"
 dependencies = [
- "hermit-abi 0.3.2",
+ "hermit-abi",
  "libc",
  "windows-sys 0.48.0",
 ]
@@ -3659,7 +3620,7 @@ version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb0889898416213fab133e1d33a0e5858a48177452750691bde3666d0fdbaf8b"
 dependencies = [
- "hermit-abi 0.3.2",
+ "hermit-abi",
  "rustix 0.38.8",
  "windows-sys 0.48.0",
 ]
@@ -3669,6 +3630,15 @@ name = "itertools"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
 dependencies = [
  "either",
 ]
@@ -3787,7 +3757,7 @@ dependencies = [
  "diff",
  "ena",
  "is-terminal",
- "itertools",
+ "itertools 0.10.5",
  "lalrpop-util",
  "petgraph",
  "regex",
@@ -3981,7 +3951,7 @@ dependencies = [
  "ammonia",
  "anyhow",
  "chrono",
- "clap 4.3.21",
+ "clap",
  "clap_complete",
  "elasticlunr-rs",
  "env_logger",
@@ -4299,7 +4269,7 @@ version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4161fcb6d602d4d2081af7c3a45852d875a03dd337a6bfdd6e06407b61342a43"
 dependencies = [
- "hermit-abi 0.3.2",
+ "hermit-abi",
  "libc",
 ]
 
@@ -4460,12 +4430,6 @@ checksum = "2fc2dbde8f8a79f2102cc474ceb0ad68e3b80b85289ea62389b60e66777e4213"
 dependencies = [
  "num-traits",
 ]
-
-[[package]]
-name = "os_str_bytes"
-version = "6.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d5d9eb14b174ee9aa2ef96dc2b94637a2d4b6e7cb873c7e171f0c20c6cf3eac"
 
 [[package]]
 name = "overload"
@@ -6232,7 +6196,7 @@ version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c792fe9fae2a2f716846f214ca10d5a1e21133e0bf36cef34bcc4a852467b21"
 dependencies = [
- "itertools",
+ "itertools 0.10.5",
  "lalrpop",
  "lalrpop-util",
  "phf 0.11.2",
@@ -6505,12 +6469,6 @@ dependencies = [
  "phf 0.11.2",
  "phf_codegen 0.11.2",
 ]
-
-[[package]]
-name = "textwrap"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "222a222a5bfe1bba4a77b45ec488a741b3cb8872e5e499451fd7d0129c9c7c3d"
 
 [[package]]
 name = "thiserror"
@@ -7074,12 +7032,11 @@ checksum = "ed646292ffc8188ef8ea4d1e0e0150fb15a5c2e12ad9b8fc191ae7a8a7f3c4b9"
 name = "ui"
 version = "0.2.0"
 dependencies = [
- "const-hex",
  "crossterm 0.26.1",
  "ethers",
  "eyre",
- "forge",
  "foundry-common",
+ "foundry-evm",
  "revm",
  "tui",
 ]

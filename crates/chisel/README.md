@@ -1,6 +1,6 @@
 # `chisel`
 
-Chisel is a fast, utilitarian, and verbose solidity REPL. It is heavily inspired by the incredible work done in [soli](https://github.com/jpopesculian/soli) and [solidity-shell](https://github.com/tintinweb/solidity-shell)!
+Chisel is a fast, utilitarian, and verbose Solidity REPL. It is heavily inspired by the incredible work done in [soli](https://github.com/jpopesculian/soli) and [solidity-shell](https://github.com/tintinweb/solidity-shell)!
 
 ![preview](./assets/preview.gif)
 
@@ -43,7 +43,7 @@ simple as installing Chisel via `foundryup`. For information on features, usage,
 
 To install `chisel`, simply run `foundryup`!
 
-If you do not have `foundryup` installed, reference the Foundry [installation guide](../README.md#installation).
+If you do not have `foundryup` installed, reference the Foundry [installation guide](../../README.md#installation).
 
 ## Usage
 
@@ -54,6 +54,7 @@ If you do not have `foundryup` installed, reference the Foundry [installation gu
 =============
 General
         !help | !h - Display all commands
+        !quit | !q - Quit Chisel
         !exec <command> [args] | !e <command> [args] - Execute a shell command and print the output
 
 Session
@@ -65,14 +66,17 @@ Session
         !clearcache | !cc - Clear the chisel cache of all stored sessions
         !export | !ex - Export the current session source to a script file
         !fetch <addr> <name> | !fe <addr> <name> - Fetch the interface of a verified contract on Etherscan
+        !edit - Open the current session in an editor
 
 Environment
         !fork <url> | !f <url> - Fork an RPC for the current session. Supply 0 arguments to return to a local network
         !traces | !t - Enable / disable traces for the current session
+        !calldata [data] | !cd [data] - Set calldata (`msg.data`) for the current session (appended after function selector). Clears it if no argument provided.
 
 Debug
         !memdump | !md - Dump the raw memory of the current state
         !stackdump | !sd - Dump the raw stack of the current state
+        !rawstack <var> | !rs <var> - Display the raw value of a variable's stack allocation. For variables that are > 32 bytes in length, this will display their memory pointer.
 ```
 
 ### Cache Session

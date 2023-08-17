@@ -55,31 +55,26 @@ use ethers::{
     utils::{get_contract_address, hex, keccak256, rlp},
 };
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-use forge::{
-    executor::inspector::AccessListTracer,
-    revm::{
-        interpreter::{return_ok, InstructionResult},
-        primitives::{BlockEnv, ExecutionResult},
-    },
-    utils::{
-        eval_to_instruction_result, h256_to_b256, halt_to_instruction_result, ru256_to_u256,
-        u256_to_ru256,
-    },
-};
 use foundry_evm::{
     decode::{decode_custom_error_args, decode_revert},
     executor::{
         backend::{DatabaseError, DatabaseResult},
         DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
+        inspector::AccessListTracer,
     },
     revm::{
         self,
         db::CacheDB,
+        interpreter::{return_ok, InstructionResult},
         primitives::{
-            Account, CreateScheme, EVMError, Env, Output, SpecId, TransactTo, TxEnv, KECCAK_EMPTY,
+            Account, BlockEnv, CreateScheme, EVMError, Env, ExecutionResult, Output, SpecId,
+            TransactTo, TxEnv, KECCAK_EMPTY,
         },
     },
-    utils::u256_to_h256_be,
+    utils::{
+        eval_to_instruction_result, h256_to_b256, halt_to_instruction_result, ru256_to_u256,
+        u256_to_h256_be, u256_to_ru256,
+    },
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;

@@ -1,6 +1,6 @@
 [package]
 name = "anvil"
-description = "Foundry's local ethereum node"
+description = "Local ethereum node"
 
 version.workspace = true
 edition.workspace = true
@@ -20,14 +20,13 @@ vergen = { version = "8", default-features = false, features = ["build", "git", 
 
 [dependencies]
 # foundry internal
-foundry-evm = { path = "../evm" }
 anvil-core = { path = "core", features = ["fastrlp", "serde", "impersonated-tx"] }
 anvil-rpc = { path = "rpc" }
 anvil-server = { path = "server" }
-foundry-utils = { path = "../utils" }
-foundry-common = { path = "../common", optional = true }
-forge = { path = "../forge", optional = true }
-foundry-config = { path = "../config" }
+foundry-common.workspace = true
+foundry-config.workspace = true
+foundry-evm.workspace = true
+foundry-utils.workspace = true
 
 # evm support
 bytes = "1.4.0"
@@ -59,7 +58,7 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 yansi = "0.5"
 tempfile = "3"
-itertools = "0.10"
+itertools.workspace = true
 
 # cli
 clap = { version = "4", features = ["derive", "env", "wrap_help"], optional = true }
@@ -71,7 +70,6 @@ fdlimit = { version = "0.2", optional = true }
 clap_complete_fig = "4"
 ethereum-forkid = "0.12"
 
-
 [dev-dependencies]
 ethers = { workspace = true, features = ["abigen"] }
 ethers-solc = { workspace = true, features = ["project-util", "full"] }
@@ -81,5 +79,5 @@ crc = "3.0.1"
 
 [features]
 default = ["cli"]
-cmd = ["foundry-common", "forge", "clap", "clap_complete", "ctrlc", "anvil-server/clap"]
+cmd = ["clap", "clap_complete", "ctrlc", "anvil-server/clap"]
 cli = ["tokio/full", "cmd", "fdlimit"]

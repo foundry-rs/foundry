@@ -11,9 +11,11 @@ use ethers::{
     signers::WalletError,
     types::{Bytes, SignatureError, U256},
 };
-use forge::revm::{self, primitives::EVMError};
 use foundry_common::SELECTOR_LEN;
-use foundry_evm::{executor::backend::DatabaseError, revm::interpreter::InstructionResult};
+use foundry_evm::{
+    executor::backend::DatabaseError,
+    revm::{self, interpreter::InstructionResult, primitives::EVMError},
+};
 use serde::Serialize;
 use tracing::error;
 

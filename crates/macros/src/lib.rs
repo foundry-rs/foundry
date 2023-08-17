@@ -2,6 +2,8 @@
 //!
 //! Also includes traits and other utilities used by the macros.
 
+#![warn(unused_crate_dependencies)]
+
 pub mod fmt;
 pub use fmt::{console_format, ConsoleFmt, FormatSpec, TokenDisplay, UIfmt};
 

@@ -1,3 +1,5 @@
+#![warn(unused_crate_dependencies)]
+
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
@@ -8,12 +10,12 @@ use crossterm::{
 };
 use ethers::{solc::artifacts::ContractBytecodeSome, types::Address};
 use eyre::Result;
-use forge::{
+use foundry_common::evm::Breakpoints;
+use foundry_evm::{
     debug::{DebugStep, Instruction},
     utils::{build_pc_ic_map, PCICMap},
     CallKind,
 };
-use foundry_common::evm::Breakpoints;
 use revm::{interpreter::opcode, primitives::SpecId};
 use std::{
     cmp::{max, min},

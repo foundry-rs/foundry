@@ -6,11 +6,13 @@ use crate::{
     Address, U256,
 };
 use ethers::prelude::H256;
-use forge::revm::Database;
 pub use foundry_evm::executor::fork::database::ForkedDatabase;
-use foundry_evm::executor::{
-    backend::{snapshot::StateSnapshot, DatabaseResult},
-    fork::database::ForkDbSnapshot,
+use foundry_evm::{
+    executor::{
+        backend::{snapshot::StateSnapshot, DatabaseResult},
+        fork::database::ForkDbSnapshot,
+    },
+    revm::Database,
 };
 
 /// Implement the helper for the fork database
