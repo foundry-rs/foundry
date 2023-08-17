@@ -59,8 +59,8 @@ use foundry_evm::{
     decode::{decode_custom_error_args, decode_revert},
     executor::{
         backend::{DatabaseError, DatabaseResult},
-        DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
         inspector::AccessListTracer,
+        DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     },
     revm::{
         self,
