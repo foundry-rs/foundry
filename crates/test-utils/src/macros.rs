@@ -10,7 +10,7 @@
 /// run `forge init`
 ///
 /// ```no_run
-/// use foundry_tests::*;
+/// use foundry_test_utils::*;
 /// forgetest!(my_test, |prj: TestProject, mut cmd: TestCommand| {
 ///     // adds `init` to forge's command arguments
 ///     cmd.arg("init");
@@ -22,8 +22,8 @@
 /// Configure a hardhat project layout by adding a `PathStyle::HardHat` argument
 ///
 /// ```no_run
-/// use foundry_tests::*;
-/// use foundry_tests::ethers_solc::PathStyle;
+/// use foundry_test_utils::*;
+/// use foundry_test_utils::ethers_solc::PathStyle;
 /// forgetest!(can_clean_hardhat, PathStyle::HardHat, |prj: TestProject, mut cmd: TestCommand| {
 ///     prj.assert_create_dirs_exists();
 ///     prj.assert_style_paths_exist(PathStyle::HardHat);

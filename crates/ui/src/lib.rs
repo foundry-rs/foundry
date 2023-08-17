@@ -1,3 +1,5 @@
+#![warn(unused_crate_dependencies)]
+
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,

@@ -3,7 +3,7 @@ use crate::constants::TEMPLATE_CONTRACT;
 use anvil::{spawn, NodeConfig};
 use ethers::abi::Address;
 use foundry_config::Config;
-use foundry_tests::{
+use foundry_test_utils::{
     forgetest, forgetest_async, forgetest_init,
     util::{OutputExt, TestCommand, TestProject},
     ScriptOutcome, ScriptTester,
@@ -128,7 +128,7 @@ contract Demo {
 forgetest_async!(
     can_execute_script_command_with_manual_gas_limit_unlocked,
     |prj: TestProject, mut cmd: TestCommand| async move {
-        foundry_tests::util::initialize(prj.root());
+        foundry_test_utils::util::initialize(prj.root());
         let deploy_script = prj
             .inner()
             .add_source(
@@ -188,7 +188,7 @@ contract DeployScript is Script {
 forgetest_async!(
     can_execute_script_command_with_manual_gas_limit,
     |prj: TestProject, mut cmd: TestCommand| async move {
-        foundry_tests::util::initialize(prj.root());
+        foundry_test_utils::util::initialize(prj.root());
         let deploy_script = prj
             .inner()
             .add_source(
@@ -301,7 +301,7 @@ contract Demo {
 forgetest_async!(
     can_broadcast_script_skipping_simulation,
     |prj: TestProject, mut cmd: TestCommand| async move {
-        foundry_tests::util::initialize(prj.root());
+        foundry_test_utils::util::initialize(prj.root());
         // This example script would fail in on-chain simulation
         let deploy_script = prj
             .inner()

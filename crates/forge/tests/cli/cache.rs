@@ -1,5 +1,5 @@
 //! Tests for various cache command
-use foundry_tests::{
+use foundry_test_utils::{
     forgetest,
     util::{TestCommand, TestProject},
 };

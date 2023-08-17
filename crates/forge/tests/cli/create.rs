@@ -10,7 +10,7 @@ use ethers::{
     types::Address,
 };
 use foundry_config::Config;
-use foundry_tests::{
+use foundry_test_utils::{
     forgetest, forgetest_async,
     util::{OutputExt, TestCommand, TestProject},
 };

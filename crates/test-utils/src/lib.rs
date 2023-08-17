@@ -1,3 +1,5 @@
+#![warn(unused_crate_dependencies)]
+
 // Macros useful for testing.
 mod macros;
 

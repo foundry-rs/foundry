@@ -1,5 +1,3 @@
-#![warn(unused_crate_dependencies)]
-
 use cast::{Cast, SimpleCast};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;

@@ -1,6 +1,6 @@
 //! Contains various tests related to forge script
 use anvil::{spawn, NodeConfig};
-use foundry_tests::{
+use foundry_test_utils::{
     forgetest_async,
     util::{TestCommand, TestProject},
     ScriptOutcome, ScriptTester,

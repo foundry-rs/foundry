@@ -9,7 +9,7 @@ use ethers::{
     },
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
-use foundry_tests::{
+use foundry_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_init,
     util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},

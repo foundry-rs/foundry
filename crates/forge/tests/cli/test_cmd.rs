@@ -1,6 +1,6 @@
 //! Contains various tests for checking `forge test`
 use foundry_config::Config;
-use foundry_tests::{
+use foundry_test_utils::{
     forgetest, forgetest_init,
     util::{OutputExt, TestCommand, TestProject},
 };

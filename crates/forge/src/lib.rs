@@ -1,5 +1,3 @@
-#![warn(unused_crate_dependencies)]
-
 use ethers::solc::ProjectCompileOutput;
 use foundry_config::{
     validate_profiles, Config, FuzzConfig, InlineConfig, InlineConfigError, InlineConfigParser,

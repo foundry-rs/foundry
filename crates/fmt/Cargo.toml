@@ -20,7 +20,6 @@ ethers-core.workspace = true
 solang-parser.workspace = true
 
 # misc
-semver = "1"
 itertools.workspace = true
 thiserror = "1"
 ariadne = "0.2"

@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use foundry_tests::{util::setup_forge_remote, TestCommand, TestProject};
+use foundry_test_utils::{util::setup_forge_remote, TestCommand, TestProject};
 
 /// Returns a cloned and `forge built` `solmate` project
 fn built_solmate() -> (TestProject, TestCommand) {

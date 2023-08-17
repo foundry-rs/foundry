@@ -1,8 +1,6 @@
 #[cfg(not(feature = "external-integration-tests"))]
 mod cache;
 #[cfg(not(feature = "external-integration-tests"))]
-mod cast;
-#[cfg(not(feature = "external-integration-tests"))]
 mod cmd;
 #[cfg(not(feature = "external-integration-tests"))]
 mod config;
@@ -21,10 +19,6 @@ mod test_cmd;
 mod utils;
 #[cfg(not(feature = "external-integration-tests"))]
 mod verify;
-
-#[allow(unused)]
-#[path = "../../../crates/cli/src/utils/mod.rs"]
-pub(crate) mod forge_utils;
 
 #[cfg(feature = "external-integration-tests")]
 mod integration;

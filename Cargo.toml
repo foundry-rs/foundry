@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*", "tests"]
+members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
@@ -110,10 +110,9 @@ foundry-common = { path = "crates/common" }
 foundry-config = { path = "crates/config" }
 foundry-evm = { path = "crates/evm" }
 foundry-macros = { path = "crates/macros" }
+foundry-test-utils = { path = "crates/test-utils" }
 foundry-utils = { path = "crates/utils" }
 ui = { path = "crates/ui" }
-
-foundry-tests = { path = "tests" }
 
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false }

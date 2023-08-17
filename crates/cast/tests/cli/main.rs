@@ -1,11 +1,11 @@
 //! Contains various tests for checking cast commands
 
-use foundry_tests::{
+use foundry_test_utils::{
     casttest,
     util::{OutputExt, TestCommand, TestProject},
 };
 use foundry_utils::rpc::next_http_rpc_endpoint;
-use std::{io::Write, path::PathBuf};
+use std::{io::Write, path::Path};
 
 // tests `--help` is printed to std out
 casttest!(print_help, |_: TestProject, mut cmd: TestCommand| {
@@ -57,7 +57,7 @@ casttest!(new_wallet_keystore_with_password, |_: TestProject, mut cmd: TestComma
 
 // tests that we can get the address of a keystore file
 casttest!(wallet_address_keystore_with_password_file, |_: TestProject, mut cmd: TestCommand| {
-    let keystore_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/keystore");
+    let keystore_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/keystore");
 
     cmd.args([
         "wallet",
@@ -123,7 +123,7 @@ casttest!(cast_wallet_sign_typed_data_file, |_: TestProject, mut cmd: TestComman
         "0x0000000000000000000000000000000000000000000000000000000000000001",
         "--data",
         "--from-file",
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/sign_typed_data.json")
             .into_os_string()
             .into_string()
@@ -205,7 +205,7 @@ casttest!(upload_signatures, |_: TestProject, mut cmd: TestCommand| {
         "upload-signature",
         "event Transfer(address,uint256)",
         "transfer(address,uint256)",
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/ERC20Artifact.json")
             .into_os_string()
             .into_string()
@@ -406,7 +406,7 @@ casttest!(cast_logs_topics, |_: TestProject, mut cmd: TestCommand| {
     ]);
 
     cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
     );
 });
 
@@ -427,7 +427,7 @@ casttest!(cast_logs_topic_2, |_: TestProject, mut cmd: TestCommand| {
     ]);
 
     cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
     );
 });
 
@@ -446,7 +446,7 @@ casttest!(cast_logs_sig, |_: TestProject, mut cmd: TestCommand| {
     ]);
 
     cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
     );
 });
 
@@ -466,7 +466,7 @@ casttest!(cast_logs_sig_2, |_: TestProject, mut cmd: TestCommand| {
     ]);
 
     cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
     );
 });
 

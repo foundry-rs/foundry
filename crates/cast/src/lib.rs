@@ -1,5 +1,3 @@
-#![warn(unused_crate_dependencies)]
-
 use crate::rlp_converter::Item;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;

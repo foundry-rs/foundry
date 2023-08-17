@@ -1,5 +1,3 @@
-#![warn(unused_crate_dependencies)]
-
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
