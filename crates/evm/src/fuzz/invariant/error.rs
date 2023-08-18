@@ -166,15 +166,12 @@ impl InvariantFuzzError {
         anchor: usize,
         removed_calls: &[usize],
     ) -> Result<Vec<&'a BasicTxDetails>, ()> {
-        let calls = calls.iter().enumerate().filter_map(|(index, element)| {
+        let mut new_sequence = Vec::with_capacity(calls.len());
+        for (index, details) in calls.iter().enumerate() {
             if anchor > index || removed_calls.contains(&index) {
-                return None
+                continue
             }
-            Some(element)
-        });
 
-        let mut new_sequence = vec![];
-        for details in calls {
             new_sequence.push(details);
 
             let (sender, (addr, bytes)) = details;
