@@ -52,6 +52,12 @@ interface Vm {
         uint256 privateKey;
     }
 
+    struct FfiResult {
+        int32 exit_code;
+        bytes stdout;
+        bytes stderr;
+    }
+
     // Set block.timestamp (newTimestamp)
     function warp(uint256) external;
 
@@ -115,6 +121,9 @@ interface Vm {
 
     // Performs a foreign function call via terminal, (stringInputs) => (result)
     function ffi(string[] calldata) external returns (bytes memory);
+
+    // Performs a foreign function call via terminal and returns the exit code, stdout, and stderr
+    function tryFfi(string[] calldata) external returns (FfiResult memory);
 
     // Set environment variables, (name, value)
     function setEnv(string calldata, string calldata) external;
