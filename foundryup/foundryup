@@ -206,7 +206,12 @@ EOF
     # Build the repo and install the binaries locally to the .foundry bin directory.
     ensure cargo build --bins --release
     for bin in "${BINS[@]}"; do
-      mv -f "target/release/$bin" "target/release/$bin.exe" "$FOUNDRY_DIR"
+      for try_path in target/release/$bin target/release/$bin.exe; do
+        if [ -f "$try_path" ]; then
+          [ -e "$FOUNDRY_BIN_DIR/$bin" ] && warn "overwriting existing $bin in $FOUNDRY_BIN_DIR"
+          mv -f "$try_path" "$FOUNDRY_BIN_DIR"
+        fi
+      done
     done
 
     # If help2man is installed, use it to add Foundry man pages.
