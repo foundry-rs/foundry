@@ -8,8 +8,8 @@ use crate::{
 /// Executes all cheat code tests but not fork cheat codes
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cheats_local() {
-    let filter = Filter::new(".*", "TryFfi*", &format!(".*cheats{RE_PATH_SEPARATOR}*"))
-        .exclude_paths("Fork");
+    let filter =
+        Filter::new(".*", "Skip*", &format!(".*cheats{RE_PATH_SEPARATOR}*")).exclude_paths("Fork");
 
     // on windows exclude ffi tests since no echo and file test that expect a certain file path
     #[cfg(windows)]
