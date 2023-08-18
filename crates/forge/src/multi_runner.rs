@@ -277,16 +277,12 @@ impl MultiContractRunnerBuilder {
 
                 let abi = contract.abi.expect("We should have an abi by now");
 
-                // get bytes if deployable, else add to known contracts and return
-                let bytecode = if let Some(bytecode) = contract.bytecode {
-                    if let Some(bytes) = bytecode.object.into_bytes() {
-                        bytes
-                    } else {
-                        known_contracts.insert(id.clone(), (abi, vec![]));
-                        return Ok(())
-                    }
-                } else {
-                    known_contracts.insert(id.clone(), (abi, vec![]));
+                // get bytes if deployable, else add to known contracts and return.
+                // interfaces and abstract contracts should be known to enable fuzzing of their ABI
+                // but they should not be deployable and their source code should be skipped by the
+                // debugger and linker.
+                let Some(bytecode) = contract.bytecode.and_then(|b| b.object.into_bytes()) else {
+                    known_contracts.insert(id.clone(), (abi.clone(), vec![]));
                     return Ok(())
                 };
 
