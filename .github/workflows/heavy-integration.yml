@@ -58,7 +58,7 @@ jobs:
             matrix:
                 job:
                     - name: Long-running integration tests
-                      filter: "!test(~live)"
+                      filter: "!test(~live) & test(heavy)"
         env:
             ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
         steps:
