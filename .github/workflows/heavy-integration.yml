@@ -27,6 +27,12 @@ jobs:
                       ~/.foundry/cache
                       ~/.config/.foundry/cache
                   key: rpc-cache-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
+            - name: Setup git config
+              run: |
+                  git config --global user.name "GitHub Actions Bot"
+                  git config --global user.email "<>"
+            - name: Force use of HTTPS for submodules
+              run: git config --global url."https://github.com/".insteadOf "git@github.com:"
             - name: test
               run: |
                   cargo nextest run -r -p forge --test cli --features heavy-integration-tests --retries 1 -E 'test(~heavy_integration)'
