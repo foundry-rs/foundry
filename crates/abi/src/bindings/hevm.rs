@@ -4876,6 +4876,40 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("tryFfi"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("tryFfi"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Array(
+                                        ::std::boxed::Box::new(
+                                            ::ethers_core::abi::ethabi::ParamType::String,
+                                        ),
+                                    ),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Tuple(
+                                        ::std::vec![
+                                            ::ethers_core::abi::ethabi::ParamType::Int(32usize),
+                                            ::ethers_core::abi::ethabi::ParamType::Bytes,
+                                            ::ethers_core::abi::ethabi::ParamType::Bytes,
+                                        ],
+                                    ),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("txGasPrice"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -7107,6 +7141,18 @@ pub mod hevm {
         ) -> ::ethers_contract::builders::ContractCall<M, ()> {
             self.0
                 .method_hash([77, 138, 188, 75], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `tryFfi` (0xf45c1ce7) function
+        pub fn try_ffi(
+            &self,
+            p0: ::std::vec::Vec<::std::string::String>,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            (i32, ::ethers_core::types::Bytes, ::ethers_core::types::Bytes),
+        > {
+            self.0
+                .method_hash([244, 92, 28, 231], p0)
                 .expect("method not found (this should never happen)")
         }
         ///Calls the contract's `txGasPrice` (0x48f50c0f) function
@@ -10012,6 +10058,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "transact", abi = "transact(uint256,bytes32)")]
     pub struct Transact1Call(pub ::ethers_core::types::U256, pub [u8; 32]);
+    ///Container type for all input parameters for the `tryFfi` function with signature `tryFfi(string[])` and selector `0xf45c1ce7`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "tryFfi", abi = "tryFfi(string[])")]
+    pub struct TryFfiCall(pub ::std::vec::Vec<::std::string::String>);
     ///Container type for all input parameters for the `txGasPrice` function with signature `txGasPrice(uint256)` and selector `0x48f50c0f`
     #[derive(
         Clone,
@@ -10310,6 +10369,7 @@ pub mod hevm {
         ToString5(ToString5Call),
         Transact0(Transact0Call),
         Transact1(Transact1Call),
+        TryFfi(TryFfiCall),
         TxGasPrice(TxGasPriceCall),
         Warp(WarpCall),
         WriteFile(WriteFileCall),
@@ -11158,6 +11218,10 @@ pub mod hevm {
                 return Ok(Self::Transact1(decoded));
             }
             if let Ok(decoded)
+                = <TryFfiCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::TryFfi(decoded));
+            }
+            if let Ok(decoded)
                 = <TxGasPriceCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::TxGasPrice(decoded));
             }
@@ -11668,6 +11732,7 @@ pub mod hevm {
                 Self::Transact1(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
+                Self::TryFfi(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::TxGasPrice(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
@@ -11910,6 +11975,7 @@ pub mod hevm {
                 Self::ToString5(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Transact0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Transact1(element) => ::core::fmt::Display::fmt(element, f),
+                Self::TryFfi(element) => ::core::fmt::Display::fmt(element, f),
                 Self::TxGasPrice(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Warp(element) => ::core::fmt::Display::fmt(element, f),
                 Self::WriteFile(element) => ::core::fmt::Display::fmt(element, f),
@@ -12903,6 +12969,11 @@ pub mod hevm {
     impl ::core::convert::From<Transact1Call> for HEVMCalls {
         fn from(value: Transact1Call) -> Self {
             Self::Transact1(value)
+        }
+    }
+    impl ::core::convert::From<TryFfiCall> for HEVMCalls {
+        fn from(value: TryFfiCall) -> Self {
+            Self::TryFfi(value)
         }
     }
     impl ::core::convert::From<TxGasPriceCall> for HEVMCalls {
@@ -14270,6 +14341,20 @@ pub mod hevm {
         Hash
     )]
     pub struct SnapshotReturn(pub ::ethers_core::types::U256);
+    ///Container type for all return fields from the `tryFfi` function with signature `tryFfi(string[])` and selector `0xf45c1ce7`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct TryFfiReturn(
+        pub (i32, ::ethers_core::types::Bytes, ::ethers_core::types::Bytes),
+    );
     ///`DirEntry(string,string,uint64,bool,bool)`
     #[derive(
         Clone,
@@ -14287,6 +14372,22 @@ pub mod hevm {
         pub depth: u64,
         pub is_dir: bool,
         pub is_symlink: bool,
+    }
+    ///`FfiResult(int32,bytes,bytes)`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct FfiResult {
+        pub exit_code: i32,
+        pub stdout: ::ethers_core::types::Bytes,
+        pub stderr: ::ethers_core::types::Bytes,
     }
     ///`FsMetadata(bool,bool,uint256,bool,uint256,uint256,uint256)`
     #[derive(
