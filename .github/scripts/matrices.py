@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import json
 import os
 
@@ -88,12 +90,10 @@ config = [
 
 
 def build_matrix():
-    os_ids = []
-    targets_ = []
+    expanded = []
     for target in targets:
-        os_ids.append(target.os_id)
-        targets_.append(target.target)
-    print(json.dumps({"os": os_ids, "target": targets_}))
+        expanded.append({"os": target.os_id, "target": target.target})
+    print_json({"include": expanded})
 
 
 def test_matrix():
@@ -125,7 +125,11 @@ def test_matrix():
                 )
                 expanded.append(vars(obj))
 
-    print(json.dumps({"include": expanded}), end="", flush=True)
+    print_json({"include": expanded})
+
+
+def print_json(obj):
+    print(json.dumps(obj), end="", flush=True)
 
 
 if __name__ == "__main__":
