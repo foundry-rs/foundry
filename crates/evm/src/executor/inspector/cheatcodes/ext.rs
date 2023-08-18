@@ -11,6 +11,50 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::{collections::BTreeMap, env, path::Path, process::Command};
 
+/// Invokes a `Command` with the given args and returns the exit code, stdout, and stderr.
+///
+/// If stdout or stderr are valid hex, it returns the hex decoded value.
+fn try_ffi(state: &Cheatcodes, args: &[String]) -> Result {
+    if args.is_empty() || args[0].is_empty() {
+        bail!("Can't execute empty command");
+    }
+    let name = &args[0];
+    let mut cmd = Command::new(name);
+    if args.len() > 1 {
+        cmd.args(&args[1..]);
+    }
+
+    trace!(?args, "invoking try_ffi");
+
+    let output = cmd
+        .current_dir(&state.config.root)
+        .output()
+        .map_err(|err| fmt_err!("Failed to execute command: {err}"))?;
+
+    let exit_code = output.status.code().unwrap_or(1);
+
+    let trimmed_stdout = String::from_utf8(output.stdout)?;
+    let trimmed_stdout = trimmed_stdout.trim();
+
+    // The stdout might be encoded on valid hex, or it might just be a string,
+    // so we need to determine which it is to avoid improperly encoding later.
+    let encoded_stdout: Token =
+        if let Ok(hex) = hex::decode(trimmed_stdout.strip_prefix("0x").unwrap_or(trimmed_stdout)) {
+            Token::Bytes(hex)
+        } else {
+            Token::Bytes(trimmed_stdout.into())
+        };
+
+    let res = abi::encode(&[Token::Tuple(vec![
+        Token::Int(exit_code.into()),
+        encoded_stdout,
+        // We can grab the stderr output as-is.
+        Token::Bytes(output.stderr),
+    ])]);
+
+    Ok(res.into())
+}
+
 /// Invokes a `Command` with the given args and returns the abi encoded response
 ///
 /// If the output of the command is valid hex, it returns the hex decoded value
@@ -457,6 +501,13 @@ pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
         HEVMCalls::Ffi(inner) => {
             if state.config.ffi {
                 ffi(state, &inner.0)
+            } else {
+                Err(fmt_err!("FFI disabled: run again with `--ffi` if you want to allow tests to call external scripts."))
+            }
+        }
+        HEVMCalls::TryFfi(inner) => {
+            if state.config.ffi {
+                try_ffi(state, &inner.0)
             } else {
                 Err(fmt_err!("FFI disabled: run again with `--ffi` if you want to allow tests to call external scripts."))
             }
