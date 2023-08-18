@@ -52,6 +52,7 @@ jobs:
             - uses: Swatinem/rust-cache@v2
             - uses: taiki-e/install-action@nextest
             - name: Build archive
+              shell: bash
               run: |
                   cargo nextest archive \
                     --workspace \
@@ -96,6 +97,7 @@ jobs:
                   git config --global user.name "GitHub Actions Bot"
                   git config --global user.email "<>"
             - name: Test
+              shell: bash
               run: |
                   # see https://github.com/foundry-rs/foundry/pull/3959
                   export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
