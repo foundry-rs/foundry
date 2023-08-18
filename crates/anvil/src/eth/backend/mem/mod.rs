@@ -60,6 +60,7 @@ use foundry_evm::{
     executor::{
         backend::{DatabaseError, DatabaseResult},
         inspector::AccessListTracer,
+        DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     },
     revm::{
         self,
@@ -233,6 +234,13 @@ impl Backend {
         // Note: this can only fail in forking mode, in which case we can't recover
         backend.apply_genesis().await.expect("Failed to create genesis");
         backend
+    }
+
+    /// Writes the CREATE2 deployer code directly to the database at the address provided.
+    pub async fn set_create2_deployer(&self, address: Address) -> DatabaseResult<()> {
+        self.set_code(address, Bytes::from_static(DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE)).await?;
+
+        Ok(())
     }
 
     /// Updates memory limits that should be more strict when auto-mine is enabled
