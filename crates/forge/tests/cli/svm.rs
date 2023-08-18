@@ -2,7 +2,7 @@
 
 use foundry_test_utils::{forgetest_init, TestCommand, TestProject};
 use semver::Version;
-use svm::{self, Platform};
+use svm::Platform;
 
 /// The latest solc release
 ///
@@ -14,14 +14,12 @@ use svm::{self, Platform};
 const LATEST_SOLC: Version = Version::new(0, 8, 21);
 
 macro_rules! ensure_svm_releases {
-    ($($test:ident => $platform:ident),*) => {
-        $(
+    ($($test:ident => $platform:ident),* $(,)?) => {$(
         #[tokio::test(flavor = "multi_thread")]
         async fn $test() {
             ensure_latest_release(Platform::$platform).await
         }
-        )*
-    };
+    )*};
 }
 
 async fn ensure_latest_release(platform: Platform) {
@@ -30,7 +28,7 @@ async fn ensure_latest_release(platform: Platform) {
         .unwrap_or_else(|err| panic!("Could not fetch releases for {platform}: {err:?}"));
     assert!(
         releases.releases.contains_key(&LATEST_SOLC),
-        "platform {platform:?} is missing solc info {LATEST_SOLC}"
+        "platform {platform:?} is missing solc info for v{LATEST_SOLC}"
     );
 }
 
@@ -45,26 +43,20 @@ ensure_svm_releases!(
 
 // Ensures we can always test with the latest solc build
 forgetest_init!(can_test_with_latest_solc, |prj: TestProject, mut cmd: TestCommand| {
-    prj.inner()
-        .add_test(
-            "Counter",
-            r#"
+    let src = format!(
+        r#"
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity =<VERSION>;
+pragma solidity ={LATEST_SOLC};
 
 import "forge-std/Test.sol";
 
-contract CounterTest is Test {
-
-    function testAssert() public {
-       assert(true);
-    }
-}
-   "#
-            .replace("<VERSION>", &LATEST_SOLC.to_string()),
-        )
-        .unwrap();
-
-    cmd.args(["test"]);
-    cmd.stdout().contains("[PASS]")
+contract CounterTest is Test {{
+    function testAssert() public {{
+        assert(true);
+    }}
+}}
+    "#
+    );
+    prj.inner().add_test("Counter", src).unwrap();
+    cmd.arg("test").stdout().contains("[PASS]")
 });

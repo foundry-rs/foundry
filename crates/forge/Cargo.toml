@@ -79,9 +79,6 @@ default = ["rustls"]
 rustls = ["foundry-cli/rustls", "reqwest/rustls-tls", "reqwest/rustls-tls-native-roots"]
 openssl = ["foundry-cli/openssl", "reqwest/default-tls"]
 
-# feature for integration tests that test external projects
-external-integration-tests = []
-
 # feature for heavy (long-running) integration tests
 heavy-integration-tests = []
 
