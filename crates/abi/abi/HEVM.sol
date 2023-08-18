@@ -3,7 +3,7 @@ struct Rpc { string name; string url; }
 struct DirEntry { string errorMessage; string path; uint64 depth; bool isDir; bool isSymlink; }
 struct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created; }
 struct Wallet { address addr; uint256 publicKeyX; uint256 publicKeyY; uint256 privateKey; }
-struct FfiResult { int32 exit_code; bytes stdout; bytes stderr; }
+struct FfiResult { int32 exitCode; bytes stdout; bytes stderr; }
 
 allowCheatcodes(address)
 
