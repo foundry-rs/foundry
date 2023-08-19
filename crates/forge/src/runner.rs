@@ -264,28 +264,30 @@ impl<'a> ContractRunner<'a> {
             .collect::<BTreeMap<_, _>>();
 
         if has_invariants {
-            let identified_contracts = load_contracts(setup.traces.clone(), known_contracts);
-
-            // TODO: par_iter ?
-            let functions = self
+            let invariants: Vec<_> = self
                 .contract
                 .functions()
-                .filter(|&func| func.is_invariant_test() && filter.matches_test(func.signature()));
-            for func in functions {
-                let runner = test_options.invariant_runner(self.name, &func.name);
-                let invariant_config = test_options.invariant_config(self.name, &func.name);
-                let results = self.run_invariant_test(
-                    runner,
-                    setup.clone(),
-                    *invariant_config,
-                    vec![func],
-                    known_contracts,
-                    identified_contracts.clone(),
-                );
-                for result in results {
-                    test_results.insert(func.signature(), result);
-                }
-            }
+                .filter(|&func| func.is_invariant_test() && filter.matches_test(func.signature()))
+                .collect();
+
+            let identified_contracts = load_contracts(setup.traces.clone(), known_contracts);
+            let results: Vec<_> = invariants
+                .par_iter()
+                .map(|func| {
+                    let runner = test_options.invariant_runner(self.name, &func.name);
+                    let invariant_config = test_options.invariant_config(self.name, &func.name);
+                    let res = self.run_invariant_test(
+                        runner,
+                        setup.clone(),
+                        *invariant_config,
+                        func,
+                        known_contracts,
+                        &identified_contracts,
+                    );
+                    (func.signature(), res)
+                })
+                .collect();
+            test_results.extend(results);
         }
 
         let duration = start.elapsed();
@@ -407,41 +409,41 @@ impl<'a> ContractRunner<'a> {
 
     #[instrument(name = "invariant-test", skip_all)]
     pub fn run_invariant_test(
-        &mut self,
+        &self,
         runner: TestRunner,
         setup: TestSetup,
         invariant_config: InvariantConfig,
-        functions: Vec<&Function>,
+        func: &Function,
         known_contracts: Option<&ContractsByArtifact>,
-        identified_contracts: ContractsByAddress,
-    ) -> Vec<TestResult> {
-        trace!(target: "forge::test::fuzz", "executing invariant test with invariant functions {:?}",  functions.iter().map(|f|&f.name).collect::<Vec<_>>());
+        identified_contracts: &ContractsByAddress,
+    ) -> TestResult {
+        trace!(target: "forge::test::fuzz", "executing invariant test for {:?}", func.name);
         let empty = ContractsByArtifact::default();
         let project_contracts = known_contracts.unwrap_or(&empty);
         let TestSetup { address, logs, traces, labeled_addresses, .. } = setup;
 
         // First, run the test normally to see if it needs to be skipped.
-        if let Err(EvmError::SkipError) = self.executor.execute_test::<(), _, _>(
+        if let Err(EvmError::SkipError) = self.executor.clone().execute_test::<(), _, _>(
             self.sender,
             address,
-            functions[0].clone(),
+            func.clone(),
             (),
             0.into(),
             self.errors,
         ) {
-            return vec![TestResult {
+            return TestResult {
                 status: TestStatus::Skipped,
                 reason: None,
                 decoded_logs: decode_console_logs(&logs),
                 traces,
                 labeled_addresses,
-                kind: TestKind::Standard(0),
+                kind: TestKind::Invariant { runs: 1, calls: 1, reverts: 1 },
                 ..Default::default()
-            }]
+            }
         };
 
         let mut evm = InvariantExecutor::new(
-            &mut self.executor,
+            self.executor.clone(),
             runner,
             invariant_config,
             &identified_contracts,
@@ -449,87 +451,92 @@ impl<'a> ContractRunner<'a> {
         );
 
         let invariant_contract =
-            InvariantContract { address, invariant_functions: functions, abi: self.contract };
+            InvariantContract { address, invariant_functions: func, abi: self.contract };
 
-        let Ok(InvariantFuzzTestResult { invariants, cases, reverts, last_run_inputs }) =
-            evm.invariant_fuzz(&invariant_contract)
-        else {
-            return vec![]
+        let InvariantFuzzTestResult { error, cases, reverts, last_run_inputs } = match evm
+            .invariant_fuzz(invariant_contract.clone())
+        {
+            Ok(x) => x,
+            Err(e) => {
+                return TestResult {
+                    status: TestStatus::Failure,
+                    reason: Some(format!("Failed to set up invariant testing environment: {e}")),
+                    decoded_logs: decode_console_logs(&logs),
+                    traces,
+                    labeled_addresses,
+                    kind: TestKind::Invariant { runs: 0, calls: 0, reverts: 0 },
+                    ..Default::default()
+                }
+            }
         };
 
-        invariants
-            .into_values()
-            .map(|(test_error, invariant)| {
-                let mut counterexample = None;
-                let mut logs = logs.clone();
-                let mut traces = traces.clone();
-
-                let success = test_error.is_none();
-                let reason = test_error.as_ref().and_then(|err| {
-                    (!err.revert_reason.is_empty()).then(|| err.revert_reason.clone())
-                });
-
-                match test_error {
-                    // If invariants were broken, replay the error to collect logs and traces
-                    Some(error @ InvariantFuzzError { test_error: TestError::Fail(_, _), .. }) => {
-                        match error.replay(
-                            self.executor.clone(),
-                            known_contracts,
-                            identified_contracts.clone(),
-                            &mut logs,
-                            &mut traces,
-                        ) {
-                            Ok(c) => counterexample = c,
-                            Err(err) => {
-                                error!(?err, "Failed to replay invariant error")
-                            }
-                        };
-
-                        logs.extend(error.logs);
-
-                        if let Some(error_traces) = error.traces {
-                            traces.push((TraceKind::Execution, error_traces));
-                        }
+        let mut counterexample = None;
+        let mut logs = logs.clone();
+        let mut traces = traces.clone();
+        let success = error.is_none();
+        let reason = error
+            .as_ref()
+            .and_then(|err| (!err.revert_reason.is_empty()).then(|| err.revert_reason.clone()));
+        match error {
+            // If invariants were broken, replay the error to collect logs and traces
+            Some(error @ InvariantFuzzError { test_error: TestError::Fail(_, _), .. }) => {
+                match error.replay(
+                    self.executor.clone(),
+                    known_contracts,
+                    identified_contracts.clone(),
+                    &mut logs,
+                    &mut traces,
+                ) {
+                    Ok(c) => counterexample = c,
+                    Err(err) => {
+                        error!(?err, "Failed to replay invariant error")
                     }
-                    _ => {
-                        // If invariants ran successfully, replay the last run to collect logs and
-                        // traces.
-                        replay_run(
-                            &invariant_contract,
-                            self.executor.clone(),
-                            known_contracts,
-                            identified_contracts.clone(),
-                            &mut logs,
-                            &mut traces,
-                            invariant,
-                            last_run_inputs.clone(),
-                        );
-                    }
-                }
-
-                let kind = TestKind::Invariant {
-                    runs: cases.len(),
-                    calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
-                    reverts,
                 };
 
-                TestResult {
-                    status: match success {
-                        true => TestStatus::Success,
-                        false => TestStatus::Failure,
-                    },
-                    reason,
-                    counterexample,
-                    decoded_logs: decode_console_logs(&logs),
-                    logs,
-                    kind,
-                    coverage: None, // TODO ?
-                    traces,
-                    labeled_addresses: labeled_addresses.clone(),
-                    breakpoints: Default::default(),
+                logs.extend(error.logs);
+
+                if let Some(error_traces) = error.traces {
+                    traces.push((TraceKind::Execution, error_traces));
                 }
-            })
-            .collect()
+            }
+
+            // If invariants ran successfully, replay the last run to collect logs and
+            // traces.
+            _ => {
+                replay_run(
+                    &invariant_contract,
+                    self.executor.clone(),
+                    known_contracts,
+                    identified_contracts.clone(),
+                    &mut logs,
+                    &mut traces,
+                    func.clone(),
+                    last_run_inputs.clone(),
+                );
+            }
+        }
+
+        let kind = TestKind::Invariant {
+            runs: cases.len(),
+            calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
+            reverts,
+        };
+
+        TestResult {
+            status: match success {
+                true => TestStatus::Success,
+                false => TestStatus::Failure,
+            },
+            reason,
+            counterexample,
+            decoded_logs: decode_console_logs(&logs),
+            logs,
+            kind,
+            coverage: None, // TODO ?
+            traces,
+            labeled_addresses: labeled_addresses.clone(),
+            breakpoints: Default::default(),
+        }
     }
 
     #[instrument(name = "fuzz-test", skip_all, fields(name = %func.signature(), %should_fail))]
