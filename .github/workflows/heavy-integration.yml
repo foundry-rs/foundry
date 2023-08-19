@@ -38,9 +38,13 @@ jobs:
               run: |
                   cargo nextest run -r -p forge --test cli --features heavy-integration-tests --retries 1 -E 'test(~heavy_integration)'
 
-            # If any of the steps fail, this will create a high-priority issue to signal so.
+    # If any of the jobs fail, this will create a high-priority issue to signal so.
+    issue:
+        name: Open an issue
+        runs-on: ubuntu-latest
+        if: ${{ failure() }}
+        steps:
             - uses: JasonEtco/create-an-issue@v2
-              if: ${{ failure() }}
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   WORKFLOW_URL: |
