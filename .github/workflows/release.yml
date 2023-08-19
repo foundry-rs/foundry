@@ -138,7 +138,8 @@ jobs:
                   PLATFORM_NAME: ${{ matrix.job.platform }}
                   TARGET: ${{ matrix.job.target }}
                   ARCH: ${{ matrix.job.arch }}
-                  VERSION_NAME: ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
+                  VERSION_NAME: |
+                      ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
               run: |
                   if [ "$PLATFORM_NAME" == "linux" ]; then
                     tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast anvil chisel
@@ -162,7 +163,8 @@ jobs:
               env:
                   PLATFORM_NAME: ${{ matrix.job.platform }}
                   TARGET: ${{ matrix.job.target }}
-                  VERSION_NAME: ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
+                  VERSION_NAME: |
+                      ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
               run: |
                   sudo apt-get -y install help2man
                   help2man -N ./target/${TARGET}/release/forge > forge.1
@@ -203,17 +205,6 @@ jobs:
                       ${{ steps.artifacts.outputs.file_name }}
                       ${{ steps.man.outputs.foundry_man }}
 
-            # If any of the steps fail, this will create a high-priority issue
-            # to signal so.
-            - uses: JasonEtco/create-an-issue@v2
-              if: ${{ failure() }}
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                  WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-              with:
-                  update_existing: true
-                  filename: .github/RELEASE_FAILURE_ISSUE_TEMPLATE.md
-
     cleanup:
         name: Release cleanup
         runs-on: ubuntu-20.04
@@ -237,3 +228,18 @@ jobs:
                   script: |
                       const prunePrereleases = require('./.github/scripts/prune-prereleases.js')
                       await prunePrereleases({github, context})
+
+    # If any of the jobs fail, this will create a high-priority issue to signal so.
+    issue:
+        name: Open an issue
+        runs-on: ubuntu-latest
+        if: ${{ failure() }}
+        steps:
+            - uses: JasonEtco/create-an-issue@v2
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  WORKFLOW_URL: |
+                      ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+              with:
+                  update_existing: true
+                  filename: .github/RELEASE_FAILURE_ISSUE_TEMPLATE.md
