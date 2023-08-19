@@ -28,13 +28,13 @@ jobs:
               run: |
                   output=$(python3 .github/scripts/matrices.py)
                   echo "::debug::build-matrix=$output"
-                  echo "build-matrix=$output" >> "$GITHUB_OUTPUT"
+                  echo "build-matrix=$output" >> $GITHUB_OUTPUT
 
                   export TEST=1
 
                   output=$(python3 .github/scripts/matrices.py)
                   echo "::debug::test-matrix=$output"
-                  echo "test-matrix=$output" >> "$GITHUB_OUTPUT"
+                  echo "test-matrix=$output" >> $GITHUB_OUTPUT
 
     build-tests:
         name: build tests

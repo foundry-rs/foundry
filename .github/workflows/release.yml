@@ -30,11 +30,11 @@ jobs:
               id: release_info
               run: |
                   if [[ $IS_NIGHTLY ]]; then
-                    echo "::set-output name=tag_name::nightly-${GITHUB_SHA}"
-                    echo "::set-output name=release_name::Nightly ($(date '+%Y-%m-%d'))"
+                    echo "tag_name=nightly-${GITHUB_SHA}" >> $GITHUB_OUTPUT
+                    echo "release_name=Nightly ($(date '+%Y-%m-%d'))" >> $GITHUB_OUTPUT
                   else
-                    echo "::set-output name=tag_name::${GITHUB_REF_NAME}"
-                    echo "::set-output name=release_name::${GITHUB_REF_NAME}"
+                    echo "tag_name=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+                    echo "release_name=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
                   fi
 
             # Creates a `nightly-SHA` tag for this specific nightly
@@ -125,12 +125,9 @@ jobs:
                   echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
             - name: Build binaries
-              uses: actions-rs/cargo@v1
               env:
                   SVM_TARGET_PLATFORM: ${{ matrix.job.svm_target_platform }}
-              with:
-                  command: build
-                  args: --release --bins --target ${{ matrix.job.target }}
+              run: cargo build --release --bins --target ${{ matrix.job.target }}
 
             - name: Archive binaries
               id: artifacts
@@ -140,22 +137,22 @@ jobs:
                   ARCH: ${{ matrix.job.arch }}
                   VERSION_NAME: |
                       ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
+              shell: bash
               run: |
                   if [ "$PLATFORM_NAME" == "linux" ]; then
                     tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast anvil chisel
-                    echo "::set-output name=file_name::foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz"
+                    echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
                   elif [ "$PLATFORM_NAME" == "darwin" ]; then
                     # We need to use gtar here otherwise the archive is corrupt.
                     # See: https://github.com/actions/virtual-environments/issues/2619
                     gtar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast anvil chisel
-                    echo "::set-output name=file_name::foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz"
+                    echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
                   else
                     cd ./target/${TARGET}/release
                     7z a -tzip "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe anvil.exe chisel.exe
                     mv "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
-                    echo "::set-output name=file_name::foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip"
+                    echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" >> $GITHUB_OUTPUT
                   fi
-              shell: bash
 
             - name: Build man page
               id: man
@@ -165,6 +162,7 @@ jobs:
                   TARGET: ${{ matrix.job.target }}
                   VERSION_NAME: |
                       ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
+              shell: bash
               run: |
                   sudo apt-get -y install help2man
                   help2man -N ./target/${TARGET}/release/forge > forge.1
@@ -176,8 +174,7 @@ jobs:
                   gzip anvil.1
                   gzip chisel.1
                   tar -czvf "foundry_man_${VERSION_NAME}.tar.gz" forge.1.gz cast.1.gz anvil.1.gz chisel.1.gz
-                  echo "::set-output name=foundry_man::foundry_man_${VERSION_NAME}.tar.gz"
-              shell: bash
+                  echo "foundry_man=foundry_man_${VERSION_NAME}.tar.gz" >> $GITHUB_OUTPUT
 
             # Creates the release for this specific version
             - name: Create release
