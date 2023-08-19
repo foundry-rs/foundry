@@ -446,12 +446,12 @@ impl<'a> ContractRunner<'a> {
             self.executor.clone(),
             runner,
             invariant_config,
-            &identified_contracts,
+            identified_contracts,
             project_contracts,
         );
 
         let invariant_contract =
-            InvariantContract { address, invariant_functions: func, abi: self.contract };
+            InvariantContract { address, invariant_function: func, abi: self.contract };
 
         let InvariantFuzzTestResult { error, cases, reverts, last_run_inputs } = match evm
             .invariant_fuzz(invariant_contract.clone())

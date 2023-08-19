@@ -107,16 +107,13 @@ impl<'a> InvariantExecutor<'a> {
         // Stores data related to reverts or failed assertions of the test.
         let failures = RefCell::new(InvariantFailures::new());
 
-        let last_call_results = RefCell::new(
-            assert_invariants(
-                &invariant_contract,
-                &self.executor,
-                &[],
-                &mut failures.borrow_mut(),
-                self.config.shrink_sequence,
-            )
-            .ok(),
-        );
+        let last_call_results = RefCell::new(assert_invariants(
+            &invariant_contract,
+            &self.executor,
+            &[],
+            &mut failures.borrow_mut(),
+            self.config.shrink_sequence,
+        ));
         let last_run_calldata: RefCell<Vec<BasicTxDetails>> = RefCell::new(vec![]);
         // Make sure invariants are sound even before starting to fuzz
         if last_call_results.borrow().is_none() {
@@ -588,8 +585,7 @@ fn can_continue(
     // Assert invariants IFF the call did not revert and the handlers did not fail.
     if !call_result.reverted && !handlers_failed {
         call_results =
-            assert_invariants(invariant_contract, executor, calldata, failures, shrink_sequence)
-                .ok();
+            assert_invariants(invariant_contract, executor, calldata, failures, shrink_sequence);
         if call_results.is_none() {
             return RichInvariantResults::new(false, None)
         }

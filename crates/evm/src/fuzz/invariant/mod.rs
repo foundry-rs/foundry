@@ -40,7 +40,7 @@ pub struct InvariantContract<'a> {
     /// Address of the test contract.
     pub address: Address,
     /// Invariant functions present in the test contract.
-    pub invariant_functions: &'a Function,
+    pub invariant_function: &'a Function,
     /// Abi of the test contract.
     pub abi: &'a Abi,
 }
@@ -54,7 +54,7 @@ pub fn assert_invariants(
     calldata: &[BasicTxDetails],
     invariant_failures: &mut InvariantFailures,
     shrink_sequence: bool,
-) -> Result<RawCallResult> {
+) -> Option<RawCallResult> {
     let mut inner_sequence = vec![];
 
     if let Some(fuzzer) = &executor.inspector.fuzzer {
@@ -63,7 +63,7 @@ pub fn assert_invariants(
         }
     }
 
-    let func = invariant_contract.invariant_functions;
+    let func = invariant_contract.invariant_function;
     let mut call_result = executor
         .call_raw(
             CALLER,
@@ -92,11 +92,11 @@ pub fn assert_invariants(
                 &inner_sequence,
                 shrink_sequence,
             ));
-            eyre::bail!("Failed");
+            return None
         }
     }
 
-    Ok(call_result)
+    Some(call_result)
 }
 
 /// Replays the provided invariant run for collecting the logs and traces from all depths.
