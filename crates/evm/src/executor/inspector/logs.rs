@@ -60,7 +60,6 @@ where
         &mut self,
         _: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
-        _: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         if call.contract == h160_to_b160(HARDHAT_CONSOLE_ADDRESS) {
             let (status, reason) = self.hardhat_log(call.input.to_vec());

@@ -61,27 +61,21 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         &mut self,
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
-        is_static: bool,
     ) -> InstructionResult {
         call_inspectors!(
             inspector,
             [&mut self.gas.as_deref().map(|gas| gas.borrow_mut()), &mut self.tracer],
-            { inspector.initialize_interp(interp, data, is_static) }
+            { inspector.initialize_interp(interp, data) }
         );
         InstructionResult::Continue
     }
 
-    fn step(
-        &mut self,
-        interp: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-        is_static: bool,
-    ) -> InstructionResult {
+    fn step(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>) -> InstructionResult {
         call_inspectors!(
             inspector,
             [&mut self.gas.as_deref().map(|gas| gas.borrow_mut()), &mut self.tracer],
             {
-                inspector.step(interp, data, is_static);
+                inspector.step(interp, data);
             }
         );
         InstructionResult::Continue
@@ -111,14 +105,13 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         &mut self,
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
-        is_static: bool,
         eval: InstructionResult,
     ) -> InstructionResult {
         call_inspectors!(
             inspector,
             [&mut self.gas.as_deref().map(|gas| gas.borrow_mut()), &mut self.tracer],
             {
-                inspector.step_end(interp, data, is_static, eval);
+                inspector.step_end(interp, data, eval);
             }
         );
         eval
@@ -128,7 +121,6 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
-        is_static: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         call_inspectors!(
             inspector,
@@ -138,7 +130,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
                 Some(&mut self.log_collector)
             ],
             {
-                inspector.call(data, call, is_static);
+                inspector.call(data, call);
             }
         );
 
@@ -152,13 +144,12 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         remaining_gas: Gas,
         ret: InstructionResult,
         out: Bytes,
-        is_static: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         call_inspectors!(
             inspector,
             [&mut self.gas.as_deref().map(|gas| gas.borrow_mut()), &mut self.tracer],
             {
-                inspector.call_end(data, inputs, remaining_gas, ret, out.clone(), is_static);
+                inspector.call_end(data, inputs, remaining_gas, ret, out.clone());
             }
         );
         (ret, remaining_gas, out)
