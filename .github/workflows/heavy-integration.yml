@@ -13,6 +13,7 @@ jobs:
     heavy-integration:
         name: heavy (long-running) integration tests
         runs-on: ubuntu-latest
+        timeout-minutes: 120
         env:
             ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
         steps:
