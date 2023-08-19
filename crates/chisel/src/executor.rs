@@ -290,14 +290,15 @@ impl SessionSource {
         };
 
         // Build a new executor
-        let executor = ExecutorBuilder::default()
-            .with_config(env)
-            .with_chisel_state(final_pc)
-            .set_tracing(true)
-            .with_spec(foundry_evm::utils::evm_spec(&self.config.foundry_config.evm_version))
-            .with_gas_limit(self.config.evm_opts.gas_limit())
-            .with_cheatcodes(CheatsConfig::new(&self.config.foundry_config, &self.config.evm_opts))
-            .build(backend);
+        let executor = ExecutorBuilder::new()
+            .inspectors(|stack| {
+                stack.chisel_state(final_pc).trace(true).cheatcodes(
+                    CheatsConfig::new(&self.config.foundry_config, &self.config.evm_opts).into(),
+                )
+            })
+            .gas_limit(self.config.evm_opts.gas_limit())
+            .spec(foundry_evm::utils::evm_spec(self.config.foundry_config.evm_version))
+            .build(env, backend);
 
         // Create a [ChiselRunner] with a default balance of [U256::MAX] and
         // the sender [Address::zero].

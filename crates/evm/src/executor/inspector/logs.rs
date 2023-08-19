@@ -43,10 +43,7 @@ impl LogCollector {
     }
 }
 
-impl<DB> Inspector<DB> for LogCollector
-where
-    DB: Database,
-{
+impl<DB: Database> Inspector<DB> for LogCollector {
     fn log(&mut self, _: &mut EVMData<'_, DB>, address: &B160, topics: &[B256], data: &Bytes) {
         self.logs.push(Log {
             address: b160_to_h160(*address),

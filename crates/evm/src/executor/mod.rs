@@ -1,6 +1,4 @@
-use self::inspector::{
-    cheatcodes::util::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStackConfig,
-};
+use self::inspector::{cheatcodes::util::BroadcastableTransactions, Cheatcodes, InspectorData};
 use crate::{
     debug::DebugArena,
     decode,
@@ -84,9 +82,9 @@ pub struct Executor {
     // only interested in the database. REVM's `EVM` is a thin
     // wrapper around spawning a new EVM on every call anyway,
     // so the performance difference should be negligible.
-    backend: Backend,
-    env: Env,
-    inspector_config: InspectorStackConfig,
+    pub backend: Backend,
+    pub env: Env,
+    pub inspector: InspectorStack,
     /// The gas limit for calls and deployments. This is different from the gas limit imposed by
     /// the passed in environment, as those limits are used by the EVM for certain opcodes like
     /// `gaslimit`.
@@ -96,59 +94,26 @@ pub struct Executor {
 // === impl Executor ===
 
 impl Executor {
-    pub fn new(
-        mut backend: Backend,
-        env: Env,
-        inspector_config: InspectorStackConfig,
-        gas_limit: U256,
-    ) -> Self {
+    #[inline]
+    pub fn new(mut backend: Backend, env: Env, inspector: InspectorStack, gas_limit: U256) -> Self {
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // does not fail
         backend.insert_account_info(
             CHEATCODE_ADDRESS,
             revm::primitives::AccountInfo {
-                code: Some(Bytecode::new_raw(vec![0u8].into()).to_checked()),
+                code: Some(Bytecode::new_raw(Bytes::from_static(&[0])).to_checked()),
                 ..Default::default()
             },
         );
 
-        Executor { backend, env, inspector_config, gas_limit }
-    }
-
-    /// Returns a reference to the Env
-    pub fn env(&self) -> &Env {
-        &self.env
-    }
-
-    /// Returns a mutable reference to the Env
-    pub fn env_mut(&mut self) -> &mut Env {
-        &mut self.env
-    }
-
-    /// Returns a mutable reference to the Backend
-    pub fn backend_mut(&mut self) -> &mut Backend {
-        &mut self.backend
-    }
-
-    pub fn backend(&self) -> &Backend {
-        &self.backend
-    }
-
-    /// Returns an immutable reference to the InspectorStackConfig
-    pub fn inspector_config(&self) -> &InspectorStackConfig {
-        &self.inspector_config
-    }
-
-    /// Returns a mutable reference to the InspectorStackConfig
-    pub fn inspector_config_mut(&mut self) -> &mut InspectorStackConfig {
-        &mut self.inspector_config
+        Executor { backend, env, inspector, gas_limit }
     }
 
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
         trace!("deploying local create2 deployer");
         let create2_deployer_account = self
-            .backend_mut()
+            .backend
             .basic(h160_to_b160(DEFAULT_CREATE2_DEPLOYER))?
             .ok_or(DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
@@ -172,17 +137,17 @@ impl Executor {
     /// Set the balance of an account.
     pub fn set_balance(&mut self, address: Address, amount: U256) -> DatabaseResult<&mut Self> {
         trace!(?address, ?amount, "setting account balance");
-        let mut account = self.backend_mut().basic(h160_to_b160(address))?.unwrap_or_default();
+        let mut account = self.backend.basic(h160_to_b160(address))?.unwrap_or_default();
         account.balance = amount.into();
 
-        self.backend_mut().insert_account_info(address, account);
+        self.backend.insert_account_info(address, account);
         Ok(self)
     }
 
     /// Gets the balance of an account
     pub fn get_balance(&self, address: Address) -> DatabaseResult<U256> {
         Ok(self
-            .backend()
+            .backend
             .basic(h160_to_b160(address))?
             .map(|acc| acc.balance.into())
             .unwrap_or_default())
@@ -190,28 +155,32 @@ impl Executor {
 
     /// Set the nonce of an account.
     pub fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<&mut Self> {
-        let mut account = self.backend_mut().basic(h160_to_b160(address))?.unwrap_or_default();
+        let mut account = self.backend.basic(h160_to_b160(address))?.unwrap_or_default();
         account.nonce = nonce;
 
-        self.backend_mut().insert_account_info(address, account);
+        self.backend.insert_account_info(address, account);
         Ok(self)
     }
 
+    #[inline]
     pub fn set_tracing(&mut self, tracing: bool) -> &mut Self {
-        self.inspector_config.tracing = tracing;
+        self.inspector.tracing(tracing);
         self
     }
 
+    #[inline]
     pub fn set_debugger(&mut self, debugger: bool) -> &mut Self {
-        self.inspector_config.debugger = debugger;
+        self.inspector.enable_debugger(debugger);
         self
     }
 
+    #[inline]
     pub fn set_trace_printer(&mut self, trace_printer: bool) -> &mut Self {
-        self.inspector_config.trace_printer = trace_printer;
+        self.inspector.print(trace_printer);
         self
     }
 
+    #[inline]
     pub fn set_gas_limit(&mut self, gas_limit: U256) -> &mut Self {
         self.gas_limit = gas_limit;
         self
@@ -231,7 +200,7 @@ impl Executor {
         trace!(?from, ?to, "setting up contract");
 
         let from = from.unwrap_or(CALLER);
-        self.backend_mut().set_test_contract(to).set_caller(from);
+        self.backend.set_test_contract(to).set_caller(from);
         let res = self.call_committing::<(), _, _>(from, to, "setUp()", (), 0.into(), None)?;
 
         // record any changes made to the block's environment during setup
@@ -353,18 +322,16 @@ impl Executor {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult> {
-        // execute the call
-        let mut inspector = self.inspector_config.stack();
+        let mut inspector = self.inspector.clone();
         // Build VM
         let mut env =
             self.build_test_env(from, TransactTo::Call(h160_to_b160(to)), calldata, value);
-        let mut db = FuzzBackendWrapper::new(self.backend());
+        let mut db = FuzzBackendWrapper::new(&self.backend);
         let result = db.inspect_ref(&mut env, &mut inspector)?;
 
         // Persist the snapshot failure recorded on the fuzz backend wrapper.
-        self.backend().set_snapshot_failure(
-            self.backend().has_snapshot_failure() || db.has_snapshot_failure(),
-        );
+        self.backend
+            .set_snapshot_failure(self.backend.has_snapshot_failure() || db.has_snapshot_failure());
 
         convert_executed_result(env, inspector, result)
     }
@@ -379,8 +346,8 @@ impl Executor {
     /// Execute the transaction configured in `env.tx`
     pub fn call_raw_with_env(&mut self, mut env: Env) -> eyre::Result<RawCallResult> {
         // execute the call
-        let mut inspector = self.inspector_config.stack();
-        let result = self.backend_mut().inspect_ref(&mut env, &mut inspector)?;
+        let mut inspector = self.inspector.clone();
+        let result = self.backend.inspect_ref(&mut env, &mut inspector)?;
         convert_executed_result(env, inspector, result)
     }
 
@@ -389,10 +356,12 @@ impl Executor {
     fn commit(&mut self, result: &mut RawCallResult) {
         // persist changes to db
         if let Some(changes) = result.state_changeset.as_ref() {
-            self.backend_mut().commit(changes.clone());
+            self.backend.commit(changes.clone());
         }
         // Persist the changed block environment
-        self.inspector_config.block = result.env.block.clone();
+        if let Some(cheatcodes) = &mut self.inspector.cheatcodes {
+            cheatcodes.block = Some(result.env.block.clone());
+        }
         // Persist cheatcode state
         let mut cheatcodes = result.cheatcodes.take();
         if let Some(cheats) = cheatcodes.as_mut() {
@@ -402,7 +371,7 @@ impl Executor {
             // corrected_nonce value is needed outside of this context (setUp), so we don't
             // reset it.
         }
-        self.inspector_config.cheatcodes = cheatcodes;
+        self.inspector.cheatcodes = cheatcodes;
     }
 
     /// Deploys a contract using the given `env` and commits the new state to the underlying
@@ -545,18 +514,18 @@ impl Executor {
         state_changeset: StateChangeset,
         should_fail: bool,
     ) -> Result<bool, DatabaseError> {
-        if self.backend().has_snapshot_failure() {
+        if self.backend.has_snapshot_failure() {
             // a failure occurred in a reverted snapshot, which is considered a failed test
             return Ok(should_fail)
         }
 
         // Construct a new VM with the state changeset
-        let mut backend = self.backend().clone_empty();
+        let mut backend = self.backend.clone_empty();
 
         // we only clone the test contract and cheatcode accounts, that's all we need to evaluate
         // success
         for addr in [address, CHEATCODE_ADDRESS] {
-            let acc = self.backend().basic(h160_to_b160(addr))?.unwrap_or_default();
+            let acc = self.backend.basic(h160_to_b160(addr))?.unwrap_or_default();
             backend.insert_account_info(addr, acc);
         }
 
@@ -565,7 +534,7 @@ impl Executor {
         // cheatcode address which are both read when call `"failed()(bool)"` in the next step
         backend.commit(state_changeset);
         let executor =
-            Executor::new(backend, self.env.clone(), self.inspector_config.clone(), self.gas_limit);
+            Executor::new(backend, self.env.clone(), self.inspector.clone(), self.gas_limit);
 
         let mut success = !reverted;
         if success {
@@ -814,15 +783,13 @@ fn convert_executed_result(
         logs,
         labels,
         traces,
-        gas,
         coverage,
         debug,
         cheatcodes,
         script_wallets,
         chisel_state,
-    } = inspector.collect_inspector_states();
+    } = inspector.collect();
 
-    let gas_refunded = gas.unwrap_or(gas_refunded);
     let transactions = match cheatcodes.as_ref() {
         Some(cheats) if !cheats.broadcastable_transactions.is_empty() => {
             Some(cheats.broadcastable_transactions.clone())

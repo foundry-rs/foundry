@@ -211,13 +211,14 @@ impl<'a> ContractRunner<'a> {
         let has_invariants = self.contract.functions().any(|func| func.is_invariant_test());
 
         // Invariant testing requires tracing to figure out what contracts were created.
-        let original_tracing = self.executor.inspector_config().tracing;
-        if has_invariants && needs_setup {
+        let tmp_tracing = self.executor.inspector.tracer.is_none() && has_invariants && needs_setup;
+        if tmp_tracing {
             self.executor.set_tracing(true);
         }
-
         let setup = self.setup(needs_setup);
-        self.executor.set_tracing(original_tracing);
+        if tmp_tracing {
+            self.executor.set_tracing(false);
+        }
 
         if setup.reason.is_some() {
             // The setup failed, so we return a single test result for `setUp`
