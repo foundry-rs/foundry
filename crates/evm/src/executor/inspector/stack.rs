@@ -16,7 +16,7 @@ use revm::{
     interpreter::{
         return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, Stack,
     },
-    primitives::{BlockEnv, B160, B256},
+    primitives::{BlockEnv, Env, B160, B256},
     EVMData, Inspector,
 };
 use std::{collections::BTreeMap, sync::Arc};
@@ -147,11 +147,9 @@ impl InspectorStackBuilder {
         } = self;
         let mut stack = InspectorStack::new();
 
+        // inspectors
         if let Some(config) = cheatcodes {
-            let mut cheatcodes = Cheatcodes::new(config);
-            cheatcodes.block = Some(block.unwrap_or_default());
-            cheatcodes.gas_price = Some(gas_price.unwrap_or_default());
-            stack.set_cheatcodes(cheatcodes);
+            stack.set_cheatcodes(Cheatcodes::new(config));
         }
         if let Some(fuzzer) = fuzzer {
             stack.set_fuzzer(fuzzer);
@@ -164,6 +162,14 @@ impl InspectorStackBuilder {
         stack.enable_debugger(debug.unwrap_or(false));
         stack.print(print.unwrap_or(false));
         stack.tracing(trace.unwrap_or(false));
+
+        // environment, must come after all of the inspectors
+        if let Some(block) = block {
+            stack.set_block(&block);
+        }
+        if let Some(gas_price) = gas_price {
+            stack.set_gas_price(gas_price);
+        }
 
         stack
     }
@@ -217,6 +223,29 @@ impl InspectorStack {
     #[inline]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set variables from an environment for the relevant inspectors.
+    #[inline]
+    pub fn set_env(&mut self, env: &Env) {
+        self.set_block(&env.block);
+        self.set_gas_price(env.tx.gas_price.into());
+    }
+
+    /// Sets the block for the relevant inspectors.
+    #[inline]
+    pub fn set_block(&mut self, block: &BlockEnv) {
+        if let Some(cheatcodes) = &mut self.cheatcodes {
+            cheatcodes.block = Some(block.clone());
+        }
+    }
+
+    /// Sets the gas price for the relevant inspectors.
+    #[inline]
+    pub fn set_gas_price(&mut self, gas_price: U256) {
+        if let Some(cheatcodes) = &mut self.cheatcodes {
+            cheatcodes.gas_price = Some(gas_price);
+        }
     }
 
     /// Set the cheatcodes inspector.

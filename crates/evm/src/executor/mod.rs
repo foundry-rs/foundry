@@ -77,13 +77,15 @@ pub const DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE: &[u8] = &hex!("7fffffffffffffff
 ///    other words: the state of the underlying database remains unchanged.
 #[derive(Debug, Clone)]
 pub struct Executor {
-    /// The underlying `revm::Database` that contains the EVM storage
+    /// The underlying `revm::Database` that contains the EVM storage.
     // Note: We do not store an EVM here, since we are really
     // only interested in the database. REVM's `EVM` is a thin
     // wrapper around spawning a new EVM on every call anyway,
     // so the performance difference should be negligible.
     pub backend: Backend,
+    /// The EVM environment.
     pub env: Env,
+    /// The Revm inspector stack.
     pub inspector: InspectorStack,
     /// The gas limit for calls and deployments. This is different from the gas limit imposed by
     /// the passed in environment, as those limits are used by the EVM for certain opcodes like
@@ -354,14 +356,11 @@ impl Executor {
     /// Commit the changeset to the database and adjust `self.inspector_config`
     /// values according to the executed call result
     fn commit(&mut self, result: &mut RawCallResult) {
-        // persist changes to db
-        if let Some(changes) = result.state_changeset.as_ref() {
+        // Persist changes to db
+        if let Some(changes) = &result.state_changeset {
             self.backend.commit(changes.clone());
         }
-        // Persist the changed block environment
-        if let Some(cheatcodes) = &mut self.inspector.cheatcodes {
-            cheatcodes.block = Some(result.env.block.clone());
-        }
+
         // Persist cheatcode state
         let mut cheatcodes = result.cheatcodes.take();
         if let Some(cheats) = cheatcodes.as_mut() {
@@ -372,6 +371,9 @@ impl Executor {
             // reset it.
         }
         self.inspector.cheatcodes = cheatcodes;
+
+        // Persist the changed environment
+        self.inspector.set_env(&result.env);
     }
 
     /// Deploys a contract using the given `env` and commits the new state to the underlying
