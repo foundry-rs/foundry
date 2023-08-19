@@ -16,12 +16,11 @@ jobs:
     prepare:
         name: Prepare release
         runs-on: ubuntu-20.04
-
+        timeout-minutes: 30
         outputs:
             tag_name: ${{ steps.release_info.outputs.tag_name }}
             release_name: ${{ steps.release_info.outputs.release_name }}
             changelog: ${{ steps.build_changelog.outputs.changelog }}
-
         steps:
             - uses: actions/checkout@v3
               with:
@@ -69,6 +68,7 @@ jobs:
     release:
         name: ${{ matrix.job.target }} (${{ matrix.job.os }})
         runs-on: ${{ matrix.job.os }}
+        timeout-minutes: 60
         needs: prepare
         strategy:
             matrix:
@@ -217,8 +217,8 @@ jobs:
     cleanup:
         name: Release cleanup
         runs-on: ubuntu-20.04
+        timeout-minutes: 30
         needs: release
-
         steps:
             - uses: actions/checkout@v3
 
