@@ -98,9 +98,9 @@ impl<'a> InvariantExecutor<'a> {
     /// Returns a list of all the consumed gas and calldata of every invariant fuzz case
     pub fn invariant_fuzz(
         &mut self,
-        invariant_contract: InvariantContract,
+        invariant_contract: &InvariantContract,
     ) -> eyre::Result<InvariantFuzzTestResult> {
-        let (fuzz_state, targeted_contracts, strat) = self.prepare_fuzzing(&invariant_contract)?;
+        let (fuzz_state, targeted_contracts, strat) = self.prepare_fuzzing(invariant_contract)?;
 
         // Stores the consumed gas and calldata of every successful fuzz call.
         let fuzz_cases: RefCell<Vec<FuzzedCases>> = RefCell::new(Default::default());
@@ -113,7 +113,7 @@ impl<'a> InvariantExecutor<'a> {
 
         let last_call_results = RefCell::new(
             assert_invariants(
-                &invariant_contract,
+                invariant_contract,
                 &blank_executor.borrow(),
                 &[],
                 &mut failures.borrow_mut(),
@@ -199,7 +199,7 @@ impl<'a> InvariantExecutor<'a> {
                     });
 
                     let RichInvariantResults { success: can_continue, call_results } = can_continue(
-                        &invariant_contract,
+                        invariant_contract,
                         call_result,
                         &executor,
                         &inputs,

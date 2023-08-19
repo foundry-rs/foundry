@@ -451,15 +451,14 @@ impl<'a> ContractRunner<'a> {
             InvariantContract { address, invariant_functions: functions, abi: self.contract };
 
         let Ok(InvariantFuzzTestResult { invariants, cases, reverts, last_run_inputs }) =
-            evm.invariant_fuzz(invariant_contract.clone())
+            evm.invariant_fuzz(&invariant_contract)
         else {
             return vec![]
         };
 
         invariants
             .into_values()
-            .map(|test_error| {
-                let (test_error, invariant) = test_error;
+            .map(|(test_error, invariant)| {
                 let mut counterexample = None;
                 let mut logs = logs.clone();
                 let mut traces = traces.clone();
@@ -495,7 +494,7 @@ impl<'a> ContractRunner<'a> {
                         // If invariants ran successfully, replay the last run to collect logs and
                         // traces.
                         replay_run(
-                            &invariant_contract.clone(),
+                            &invariant_contract,
                             self.executor.clone(),
                             known_contracts,
                             identified_contracts.clone(),
