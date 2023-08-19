@@ -347,7 +347,7 @@ impl Backend {
     }
 
     pub fn precompiles(&self) -> Vec<Address> {
-        get_precompiles_for(self.env().read().cfg.spec_id)
+        get_precompiles_for(self.env.read().cfg.spec_id)
     }
 
     /// Resets the fork to a fresh state
@@ -541,12 +541,12 @@ impl Backend {
 
     /// Returns the block gas limit
     pub fn gas_limit(&self) -> U256 {
-        self.env().read().block.gas_limit.into()
+        self.env.read().block.gas_limit.into()
     }
 
     /// Sets the block gas limit
     pub fn set_gas_limit(&self, gas_limit: U256) {
-        self.env().write().block.gas_limit = gas_limit.into();
+        self.env.write().block.gas_limit = gas_limit.into();
     }
 
     /// Returns the current base fee
@@ -791,7 +791,7 @@ impl Backend {
         let (outcome, header, block_hash) = {
             let current_base_fee = self.base_fee();
 
-            let mut env = self.env().read().clone();
+            let mut env = self.env.read().clone();
 
             if env.block.basefee == revm::primitives::U256::ZERO {
                 // this is an edge case because the evm fails if `tx.effective_gas_price < base_fee`
@@ -1631,7 +1631,7 @@ impl Backend {
             // So this provides calls the given provided function `f` with a genesis aware database
             if let Some(fork) = self.get_fork() {
                 if block_number == U256::from(fork.block_number()) {
-                    let mut block = self.env().read().block.clone();
+                    let mut block = self.env.read().block.clone();
                     let db = self.db.read().await;
                     let gen_db = self.genesis.state_db_at_genesis(Box::new(&*db));
 
@@ -1651,7 +1651,7 @@ impl Backend {
         }
 
         let db = self.db.read().await;
-        let block = self.env().read().block.clone();
+        let block = self.env.read().block.clone();
         Ok(f(Box::new(&*db), block))
     }
 

@@ -19,19 +19,28 @@ use revm::{
     interpreter::opcode::{self, spec_opcode_gas},
     primitives::SpecId,
 };
-use std::{io::Write, sync::Arc};
+use std::{fmt, io::Write, sync::Arc};
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
 /// Wrapped in a shareable container.
 pub type EvmFuzzState = Arc<RwLock<FuzzDictionary>>;
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct FuzzDictionary {
     /// Collected state values.
     state_values: HashSet<[u8; 32]>,
     /// Addresses that already had their PUSH bytes collected.
     addresses: HashSet<Address>,
+}
+
+impl fmt::Debug for FuzzDictionary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FuzzDictionary")
+            .field("state_values", &self.state_values.len())
+            .field("addresses", &self.addresses)
+            .finish()
+    }
 }
 
 impl FuzzDictionary {
@@ -73,9 +82,8 @@ pub fn fuzz_calldata_from_state(
             func.encode_input(&tokens)
                 .unwrap_or_else(|_| {
                     panic!(
-                        r#"Fuzzer generated invalid tokens {:?} for function `{}` inputs {:?}
-This is a bug, please open an issue: https://github.com/foundry-rs/foundry/issues"#,
-                        tokens, func.name, func.inputs
+                        "Fuzzer generated invalid tokens for function `{}` with inputs {:?}: {:?}",
+                        func.name, func.inputs, tokens
                     )
                 })
                 .into()
