@@ -17,7 +17,7 @@ use std::{collections::BTreeMap, fmt, time::Duration};
 pub struct SuiteResult {
     /// Total duration of the test run for this block of tests
     pub duration: Duration,
-    /// Individual test results. `test method name -> TestResult`
+    /// Individual test results. `test fn signature -> TestResult`
     pub test_results: BTreeMap<String, TestResult>,
     /// Warnings
     pub warnings: Vec<String>,

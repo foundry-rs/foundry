@@ -372,25 +372,30 @@ pub struct FuzzedCases {
 }
 
 impl FuzzedCases {
+    #[inline]
     pub fn new(mut cases: Vec<FuzzCase>) -> Self {
         cases.sort_by_key(|c| c.gas);
         Self { cases }
     }
 
+    #[inline]
     pub fn cases(&self) -> &[FuzzCase] {
         &self.cases
     }
 
+    #[inline]
     pub fn into_cases(self) -> Vec<FuzzCase> {
         self.cases
     }
 
     /// Get the last [FuzzCase]
+    #[inline]
     pub fn last(&self) -> Option<&FuzzCase> {
         self.cases.last()
     }
 
     /// Returns the median gas of all test cases
+    #[inline]
     pub fn median_gas(&self, with_stipend: bool) -> u64 {
         let mut values = self.gas_values(with_stipend);
         values.sort_unstable();
@@ -398,12 +403,14 @@ impl FuzzedCases {
     }
 
     /// Returns the average gas use of all test cases
+    #[inline]
     pub fn mean_gas(&self, with_stipend: bool) -> u64 {
         let mut values = self.gas_values(with_stipend);
         values.sort_unstable();
         calc::mean(&values).as_u64()
     }
 
+    #[inline]
     fn gas_values(&self, with_stipend: bool) -> Vec<u64> {
         self.cases
             .iter()
@@ -412,16 +419,19 @@ impl FuzzedCases {
     }
 
     /// Returns the case with the highest gas usage
+    #[inline]
     pub fn highest(&self) -> Option<&FuzzCase> {
         self.cases.last()
     }
 
     /// Returns the case with the lowest gas usage
+    #[inline]
     pub fn lowest(&self) -> Option<&FuzzCase> {
         self.cases.first()
     }
 
     /// Returns the highest amount of gas spent on a fuzz case
+    #[inline]
     pub fn highest_gas(&self, with_stipend: bool) -> u64 {
         self.highest()
             .map(|c| if with_stipend { c.gas } else { c.gas - c.stipend })
@@ -429,6 +439,7 @@ impl FuzzedCases {
     }
 
     /// Returns the lowest amount of gas spent on a fuzz case
+    #[inline]
     pub fn lowest_gas(&self) -> u64 {
         self.lowest().map(|c| c.gas).unwrap_or_default()
     }
