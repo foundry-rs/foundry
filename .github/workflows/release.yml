@@ -135,7 +135,7 @@ jobs:
                   PLATFORM_NAME: ${{ matrix.job.platform }}
                   TARGET: ${{ matrix.job.target }}
                   ARCH: ${{ matrix.job.arch }}
-                  VERSION_NAME: |
+                  VERSION_NAME:
                       ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
               shell: bash
               run: |
@@ -160,7 +160,7 @@ jobs:
               env:
                   PLATFORM_NAME: ${{ matrix.job.platform }}
                   TARGET: ${{ matrix.job.target }}
-                  VERSION_NAME: |
+                  VERSION_NAME:
                       ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
               shell: bash
               run: |
