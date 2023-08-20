@@ -13,6 +13,7 @@ jobs:
     heavy-integration:
         name: heavy (long-running) integration tests
         runs-on: ubuntu-latest
+        timeout-minutes: 120
         env:
             ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
         steps:
@@ -37,9 +38,14 @@ jobs:
               run: |
                   cargo nextest run -r -p forge --test cli --features heavy-integration-tests --retries 1 -E 'test(~heavy_integration)'
 
-            # If any of the steps fail, this will create a high-priority issue to signal so.
+    # If any of the jobs fail, this will create a high-priority issue to signal so.
+    issue:
+        name: Open an issue
+        runs-on: ubuntu-latest
+        needs: heavy-integration
+        if: ${{ failure() }}
+        steps:
             - uses: JasonEtco/create-an-issue@v2
-              if: ${{ failure() }}
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   WORKFLOW_URL: |

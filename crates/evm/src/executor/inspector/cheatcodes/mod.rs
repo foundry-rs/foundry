@@ -197,16 +197,10 @@ pub struct Cheatcodes {
 }
 
 impl Cheatcodes {
-    /// Creates a new `Cheatcodes` based on the given settings
-    pub fn new(block: BlockEnv, gas_price: U256, config: CheatsConfig) -> Self {
-        Self {
-            corrected_nonce: false,
-            block: Some(block),
-            gas_price: Some(gas_price),
-            config: Arc::new(config),
-            fs_commit: true,
-            ..Default::default()
-        }
+    /// Creates a new `Cheatcodes` with the given settings.
+    #[inline]
+    pub fn new(config: Arc<CheatsConfig>) -> Self {
+        Self { config, fs_commit: true, ..Default::default() }
     }
 
     #[instrument(level = "error", name = "apply", target = "evm::cheatcodes", skip_all)]
@@ -223,7 +217,6 @@ impl Cheatcodes {
         // but only if the backend is in forking mode
         data.db.ensure_cheatcode_access_forking_mode(caller)?;
 
-        // TODO: Log the opcode for the debugger
         let opt = env::apply(self, data, caller, &decoded)
             .transpose()
             .or_else(|| util::apply(self, data, &decoded))
@@ -295,10 +288,8 @@ impl Cheatcodes {
     }
 }
 
-impl<DB> Inspector<DB> for Cheatcodes
-where
-    DB: DatabaseExt,
-{
+impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
+    #[inline]
     fn initialize_interp(
         &mut self,
         _: &mut Interpreter,
@@ -1107,6 +1098,14 @@ pub struct Context {
 impl Clone for Context {
     fn clone(&self) -> Self {
         Default::default()
+    }
+}
+
+impl Context {
+    /// Clears the context.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.opened_read_files.clear();
     }
 }
 

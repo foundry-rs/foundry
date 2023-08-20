@@ -19,14 +19,22 @@ debug = 0
 
 # Speed up tests and dev build
 [profile.dev.package]
+# solc
+ethers-solc.opt-level = 3
+solang-parser.opt-level = 3
+serde_json.opt-level = 3
+
 # evm
 revm.opt-level = 3
 revm-primitives.opt-level = 3
 revm-interpreter.opt-level = 3
 revm-precompile.opt-level = 3
 tiny-keccak.opt-level = 3
+sha2.opt-level = 3
+sha3.opt-level = 3
+keccak.opt-level = 3
 ruint.opt-level = 3
-primitive-types.opt-level = 3
+hashbrown.opt-level = 3
 
 # keystores
 scrypt.opt-level = 3
@@ -48,7 +56,6 @@ codegen-units = 1
 # Package overrides
 foundry-evm.opt-level = 3
 
-ethers-solc.opt-level = 1
 foundry-abi.opt-level = 1
 mdbook.opt-level = 1
 protobuf.opt-level = 1
@@ -93,12 +100,11 @@ wasm-bindgen-backend.opt-level = 0
 
 # Local "release" mode, more optimized than dev but much faster to compile than release
 [profile.local]
-inherits = "release"
+inherits = "dev"
 opt-level = 1
-lto = "none"
+strip = true
+panic = "abort"
 codegen-units = 16
-# Empty, clears `profile.release.package`
-package = {}
 
 [workspace.dependencies]
 anvil = { path = "crates/anvil" }

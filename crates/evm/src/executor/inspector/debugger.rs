@@ -12,7 +12,6 @@ use bytes::Bytes;
 use ethers::types::Address;
 use foundry_utils::error::SolError;
 use revm::{
-    inspectors::GasInspector,
     interpreter::{
         opcode::{self, spec_opcode_gas},
         CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory,
@@ -20,10 +19,9 @@ use revm::{
     primitives::B160,
     EVMData, Inspector,
 };
-use std::{cell::RefCell, rc::Rc};
 
 /// An inspector that collects debug nodes on every step of the interpreter.
-#[derive(Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct Debugger {
     /// The arena of [DebugNode]s
     pub arena: DebugArena,
@@ -31,20 +29,9 @@ pub struct Debugger {
     pub head: usize,
     /// The current execution address.
     pub context: Address,
-
-    gas_inspector: Rc<RefCell<GasInspector>>,
 }
 
 impl Debugger {
-    pub fn new(gas_inspector: Rc<RefCell<GasInspector>>) -> Self {
-        Self {
-            arena: Default::default(),
-            head: Default::default(),
-            context: Default::default(),
-            gas_inspector,
-        }
-    }
-
     /// Enters a new execution context.
     pub fn enter(&mut self, depth: usize, address: Address, kind: CallKind) {
         self.context = address;
@@ -62,10 +49,8 @@ impl Debugger {
     }
 }
 
-impl<DB> Inspector<DB> for Debugger
-where
-    DB: DatabaseExt,
-{
+impl<DB: DatabaseExt> Inspector<DB> for Debugger {
+    #[inline]
     fn step(
         &mut self,
         interpreter: &mut Interpreter,
@@ -91,7 +76,7 @@ where
 
         let total_gas_used = gas_used(
             data.env.cfg.spec_id,
-            interpreter.gas.limit().saturating_sub(self.gas_inspector.borrow().gas_remaining()),
+            interpreter.gas.limit().saturating_sub(interpreter.gas.remaining()),
             interpreter.gas.refunded() as u64,
         );
 
@@ -107,6 +92,7 @@ where
         InstructionResult::Continue
     }
 
+    #[inline]
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,
@@ -130,6 +116,7 @@ where
         (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
 
+    #[inline]
     fn call_end(
         &mut self,
         _: &mut EVMData<'_, DB>,
@@ -143,6 +130,7 @@ where
         (status, gas, retdata)
     }
 
+    #[inline]
     fn create(
         &mut self,
         data: &mut EVMData<'_, DB>,
@@ -164,6 +152,7 @@ where
         (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }
 
+    #[inline]
     fn create_end(
         &mut self,
         _: &mut EVMData<'_, DB>,

@@ -5,12 +5,13 @@ use ethers::{
 };
 use eyre::ContextCompat;
 use revm::{
-    interpreter::{opcode, opcode::spec_opcode_gas},
-    primitives::SpecId,
+    interpreter::{opcode, opcode::spec_opcode_gas, InstructionResult},
+    primitives::{Eval, Halt, SpecId},
 };
 use std::collections::BTreeMap;
 
 /// Small helper function to convert [U256] into [H256].
+#[inline]
 pub fn u256_to_h256_le(u: U256) -> H256 {
     let mut h = H256::default();
     u.to_little_endian(h.as_mut());
@@ -18,6 +19,7 @@ pub fn u256_to_h256_le(u: U256) -> H256 {
 }
 
 /// Small helper function to convert [U256] into [H256].
+#[inline]
 pub fn u256_to_h256_be(u: U256) -> H256 {
     let mut h = H256::default();
     u.to_big_endian(h.as_mut());
@@ -25,11 +27,13 @@ pub fn u256_to_h256_be(u: U256) -> H256 {
 }
 
 /// Small helper function to convert [H256] into [U256].
+#[inline]
 pub fn h256_to_u256_be(storage: H256) -> U256 {
     U256::from_big_endian(storage.as_bytes())
 }
 
 /// Small helper function to convert [H256] into [U256].
+#[inline]
 pub fn h256_to_u256_le(storage: H256) -> U256 {
     U256::from_little_endian(storage.as_bytes())
 }
@@ -73,71 +77,44 @@ pub fn ru256_to_u256(u: revm::primitives::U256) -> ethers::types::U256 {
 }
 
 /// Small helper function to convert an Eval into an InstructionResult
-pub fn eval_to_instruction_result(
-    eval: revm::primitives::Eval,
-) -> revm::interpreter::InstructionResult {
+#[inline]
+pub fn eval_to_instruction_result(eval: Eval) -> InstructionResult {
     match eval {
-        revm::primitives::Eval::Return => revm::interpreter::InstructionResult::Return,
-        revm::primitives::Eval::Stop => revm::interpreter::InstructionResult::Stop,
-        revm::primitives::Eval::SelfDestruct => revm::interpreter::InstructionResult::SelfDestruct,
+        Eval::Return => InstructionResult::Return,
+        Eval::Stop => InstructionResult::Stop,
+        Eval::SelfDestruct => InstructionResult::SelfDestruct,
     }
 }
 
 /// Small helper function to convert a Halt into an InstructionResult
-pub fn halt_to_instruction_result(
-    halt: revm::primitives::Halt,
-) -> revm::interpreter::InstructionResult {
+#[inline]
+pub fn halt_to_instruction_result(halt: Halt) -> InstructionResult {
     match halt {
-        revm::primitives::Halt::OutOfGas(_) => revm::interpreter::InstructionResult::OutOfGas,
-        revm::primitives::Halt::OpcodeNotFound => {
-            revm::interpreter::InstructionResult::OpcodeNotFound
-        }
-        revm::primitives::Halt::InvalidFEOpcode => {
-            revm::interpreter::InstructionResult::InvalidFEOpcode
-        }
-        revm::primitives::Halt::InvalidJump => revm::interpreter::InstructionResult::InvalidJump,
-        revm::primitives::Halt::NotActivated => revm::interpreter::InstructionResult::NotActivated,
-        revm::primitives::Halt::StackOverflow => {
-            revm::interpreter::InstructionResult::StackOverflow
-        }
-        revm::primitives::Halt::StackUnderflow => {
-            revm::interpreter::InstructionResult::StackUnderflow
-        }
-        revm::primitives::Halt::OutOfOffset => revm::interpreter::InstructionResult::OutOfOffset,
-        revm::primitives::Halt::CreateCollision => {
-            revm::interpreter::InstructionResult::CreateCollision
-        }
-        revm::primitives::Halt::PrecompileError => {
-            revm::interpreter::InstructionResult::PrecompileError
-        }
-        revm::primitives::Halt::NonceOverflow => {
-            revm::interpreter::InstructionResult::NonceOverflow
-        }
-        revm::primitives::Halt::CreateContractSizeLimit => {
-            revm::interpreter::InstructionResult::CreateContractSizeLimit
-        }
-        revm::primitives::Halt::CreateContractStartingWithEF => {
-            revm::interpreter::InstructionResult::CreateContractStartingWithEF
-        }
-        revm::primitives::Halt::CreateInitcodeSizeLimit => {
-            revm::interpreter::InstructionResult::CreateInitcodeSizeLimit
-        }
-        revm::primitives::Halt::OverflowPayment => {
-            revm::interpreter::InstructionResult::OverflowPayment
-        }
-        revm::primitives::Halt::StateChangeDuringStaticCall => {
-            revm::interpreter::InstructionResult::StateChangeDuringStaticCall
-        }
-        revm::primitives::Halt::CallNotAllowedInsideStatic => {
-            revm::interpreter::InstructionResult::CallNotAllowedInsideStatic
-        }
-        revm::primitives::Halt::OutOfFund => revm::interpreter::InstructionResult::OutOfFund,
-        revm::primitives::Halt::CallTooDeep => revm::interpreter::InstructionResult::CallTooDeep,
+        Halt::OutOfGas(_) => InstructionResult::OutOfGas,
+        Halt::OpcodeNotFound => InstructionResult::OpcodeNotFound,
+        Halt::InvalidFEOpcode => InstructionResult::InvalidFEOpcode,
+        Halt::InvalidJump => InstructionResult::InvalidJump,
+        Halt::NotActivated => InstructionResult::NotActivated,
+        Halt::StackOverflow => InstructionResult::StackOverflow,
+        Halt::StackUnderflow => InstructionResult::StackUnderflow,
+        Halt::OutOfOffset => InstructionResult::OutOfOffset,
+        Halt::CreateCollision => InstructionResult::CreateCollision,
+        Halt::PrecompileError => InstructionResult::PrecompileError,
+        Halt::NonceOverflow => InstructionResult::NonceOverflow,
+        Halt::CreateContractSizeLimit => InstructionResult::CreateContractSizeLimit,
+        Halt::CreateContractStartingWithEF => InstructionResult::CreateContractStartingWithEF,
+        Halt::CreateInitcodeSizeLimit => InstructionResult::CreateInitcodeSizeLimit,
+        Halt::OverflowPayment => InstructionResult::OverflowPayment,
+        Halt::StateChangeDuringStaticCall => InstructionResult::StateChangeDuringStaticCall,
+        Halt::CallNotAllowedInsideStatic => InstructionResult::CallNotAllowedInsideStatic,
+        Halt::OutOfFund => InstructionResult::OutOfFund,
+        Halt::CallTooDeep => InstructionResult::CallTooDeep,
     }
 }
 
-/// Converts an `EvmVersion` into a `SpecId`
-pub fn evm_spec(evm: &EvmVersion) -> SpecId {
+/// Converts an `EvmVersion` into a `SpecId`.
+#[inline]
+pub fn evm_spec(evm: EvmVersion) -> SpecId {
     match evm {
         EvmVersion::Homestead => SpecId::HOMESTEAD,
         EvmVersion::TangerineWhistle => SpecId::TANGERINE,

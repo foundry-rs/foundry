@@ -50,10 +50,8 @@ impl AccessListTracer {
     }
 }
 
-impl<DB> Inspector<DB> for AccessListTracer
-where
-    DB: Database,
-{
+impl<DB: Database> Inspector<DB> for AccessListTracer {
+    #[inline]
     fn step(
         &mut self,
         interpreter: &mut Interpreter,

@@ -393,7 +393,7 @@ pub async fn handle_traces(
         let (sources, bytecode) = etherscan_identifier.get_compiled_contracts().await?;
         run_debugger(result, decoder, bytecode, sources)?;
     } else {
-        print_traces(&mut result, decoder, verbose).await?;
+        print_traces(&mut result, &decoder, verbose).await?;
     }
 
     Ok(())
@@ -401,7 +401,7 @@ pub async fn handle_traces(
 
 pub async fn print_traces(
     result: &mut TraceResult,
-    decoder: CallTraceDecoder,
+    decoder: &CallTraceDecoder,
     verbose: bool,
 ) -> Result<()> {
     if result.traces.is_empty() {

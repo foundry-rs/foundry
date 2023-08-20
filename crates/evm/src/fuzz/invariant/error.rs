@@ -41,17 +41,18 @@ impl InvariantFuzzError {
         calldata: &[BasicTxDetails],
         call_result: RawCallResult,
         inner_sequence: &[Option<BasicTxDetails>],
-        shrink_sequence: bool,
+        shrink: bool,
     ) -> Self {
-        let mut func = None;
-        let origin: String;
-
-        if let Some(f) = error_func {
-            func = Some(f.short_signature().into());
-            origin = f.name.clone();
+        let (func, origin) = if let Some(f) = error_func {
+            (Some(f.short_signature().into()), f.name.as_str())
         } else {
-            origin = "Revert".to_string();
-        }
+            (None, "Revert")
+        };
+        let revert_reason = decode_revert(
+            call_result.result.as_ref(),
+            Some(invariant_contract.abi),
+            Some(call_result.exit_reason),
+        );
 
         InvariantFuzzError {
             logs: call_result.logs,
@@ -60,12 +61,8 @@ impl InvariantFuzzError {
                 format!(
                     "{}, reason: '{}'",
                     origin,
-                    match decode_revert(
-                        call_result.result.as_ref(),
-                        Some(invariant_contract.abi),
-                        Some(call_result.exit_reason)
-                    ) {
-                        Ok(e) => e,
+                    match &revert_reason {
+                        Ok(s) => s.clone(),
                         Err(e) => e.to_string(),
                     }
                 )
@@ -73,16 +70,11 @@ impl InvariantFuzzError {
                 calldata.to_vec(),
             ),
             return_reason: "".into(),
-            revert_reason: decode_revert(
-                call_result.result.as_ref(),
-                Some(invariant_contract.abi),
-                Some(call_result.exit_reason),
-            )
-            .unwrap_or_default(),
+            revert_reason: revert_reason.unwrap_or_default(),
             addr: invariant_contract.address,
             func,
             inner_sequence: inner_sequence.to_vec(),
-            shrink: shrink_sequence,
+            shrink,
         }
     }
 
@@ -166,15 +158,12 @@ impl InvariantFuzzError {
         anchor: usize,
         removed_calls: &[usize],
     ) -> Result<Vec<&'a BasicTxDetails>, ()> {
-        let calls = calls.iter().enumerate().filter_map(|(index, element)| {
+        let mut new_sequence = Vec::with_capacity(calls.len());
+        for (index, details) in calls.iter().enumerate() {
             if anchor > index || removed_calls.contains(&index) {
-                return None
+                continue
             }
-            Some(element)
-        });
 
-        let mut new_sequence = vec![];
-        for details in calls {
             new_sequence.push(details);
 
             let (sender, (addr, bytes)) = details;

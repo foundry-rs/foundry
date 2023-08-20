@@ -178,7 +178,7 @@ impl ScriptArgs {
 
                     // Simulate mining the transaction if the user passes `--slow`.
                     if self.slow {
-                        runner.executor.env_mut().block.number += rU256::from(1);
+                        runner.executor.env.block.number += rU256::from(1);
                     }
 
                     let is_fixed_gas_limit = tx.gas.is_some();
@@ -302,19 +302,20 @@ impl ScriptArgs {
             }
         };
 
-        let mut builder = ExecutorBuilder::default()
-            .with_config(env)
-            .with_spec(evm_spec(&script_config.config.evm_version))
-            .with_gas_limit(script_config.evm_opts.gas_limit())
-            // We need it enabled to decode contract names: local or external.
-            .set_tracing(true);
+        // We need to enable tracing to decode contract names: local or external.
+        let mut builder = ExecutorBuilder::new()
+            .inspectors(|stack| stack.trace(true))
+            .spec(evm_spec(script_config.config.evm_version))
+            .gas_limit(script_config.evm_opts.gas_limit());
 
         if let SimulationStage::Local = stage {
-            builder = builder
-                .set_debugger(self.debug)
-                .with_cheatcodes(CheatsConfig::new(&script_config.config, &script_config.evm_opts));
+            builder = builder.inspectors(|stack| {
+                stack.debug(self.debug).cheatcodes(
+                    CheatsConfig::new(&script_config.config, &script_config.evm_opts).into(),
+                )
+            });
         }
 
-        ScriptRunner::new(builder.build(db), script_config.evm_opts.initial_balance, sender)
+        ScriptRunner::new(builder.build(env, db), script_config.evm_opts.initial_balance, sender)
     }
 }

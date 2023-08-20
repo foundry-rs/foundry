@@ -19,10 +19,8 @@ pub struct Fuzzer {
     pub fuzz_state: EvmFuzzState,
 }
 
-impl<DB> Inspector<DB> for Fuzzer
-where
-    DB: Database,
-{
+impl<DB: Database> Inspector<DB> for Fuzzer {
+    #[inline]
     fn step(
         &mut self,
         interpreter: &mut Interpreter,
@@ -36,6 +34,7 @@ where
         InstructionResult::Continue
     }
 
+    #[inline]
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,
@@ -53,6 +52,7 @@ where
         (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
 
+    #[inline]
     fn call_end(
         &mut self,
         _: &mut EVMData<'_, DB>,

@@ -23,8 +23,7 @@ jobs:
             id-token: write
             packages: write
             contents: read
-        timeout-minutes: 30
-
+        timeout-minutes: 120
         steps:
             - name: Checkout repository
               id: checkout
@@ -64,13 +63,13 @@ jobs:
               run: |
                   if [[ "${{ github.event_name }}" == 'schedule' ]]; then
                     echo "cron trigger, assigning nightly tag"
-                    echo "::set-output name=docker_tags::${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly-${GITHUB_SHA}"
+                    echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly-${GITHUB_SHA}" >> $GITHUB_OUTPUT
                   elif [[ "${GITHUB_REF##*/}" == "main" ]] || [[ ${GITHUB_REF##*/} == "master" ]]; then
                     echo "manual trigger from master/main branch, assigning latest tag"
-                    echo "::set-output name=docker_tags::${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF##*/},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+                    echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF##*/},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_OUTPUT
                   else
                     echo "Neither scheduled nor manual release from main branch. Just tagging as branch name"
-                    echo "::set-output name=docker_tags::${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF##*/}"
+                    echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF##*/}" >> $GITHUB_OUTPUT
                   fi
 
             # Log docker metadata to explicitly know what is being pushed
