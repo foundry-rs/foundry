@@ -217,7 +217,6 @@ impl Cheatcodes {
         // but only if the backend is in forking mode
         data.db.ensure_cheatcode_access_forking_mode(caller)?;
 
-        // TODO: Log the opcode for the debugger
         let opt = env::apply(self, data, caller, &decoded)
             .transpose()
             .or_else(|| util::apply(self, data, &decoded))

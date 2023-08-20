@@ -198,12 +198,8 @@ impl<'a> ContractRunner<'a> {
         if setup_fns.len() > 1 {
             return SuiteResult::new(
                 start.elapsed(),
-                [(
-                    "setUp()".to_string(),
-                    // TODO-f: get the breakpoints here
-                    TestResult::fail("Multiple setUp functions".to_string()),
-                )]
-                .into(),
+                [("setUp()".to_string(), TestResult::fail("Multiple setUp functions".to_string()))]
+                    .into(),
                 warnings,
             )
         }
@@ -244,36 +240,29 @@ impl<'a> ContractRunner<'a> {
             )
         }
 
-        let mut test_results = self
-            .contract
-            .functions
+        let functions: Vec<_> = self.contract.functions().collect();
+        let mut test_results = functions
             .par_iter()
-            .flat_map(|(_, f)| f)
-            .filter(|&func| func.is_test() && filter.matches_test(func.signature()))
-            .map(|func| {
+            .filter(|&&func| func.is_test() && filter.matches_test(func.signature()))
+            .map(|&func| {
                 let should_fail = func.is_test_fail();
                 let res = if func.is_fuzz_test() {
                     let runner = test_options.fuzz_runner(self.name, &func.name);
                     let fuzz_config = test_options.fuzz_config(self.name, &func.name);
                     self.run_fuzz_test(func, should_fail, runner, setup.clone(), *fuzz_config)
                 } else {
-                    self.clone().run_test(func, should_fail, setup.clone())
+                    self.run_test(func, should_fail, setup.clone())
                 };
                 (func.signature(), res)
             })
             .collect::<BTreeMap<_, _>>();
 
         if has_invariants {
-            let invariants: Vec<_> = self
-                .contract
-                .functions()
-                .filter(|&func| func.is_invariant_test() && filter.matches_test(func.signature()))
-                .collect();
-
             let identified_contracts = load_contracts(setup.traces.clone(), known_contracts);
-            let results: Vec<_> = invariants
+            let results: Vec<_> = functions
                 .par_iter()
-                .map(|func| {
+                .filter(|&&func| func.is_invariant_test() && filter.matches_test(func.signature()))
+                .map(|&func| {
                     let runner = test_options.invariant_runner(self.name, &func.name);
                     let invariant_config = test_options.invariant_config(self.name, &func.name);
                     let res = self.run_invariant_test(
@@ -312,71 +301,77 @@ impl<'a> ContractRunner<'a> {
     /// State modifications are not committed to the evm database but discarded after the call,
     /// similar to `eth_call`.
     #[instrument(name = "test", skip_all, fields(name = %func.signature(), %should_fail))]
-    pub fn run_test(mut self, func: &Function, should_fail: bool, setup: TestSetup) -> TestResult {
+    pub fn run_test(&self, func: &Function, should_fail: bool, setup: TestSetup) -> TestResult {
         let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
 
         // Run unit test
+        let mut executor = self.executor.clone();
         let start = Instant::now();
-        let (reverted, reason, gas, stipend, coverage, state_changeset, breakpoints) = match self
-            .executor
-            .execute_test::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), self.errors)
-        {
-            Ok(CallResult {
-                reverted,
-                gas_used: gas,
-                stipend,
-                logs: execution_logs,
-                traces: execution_trace,
-                coverage,
-                labels: new_labels,
-                state_changeset,
-                breakpoints,
-                ..
-            }) => {
-                traces.extend(execution_trace.map(|traces| (TraceKind::Execution, traces)));
-                labeled_addresses.extend(new_labels);
-                logs.extend(execution_logs);
-                (reverted, None, gas, stipend, coverage, state_changeset, breakpoints)
-            }
-            Err(EvmError::Execution(err)) => {
-                traces.extend(err.traces.map(|traces| (TraceKind::Execution, traces)));
-                labeled_addresses.extend(err.labels);
-                logs.extend(err.logs);
-                (
-                    err.reverted,
-                    Some(err.reason),
-                    err.gas_used,
-                    err.stipend,
-                    None,
-                    err.state_changeset,
-                    HashMap::new(),
-                )
-            }
-            Err(EvmError::SkipError) => {
-                return TestResult {
-                    status: TestStatus::Skipped,
-                    reason: None,
-                    decoded_logs: decode_console_logs(&logs),
-                    traces,
-                    labeled_addresses,
-                    kind: TestKind::Standard(0),
-                    ..Default::default()
+        let (reverted, reason, gas, stipend, coverage, state_changeset, breakpoints) =
+            match executor.execute_test::<(), _, _>(
+                self.sender,
+                address,
+                func.clone(),
+                (),
+                0.into(),
+                self.errors,
+            ) {
+                Ok(CallResult {
+                    reverted,
+                    gas_used: gas,
+                    stipend,
+                    logs: execution_logs,
+                    traces: execution_trace,
+                    coverage,
+                    labels: new_labels,
+                    state_changeset,
+                    breakpoints,
+                    ..
+                }) => {
+                    traces.extend(execution_trace.map(|traces| (TraceKind::Execution, traces)));
+                    labeled_addresses.extend(new_labels);
+                    logs.extend(execution_logs);
+                    (reverted, None, gas, stipend, coverage, state_changeset, breakpoints)
                 }
-            }
-            Err(err) => {
-                return TestResult {
-                    status: TestStatus::Failure,
-                    reason: Some(err.to_string()),
-                    decoded_logs: decode_console_logs(&logs),
-                    traces,
-                    labeled_addresses,
-                    kind: TestKind::Standard(0),
-                    ..Default::default()
+                Err(EvmError::Execution(err)) => {
+                    traces.extend(err.traces.map(|traces| (TraceKind::Execution, traces)));
+                    labeled_addresses.extend(err.labels);
+                    logs.extend(err.logs);
+                    (
+                        err.reverted,
+                        Some(err.reason),
+                        err.gas_used,
+                        err.stipend,
+                        None,
+                        err.state_changeset,
+                        HashMap::new(),
+                    )
                 }
-            }
-        };
+                Err(EvmError::SkipError) => {
+                    return TestResult {
+                        status: TestStatus::Skipped,
+                        reason: None,
+                        decoded_logs: decode_console_logs(&logs),
+                        traces,
+                        labeled_addresses,
+                        kind: TestKind::Standard(0),
+                        ..Default::default()
+                    }
+                }
+                Err(err) => {
+                    return TestResult {
+                        status: TestStatus::Failure,
+                        reason: Some(err.to_string()),
+                        decoded_logs: decode_console_logs(&logs),
+                        traces,
+                        labeled_addresses,
+                        kind: TestKind::Standard(0),
+                        ..Default::default()
+                    }
+                }
+            };
 
-        let success = self.executor.is_success(
+        let success = executor.is_success(
             setup.address,
             reverted,
             state_changeset.expect("we should have a state changeset"),
