@@ -237,14 +237,13 @@ impl ScriptArgs {
 
         let mut local_identifier = LocalTraceIdentifier::new(known_contracts);
         let mut decoder = CallTraceDecoderBuilder::new()
-            .with_labels(result.labeled_addresses.clone())
+            .with_labels(result.labeled_addresses.iter().map(|(a, s)| (*a, s.clone())))
             .with_verbosity(verbosity)
+            .with_signature_identifier(SignaturesIdentifier::new(
+                Config::foundry_cache_dir(),
+                script_config.config.offline,
+            )?)
             .build();
-
-        decoder.add_signature_identifier(SignaturesIdentifier::new(
-            Config::foundry_cache_dir(),
-            script_config.config.offline,
-        )?);
 
         // Decoding traces using etherscan is costly as we run into rate limits,
         // causing scripts to run for a very long time unnecesarily.

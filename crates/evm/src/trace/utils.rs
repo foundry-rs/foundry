@@ -79,7 +79,7 @@ pub(crate) fn decode_cheatcode_inputs(
         "serializeBytes32" |
         "serializeString" |
         "serializeBytes" => {
-            if verbosity == 5 {
+            if verbosity >= 5 {
                 None
             } else {
                 let mut decoded = func.decode_input(&data[SELECTOR_LEN..]).ok()?;
@@ -111,10 +111,10 @@ pub(crate) fn decode_cheatcode_outputs(
         // redacts derived private key
         return Some("<pk>".to_string())
     }
-    if func.name == "parseJson" && verbosity != 5 {
+    if func.name == "parseJson" && verbosity < 5 {
         return Some("<encoded JSON value>".to_string())
     }
-    if func.name == "readFile" && verbosity != 5 {
+    if func.name == "readFile" && verbosity < 5 {
         return Some("<file>".to_string())
     }
     None

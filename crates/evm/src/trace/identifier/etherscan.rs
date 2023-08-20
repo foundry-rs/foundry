@@ -100,11 +100,11 @@ impl EtherscanIdentifier {
 }
 
 impl TraceIdentifier for EtherscanIdentifier {
-    fn identify_addresses(
-        &mut self,
-        addresses: Vec<(&Address, Option<&[u8]>)>,
-    ) -> Vec<AddressIdentity> {
-        trace!(target: "etherscanidentifier", "identify {} addresses", addresses.len());
+    fn identify_addresses<'a, A>(&mut self, addresses: A) -> Vec<AddressIdentity>
+    where
+        A: Iterator<Item = (&'a Address, Option<&'a [u8]>)>,
+    {
+        trace!(target: "etherscanidentifier", "identify {:?} addresses", addresses.size_hint().1);
 
         let Some(client) = self.client.clone() else {
             // no client was configured
