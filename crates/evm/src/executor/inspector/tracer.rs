@@ -150,11 +150,7 @@ impl Tracer {
 
 impl<DB: Database> Inspector<DB> for Tracer {
     #[inline]
-    fn step(
-        &mut self,
-        interp: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-    ) -> InstructionResult {
+    fn step(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>) -> InstructionResult {
         if self.record_steps {
             self.start_step(interp, data);
         }

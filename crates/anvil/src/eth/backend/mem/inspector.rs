@@ -61,11 +61,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     }
 
     #[inline]
-    fn step(
-        &mut self,
-        interp: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-    ) -> InstructionResult {
+    fn step(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>) -> InstructionResult {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.step(interp, data);
         });

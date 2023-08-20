@@ -338,13 +338,8 @@ impl InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                let (new_status, new_gas, new_retdata) = inspector.call_end(
-                    data,
-                    call,
-                    remaining_gas,
-                    status,
-                    retdata.clone(),
-                );
+                let (new_status, new_gas, new_retdata) =
+                    inspector.call_end(data, call, remaining_gas, status, retdata.clone());
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
