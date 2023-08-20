@@ -212,6 +212,6 @@ impl TestOptionsBuilder {
             self.profiles.unwrap_or_else(|| vec![Config::selected_profile().into()]);
         let base_fuzz = self.fuzz.unwrap_or_default();
         let base_invariant = self.invariant.unwrap_or_default();
-        TestOptions::new(output, &root, profiles, base_fuzz, base_invariant)
+        TestOptions::new(output, root, profiles, base_fuzz, base_invariant)
     }
 }
