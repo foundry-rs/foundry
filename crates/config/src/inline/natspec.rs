@@ -1,15 +1,10 @@
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
-
+use super::{remove_whitespaces, INLINE_CONFIG_PREFIX, INLINE_CONFIG_PREFIX_SELECTED_PROFILE};
 use ethers_solc::{
     artifacts::{ast::NodeType, Node},
-    ArtifactId, ArtifactOutput, Artifacts, ConfigurableArtifacts, ProjectCompileOutput,
+    ProjectCompileOutput,
 };
 use serde_json::Value;
-
-use super::{remove_whitespaces, INLINE_CONFIG_PREFIX, INLINE_CONFIG_PREFIX_SELECTED_PROFILE};
+use std::{collections::BTreeMap, path::Path};
 
 /// Convenient struct to hold in-line per-test configurations
 pub struct NatSpec {
@@ -32,9 +27,7 @@ impl NatSpec {
     pub fn parse(output: &ProjectCompileOutput, root: &Path) -> Vec<Self> {
         let mut natspecs: Vec<Self> = vec![];
 
-        let artifacts = artifacts::<_, ConfigurableArtifacts>(output.cached_artifacts())
-            .chain(artifacts::<_, ConfigurableArtifacts>(output.compiled_artifacts()));
-        for (id, artifact) in artifacts {
+        for (id, artifact) in output.artifact_ids() {
             let Some(ast) = &artifact.ast else { continue };
             let path = id.source.as_path();
             let path = path.strip_prefix(root).unwrap_or(path);
@@ -87,31 +80,6 @@ fn contract_root_node<'a>(nodes: &'a [Node], contract_id: &'a str) -> Option<&'a
         }
     }
     None
-}
-
-// borrowed version of `Artifacts::into_artifacts`
-fn artifacts<'a, T, O: ArtifactOutput<Artifact = T>>(
-    a: &'a Artifacts<T>,
-) -> impl Iterator<Item = (ArtifactId, &'a T)> + 'a {
-    a.0.iter().flat_map(|(file, contract_artifacts)| {
-        contract_artifacts.iter().flat_map(move |(_contract_name, artifacts)| {
-            let source = PathBuf::from(file.clone());
-            artifacts.iter().filter_map(move |artifact| {
-                O::contract_name(&artifact.file).map(|name| {
-                    (
-                        ArtifactId {
-                            path: PathBuf::from(&artifact.file),
-                            name,
-                            source: source.clone(),
-                            version: artifact.version.clone(),
-                        }
-                        .with_slashed_paths(),
-                        &artifact.artifact,
-                    )
-                })
-            })
-        })
-    })
 }
 
 /// Implements a DFS over a compiler output node and its children.
