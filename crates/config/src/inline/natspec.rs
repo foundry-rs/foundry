@@ -1,8 +1,11 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use ethers_solc::{
     artifacts::{ast::NodeType, Node},
-    ProjectCompileOutput,
+    ArtifactId, ArtifactOutput, Artifacts, ConfigurableArtifacts, ProjectCompileOutput,
 };
 use serde_json::Value;
 
@@ -26,21 +29,21 @@ impl NatSpec {
     /// Factory function that extracts a vector of [`NatSpec`] instances from
     /// a solc compiler output. The root path is to express contract base dirs.
     /// That is essential to match per-test configs at runtime.
-    pub fn parse<P>(output: &ProjectCompileOutput, root: &P) -> Vec<Self>
-    where
-        P: AsRef<Path>,
-    {
+    pub fn parse(output: &ProjectCompileOutput, root: &Path) -> Vec<Self> {
         let mut natspecs: Vec<Self> = vec![];
 
-        let output = output.clone();
-        for artifact in output.with_stripped_file_prefixes(root).into_artifacts() {
-            if let Some(ast) = artifact.1.ast.as_ref() {
-                let contract: String = artifact.0.identifier();
-                if let Some(node) = contract_root_node(&ast.nodes, &contract) {
-                    apply(&mut natspecs, &contract, node)
-                }
-            }
+        let artifacts = artifacts::<_, ConfigurableArtifacts>(output.cached_artifacts())
+            .chain(artifacts::<_, ConfigurableArtifacts>(output.compiled_artifacts()));
+        for (id, artifact) in artifacts {
+            let Some(ast) = &artifact.ast else { continue };
+            let path = id.source.as_path();
+            let path = path.strip_prefix(root).unwrap_or(path);
+            // id.identifier
+            let contract = format!("{}:{}", path.display(), id.name);
+            let Some(node) = contract_root_node(&ast.nodes, &contract) else { continue };
+            apply(&mut natspecs, &contract, node)
         }
+
         natspecs
     }
 
@@ -52,24 +55,21 @@ impl NatSpec {
     }
 
     /// Returns a list of configuration lines that match the current profile
-    pub fn current_profile_configs(&self) -> Vec<String> {
-        let prefix: &str = INLINE_CONFIG_PREFIX_SELECTED_PROFILE.as_ref();
-        self.config_lines_with_prefix(prefix)
+    pub fn current_profile_configs(&self) -> impl Iterator<Item = String> + '_ {
+        self.config_lines_with_prefix(INLINE_CONFIG_PREFIX_SELECTED_PROFILE.as_str())
     }
 
     /// Returns a list of configuration lines that match a specific string prefix
-    pub fn config_lines_with_prefix<S: Into<String>>(&self, prefix: S) -> Vec<String> {
-        let prefix: String = prefix.into();
-        self.config_lines().into_iter().filter(|l| l.starts_with(&prefix)).collect()
+    pub fn config_lines_with_prefix<'a>(
+        &'a self,
+        prefix: &'a str,
+    ) -> impl Iterator<Item = String> + 'a {
+        self.config_lines().into_iter().filter(move |l| l.starts_with(prefix))
     }
 
     /// Returns a list of all the configuration lines available in the natspec
-    pub fn config_lines(&self) -> Vec<String> {
-        self.docs
-            .split('\n')
-            .map(remove_whitespaces)
-            .filter(|line| line.contains(INLINE_CONFIG_PREFIX))
-            .collect::<Vec<String>>()
+    pub fn config_lines(&self) -> impl Iterator<Item = String> + '_ {
+        self.docs.lines().map(remove_whitespaces).filter(|line| line.contains(INLINE_CONFIG_PREFIX))
     }
 }
 
@@ -87,6 +87,31 @@ fn contract_root_node<'a>(nodes: &'a [Node], contract_id: &'a str) -> Option<&'a
         }
     }
     None
+}
+
+// borrowed version of `Artifacts::into_artifacts`
+fn artifacts<'a, T, O: ArtifactOutput<Artifact = T>>(
+    a: &'a Artifacts<T>,
+) -> impl Iterator<Item = (ArtifactId, &'a T)> + 'a {
+    a.0.iter().flat_map(|(file, contract_artifacts)| {
+        contract_artifacts.iter().flat_map(move |(_contract_name, artifacts)| {
+            let source = PathBuf::from(file.clone());
+            artifacts.iter().filter_map(move |artifact| {
+                O::contract_name(&artifact.file).map(|name| {
+                    (
+                        ArtifactId {
+                            path: PathBuf::from(&artifact.file),
+                            name,
+                            source: source.clone(),
+                            version: artifact.version.clone(),
+                        }
+                        .with_slashed_paths(),
+                        &artifact.artifact,
+                    )
+                })
+            })
+        })
+    })
 }
 
 /// Implements a DFS over a compiler output node and its children.
@@ -137,7 +162,7 @@ fn get_fn_docs(fn_data: &BTreeMap<String, Value>) -> Option<(String, String)> {
                 let mut src_line = fn_docs
                     .get("src")
                     .map(|src| src.to_string())
-                    .unwrap_or(String::from("<no-src-line-available>"));
+                    .unwrap_or_else(|| String::from("<no-src-line-available>"));
 
                 src_line.retain(|c| c != '"');
                 return Some((comment.into(), src_line))
@@ -158,7 +183,7 @@ mod tests {
         let natspec = natspec();
         let config_lines = natspec.config_lines();
         assert_eq!(
-            config_lines,
+            config_lines.collect::<Vec<_>>(),
             vec![
                 "forge-config:default.fuzz.runs=600".to_string(),
                 "forge-config:ci.fuzz.runs=500".to_string(),
@@ -173,7 +198,7 @@ mod tests {
         let config_lines = natspec.current_profile_configs();
 
         assert_eq!(
-            config_lines,
+            config_lines.collect::<Vec<_>>(),
             vec![
                 "forge-config:default.fuzz.runs=600".to_string(),
                 "forge-config:default.invariant.runs=1".to_string()
@@ -186,9 +211,9 @@ mod tests {
         use super::INLINE_CONFIG_PREFIX;
         let natspec = natspec();
         let prefix = format!("{INLINE_CONFIG_PREFIX}:default");
-        let config_lines = natspec.config_lines_with_prefix(prefix);
+        let config_lines = natspec.config_lines_with_prefix(&prefix);
         assert_eq!(
-            config_lines,
+            config_lines.collect::<Vec<_>>(),
             vec![
                 "forge-config:default.fuzz.runs=600".to_string(),
                 "forge-config:default.invariant.runs=1".to_string()

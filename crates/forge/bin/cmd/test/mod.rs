@@ -165,9 +165,8 @@ impl TestArgs {
         let test_options: TestOptions = TestOptionsBuilder::default()
             .fuzz(config.fuzz)
             .invariant(config.invariant)
-            .compile_output(&output)
             .profiles(profiles)
-            .build(project_root)?;
+            .build(&output, project_root)?;
 
         // Determine print verbosity and executor verbosity
         let verbosity = evm_opts.verbosity;
