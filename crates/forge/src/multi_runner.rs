@@ -19,6 +19,7 @@ use rayon::prelude::*;
 use revm::primitives::SpecId;
 use std::{
     collections::{BTreeMap, HashSet},
+    iter::Iterator,
     path::Path,
     sync::mpsc::Sender,
 };
@@ -72,31 +73,29 @@ impl MultiContractRunner {
             .count()
     }
 
-    // Get all tests of matching path and contract
-    pub fn get_tests(&self, filter: &impl TestFilter) -> Vec<String> {
+    fn filtered_tests<'a>(
+        &'a self,
+        filter: &'a impl TestFilter,
+    ) -> impl Iterator<Item = &Function> {
         self.contracts
             .iter()
             .filter(|(id, _)| {
                 filter.matches_path(id.source.to_string_lossy()) &&
                     filter.matches_contract(&id.name)
             })
-            .flat_map(|(_, (abi, _, _))| abi.functions().map(|func| func.name.clone()))
-            .filter(|sig| sig.is_test())
+            .flat_map(|(_, (abi, _, _))| abi.functions())
+    }
+
+    // Get all tests of matching path and contract
+    pub fn get_tests(&self, filter: &impl TestFilter) -> Vec<String> {
+        self.filtered_tests(filter)
+            .map(|func| func.name.clone())
+            .filter(|name| name.is_test())
             .collect()
     }
 
-    pub fn get_typed_tests(&self, filter: &impl TestFilter) -> Vec<Function> {
-        self.contracts
-            .iter()
-            .filter(|(id, _)| {
-                filter.matches_path(id.source.to_string_lossy()) &&
-                    filter.matches_contract(&id.name)
-            })
-            .flat_map(|(_, (abi, _, _))| {
-                abi.functions().map(|func| func.clone()).collect::<Vec<_>>()
-            })
-            .filter(|func| func.name.is_test())
-            .collect()
+    pub fn get_typed_tests<'a>(&'a self, filter: &'a impl TestFilter) -> Vec<&Function> {
+        self.filtered_tests(filter).filter(|func| func.name.is_test()).collect()
     }
 
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))

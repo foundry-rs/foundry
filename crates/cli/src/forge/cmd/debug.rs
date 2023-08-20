@@ -1,8 +1,7 @@
 use super::{build::BuildArgs, retry::RETRY_VERIFY_ON_CREATE, script::ScriptArgs};
 use clap::{Parser, ValueHint};
-use eyre::Result;
 use foundry_cli::opts::CoreBuildArgs;
-use foundry_common::evm::{Breakpoints, EvmArgs};
+use foundry_common::evm::EvmArgs;
 use std::path::PathBuf;
 
 // Loads project's figment and merges the build cli arguments into it

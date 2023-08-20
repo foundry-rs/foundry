@@ -197,6 +197,7 @@ impl ScriptRunner {
 
     /// Executes the method that will collect all broadcastable transactions.
     pub fn script(&mut self, address: Address, calldata: Bytes) -> Result<ScriptResult> {
+        trace!(target: "script", "executing the script function");
         self.call(self.sender, address, calldata, U256::zero(), false)
     }
 

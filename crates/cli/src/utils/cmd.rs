@@ -2,12 +2,11 @@ use ethers::{
     abi::Abi,
     core::types::Chain,
     solc::{
-        artifacts::{CompactBytecode, CompactDeployedBytecode, ContractBytecodeSome},
+        artifacts::{CompactBytecode, CompactDeployedBytecode},
         cache::{CacheEntry, SolFilesCache},
-        contracts::ArtifactContracts,
         info::ContractInfo,
         utils::read_json_file,
-        Artifact, ArtifactId, ProjectBuilder, ProjectCompileOutput,
+        Artifact, ProjectCompileOutput,
     },
 };
 use eyre::{Result, WrapErr};
@@ -22,9 +21,9 @@ use foundry_evm::{
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
-use std::{collections::BTreeMap, fmt::Write, path::PathBuf, str::FromStr};
+use std::{fmt::Write, path::PathBuf, str::FromStr};
 use tracing::trace;
-use ui::{debugger::DebuggerArgs, TUIExitReason, Tui};
+use ui::debugger::DebuggerArgs;
 use yansi::Paint;
 
 /// Given a `Project`'s output, removes the matching ABI, Bytecode and
@@ -392,7 +391,7 @@ pub async fn handle_traces(
     }
 
     if debug {
-        let (sources, compiled_contracts) = etherscan_identifier.get_compiled_contracts().await?;
+        let (sources, _compiled_contracts) = etherscan_identifier.get_compiled_contracts().await?;
         let debugger = DebuggerArgs {
             debug: vec![result.debug],
             decoder: &decoder,

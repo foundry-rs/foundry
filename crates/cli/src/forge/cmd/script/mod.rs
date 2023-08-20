@@ -1,7 +1,4 @@
-use self::{
-    build::{filter_sources_and_artifacts, BuildOutput},
-    runner::ScriptRunner,
-};
+use self::{build::BuildOutput, runner::ScriptRunner};
 use super::{build::BuildArgs, retry::RetryArgs};
 use cast::{
     decode,

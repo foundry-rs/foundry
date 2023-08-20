@@ -85,7 +85,7 @@ impl RunArgs {
     pub async fn run(self) -> Result<()> {
         let figment =
             Config::figment_with_root(find_project_root_path(None).unwrap()).merge(self.rpc);
-        let mut evm_opts = figment.extract::<EvmOpts>()?;
+        let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment).sanitized();
 
         let compute_units_per_second =

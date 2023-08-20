@@ -13,7 +13,7 @@ use ethers::{
 };
 use eyre::{Context, ContextCompat, Result};
 use foundry_cli::utils::get_cached_entry_by_name;
-use foundry_common::compile;
+use foundry_common::{compact_to_contract, compile};
 use foundry_utils::{PostLinkInput, ResolvedDependency};
 use std::{collections::BTreeMap, fs, str::FromStr};
 use tracing::{trace, warn};
@@ -40,20 +40,14 @@ impl ScriptArgs {
                 // Sources are only required for the debugger, but it *might* mean that there's
                 // something wrong with the build and/or artifacts.
                 if let Some(source) = artifact.source_file() {
-                    let inner_map = sources.entry(id.clone().name).or_insert_with(HashMap::new);
+                    let inner_map = sources.entry(id.clone().name).or_default();
                     let abs_path = source
                         .ast
                         .ok_or(eyre::eyre!("Source from artifact has no AST."))?
                         .absolute_path;
                     let source_code = fs::read_to_string(abs_path).unwrap();
                     let contract = artifact.clone().into_contract_bytecode();
-                    // TODO factor this unwrap in a nicer function
-                    // NOTE crates/common/src/compile.rs
-                    let source_contract = ContractBytecodeSome {
-                        abi: contract.abi.unwrap(),
-                        bytecode: contract.bytecode.unwrap().into(),
-                        deployed_bytecode: contract.deployed_bytecode.unwrap().into(),
-                    };
+                    let source_contract = compact_to_contract(contract);
                     inner_map.insert(source.id, (source_code, source_contract));
                 } else {
                     warn!("source not found for artifact={:?}", id);
@@ -271,6 +265,7 @@ impl ScriptArgs {
 
 /// Resolve the import tree of our target path, and get only the artifacts and
 /// sources we need. If it's a standalone script, don't filter anything out.
+#[allow(unused)]
 pub fn filter_sources_and_artifacts(
     target: &str,
     sources: BTreeMap<u32, String>,

@@ -23,7 +23,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tracing::log::trace;
 use tui::{
     backend::{Backend, CrosstermBackend},
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -85,7 +84,7 @@ impl Tui {
         terminal.hide_cursor();
         let pc_ic_maps = contracts_sources
             .iter()
-            .map(|(contract_name, files_sources)| {
+            .flat_map(|(contract_name, files_sources)| {
                 files_sources.iter().filter_map(|(_, (_, contract))| {
                     Some((
                         contract_name.clone(),
@@ -108,7 +107,6 @@ impl Tui {
                     ))
                 })
             })
-            .flatten()
             .collect();
 
         // trace!(target: "debugger", "{:?}", identified_contracts);

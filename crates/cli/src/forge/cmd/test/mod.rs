@@ -1,17 +1,13 @@
-use super::{debug::DebugArgs, install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
+use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use cast::fuzz::CounterExample;
 use clap::Parser;
-use ethers::{
-    prelude::artifacts::ContractBytecodeSome,
-    solc::{contracts::ArtifactContracts, Artifact, ArtifactId},
-    types::U256,
-};
+use ethers::types::U256;
 use eyre::Result;
 use forge::{
     decode::decode_console_logs,
     executor::inspector::CheatsConfig,
     gas_report::GasReport,
-    result::{SuiteResult, TestKind, TestResult, TestStatus},
+    result::{SuiteResult, TestResult, TestStatus},
     trace::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
         CallTraceDecoderBuilder, TraceKind,
@@ -23,6 +19,7 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
+    compact_to_contract,
     compile::{self, ProjectCompiler},
     evm::EvmArgs,
     get_contract_name, get_file_name, shell,
@@ -40,7 +37,6 @@ use regex::Regex;
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
-    path::PathBuf,
     sync::mpsc::channel,
     time::Duration,
 };
@@ -232,7 +228,6 @@ impl TestArgs {
 
         let mut local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
         let remote_chain_id = runner.evm_opts.get_remote_chain_id();
-        let source_paths = runner.source_paths.clone();
 
         let outcome = self.run_tests(runner, &config, filter.clone(), test_options.clone()).await?;
         let tests = outcome.clone().into_tests();
@@ -305,13 +300,7 @@ impl TestArgs {
                     let abs_path = source.ast.unwrap().absolute_path;
                     let source_code = fs::read_to_string(abs_path).unwrap();
                     let contract = artifact.clone().into_contract_bytecode();
-                    // TODO factor this unwrap in a nicer function
-                    // NOTE crates/common/src/compile.rs
-                    let source_contract = ContractBytecodeSome {
-                        abi: contract.abi.unwrap(),
-                        bytecode: contract.bytecode.unwrap().into(),
-                        deployed_bytecode: contract.deployed_bytecode.unwrap().into(),
-                    };
+                    let source_contract = compact_to_contract(contract);
                     inner_map.insert(source.id, (source_code, source_contract));
                 }
             });
@@ -433,7 +422,7 @@ impl TestArgs {
             let mut local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
             let remote_chain_id = runner.evm_opts.get_remote_chain_id();
             // Do not re-query etherscan for contracts that you've already queried today.
-            let mut etherscan_identifier = EtherscanIdentifier::new(&config, remote_chain_id)?;
+            let mut etherscan_identifier = EtherscanIdentifier::new(config, remote_chain_id)?;
 
             // Set up test reporter channel
             let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -783,212 +772,4 @@ fn format_aggregated_summary(
         "Ran {} test suites: {} tests passed, {} failed, {} skipped ({} total tests)",
         num_test_suites, total_passed, total_failed, total_skipped, total_tests
     )
-}
-
-/// Lists all matching tests
-fn list(
-    runner: MultiContractRunner,
-    filter: ProjectPathsAwareFilter,
-    json: bool,
-) -> Result<TestOutcome> {
-    let results = runner.list(&filter);
-
-    if json {
-        println!("{}", serde_json::to_string(&results)?);
-    } else {
-        for (file, contracts) in results.iter() {
-            println!("{file}");
-            for (contract, tests) in contracts.iter() {
-                println!("  {contract}");
-                println!("    {}\n", tests.join("\n    "));
-            }
-        }
-    }
-    Ok(TestOutcome::new(BTreeMap::new(), false))
-}
-
-/// Runs all the tests
-#[allow(clippy::too_many_arguments)]
-async fn test(
-    config: Config,
-    mut runner: MultiContractRunner,
-    verbosity: u8,
-    filter: ProjectPathsAwareFilter,
-    json: bool,
-    allow_failure: bool,
-    test_options: TestOptions,
-    gas_reporting: bool,
-    fail_fast: bool,
-) -> Result<TestOutcome> {
-    trace!(target: "forge::test", "running all tests");
-    if runner.count_filtered_tests(&filter) == 0 {
-        let filter_str = filter.to_string();
-        if filter_str.is_empty() {
-            println!(
-                "\nNo tests found in project! Forge looks for functions that starts with `test`."
-            );
-        } else {
-            println!("\nNo tests match the provided pattern:");
-            println!("{filter_str}");
-            // Try to suggest a test when there's no match
-            if let Some(ref test_pattern) = filter.args().test_pattern {
-                let test_name = test_pattern.as_str();
-                let candidates = runner.get_tests(&filter);
-                if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
-                    println!("\nDid you mean `{suggestion}`?");
-                }
-            }
-        }
-    }
-
-    if json {
-        let results = runner.test(filter, None, test_options).await;
-        println!("{}", serde_json::to_string(&results)?);
-        Ok(TestOutcome::new(results, allow_failure))
-    } else {
-        // Set up identifiers
-        let mut local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
-        let remote_chain_id = runner.evm_opts.get_remote_chain_id();
-        // Do not re-query etherscan for contracts that you've already queried today.
-        let mut etherscan_identifier = EtherscanIdentifier::new(&config, remote_chain_id)?;
-
-        // Set up test reporter channel
-        let (tx, rx) = channel::<(String, SuiteResult)>();
-
-        // Run tests
-        let handle =
-            tokio::task::spawn(async move { runner.test(filter, Some(tx), test_options).await });
-
-        let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
-        let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
-        let sig_identifier =
-            SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
-
-        let mut total_passed = 0;
-        let mut total_failed = 0;
-        let mut total_skipped = 0;
-
-        'outer: for (contract_name, suite_result) in rx {
-            results.insert(contract_name.clone(), suite_result.clone());
-
-            let mut tests = suite_result.test_results.clone();
-            println!();
-            for warning in suite_result.warnings.iter() {
-                eprintln!("{} {warning}", Paint::yellow("Warning:").bold());
-            }
-            if !tests.is_empty() {
-                let term = if tests.len() > 1 { "tests" } else { "test" };
-                println!("Running {} {term} for {contract_name}", tests.len());
-            }
-            for (name, result) in &mut tests {
-                short_test_result(name, result);
-
-                // If the test failed, we want to stop processing the rest of the tests
-                if fail_fast && result.status == TestStatus::Failure {
-                    break 'outer
-                }
-
-                // We only display logs at level 2 and above
-                if verbosity >= 2 {
-                    // We only decode logs from Hardhat and DS-style console events
-                    let console_logs = decode_console_logs(&result.logs);
-                    if !console_logs.is_empty() {
-                        println!("Logs:");
-                        for log in console_logs {
-                            println!("  {log}");
-                        }
-                        println!();
-                    }
-                }
-
-                if !result.traces.is_empty() {
-                    // Identify addresses in each trace
-                    let mut decoder = CallTraceDecoderBuilder::new()
-                        .with_labels(result.labeled_addresses.clone())
-                        .with_events(local_identifier.events().cloned())
-                        .with_verbosity(verbosity)
-                        .build();
-
-                    // Signatures are of no value for gas reports
-                    if !gas_reporting {
-                        decoder.add_signature_identifier(sig_identifier.clone());
-                    }
-
-                    // Decode the traces
-                    let mut decoded_traces = Vec::new();
-                    for (kind, trace) in &mut result.traces {
-                        decoder.identify(trace, &mut local_identifier);
-                        decoder.identify(trace, &mut etherscan_identifier);
-
-                        let should_include = match kind {
-                            // At verbosity level 3, we only display traces for failed tests
-                            // At verbosity level 4, we also display the setup trace for failed
-                            // tests At verbosity level 5, we display
-                            // all traces for all tests
-                            TraceKind::Setup => {
-                                (verbosity >= 5) ||
-                                    (verbosity == 4 && result.status == TestStatus::Failure)
-                            }
-                            TraceKind::Execution => {
-                                verbosity > 3 ||
-                                    (verbosity == 3 && result.status == TestStatus::Failure)
-                            }
-                            _ => false,
-                        };
-
-                        // We decode the trace if we either need to build a gas report or we need
-                        // to print it
-                        if should_include || gas_reporting {
-                            decoder.decode(trace).await;
-                        }
-
-                        if should_include {
-                            decoded_traces.push(trace.to_string());
-                        }
-                    }
-
-                    if !decoded_traces.is_empty() {
-                        println!("Traces:");
-                        decoded_traces.into_iter().for_each(|trace| println!("{trace}"));
-                    }
-
-                    if gas_reporting {
-                        gas_report.analyze(&result.traces);
-                    }
-                }
-            }
-            let block_outcome =
-                TestOutcome::new([(contract_name, suite_result)].into(), allow_failure);
-
-            total_passed += block_outcome.successes().count();
-            total_failed += block_outcome.failures().count();
-            total_skipped += block_outcome.skips().count();
-
-            println!("{}", block_outcome.summary());
-        }
-
-        if gas_reporting {
-            println!("{}", gas_report.finalize());
-        }
-
-        let num_test_suites = results.len();
-
-        if num_test_suites > 0 {
-            println!(
-                "{}",
-                format_aggregated_summary(
-                    num_test_suites,
-                    total_passed,
-                    total_failed,
-                    total_skipped
-                )
-            );
-        }
-
-        // reattach the thread
-        let _results = handle.await?;
-
-        trace!(target: "forge::test", "received {} results", results.len());
-        Ok(TestOutcome::new(results, allow_failure))
-    }
 }

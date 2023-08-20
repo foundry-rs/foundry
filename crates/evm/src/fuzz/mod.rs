@@ -17,7 +17,7 @@ pub use proptest::test_runner::Reason;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 use revm::interpreter::InstructionResult;
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, collections::BTreeMap, fmt, ops::Deref};
+use std::{cell::RefCell, collections::BTreeMap, fmt};
 use strategies::{
     build_initial_state, collect_state_from_call, fuzz_calldata, fuzz_calldata_from_state,
     EvmFuzzState,
@@ -265,7 +265,7 @@ impl<'a> FuzzedExecutor<'a> {
         } else {
             Ok(FuzzOutcome::CounterExample(CounterExampleOutcome {
                 debug: call.debug.clone(),
-                exit_reason: call.exit_reason.clone(),
+                exit_reason: call.exit_reason,
                 counterexample: (calldata, call),
                 breakpoints,
             }))

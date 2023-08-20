@@ -1,5 +1,5 @@
 //! Support for compiling [ethers::solc::Project]
-use crate::{glob::GlobMatcher, term, TestFunctionExt};
+use crate::{compact_to_contract, glob::GlobMatcher, term, TestFunctionExt};
 use comfy_table::{presets::ASCII_MARKDOWN, *};
 use ethers_etherscan::contract::Metadata;
 use ethers_solc::{
@@ -419,12 +419,7 @@ pub async fn compile_from_source(
             (aid, art.source_file().expect("no source file").id, art.into_contract_bytecode())
         })
         .expect("there should be a contract with bytecode");
-    // TODO factor this unwrap in a nicer function
-    let bytecode = ContractBytecodeSome {
-        abi: contract.abi.unwrap(),
-        bytecode: contract.bytecode.unwrap().into(),
-        deployed_bytecode: contract.deployed_bytecode.unwrap().into(),
-    };
+    let bytecode = compact_to_contract(contract);
 
     root.close()?;
 

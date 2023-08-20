@@ -592,7 +592,6 @@ impl<'a> ContractRunner<'a> {
             } else {
                 result.first_case.calldata.clone()
             };
-            dbg!(&calldata);
             // rerun the last relevant test with traces
             let debug_result = FuzzedExecutor::new(
                 &debug_executor,

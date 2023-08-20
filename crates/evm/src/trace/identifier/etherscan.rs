@@ -61,8 +61,8 @@ impl EtherscanIdentifier {
     pub async fn get_compiled_contracts(
         &self,
     ) -> eyre::Result<(
-        // TODO should use ContractSources but has circular import. Should move ContractSources
-        // lower
+        // TODO should use `ContractSources` but has circular import.
+        // Maybe move ContractSources lower
         HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>,
         BTreeMap<ArtifactId, ContractBytecodeSome>,
     )> {

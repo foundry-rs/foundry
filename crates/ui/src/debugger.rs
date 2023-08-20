@@ -1,31 +1,7 @@
-use crate::{Breakpoints, ContractBytecodeSome, DrawMemory, Interrupt, TUIExitReason, Tui};
-use cast::{
-    decode,
-    executor::inspector::{
-        cheatcodes::{util::BroadcastableTransactions, BroadcastableTransaction},
-        DEFAULT_CREATE2_DEPLOYER,
-    },
-    trace::CallTraceDecoder,
-};
-use crossterm::{
-    event::{self, DisableMouseCapture, Event, KeyCode, KeyModifiers, MouseEventKind},
-    execute,
-    terminal::{disable_raw_mode, LeaveAlternateScreen},
-};
-use ethers::{
-    signers::LocalWallet,
-    types::{Address, Log},
-};
-use ethers_solc::{
-    artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode, Libraries},
-    contracts::ArtifactContracts,
-    ArtifactId, Graph, Project,
-};
-use forge::{
-    debug::{DebugArena, DebugStep},
-    trace::Traces,
-    CallKind,
-};
+use crate::{Breakpoints, ContractBytecodeSome, TUIExitReason, Tui};
+use cast::trace::CallTraceDecoder;
+use ethers_solc::{contracts::ArtifactContracts, ArtifactId, Graph, Project};
+use forge::debug::DebugArena;
 use foundry_common::get_contract_name;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -48,32 +24,12 @@ pub struct DebuggerArgs<'a> {
     pub sources: ContractSources,
     /// map of the debugger breakpoints
     pub breakpoints: Breakpoints,
-    // /// target path of the contract to debug in the project (should remove)
-    // pub path: PathBuf,
 }
 
 impl DebuggerArgs<'_> {
     pub fn run(&self) -> eyre::Result<TUIExitReason> {
         trace!(target: "debugger", "running debugger");
 
-        // let known_contracts = self
-        //     .sources
-        //     .iter()
-        //     .map(|((aid, _, _, bytecode))| (aid.name.clone(), bytecode.clone()))
-        //     .collect();
-
-        // let known_contracts = self
-        //     .highlevel_known_contracts
-        //     .iter()
-        //     .map(|(aid, bytecode)| (aid.name.clone(), bytecode.clone()))
-        //     .collect();
-
-        // let (sources, known_contracts) = filter_sources_and_artifacts(
-        //     self.path.as_os_str().to_str().unwrap(),
-        //     self.sources.clone(),
-        //     self.highlevel_known_contracts.clone(),
-        //     &self.project,
-        // )?;
         let flattened = self
             .debug
             .last()
