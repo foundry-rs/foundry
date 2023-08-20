@@ -30,17 +30,6 @@ pub use suggestions::*;
 #[doc(hidden)]
 pub use foundry_config::utils::*;
 
-/// The version message for the current program, like
-/// `forge 0.1.0 (f01b232bc 2022-01-22T23:28:39.493201+00:00)`
-pub const VERSION_MESSAGE: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    " (",
-    env!("VERGEN_GIT_SHA"),
-    " ",
-    env!("VERGEN_BUILD_TIMESTAMP"),
-    ")"
-);
-
 /// Deterministic fuzzer seed used for gas snapshots and coverage reports.
 ///
 /// The keccak256 hash of "foundry rulez"
@@ -533,9 +522,9 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_cli_test_utils::tempfile::tempdir;
     use foundry_common::fs;
     use std::{env, fs::File, io::Write};
+    use tempfile::tempdir;
 
     #[test]
     fn foundry_path_ext_works() {

@@ -52,8 +52,8 @@ pub fn assert_invariants(
     let mut found_case = false;
     let mut inner_sequence = vec![];
 
-    if let Some(ref fuzzer) = executor.inspector_config().fuzzer {
-        if let Some(ref call_generator) = fuzzer.call_generator {
+    if let Some(fuzzer) = &executor.inspector.fuzzer {
+        if let Some(call_generator) = &fuzzer.call_generator {
             inner_sequence.extend(call_generator.last_sequence.read().iter().cloned());
         }
     }

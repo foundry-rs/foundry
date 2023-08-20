@@ -1,3 +1,5 @@
+#![warn(unused_crate_dependencies)]
+
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
@@ -8,12 +10,13 @@ use crossterm::{
 };
 use ethers::{solc::artifacts::ContractBytecodeSome, types::Address};
 use eyre::Result;
-use forge::{
-    debug::{DebugStep, Instruction},
+use foundry_common::{evm::Breakpoints, get_contract_name};
+use foundry_evm::{
+    debug::{DebugArena, DebugStep, Instruction},
+    trace::CallTraceDecoder,
     utils::{build_pc_ic_map, PCICMap},
     CallKind,
 };
-use foundry_common::evm::Breakpoints;
 use revm::{interpreter::opcode, primitives::SpecId};
 use std::{
     cmp::{max, min},
@@ -23,6 +26,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use tracing::log::trace;
 use tui::{
     backend::{Backend, CrosstermBackend},
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -33,6 +37,51 @@ use tui::{
     Terminal,
 };
 
+/// Map over debugger contract sources name -> file_id -> (source, contract)
+pub type ContractSources = HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>;
+
+/// Standardized way of firing up the debugger
+pub struct DebuggerArgs<'a> {
+    /// debug traces returned from the execution
+    pub debug: Vec<DebugArena>,
+    /// trace decoder
+    pub decoder: &'a CallTraceDecoder,
+    /// map of source files
+    pub sources: ContractSources,
+    /// map of the debugger breakpoints
+    pub breakpoints: Breakpoints,
+}
+
+impl DebuggerArgs<'_> {
+    pub fn run(&self) -> eyre::Result<TUIExitReason> {
+        trace!(target: "debugger", "running debugger");
+
+        let flattened = self
+            .debug
+            .last()
+            .map(|arena| arena.flatten(0))
+            .expect("We should have collected debug information");
+
+        let identified_contracts = self
+            .decoder
+            .contracts
+            .iter()
+            .map(|(addr, identifier)| (*addr, get_contract_name(identifier).to_string()))
+            .collect();
+
+        let contract_sources = self.sources.clone();
+
+        let mut tui = Tui::new(
+            flattened,
+            0,
+            identified_contracts,
+            contract_sources,
+            self.breakpoints.clone(),
+        )?;
+
+        tui.launch()
+    }
+}
 /// Used to indicate why the UI stopped
 pub enum TUIExitReason {
     /// Exit using <q>
@@ -42,8 +91,6 @@ pub enum TUIExitReason {
 pub mod debugger;
 mod op_effects;
 use op_effects::stack_indices_affected;
-
-use self::debugger::ContractSources;
 
 pub struct Tui {
     debug_arena: Vec<(Address, Vec<DebugStep>, CallKind)>,

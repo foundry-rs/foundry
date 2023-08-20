@@ -57,11 +57,13 @@ use ethers::{
     },
     utils::rlp,
 };
-use forge::{executor::DatabaseRef, revm::primitives::BlockEnv};
 use foundry_common::ProviderBuilder;
 use foundry_evm::{
-    executor::backend::DatabaseError,
-    revm::interpreter::{return_ok, return_revert, InstructionResult},
+    executor::{backend::DatabaseError, DatabaseRef},
+    revm::{
+        interpreter::{return_ok, return_revert, InstructionResult},
+        primitives::BlockEnv,
+    },
 };
 use futures::channel::mpsc::Receiver;
 use parking_lot::RwLock;

@@ -1,10 +1,9 @@
-use std::path::Path;
-
 use chisel::session::ChiselSession;
 use ethers_solc::EvmVersion;
-use forge::executor::opts::EvmOpts;
 use foundry_config::Config;
+use foundry_evm::executor::opts::EvmOpts;
 use serial_test::serial;
+use std::path::Path;
 
 #[test]
 #[serial]

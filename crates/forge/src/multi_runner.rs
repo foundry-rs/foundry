@@ -21,7 +21,7 @@ use std::{
     collections::{BTreeMap, HashSet},
     iter::Iterator,
     path::Path,
-    sync::mpsc::Sender,
+    sync::{mpsc::Sender, Arc},
 };
 
 pub type DeployableContracts = BTreeMap<ArtifactId, (Abi, Bytes, Vec<Bytes>)>;
@@ -49,7 +49,7 @@ pub struct MultiContractRunner {
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
     /// Additional cheatcode inspector related settings derived from the `Config`
-    pub cheats_config: CheatsConfig,
+    pub cheats_config: Arc<CheatsConfig>,
     /// Whether to collect coverage info
     pub coverage: bool,
     /// Whether to collect debug info
@@ -142,8 +142,9 @@ impl MultiContractRunner {
     ) -> BTreeMap<String, SuiteResult> {
         trace!("running all tests");
 
+        // the db backend that serves all the data, each contract gets its own instance
+        let db = Backend::spawn(self.fork.take()).await;
         let filter = &filter;
-        let executor = self.test_executor().await;
 
         self.contracts
             .par_iter()
@@ -153,13 +154,24 @@ impl MultiContractRunner {
             })
             .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
             .map_with(stream_result, |stream_result, (id, (abi, deploy_code, libs))| {
+                let executor = ExecutorBuilder::new()
+                    .inspectors(|stack| {
+                        stack
+                            .cheatcodes(self.cheats_config.clone())
+                            .trace(self.evm_opts.verbosity >= 3 || self.debug)
+                            .debug(self.debug)
+                            .coverage(self.coverage)
+                    })
+                    .spec(self.evm_spec)
+                    .gas_limit(self.evm_opts.gas_limit())
+                    .build(self.env.clone(), db.clone());
                 let identifier = id.identifier();
                 trace!(contract=%identifier, "start executing all tests in contract");
 
                 let result = self.run_tests(
                     &identifier,
                     abi,
-                    executor.clone(),
+                    executor,
                     deploy_code.clone(),
                     libs,
                     filter,
@@ -200,21 +212,6 @@ impl MultiContractRunner {
             self.debug,
         );
         runner.run_tests(filter, test_options, Some(&self.known_contracts))
-    }
-
-    pub async fn test_executor(&mut self) -> Executor {
-        // the db backend that serves all the data, each contract gets its own instance
-        let db = Backend::spawn(self.fork.take()).await;
-
-        ExecutorBuilder::default()
-            .with_cheatcodes(self.cheats_config.clone())
-            .with_config(self.env.clone())
-            .with_spec(self.evm_spec)
-            .with_gas_limit(self.evm_opts.gas_limit())
-            .set_tracing(self.evm_opts.verbosity >= 3 || self.debug)
-            .set_coverage(self.coverage)
-            .set_debugger(self.debug)
-            .build(db.clone())
     }
 }
 
@@ -344,7 +341,7 @@ impl MultiContractRunnerBuilder {
             errors: Some(execution_info.2),
             source_paths,
             fork: self.fork,
-            cheats_config: self.cheats_config.unwrap_or_default(),
+            cheats_config: self.cheats_config.unwrap_or_default().into(),
             coverage: self.coverage,
             debug: self.debug,
             test_options: self.test_options.unwrap_or_default(),

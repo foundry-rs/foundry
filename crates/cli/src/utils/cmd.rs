@@ -10,12 +10,11 @@ use ethers::{
     },
 };
 use eyre::{Result, WrapErr};
-use forge::executor::opts::EvmOpts;
 use foundry_common::{cli_warn, fs, TestFunctionExt};
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain as ConfigChain, Config};
 use foundry_evm::{
     debug::DebugArena,
-    executor::{DeployResult, EvmError, ExecutionErr, RawCallResult},
+    executor::{opts::EvmOpts, DeployResult, EvmError, ExecutionErr, RawCallResult},
     trace::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
@@ -23,7 +22,7 @@ use foundry_evm::{
 };
 use std::{fmt::Write, path::PathBuf, str::FromStr};
 use tracing::trace;
-use ui::debugger::DebuggerArgs;
+use ui::DebuggerArgs;
 use yansi::Paint;
 
 /// Given a `Project`'s output, removes the matching ABI, Bytecode and
@@ -400,7 +399,7 @@ pub async fn handle_traces(
         };
         debugger.run()?;
     } else {
-        print_traces(&mut result, decoder, verbose).await?;
+        print_traces(&mut result, &decoder, verbose).await?;
     }
 
     Ok(())
@@ -408,7 +407,7 @@ pub async fn handle_traces(
 
 pub async fn print_traces(
     result: &mut TraceResult,
-    decoder: CallTraceDecoder,
+    decoder: &CallTraceDecoder,
     verbose: bool,
 ) -> Result<()> {
     if result.traces.is_empty() {

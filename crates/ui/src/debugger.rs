@@ -1,64 +1,15 @@
-use crate::{Breakpoints, ContractBytecodeSome, TUIExitReason, Tui};
-use cast::trace::CallTraceDecoder;
+use crate::ContractBytecodeSome;
 use ethers_solc::{contracts::ArtifactContracts, ArtifactId, Graph, Project};
-use forge::debug::DebugArena;
-use foundry_common::get_contract_name;
 use std::{
     collections::{BTreeMap, HashMap},
     convert::From,
     fs,
     path::PathBuf,
 };
-use tracing::log::trace;
-
-/// Map over debugger contract sources name -> file_id -> (source, contract)
-pub type ContractSources = HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>;
-
-/// Standardized way of firing up the debugger
-pub struct DebuggerArgs<'a> {
-    /// debug traces returned from the execution
-    pub debug: Vec<DebugArena>,
-    /// trace decoder
-    pub decoder: &'a CallTraceDecoder,
-    /// map of source files
-    pub sources: ContractSources,
-    /// map of the debugger breakpoints
-    pub breakpoints: Breakpoints,
-}
-
-impl DebuggerArgs<'_> {
-    pub fn run(&self) -> eyre::Result<TUIExitReason> {
-        trace!(target: "debugger", "running debugger");
-
-        let flattened = self
-            .debug
-            .last()
-            .map(|arena| arena.flatten(0))
-            .expect("We should have collected debug information");
-
-        let identified_contracts = self
-            .decoder
-            .contracts
-            .iter()
-            .map(|(addr, identifier)| (*addr, get_contract_name(identifier).to_string()))
-            .collect();
-
-        let contract_sources = self.sources.clone();
-
-        let mut tui = Tui::new(
-            flattened,
-            0,
-            identified_contracts,
-            contract_sources,
-            self.breakpoints.clone(),
-        )?;
-
-        tui.launch()
-    }
-}
 
 /// Resolve the import tree of our target path, and get only the artifacts and
 /// sources we need. If it's a standalone script, don't filter anything out.
+#[allow(unused)]
 pub fn filter_sources_and_artifacts(
     target: &str,
     sources: BTreeMap<ArtifactId, String>,

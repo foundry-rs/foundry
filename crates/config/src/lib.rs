@@ -1,5 +1,6 @@
-//! foundry configuration.
-#![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
+//! Foundry configuration.
+
+#![warn(missing_docs, unused_crate_dependencies)]
 
 use crate::cache::StorageCachingConfig;
 use ethers_core::types::{Address, Chain::Mainnet, H160, H256, U256};
@@ -2439,7 +2440,7 @@ impl BasicConfig {
             "\
 [profile.{}]
 {s}
-# See more config options https://github.com/foundry-rs/foundry/tree/master/config\n",
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n",
             self.profile
         ))
     }
@@ -4139,7 +4140,7 @@ mod tests {
             out = 'out'
             libs = ['lib']
 
-            # See more config options https://github.com/foundry-rs/foundry/tree/master/config
+            # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
         "#;
         assert_eq!(
             parse_with_profile::<BasicConfig>(foundry_str).unwrap().unwrap(),

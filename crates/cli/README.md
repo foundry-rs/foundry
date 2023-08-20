@@ -4,7 +4,7 @@ The CLIs are written using [clap's](https://docs.rs/clap) [derive feature](https
 
 ## Installation
 
-See [Installation](../README.md#Installation).
+See [Installation](../../README.md#Installation).
 
 ## Usage
 
