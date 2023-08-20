@@ -42,6 +42,7 @@ jobs:
     issue:
         name: Open an issue
         runs-on: ubuntu-latest
+        needs: heavy-integration
         if: ${{ failure() }}
         steps:
             - uses: JasonEtco/create-an-issue@v2
