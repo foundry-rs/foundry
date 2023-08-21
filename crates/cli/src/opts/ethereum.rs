@@ -55,7 +55,7 @@ impl RpcOpts {
 
     /// Returns the JWT secret.
     pub fn jwt<'a>(&'a self, config: Option<&'a Config>) -> Result<Option<Cow<'a, str>>> {
-        let jwt = match (self.jwt.as_deref(), config) {
+        let jwt = match (self.jwt_secret.as_deref(), config) {
             (Some(jwt), _) => Some(Cow::Borrowed(jwt)),
             (None, Some(config)) => config.get_rpc_jwt_secret()?,
             (None, None) => None,
