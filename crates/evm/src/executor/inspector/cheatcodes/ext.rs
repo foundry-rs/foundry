@@ -202,7 +202,7 @@ fn get_env(key: &str, ty: ParamType, delim: Option<&str>, default: Option<String
 /// The function is designed to run recursively, so that in case of an object
 /// it will call itself to convert each of it's value and encode the whole as a
 /// Tuple
-fn value_to_token(value: &Value) -> Result<Token> {
+pub fn value_to_token(value: &Value) -> Result<Token> {
     match value {
         Value::Null => Ok(Token::FixedBytes(vec![0; 32])),
         Value::Bool(boolean) => Ok(Token::Bool(*boolean)),

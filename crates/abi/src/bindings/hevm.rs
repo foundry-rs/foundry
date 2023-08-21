@@ -1540,6 +1540,69 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("eth_getLogs"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("eth_getLogs"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Address,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Array(
+                                        ::std::boxed::Box::new(
+                                            ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
+                                        ),
+                                    ),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Array(
+                                        ::std::boxed::Box::new(
+                                            ::ethers_core::abi::ethabi::ParamType::Tuple(
+                                                ::std::vec![
+                                                    ::ethers_core::abi::ethabi::ParamType::Address,
+                                                    ::ethers_core::abi::ethabi::ParamType::Array(
+                                                        ::std::boxed::Box::new(
+                                                            ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
+                                                        ),
+                                                    ),
+                                                    ::ethers_core::abi::ethabi::ParamType::Bytes,
+                                                    ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                                    ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
+                                                    ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                                    ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
+                                                    ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                                    ::ethers_core::abi::ethabi::ParamType::Bool,
+                                                ],
+                                            ),
+                                        ),
+                                    ),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("expectCall"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -3811,6 +3874,35 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("rpc"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("rpc"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Bytes,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("rpcUrl"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -5755,6 +5847,33 @@ pub mod hevm {
                 .method_hash([180, 214, 199, 130], (p0, p1))
                 .expect("method not found (this should never happen)")
         }
+        ///Calls the contract's `eth_getLogs` (0x35e1349b) function
+        pub fn eth_get_logs(
+            &self,
+            p0: ::ethers_core::types::U256,
+            p1: ::ethers_core::types::U256,
+            p2: ::ethers_core::types::Address,
+            p3: ::std::vec::Vec<[u8; 32]>,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<
+                (
+                    ::ethers_core::types::Address,
+                    ::std::vec::Vec<[u8; 32]>,
+                    ::ethers_core::types::Bytes,
+                    ::ethers_core::types::U256,
+                    [u8; 32],
+                    ::ethers_core::types::U256,
+                    [u8; 32],
+                    ::ethers_core::types::U256,
+                    bool,
+                ),
+            >,
+        > {
+            self.0
+                .method_hash([53, 225, 52, 155], (p0, p1, p2, p3))
+                .expect("method not found (this should never happen)")
+        }
         ///Calls the contract's `expectCall` (0xbd6af434) function
         pub fn expect_call_0(
             &self,
@@ -6712,6 +6831,16 @@ pub mod hevm {
         ) -> ::ethers_contract::builders::ContractCall<M, ()> {
             self.0
                 .method_hash([242, 131, 15, 123], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `rpc` (0x1206c8a8) function
+        pub fn rpc(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::Bytes> {
+            self.0
+                .method_hash([18, 6, 200, 168], (p0, p1))
                 .expect("method not found (this should never happen)")
         }
         ///Calls the contract's `rpcUrl` (0x975a6ce9) function
@@ -8067,6 +8196,27 @@ pub mod hevm {
         pub ::ethers_core::types::Address,
         pub ::ethers_core::types::Bytes,
     );
+    ///Container type for all input parameters for the `eth_getLogs` function with signature `eth_getLogs(uint256,uint256,address,bytes32[])` and selector `0x35e1349b`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(
+        name = "eth_getLogs",
+        abi = "eth_getLogs(uint256,uint256,address,bytes32[])"
+    )]
+    pub struct EthGetLogsCall(
+        pub ::ethers_core::types::U256,
+        pub ::ethers_core::types::U256,
+        pub ::ethers_core::types::Address,
+        pub ::std::vec::Vec<[u8; 32]>,
+    );
     ///Container type for all input parameters for the `expectCall` function with signature `expectCall(address,bytes)` and selector `0xbd6af434`
     #[derive(
         Clone,
@@ -9415,6 +9565,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "rollFork", abi = "rollFork(uint256,bytes32)")]
     pub struct RollFork3Call(pub ::ethers_core::types::U256, pub [u8; 32]);
+    ///Container type for all input parameters for the `rpc` function with signature `rpc(string,string)` and selector `0x1206c8a8`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "rpc", abi = "rpc(string,string)")]
+    pub struct RpcCall(pub ::std::string::String, pub ::std::string::String);
     ///Container type for all input parameters for the `rpcUrl` function with signature `rpcUrl(string)` and selector `0x975a6ce9`
     #[derive(
         Clone,
@@ -10232,6 +10395,7 @@ pub mod hevm {
         EnvUint0(EnvUint0Call),
         EnvUint1(EnvUint1Call),
         Etch(EtchCall),
+        EthGetLogs(EthGetLogsCall),
         ExpectCall0(ExpectCall0Call),
         ExpectCall1(ExpectCall1Call),
         ExpectCall2(ExpectCall2Call),
@@ -10325,6 +10489,7 @@ pub mod hevm {
         RollFork1(RollFork1Call),
         RollFork2(RollFork2Call),
         RollFork3(RollFork3Call),
+        Rpc(RpcCall),
         RpcUrl(RpcUrlCall),
         RpcUrlStructs(RpcUrlStructsCall),
         RpcUrls(RpcUrlsCall),
@@ -10628,6 +10793,10 @@ pub mod hevm {
             if let Ok(decoded)
                 = <EtchCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::Etch(decoded));
+            }
+            if let Ok(decoded)
+                = <EthGetLogsCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::EthGetLogs(decoded));
             }
             if let Ok(decoded)
                 = <ExpectCall0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
@@ -11030,6 +11199,10 @@ pub mod hevm {
                 return Ok(Self::RollFork3(decoded));
             }
             if let Ok(decoded)
+                = <RpcCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::Rpc(decoded));
+            }
+            if let Ok(decoded)
                 = <RpcUrlCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::RpcUrl(decoded));
             }
@@ -11379,6 +11552,9 @@ pub mod hevm {
                 Self::EnvUint0(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::EnvUint1(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::Etch(element) => ::ethers_core::abi::AbiEncode::encode(element),
+                Self::EthGetLogs(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
                 Self::ExpectCall0(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
@@ -11620,6 +11796,7 @@ pub mod hevm {
                 Self::RollFork3(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
+                Self::Rpc(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::RpcUrl(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::RpcUrlStructs(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
@@ -11818,6 +11995,7 @@ pub mod hevm {
                 Self::EnvUint0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::EnvUint1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Etch(element) => ::core::fmt::Display::fmt(element, f),
+                Self::EthGetLogs(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ExpectCall0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ExpectCall1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ExpectCall2(element) => ::core::fmt::Display::fmt(element, f),
@@ -11927,6 +12105,7 @@ pub mod hevm {
                 Self::RollFork1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::RollFork2(element) => ::core::fmt::Display::fmt(element, f),
                 Self::RollFork3(element) => ::core::fmt::Display::fmt(element, f),
+                Self::Rpc(element) => ::core::fmt::Display::fmt(element, f),
                 Self::RpcUrl(element) => ::core::fmt::Display::fmt(element, f),
                 Self::RpcUrlStructs(element) => ::core::fmt::Display::fmt(element, f),
                 Self::RpcUrls(element) => ::core::fmt::Display::fmt(element, f),
@@ -12284,6 +12463,11 @@ pub mod hevm {
     impl ::core::convert::From<EtchCall> for HEVMCalls {
         fn from(value: EtchCall) -> Self {
             Self::Etch(value)
+        }
+    }
+    impl ::core::convert::From<EthGetLogsCall> for HEVMCalls {
+        fn from(value: EthGetLogsCall) -> Self {
+            Self::EthGetLogs(value)
         }
     }
     impl ::core::convert::From<ExpectCall0Call> for HEVMCalls {
@@ -12749,6 +12933,11 @@ pub mod hevm {
     impl ::core::convert::From<RollFork3Call> for HEVMCalls {
         fn from(value: RollFork3Call) -> Self {
             Self::RollFork3(value)
+        }
+    }
+    impl ::core::convert::From<RpcCall> for HEVMCalls {
+        fn from(value: RpcCall) -> Self {
+            Self::Rpc(value)
         }
     }
     impl ::core::convert::From<RpcUrlCall> for HEVMCalls {
@@ -13563,6 +13752,32 @@ pub mod hevm {
         Hash
     )]
     pub struct EnvUint1Return(pub ::std::vec::Vec<::ethers_core::types::U256>);
+    ///Container type for all return fields from the `eth_getLogs` function with signature `eth_getLogs(uint256,uint256,address,bytes32[])` and selector `0x35e1349b`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct EthGetLogsReturn(
+        pub ::std::vec::Vec<
+            (
+                ::ethers_core::types::Address,
+                ::std::vec::Vec<[u8; 32]>,
+                ::ethers_core::types::Bytes,
+                ::ethers_core::types::U256,
+                [u8; 32],
+                ::ethers_core::types::U256,
+                [u8; 32],
+                ::ethers_core::types::U256,
+                bool,
+            ),
+        >,
+    );
     ///Container type for all return fields from the `ffi` function with signature `ffi(string[])` and selector `0x89160467`
     #[derive(
         Clone,
@@ -14099,6 +14314,18 @@ pub mod hevm {
         Hash
     )]
     pub struct RevertToReturn(pub bool);
+    ///Container type for all return fields from the `rpc` function with signature `rpc(string,string)` and selector `0x1206c8a8`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct RpcReturn(pub ::ethers_core::types::Bytes);
     ///Container type for all return fields from the `rpcUrl` function with signature `rpcUrl(string)` and selector `0x975a6ce9`
     #[derive(
         Clone,
@@ -14372,6 +14599,28 @@ pub mod hevm {
         pub depth: u64,
         pub is_dir: bool,
         pub is_symlink: bool,
+    }
+    ///`EthGetLogs(address,bytes32[],bytes,uint256,bytes32,uint256,bytes32,uint256,bool)`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct EthGetLogs {
+        pub emitter: ::ethers_core::types::Address,
+        pub topics: ::std::vec::Vec<[u8; 32]>,
+        pub data: ::ethers_core::types::Bytes,
+        pub block_number: ::ethers_core::types::U256,
+        pub transaction_hash: [u8; 32],
+        pub transaction_index: ::ethers_core::types::U256,
+        pub block_hash: [u8; 32],
+        pub log_index: ::ethers_core::types::U256,
+        pub removed: bool,
     }
     ///`FfiResult(int32,bytes,bytes)`
     #[derive(

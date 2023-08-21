@@ -1,14 +1,21 @@
 use super::{fmt_err, Cheatcodes, Error, Result};
 use crate::{
     abi::HEVMCalls,
-    executor::{backend::DatabaseExt, fork::CreateFork},
+    executor::{
+        backend::DatabaseExt, fork::CreateFork, inspector::cheatcodes::ext::value_to_token,
+    },
+    utils::{b160_to_h160, RuntimeOrHandle},
 };
 use ethers::{
-    abi::AbiEncode,
+    abi::{self, AbiEncode, Token, Tokenizable, Tokenize},
     prelude::U256,
-    types::{Bytes, H256},
+    providers::Middleware,
+    types::{Bytes, Filter, H256},
 };
+use foundry_abi::hevm::{EthGetLogsCall, RpcCall};
+use foundry_common::ProviderBuilder;
 use revm::EVMData;
+use serde_json::Value;
 
 fn empty<T>(_: T) -> Bytes {
     Bytes::new()
@@ -140,6 +147,8 @@ pub fn apply<DB: DatabaseExt>(
             )
             .map(empty)
             .map_err(Into::into),
+        HEVMCalls::EthGetLogs(inner) => eth_getlogs(data, inner),
+        HEVMCalls::Rpc(inner) => rpc(data, inner),
         _ => return None,
     };
     Some(result)
@@ -245,4 +254,108 @@ fn create_fork_request<DB: DatabaseExt>(
         evm_opts,
     };
     Ok(fork)
+}
+
+/// Retrieve the logs specified for the current fork.
+/// Equivalent to eth_getLogs but on a cheatcode.
+fn eth_getlogs<DB: DatabaseExt>(data: &EVMData<DB>, inner: &EthGetLogsCall) -> Result {
+    let url = data.db.active_fork_url().ok_or(fmt_err!("No active fork url found"))?;
+    if inner.0 > U256::from(u64::MAX) || inner.1 > U256::from(u64::MAX) {
+        return Err(fmt_err!("Blocks in block range must be less than 2^64 - 1"))
+    }
+    // Cannot possibly have more than 4 topics in the topics array.
+    if inner.3.len() > 4 {
+        return Err(fmt_err!("Topics array must be less than 4 elements"))
+    }
+
+    let provider = ProviderBuilder::new(url).build()?;
+    let mut filter = Filter::new()
+        .address(b160_to_h160(inner.2.into()))
+        .from_block(inner.0.as_u64())
+        .to_block(inner.1.as_u64());
+    for (i, item) in inner.3.iter().enumerate() {
+        match i {
+            0 => filter = filter.topic0(U256::from(item)),
+            1 => filter = filter.topic1(U256::from(item)),
+            2 => filter = filter.topic2(U256::from(item)),
+            3 => filter = filter.topic3(U256::from(item)),
+            _ => return Err(fmt_err!("Topics array should be less than 4 elements")),
+        };
+    }
+
+    let logs = RuntimeOrHandle::new()
+        .block_on(provider.get_logs(&filter))
+        .map_err(|_| fmt_err!("Error in calling eth_getLogs"))?;
+
+    if logs.is_empty() {
+        let empty: Bytes = abi::encode(&[Token::Array(vec![])]).into();
+        return Ok(empty)
+    }
+
+    let result = abi::encode(
+        &logs
+            .iter()
+            .map(|entry| {
+                Token::Tuple(vec![
+                    entry.address.into_token(),
+                    entry.topics.clone().into_token(),
+                    Token::Bytes(entry.data.to_vec()),
+                    entry
+                        .block_number
+                        .expect("eth_getLogs response should include block_number field")
+                        .as_u64()
+                        .into_token(),
+                    entry
+                        .transaction_hash
+                        .expect("eth_getLogs response should include transaction_hash field")
+                        .into_token(),
+                    entry
+                        .transaction_index
+                        .expect("eth_getLogs response should include transaction_index field")
+                        .as_u64()
+                        .into_token(),
+                    entry
+                        .block_hash
+                        .expect("eth_getLogs response should include block_hash field")
+                        .into_token(),
+                    entry
+                        .log_index
+                        .expect("eth_getLogs response should include log_index field")
+                        .into_token(),
+                    entry
+                        .removed
+                        .expect("eth_getLogs response should include removed field")
+                        .into_token(),
+                ])
+            })
+            .collect::<Vec<Token>>()
+            .into_tokens(),
+    )
+    .into();
+    Ok(result)
+}
+
+fn rpc<DB: DatabaseExt>(data: &EVMData<DB>, inner: &RpcCall) -> Result {
+    let url = data.db.active_fork_url().ok_or(fmt_err!("No active fork url found"))?;
+    let provider = ProviderBuilder::new(url).build()?;
+
+    let method = inner.0.as_str();
+    let params = inner.1.as_str();
+    let params_json: Value = serde_json::from_str(params)?;
+
+    let result: Value = RuntimeOrHandle::new()
+        .block_on(provider.request(method, params_json))
+        .map_err(|err| fmt_err!("Error in calling {:?}: {:?}", method, err))?;
+
+    let result_as_tokens =
+        value_to_token(&result).map_err(|err| fmt_err!("Failed to parse result: {err}"))?;
+
+    let abi_encoded: Vec<u8> = match result_as_tokens {
+        Token::Tuple(vec) | Token::Array(vec) | Token::FixedArray(vec) => abi::encode(&vec),
+        _ => {
+            let vec = vec![result_as_tokens];
+            abi::encode(&vec)
+        }
+    };
+    Ok(abi_encoded.into())
 }
