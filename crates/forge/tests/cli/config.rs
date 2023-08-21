@@ -116,7 +116,6 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         fs_permissions: Default::default(),
         __non_exhaustive: (),
         __warnings: vec![],
-        eth_rpc_jwt: None,
     };
     prj.write_config(input.clone());
     let config = cmd.config();
