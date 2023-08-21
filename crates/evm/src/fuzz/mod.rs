@@ -27,6 +27,8 @@ pub mod error;
 pub mod invariant;
 pub mod strategies;
 
+/// Returned by a single fuzz in the case of a successful run
+#[derive(Debug)]
 pub struct CaseOutcome {
     pub case: FuzzCase,
     pub gas_used: u64,
@@ -37,6 +39,8 @@ pub struct CaseOutcome {
     pub breakpoints: Breakpoints,
 }
 
+/// Returned by a single fuzz when a counterexample has been discovered
+#[derive(Debug)]
 pub struct CounterExampleOutcome {
     pub counterexample: (ethers::types::Bytes, RawCallResult),
     pub exit_reason: InstructionResult,
@@ -44,6 +48,8 @@ pub struct CounterExampleOutcome {
     pub breakpoints: Breakpoints,
 }
 
+/// Outcome of a single fuzz
+#[derive(Debug)]
 pub enum FuzzOutcome {
     Case(CaseOutcome),
     CounterExample(CounterExampleOutcome),
