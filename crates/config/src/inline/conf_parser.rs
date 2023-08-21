@@ -71,11 +71,8 @@ where
     fn validate_configs(natspec: &NatSpec) -> Result<(), InlineConfigError> {
         let config_key = Self::config_key();
 
-        let configs = natspec
-            .config_lines()
-            .into_iter()
-            .filter(|l| l.contains(&config_key))
-            .collect::<Vec<String>>();
+        let configs =
+            natspec.config_lines().filter(|l| l.contains(&config_key)).collect::<Vec<String>>();
 
         Self::default().try_merge(&configs).map_err(|e| {
             let line = natspec.debug_context();
