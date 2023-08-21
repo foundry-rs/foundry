@@ -23,6 +23,18 @@ pub struct RpcOpts {
     /// Use the Flashbots RPC URL (https://rpc.flashbots.net).
     #[clap(long)]
     pub flashbots: bool,
+
+    /// JWT Secret for the RPC endpoint.
+    ///
+    /// The JWT secret will be used to create a JWT for a RPC. For example, the following can be
+    /// used to simulate a CL `engine_forkchoiceUpdated` call:
+    ///
+    /// cast rpc --jwt-secret <JWT_SECRET> engine_forkchoiceUpdatedV2
+    /// '["0x6bb38c26db65749ab6e472080a3d20a2f35776494e72016d1e339593f21c59bc",
+    /// "0x6bb38c26db65749ab6e472080a3d20a2f35776494e72016d1e339593f21c59bc",
+    /// "0x6bb38c26db65749ab6e472080a3d20a2f35776494e72016d1e339593f21c59bc"]'
+    #[clap(long, env = "ETH_RPC_JWT_SECRET")]
+    pub jwt_secret: Option<String>,
 }
 
 impl_figment_convert_cast!(RpcOpts);
@@ -49,10 +61,23 @@ impl RpcOpts {
         Ok(url)
     }
 
+    /// Returns the JWT secret.
+    pub fn jwt<'a>(&'a self, config: Option<&'a Config>) -> Result<Option<Cow<'a, str>>> {
+        let jwt = match (self.jwt_secret.as_deref(), config) {
+            (Some(jwt), _) => Some(Cow::Borrowed(jwt)),
+            (None, Some(config)) => config.get_rpc_jwt_secret()?,
+            (None, None) => None,
+        };
+        Ok(jwt)
+    }
+
     pub fn dict(&self) -> Dict {
         let mut dict = Dict::new();
         if let Ok(Some(url)) = self.url(None) {
             dict.insert("eth_rpc_url".into(), url.into_owned().into());
+        }
+        if let Ok(Some(jwt)) = self.jwt(None) {
+            dict.insert("eth_rpc_jwt".into(), jwt.into_owned().into());
         }
         dict
     }

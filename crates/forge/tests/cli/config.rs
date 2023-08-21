@@ -84,6 +84,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         block_gas_limit: Some(100u64.into()),
         memory_limit: 2u64.pow(25),
         eth_rpc_url: Some("localhost".to_string()),
+        eth_rpc_jwt: None,
         etherscan_api_key: None,
         etherscan: Default::default(),
         verbosity: 4,

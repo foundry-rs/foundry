@@ -4,11 +4,11 @@ use crate::{ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
 use ethers_core::types::{Chain, U256};
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use ethers_providers::{
-    is_local_endpoint, Http, HttpRateLimitRetryPolicy, Middleware, Provider, RetryClient,
-    RetryClientBuilder, DEFAULT_LOCAL_POLL_INTERVAL,
+    is_local_endpoint, Authorization, Http, HttpRateLimitRetryPolicy, JwtAuth, JwtKey, Middleware,
+    Provider, RetryClient, RetryClientBuilder, DEFAULT_LOCAL_POLL_INTERVAL,
 };
 use eyre::WrapErr;
-use reqwest::{IntoUrl, Url};
+use reqwest::{header::HeaderValue, IntoUrl, Url};
 use std::{borrow::Cow, time::Duration};
 
 /// Helper type alias for a retry provider
@@ -53,6 +53,8 @@ pub struct ProviderBuilder {
     timeout: Duration,
     /// available CUPS
     compute_units_per_second: u64,
+    /// JWT Secret
+    jwt: Option<String>,
 }
 
 // === impl ProviderBuilder ===
@@ -76,6 +78,7 @@ impl ProviderBuilder {
             timeout: REQUEST_TIMEOUT,
             // alchemy max cpus <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
+            jwt: None,
         }
     }
 
@@ -141,6 +144,12 @@ impl ProviderBuilder {
         self.max_retry(100).initial_backoff(100)
     }
 
+    /// Sets the JWT secret
+    pub fn jwt(mut self, jwt: impl Into<String>) -> Self {
+        self.jwt = Some(jwt.into());
+        self
+    }
+
     /// Same as [`Self:build()`] but also retrieves the `chainId` in order to derive an appropriate
     /// interval
     pub async fn connect(self) -> eyre::Result<RetryProvider> {
@@ -163,10 +172,33 @@ impl ProviderBuilder {
             initial_backoff,
             timeout,
             compute_units_per_second,
+            jwt,
         } = self;
         let url = url?;
 
-        let client = reqwest::Client::builder().timeout(timeout).build()?;
+        let mut client_builder = reqwest::Client::builder().timeout(timeout);
+
+        // Set the JWT auth as a header if present
+        if let Some(jwt) = jwt {
+            // Decode jwt from hex, then generate claims (iat with current timestamp)
+            let jwt = hex::decode(jwt)?;
+            let secret =
+                JwtKey::from_slice(&jwt).map_err(|err| eyre::eyre!("Invalid JWT: {}", err))?;
+            let auth = JwtAuth::new(secret, None, None);
+            let token = auth.generate_token()?;
+
+            // Essentially unrolled ethers-rs new_with_auth to accomodate the custom timeout
+            let auth = Authorization::Bearer(token);
+            let mut auth_value = HeaderValue::from_str(&auth.to_string())?;
+            auth_value.set_sensitive(true);
+
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(reqwest::header::AUTHORIZATION, auth_value);
+
+            client_builder = client_builder.default_headers(headers);
+        }
+
+        let client = client_builder.build()?;
         let is_local = is_local_endpoint(url.as_str());
 
         let provider = Http::new_with_client(url, client);
