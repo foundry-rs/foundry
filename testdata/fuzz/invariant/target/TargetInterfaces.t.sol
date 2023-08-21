@@ -9,7 +9,7 @@ struct FuzzInterface {
 }
 
 contract Hello {
-    bool public world; 
+    bool public world;
 
     function changeWorld() external {
         world = true;
