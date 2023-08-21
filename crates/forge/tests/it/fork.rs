@@ -2,9 +2,10 @@
 
 use crate::{
     config::*,
-    test_helpers::{filter::Filter, RE_PATH_SEPARATOR},
+    test_helpers::{filter::Filter, PROJECT, RE_PATH_SEPARATOR},
 };
 use forge::result::SuiteResult;
+use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 
 /// Executes reverting fork test
 #[tokio::test(flavor = "multi_thread")]
@@ -52,9 +53,12 @@ async fn test_get_logs_fork() {
 /// Executes rpc cheatcode
 #[tokio::test(flavor = "multi_thread")]
 async fn test_rpc_fork() {
+    let mut config = Config::with_root(PROJECT.root());
+    config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
+    let runner = runner_with_config(config);
     let filter = Filter::new("testRpc", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
-    TestConfig::filter(filter).await.run().await;
+    TestConfig::with_filter(runner.await, filter).run().await;
 }
 
 /// Tests that we can launch in forking mode
