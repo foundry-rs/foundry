@@ -766,7 +766,7 @@ impl Config {
     /// use foundry_config::Config;
     /// # fn t() {
     ///     let config = Config::with_root("./");
-    ///     let rpc_jwt = config.get_rpc_jwt().unwrap().unwrap();
+    ///     let rpc_jwt = config.get_rpc_jwt_secret().unwrap().unwrap();
     /// # }
     /// ```
     pub fn get_rpc_jwt_secret(&self) -> Result<Option<Cow<str>>, UnresolvedEnvVarError> {
