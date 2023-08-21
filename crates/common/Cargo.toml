@@ -43,7 +43,8 @@ once_cell = "1"
 dunce = "1"
 regex = "1"
 globset = "0.4"
-hex = "0.4"
+# Using const-hex instead of hex for speed
+hex.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
