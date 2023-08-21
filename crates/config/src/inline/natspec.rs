@@ -57,7 +57,7 @@ impl NatSpec {
         &'a self,
         prefix: &'a str,
     ) -> impl Iterator<Item = String> + 'a {
-        self.config_lines().into_iter().filter(move |l| l.starts_with(prefix))
+        self.config_lines().filter(move |l| l.starts_with(prefix))
     }
 
     /// Returns a list of all the configuration lines available in the natspec

@@ -73,7 +73,6 @@ where
 
         let configs = natspec
             .config_lines()
-            .into_iter()
             .filter(|l| l.contains(&config_key))
             .collect::<Vec<String>>();
 
