@@ -455,6 +455,256 @@ pub mod console {
     pub static CONSOLE_ABI: ::ethers_contract::Lazy<::ethers_core::abi::Abi> = ::ethers_contract::Lazy::new(
         __abi,
     );
+    pub struct Console<M>(::ethers_contract::Contract<M>);
+    impl<M> ::core::clone::Clone for Console<M> {
+        fn clone(&self) -> Self {
+            Self(::core::clone::Clone::clone(&self.0))
+        }
+    }
+    impl<M> ::core::ops::Deref for Console<M> {
+        type Target = ::ethers_contract::Contract<M>;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+    impl<M> ::core::ops::DerefMut for Console<M> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.0
+        }
+    }
+    impl<M> ::core::fmt::Debug for Console<M> {
+        fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+            f.debug_tuple(::core::stringify!(Console)).field(&self.address()).finish()
+        }
+    }
+    impl<M: ::ethers_providers::Middleware> Console<M> {
+        /// Creates a new contract instance with the specified `ethers` client at
+        /// `address`. The contract derefs to a `ethers::Contract` object.
+        pub fn new<T: Into<::ethers_core::types::Address>>(
+            address: T,
+            client: ::std::sync::Arc<M>,
+        ) -> Self {
+            Self(
+                ::ethers_contract::Contract::new(
+                    address.into(),
+                    CONSOLE_ABI.clone(),
+                    client,
+                ),
+            )
+        }
+        ///Gets the contract's `log` event
+        pub fn log_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogFilter> {
+            self.0.event()
+        }
+        ///Gets the contract's `log_address` event
+        pub fn log_address_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<
+            ::std::sync::Arc<M>,
+            M,
+            LogAddressFilter,
+        > {
+            self.0.event()
+        }
+        ///Gets the contract's `log_array` event
+        pub fn log_array_1_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<
+            ::std::sync::Arc<M>,
+            M,
+            LogArray1Filter,
+        > {
+            self.0.event()
+        }
+        ///Gets the contract's `log_array` event
+        pub fn log_array_2_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<
+            ::std::sync::Arc<M>,
+            M,
+            LogArray2Filter,
+        > {
+            self.0.event()
+        }
+        ///Gets the contract's `log_array` event
+        pub fn log_array_3_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<
+            ::std::sync::Arc<M>,
+            M,
+            LogArray3Filter,
+        > {
+            self.0.event()
+        }
+        ///Gets the contract's `log_bytes` event
+        pub fn log_bytes_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogBytesFilter> {
+            self.0.event()
+        }
+        ///Gets the contract's `log_bytes32` event
+        pub fn log_bytes_32_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<
+            ::std::sync::Arc<M>,
+            M,
+            LogBytes32Filter,
+        > {
+            self.0.event()
+        }
+        ///Gets the contract's `log_int` event
+        pub fn log_int_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogIntFilter> {
+            self.0.event()
+        }
+        ///Gets the contract's `log_named_address` event
+        pub fn log_named_address_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<
+            ::std::sync::Arc<M>,
+            M,
+            LogNamedAddressFilter,
+        > {
+            self.0.event()
+        }
+        ///Gets the contract's `log_named_array` event
+        pub fn log_named_array_1_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<
+            ::std::sync::Arc<M>,
+            M,
+            LogNamedArray1Filter,
+        > {
+            self.0.event()
+        }
+        ///Gets the contract's `log_named_array` event
+        pub fn log_named_array_2_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<
+            ::std::sync::Arc<M>,
+            M,
+            LogNamedArray2Filter,
+        > {
+            self.0.event()
+        }
+        ///Gets the contract's `log_named_array` event
+        pub fn log_named_array_3_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<
+            ::std::sync::Arc<M>,
+            M,
+            LogNamedArray3Filter,
+        > {
+            self.0.event()
+        }
+        ///Gets the contract's `log_named_bytes` event
+        pub fn log_named_bytes_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<
+            ::std::sync::Arc<M>,
+            M,
+            LogNamedBytesFilter,
+        > {
+            self.0.event()
+        }
+        ///Gets the contract's `log_named_bytes32` event
+        pub fn log_named_bytes_32_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<
+            ::std::sync::Arc<M>,
+            M,
+            LogNamedBytes32Filter,
+        > {
+            self.0.event()
+        }
+        ///Gets the contract's `log_named_decimal_int` event
+        pub fn log_named_decimal_int_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<
+            ::std::sync::Arc<M>,
+            M,
+            LogNamedDecimalIntFilter,
+        > {
+            self.0.event()
+        }
+        ///Gets the contract's `log_named_decimal_uint` event
+        pub fn log_named_decimal_uint_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<
+            ::std::sync::Arc<M>,
+            M,
+            LogNamedDecimalUintFilter,
+        > {
+            self.0.event()
+        }
+        ///Gets the contract's `log_named_int` event
+        pub fn log_named_int_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<
+            ::std::sync::Arc<M>,
+            M,
+            LogNamedIntFilter,
+        > {
+            self.0.event()
+        }
+        ///Gets the contract's `log_named_string` event
+        pub fn log_named_string_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<
+            ::std::sync::Arc<M>,
+            M,
+            LogNamedStringFilter,
+        > {
+            self.0.event()
+        }
+        ///Gets the contract's `log_named_uint` event
+        pub fn log_named_uint_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<
+            ::std::sync::Arc<M>,
+            M,
+            LogNamedUintFilter,
+        > {
+            self.0.event()
+        }
+        ///Gets the contract's `log_string` event
+        pub fn log_string_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<
+            ::std::sync::Arc<M>,
+            M,
+            LogStringFilter,
+        > {
+            self.0.event()
+        }
+        ///Gets the contract's `log_uint` event
+        pub fn log_uint_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogUintFilter> {
+            self.0.event()
+        }
+        ///Gets the contract's `logs` event
+        pub fn logs_filter(
+            &self,
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, LogsFilter> {
+            self.0.event()
+        }
+        /// Returns an `Event` builder for all the events of this contract.
+        pub fn events(
+            &self,
+        ) -> ::ethers_contract::builders::Event<::std::sync::Arc<M>, M, ConsoleEvents> {
+            self.0.event_with_filter(::core::default::Default::default())
+        }
+    }
+    impl<M: ::ethers_providers::Middleware> From<::ethers_contract::Contract<M>>
+    for Console<M> {
+        fn from(contract: ::ethers_contract::Contract<M>) -> Self {
+            Self::new(contract.address(), contract.client())
+        }
+    }
     #[derive(
         Clone,
         ::ethers_contract::EthEvent,

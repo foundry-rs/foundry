@@ -37,17 +37,23 @@ async fn test_cheats_fork_revert() {
 /// Executes all non-reverting fork cheatcodes
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cheats_fork() {
+    let mut config = Config::with_root(PROJECT.root());
+    config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
+    let runner = runner_with_config(config);
     let filter = Filter::new(".*", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
-    TestConfig::filter(filter).await.run().await;
+    TestConfig::with_filter(runner.await, filter).run().await;
 }
 
 /// Executes eth_getLogs cheatcode
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_logs_fork() {
+    let mut config = Config::with_root(PROJECT.root());
+    config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
+    let runner = runner_with_config(config);
     let filter = Filter::new("testEthGetLogs", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
-    TestConfig::filter(filter).await.run().await;
+    TestConfig::with_filter(runner.await, filter).run().await;
 }
 
 /// Executes rpc cheatcode

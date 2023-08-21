@@ -5163,6 +5163,2203 @@ pub mod hevm {
     pub static HEVM_ABI: ::ethers_contract::Lazy<::ethers_core::abi::Abi> = ::ethers_contract::Lazy::new(
         __abi,
     );
+    pub struct HEVM<M>(::ethers_contract::Contract<M>);
+    impl<M> ::core::clone::Clone for HEVM<M> {
+        fn clone(&self) -> Self {
+            Self(::core::clone::Clone::clone(&self.0))
+        }
+    }
+    impl<M> ::core::ops::Deref for HEVM<M> {
+        type Target = ::ethers_contract::Contract<M>;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+    impl<M> ::core::ops::DerefMut for HEVM<M> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.0
+        }
+    }
+    impl<M> ::core::fmt::Debug for HEVM<M> {
+        fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+            f.debug_tuple(::core::stringify!(HEVM)).field(&self.address()).finish()
+        }
+    }
+    impl<M: ::ethers_providers::Middleware> HEVM<M> {
+        /// Creates a new contract instance with the specified `ethers` client at
+        /// `address`. The contract derefs to a `ethers::Contract` object.
+        pub fn new<T: Into<::ethers_core::types::Address>>(
+            address: T,
+            client: ::std::sync::Arc<M>,
+        ) -> Self {
+            Self(
+                ::ethers_contract::Contract::new(
+                    address.into(),
+                    HEVM_ABI.clone(),
+                    client,
+                ),
+            )
+        }
+        ///Calls the contract's `accesses` (0x65bc9481) function
+        pub fn accesses(
+            &self,
+            p0: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            (::std::vec::Vec<[u8; 32]>, ::std::vec::Vec<[u8; 32]>),
+        > {
+            self.0
+                .method_hash([101, 188, 148, 129], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `activeFork` (0x2f103f22) function
+        pub fn active_fork(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([47, 16, 63, 34], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `addr` (0xffa18649) function
+        pub fn addr(
+            &self,
+            p0: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::ethers_core::types::Address,
+        > {
+            self.0
+                .method_hash([255, 161, 134, 73], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `allowCheatcodes` (0xea060291) function
+        pub fn allow_cheatcodes(
+            &self,
+            p0: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([234, 6, 2, 145], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `assume` (0x4c63e562) function
+        pub fn assume(
+            &self,
+            p0: bool,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([76, 99, 229, 98], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `breakpoint` (0xf0259e92) function
+        pub fn breakpoint_0(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([240, 37, 158, 146], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `breakpoint` (0xf7d39a8d) function
+        pub fn breakpoint_1(
+            &self,
+            p0: ::std::string::String,
+            p1: bool,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([247, 211, 154, 141], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `broadcast` (0xafc98040) function
+        pub fn broadcast_0(&self) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([175, 201, 128, 64], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `broadcast` (0xe6962cdb) function
+        pub fn broadcast_1(
+            &self,
+            p0: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([230, 150, 44, 219], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `broadcast` (0xf67a965b) function
+        pub fn broadcast_2(
+            &self,
+            p0: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([246, 122, 150, 91], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `chainId` (0x4049ddd2) function
+        pub fn chain_id(
+            &self,
+            p0: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([64, 73, 221, 210], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `clearMockedCalls` (0x3fdf4e15) function
+        pub fn clear_mocked_calls(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([63, 223, 78, 21], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `closeFile` (0x48c3241f) function
+        pub fn close_file(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([72, 195, 36, 31], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `coinbase` (0xff483c54) function
+        pub fn coinbase(
+            &self,
+            p0: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([255, 72, 60, 84], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `copyFile` (0xa54a87d8) function
+        pub fn copy_file(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([165, 74, 135, 216], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `createDir` (0x168b64d3) function
+        pub fn create_dir(
+            &self,
+            p0: ::std::string::String,
+            p1: bool,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([22, 139, 100, 211], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `createFork` (0x6ba3ba2b) function
+        pub fn create_fork_1(
+            &self,
+            p0: ::std::string::String,
+            p1: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([107, 163, 186, 43], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `createFork` (0x7ca29682) function
+        pub fn create_fork_2(
+            &self,
+            p0: ::std::string::String,
+            p1: [u8; 32],
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([124, 162, 150, 130], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `createFork` (0x31ba3498) function
+        pub fn create_fork_0(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([49, 186, 52, 152], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `createSelectFork` (0x71ee464d) function
+        pub fn create_select_fork_1(
+            &self,
+            p0: ::std::string::String,
+            p1: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([113, 238, 70, 77], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `createSelectFork` (0x84d52b7a) function
+        pub fn create_select_fork_2(
+            &self,
+            p0: ::std::string::String,
+            p1: [u8; 32],
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([132, 213, 43, 122], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `createSelectFork` (0x98680034) function
+        pub fn create_select_fork_0(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([152, 104, 0, 52], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `createWallet` (0x7404f1d2) function
+        pub fn create_wallet_0(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            (
+                ::ethers_core::types::Address,
+                ::ethers_core::types::U256,
+                ::ethers_core::types::U256,
+                ::ethers_core::types::U256,
+            ),
+        > {
+            self.0
+                .method_hash([116, 4, 241, 210], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `createWallet` (0x7a675bb6) function
+        pub fn create_wallet_1(
+            &self,
+            p0: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            (
+                ::ethers_core::types::Address,
+                ::ethers_core::types::U256,
+                ::ethers_core::types::U256,
+                ::ethers_core::types::U256,
+            ),
+        > {
+            self.0
+                .method_hash([122, 103, 91, 182], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `createWallet` (0xed7c5462) function
+        pub fn create_wallet_2(
+            &self,
+            p0: ::ethers_core::types::U256,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            (
+                ::ethers_core::types::Address,
+                ::ethers_core::types::U256,
+                ::ethers_core::types::U256,
+                ::ethers_core::types::U256,
+            ),
+        > {
+            self.0
+                .method_hash([237, 124, 84, 98], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `deal` (0xc88a5e6d) function
+        pub fn deal(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([200, 138, 94, 109], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `deriveKey` (0x6229498b) function
+        pub fn derive_key_0(
+            &self,
+            p0: ::std::string::String,
+            p1: u32,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([98, 41, 73, 139], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `deriveKey` (0x6bcb2c1b) function
+        pub fn derive_key_1(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: u32,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([107, 203, 44, 27], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `deriveKey` (0x32c8176d) function
+        pub fn derive_key_2(
+            &self,
+            p0: ::std::string::String,
+            p1: u32,
+            p2: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([50, 200, 23, 109], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `deriveKey` (0x29233b1f) function
+        pub fn derive_key_3(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: u32,
+            p3: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([41, 35, 59, 31], (p0, p1, p2, p3))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `difficulty` (0x46cc92d9) function
+        pub fn difficulty(
+            &self,
+            p0: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([70, 204, 146, 217], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envAddress` (0x350d56bf) function
+        pub fn env_address_0(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::ethers_core::types::Address,
+        > {
+            self.0
+                .method_hash([53, 13, 86, 191], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envAddress` (0xad31b9fa) function
+        pub fn env_address_1(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<::ethers_core::types::Address>,
+        > {
+            self.0
+                .method_hash([173, 49, 185, 250], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envBool` (0x7ed1ec7d) function
+        pub fn env_bool_0(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, bool> {
+            self.0
+                .method_hash([126, 209, 236, 125], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envBool` (0xaaaddeaf) function
+        pub fn env_bool_1(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::vec::Vec<bool>> {
+            self.0
+                .method_hash([170, 173, 222, 175], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envBytes` (0x4d7baf06) function
+        pub fn env_bytes_0(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::Bytes> {
+            self.0
+                .method_hash([77, 123, 175, 6], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envBytes` (0xddc2651b) function
+        pub fn env_bytes_1(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<::ethers_core::types::Bytes>,
+        > {
+            self.0
+                .method_hash([221, 194, 101, 27], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envBytes32` (0x97949042) function
+        pub fn env_bytes_320(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, [u8; 32]> {
+            self.0
+                .method_hash([151, 148, 144, 66], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envBytes32` (0x5af231c1) function
+        pub fn env_bytes_321(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::vec::Vec<[u8; 32]>> {
+            self.0
+                .method_hash([90, 242, 49, 193], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envInt` (0x892a0c61) function
+        pub fn env_int_0(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::I256> {
+            self.0
+                .method_hash([137, 42, 12, 97], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envInt` (0x42181150) function
+        pub fn env_int_1(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<::ethers_core::types::I256>,
+        > {
+            self.0
+                .method_hash([66, 24, 17, 80], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envOr` (0x4777f3cf) function
+        pub fn env_or_0(
+            &self,
+            p0: ::std::string::String,
+            p1: bool,
+        ) -> ::ethers_contract::builders::ContractCall<M, bool> {
+            self.0
+                .method_hash([71, 119, 243, 207], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envOr` (0x5e97348f) function
+        pub fn env_or_1(
+            &self,
+            p0: ::std::string::String,
+            p1: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([94, 151, 52, 143], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envOr` (0xbbcb713e) function
+        pub fn env_or_2(
+            &self,
+            p0: ::std::string::String,
+            p1: ::ethers_core::types::I256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::I256> {
+            self.0
+                .method_hash([187, 203, 113, 62], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envOr` (0x561fe540) function
+        pub fn env_or_3(
+            &self,
+            p0: ::std::string::String,
+            p1: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::ethers_core::types::Address,
+        > {
+            self.0
+                .method_hash([86, 31, 229, 64], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envOr` (0xb4a85892) function
+        pub fn env_or_4(
+            &self,
+            p0: ::std::string::String,
+            p1: [u8; 32],
+        ) -> ::ethers_contract::builders::ContractCall<M, [u8; 32]> {
+            self.0
+                .method_hash([180, 168, 88, 146], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envOr` (0xd145736c) function
+        pub fn env_or_5(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([209, 69, 115, 108], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envOr` (0xb3e47705) function
+        pub fn env_or_6(
+            &self,
+            p0: ::std::string::String,
+            p1: ::ethers_core::types::Bytes,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::Bytes> {
+            self.0
+                .method_hash([179, 228, 119, 5], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envOr` (0xeb85e83b) function
+        pub fn env_or_7(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::std::vec::Vec<bool>,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::vec::Vec<bool>> {
+            self.0
+                .method_hash([235, 133, 232, 59], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envOr` (0x74318528) function
+        pub fn env_or_8(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::std::vec::Vec<::ethers_core::types::U256>,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<::ethers_core::types::U256>,
+        > {
+            self.0
+                .method_hash([116, 49, 133, 40], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envOr` (0x4700d74b) function
+        pub fn env_or_9(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::std::vec::Vec<::ethers_core::types::I256>,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<::ethers_core::types::I256>,
+        > {
+            self.0
+                .method_hash([71, 0, 215, 75], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envOr` (0xc74e9deb) function
+        pub fn env_or_10(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::std::vec::Vec<::ethers_core::types::Address>,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<::ethers_core::types::Address>,
+        > {
+            self.0
+                .method_hash([199, 78, 157, 235], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envOr` (0x2281f367) function
+        pub fn env_or_11(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::std::vec::Vec<[u8; 32]>,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::vec::Vec<[u8; 32]>> {
+            self.0
+                .method_hash([34, 129, 243, 103], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envOr` (0x859216bc) function
+        pub fn env_or_12(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::std::vec::Vec<::std::string::String>,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<::std::string::String>,
+        > {
+            self.0
+                .method_hash([133, 146, 22, 188], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envOr` (0x64bc3e64) function
+        pub fn env_or_13(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::std::vec::Vec<::ethers_core::types::Bytes>,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<::ethers_core::types::Bytes>,
+        > {
+            self.0
+                .method_hash([100, 188, 62, 100], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envString` (0xf877cb19) function
+        pub fn env_string_0(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([248, 119, 203, 25], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envString` (0x14b02bc9) function
+        pub fn env_string_1(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<::std::string::String>,
+        > {
+            self.0
+                .method_hash([20, 176, 43, 201], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envUint` (0xc1978d1f) function
+        pub fn env_uint_0(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([193, 151, 141, 31], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `envUint` (0xf3dec099) function
+        pub fn env_uint_1(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<::ethers_core::types::U256>,
+        > {
+            self.0
+                .method_hash([243, 222, 192, 153], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `etch` (0xb4d6c782) function
+        pub fn etch(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::ethers_core::types::Bytes,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([180, 214, 199, 130], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `eth_getLogs` (0x35e1349b) function
+        pub fn eth_get_logs(
+            &self,
+            p0: ::ethers_core::types::U256,
+            p1: ::ethers_core::types::U256,
+            p2: ::ethers_core::types::Address,
+            p3: ::std::vec::Vec<[u8; 32]>,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<
+                (
+                    ::ethers_core::types::Address,
+                    ::std::vec::Vec<[u8; 32]>,
+                    ::ethers_core::types::Bytes,
+                    ::ethers_core::types::U256,
+                    [u8; 32],
+                    ::ethers_core::types::U256,
+                    [u8; 32],
+                    ::ethers_core::types::U256,
+                    bool,
+                ),
+            >,
+        > {
+            self.0
+                .method_hash([53, 225, 52, 155], (p0, p1, p2, p3))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectCall` (0xbd6af434) function
+        pub fn expect_call_0(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::ethers_core::types::Bytes,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([189, 106, 244, 52], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectCall` (0xc1adbbff) function
+        pub fn expect_call_1(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::ethers_core::types::Bytes,
+            p2: u64,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([193, 173, 187, 255], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectCall` (0xf30c7ba3) function
+        pub fn expect_call_2(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::ethers_core::types::U256,
+            p2: ::ethers_core::types::Bytes,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([243, 12, 123, 163], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectCall` (0xa2b1a1ae) function
+        pub fn expect_call_3(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::ethers_core::types::U256,
+            p2: ::ethers_core::types::Bytes,
+            p3: u64,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([162, 177, 161, 174], (p0, p1, p2, p3))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectCall` (0x23361207) function
+        pub fn expect_call_4(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::ethers_core::types::U256,
+            p2: u64,
+            p3: ::ethers_core::types::Bytes,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([35, 54, 18, 7], (p0, p1, p2, p3))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectCall` (0x65b7b7cc) function
+        pub fn expect_call_5(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::ethers_core::types::U256,
+            p2: u64,
+            p3: ::ethers_core::types::Bytes,
+            p4: u64,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([101, 183, 183, 204], (p0, p1, p2, p3, p4))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectCallMinGas` (0x08e4e116) function
+        pub fn expect_call_min_gas_0(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::ethers_core::types::U256,
+            p2: u64,
+            p3: ::ethers_core::types::Bytes,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([8, 228, 225, 22], (p0, p1, p2, p3))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectCallMinGas` (0xe13a1834) function
+        pub fn expect_call_min_gas_1(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::ethers_core::types::U256,
+            p2: u64,
+            p3: ::ethers_core::types::Bytes,
+            p4: u64,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([225, 58, 24, 52], (p0, p1, p2, p3, p4))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectEmit` (0x440ed10d) function
+        pub fn expect_emit_0(&self) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([68, 14, 209, 13], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectEmit` (0x86b9620d) function
+        pub fn expect_emit_1(
+            &self,
+            p0: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([134, 185, 98, 13], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectEmit` (0x491cc7c2) function
+        pub fn expect_emit_2(
+            &self,
+            p0: bool,
+            p1: bool,
+            p2: bool,
+            p3: bool,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([73, 28, 199, 194], (p0, p1, p2, p3))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectEmit` (0x81bad6f3) function
+        pub fn expect_emit_3(
+            &self,
+            p0: bool,
+            p1: bool,
+            p2: bool,
+            p3: bool,
+            p4: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([129, 186, 214, 243], (p0, p1, p2, p3, p4))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectRevert` (0xf4844814) function
+        pub fn expect_revert_0(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([244, 132, 72, 20], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectRevert` (0xf28dceb3) function
+        pub fn expect_revert_1(
+            &self,
+            p0: ::ethers_core::types::Bytes,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([242, 141, 206, 179], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectRevert` (0xc31eb0e0) function
+        pub fn expect_revert_2(
+            &self,
+            p0: [u8; 4],
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([195, 30, 176, 224], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectSafeMemory` (0x6d016688) function
+        pub fn expect_safe_memory(
+            &self,
+            p0: u64,
+            p1: u64,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([109, 1, 102, 136], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectSafeMemoryCall` (0x05838bf4) function
+        pub fn expect_safe_memory_call(
+            &self,
+            p0: u64,
+            p1: u64,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([5, 131, 139, 244], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `fee` (0x39b37ab0) function
+        pub fn fee(
+            &self,
+            p0: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([57, 179, 122, 176], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `ffi` (0x89160467) function
+        pub fn ffi(
+            &self,
+            p0: ::std::vec::Vec<::std::string::String>,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::Bytes> {
+            self.0
+                .method_hash([137, 22, 4, 103], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `fsMetadata` (0xaf368a08) function
+        pub fn fs_metadata(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            (
+                bool,
+                bool,
+                ::ethers_core::types::U256,
+                bool,
+                ::ethers_core::types::U256,
+                ::ethers_core::types::U256,
+                ::ethers_core::types::U256,
+            ),
+        > {
+            self.0
+                .method_hash([175, 54, 138, 8], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `getCode` (0x8d1cc925) function
+        pub fn get_code(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([141, 28, 201, 37], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `getDeployedCode` (0x3ebf73b4) function
+        pub fn get_deployed_code(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([62, 191, 115, 180], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `getLabel` (0x28a249b0) function
+        pub fn get_label(
+            &self,
+            p0: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([40, 162, 73, 176], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `getMappingKeyAndParentOf` (0x876e24e6) function
+        pub fn get_mapping_key_and_parent_of(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: [u8; 32],
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([135, 110, 36, 230], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `getMappingLength` (0x2f2fd63f) function
+        pub fn get_mapping_length(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: [u8; 32],
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([47, 47, 214, 63], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `getMappingSlotAt` (0xebc73ab4) function
+        pub fn get_mapping_slot_at(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: [u8; 32],
+            p2: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([235, 199, 58, 180], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `getNonce` (0xa5748aad) function
+        pub fn get_nonce_0(
+            &self,
+            p0: Wallet,
+        ) -> ::ethers_contract::builders::ContractCall<M, u64> {
+            self.0
+                .method_hash([165, 116, 138, 173], (p0,))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `getNonce` (0x2d0335ab) function
+        pub fn get_nonce_1(
+            &self,
+            p0: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([45, 3, 53, 171], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `getRecordedLogs` (0x191553a4) function
+        pub fn get_recorded_logs(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<(::std::vec::Vec<[u8; 32]>, ::ethers_core::types::Bytes)>,
+        > {
+            self.0
+                .method_hash([25, 21, 83, 164], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `isPersistent` (0xd92d8efd) function
+        pub fn is_persistent(
+            &self,
+            p0: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, bool> {
+            self.0
+                .method_hash([217, 45, 142, 253], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `keyExists` (0x528a683c) function
+        pub fn key_exists(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, bool> {
+            self.0
+                .method_hash([82, 138, 104, 60], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `label` (0xc657c718) function
+        pub fn label(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([198, 87, 199, 24], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `load` (0x667f9d70) function
+        pub fn load(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: [u8; 32],
+        ) -> ::ethers_contract::builders::ContractCall<M, [u8; 32]> {
+            self.0
+                .method_hash([102, 127, 157, 112], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `makePersistent` (0x57e22dde) function
+        pub fn make_persistent_0(
+            &self,
+            p0: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([87, 226, 45, 222], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `makePersistent` (0x4074e0a8) function
+        pub fn make_persistent_2(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([64, 116, 224, 168], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `makePersistent` (0xefb77a75) function
+        pub fn make_persistent_3(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::ethers_core::types::Address,
+            p2: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([239, 183, 122, 117], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `makePersistent` (0x1d9e269e) function
+        pub fn make_persistent_1(
+            &self,
+            p0: ::std::vec::Vec<::ethers_core::types::Address>,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([29, 158, 38, 158], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `mockCall` (0xb96213e4) function
+        pub fn mock_call_0(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::ethers_core::types::Bytes,
+            p2: ::ethers_core::types::Bytes,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([185, 98, 19, 228], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `mockCall` (0x81409b91) function
+        pub fn mock_call_1(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::ethers_core::types::U256,
+            p2: ::ethers_core::types::Bytes,
+            p3: ::ethers_core::types::Bytes,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([129, 64, 155, 145], (p0, p1, p2, p3))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `mockCallRevert` (0xdbaad147) function
+        pub fn mock_call_revert_0(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::ethers_core::types::Bytes,
+            p2: ::ethers_core::types::Bytes,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([219, 170, 209, 71], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `mockCallRevert` (0xd23cd037) function
+        pub fn mock_call_revert_1(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::ethers_core::types::U256,
+            p2: ::ethers_core::types::Bytes,
+            p3: ::ethers_core::types::Bytes,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([210, 60, 208, 55], (p0, p1, p2, p3))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `openFile` (0x7e0394bc) function
+        pub fn open_file(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([126, 3, 148, 188], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseAddress` (0xc6ce059d) function
+        pub fn parse_address(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::ethers_core::types::Address,
+        > {
+            self.0
+                .method_hash([198, 206, 5, 157], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseBool` (0x974ef924) function
+        pub fn parse_bool(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, bool> {
+            self.0
+                .method_hash([151, 78, 249, 36], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseBytes` (0x8f5d232d) function
+        pub fn parse_bytes(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::Bytes> {
+            self.0
+                .method_hash([143, 93, 35, 45], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseBytes32` (0x087e6e81) function
+        pub fn parse_bytes_32(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, [u8; 32]> {
+            self.0
+                .method_hash([8, 126, 110, 129], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseInt` (0x42346c5e) function
+        pub fn parse_int(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::I256> {
+            self.0
+                .method_hash([66, 52, 108, 94], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseJson` (0x6a82600a) function
+        pub fn parse_json_0(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::Bytes> {
+            self.0
+                .method_hash([106, 130, 96, 10], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseJson` (0x85940ef1) function
+        pub fn parse_json_1(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::Bytes> {
+            self.0
+                .method_hash([133, 148, 14, 241], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseJsonAddress` (0x1e19e657) function
+        pub fn parse_json_address(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::ethers_core::types::Address,
+        > {
+            self.0
+                .method_hash([30, 25, 230, 87], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseJsonAddressArray` (0x2fce7883) function
+        pub fn parse_json_address_array(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<::ethers_core::types::Address>,
+        > {
+            self.0
+                .method_hash([47, 206, 120, 131], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseJsonBool` (0x9f86dc91) function
+        pub fn parse_json_bool(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, bool> {
+            self.0
+                .method_hash([159, 134, 220, 145], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseJsonBoolArray` (0x91f3b94f) function
+        pub fn parse_json_bool_array(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::vec::Vec<bool>> {
+            self.0
+                .method_hash([145, 243, 185, 79], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseJsonBytes` (0xfd921be8) function
+        pub fn parse_json_bytes(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::Bytes> {
+            self.0
+                .method_hash([253, 146, 27, 232], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseJsonBytes32` (0x1777e59d) function
+        pub fn parse_json_bytes_32(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, [u8; 32]> {
+            self.0
+                .method_hash([23, 119, 229, 157], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseJsonBytes32Array` (0x91c75bc3) function
+        pub fn parse_json_bytes_32_array(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::vec::Vec<[u8; 32]>> {
+            self.0
+                .method_hash([145, 199, 91, 195], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseJsonBytesArray` (0x6631aa99) function
+        pub fn parse_json_bytes_array(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<::ethers_core::types::Bytes>,
+        > {
+            self.0
+                .method_hash([102, 49, 170, 153], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseJsonInt` (0x7b048ccd) function
+        pub fn parse_json_int(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::I256> {
+            self.0
+                .method_hash([123, 4, 140, 205], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseJsonIntArray` (0x9983c28a) function
+        pub fn parse_json_int_array(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<::ethers_core::types::I256>,
+        > {
+            self.0
+                .method_hash([153, 131, 194, 138], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseJsonKeys` (0x213e4198) function
+        pub fn parse_json_keys(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<::std::string::String>,
+        > {
+            self.0
+                .method_hash([33, 62, 65, 152], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseJsonString` (0x49c4fac8) function
+        pub fn parse_json_string(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([73, 196, 250, 200], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseJsonStringArray` (0x498fdcf4) function
+        pub fn parse_json_string_array(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<::std::string::String>,
+        > {
+            self.0
+                .method_hash([73, 143, 220, 244], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseJsonUint` (0xaddde2b6) function
+        pub fn parse_json_uint(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([173, 221, 226, 182], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseJsonUintArray` (0x522074ab) function
+        pub fn parse_json_uint_array(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<::ethers_core::types::U256>,
+        > {
+            self.0
+                .method_hash([82, 32, 116, 171], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `parseUint` (0xfa91454d) function
+        pub fn parse_uint(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([250, 145, 69, 77], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `pauseGasMetering` (0xd1a5b36f) function
+        pub fn pause_gas_metering(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([209, 165, 179, 111], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `prank` (0xca669fa7) function
+        pub fn prank_0(
+            &self,
+            p0: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([202, 102, 159, 167], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `prank` (0x47e50cce) function
+        pub fn prank_1(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([71, 229, 12, 206], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `prevrandao` (0x3b925549) function
+        pub fn prevrandao(
+            &self,
+            p0: [u8; 32],
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([59, 146, 85, 73], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `projectRoot` (0xd930a0e6) function
+        pub fn project_root(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([217, 48, 160, 230], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `readCallers` (0x4ad0bac9) function
+        pub fn read_callers(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            (
+                ::ethers_core::types::U256,
+                ::ethers_core::types::Address,
+                ::ethers_core::types::Address,
+            ),
+        > {
+            self.0
+                .method_hash([74, 208, 186, 201], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `readDir` (0xc4bc59e0) function
+        pub fn read_dir_0(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<
+                (::std::string::String, ::std::string::String, u64, bool, bool),
+            >,
+        > {
+            self.0
+                .method_hash([196, 188, 89, 224], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `readDir` (0x1497876c) function
+        pub fn read_dir_1(
+            &self,
+            p0: ::std::string::String,
+            p1: u64,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<
+                (::std::string::String, ::std::string::String, u64, bool, bool),
+            >,
+        > {
+            self.0
+                .method_hash([20, 151, 135, 108], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `readDir` (0x8102d70d) function
+        pub fn read_dir_2(
+            &self,
+            p0: ::std::string::String,
+            p1: u64,
+            p2: bool,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<
+                (::std::string::String, ::std::string::String, u64, bool, bool),
+            >,
+        > {
+            self.0
+                .method_hash([129, 2, 215, 13], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `readFile` (0x60f9bb11) function
+        pub fn read_file(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([96, 249, 187, 17], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `readFileBinary` (0x16ed7bc4) function
+        pub fn read_file_binary(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::Bytes> {
+            self.0
+                .method_hash([22, 237, 123, 196], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `readLine` (0x70f55728) function
+        pub fn read_line(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([112, 245, 87, 40], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `readLink` (0x9f5684a2) function
+        pub fn read_link(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([159, 86, 132, 162], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `record` (0x266cf109) function
+        pub fn record(&self) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([38, 108, 241, 9], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `recordLogs` (0x41af2f52) function
+        pub fn record_logs(&self) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([65, 175, 47, 82], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `rememberKey` (0x22100064) function
+        pub fn remember_key(
+            &self,
+            p0: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::ethers_core::types::Address,
+        > {
+            self.0
+                .method_hash([34, 16, 0, 100], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `removeDir` (0x45c62011) function
+        pub fn remove_dir(
+            &self,
+            p0: ::std::string::String,
+            p1: bool,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([69, 198, 32, 17], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `removeFile` (0xf1afe04d) function
+        pub fn remove_file(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([241, 175, 224, 77], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `resetNonce` (0x1c72346d) function
+        pub fn reset_nonce(
+            &self,
+            p0: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([28, 114, 52, 109], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `resumeGasMetering` (0x2bcd50e0) function
+        pub fn resume_gas_metering(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([43, 205, 80, 224], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `revertTo` (0x44d7f0a4) function
+        pub fn revert_to(
+            &self,
+            p0: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, bool> {
+            self.0
+                .method_hash([68, 215, 240, 164], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `revokePersistent` (0x997a0222) function
+        pub fn revoke_persistent_0(
+            &self,
+            p0: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([153, 122, 2, 34], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `revokePersistent` (0x3ce969e6) function
+        pub fn revoke_persistent_1(
+            &self,
+            p0: ::std::vec::Vec<::ethers_core::types::Address>,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([60, 233, 105, 230], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `roll` (0x1f7b4f30) function
+        pub fn roll(
+            &self,
+            p0: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([31, 123, 79, 48], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `rollFork` (0xd9bbf3a1) function
+        pub fn roll_fork_0(
+            &self,
+            p0: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([217, 187, 243, 161], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `rollFork` (0x0f29772b) function
+        pub fn roll_fork_1(
+            &self,
+            p0: [u8; 32],
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([15, 41, 119, 43], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `rollFork` (0xd74c83a4) function
+        pub fn roll_fork_2(
+            &self,
+            p0: ::ethers_core::types::U256,
+            p1: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([215, 76, 131, 164], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `rollFork` (0xf2830f7b) function
+        pub fn roll_fork_3(
+            &self,
+            p0: ::ethers_core::types::U256,
+            p1: [u8; 32],
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([242, 131, 15, 123], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `rpc` (0x1206c8a8) function
+        pub fn rpc(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::Bytes> {
+            self.0
+                .method_hash([18, 6, 200, 168], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `rpcUrl` (0x975a6ce9) function
+        pub fn rpc_url(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([151, 90, 108, 233], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `rpcUrlStructs` (0x9d2ad72a) function
+        pub fn rpc_url_structs(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<(::std::string::String, ::std::string::String)>,
+        > {
+            self.0
+                .method_hash([157, 42, 215, 42], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `rpcUrls` (0xa85a8418) function
+        pub fn rpc_urls(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<[::std::string::String; 2]>,
+        > {
+            self.0
+                .method_hash([168, 90, 132, 24], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `selectFork` (0x9ebf6827) function
+        pub fn select_fork(
+            &self,
+            p0: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([158, 191, 104, 39], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `serializeAddress` (0x972c6062) function
+        pub fn serialize_address_0(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([151, 44, 96, 98], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `serializeAddress` (0x1e356e1a) function
+        pub fn serialize_address_1(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::std::vec::Vec<::ethers_core::types::Address>,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([30, 53, 110, 26], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `serializeBool` (0xac22e971) function
+        pub fn serialize_bool_0(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: bool,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([172, 34, 233, 113], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `serializeBool` (0x92925aa1) function
+        pub fn serialize_bool_1(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::std::vec::Vec<bool>,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([146, 146, 90, 161], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `serializeBytes` (0xf21d52c7) function
+        pub fn serialize_bytes_0(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::ethers_core::types::Bytes,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([242, 29, 82, 199], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `serializeBytes` (0x9884b232) function
+        pub fn serialize_bytes_1(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::std::vec::Vec<::ethers_core::types::Bytes>,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([152, 132, 178, 50], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `serializeBytes32` (0x2d812b44) function
+        pub fn serialize_bytes_320(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: [u8; 32],
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([45, 129, 43, 68], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `serializeBytes32` (0x201e43e2) function
+        pub fn serialize_bytes_321(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::std::vec::Vec<[u8; 32]>,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([32, 30, 67, 226], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `serializeInt` (0x3f33db60) function
+        pub fn serialize_int_0(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::ethers_core::types::I256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([63, 51, 219, 96], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `serializeInt` (0x7676e127) function
+        pub fn serialize_int_1(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::std::vec::Vec<::ethers_core::types::I256>,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([118, 118, 225, 39], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `serializeString` (0x88da6d35) function
+        pub fn serialize_string_0(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([136, 218, 109, 53], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `serializeString` (0x561cd6f3) function
+        pub fn serialize_string_1(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::std::vec::Vec<::std::string::String>,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([86, 28, 214, 243], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `serializeUint` (0x129e9002) function
+        pub fn serialize_uint_0(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([18, 158, 144, 2], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `serializeUint` (0xfee9a469) function
+        pub fn serialize_uint_1(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::std::vec::Vec<::ethers_core::types::U256>,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([254, 233, 164, 105], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `setEnv` (0x3d5923ee) function
+        pub fn set_env(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([61, 89, 35, 238], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `setNonce` (0xf8e18b57) function
+        pub fn set_nonce(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: u64,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([248, 225, 139, 87], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `setNonceUnsafe` (0x9b67b21c) function
+        pub fn set_nonce_unsafe(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: u64,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([155, 103, 178, 28], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `sign` (0xe341eaa4) function
+        pub fn sign_0(
+            &self,
+            p0: ::ethers_core::types::U256,
+            p1: [u8; 32],
+        ) -> ::ethers_contract::builders::ContractCall<M, (u8, [u8; 32], [u8; 32])> {
+            self.0
+                .method_hash([227, 65, 234, 164], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `sign` (0xb25c5a25) function
+        pub fn sign_1(
+            &self,
+            p0: Wallet,
+            p1: [u8; 32],
+        ) -> ::ethers_contract::builders::ContractCall<M, (u8, [u8; 32], [u8; 32])> {
+            self.0
+                .method_hash([178, 92, 90, 37], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `skip` (0xdd82d13e) function
+        pub fn skip(
+            &self,
+            p0: bool,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([221, 130, 209, 62], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `sleep` (0xfa9d8713) function
+        pub fn sleep(
+            &self,
+            p0: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([250, 157, 135, 19], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `snapshot` (0x9711715a) function
+        pub fn snapshot(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([151, 17, 113, 90], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `startBroadcast` (0x7fb5297f) function
+        pub fn start_broadcast_0(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([127, 181, 41, 127], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `startBroadcast` (0x7fec2a8d) function
+        pub fn start_broadcast_1(
+            &self,
+            p0: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([127, 236, 42, 141], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `startBroadcast` (0xce817d47) function
+        pub fn start_broadcast_2(
+            &self,
+            p0: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([206, 129, 125, 71], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `startMappingRecording` (0x3e9705c0) function
+        pub fn start_mapping_recording(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([62, 151, 5, 192], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `startPrank` (0x06447d56) function
+        pub fn start_prank_0(
+            &self,
+            p0: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([6, 68, 125, 86], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `startPrank` (0x45b56078) function
+        pub fn start_prank_1(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([69, 181, 96, 120], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `stopBroadcast` (0x76eadd36) function
+        pub fn stop_broadcast(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([118, 234, 221, 54], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `stopMappingRecording` (0x0d4aae9b) function
+        pub fn stop_mapping_recording(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([13, 74, 174, 155], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `stopPrank` (0x90c5013b) function
+        pub fn stop_prank(&self) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([144, 197, 1, 59], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `store` (0x70ca10bb) function
+        pub fn store(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: [u8; 32],
+            p2: [u8; 32],
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([112, 202, 16, 187], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `toString` (0x71aad10d) function
+        pub fn to_string_0(
+            &self,
+            p0: ::ethers_core::types::Bytes,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([113, 170, 209, 13], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `toString` (0x56ca623e) function
+        pub fn to_string_1(
+            &self,
+            p0: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([86, 202, 98, 62], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `toString` (0x6900a3ae) function
+        pub fn to_string_2(
+            &self,
+            p0: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([105, 0, 163, 174], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `toString` (0xa322c40e) function
+        pub fn to_string_3(
+            &self,
+            p0: ::ethers_core::types::I256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([163, 34, 196, 14], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `toString` (0xb11a19e8) function
+        pub fn to_string_4(
+            &self,
+            p0: [u8; 32],
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([177, 26, 25, 232], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `toString` (0x71dce7da) function
+        pub fn to_string_5(
+            &self,
+            p0: bool,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([113, 220, 231, 218], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `transact` (0xbe646da1) function
+        pub fn transact_0(
+            &self,
+            p0: [u8; 32],
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([190, 100, 109, 161], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `transact` (0x4d8abc4b) function
+        pub fn transact_1(
+            &self,
+            p0: ::ethers_core::types::U256,
+            p1: [u8; 32],
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([77, 138, 188, 75], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `tryFfi` (0xf45c1ce7) function
+        pub fn try_ffi(
+            &self,
+            p0: ::std::vec::Vec<::std::string::String>,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            (i32, ::ethers_core::types::Bytes, ::ethers_core::types::Bytes),
+        > {
+            self.0
+                .method_hash([244, 92, 28, 231], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `txGasPrice` (0x48f50c0f) function
+        pub fn tx_gas_price(
+            &self,
+            p0: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([72, 245, 12, 15], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `warp` (0xe5d6bf02) function
+        pub fn warp(
+            &self,
+            p0: ::ethers_core::types::U256,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([229, 214, 191, 2], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `writeFile` (0x897e0a97) function
+        pub fn write_file(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([137, 126, 10, 151], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `writeFileBinary` (0x1f21fc80) function
+        pub fn write_file_binary(
+            &self,
+            p0: ::std::string::String,
+            p1: ::ethers_core::types::Bytes,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([31, 33, 252, 128], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `writeJson` (0xe23cd19f) function
+        pub fn write_json_0(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([226, 60, 209, 159], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `writeJson` (0x35d6ad46) function
+        pub fn write_json_1(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+            p2: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([53, 214, 173, 70], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `writeLine` (0x619d897f) function
+        pub fn write_line(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([97, 157, 137, 127], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+    }
+    impl<M: ::ethers_providers::Middleware> From<::ethers_contract::Contract<M>>
+    for HEVM<M> {
+        fn from(contract: ::ethers_contract::Contract<M>) -> Self {
+            Self::new(contract.address(), contract.client())
+        }
+    }
     ///Container type for all input parameters for the `accesses` function with signature `accesses(address)` and selector `0x65bc9481`
     #[derive(
         Clone,
