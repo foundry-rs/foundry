@@ -43,10 +43,7 @@ impl LogCollector {
     }
 }
 
-impl<DB> Inspector<DB> for LogCollector
-where
-    DB: Database,
-{
+impl<DB: Database> Inspector<DB> for LogCollector {
     fn log(&mut self, _: &mut EVMData<'_, DB>, address: &B160, topics: &[B256], data: &Bytes) {
         self.logs.push(Log {
             address: b160_to_h160(*address),
@@ -60,7 +57,6 @@ where
         &mut self,
         _: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
-        _: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         if call.contract == h160_to_b160(HARDHAT_CONSOLE_ADDRESS) {
             let (status, reason) = self.hardhat_log(call.input.to_vec());

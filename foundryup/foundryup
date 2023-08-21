@@ -58,7 +58,7 @@ main() {
     # Enter local repo and build
     say "installing from $FOUNDRYUP_LOCAL_REPO"
     cd "$FOUNDRYUP_LOCAL_REPO"
-    ensure cargo build --release # need 4 speed
+    ensure cargo build --bins --release # need 4 speed
 
     for bin in "${BINS[@]}"; do
       # Remove prior installations if they exist
@@ -204,12 +204,15 @@ EOF
     fi
 
     # Build the repo and install the binaries locally to the .foundry bin directory.
-    # --root appends /bin to the directory it is given, so we pass FOUNDRY_DIR.
-    ensure cargo install --path ./cli --bins --locked --force --root "$FOUNDRY_DIR"
-    # install anvil
-    ensure cargo install --path ./anvil --bin anvil --locked --force --root "$FOUNDRY_DIR"
-    # install chisel
-    ensure cargo install --path ./chisel --bin chisel --locked --force --root "$FOUNDRY_DIR"
+    ensure cargo build --bins --release
+    for bin in "${BINS[@]}"; do
+      for try_path in target/release/$bin target/release/$bin.exe; do
+        if [ -f "$try_path" ]; then
+          [ -e "$FOUNDRY_BIN_DIR/$bin" ] && warn "overwriting existing $bin in $FOUNDRY_BIN_DIR"
+          mv -f "$try_path" "$FOUNDRY_BIN_DIR"
+        fi
+      done
+    done
 
     # If help2man is installed, use it to add Foundry man pages.
     if check_cmd help2man; then

@@ -1,5 +1,6 @@
 [package]
 name = "cast"
+description = "Command-line tool for performing Ethereum RPC calls"
 
 version.workspace = true
 edition.workspace = true
@@ -9,37 +10,70 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[[bin]]
+name = "cast"
+path = "bin/main.rs"
+
+[build-dependencies]
+vergen = { version = "8", default-features = false, features = ["build", "git", "git2"] }
+
 [dependencies]
+# lib
 foundry-utils.workspace = true
 foundry-evm.workspace = true
 foundry-config.workspace = true
 foundry-common.workspace = true
 
 ethers-etherscan.workspace = true
-ethers-contract = { workspace = true, features = ["abigen"] }
 ethers-core.workspace = true
 ethers-providers.workspace = true
-ethers-signers.workspace = true
-futures = "0.3"
-eyre = "0.6"
-serde = "1"
-serde_json = "1"
 chrono.workspace = true
+evm-disassembler = "0.2"
+eyre = "0.6"
+futures = "0.3"
 hex.workspace = true
 rayon = "1"
+serde = "1"
+serde_json = "1"
 
 # aws
-rusoto_core = { version = "0.48", default-features = false, optional = true }
-rusoto_kms = { version = "0.48", default-features = false, optional = true }
-evm-disassembler = "0.2"
+rusoto_core = { version = "0.48", default-features = false }
+rusoto_kms = { version = "0.48", default-features = false }
+
+# bin
+# foundry internal
+foundry-cli.workspace = true
+
+# eth
+ethers = { workspace = true, features = ["rustls"] }
+eth-keystore = "0.5"
+
+bytes = "1.4"
+clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
+clap_complete = "4"
+clap_complete_fig = "4"
+comfy-table = "6"
+dunce = "1"
+indicatif = "0.17"
+itertools.workspace = true
+regex = { version = "1", default-features = false }
+rpassword = "7"
+semver = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["macros"] }
+tracing = "0.1"
+yansi = "0.5"
 
 [dev-dependencies]
+foundry-test-utils.workspace = true
 async-trait = "0.1"
-tokio = "1"
-thiserror = "1"
+criterion = "0.5"
 
 [features]
-default = ["ledger", "trezor", "aws"]
-ledger = ["ethers-signers/ledger"]
-trezor = ["ethers-signers/trezor"]
-aws = ["ethers-signers/aws", "rusoto_core/rustls", "rusoto_kms/rustls"]
+default = ["rustls"]
+rustls = ["foundry-cli/rustls"]
+openssl = ["foundry-cli/openssl"]
+
+[[bench]]
+name = "vanity"
+harness = false

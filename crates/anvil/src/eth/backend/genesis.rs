@@ -8,16 +8,13 @@ use ethers::{
     abi::ethereum_types::BigEndianHash,
     types::{Address, H256},
 };
-use forge::{
-    revm::primitives::{B160, B256, KECCAK_EMPTY, U256},
-    utils::b160_to_h160,
-};
 use foundry_evm::{
     executor::{
         backend::{snapshot::StateSnapshot, DatabaseError, DatabaseResult},
         DatabaseRef,
     },
-    revm::primitives::{AccountInfo, Bytecode},
+    revm::primitives::{AccountInfo, Bytecode, B160, B256, KECCAK_EMPTY, U256},
+    utils::b160_to_h160,
 };
 use parking_lot::Mutex;
 use std::{collections::HashMap, sync::Arc};

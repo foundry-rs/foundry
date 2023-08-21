@@ -55,28 +55,26 @@ use ethers::{
     utils::{get_contract_address, hex, keccak256, rlp},
 };
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-use forge::{
-    executor::inspector::AccessListTracer,
-    revm::{
-        interpreter::{return_ok, InstructionResult},
-        primitives::{BlockEnv, ExecutionResult},
-    },
-    utils::{
-        eval_to_instruction_result, h256_to_b256, halt_to_instruction_result, ru256_to_u256,
-        u256_to_ru256,
-    },
-};
 use foundry_evm::{
     decode::{decode_custom_error_args, decode_revert},
-    executor::backend::{DatabaseError, DatabaseResult},
+    executor::{
+        backend::{DatabaseError, DatabaseResult},
+        inspector::AccessListTracer,
+        DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
+    },
     revm::{
         self,
         db::CacheDB,
+        interpreter::{return_ok, InstructionResult},
         primitives::{
-            Account, CreateScheme, EVMError, Env, Output, SpecId, TransactTo, TxEnv, KECCAK_EMPTY,
+            Account, BlockEnv, CreateScheme, EVMError, Env, ExecutionResult, Output, SpecId,
+            TransactTo, TxEnv, KECCAK_EMPTY,
         },
     },
-    utils::u256_to_h256_be,
+    utils::{
+        eval_to_instruction_result, h256_to_b256, halt_to_instruction_result, ru256_to_u256,
+        u256_to_h256_be, u256_to_ru256,
+    },
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
@@ -238,6 +236,13 @@ impl Backend {
         backend
     }
 
+    /// Writes the CREATE2 deployer code directly to the database at the address provided.
+    pub async fn set_create2_deployer(&self, address: Address) -> DatabaseResult<()> {
+        self.set_code(address, Bytes::from_static(DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE)).await?;
+
+        Ok(())
+    }
+
     /// Updates memory limits that should be more strict when auto-mine is enabled
     pub(crate) fn update_interval_mine_block_time(&self, block_time: Duration) {
         self.states.write().update_interval_mine_block_time(block_time)
@@ -342,7 +347,7 @@ impl Backend {
     }
 
     pub fn precompiles(&self) -> Vec<Address> {
-        get_precompiles_for(self.env().read().cfg.spec_id)
+        get_precompiles_for(self.env.read().cfg.spec_id)
     }
 
     /// Resets the fork to a fresh state
@@ -536,12 +541,12 @@ impl Backend {
 
     /// Returns the block gas limit
     pub fn gas_limit(&self) -> U256 {
-        self.env().read().block.gas_limit.into()
+        self.env.read().block.gas_limit.into()
     }
 
     /// Sets the block gas limit
     pub fn set_gas_limit(&self, gas_limit: U256) {
-        self.env().write().block.gas_limit = gas_limit.into();
+        self.env.write().block.gas_limit = gas_limit.into();
     }
 
     /// Returns the current base fee
@@ -786,7 +791,7 @@ impl Backend {
         let (outcome, header, block_hash) = {
             let current_base_fee = self.base_fee();
 
-            let mut env = self.env().read().clone();
+            let mut env = self.env.read().clone();
 
             if env.block.basefee == revm::primitives::U256::ZERO {
                 // this is an edge case because the evm fails if `tx.effective_gas_price < base_fee`
@@ -1626,7 +1631,7 @@ impl Backend {
             // So this provides calls the given provided function `f` with a genesis aware database
             if let Some(fork) = self.get_fork() {
                 if block_number == U256::from(fork.block_number()) {
-                    let mut block = self.env().read().block.clone();
+                    let mut block = self.env.read().block.clone();
                     let db = self.db.read().await;
                     let gen_db = self.genesis.state_db_at_genesis(Box::new(&*db));
 
@@ -1646,7 +1651,7 @@ impl Backend {
         }
 
         let db = self.db.read().await;
-        let block = self.env().read().block.clone();
+        let block = self.env.read().block.clone();
         Ok(f(Box::new(&*db), block))
     }
 

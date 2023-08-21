@@ -3,7 +3,7 @@
 //! This module contains the execution logic for the [SessionSource].
 
 use crate::prelude::{
-    ChiselDispatcher, ChiselResult, ChiselRunner, IntermediateOutput, SessionSource,
+    ChiselDispatcher, ChiselResult, ChiselRunner, IntermediateOutput, SessionSource, SolidityHelper,
 };
 use core::fmt::Debug;
 use ethers::{
@@ -13,7 +13,7 @@ use ethers::{
 };
 use ethers_solc::Artifact;
 use eyre::{Result, WrapErr};
-use forge::{
+use foundry_evm::{
     decode::decode_console_logs,
     executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
     utils::ru256_to_u256,
@@ -136,16 +136,43 @@ impl SessionSource {
             Err(_) => return Ok((true, None)),
         };
 
-        // TODO: Any tuple fails compilation due to it not being able to be encoded in `inspectoor`
-        let mut res = match source.execute().await {
-            Ok((_, res)) => res,
-            Err(e) => {
-                if self.config.foundry_config.verbosity >= 3 {
-                    eprintln!("Could not inspect: {e}");
+        let mut source_without_inspector = self.clone();
+
+        // Events and tuples fails compilation due to it not being able to be encoded in
+        // `inspectoor`. If that happens, try executing without the inspector.
+        let (mut res, has_inspector) = match source.execute().await {
+            Ok((_, res)) => (res, true),
+            Err(e) => match source_without_inspector.execute().await {
+                Ok((_, res)) => (res, false),
+                Err(_) => {
+                    if self.config.foundry_config.verbosity >= 3 {
+                        eprintln!("Could not inspect: {e}");
+                    }
+                    return Ok((true, None))
                 }
-                return Ok((true, None))
-            }
+            },
         };
+
+        // If abi-encoding the input failed, check whether it is an event
+        if !has_inspector {
+            let generated_output = source_without_inspector
+                .generated_output
+                .as_ref()
+                .ok_or_else(|| eyre::eyre!("Could not find generated output!"))?;
+
+            let intermediate_contract = generated_output
+                .intermediate
+                .intermediate_contracts
+                .get("REPL")
+                .ok_or_else(|| eyre::eyre!("Could not find intermediate contract!"))?;
+
+            if let Some(event_definition) = intermediate_contract.event_definitions.get(input) {
+                let formatted = format_event_definition(event_definition)?;
+                return Ok((false, Some(formatted)))
+            }
+
+            return Ok((false, None))
+        }
 
         let Some((stack, memory, _)) = &res.state else {
             // Show traces and logs, if there are any, and return an error
@@ -263,14 +290,15 @@ impl SessionSource {
         };
 
         // Build a new executor
-        let executor = ExecutorBuilder::default()
-            .with_config(env)
-            .with_chisel_state(final_pc)
-            .set_tracing(true)
-            .with_spec(foundry_evm::utils::evm_spec(&self.config.foundry_config.evm_version))
-            .with_gas_limit(self.config.evm_opts.gas_limit())
-            .with_cheatcodes(CheatsConfig::new(&self.config.foundry_config, &self.config.evm_opts))
-            .build(backend);
+        let executor = ExecutorBuilder::new()
+            .inspectors(|stack| {
+                stack.chisel_state(final_pc).trace(true).cheatcodes(
+                    CheatsConfig::new(&self.config.foundry_config, &self.config.evm_opts).into(),
+                )
+            })
+            .gas_limit(self.config.evm_opts.gas_limit())
+            .spec(foundry_evm::utils::evm_spec(self.config.foundry_config.evm_version))
+            .build(env, backend);
 
         // Create a [ChiselRunner] with a default balance of [U256::MAX] and
         // the sender [Address::zero].
@@ -374,6 +402,62 @@ fn format_token(token: Token) -> String {
             out
         }
     }
+}
+
+/// Formats a [pt::EventDefinition] into an inspection message
+///
+/// ### Takes
+///
+/// An borrowed [pt::EventDefinition]
+///
+/// ### Returns
+///
+/// A formatted [pt::EventDefinition] for use in inspection output.
+///
+/// TODO: Verbosity option
+fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<String> {
+    let event_name = event_definition.name.as_ref().expect("Event has a name").to_string();
+    let inputs = event_definition
+        .fields
+        .iter()
+        .map(|param| {
+            let name = param
+                .name
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "<anonymous>".to_string());
+            let kind = Type::from_expression(&param.ty)
+                .and_then(Type::into_builtin)
+                .ok_or_else(|| eyre::eyre!("Invalid type in event {event_name}"))?;
+            Ok(ethabi::EventParam { name, kind, indexed: param.indexed })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let event = ethabi::Event { name: event_name, inputs, anonymous: event_definition.anonymous };
+
+    Ok(format!(
+        "Type: {}\n├ Name: {}\n└ Signature: {:?}",
+        Paint::red("event"),
+        SolidityHelper::highlight(&format!(
+            "{}({})",
+            &event.name,
+            &event
+                .inputs
+                .iter()
+                .map(|param| format!(
+                    "{}{}{}",
+                    param.kind,
+                    if param.indexed { " indexed" } else { "" },
+                    if param.name.is_empty() {
+                        String::default()
+                    } else {
+                        format!(" {}", &param.name)
+                    },
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        Paint::cyan(event.signature()),
+    ))
 }
 
 // =============================================

@@ -118,7 +118,7 @@ async fn test_invariant_storage() {
     let mut runner = runner().await;
 
     let mut opts = test_opts();
-    opts.invariant.depth = 100;
+    opts.invariant.depth = 100 + (50 * cfg!(windows) as u32);
     opts.fuzz.seed = Some(U256::from(6u32));
     runner.test_options = opts.clone();
 

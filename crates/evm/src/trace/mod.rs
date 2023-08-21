@@ -561,11 +561,37 @@ impl fmt::Display for CallTrace {
 }
 
 /// Specifies the kind of trace.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TraceKind {
     Deployment,
     Setup,
     Execution,
+}
+
+impl TraceKind {
+    /// Returns `true` if the trace kind is [`Deployment`].
+    ///
+    /// [`Deployment`]: TraceKind::Deployment
+    #[must_use]
+    pub fn is_deployment(self) -> bool {
+        matches!(self, Self::Deployment)
+    }
+
+    /// Returns `true` if the trace kind is [`Setup`].
+    ///
+    /// [`Setup`]: TraceKind::Setup
+    #[must_use]
+    pub fn is_setup(self) -> bool {
+        matches!(self, Self::Setup)
+    }
+
+    /// Returns `true` if the trace kind is [`Execution`].
+    ///
+    /// [`Execution`]: TraceKind::Execution
+    #[must_use]
+    pub fn is_execution(self) -> bool {
+        matches!(self, Self::Execution)
+    }
 }
 
 /// Chooses the color of the trace depending on the destination address and status of the call.
@@ -584,26 +610,23 @@ pub fn load_contracts(
     traces: Traces,
     known_contracts: Option<&ContractsByArtifact>,
 ) -> ContractsByAddress {
-    if let Some(contracts) = known_contracts {
-        let mut local_identifier = LocalTraceIdentifier::new(contracts);
-        let mut decoder = CallTraceDecoderBuilder::new().build();
-        for (_, trace) in &traces {
-            decoder.identify(trace, &mut local_identifier);
-        }
-
-        decoder
-            .contracts
-            .iter()
-            .filter_map(|(addr, name)| {
-                if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(name) {
-                    return Some((*addr, (name.clone(), abi.clone())))
-                }
-                None
-            })
-            .collect()
-    } else {
-        BTreeMap::new()
+    let Some(contracts) = known_contracts else { return BTreeMap::new() };
+    let mut local_identifier = LocalTraceIdentifier::new(contracts);
+    let mut decoder = CallTraceDecoderBuilder::new().build();
+    for (_, trace) in &traces {
+        decoder.identify(trace, &mut local_identifier);
     }
+
+    decoder
+        .contracts
+        .iter()
+        .filter_map(|(addr, name)| {
+            if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(name) {
+                return Some((*addr, (name.clone(), abi.clone())))
+            }
+            None
+        })
+        .collect()
 }
 
 /// creates the memory data in 32byte chunks

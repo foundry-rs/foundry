@@ -50,15 +50,12 @@ impl AccessListTracer {
     }
 }
 
-impl<DB> Inspector<DB> for AccessListTracer
-where
-    DB: Database,
-{
+impl<DB: Database> Inspector<DB> for AccessListTracer {
+    #[inline]
     fn step(
         &mut self,
         interpreter: &mut Interpreter,
         _data: &mut EVMData<'_, DB>,
-        _is_static: bool,
     ) -> InstructionResult {
         let pc = interpreter.program_counter();
         let op = interpreter.contract.bytecode.bytecode()[pc];

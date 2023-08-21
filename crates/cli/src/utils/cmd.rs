@@ -10,12 +10,11 @@ use ethers::{
     },
 };
 use eyre::{Result, WrapErr};
-use forge::executor::opts::EvmOpts;
 use foundry_common::{cli_warn, fs, TestFunctionExt};
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain as ConfigChain, Config};
 use foundry_evm::{
     debug::DebugArena,
-    executor::{DeployResult, EvmError, ExecutionErr, RawCallResult},
+    executor::{opts::EvmOpts, DeployResult, EvmError, ExecutionErr, RawCallResult},
     trace::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
@@ -379,12 +378,13 @@ pub async fn handle_traces(
         None
     });
 
-    let mut decoder = CallTraceDecoderBuilder::new().with_labels(labeled_addresses).build();
-
-    decoder.add_signature_identifier(SignaturesIdentifier::new(
-        Config::foundry_cache_dir(),
-        config.offline,
-    )?);
+    let mut decoder = CallTraceDecoderBuilder::new()
+        .with_labels(labeled_addresses)
+        .with_signature_identifier(SignaturesIdentifier::new(
+            Config::foundry_cache_dir(),
+            config.offline,
+        )?)
+        .build();
 
     for (_, trace) in &mut result.traces {
         decoder.identify(trace, &mut etherscan_identifier);
@@ -394,7 +394,7 @@ pub async fn handle_traces(
         let (sources, bytecode) = etherscan_identifier.get_compiled_contracts().await?;
         run_debugger(result, decoder, bytecode, sources)?;
     } else {
-        print_traces(&mut result, decoder, verbose).await?;
+        print_traces(&mut result, &decoder, verbose).await?;
     }
 
     Ok(())
@@ -402,7 +402,7 @@ pub async fn handle_traces(
 
 pub async fn print_traces(
     result: &mut TraceResult,
-    decoder: CallTraceDecoder,
+    decoder: &CallTraceDecoder,
     verbose: bool,
 ) -> Result<()> {
     if result.traces.is_empty() {

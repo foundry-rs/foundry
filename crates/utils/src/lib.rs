@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![warn(unused_crate_dependencies)]
 
 use ethers_addressbook::contract;
 use ethers_core::types::*;

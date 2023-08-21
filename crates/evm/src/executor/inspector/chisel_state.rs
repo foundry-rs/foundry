@@ -4,7 +4,7 @@ use revm::{
 };
 
 /// An inspector for Chisel
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ChiselState {
     /// The PC of the final instruction
     pub final_pc: usize,
@@ -13,20 +13,19 @@ pub struct ChiselState {
 }
 
 impl ChiselState {
+    /// Create a new Chisel state inspector.
+    #[inline]
     pub fn new(final_pc: usize) -> Self {
         Self { final_pc, state: None }
     }
 }
 
-impl<DB> Inspector<DB> for ChiselState
-where
-    DB: Database,
-{
+impl<DB: Database> Inspector<DB> for ChiselState {
+    #[inline]
     fn step_end(
         &mut self,
         interp: &mut Interpreter,
         _: &mut revm::EVMData<'_, DB>,
-        _: bool,
         eval: InstructionResult,
     ) -> InstructionResult {
         // If we are at the final pc of the REPL contract execution, set the state.

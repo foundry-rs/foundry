@@ -17,7 +17,7 @@ use std::{collections::BTreeMap, fmt, time::Duration};
 pub struct SuiteResult {
     /// Total duration of the test run for this block of tests
     pub duration: Duration,
-    /// Individual test results. `test method name -> TestResult`
+    /// Individual test results. `test fn signature -> TestResult`
     pub test_results: BTreeMap<String, TestResult>,
     /// Warnings
     pub warnings: Vec<String>,
@@ -58,12 +58,32 @@ impl SuiteResult {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TestStatus {
     Success,
     #[default]
     Failure,
     Skipped,
+}
+
+impl TestStatus {
+    /// Returns `true` if the test was successful.
+    #[inline]
+    pub fn is_success(self) -> bool {
+        matches!(self, Self::Success)
+    }
+
+    /// Returns `true` if the test failed.
+    #[inline]
+    pub fn is_failure(self) -> bool {
+        matches!(self, Self::Failure)
+    }
+
+    /// Returns `true` if the test was skipped.
+    #[inline]
+    pub fn is_skipped(self) -> bool {
+        matches!(self, Self::Skipped)
+    }
 }
 
 /// The result of an executed solidity test

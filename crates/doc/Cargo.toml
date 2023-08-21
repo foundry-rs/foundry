@@ -12,7 +12,6 @@ repository.workspace = true
 
 [dependencies]
 # foundry internal
-foundry-common.workspace = true
 forge-fmt.workspace = true
 foundry-config.workspace = true
 foundry-utils.workspace = true
@@ -20,9 +19,6 @@ foundry-utils.workspace = true
 # ethers
 ethers-solc = { workspace = true, features = ["async"] }
 ethers-core.workspace = true
-
-# cli
-clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 
 # tracing
 tracing = "0.1"
@@ -38,7 +34,7 @@ solang-parser.workspace = true
 eyre = "0.6"
 thiserror = "1"
 rayon = "1"
-itertools = "0.10"
+itertools.workspace = true
 toml = "0.7"
 auto_impl = "1"
 derive_more = "0.99"

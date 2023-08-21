@@ -19,15 +19,12 @@ pub struct Fuzzer {
     pub fuzz_state: EvmFuzzState,
 }
 
-impl<DB> Inspector<DB> for Fuzzer
-where
-    DB: Database,
-{
+impl<DB: Database> Inspector<DB> for Fuzzer {
+    #[inline]
     fn step(
         &mut self,
         interpreter: &mut Interpreter,
         _: &mut EVMData<'_, DB>,
-        _: bool,
     ) -> InstructionResult {
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
@@ -37,11 +34,11 @@ where
         InstructionResult::Continue
     }
 
+    #[inline]
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
-        _: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         // We don't want to override the very first call made to the test contract.
         if self.call_generator.is_some() && data.env.tx.caller != call.context.caller {
@@ -55,6 +52,7 @@ where
         (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
 
+    #[inline]
     fn call_end(
         &mut self,
         _: &mut EVMData<'_, DB>,
@@ -62,7 +60,6 @@ where
         remaining_gas: Gas,
         status: InstructionResult,
         retdata: Bytes,
-        _: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         if let Some(ref mut call_generator) = self.call_generator {
             call_generator.used = false;

@@ -76,9 +76,8 @@ fn build_test_options() {
     let build_result = TestOptionsBuilder::default()
         .fuzz(FuzzConfig::default())
         .invariant(InvariantConfig::default())
-        .compile_output(&COMPILED)
         .profiles(profiles)
-        .build(root);
+        .build(&COMPILED, root);
 
     assert!(build_result.is_ok());
 }
@@ -90,9 +89,8 @@ fn build_test_options_just_one_valid_profile() {
     let build_result = TestOptionsBuilder::default()
         .fuzz(FuzzConfig::default())
         .invariant(InvariantConfig::default())
-        .compile_output(&COMPILED)
         .profiles(valid_profiles)
-        .build(root);
+        .build(&COMPILED, root);
 
     // We expect an error, since COMPILED contains in-line
     // per-test configs for "default" and "ci" profiles
@@ -104,7 +102,6 @@ fn test_options() -> TestOptions {
     TestOptionsBuilder::default()
         .fuzz(FuzzConfig::default())
         .invariant(InvariantConfig::default())
-        .compile_output(&COMPILED)
-        .build(root)
+        .build(&COMPILED, root)
         .expect("Config loaded")
 }

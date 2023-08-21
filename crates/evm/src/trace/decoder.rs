@@ -1,5 +1,5 @@
 use super::{
-    identifier::{SingleSignaturesIdentifier, TraceIdentifier},
+    identifier::{AddressIdentity, SingleSignaturesIdentifier, TraceIdentifier},
     CallTraceArena, RawOrDecodedCall, RawOrDecodedLog, RawOrDecodedReturnData,
 };
 use crate::{
@@ -15,26 +15,32 @@ use ethers::{
 };
 use foundry_common::{abi::get_indexed_event, SELECTOR_LEN};
 use hashbrown::HashSet;
+use once_cell::sync::OnceCell;
 use std::collections::{BTreeMap, HashMap};
 
 /// Build a new [CallTraceDecoder].
 #[derive(Default)]
+#[must_use = "builders do nothing unless you call `build` on them"]
 pub struct CallTraceDecoderBuilder {
     decoder: CallTraceDecoder,
 }
 
 impl CallTraceDecoderBuilder {
+    /// Create a new builder.
+    #[inline]
     pub fn new() -> Self {
-        Self { decoder: CallTraceDecoder::new() }
+        Self { decoder: CallTraceDecoder::new().clone() }
     }
 
     /// Add known labels to the decoder.
+    #[inline]
     pub fn with_labels(mut self, labels: impl IntoIterator<Item = (Address, String)>) -> Self {
         self.decoder.labels.extend(labels);
         self
     }
 
     /// Add known events to the decoder.
+    #[inline]
     pub fn with_events(mut self, events: impl IntoIterator<Item = Event>) -> Self {
         for event in events {
             self.decoder
@@ -47,12 +53,21 @@ impl CallTraceDecoderBuilder {
     }
 
     /// Sets the verbosity level of the decoder.
+    #[inline]
     pub fn with_verbosity(mut self, level: u8) -> Self {
         self.decoder.verbosity = level;
         self
     }
 
+    /// Sets the signature identifier for events and functions.
+    #[inline]
+    pub fn with_signature_identifier(mut self, identifier: SingleSignaturesIdentifier) -> Self {
+        self.decoder.signature_identifier = Some(identifier);
+        self
+    }
+
     /// Build the decoder.
+    #[inline]
     pub fn build(self) -> CallTraceDecoder {
         self.decoder
     }
@@ -65,7 +80,7 @@ impl CallTraceDecoderBuilder {
 ///
 /// Note that a call trace decoder is required for each new set of traces, since addresses in
 /// different sets might overlap.
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct CallTraceDecoder {
     /// Information for decoding precompile calls.
     pub precompiles: HashMap<Address, Function>,
@@ -115,7 +130,14 @@ impl CallTraceDecoder {
     ///
     /// The call trace decoder always knows how to decode calls to the cheatcode address, as well
     /// as DSTest-style logs.
-    pub fn new() -> Self {
+    pub fn new() -> &'static Self {
+        // If you want to take arguments in this function, assign them to the fields of the cloned
+        // lazy instead of removing it
+        static INIT: OnceCell<CallTraceDecoder> = OnceCell::new();
+        INIT.get_or_init(Self::init)
+    }
+
+    fn init() -> Self {
         Self {
             // TODO: These are the Ethereum precompiles. We should add a way to support precompiles
             // for other networks, too.
@@ -160,23 +182,26 @@ impl CallTraceDecoder {
         }
     }
 
-    pub fn add_signature_identifier(&mut self, identifier: SingleSignaturesIdentifier) {
-        self.signature_identifier = Some(identifier);
-    }
-
     /// Identify unknown addresses in the specified call trace using the specified identifier.
     ///
     /// Unknown contracts are contracts that either lack a label or an ABI.
+    #[inline]
     pub fn identify(&mut self, trace: &CallTraceArena, identifier: &mut impl TraceIdentifier) {
-        let unidentified_addresses = trace
-            .addresses()
-            .into_iter()
-            .filter(|(address, _)| {
-                !self.labels.contains_key(address) || !self.contracts.contains_key(address)
-            })
-            .collect();
+        self.collect_identities(identifier.identify_addresses(self.addresses(trace)));
+    }
 
-        identifier.identify_addresses(unidentified_addresses).iter().for_each(|identity| {
+    #[inline(always)]
+    fn addresses<'a>(
+        &'a self,
+        trace: &'a CallTraceArena,
+    ) -> impl Iterator<Item = (&'a Address, Option<&'a [u8]>)> + 'a {
+        trace.addresses().into_iter().filter(|&(address, _)| {
+            !self.labels.contains_key(address) || !self.contracts.contains_key(address)
+        })
+    }
+
+    fn collect_identities(&mut self, identities: Vec<AddressIdentity>) {
+        for identity in identities {
             let address = identity.address;
 
             if let Some(contract) = &identity.contract {
@@ -189,30 +214,31 @@ impl CallTraceDecoder {
 
             if let Some(abi) = &identity.abi {
                 // Store known functions for the address
-                abi.functions()
-                    .map(|func| (func.short_signature(), func.clone()))
-                    .for_each(|(sig, func)| self.functions.entry(sig).or_default().push(func));
+                for function in abi.functions() {
+                    self.functions
+                        .entry(function.short_signature())
+                        .or_default()
+                        .push(function.clone())
+                }
 
                 // Flatten events from all ABIs
-                abi.events()
-                    .map(|event| ((event.signature(), indexed_inputs(event)), event.clone()))
-                    .for_each(|(sig, event)| {
-                        self.events.entry(sig).or_default().push(event);
-                    });
+                for event in abi.events() {
+                    let sig = (event.signature(), indexed_inputs(event));
+                    self.events.entry(sig).or_default().push(event.clone());
+                }
 
                 // Flatten errors from all ABIs
-                abi.errors().for_each(|error| {
-                    let entry = self.errors.errors.entry(error.name.clone()).or_default();
-                    entry.push(error.clone());
-                });
+                for error in abi.errors() {
+                    self.errors.errors.entry(error.name.clone()).or_default().push(error.clone());
+                }
 
                 self.receive_contracts.entry(address).or_insert(abi.receive);
             }
-        });
+        }
     }
 
     pub async fn decode(&self, traces: &mut CallTraceArena) {
-        for node in traces.arena.iter_mut() {
+        for node in &mut traces.arena {
             // Set contract name
             if let Some(contract) = self.contracts.get(&node.trace.address).cloned() {
                 node.trace.contract = Some(contract);

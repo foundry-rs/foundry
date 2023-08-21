@@ -8,15 +8,15 @@ use crate::prelude::{
     SolidityHelper,
 };
 use ethers::{abi::ParamType, contract::Lazy, types::Address, utils::hex};
-use forge::{
+use forge_fmt::FormatterConfig;
+use foundry_config::{Config, RpcEndpoint};
+use foundry_evm::{
     decode::decode_console_logs,
     trace::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-use forge_fmt::FormatterConfig;
-use foundry_config::{Config, RpcEndpoint};
 use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -958,13 +958,13 @@ impl ChiselDispatcher {
             session_config.evm_opts.get_remote_chain_id(),
         )?;
 
-        let mut decoder =
-            CallTraceDecoderBuilder::new().with_labels(result.labeled_addresses.clone()).build();
-
-        decoder.add_signature_identifier(SignaturesIdentifier::new(
-            Config::foundry_cache_dir(),
-            session_config.foundry_config.offline,
-        )?);
+        let mut decoder = CallTraceDecoderBuilder::new()
+            .with_labels(result.labeled_addresses.iter().map(|(a, s)| (*a, s.clone())))
+            .with_signature_identifier(SignaturesIdentifier::new(
+                Config::foundry_cache_dir(),
+                session_config.foundry_config.offline,
+            )?)
+            .build();
 
         for (_, trace) in &mut result.traces {
             // decoder.identify(trace, &mut local_identifier);
