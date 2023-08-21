@@ -25,8 +25,8 @@ pub struct RpcOpts {
     pub flashbots: bool,
 
     /// JWT Secret for the RPC endpoint.
-    #[clap(long, env = "ETH_RPC_JWT")]
-    pub jwt: Option<String>,
+    #[clap(long, env = "ETH_RPC_JWT_SECRET")]
+    pub jwt_secret: Option<String>,
 }
 
 impl_figment_convert_cast!(RpcOpts);
