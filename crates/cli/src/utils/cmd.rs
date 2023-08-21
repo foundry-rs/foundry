@@ -378,12 +378,13 @@ pub async fn handle_traces(
         None
     });
 
-    let mut decoder = CallTraceDecoderBuilder::new().with_labels(labeled_addresses).build();
-
-    decoder.add_signature_identifier(SignaturesIdentifier::new(
-        Config::foundry_cache_dir(),
-        config.offline,
-    )?);
+    let mut decoder = CallTraceDecoderBuilder::new()
+        .with_labels(labeled_addresses)
+        .with_signature_identifier(SignaturesIdentifier::new(
+            Config::foundry_cache_dir(),
+            config.offline,
+        )?)
+        .build();
 
     for (_, trace) in &mut result.traces {
         decoder.identify(trace, &mut etherscan_identifier);

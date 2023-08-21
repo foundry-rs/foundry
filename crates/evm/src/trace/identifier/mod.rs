@@ -33,9 +33,7 @@ pub struct AddressIdentity<'a> {
 pub trait TraceIdentifier {
     // TODO: Update docs
     /// Attempts to identify an address in one or more call traces.
-    #[allow(clippy::type_complexity)]
-    fn identify_addresses(
-        &mut self,
-        addresses: Vec<(&Address, Option<&[u8]>)>,
-    ) -> Vec<AddressIdentity>;
+    fn identify_addresses<'a, A>(&mut self, addresses: A) -> Vec<AddressIdentity>
+    where
+        A: Iterator<Item = (&'a Address, Option<&'a [u8]>)>;
 }

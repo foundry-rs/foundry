@@ -58,12 +58,32 @@ impl SuiteResult {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TestStatus {
     Success,
     #[default]
     Failure,
     Skipped,
+}
+
+impl TestStatus {
+    /// Returns `true` if the test was successful.
+    #[inline]
+    pub fn is_success(self) -> bool {
+        matches!(self, Self::Success)
+    }
+
+    /// Returns `true` if the test failed.
+    #[inline]
+    pub fn is_failure(self) -> bool {
+        matches!(self, Self::Failure)
+    }
+
+    /// Returns `true` if the test was skipped.
+    #[inline]
+    pub fn is_skipped(self) -> bool {
+        matches!(self, Self::Skipped)
+    }
 }
 
 /// The result of an executed solidity test
