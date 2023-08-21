@@ -438,8 +438,8 @@ impl<'a> InvariantExecutor<'a> {
 
     /// Extends the contracts and selectors to fuzz with the addresses and ABIs specified in
     /// `targetInterfaces() -> (address, string[])[]`. Enables targeting of addresses that are
-    /// not deployed during `setUp` such as when fuzzing in a forked environment. Also enables 
-    /// targeting of delegate proxies and contracts deployed with `create` or `create2`. 
+    /// not deployed during `setUp` such as when fuzzing in a forked environment. Also enables
+    /// targeting of delegate proxies and contracts deployed with `create` or `create2`.
     pub fn target_interfaces(
         &self,
         invariant_address: Address,
