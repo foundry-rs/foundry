@@ -8,23 +8,20 @@ use revm::{
     Database, EVMData, Inspector,
 };
 
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct CoverageCollector {
     /// Maps that track instruction hit data.
     pub maps: HitMaps,
 }
 
-impl<DB> Inspector<DB> for CoverageCollector
-where
-    DB: Database,
-{
+impl<DB: Database> Inspector<DB> for CoverageCollector {
+    #[inline]
     fn initialize_interp(
         &mut self,
         interpreter: &mut Interpreter,
         _: &mut EVMData<'_, DB>,
-        _: bool,
     ) -> InstructionResult {
-        let hash = b256_to_h256(interpreter.contract.bytecode.hash());
+        let hash = b256_to_h256(interpreter.contract.bytecode.clone().unlock().hash_slow());
         self.maps.entry(hash).or_insert_with(|| {
             HitMap::new(Bytes::copy_from_slice(
                 interpreter.contract.bytecode.original_bytecode_slice(),
@@ -34,13 +31,13 @@ where
         InstructionResult::Continue
     }
 
+    #[inline]
     fn step(
         &mut self,
         interpreter: &mut Interpreter,
         _: &mut EVMData<'_, DB>,
-        _: bool,
     ) -> InstructionResult {
-        let hash = b256_to_h256(interpreter.contract.bytecode.hash());
+        let hash = b256_to_h256(interpreter.contract.bytecode.clone().unlock().hash_slow());
         self.maps.entry(hash).and_modify(|map| map.hit(interpreter.program_counter()));
 
         InstructionResult::Continue

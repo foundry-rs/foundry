@@ -17,21 +17,18 @@ use ethers::{
     types::{Bloom, H256, U256},
     utils::rlp,
 };
-use forge::{
-    revm::primitives::{EVMError, ExecutionResult},
-    utils::{
-        b160_to_h160, eval_to_instruction_result, h160_to_b160, halt_to_instruction_result,
-        ru256_to_u256,
-    },
-};
 use foundry_evm::{
     executor::backend::DatabaseError,
     revm,
     revm::{
         interpreter::InstructionResult,
-        primitives::{BlockEnv, CfgEnv, Env, Output, SpecId},
+        primitives::{BlockEnv, CfgEnv, EVMError, Env, ExecutionResult, Output, SpecId},
     },
     trace::{node::CallTraceNode, CallTraceArena},
+    utils::{
+        b160_to_h160, eval_to_instruction_result, h160_to_b160, halt_to_instruction_result,
+        ru256_to_u256,
+    },
 };
 use std::sync::Arc;
 use tracing::{trace, warn};

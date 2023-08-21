@@ -9,109 +9,45 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
-[build-dependencies]
-vergen = { version = "8", default-features = false, features = ["build", "git", "git2"] }
-
 [dependencies]
 # foundry internal
-forge-fmt.workspace = true
-forge-doc.workspace = true
-foundry-utils.workspace = true
-forge.workspace = true
 foundry-config.workspace = true
 foundry-common.workspace = true
 foundry-evm.workspace = true
-cast.workspace = true
 ui.workspace = true
 
+# aws
+rusoto_core = { version = "0.48", default-features = false }
+rusoto_kms = { version = "0.48", default-features = false }
+
 # eth
-ethers = { workspace = true, features = ["rustls"] }
-solang-parser.workspace = true
-eth-keystore = "0.5"
+ethers = { workspace = true, features = ["aws", "ledger", "trezor"] }
 
-# cli
-clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
-clap_complete = "4"
-clap_complete_fig = "4"
-yansi = "0.5"
-tracing-error = "0.2"
-tracing-subscriber = { version = "0.3", features = ["registry", "env-filter", "fmt"] }
-tracing = "0.1"
-watchexec = "2"
-comfy-table = "6"
-reqwest = { version = "0.11", default-features = false, features = [
-  "json",
-  "rustls",
-  "rustls-tls-native-roots",
-] }
-dotenvy = "0.15"
-dialoguer = { version = "0.10", default-features = false }
-
-# async / parallel
-tokio = { version = "1", features = ["macros"] }
-futures = "0.3"
-rayon = "1"
 async-trait = "0.1"
-
-# disk / paths
-walkdir = "2"
-dunce = "1"
-path-slash = "0.2"
-tempfile = "3"
-
-# misc
-eyre = "0.6"
+clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 color-eyre = "0.6"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+dotenvy = "0.15"
+eyre = "0.6"
+hex = { workspace = true, features = ["serde"] }
+indicatif = "0.17"
+itertools.workspace = true
+once_cell = "1"
 regex = { version = "1", default-features = false }
 rpassword = "7"
-hex = { workspace = true, features = ["serde"] }
-itertools = "0.10"
-proptest = "1"
-semver = "1"
-once_cell = "1"
-similar = { version = "2", features = ["inline"] }
+serde = { version = "1", features = ["derive"] }
 strsim = "0.10"
-bytes = "1.4"
 strum = { version = "0.25", features = ["derive"] }
 thiserror = "1"
-indicatif = "0.17"
-parking_lot = "0.12"
+tokio = { version = "1", features = ["macros"] }
+tracing = "0.1"
+tracing-error = "0.2"
+tracing-subscriber = { version = "0.3", features = ["registry", "env-filter", "fmt"] }
+yansi = "0.5"
 
 [dev-dependencies]
-anvil.workspace = true
-foundry-utils.workspace = true
-foundry-cli-test-utils.path = "test-utils"
-pretty_assertions = "1"
-toml = "0.7"
-serial_test = "2"
-criterion = "0.4"
-svm = { package = "svm-rs", version = "0.3", default-features = false, features = ["rustls"] }
-globset = "0.4"
+tempfile = "3.7"
 
 [features]
 default = ["rustls"]
-rustls = ["ethers/rustls"]
+rustls = ["ethers/rustls", "rusoto_core/rustls"]
 openssl = ["ethers/openssl"]
-
-# feature for integration tests that test external projects
-external-integration-tests = []
-
-[[bin]]
-name = "cast"
-path = "src/cast/main.rs"
-doc = false
-
-[[bin]]
-name = "forge"
-path = "src/forge/main.rs"
-doc = false
-
-[[bench]]
-name = "forge_test"
-harness = false
-
-[[bench]]
-name = "cast"
-harness = false

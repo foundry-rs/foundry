@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 #[macro_use]
 extern crate tracing;

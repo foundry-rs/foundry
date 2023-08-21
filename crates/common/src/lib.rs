@@ -1,5 +1,6 @@
 //! Common utilities for building and using foundry's tools.
-#![deny(missing_docs, unused_crate_dependencies)]
+
+#![warn(missing_docs, unused_crate_dependencies)]
 
 pub mod abi;
 pub mod calc;

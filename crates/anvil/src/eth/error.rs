@@ -11,9 +11,11 @@ use ethers::{
     signers::WalletError,
     types::{Bytes, SignatureError, U256},
 };
-use forge::revm::{self, primitives::EVMError};
 use foundry_common::SELECTOR_LEN;
-use foundry_evm::{executor::backend::DatabaseError, revm::interpreter::InstructionResult};
+use foundry_evm::{
+    executor::backend::DatabaseError,
+    revm::{self, interpreter::InstructionResult, primitives::EVMError},
+};
 use serde::Serialize;
 use tracing::error;
 
@@ -179,6 +181,9 @@ pub enum InvalidTransactionError {
     /// Thrown when a legacy tx was signed for a different chain
     #[error("Incompatible EIP-155 transaction, signed for another chain")]
     IncompatibleEIP155,
+    /// Thrown when an access list is used before the berlin hard fork.
+    #[error("Access lists are not supported before the Berlin hardfork")]
+    AccessListNotSupported,
 }
 
 impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
@@ -201,7 +206,7 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
                 })
             }
             InvalidTransaction::RejectCallerWithCode => InvalidTransactionError::SenderNoEOA,
-            InvalidTransaction::LackOfFundForGasLimit { .. } => {
+            InvalidTransaction::LackOfFundForMaxFee { .. } => {
                 InvalidTransactionError::InsufficientFunds
             }
             InvalidTransaction::OverflowPaymentInTransaction => {
@@ -215,6 +220,9 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             }
             InvalidTransaction::NonceTooHigh { .. } => InvalidTransactionError::NonceTooHigh,
             InvalidTransaction::NonceTooLow { .. } => InvalidTransactionError::NonceTooLow,
+            InvalidTransaction::AccessListNotSupported => {
+                InvalidTransactionError::AccessListNotSupported
+            }
         }
     }
 }

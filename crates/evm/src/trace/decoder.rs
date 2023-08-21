@@ -15,6 +15,7 @@ use ethers::{
 };
 use foundry_common::{abi::get_indexed_event, SELECTOR_LEN};
 use hashbrown::HashSet;
+use once_cell::sync::OnceCell;
 use std::collections::{BTreeMap, HashMap};
 
 /// Build a new [CallTraceDecoder].
@@ -25,7 +26,7 @@ pub struct CallTraceDecoderBuilder {
 
 impl CallTraceDecoderBuilder {
     pub fn new() -> Self {
-        Self { decoder: CallTraceDecoder::new() }
+        Self { decoder: CallTraceDecoder::new().clone() }
     }
 
     /// Add known labels to the decoder.
@@ -65,7 +66,7 @@ impl CallTraceDecoderBuilder {
 ///
 /// Note that a call trace decoder is required for each new set of traces, since addresses in
 /// different sets might overlap.
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct CallTraceDecoder {
     /// Information for decoding precompile calls.
     pub precompiles: HashMap<Address, Function>,
@@ -115,7 +116,14 @@ impl CallTraceDecoder {
     ///
     /// The call trace decoder always knows how to decode calls to the cheatcode address, as well
     /// as DSTest-style logs.
-    pub fn new() -> Self {
+    pub fn new() -> &'static Self {
+        // If you want to take arguments in this function, assign them to the fields of the cloned
+        // lazy instead of removing it
+        static INIT: OnceCell<CallTraceDecoder> = OnceCell::new();
+        INIT.get_or_init(Self::init)
+    }
+
+    fn init() -> Self {
         Self {
             // TODO: These are the Ethereum precompiles. We should add a way to support precompiles
             // for other networks, too.
