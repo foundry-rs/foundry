@@ -56,6 +56,7 @@ impl<DB: Database> Inspector<DB> for AccessListTracer {
         &mut self,
         interpreter: &mut Interpreter,
         _data: &mut EVMData<'_, DB>,
+        _is_static: bool,
     ) -> InstructionResult {
         let pc = interpreter.program_counter();
         let op = interpreter.contract.bytecode.bytecode()[pc];
