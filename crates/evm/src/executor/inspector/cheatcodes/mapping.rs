@@ -90,7 +90,7 @@ pub fn on_evm_step<DB: Database>(
     interpreter: &Interpreter,
     _data: &mut EVMData<'_, DB>,
 ) {
-    match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
+    match interpreter.current_opcode() {
         opcode::KECCAK256 => {
             if interpreter.stack.peek(1) == Ok(revm::primitives::U256::from(0x40)) {
                 let address = interpreter.contract.address;
