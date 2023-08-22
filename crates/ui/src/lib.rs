@@ -486,31 +486,51 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                                     if let Some(last) = before.pop() {
                                         if !last.ends_with('\n') {
                                             before.iter().skip(start_line).for_each(|line| {
-                                                text_output.lines.push(
-                                                    Line::from(vec![
-                                                        Span::styled(
-                                                            format!(
-                                                                "{: >max_line_num$}",
-                                                                line_number.to_string(),
-                                                                max_line_num = max_line_num
-                                                            ),
-                                                            Style::default()
-                                                                .fg(Color::Gray)
-                                                                .bg(Color::DarkGray),
+                                                text_output.lines.push(Line::from(vec![
+                                                    Span::styled(
+                                                        format!(
+                                                            "{: >max_line_num$}",
+                                                            line_number.to_string(),
+                                                            max_line_num = max_line_num
                                                         ),
-                                                        Span::styled(
-                                                            "\u{2800} ".to_string() + line,
-                                                            Style::default()
-                                                                .add_modifier(Modifier::DIM),
-                                                        ),
-                                                    ])
-                                                    .into(),
-                                                );
+                                                        Style::default()
+                                                            .fg(Color::Gray)
+                                                            .bg(Color::DarkGray),
+                                                    ),
+                                                    Span::styled(
+                                                        "\u{2800} ".to_string() + line,
+                                                        Style::default()
+                                                            .add_modifier(Modifier::DIM),
+                                                    ),
+                                                ]));
                                                 line_number += 1;
                                             });
 
-                                            text_output.lines.push(
-                                                Line::from(vec![
+                                            text_output.lines.push(Line::from(vec![
+                                                Span::styled(
+                                                    format!(
+                                                        "{: >max_line_num$}",
+                                                        line_number.to_string(),
+                                                        max_line_num = max_line_num
+                                                    ),
+                                                    Style::default()
+                                                        .fg(Color::Cyan)
+                                                        .bg(Color::DarkGray)
+                                                        .add_modifier(Modifier::BOLD),
+                                                ),
+                                                Span::raw("\u{2800} "),
+                                                Span::raw(last),
+                                                Span::styled(
+                                                    actual[0].to_string(),
+                                                    Style::default()
+                                                        .fg(Color::Cyan)
+                                                        .add_modifier(Modifier::BOLD),
+                                                ),
+                                            ]));
+                                            line_number += 1;
+
+                                            actual.iter().skip(1).for_each(|s| {
+                                                text_output.lines.push(Line::from(vec![
                                                     Span::styled(
                                                         format!(
                                                             "{: >max_line_num$}",
@@ -523,111 +543,46 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                                                             .add_modifier(Modifier::BOLD),
                                                     ),
                                                     Span::raw("\u{2800} "),
-                                                    Span::raw(last),
                                                     Span::styled(
-                                                        actual[0].to_string(),
+                                                        // this is a hack to add coloring
+                                                        // because tui does weird trimming
+                                                        if s.is_empty() || s == "\n" {
+                                                            "\u{2800} \n".to_string()
+                                                        } else {
+                                                            s.to_string()
+                                                        },
                                                         Style::default()
                                                             .fg(Color::Cyan)
                                                             .add_modifier(Modifier::BOLD),
                                                     ),
-                                                ])
-                                                .into(),
-                                            );
-                                            line_number += 1;
-
-                                            actual.iter().skip(1).for_each(|s| {
-                                                text_output.lines.push(
-                                                    Line::from(vec![
-                                                        Span::styled(
-                                                            format!(
-                                                                "{: >max_line_num$}",
-                                                                line_number.to_string(),
-                                                                max_line_num = max_line_num
-                                                            ),
-                                                            Style::default()
-                                                                .fg(Color::Cyan)
-                                                                .bg(Color::DarkGray)
-                                                                .add_modifier(Modifier::BOLD),
-                                                        ),
-                                                        Span::raw("\u{2800} "),
-                                                        Span::styled(
-                                                            // this is a hack to add coloring
-                                                            // because tui does weird trimming
-                                                            if s.is_empty() || s == "\n" {
-                                                                "\u{2800} \n".to_string()
-                                                            } else {
-                                                                s.to_string()
-                                                            },
-                                                            Style::default()
-                                                                .fg(Color::Cyan)
-                                                                .add_modifier(Modifier::BOLD),
-                                                        ),
-                                                    ])
-                                                    .into(),
-                                                );
+                                                ]));
                                                 line_number += 1;
                                             });
                                         } else {
                                             before.push(last);
                                             before.iter().skip(start_line).for_each(|line| {
-                                                text_output.lines.push(
-                                                    Line::from(vec![
-                                                        Span::styled(
-                                                            format!(
-                                                                "{: >max_line_num$}",
-                                                                line_number.to_string(),
-                                                                max_line_num = max_line_num
-                                                            ),
-                                                            Style::default()
-                                                                .fg(Color::Gray)
-                                                                .bg(Color::DarkGray),
+                                                text_output.lines.push(Line::from(vec![
+                                                    Span::styled(
+                                                        format!(
+                                                            "{: >max_line_num$}",
+                                                            line_number.to_string(),
+                                                            max_line_num = max_line_num
                                                         ),
-                                                        Span::styled(
-                                                            "\u{2800} ".to_string() + line,
-                                                            Style::default()
-                                                                .add_modifier(Modifier::DIM),
-                                                        ),
-                                                    ])
-                                                    .into(),
-                                                );
+                                                        Style::default()
+                                                            .fg(Color::Gray)
+                                                            .bg(Color::DarkGray),
+                                                    ),
+                                                    Span::styled(
+                                                        "\u{2800} ".to_string() + line,
+                                                        Style::default()
+                                                            .add_modifier(Modifier::DIM),
+                                                    ),
+                                                ]));
 
                                                 line_number += 1;
                                             });
                                             actual.iter().for_each(|s| {
-                                                text_output.lines.push(
-                                                    Line::from(vec![
-                                                        Span::styled(
-                                                            format!(
-                                                                "{: >max_line_num$}",
-                                                                line_number.to_string(),
-                                                                max_line_num = max_line_num
-                                                            ),
-                                                            Style::default()
-                                                                .fg(Color::Cyan)
-                                                                .bg(Color::DarkGray)
-                                                                .add_modifier(Modifier::BOLD),
-                                                        ),
-                                                        Span::raw("\u{2800} "),
-                                                        Span::styled(
-                                                            if s.is_empty() || s == "\n" {
-                                                                "\u{2800} \n".to_string()
-                                                            } else {
-                                                                s.to_string()
-                                                            },
-                                                            Style::default()
-                                                                .fg(Color::Cyan)
-                                                                .add_modifier(Modifier::BOLD),
-                                                        ),
-                                                    ])
-                                                    .into(),
-                                                );
-                                                line_number += 1;
-                                            });
-                                        }
-                                    } else {
-                                        actual.iter().for_each(|s| {
-                                            text_output.lines.push(
-                                                Line::from(vec![
+                                                text_output.lines.push(Line::from(vec![
                                                     Span::styled(
                                                         format!(
                                                             "{: >max_line_num$}",
@@ -650,9 +605,36 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                                                             .fg(Color::Cyan)
                                                             .add_modifier(Modifier::BOLD),
                                                     ),
-                                                ])
-                                                .into(),
-                                            );
+                                                ]));
+                                                line_number += 1;
+                                            });
+                                        }
+                                    } else {
+                                        actual.iter().for_each(|s| {
+                                            text_output.lines.push(Line::from(vec![
+                                                Span::styled(
+                                                    format!(
+                                                        "{: >max_line_num$}",
+                                                        line_number.to_string(),
+                                                        max_line_num = max_line_num
+                                                    ),
+                                                    Style::default()
+                                                        .fg(Color::Cyan)
+                                                        .bg(Color::DarkGray)
+                                                        .add_modifier(Modifier::BOLD),
+                                                ),
+                                                Span::raw("\u{2800} "),
+                                                Span::styled(
+                                                    if s.is_empty() || s == "\n" {
+                                                        "\u{2800} \n".to_string()
+                                                    } else {
+                                                        s.to_string()
+                                                    },
+                                                    Style::default()
+                                                        .fg(Color::Cyan)
+                                                        .add_modifier(Modifier::BOLD),
+                                                ),
+                                            ]));
                                             line_number += 1;
                                         });
                                     }
@@ -673,25 +655,22 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                                         after.pop_back();
                                     }
                                     after.iter().for_each(|line| {
-                                        text_output.lines.push(
-                                            Line::from(vec![
-                                                Span::styled(
-                                                    format!(
-                                                        "{: >max_line_num$}",
-                                                        line_number.to_string(),
-                                                        max_line_num = max_line_num
-                                                    ),
-                                                    Style::default()
-                                                        .fg(Color::Gray)
-                                                        .bg(Color::DarkGray),
+                                        text_output.lines.push(Line::from(vec![
+                                            Span::styled(
+                                                format!(
+                                                    "{: >max_line_num$}",
+                                                    line_number.to_string(),
+                                                    max_line_num = max_line_num
                                                 ),
-                                                Span::styled(
-                                                    "\u{2800} ".to_string() + line,
-                                                    Style::default().add_modifier(Modifier::DIM),
-                                                ),
-                                            ])
-                                            .into(),
-                                        );
+                                                Style::default()
+                                                    .fg(Color::Gray)
+                                                    .bg(Color::DarkGray),
+                                            ),
+                                            Span::styled(
+                                                "\u{2800} ".to_string() + line,
+                                                Style::default().add_modifier(Modifier::DIM),
+                                            ),
+                                        ]));
                                         line_number += 1;
                                     });
                                 } else {
