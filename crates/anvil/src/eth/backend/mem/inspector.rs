@@ -53,17 +53,23 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         &mut self,
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
+        is_static: bool,
     ) -> InstructionResult {
         call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.initialize_interp(interp, data);
+            inspector.initialize_interp(interp, data, is_static);
         });
         InstructionResult::Continue
     }
 
     #[inline]
-    fn step(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>) -> InstructionResult {
+    fn step(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        is_static: bool,
+    ) -> InstructionResult {
         call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.step(interp, data);
+            inspector.step(interp, data, is_static);
         });
         InstructionResult::Continue
     }
@@ -86,10 +92,11 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         &mut self,
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
+        is_static: bool,
         eval: InstructionResult,
     ) -> InstructionResult {
         call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.step_end(interp, data, eval);
+            inspector.step_end(interp, data, is_static, eval);
         });
         eval
     }
@@ -99,9 +106,10 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
+        is_static: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         call_inspectors!([&mut self.tracer, Some(&mut self.log_collector)], |inspector| {
-            inspector.call(data, call);
+            inspector.call(data, call, is_static);
         });
 
         (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
@@ -115,9 +123,10 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         remaining_gas: Gas,
         ret: InstructionResult,
         out: Bytes,
+        is_static: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.call_end(data, inputs, remaining_gas, ret, out.clone());
+            inspector.call_end(data, inputs, remaining_gas, ret, out.clone(), is_static);
         });
         (ret, remaining_gas, out)
     }
