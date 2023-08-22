@@ -1,10 +1,6 @@
 use self::{
     env::Broadcast,
-    expect::{
-        build_expect_revert_with_address_failure_message, handle_expect_emit, handle_expect_revert,
-        handle_expected_reverts_with_address, ExpectedCallType, ExpectedRevertWithAddress,
-        DUMMY_CALL_OUTPUT,
-    },
+    expect::{handle_expect_emit, handle_expect_revert, ExpectedCallType},
     mapping::MappingSlots,
     util::{check_if_fixed_gas_limit, process_create, BroadcastableTransactions, MAGIC_SKIP_BYTES},
 };
@@ -131,17 +127,6 @@ pub struct Cheatcodes {
     /// Expected revert information
     pub expected_revert: Option<ExpectedRevert>,
 
-    /// Stores the expected reverts associated to an address
-    pub expected_reverts_with_address: VecDeque<ExpectedRevertWithAddress>,
-
-    /// Tracks if all the expected reverts associated to an address have been matched to alter the
-    /// root call return data from a revert to a simple return
-    pub matched_all_expected_reverts_with_address: bool,
-
-    /// Tracks if an EVM execution result can be altered after matching all the expected reverts
-    /// associated to an address. It can only be false if a simple expect revert failed.
-    pub alter_revert_result: bool,
-
     /// Additional diagnostic for reverts
     pub fork_revert_diagnostic: Option<RevertDiagnostic>,
 
@@ -215,7 +200,7 @@ impl Cheatcodes {
     /// Creates a new `Cheatcodes` with the given settings.
     #[inline]
     pub fn new(config: Arc<CheatsConfig>) -> Self {
-        Self { config, fs_commit: true, alter_revert_result: true, ..Default::default() }
+        Self { config, fs_commit: true, ..Default::default() }
     }
 
     #[instrument(level = "error", name = "apply", target = "evm::cheatcodes", skip_all)]
@@ -794,16 +779,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
-        // If we are reverting check if the current revert matches any of the expected reverts
-        // associated to an address if any has been set.
-        if status == InstructionResult::Revert {
-            handle_expected_reverts_with_address(
-                self,
-                b160_to_h160(call.contract),
-                retdata.clone().into(),
-            )
-        }
-
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
             if data.journaled_state.depth() <= expected_revert.depth {
@@ -817,7 +792,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 ) {
                     Err(error) => {
                         trace!(expected=?expected_revert, ?error, ?status, "Expected revert mismatch");
-                        self.alter_revert_result = false;
                         (InstructionResult::Revert, remaining_gas, error.encode_error().0)
                     }
                     Ok((_, retdata)) => (InstructionResult::Return, remaining_gas, retdata.0),
@@ -944,21 +918,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     failure_message.to_string().encode().into(),
                 )
             }
-
-            // Check if there are any expected reverts by address that haven't been matched
-            self.expected_reverts_with_address.retain(|expected_revert| !expected_revert.found);
-
-            // If `expected_reverts_with_address` is not empty then we did not match all the
-            // expected reverts with an address
-            if let Some(pending_expected_revert) = self.expected_reverts_with_address.pop_front() {
-                return (
-                    InstructionResult::Revert,
-                    remaining_gas,
-                    build_expect_revert_with_address_failure_message(pending_expected_revert)
-                        .encode()
-                        .into(),
-                )
-            }
         }
 
         // if there's a revert and a previous call was diagnosed as fork related revert then we can
@@ -985,19 +944,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 self.fork_revert_diagnostic =
                     data.db.diagnose_revert(b160_to_h160(call.contract), &data.journaled_state);
             }
-        }
-
-        // We must verify that all the expected reverts have been matched and that we are at the
-        // root call to alter the execution result. This is needed to cover the scenario where the
-        // current call is reverting while all the revert expectations have been satisfied, which
-        // would cause the call to fail even if it shouldn't. This happens when using expect_revert
-        // with an address.
-        if self.matched_all_expected_reverts_with_address &&
-            self.alter_revert_result &&
-            data.journaled_state.depth() == 0 &&
-            status == InstructionResult::Revert
-        {
-            return (InstructionResult::Return, remaining_gas, DUMMY_CALL_OUTPUT.to_vec().into())
         }
 
         (status, remaining_gas, retdata)
@@ -1140,18 +1086,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         (InstructionResult::Revert, None, remaining_gas, err.encode_error().0)
                     }
                 }
-            }
-        }
-
-        // If we are reverting check if the current revert matches any of the expected reverts
-        // associated to an address if any has been set.
-        if status == InstructionResult::Revert {
-            if let Some(address) = address {
-                handle_expected_reverts_with_address(
-                    self,
-                    b160_to_h160(address),
-                    retdata.clone().into(),
-                );
             }
         }
 

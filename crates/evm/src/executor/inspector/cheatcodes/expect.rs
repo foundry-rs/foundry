@@ -27,6 +27,8 @@ static DUMMY_CREATE_ADDRESS: Address =
 
 #[derive(Clone, Debug, Default)]
 pub struct ExpectedRevert {
+    /// The expected address from which the expected revert should happen
+    pub address: Option<H160>,
     /// The expected data returned by the revert, None being any
     pub reason: Option<Bytes>,
     /// The depth at which the revert is expected
@@ -68,12 +70,17 @@ impl ExpectedRevertWithAddress {
     }
 }
 
-fn expect_revert(state: &mut Cheatcodes, reason: Option<Bytes>, depth: u64) -> Result {
+fn expect_revert(
+    state: &mut Cheatcodes,
+    reason: Option<Bytes>,
+    address: Option<H160>,
+    depth: u64,
+) -> Result {
     ensure!(
         state.expected_revert.is_none(),
         "You must call another function prior to expecting a second revert."
     );
-    state.expected_revert = Some(ExpectedRevert { reason, depth });
+    state.expected_revert = Some(ExpectedRevert { reason, depth, address });
     Ok(Bytes::new())
 }
 
@@ -175,43 +182,40 @@ pub fn build_expect_revert_with_address_failure_message(
     }
 }
 
-/// Verifies that a revert matches one of the reverts associated to an address as expected by the
-/// user and that it happened in the expected order
-pub fn handle_expected_reverts_with_address(
-    state: &mut Cheatcodes,
-    current_contract: H160,
-    current_revert_data: Bytes,
-) {
-    // If this is empty we don't need to match any revert
-    if state.expected_reverts_with_address.is_empty() {
-        return
-    }
+// /// Verifies that a revert matches one of the reverts associated to an address as expected by the
+// /// user and that it happened in the expected order
+// pub fn handle_expected_reverts_with_address(
+//     state: &mut Cheatcodes,
+//     current_contract: H160,
+//     current_revert_data: Bytes,
+// ) { // If this is empty we don't need to match any revert if
+//   state.expected_reverts_with_address.is_empty() { return }
 
-    // Take the first expected revert and...
-    if let Some(mut first) = state.expected_reverts_with_address.pop_front() {
-        // ... verify if it has been alredy matched.
-        if !first.found {
-            // if it matches with the current revert mark found as true and push the current
-            // expected revert to the end of the queue to match any other pending expected
-            // revert.
-            if first.compare_revert(current_contract, current_revert_data) {
-                first.found = true;
-                state.expected_reverts_with_address.push_back(first);
-            }
-            // If the current expected revert does not match we push it to the front of the queue to
-            // try to match it again with the next revert.
-            else {
-                state.expected_reverts_with_address.push_front(first);
-            }
-        }
-        // If the first expected revert has already been matched it means that all the expected
-        // reverts have been matched and we can safely clear the queque.
-        else {
-            state.matched_all_expected_reverts_with_address = true;
-            state.expected_reverts_with_address.clear();
-        }
-    }
-}
+//     // Take the first expected revert and...
+//     if let Some(mut first) = state.expected_reverts_with_address.pop_front() {
+//         // ... verify if it has been alredy matched.
+//         if !first.found {
+//             // if it matches with the current revert mark found as true and push the current
+//             // expected revert to the end of the queue to match any other pending expected
+//             // revert.
+//             if first.compare_revert(current_contract, current_revert_data) {
+//                 first.found = true;
+//                 state.expected_reverts_with_address.push_back(first);
+//             }
+//             // If the current expected revert does not match we push it to the front of the queue
+// to             // try to match it again with the next revert.
+//             else {
+//                 state.expected_reverts_with_address.push_front(first);
+//             }
+//         }
+//         // If the first expected revert has already been matched it means that all the expected
+//         // reverts have been matched and we can safely clear the queque.
+//         else {
+//             state.matched_all_expected_reverts_with_address = true;
+//             state.expected_reverts_with_address.clear();
+//         }
+//     }
+// }
 
 #[derive(Clone, Debug, Default)]
 pub struct ExpectedEmit {
@@ -445,35 +449,23 @@ pub fn apply<DB: DatabaseExt>(
     call: &HEVMCalls,
 ) -> Option<Result> {
     let result = match call {
-        HEVMCalls::ExpectRevert0(_) => expect_revert(state, None, data.journaled_state.depth()),
+        HEVMCalls::ExpectRevert0(_) => {
+            expect_revert(state, None, None, data.journaled_state.depth())
+        }
         HEVMCalls::ExpectRevert1(inner) => {
-            expect_revert(state, Some(inner.0.clone()), data.journaled_state.depth())
+            expect_revert(state, Some(inner.0.clone()), None, data.journaled_state.depth())
         }
         HEVMCalls::ExpectRevert2(inner) => {
-            expect_revert(state, Some(inner.0.into()), data.journaled_state.depth())
+            expect_revert(state, Some(inner.0.into()), None, data.journaled_state.depth())
         }
         HEVMCalls::ExpectRevert3(inner) => {
-            state
-                .expected_reverts_with_address
-                .push_back(ExpectedRevertWithAddress { address: inner.0, ..Default::default() });
-            Ok(Bytes::new())
+            expect_revert(state, None, Some(inner.0), data.journaled_state.depth())
         }
         HEVMCalls::ExpectRevert4(inner) => {
-            state.expected_reverts_with_address.push_back(ExpectedRevertWithAddress {
-                address: inner.1,
-                reason: Some(inner.0.clone()),
-                ..Default::default()
-            });
-            Ok(Bytes::new())
+            expect_revert(state, Some(inner.0.clone()), Some(inner.1), data.journaled_state.depth())
         }
         HEVMCalls::ExpectRevert5(inner) => {
-            state.expected_reverts_with_address.push_back(ExpectedRevertWithAddress {
-                address: inner.1,
-                reason: Some(inner.0.into()),
-                ..Default::default()
-            });
-
-            Ok(Bytes::new())
+            expect_revert(state, Some(inner.0.into()), Some(inner.1), data.journaled_state.depth())
         }
         HEVMCalls::ExpectEmit0(_) => {
             state.expected_emits.push_back(ExpectedEmit {
