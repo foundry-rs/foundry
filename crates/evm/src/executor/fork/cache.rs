@@ -1,10 +1,9 @@
 //! Cache related abstraction
 use crate::executor::backend::snapshot::StateSnapshot;
+use hashbrown::HashMap as Map;
 use parking_lot::RwLock;
 use revm::{
-    primitives::{
-        Account, AccountInfo, AccountStatus, HashMap as Map, B160, B256, KECCAK_EMPTY, U256,
-    },
+    primitives::{Account, AccountInfo, B160, B256, KECCAK_EMPTY, U256},
     DatabaseCommit,
 };
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
@@ -257,17 +256,13 @@ impl MemDb {
         let mut storage = self.storage.write();
         let mut accounts = self.accounts.write();
         for (add, mut acc) in changes {
-            if acc.is_empty() || acc.is_selfdestructed() {
+            if acc.is_empty() || acc.is_destroyed {
                 accounts.remove(&add);
                 storage.remove(&add);
             } else {
                 // insert account
-                if let Some(code_hash) = acc
-                    .info
-                    .code
-                    .as_ref()
-                    .filter(|code| !code.is_empty())
-                    .map(|code| code.hash_slow())
+                if let Some(code_hash) =
+                    acc.info.code.as_ref().filter(|code| !code.is_empty()).map(|code| code.hash)
                 {
                     acc.info.code_hash = code_hash;
                 } else if acc.info.code_hash.is_zero() {
@@ -276,7 +271,7 @@ impl MemDb {
                 accounts.insert(add, acc.info);
 
                 let acc_storage = storage.entry(add).or_default();
-                if acc.status.contains(AccountStatus::Created) {
+                if acc.storage_cleared {
                     acc_storage.clear();
                 }
                 for (index, value) in acc.storage {
