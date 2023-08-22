@@ -57,7 +57,7 @@ impl TestOptions {
         base_fuzz: FuzzConfig,
         base_invariant: InvariantConfig,
     ) -> Result<Self, InlineConfigError> {
-        let natspecs: Vec<NatSpec> = NatSpec::parse(output, &root);
+        let natspecs: Vec<NatSpec> = NatSpec::parse(output, root);
         let mut inline_invariant = InlineConfig::<InvariantConfig>::default();
         let mut inline_fuzz = InlineConfig::<FuzzConfig>::default();
 
@@ -68,7 +68,7 @@ impl TestOptions {
             InvariantConfig::validate_configs(&natspec)?;
 
             // Apply in-line configurations for the current profile
-            let configs: Vec<String> = natspec.current_profile_configs().into_iter().collect_vec();
+            let configs: Vec<String> = natspec.current_profile_configs().collect_vec();
             let c: &str = &natspec.contract;
             let f: &str = &natspec.function;
             let line: String = natspec.debug_context();
