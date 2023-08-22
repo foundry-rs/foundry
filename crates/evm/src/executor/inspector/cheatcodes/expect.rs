@@ -35,41 +35,6 @@ pub struct ExpectedRevert {
     pub depth: u64,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct ExpectedRevertWithAddress {
-    /// The address from which the revert is expected to be thrown
-    pub address: H160,
-
-    /// The expected data returned by the revert, None being any
-    pub reason: Option<Bytes>,
-
-    /// Tracks if the revert has been matched during EVM execution
-    pub found: bool,
-
-    /// Stores the latest revert data thrown by `address` during EVM execution. If None, `address`
-    /// did not revert
-    pub captured_revert_data: Option<Bytes>,
-}
-
-impl ExpectedRevertWithAddress {
-    pub fn compare_revert(&mut self, other: H160, data: Bytes) -> bool {
-        if self.address != other {
-            return false
-        }
-
-        if let Some(ref expected_data) = self.reason {
-            let raw_error_data = get_raw_error(data);
-            let check = *expected_data == raw_error_data;
-
-            self.captured_revert_data = Some(raw_error_data);
-
-            return check
-        }
-
-        true
-    }
-}
-
 fn expect_revert(
     state: &mut Cheatcodes,
     reason: Option<Bytes>,
@@ -115,16 +80,89 @@ fn get_raw_error(data: Bytes) -> Bytes {
     data
 }
 
-/// Verifies that an EVM execution completed with a revert and that the revert matches the user
-/// provided data if any.
+/// Verifies that a revert occurred during EVM execution and that matches the user provided data if
+/// any. Depending on the provided input, the expectation is verified under different assumptions:
+/// - See [handle_expect_revert_with_address]: If an address has been provided by the user check if
+///   anywhere in the call stack `expected_revert_address` reverted:
+///     - if the address did not revert fail.
+///     - if the address reverted:
+///         - if the user did not provided an `expected_revert` then it is a success.
+///         - if the user did provide an `expected_revert` check that is one of the reverts
+///           registered during EVM execution.
+///
+///
+/// - See [handle_expect_revert_with_data]: If an address has not been provided by the user:
+///  The status of the current call is checked:
+///     - If the call is not reverting then fail.
+///     - If the call is reverting then:
+///         - If the user did not provide any data to match then it is a success.
+///         - If the user provided data to match and it does, then it is a success, otherwise it is
+///           a failure.
+///     
+///
+/// More details here https://github.com/foundry-rs/foundry/pull/5430 and here:
+/// https://github.com/foundry-rs/foundry/issues/5299
 pub fn handle_expect_revert(
     is_create: bool,
     expected_revert: Option<&Bytes>,
+    expected_revert_address: Option<H160>,
+    expected_revert_address_reverts: Vec<Bytes>,
     status: InstructionResult,
     retdata: Bytes,
 ) -> Result<(Option<Address>, Bytes)> {
     trace!("handle expect revert");
 
+    match expected_revert_address {
+        Some(expected_revert_address) => handle_expect_revert_with_address(
+            is_create,
+            expected_revert,
+            expected_revert_address,
+            expected_revert_address_reverts,
+        ),
+        None => handle_expect_revert_with_data(is_create, expected_revert, status, retdata),
+    }
+}
+
+/// Verifies that `expected_revert_address` reverted with `expected_reverted` anywhere in the call
+/// stack during EVM execution.
+fn handle_expect_revert_with_address(
+    is_create: bool,
+    expected_revert: Option<&Bytes>,
+    expected_revert_address: H160,
+    expected_revert_address_reverts: Vec<Bytes>,
+) -> Result<(Option<Address>, Bytes)> {
+    if expected_revert_address_reverts.is_empty() {
+        bail!("The expected revert address {:#?} did not revert", expected_revert_address)
+    }
+
+    match expected_revert {
+        Some(expected_revert_data) => {
+            let reverted_with_expected_data = expected_revert_address_reverts
+                .iter()
+                .any(|revert_data| get_raw_error(revert_data.clone()) == *expected_revert_data);
+
+            if !reverted_with_expected_data {
+                bail!(
+                    "The expected revert address {:#?} did not revert with the expected revert data. Expected: '{}' but found: '{}'",
+                    expected_revert_address,
+                    stringify(expected_revert_data),
+                    stringify(&expected_revert_address_reverts[0]),
+                )
+            }
+
+            success_return!(is_create)
+        }
+        None => success_return!(is_create),
+    }
+}
+
+/// Verifies that the current call is reverting and that it reverted with `expected_revert`
+fn handle_expect_revert_with_data(
+    is_create: bool,
+    expected_revert: Option<&Bytes>,
+    status: InstructionResult,
+    retdata: Bytes,
+) -> Result<(Option<Address>, Bytes)> {
     ensure!(!matches!(status, return_ok!()), "Call did not revert as expected");
 
     // If None, accept any revert
@@ -148,74 +186,6 @@ pub fn handle_expect_revert(
         ))
     }
 }
-
-pub fn build_expect_revert_with_address_failure_message(
-    expected_revert: ExpectedRevertWithAddress,
-) -> String {
-    match expected_revert.captured_revert_data {
-        Some(captured_revert_data) => {
-            if captured_revert_data.is_empty() {
-                format!(
-                    "The expected revert address {:#?} reverted as expected, but without data",
-                    expected_revert.address
-                )
-            } else if let Some(expected_revert_reason) = expected_revert.reason {
-                format!(
-                "The expected revert address {:#?} did not revert with the expected revert data. Expected: {} but found: {}",
-                expected_revert.address,
-                stringify(&expected_revert_reason),
-                stringify(&captured_revert_data),
-            )
-            }
-            // Technically this scenario shouldn't happen because if the expected revert data is
-            // None and the address of the revert matches then the test should pass.
-            else {
-                format!(
-                "The expected revert address {:#?} did not revert with the expected revert data.",
-                expected_revert.address
-            )
-            }
-        }
-        None => {
-            format!("The expected revert address {:#?} did not revert", expected_revert.address,)
-        }
-    }
-}
-
-// /// Verifies that a revert matches one of the reverts associated to an address as expected by the
-// /// user and that it happened in the expected order
-// pub fn handle_expected_reverts_with_address(
-//     state: &mut Cheatcodes,
-//     current_contract: H160,
-//     current_revert_data: Bytes,
-// ) { // If this is empty we don't need to match any revert if
-//   state.expected_reverts_with_address.is_empty() { return }
-
-//     // Take the first expected revert and...
-//     if let Some(mut first) = state.expected_reverts_with_address.pop_front() {
-//         // ... verify if it has been alredy matched.
-//         if !first.found {
-//             // if it matches with the current revert mark found as true and push the current
-//             // expected revert to the end of the queue to match any other pending expected
-//             // revert.
-//             if first.compare_revert(current_contract, current_revert_data) {
-//                 first.found = true;
-//                 state.expected_reverts_with_address.push_back(first);
-//             }
-//             // If the current expected revert does not match we push it to the front of the queue
-// to             // try to match it again with the next revert.
-//             else {
-//                 state.expected_reverts_with_address.push_front(first);
-//             }
-//         }
-//         // If the first expected revert has already been matched it means that all the expected
-//         // reverts have been matched and we can safely clear the queque.
-//         else {
-//             state.matched_all_expected_reverts_with_address = true;
-//             state.expected_reverts_with_address.clear();
-//         }
-//     }
-// }
 
 #[derive(Clone, Debug, Default)]
 pub struct ExpectedEmit {

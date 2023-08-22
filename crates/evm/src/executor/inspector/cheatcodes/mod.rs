@@ -127,6 +127,11 @@ pub struct Cheatcodes {
     /// Expected revert information
     pub expected_revert: Option<ExpectedRevert>,
 
+    /// Keeps track of the reverts thrown by an address during EVM execution if
+    /// there is an expected revert. It is used by [handle_expect_revert] to check if
+    /// `expected_reverted_address` reverted as specified by `expected_revert`.
+    pub expected_revert_address_reverts: Vec<Bytes>,
+
     /// Additional diagnostic for reverts
     pub fork_revert_diagnostic: Option<RevertDiagnostic>,
 
@@ -779,14 +784,30 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
+        // If we are reverting and we are expecting a revert from an address store the current
+        // revert data for that address
+        if status == InstructionResult::Revert {
+            if let Some(ExpectedRevert { address: Some(expected_revert_address), .. }) =
+                &self.expected_revert
+            {
+                if *expected_revert_address == b160_to_h160(call.contract) {
+                    self.expected_revert_address_reverts.push(retdata.clone().into())
+                }
+            }
+        }
+
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
             if data.journaled_state.depth() <= expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                let expected_revert_address_reverts =
+                    std::mem::take(&mut self.expected_revert_address_reverts);
 
                 return match handle_expect_revert(
                     false,
                     expected_revert.reason.as_ref(),
+                    expected_revert.address,
+                    expected_revert_address_reverts,
                     status,
                     retdata.into(),
                 ) {
@@ -1065,14 +1086,30 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
+        // If we are reverting and we are expecting a revert from an address store the current
+        // revert data for that address
+        if status == InstructionResult::Revert {
+            if let Some(ExpectedRevert { address: expected_revert_address, .. }) =
+                &self.expected_revert
+            {
+                if *expected_revert_address == address.map(b160_to_h160) {
+                    self.expected_revert_address_reverts.push(retdata.clone().into())
+                }
+            }
+        }
+
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
             if data.journaled_state.depth() <= expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                let expected_revert_address_reverts =
+                    std::mem::take(&mut self.expected_revert_address_reverts);
 
                 return match handle_expect_revert(
                     true,
                     expected_revert.reason.as_ref(),
+                    expected_revert.address,
+                    expected_revert_address_reverts,
                     status,
                     retdata.into(),
                 ) {
