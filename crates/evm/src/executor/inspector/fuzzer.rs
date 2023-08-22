@@ -25,6 +25,7 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
         &mut self,
         interpreter: &mut Interpreter,
         _: &mut EVMData<'_, DB>,
+        _: bool,
     ) -> InstructionResult {
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
@@ -39,6 +40,7 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
+        _: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         // We don't want to override the very first call made to the test contract.
         if self.call_generator.is_some() && data.env.tx.caller != call.context.caller {
@@ -60,6 +62,7 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
         remaining_gas: Gas,
         status: InstructionResult,
         retdata: Bytes,
+        _: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         if let Some(ref mut call_generator) = self.call_generator {
             call_generator.used = false;

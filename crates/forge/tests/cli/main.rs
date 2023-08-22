@@ -4,6 +4,7 @@ pub mod utils;
 mod cache;
 mod cmd;
 mod config;
+mod coverage;
 mod create;
 mod doc;
 mod multi_script;
