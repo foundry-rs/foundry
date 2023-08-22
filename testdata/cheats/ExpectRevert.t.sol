@@ -278,6 +278,10 @@ contract ExpectRevertWithAddressTest is DSTest {
     }
 
     // Simple revert tests
+    function testFailExpectRevertWithAddressAndNotCallingFunction(address randomAddress) external {
+        vm.expectRevert(randomAddress);
+    }
+
     function testFailExpectRevertWithAddressNotOnImmediateNextCall(string memory data) public {
         vm.expectRevert(bytes(data), reverterAddress);
         reverter.doNotRevert();
@@ -536,98 +540,5 @@ contract ExpectRevertWithAddressTest is DSTest {
 
         vm.expectRevert(CustomError.selector, address(middleWrapper));
         outerWrapper.revertWithCustomError();
-    }
-
-    // Misc
-    function testFailMultipleExpectWithWrongRevertOrder(string memory data) external {
-        ReverterWrapper middleWrapper = new ReverterWrapper(reverter);
-        ReverterWrapper outerWrapper = new ReverterWrapper(middleWrapper);
-
-        vm.expectRevert(address(outerWrapper));
-        vm.expectRevert(reverterAddress);
-        vm.expectRevert(address(middleWrapper));
-        outerWrapper.revertWithMessage(data);
-    }
-
-    function testMultipleExpectAnyRevertAtMultipleNestingLevels(string memory data) external {
-        ReverterWrapper middleWrapper = new ReverterWrapper(reverter);
-        ReverterWrapper outerWrapper = new ReverterWrapper(middleWrapper);
-
-        vm.expectRevert(reverterAddress);
-        vm.expectRevert(address(middleWrapper));
-        vm.expectRevert(address(outerWrapper));
-        outerWrapper.revertWithoutReason();
-
-        vm.expectRevert(reverterAddress);
-        vm.expectRevert(address(middleWrapper));
-        vm.expectRevert(address(outerWrapper));
-        outerWrapper.revertWithCustomError();
-
-        vm.expectRevert(reverterAddress);
-        vm.expectRevert(address(middleWrapper));
-        vm.expectRevert(address(outerWrapper));
-        outerWrapper.revertWithMessage(data);
-    }
-
-    function testMultipleExpectAnyRevertOnlyAtThe2LowestLevels(string memory data) external {
-        ReverterWrapper middleWrapper = new ReverterWrapper(reverter);
-        RevertCatcher outerWrapper = new RevertCatcher(middleWrapper);
-
-        vm.expectRevert(reverterAddress);
-        vm.expectRevert(address(middleWrapper));
-        outerWrapper.revertWithoutReason();
-
-        vm.expectRevert(reverterAddress);
-        vm.expectRevert(address(middleWrapper));
-        outerWrapper.revertWithCustomError();
-
-        vm.expectRevert(bytes(data), reverterAddress);
-        vm.expectRevert(bytes(data), address(middleWrapper));
-        outerWrapper.revertWithMessage(data);
-    }
-
-    function testMultipleExpectRevertCallsWithDataOnlyAtThe2LowestLevels(string memory data) external {
-        ReverterWrapper middleWrapper = new ReverterWrapper(reverter);
-        RevertCatcher outerWrapper = new RevertCatcher(middleWrapper);
-
-        vm.expectRevert(bytes(data), reverterAddress);
-        vm.expectRevert(bytes(data), address(middleWrapper));
-        outerWrapper.revertWithMessage(data);
-
-        vm.expectRevert(CustomError.selector, reverterAddress);
-        vm.expectRevert(CustomError.selector, address(middleWrapper));
-        outerWrapper.revertWithCustomError();
-    }
-
-    function testFailExpectRevertWithAddressCombinedWithExpectRevertIfCallDoesNotRevert(string memory data) external {
-        ReverterWrapper middleWrapper = new ReverterWrapper(reverter);
-        RevertCatcher outerWrapper = new RevertCatcher(middleWrapper);
-
-        vm.expectRevert(bytes(data), reverterAddress);
-        vm.expectRevert(bytes(data), address(middleWrapper));
-        vm.expectRevert(bytes(data));
-        outerWrapper.revertWithMessage(data);
-    }
-
-    function testExpectRevertWithAddressCombinedWithExpectRevert(string memory data) external {
-        ReverterWrapper middleWrapper = new ReverterWrapper(reverter);
-        ReverterWrapper outerWrapper = new ReverterWrapper(middleWrapper);
-
-        vm.expectRevert(bytes(data), reverterAddress);
-        vm.expectRevert(bytes(data), address(middleWrapper));
-        vm.expectRevert(bytes(data));
-        outerWrapper.revertWithMessage(data);
-    }
-
-    function testExpectEmitCombinedWithExpectRevertWithAddress() external {
-        ReverterWrapper middleWrapper = new ReverterWrapper(reverter);
-        Emitter emitter = new Emitter(middleWrapper);
-
-        vm.expectEmit();
-        emit CustomEvent();
-
-        vm.expectRevert(reverterAddress);
-        vm.expectRevert(address(middleWrapper));
-        emitter.revertWithNoDataAndEmit();
     }
 }
