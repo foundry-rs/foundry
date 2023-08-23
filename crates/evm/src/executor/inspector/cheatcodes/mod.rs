@@ -321,7 +321,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 self.gas_metering = Some(Some(interpreter.gas));
             }
             Some(Some(gas)) => {
-                match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
+                match interpreter.current_opcode() {
                     opcode::CREATE | opcode::CREATE2 => {
                         // set we're about to enter CREATE frame to meter its gas on first opcode
                         // inside it
@@ -373,7 +373,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Record writes and reads if `record` has been called
         if let Some(storage_accesses) = &mut self.accesses {
-            match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
+            match interpreter.current_opcode() {
                 opcode::SLOAD => {
                     let key = try_or_continue!(interpreter.stack().peek(0));
                     storage_accesses
@@ -416,7 +416,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             // size of the memory write is implicit, so these cases are hard-coded.
             macro_rules! mem_opcode_match {
                 ([$(($opcode:ident, $offset_depth:expr, $size_depth:expr, $writes:expr)),*]) => {
-                    match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
+                    match interpreter.current_opcode() {
                         ////////////////////////////////////////////////////////////////
                         //    OPERATIONS THAT CAN EXPAND/MUTATE MEMORY BY WRITING     //
                         ////////////////////////////////////////////////////////////////
