@@ -1,9 +1,10 @@
 //! Cache related abstraction
 use crate::executor::backend::snapshot::StateSnapshot;
-use hashbrown::HashMap as Map;
 use parking_lot::RwLock;
 use revm::{
-    primitives::{Account, AccountInfo, B160, B256, KECCAK_EMPTY, U256},
+    primitives::{
+        Account, AccountInfo, AccountStatus, HashMap as Map, B160, B256, KECCAK_EMPTY, U256,
+    },
     DatabaseCommit,
 };
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
@@ -256,13 +257,17 @@ impl MemDb {
         let mut storage = self.storage.write();
         let mut accounts = self.accounts.write();
         for (add, mut acc) in changes {
-            if acc.is_empty() || acc.is_destroyed {
+            if acc.is_empty() || acc.is_selfdestructed() {
                 accounts.remove(&add);
                 storage.remove(&add);
             } else {
                 // insert account
-                if let Some(code_hash) =
-                    acc.info.code.as_ref().filter(|code| !code.is_empty()).map(|code| code.hash)
+                if let Some(code_hash) = acc
+                    .info
+                    .code
+                    .as_ref()
+                    .filter(|code| !code.is_empty())
+                    .map(|code| code.hash_slow())
                 {
                     acc.info.code_hash = code_hash;
                 } else if acc.info.code_hash.is_zero() {
@@ -271,7 +276,7 @@ impl MemDb {
                 accounts.insert(add, acc.info);
 
                 let acc_storage = storage.entry(add).or_default();
-                if acc.storage_cleared {
+                if acc.status.contains(AccountStatus::Created) {
                     acc_storage.clear();
                 }
                 for (index, value) in acc.storage {
@@ -474,6 +479,7 @@ mod tests {
             "chain_id": "0x539",
             "spec_id": "LATEST",
             "perf_all_precompiles_have_balance": false,
+            "disable_coinbase_tip": false,
             "perf_analyse_created_bytecodes": "Analyse",
             "limit_contract_code_size": 18446744073709551615,
             "memory_limit": 4294967295

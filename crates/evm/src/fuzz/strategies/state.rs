@@ -268,7 +268,7 @@ pub fn collect_created_contracts(
 
     for (address, account) in state_changeset {
         if !setup_contracts.contains_key(&b160_to_h160(*address)) {
-            if let (true, Some(code)) = (&account.is_touched, &account.info.code) {
+            if let (true, Some(code)) = (&account.is_touched(), &account.info.code) {
                 if !code.is_empty() {
                     if let Some((artifact, (abi, _))) = project_contracts.find_by_code(code.bytes())
                     {
