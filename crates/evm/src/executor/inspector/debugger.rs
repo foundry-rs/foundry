@@ -55,7 +55,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         &mut self,
         interpreter: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
-        _: bool,
     ) -> InstructionResult {
         let pc = interpreter.program_counter();
         let op = interpreter.contract.bytecode.bytecode()[pc];
@@ -98,7 +97,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
-        _: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         self.enter(
             data.journaled_state.depth() as usize,
@@ -126,7 +124,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         gas: Gas,
         status: InstructionResult,
         retdata: Bytes,
-        _: bool,
     ) -> (InstructionResult, Gas, Bytes) {
         self.exit();
 
