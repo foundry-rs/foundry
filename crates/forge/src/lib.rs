@@ -3,7 +3,7 @@ use foundry_config::{
     validate_profiles, Config, FuzzConfig, InlineConfig, InlineConfigError, InlineConfigParser,
     InvariantConfig, NatSpec,
 };
-use itertools::Itertools;
+
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use std::path::Path;
 
@@ -68,7 +68,7 @@ impl TestOptions {
             InvariantConfig::validate_configs(&natspec)?;
 
             // Apply in-line configurations for the current profile
-            let configs: Vec<String> = natspec.current_profile_configs().collect_vec();
+            let configs: Vec<String> = natspec.current_profile_configs().collect();
             let c: &str = &natspec.contract;
             let f: &str = &natspec.function;
             let line: String = natspec.debug_context();
