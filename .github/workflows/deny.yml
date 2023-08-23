@@ -3,10 +3,10 @@ name: deny
 on:
     push:
         branches: [master]
-        paths: [Cargo.lock]
+        paths: [Cargo.lock, deny.toml]
     pull_request:
         branches: [master]
-        paths: [Cargo.lock]
+        paths: [Cargo.lock, deny.toml]
 
 env:
     CARGO_TERM_COLOR: always
