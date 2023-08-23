@@ -5300,7 +5300,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "3.3.0"
-source = "git+https://github.com/evalir/revm/?branch=evalir/add-hash-contract#5097894b0c3a129c6a81621394ef96d277ee7ee1"
+source = "git+https://github.com/bluealloy/revm/?rev=6b55b9c0ab264c000e087c2f54f2d8dc24b869aa#6b55b9c0ab264c000e087c2f54f2d8dc24b869aa"
 dependencies = [
  "auto_impl",
  "once_cell",
@@ -5314,7 +5314,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "1.1.2"
-source = "git+https://github.com/evalir/revm/?branch=evalir/add-hash-contract#5097894b0c3a129c6a81621394ef96d277ee7ee1"
+source = "git+https://github.com/bluealloy/revm/?rev=6b55b9c0ab264c000e087c2f54f2d8dc24b869aa#6b55b9c0ab264c000e087c2f54f2d8dc24b869aa"
 dependencies = [
  "derive_more",
  "enumn",
@@ -5326,7 +5326,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "2.0.3"
-source = "git+https://github.com/evalir/revm/?branch=evalir/add-hash-contract#5097894b0c3a129c6a81621394ef96d277ee7ee1"
+source = "git+https://github.com/bluealloy/revm/?rev=6b55b9c0ab264c000e087c2f54f2d8dc24b869aa#6b55b9c0ab264c000e087c2f54f2d8dc24b869aa"
 dependencies = [
  "k256",
  "num",
@@ -5342,7 +5342,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "1.1.2"
-source = "git+https://github.com/evalir/revm/?branch=evalir/add-hash-contract#5097894b0c3a129c6a81621394ef96d277ee7ee1"
+source = "git+https://github.com/bluealloy/revm/?rev=6b55b9c0ab264c000e087c2f54f2d8dc24b869aa#6b55b9c0ab264c000e087c2f54f2d8dc24b869aa"
 dependencies = [
  "auto_impl",
  "bitflags 2.4.0",
