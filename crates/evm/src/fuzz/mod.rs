@@ -250,7 +250,7 @@ impl<'a> FuzzedExecutor<'a> {
         }
 
         let breakpoints =
-            call.cheatcodes.clone().map_or(Default::default(), |cheats| cheats.breakpoints);
+            call.cheatcodes.as_ref().map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
 
         let success =
             self.executor.is_success(address, call.reverted, state_changeset.clone(), should_fail);
