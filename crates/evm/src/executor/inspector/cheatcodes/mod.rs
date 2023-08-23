@@ -294,7 +294,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         &mut self,
         _: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
-        _: bool,
     ) -> InstructionResult {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
@@ -312,7 +311,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         &mut self,
         interpreter: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
-        _: bool,
     ) -> InstructionResult {
         self.pc = interpreter.program_counter();
 
@@ -513,7 +511,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 (CALLCODE, 5, 6, true),
                 (STATICCALL, 4, 5, true),
                 (DELEGATECALL, 4, 5, true),
-                (SHA3, 0, 1, false),
+                (KECCAK256, 0, 1, false),
                 (LOG0, 0, 1, false),
                 (LOG1, 0, 1, false),
                 (LOG2, 0, 1, false),
@@ -568,7 +566,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
-        is_static: bool,
     ) -> (InstructionResult, Gas, bytes::Bytes) {
         if call.contract == h160_to_b160(CHEATCODE_ADDRESS) {
             let gas = Gas::new(call.gas_limit);
@@ -677,7 +674,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     // because we only need the from, to, value, and data. We can later change this
                     // into 1559, in the cli package, relatively easily once we
                     // know the target chain supports EIP-1559.
-                    if !is_static {
+                    if !call.is_static {
                         if let Err(err) = data
                             .journaled_state
                             .load_account(h160_to_b160(broadcast.new_origin), data.db)
@@ -742,7 +739,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         remaining_gas: Gas,
         status: InstructionResult,
         retdata: bytes::Bytes,
-        _: bool,
     ) -> (InstructionResult, Gas, bytes::Bytes) {
         if call.contract == h160_to_b160(CHEATCODE_ADDRESS) ||
             call.contract == h160_to_b160(HARDHAT_CONSOLE_ADDRESS)

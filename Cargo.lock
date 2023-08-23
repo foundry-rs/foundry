@@ -70,6 +70,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "allocator-api2"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0942ffc6dcaadf03badf6e6a2d0228460359d5e34b57ccdc720b7382dfbd5ec5"
+
+[[package]]
 name = "alloy-rlp"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -625,6 +631,9 @@ name = "bitflags"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4682ae6287fcf752ecaabbfcc7b6f9b72aa33933dc23a554d853aea8eea8635"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "bitvec"
@@ -1147,7 +1156,7 @@ version = "6.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e959d788268e3bf9d35ace83e81b124190378e4c91c9067524675e33394b8ba"
 dependencies = [
- "crossterm 0.26.1",
+ "crossterm",
  "strum 0.24.1",
  "strum_macros 0.24.3",
  "unicode-width",
@@ -1345,22 +1354,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a22b2d63d4d1dc0b7f1b6b2747dd0088008a9be28b6ddf0b1e7d335e3037294"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "crossterm"
-version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e64e6c0fbe2c17357405f7c758c1ef960fce08bdfb2c03d88d2a18d7e09c4b67"
-dependencies = [
- "bitflags 1.3.2",
- "crossterm_winapi",
- "libc",
- "mio",
- "parking_lot",
- "signal-hook",
- "signal-hook-mio",
- "winapi",
 ]
 
 [[package]]
@@ -3180,6 +3173,11 @@ name = "hashbrown"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c6201b9ff9fd90a5a3bac2e56a830d0caa509576f0e503818ee82c181b3437a"
+dependencies = [
+ "ahash 0.8.3",
+ "allocator-api2",
+ "serde",
+]
 
 [[package]]
 name = "hashers"
@@ -3552,6 +3550,12 @@ dependencies = [
  "portable-atomic",
  "unicode-width",
 ]
+
+[[package]]
+name = "indoc"
+version = "2.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c785eefb63ebd0e33416dfcb8d6da0bf27ce752843a45632a67bf10d4d4b5c4"
 
 [[package]]
 name = "inlinable_string"
@@ -5132,6 +5136,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ratatui"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8285baa38bdc9f879d92c0e37cb562ef38aa3aeefca22b3200186bc39242d3d5"
+dependencies = [
+ "bitflags 2.4.0",
+ "cassowary",
+ "crossterm",
+ "indoc",
+ "paste",
+ "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
 name = "rayon"
 version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5286,9 +5305,11 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "3.3.0"
-source = "git+https://github.com/bluealloy/revm/?branch=release/v25#88337924f4d16ed1f5e4cde12a03d0cb755cd658"
+source = "git+https://github.com/bluealloy/revm/?rev=6b55b9c0ab264c000e087c2f54f2d8dc24b869aa#6b55b9c0ab264c000e087c2f54f2d8dc24b869aa"
 dependencies = [
  "auto_impl",
+ "once_cell",
+ "rayon",
  "revm-interpreter",
  "revm-precompile",
  "serde",
@@ -5298,7 +5319,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "1.1.2"
-source = "git+https://github.com/bluealloy/revm/?branch=release/v25#88337924f4d16ed1f5e4cde12a03d0cb755cd658"
+source = "git+https://github.com/bluealloy/revm/?rev=6b55b9c0ab264c000e087c2f54f2d8dc24b869aa#6b55b9c0ab264c000e087c2f54f2d8dc24b869aa"
 dependencies = [
  "derive_more",
  "enumn",
@@ -5310,7 +5331,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "2.0.3"
-source = "git+https://github.com/bluealloy/revm/?branch=release/v25#88337924f4d16ed1f5e4cde12a03d0cb755cd658"
+source = "git+https://github.com/bluealloy/revm/?rev=6b55b9c0ab264c000e087c2f54f2d8dc24b869aa#6b55b9c0ab264c000e087c2f54f2d8dc24b869aa"
 dependencies = [
  "k256",
  "num",
@@ -5326,15 +5347,16 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "1.1.2"
-source = "git+https://github.com/bluealloy/revm/?branch=release/v25#88337924f4d16ed1f5e4cde12a03d0cb755cd658"
+source = "git+https://github.com/bluealloy/revm/?rev=6b55b9c0ab264c000e087c2f54f2d8dc24b869aa#6b55b9c0ab264c000e087c2f54f2d8dc24b869aa"
 dependencies = [
  "auto_impl",
+ "bitflags 2.4.0",
  "bitvec 1.0.1",
  "bytes",
  "derive_more",
  "enumn",
  "fixed-hash",
- "hashbrown 0.13.2",
+ "hashbrown 0.14.0",
  "hex",
  "hex-literal",
  "primitive-types",
@@ -5342,6 +5364,7 @@ dependencies = [
  "ruint",
  "serde",
  "sha3",
+ "to-binary",
 ]
 
 [[package]]
@@ -6565,6 +6588,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
+name = "to-binary"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4424552bc848fd1afbcd81f0e8a54b7401b90fd81bb418655ad6dc6d0823bbe3"
+dependencies = [
+ "hex",
+]
+
+[[package]]
 name = "tokio"
 version = "1.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6944,19 +6976,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3528ecfd12c466c6f163363caf2d02a71161dd5e1cc6ae7b34207ea2d42d81ed"
 
 [[package]]
-name = "tui"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ccdd26cbd674007e649a272da4475fb666d3aa0ad0531da7136db6fab0e5bad1"
-dependencies = [
- "bitflags 1.3.2",
- "cassowary",
- "crossterm 0.25.0",
- "unicode-segmentation",
- "unicode-width",
-]
-
-[[package]]
 name = "tungstenite"
 version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7032,13 +7051,13 @@ checksum = "ed646292ffc8188ef8ea4d1e0e0150fb15a5c2e12ad9b8fc191ae7a8a7f3c4b9"
 name = "ui"
 version = "0.2.0"
 dependencies = [
- "crossterm 0.26.1",
+ "crossterm",
  "ethers",
  "eyre",
  "foundry-common",
  "foundry-evm",
+ "ratatui",
  "revm",
- "tui",
 ]
 
 [[package]]

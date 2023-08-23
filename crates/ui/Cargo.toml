@@ -18,4 +18,4 @@ ethers.workspace = true
 crossterm = "0.26"
 eyre = "0.6"
 revm = { version = "3", features = ["std", "serde"] }
-tui = { version = "0.19", default-features = false, features = ["crossterm"] }
+ratatui = { version = "0.22.0", default-features = false, features = ["crossterm"]}
