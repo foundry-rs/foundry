@@ -90,16 +90,15 @@ impl Create2Args {
         }
 
         if let Some(prefix) = starts_with {
-            let pad_width = prefix.len() + prefix.len() % 2;
-            hex::decode(format!("{prefix:0>pad_width$}"))
-                .wrap_err("invalid prefix hex provided")?;
-            regexs.push(format!(r"^{prefix}"));
+            regexs.push(format!(
+                r"^{}",
+                get_regex_hex_string(prefix).wrap_err("invalid prefix hex provided")?
+            ));
         }
         if let Some(suffix) = ends_with {
-            let pad_width = suffix.len() + suffix.len() % 2;
-            hex::decode(format!("{suffix:0>pad_width$}"))
-                .wrap_err("invalid suffix hex provided")?;
-            regexs.push(format!(r"{suffix}$"));
+            regexs.push(
+                (get_regex_hex_string(suffix).wrap_err("invalid suffix hex provided")?).to_string(),
+            );
         }
 
         debug_assert!(
@@ -111,12 +110,11 @@ impl Create2Args {
 
         let init_code_hash = if let Some(init_code_hash) = init_code_hash {
             let mut a: [u8; 32] = [0; 32];
-            let init_code_hash = init_code_hash.strip_prefix("0x").unwrap_or(&init_code_hash);
-            assert!(init_code_hash.len() == 64, "init code hash should be 32 bytes long"); // 32 bytes * 2
-            a.copy_from_slice(&hex::decode(init_code_hash)?[..32]);
+            let init_code_hash_bytes = hex::decode(init_code_hash)?;
+            assert!(init_code_hash_bytes.len() == 32, "init code hash should be 32 bytes long");
+            a.copy_from_slice(&init_code_hash_bytes);
             a
         } else {
-            let init_code = init_code.strip_prefix("0x").unwrap_or(&init_code).as_bytes();
             keccak256(hex::decode(init_code)?)
         };
 
@@ -157,6 +155,13 @@ impl Create2Args {
     }
 }
 
+fn get_regex_hex_string(s: String) -> Result<String> {
+    let s = s.strip_prefix("0x").unwrap_or(&s);
+    let pad_width = s.len() + s.len() % 2;
+    hex::decode(format!("{s:0>pad_width$}"))?;
+    Ok(s.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use ethers::{abi::AbiEncode, utils::get_create2_address};
@@ -167,12 +172,42 @@ mod tests {
 
     #[test]
     fn basic_create2() {
+        // even hex chars
         let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "aa"]);
         let create2_out = args.run().unwrap();
         let address = create2_out.address;
         let address = format!("{address:x}");
 
         assert!(address.starts_with("aa"));
+
+        // odd hex chars
+        let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "aaa"]);
+        let create2_out = args.run().unwrap();
+        let address = create2_out.address;
+        let address = format!("{address:x}");
+
+        assert!(address.starts_with("aaa"));
+
+        // even hex chars with 0x prefix
+        let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "0xaa"]);
+        let create2_out = args.run().unwrap();
+        let address = create2_out.address;
+        let address = format!("{address:x}");
+
+        assert!(address.starts_with("aa"));
+
+        // odd hex chars with 0x prefix
+        let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "0xaaa"]);
+        let create2_out = args.run().unwrap();
+        let address = create2_out.address;
+        let address = format!("{address:x}");
+
+        assert!(address.starts_with("aaa"));
+
+        // TODO: add check fails on wrong chars
+        // let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "0xtest"]);
+        // let create2_out = args.run();
+        // assert_eq!(create2_out, Err("invalid prefix hex provided"));
     }
 
     #[test]

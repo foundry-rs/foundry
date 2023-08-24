@@ -46,10 +46,7 @@ impl Item {
             }
             // If a value is passed without quotes we cast it to string
             Value::Number(n) => Ok(Item::value_to_item(&Value::String(n.to_string()))?),
-            Value::String(s) => {
-                let hex_string = s.strip_prefix("0x").unwrap_or(s);
-                Ok(Item::Data(hex::decode(hex_string).expect("Could not decode hex")))
-            }
+            Value::String(s) => Ok(Item::Data(hex::decode(s).expect("Could not decode hex"))),
             Value::Array(values) => values.iter().map(Item::value_to_item).collect(),
             Value::Object(_) => {
                 eyre::bail!("RLP input can not contain objects")
