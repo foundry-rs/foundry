@@ -51,14 +51,20 @@ contract FsProxy is DSTest {
         return vm.createDir(path, recursive);
     }
 
+    /// @notice Verifies if a given path exists on the disk
+    /// @dev Returns true if the given path points to an existing entity, else returns false
     function exists(string calldata path) external returns (bool) {
         return vm.exists(path);
     }
 
+    /// @notice Verifies if a given path points at a file
+    /// @dev Returns true if the given path points at a regular file, else returns false
     function isFile(string calldata path) external returns (bool) {
         return vm.isFile(path);
     }
 
+    /// @notice Verifies if a given path points at a directory
+    /// @dev Returns true if the given path points at a directory, else returns false
     function isDir(string calldata path) external returns (bool) {
         return vm.isDir(path);
     }
