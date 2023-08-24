@@ -1201,8 +1201,7 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn from_rlp(value: impl AsRef<str>) -> Result<String> {
-        let data = strip_0x(value.as_ref());
-        let bytes = hex::decode(data).wrap_err("Could not decode hex")?;
+        let bytes = hex::decode(value.as_ref()).wrap_err("Could not decode hex")?;
         let item = rlp::decode::<Item>(&bytes).wrap_err("Could not decode rlp")?;
         Ok(item.to_string())
     }
@@ -1302,12 +1301,11 @@ impl SimpleCast {
 
     /// Decodes string from bytes32 value
     pub fn parse_bytes32_string(s: &str) -> Result<String> {
-        let s = strip_0x(s);
-        if s.len() != 64 {
-            eyre::bail!("expected 64 byte hex-string, got {s}");
+        let bytes = hex::decode(s)?;
+        if bytes.len() != 32 {
+            eyre::bail!("expected 64 byte hex-string, got {}", strip_0x(s));
         }
 
-        let bytes = hex::decode(s)?;
         let mut buffer = [0u8; 32];
         buffer.copy_from_slice(&bytes);
 
