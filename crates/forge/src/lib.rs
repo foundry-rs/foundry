@@ -3,6 +3,7 @@ use foundry_config::{
     validate_profiles, Config, FuzzConfig, InlineConfig, InlineConfigError, InlineConfigParser,
     InvariantConfig, NatSpec,
 };
+
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use std::path::Path;
 
