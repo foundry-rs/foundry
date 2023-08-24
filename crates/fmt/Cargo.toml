@@ -1,0 +1,32 @@
+[package]
+name = "forge-fmt"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+# foundry dep
+foundry-config.workspace = true
+
+# ethers
+ethers-core.workspace = true
+
+# parser
+solang-parser.workspace = true
+
+# misc
+itertools.workspace = true
+thiserror = "1"
+ariadne = "0.2"
+tracing = "0.1"
+
+[dev-dependencies]
+pretty_assertions = "1"
+itertools.workspace = true
+toml = "0.7"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

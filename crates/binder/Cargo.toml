@@ -1,0 +1,22 @@
+[package]
+name = "foundry-binder"
+description = "Generate rust bindings for solidity projects"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+foundry-config.workspace = true
+ethers-solc = { workspace = true, features = ["async", "svm-solc", "project-util"] }
+ethers-contract = { workspace = true, features = ["abigen"] }
+curl = { version = "0.4", default-features = false, features = ["http2"] }
+eyre = "0.6"
+git2 = { version = "0.17", default-features = false }
+url = "2"
+tracing = "0.1"
+tempfile = "3"

@@ -2,6 +2,7 @@
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
+import "../logs/console.sol";
 import "./Vm.sol";
 
 struct MyStruct {
@@ -164,6 +165,67 @@ contract ForkTest is DSTest {
 
         // this will revert since `dummy` does not exists on the currently active fork
         string memory msg2 = dummy.hello();
+    }
+
+    struct EthGetLogsJsonParseable {
+        bytes32 blockHash;
+        bytes blockNumber; // Should be uint256, but is returned from RPC in 0x... format
+        bytes32 data; // Should be bytes, but in our particular example is bytes32
+        address emitter;
+        bytes logIndex; // Should be uint256, but is returned from RPC in 0x... format
+        bool removed;
+        bytes32[] topics;
+        bytes32 transactionHash;
+        bytes transactionIndex; // Should be uint256, but is returned from RPC in 0x... format
+    }
+
+    function testEthGetLogs() public {
+        vm.selectFork(mainnetFork);
+        address weth = address(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
+        bytes32 withdrawalTopic = 0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65;
+        uint256 blockNumber = 17623835;
+
+        string memory path = "fixtures/Rpc/eth_getLogs.json";
+        string memory file = vm.readFile(path);
+        bytes memory parsed = vm.parseJson(file);
+        EthGetLogsJsonParseable[] memory fixtureLogs = abi.decode(parsed, (EthGetLogsJsonParseable[]));
+
+        bytes32[] memory topics = new bytes32[](1);
+        topics[0] = withdrawalTopic;
+        Vm.EthGetLogs[] memory logs = vm.eth_getLogs(blockNumber, blockNumber, weth, topics);
+        assertEq(logs.length, 3);
+
+        for (uint256 i = 0; i < logs.length; i++) {
+            Vm.EthGetLogs memory log = logs[i];
+            assertEq(log.emitter, fixtureLogs[i].emitter);
+
+            string memory i_str;
+            if (i == 0) i_str = "0";
+            if (i == 1) i_str = "1";
+            if (i == 2) i_str = "2";
+
+            assertEq(log.blockNumber, vm.parseJsonUint(file, string.concat("[", i_str, "].blockNumber")));
+            assertEq(log.logIndex, vm.parseJsonUint(file, string.concat("[", i_str, "].logIndex")));
+            assertEq(log.transactionIndex, vm.parseJsonUint(file, string.concat("[", i_str, "].transactionIndex")));
+
+            assertEq(log.blockHash, fixtureLogs[i].blockHash);
+            assertEq(log.removed, fixtureLogs[i].removed);
+            assertEq(log.transactionHash, fixtureLogs[i].transactionHash);
+
+            // In this specific example, the log.data is bytes32
+            assertEq(bytes32(log.data), fixtureLogs[i].data);
+            assertEq(log.topics.length, 2);
+            assertEq(log.topics[0], withdrawalTopic);
+            assertEq(log.topics[1], fixtureLogs[i].topics[1]);
+        }
+    }
+
+    function testRpc() public {
+        vm.selectFork(mainnetFork);
+        string memory path = "fixtures/Rpc/balance_params.json";
+        string memory file = vm.readFile(path);
+        bytes memory result = vm.rpc("eth_getBalance", file);
+        assertEq(result, hex"65a221ccb194dc");
     }
 }
 

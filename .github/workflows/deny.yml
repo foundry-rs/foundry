@@ -3,10 +3,10 @@ name: deny
 on:
     push:
         branches: [master]
-        paths: [Cargo.lock]
+        paths: [Cargo.lock, deny.toml]
     pull_request:
         branches: [master]
-        paths: [Cargo.lock]
+        paths: [Cargo.lock, deny.toml]
 
 env:
     CARGO_TERM_COLOR: always
@@ -15,11 +15,12 @@ jobs:
     cargo-deny:
         name: cargo deny check
         runs-on: ubuntu-latest
+        timeout-minutes: 30
         steps:
             - uses: actions/checkout@v3
             - uses: EmbarkStudios/cargo-deny-action@v1
               with:
                   command: check all
                   # Clear out arguments to not pass `--all-features` to `cargo deny`.
-                  # `foundry-cli` has an `openssl` feature which enables banned dependencies
+                  # many crates have an `openssl` feature which enables banned dependencies
                   arguments: ""

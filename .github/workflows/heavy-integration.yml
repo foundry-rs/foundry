@@ -1,0 +1,55 @@
+name: Heavy (long-running) integration tests
+
+on:
+    schedule:
+        # Runs at 10PM utc
+        - cron: "0 22 * * *"
+    workflow_dispatch:
+
+env:
+    CARGO_TERM_COLOR: always
+
+jobs:
+    heavy-integration:
+        name: heavy (long-running) integration tests
+        runs-on: ubuntu-latest
+        timeout-minutes: 120
+        env:
+            ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
+        steps:
+            - uses: actions/checkout@v3
+            - uses: dtolnay/rust-toolchain@stable
+            - uses: taiki-e/install-action@nextest
+            - uses: Swatinem/rust-cache@v2
+            - name: Forge RPC cache
+              uses: actions/cache@v3
+              with:
+                  path: |
+                      ~/.foundry/cache
+                      ~/.config/.foundry/cache
+                  key: rpc-cache-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
+            - name: Setup git config
+              run: |
+                  git config --global user.name "GitHub Actions Bot"
+                  git config --global user.email "<>"
+            - name: Force use of HTTPS for submodules
+              run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+            - name: test
+              run: |
+                  cargo nextest run -r -p forge --test cli --features heavy-integration-tests --retries 1 -E 'test(~heavy_integration)'
+
+    # If any of the jobs fail, this will create a high-priority issue to signal so.
+    issue:
+        name: Open an issue
+        runs-on: ubuntu-latest
+        needs: heavy-integration
+        if: ${{ failure() }}
+        steps:
+            - uses: JasonEtco/create-an-issue@v2
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  WORKFLOW_URL: |
+                      ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+              with:
+                  update_existing: true
+                  filename: .github/INTEGRATION_FAILURE.md

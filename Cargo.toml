@@ -1,66 +1,130 @@
 [workspace]
-members = [
-    "anvil",
-    "anvil/core",
-    "anvil/rpc",
-    "anvil/server",
-    "abi",
-    "binder",
-    "cast",
-    "chisel",
-    "cli",
-    "cli/test-utils",
-    "common",
-    "config",
-    "doc",
-    "evm",
-    "fmt",
-    "forge",
-    "macros",
-    "macros/impl",
-    "ui",
-    "utils",
-]
+members = ["crates/*"]
 resolver = "2"
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.71"
+authors = ["Foundry Contributors"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/foundry-rs/foundry"
+repository = "https://github.com/foundry-rs/foundry"
+exclude = ["benches/", "tests/", "test-data/", "testdata/"]
 
 [profile.dev]
 # Disabling debug info speeds up builds a bunch,
 # and we don't rely on it for debugging that much
 debug = 0
 
-# These speed up local tests
-[profile.dev.package.ethers-solc]
-opt-level = 3
+# Speed up tests and dev build
+[profile.dev.package]
+# solc
+ethers-solc.opt-level = 3
+solang-parser.opt-level = 3
+serde_json.opt-level = 3
 
-[profile.dev.package.revm]
-opt-level = 3
+# evm
+revm.opt-level = 3
+revm-primitives.opt-level = 3
+revm-interpreter.opt-level = 3
+revm-precompile.opt-level = 3
+tiny-keccak.opt-level = 3
+sha2.opt-level = 3
+sha3.opt-level = 3
+keccak.opt-level = 3
+ruint.opt-level = 3
+hashbrown.opt-level = 3
 
-# These speed up all forge script related integration tests
-[profile.test.package.axum]
-opt-level = 3
+# keystores
+scrypt.opt-level = 3
 
-# Local "release" mode, more optimized than dev but much faster to compile than release
-[profile.local]
-inherits = "dev"
-opt-level = 3
-# Set this to 1 or 2 to get more useful backtraces
-debug = 0
-panic = 'unwind'
-# better recompile times
-incremental = true
-codegen-units = 16
+# forking
+axum.opt-level = 3
 
 [profile.release]
-# Optimize for binary size, but keep loop vectorization
 opt-level = "s"
-# Performance optimizations
 lto = "fat"
-debug = 0
 strip = true
 panic = "abort"
 codegen-units = 1
 
+[profile.release.package]
+# Optimize all non-workspace packages for speed
+"*".opt-level = 3
+
+# Package overrides
+foundry-evm.opt-level = 3
+
+foundry-abi.opt-level = 1
+mdbook.opt-level = 1
+protobuf.opt-level = 1
+rusoto_core.opt-level = 1
+rusoto_credential.opt-level = 1
+rusoto_kms.opt-level = 1
+toml_edit.opt-level = 1
+trezor-client.opt-level = 1
+
+# Given that the `"*"` above takes precedence over the defaults for build scripts and macros, we
+# have to override all of them to reduce compile times
+syn.opt-level = 0
+prettyplease.opt-level = 0
+lalrpop.opt-level = 0
+
+ethers-contract-abigen.opt-level = 0
+ethers-contract-derive.opt-level = 0
+async-recursion.opt-level = 0
+miette-derive.opt-level = 0
+strum_macros.opt-level = 0
+enumn.opt-level = 0
+clap_derive.opt-level = 0
+serde_derive.opt-level = 0
+pear_codegen.opt-level = 0
+num_enum_derive.opt-level = 0
+scale-info-derive.opt-level = 0
+parity-scale-codec-derive.opt-level = 0
+time-macros.opt-level = 0
+phf_macros.opt-level = 0
+pin-project-internal.opt-level = 0
+auto_impl.opt-level = 0
+derive_more.opt-level = 0
+rlp-derive.opt-level = 0
+impl-trait-for-tuples.opt-level = 0
+async-trait.opt-level = 0
+tokio-macros.opt-level = 0
+tracing-attributes.opt-level = 0
+futures-macro.opt-level = 0
+thiserror-impl.opt-level = 0
+wasm-bindgen-macro-support.opt-level = 0
+wasm-bindgen-backend.opt-level = 0
+
+# Local "release" mode, more optimized than dev but much faster to compile than release
+[profile.local]
+inherits = "dev"
+opt-level = 1
+strip = true
+panic = "abort"
+codegen-units = 16
+
 [workspace.dependencies]
+anvil = { path = "crates/anvil" }
+cast = { path = "crates/cast" }
+chisel = { path = "crates/chisel" }
+forge = { path = "crates/forge" }
+
+forge-doc = { path = "crates/doc" }
+forge-fmt = { path = "crates/fmt" }
+foundry-abi = { path = "crates/abi" }
+foundry-binder = { path = "crates/binder" }
+foundry-cli = { path = "crates/cli" }
+foundry-common = { path = "crates/common" }
+foundry-config = { path = "crates/config" }
+foundry-evm = { path = "crates/evm" }
+foundry-macros = { path = "crates/macros" }
+foundry-test-utils = { path = "crates/test-utils" }
+foundry-utils = { path = "crates/utils" }
+ui = { path = "crates/ui" }
+
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
@@ -72,6 +136,9 @@ ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", default-feat
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+hex = { package = "const-hex", version = "1.6", features = ["hex"] }
+itertools = "0.11"
 solang-parser = "=0.3.1"
 
 #[patch."https://github.com/gakonst/ethers-rs"]
@@ -87,4 +154,4 @@ solang-parser = "=0.3.1"
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-revm = { git = "https://github.com/bluealloy/revm/", branch = "release/v25" }
+revm = { git = "https://github.com/bluealloy/revm/", rev = "6b55b9c0ab264c000e087c2f54f2d8dc24b869aa" }

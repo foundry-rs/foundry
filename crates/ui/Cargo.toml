@@ -1,0 +1,21 @@
+[package]
+name = "ui"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+foundry-evm.workspace = true
+foundry-common.workspace = true
+
+ethers.workspace = true
+
+crossterm = "0.26"
+eyre = "0.6"
+revm = { version = "3", features = ["std", "serde"] }
+ratatui = { version = "0.22.0", default-features = false, features = ["crossterm"]}
