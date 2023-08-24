@@ -439,7 +439,7 @@ fn parse_uint(s: &str) -> Result<U256, String> {
 }
 
 fn parse_bytes(s: &str) -> Result<Vec<u8>, String> {
-    hex::decode(s.strip_prefix("0x").unwrap_or(s)).map_err(|e| e.to_string())
+    hex::decode(s).map_err(|e| e.to_string())
 }
 
 pub fn parse_private_key(private_key: U256) -> Result<SigningKey> {
