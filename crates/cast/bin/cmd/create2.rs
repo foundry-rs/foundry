@@ -158,7 +158,7 @@ impl Create2Args {
 fn get_regex_hex_string(s: String) -> Result<String> {
     let s = s.strip_prefix("0x").unwrap_or(&s);
     let pad_width = s.len() + s.len() % 2;
-    hex::decode(format!("{s:0>pad_width$}"))?;
+    hex::decode(format!("{s:0<pad_width$}"))?;
     Ok(s.to_string())
 }
 
@@ -204,10 +204,15 @@ mod tests {
 
         assert!(address.starts_with("aaa"));
 
-        // TODO: add check fails on wrong chars
-        // let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "0xtest"]);
-        // let create2_out = args.run();
-        // assert_eq!(create2_out, Err("invalid prefix hex provided"));
+        // check fails on wrong chars
+        let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "0xerr"]);
+        let create2_out = args.run();
+        assert!(create2_out.is_err());
+
+        // check fails on wrong x prefixed string provided
+        let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "x00"]);
+        let create2_out = args.run();
+        assert!(create2_out.is_err());
     }
 
     #[test]
