@@ -20,7 +20,7 @@ A local Ethereum node, akin to Ganache, designed for development with [**Forge**
 ```sh
 git clone https://github.com/foundry-rs/foundry
 cd foundry
-cargo install --path ./anvil --bins --locked --force
+cargo install --path ./crates/anvil --profile local --force
 ```
 
 ## Getting started
