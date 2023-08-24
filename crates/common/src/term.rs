@@ -10,10 +10,8 @@ use std::{
     io,
     io::{prelude::*, IsTerminal},
     path::{Path, PathBuf},
-    sync::{
-        mpsc::{self, TryRecvError},
-        Arc, Mutex,
-    },
+    sync::mpsc::{self, TryRecvError},
+    thread,
     time::Duration,
 };
 use yansi::Paint;
@@ -71,17 +69,12 @@ impl Spinner {
             return
         }
 
-        print!(
-            "\r\x33[2K\r{} {}",
-            Paint::new(format!("[{}]", Paint::green(self.indicator[self.idx]))).bold(),
-            self.message
-        );
+        let indicator = Paint::green(self.indicator[self.idx % self.indicator.len()]);
+        let indicator = Paint::new(format!("[{indicator}]")).bold();
+        print!("\r\x33[2K\r{indicator} {}", self.message);
         io::stdout().flush().unwrap();
 
-        self.idx += 1;
-        if self.idx >= self.indicator.len() {
-            self.idx = 0;
-        }
+        self.idx = self.idx.wrapping_add(1);
     }
 
     pub fn message(&mut self, msg: impl Into<String>) {
@@ -94,12 +87,16 @@ impl Spinner {
 /// This reporter will prefix messages with a spinning cursor
 #[derive(Debug)]
 pub struct SpinnerReporter {
-    /// the timeout in ms
-    sender: Arc<Mutex<mpsc::Sender<SpinnerMsg>>>,
-    /// A reporter that logs solc compiler input and output to separate files if configured via env
-    /// var
+    /// The sender to the spinner thread.
+    sender: mpsc::Sender<SpinnerMsg>,
+    /// Reporter that logs Solc compiler input and output to separate files if configured via env
+    /// var.
     solc_io_report: SolcCompilerIoReporter,
 }
+
+// `mpsc::Sender: Sync` was stabilized in 1.72 https://github.com/rust-lang/rust/pull/111087
+unsafe impl Sync for SpinnerReporter {}
+
 impl SpinnerReporter {
     /// Spawns the [`Spinner`] on a new thread
     ///
@@ -108,43 +105,37 @@ impl SpinnerReporter {
     /// On drop the channel will disconnect and the thread will terminate
     pub fn spawn() -> Self {
         let (sender, rx) = mpsc::channel::<SpinnerMsg>();
-        std::thread::spawn(move || {
-            let mut spinner = Spinner::new("Compiling...");
-            loop {
-                spinner.tick();
-                match rx.try_recv() {
-                    Ok(msg) => {
-                        match msg {
-                            SpinnerMsg::Msg(msg) => {
-                                spinner.message(msg);
-                                // new line so past messages are not overwritten
-                                println!();
-                            }
-                            SpinnerMsg::Shutdown(ack) => {
-                                // end with a newline
-                                println!();
-                                let _ = ack.send(());
-                                break
-                            }
+
+        std::thread::Builder::new()
+            .name("spinner".into())
+            .spawn(move || {
+                let mut spinner = Spinner::new("Compiling...");
+                loop {
+                    spinner.tick();
+                    match rx.try_recv() {
+                        Ok(SpinnerMsg::Msg(msg)) => {
+                            spinner.message(msg);
+                            // new line so past messages are not overwritten
+                            println!();
                         }
-                    }
-                    Err(TryRecvError::Disconnected) => break,
-                    Err(TryRecvError::Empty) => {
-                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        Ok(SpinnerMsg::Shutdown(ack)) => {
+                            // end with a newline
+                            println!();
+                            let _ = ack.send(());
+                            break
+                        }
+                        Err(TryRecvError::Disconnected) => break,
+                        Err(TryRecvError::Empty) => thread::sleep(Duration::from_millis(100)),
                     }
                 }
-            }
-        });
-        SpinnerReporter {
-            sender: Arc::new(Mutex::new(sender)),
-            solc_io_report: SolcCompilerIoReporter::from_default_env(),
-        }
+            })
+            .expect("failed to spawn thread");
+
+        SpinnerReporter { sender, solc_io_report: SolcCompilerIoReporter::from_default_env() }
     }
 
     fn send_msg(&self, msg: impl Into<String>) {
-        if let Ok(sender) = self.sender.lock() {
-            let _ = sender.send(SpinnerMsg::Msg(msg.into()));
-        }
+        let _ = self.sender.send(SpinnerMsg::Msg(msg.into()));
     }
 }
 
@@ -155,11 +146,9 @@ enum SpinnerMsg {
 
 impl Drop for SpinnerReporter {
     fn drop(&mut self) {
-        if let Ok(sender) = self.sender.lock() {
-            let (tx, rx) = mpsc::channel();
-            if sender.send(SpinnerMsg::Shutdown(tx)).is_ok() {
-                let _ = rx.recv();
-            }
+        let (tx, rx) = mpsc::channel();
+        if self.sender.send(SpinnerMsg::Shutdown(tx)).is_ok() {
+            let _ = rx.recv();
         }
     }
 }
