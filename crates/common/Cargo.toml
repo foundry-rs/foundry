@@ -13,6 +13,7 @@ repository.workspace = true
 # foundry internal
 foundry-config.workspace = true
 foundry-macros.workspace = true
+async-trait = "0.1"
 
 # eth
 ethers-core.workspace = true

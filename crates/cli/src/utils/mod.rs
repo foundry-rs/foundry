@@ -98,7 +98,9 @@ pub fn get_provider(config: &Config) -> Result<foundry_common::RetryProvider> {
 pub fn get_provider_builder(config: &Config) -> Result<foundry_common::ProviderBuilder> {
     let url = config.get_rpc_url_or_localhost_http()?;
     let chain = config.chain_id.unwrap_or_default();
-    let mut builder = foundry_common::ProviderBuilder::new(url.as_ref()).chain(chain);
+    let mut builder = foundry_common::ProviderBuilder::new(url.as_ref())
+        .chain(chain)
+        .relaxed_rpc(config.relaxed_rpc);
 
     let jwt = config.get_rpc_jwt_secret()?;
     if let Some(jwt) = jwt {

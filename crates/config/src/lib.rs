@@ -203,6 +203,8 @@ pub struct Config {
     pub model_checker: Option<ModelCheckerSettings>,
     /// verbosity to use
     pub verbosity: u8,
+    /// relaxed rpc handling
+    pub relaxed_rpc: bool, // TODO: propagate paying attention to this everywhere...
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
     /// JWT secret that should be used for any rpc calls
@@ -1794,6 +1796,7 @@ impl Default for Config {
             block_prevrandao: Default::default(),
             block_gas_limit: None,
             memory_limit: 2u64.pow(25),
+            relaxed_rpc: false,
             eth_rpc_url: None,
             eth_rpc_jwt: None,
             etherscan_api_key: None,

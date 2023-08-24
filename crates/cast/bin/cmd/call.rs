@@ -9,12 +9,10 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
+use foundry_common::RetryProvider;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{executor::opts::EvmOpts, trace::TracingExecutor};
 use std::str::FromStr;
-
-type Provider =
-    ethers::providers::Provider<ethers::providers::RetryClient<ethers::providers::Http>>;
 
 /// CLI arguments for `cast call`.
 #[derive(Debug, Parser)]
@@ -129,8 +127,7 @@ impl CallArgs {
         let chain = utils::get_chain(config.chain_id, &provider).await?;
         let sender = eth.wallet.sender().await;
 
-        let mut builder: TxBuilder<'_, Provider> =
-            TxBuilder::new(&provider, sender, to, chain, tx.legacy).await?;
+        let mut builder = TxBuilder::new(&provider, sender, to, chain, tx.legacy).await?;
 
         builder
             .gas(tx.gas_limit)
@@ -218,7 +215,7 @@ impl CallArgs {
 
 /// fills the builder from create arg
 async fn fill_create(
-    builder: &mut TxBuilder<'_, Provider>,
+    builder: &mut TxBuilder<'_, RetryProvider>,
     value: Option<U256>,
     code: String,
     sig: Option<String>,
@@ -240,7 +237,7 @@ async fn fill_create(
 
 /// fills the builder from args
 async fn fill_tx(
-    builder: &mut TxBuilder<'_, Provider>,
+    builder: &mut TxBuilder<'_, RetryProvider>,
     value: Option<U256>,
     sig: Option<String>,
     args: Vec<String>,

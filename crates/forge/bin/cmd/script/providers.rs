@@ -1,4 +1,4 @@
-use ethers::prelude::{Http, Middleware, Provider, RetryClient, U256};
+use ethers::prelude::{Middleware, Provider, RetryClient, U256};
 use eyre::{Result, WrapErr};
 use foundry_common::{get_http_provider, ProviderKinds, RpcUrl};
 

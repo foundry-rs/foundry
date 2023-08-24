@@ -2,14 +2,17 @@
 
 use crate::{ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
 use async_trait::async_trait;
+use core::fmt::Debug;
 use ethers_core::types::{Chain, U256};
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use ethers_providers::{
-    is_local_endpoint, Authorization, Http, HttpRateLimitRetryPolicy, JwtAuth, JwtKey, Middleware,
-    Provider, RelaxedHttp, RetryClient, RetryClientBuilder, DEFAULT_LOCAL_POLL_INTERVAL,
+    is_local_endpoint, Authorization, Http, HttpRateLimitRetryPolicy, JsonRpcClient, JwtAuth,
+    JwtKey, Middleware, Provider, RelaxedHttp, RetryClient, RetryClientBuilder,
+    DEFAULT_LOCAL_POLL_INTERVAL,
 };
 use eyre::WrapErr;
 use reqwest::{header::HeaderValue, IntoUrl, Url};
+use serde::{de::DeserializeOwned, Serialize};
 use std::{borrow::Cow, time::Duration};
 
 /// Wraps strict or loose rpc handling in the Http provider
@@ -42,6 +45,8 @@ impl JsonRpcClient for ProviderKinds {
 
 /// Helper type alias for a retry provider
 pub type RetryProvider = Provider<RetryClient<ProviderKinds>>;
+
+// TODO: Should this be a ForkUrl/ForkConnInfo?
 
 /// Helper type alias for a rpc url
 pub type RpcUrl = String;

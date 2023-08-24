@@ -586,6 +586,9 @@ impl StateFile {
     }
 }
 
+// TODO: Maybe ForkUrl should be used wherever pub fork_url:'s exist, and it should be called
+// ForkConnSpec, to include various details of the transport (like relaxed_rpc)
+
 /// Represents the input URL for a fork with an optional trailing block number:
 /// `http://localhost:8545@1000000`
 #[derive(Debug, Clone, PartialEq, Eq)]

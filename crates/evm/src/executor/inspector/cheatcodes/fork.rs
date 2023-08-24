@@ -268,6 +268,8 @@ fn eth_getlogs<DB: DatabaseExt>(data: &EVMData<DB>, inner: &EthGetLogsCall) -> R
         return Err(fmt_err!("Topics array must be less than 4 elements"))
     }
 
+    //TODO: Where do we get other relevant provider options from? Seems like there needs to be
+    // context information!
     let provider = ProviderBuilder::new(url).build()?;
     let mut filter = Filter::new()
         .address(b160_to_h160(inner.2.into()))
@@ -337,6 +339,8 @@ fn eth_getlogs<DB: DatabaseExt>(data: &EVMData<DB>, inner: &EthGetLogsCall) -> R
 
 fn rpc<DB: DatabaseExt>(data: &EVMData<DB>, inner: &RpcCall) -> Result {
     let url = data.db.active_fork_url().ok_or(fmt_err!("No active fork url found"))?;
+    //TODO: Where do we get other relevant provider options from? Seems like there needs to be
+    // context information!
     let provider = ProviderBuilder::new(url).build()?;
 
     let method = inner.0.as_str();
