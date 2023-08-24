@@ -250,6 +250,45 @@ fn fs_metadata(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
     Ok(metadata.encode().into())
 }
 
+/// Verifies if a given path points to a valid entity
+///
+/// This function will return `true` if `path` points to a valid filesystem entity, otherwise it
+/// will return `false`
+///
+/// Note: This function does not verify if a user has necessary permissions to access the path,
+/// only that such a path exists
+fn exists(path: impl AsRef<Path>) -> Result {
+    let path = path.as_ref();
+
+    Ok(abi::encode(&[Token::Bool(path.exists())]).into())
+}
+
+/// Verifies if a given path exists on disk and points at a regular file
+///
+/// This function will return `true` if `path` points to a regular file that exists on the disk,
+/// otherwise it will return `false`
+///
+/// Note: This function does not verify if a user has necessary permissions to access the file,
+/// only that such a file exists on disk
+fn is_file(path: impl AsRef<Path>) -> Result {
+    let path = path.as_ref();
+
+    Ok(abi::encode(&[Token::Bool(path.is_file())]).into())
+}
+
+/// Verifies if a given path exists on disk and points at a directory
+///
+/// This function will return `true` if `path` points to a directory that exists on the disk,
+/// otherwise it will return `false`
+///
+/// Note: This function does not verify if a user has necessary permissions to access the directory,
+/// only that such a directory exists
+fn is_dir(path: impl AsRef<Path>) -> Result {
+    let path = path.as_ref();
+
+    Ok(abi::encode(&[Token::Bool(path.is_dir())]).into())
+}
+
 #[instrument(level = "error", name = "fs", target = "evm::cheatcodes", skip_all)]
 pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
     let res = match call {
@@ -270,6 +309,9 @@ pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
         HEVMCalls::ReadDir0(inner) => read_dir(state, &inner.0, 1, false),
         HEVMCalls::ReadDir1(inner) => read_dir(state, &inner.0, inner.1, false),
         HEVMCalls::ReadDir2(inner) => read_dir(state, &inner.0, inner.1, inner.2),
+        HEVMCalls::Exists(inner) => exists(&inner.0),
+        HEVMCalls::IsFile(inner) => is_file(&inner.0),
+        HEVMCalls::IsDir(inner) => is_dir(&inner.0),
 
         _ => return None,
     };
