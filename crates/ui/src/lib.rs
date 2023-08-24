@@ -998,33 +998,36 @@ impl Ui for Tui {
 
         // Setup a channel to send interrupts
         let (tx, rx) = mpsc::channel();
-        thread::spawn(move || {
-            let mut last_tick = Instant::now();
-            loop {
-                // Poll events since last tick - if last tick is greater than tick_rate, we demand
-                // immediate availability of the event. This may affect
-                // interactivity, but I'm not sure as it is hard to test.
-                if event::poll(tick_rate.saturating_sub(last_tick.elapsed())).unwrap() {
-                    let event = event::read().unwrap();
-                    if let Event::Key(key) = event {
-                        if tx.send(Interrupt::KeyPressed(key)).is_err() {
-                            return
-                        }
-                    } else if let Event::Mouse(mouse) = event {
-                        if tx.send(Interrupt::MouseEvent(mouse)).is_err() {
-                            return
+        thread::Builder::new()
+            .name("event-listener".into())
+            .spawn(move || {
+                let mut last_tick = Instant::now();
+                loop {
+                    // Poll events since last tick - if last tick is greater than tick_rate, we
+                    // demand immediate availability of the event. This may affect interactivity,
+                    // but I'm not sure as it is hard to test.
+                    if event::poll(tick_rate.saturating_sub(last_tick.elapsed())).unwrap() {
+                        let event = event::read().unwrap();
+                        if let Event::Key(key) = event {
+                            if tx.send(Interrupt::KeyPressed(key)).is_err() {
+                                return
+                            }
+                        } else if let Event::Mouse(mouse) = event {
+                            if tx.send(Interrupt::MouseEvent(mouse)).is_err() {
+                                return
+                            }
                         }
                     }
-                }
-                // Force update if time has passed
-                if last_tick.elapsed() > tick_rate {
-                    if tx.send(Interrupt::IntervalElapsed).is_err() {
-                        return
+                    // Force update if time has passed
+                    if last_tick.elapsed() > tick_rate {
+                        if tx.send(Interrupt::IntervalElapsed).is_err() {
+                            return
+                        }
+                        last_tick = Instant::now();
                     }
-                    last_tick = Instant::now();
                 }
-            }
-        });
+            })
+            .expect("failed to spawn thread");
 
         self.terminal.clear()?;
         let mut draw_memory: DrawMemory = DrawMemory::default();
