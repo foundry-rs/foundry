@@ -2445,6 +2445,7 @@ dependencies = [
  "foundry-common",
  "foundry-config",
  "foundry-evm",
+ "fwdansi",
  "indicatif",
  "itertools 0.11.0",
  "once_cell",
@@ -2453,9 +2454,12 @@ dependencies = [
  "rusoto_core",
  "rusoto_kms",
  "serde",
+ "serde_json",
  "strsim",
  "strum 0.25.0",
  "tempfile",
+ "termcolor",
+ "terminal_size",
  "thiserror",
  "tokio",
  "tracing",
@@ -2771,6 +2775,16 @@ dependencies = [
  "pin-project-lite",
  "pin-utils",
  "slab",
+]
+
+[[package]]
+name = "fwdansi"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08c1f5787fe85505d1f7777268db5103d80a7a374d2316a7ce262e57baf8f208"
+dependencies = [
+ "memchr",
+ "termcolor",
 ]
 
 [[package]]

@@ -30,6 +30,8 @@ pub use suggestions::*;
 #[doc(hidden)]
 pub use foundry_config::utils::*;
 
+use crate::Shell;
+
 /// Deterministic fuzzer seed used for gas snapshots and coverage reports.
 ///
 /// The keccak256 hash of "foundry rulez"
@@ -177,6 +179,13 @@ macro_rules! p_println {
             println!($($arg)*)
         }
     }}
+}
+
+pub fn exit_on_err(run: impl FnOnce() -> Result<()>) {
+    if let Err(err) = run() {
+        let _ = Shell::get().error(&err);
+        std::process::exit(1);
+    }
 }
 
 /// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.

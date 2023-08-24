@@ -44,12 +44,12 @@ impl FromStr for Base {
             "10" | "d" | "dec" | "decimal" => Ok(Self::Decimal),
             "16" | "h" | "hex" | "hexadecimal" => Ok(Self::Hexadecimal),
             s => Err(eyre::eyre!(
-                r#"Invalid base "{}". Possible values:
-2, b, bin, binary
-8, o, oct, octal
+                "\
+Invalid base \"{s}\". Possible values:
+ 2, b, bin, binary
+ 8, o, oct, octal
 10, d, dec, decimal
-16, h, hex, hexadecimal"#,
-                s
+16, h, hex, hexadecimal"
             )),
         }
     }

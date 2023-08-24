@@ -7,37 +7,6 @@ use std::{
     str::FromStr,
 };
 
-/// Prints a message to [`stdout`][io::stdout] and [reads a line from stdin into a String](read).
-///
-/// Returns `Result<T>`, so sometimes `T` must be explicitly specified, like in `str::parse`.
-///
-/// # Examples
-///
-/// ```no_run
-/// # use foundry_cli::prompt;
-/// let response: String = prompt!("Would you like to continue? [y/N] ")?;
-/// if !matches!(response.as_str(), "y" | "Y") {
-///     return Ok(())
-/// }
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-#[macro_export]
-macro_rules! prompt {
-    () => {
-        $crate::stdin::parse_line()
-    };
-
-    ($($tt:tt)+) => {
-        {
-            ::std::print!($($tt)+);
-            match ::std::io::Write::flush(&mut ::std::io::stdout()) {
-                ::core::result::Result::Ok(_) => $crate::prompt!(),
-                ::core::result::Result::Err(e) => ::core::result::Result::Err(::eyre::eyre!("Could not flush stdout: {}", e))
-            }
-        }
-    };
-}
-
 /// Unwraps the given `Option<T>` or [reads stdin into a String](read) and parses it as `T`.
 pub fn unwrap<T>(value: Option<T>, read_line: bool) -> Result<T>
 where

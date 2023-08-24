@@ -5,4 +5,4 @@ pub mod opts;
 pub mod utils;
 
 mod io;
-pub use io::{shell, stdin};
+pub use io::{shell, stdin, Shell};
