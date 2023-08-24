@@ -250,6 +250,24 @@ fn fs_metadata(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
     Ok(metadata.encode().into())
 }
 
+fn exists(path: impl AsRef<Path>) -> Result {
+    let path = path.as_ref();
+
+    Ok(abi::encode(&[Token::Bool(path.exists())]).into())
+}
+
+fn is_file(path: impl AsRef<Path>) -> Result {
+    let path = path.as_ref();
+
+    Ok(abi::encode(&[Token::Bool(path.is_file())]).into())
+}
+
+fn is_dir(path: impl AsRef<Path>) -> Result {
+    let path = path.as_ref();
+
+    Ok(abi::encode(&[Token::Bool(path.is_dir())]).into())
+}
+
 #[instrument(level = "error", name = "fs", target = "evm::cheatcodes", skip_all)]
 pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
     let res = match call {
@@ -270,6 +288,9 @@ pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
         HEVMCalls::ReadDir0(inner) => read_dir(state, &inner.0, 1, false),
         HEVMCalls::ReadDir1(inner) => read_dir(state, &inner.0, inner.1, false),
         HEVMCalls::ReadDir2(inner) => read_dir(state, &inner.0, inner.1, inner.2),
+        HEVMCalls::Exists(inner) => exists(&inner.0),
+        HEVMCalls::IsFile(inner) => is_file(&inner.0),
+        HEVMCalls::IsDir(inner) => is_dir(&inner.0),
 
         _ => return None,
     };

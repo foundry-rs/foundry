@@ -1603,6 +1603,30 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("exists"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("exists"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Bool,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("expectCall"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -2289,6 +2313,54 @@ pub mod hevm {
                                             ),
                                         ),
                                     ),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
+                    ::std::borrow::ToOwned::to_owned("isDir"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("isDir"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Bool,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
+                    ::std::borrow::ToOwned::to_owned("isFile"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("isFile"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Bool,
                                     internal_type: ::core::option::Option::None,
                                 },
                             ],
@@ -5874,6 +5946,15 @@ pub mod hevm {
                 .method_hash([53, 225, 52, 155], (p0, p1, p2, p3))
                 .expect("method not found (this should never happen)")
         }
+        ///Calls the contract's `exists` (0x261a323e) function
+        pub fn exists(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, bool> {
+            self.0
+                .method_hash([38, 26, 50, 62], p0)
+                .expect("method not found (this should never happen)")
+        }
         ///Calls the contract's `expectCall` (0xbd6af434) function
         pub fn expect_call_0(
             &self,
@@ -6177,6 +6258,24 @@ pub mod hevm {
         > {
             self.0
                 .method_hash([25, 21, 83, 164], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `isDir` (0x7d15d019) function
+        pub fn is_dir(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, bool> {
+            self.0
+                .method_hash([125, 21, 208, 25], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `isFile` (0xe0eb04d4) function
+        pub fn is_file(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, bool> {
+            self.0
+                .method_hash([224, 235, 4, 212], p0)
                 .expect("method not found (this should never happen)")
         }
         ///Calls the contract's `isPersistent` (0xd92d8efd) function
@@ -8217,6 +8316,19 @@ pub mod hevm {
         pub ::ethers_core::types::Address,
         pub ::std::vec::Vec<[u8; 32]>,
     );
+    ///Container type for all input parameters for the `exists` function with signature `exists(string)` and selector `0x261a323e`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "exists", abi = "exists(string)")]
+    pub struct ExistsCall(pub ::std::string::String);
     ///Container type for all input parameters for the `expectCall` function with signature `expectCall(address,bytes)` and selector `0xbd6af434`
     #[derive(
         Clone,
@@ -8663,6 +8775,32 @@ pub mod hevm {
     )]
     #[ethcall(name = "getRecordedLogs", abi = "getRecordedLogs()")]
     pub struct GetRecordedLogsCall;
+    ///Container type for all input parameters for the `isDir` function with signature `isDir(string)` and selector `0x7d15d019`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "isDir", abi = "isDir(string)")]
+    pub struct IsDirCall(pub ::std::string::String);
+    ///Container type for all input parameters for the `isFile` function with signature `isFile(string)` and selector `0xe0eb04d4`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "isFile", abi = "isFile(string)")]
+    pub struct IsFileCall(pub ::std::string::String);
     ///Container type for all input parameters for the `isPersistent` function with signature `isPersistent(address)` and selector `0xd92d8efd`
     #[derive(
         Clone,
@@ -10396,6 +10534,7 @@ pub mod hevm {
         EnvUint1(EnvUint1Call),
         Etch(EtchCall),
         EthGetLogs(EthGetLogsCall),
+        Exists(ExistsCall),
         ExpectCall0(ExpectCall0Call),
         ExpectCall1(ExpectCall1Call),
         ExpectCall2(ExpectCall2Call),
@@ -10425,6 +10564,8 @@ pub mod hevm {
         GetNonce0(GetNonce0Call),
         GetNonce1(GetNonce1Call),
         GetRecordedLogs(GetRecordedLogsCall),
+        IsDir(IsDirCall),
+        IsFile(IsFileCall),
         IsPersistent(IsPersistentCall),
         KeyExists(KeyExistsCall),
         Label(LabelCall),
@@ -10799,6 +10940,10 @@ pub mod hevm {
                 return Ok(Self::EthGetLogs(decoded));
             }
             if let Ok(decoded)
+                = <ExistsCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::Exists(decoded));
+            }
+            if let Ok(decoded)
                 = <ExpectCall0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::ExpectCall0(decoded));
             }
@@ -10921,6 +11066,14 @@ pub mod hevm {
             if let Ok(decoded)
                 = <GetRecordedLogsCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::GetRecordedLogs(decoded));
+            }
+            if let Ok(decoded)
+                = <IsDirCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::IsDir(decoded));
+            }
+            if let Ok(decoded)
+                = <IsFileCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::IsFile(decoded));
             }
             if let Ok(decoded)
                 = <IsPersistentCall as ::ethers_core::abi::AbiDecode>::decode(data) {
@@ -11555,6 +11708,7 @@ pub mod hevm {
                 Self::EthGetLogs(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
+                Self::Exists(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::ExpectCall0(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
@@ -11634,6 +11788,8 @@ pub mod hevm {
                 Self::GetRecordedLogs(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
+                Self::IsDir(element) => ::ethers_core::abi::AbiEncode::encode(element),
+                Self::IsFile(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::IsPersistent(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
@@ -11996,6 +12152,7 @@ pub mod hevm {
                 Self::EnvUint1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Etch(element) => ::core::fmt::Display::fmt(element, f),
                 Self::EthGetLogs(element) => ::core::fmt::Display::fmt(element, f),
+                Self::Exists(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ExpectCall0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ExpectCall1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ExpectCall2(element) => ::core::fmt::Display::fmt(element, f),
@@ -12029,6 +12186,8 @@ pub mod hevm {
                 Self::GetNonce0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::GetNonce1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::GetRecordedLogs(element) => ::core::fmt::Display::fmt(element, f),
+                Self::IsDir(element) => ::core::fmt::Display::fmt(element, f),
+                Self::IsFile(element) => ::core::fmt::Display::fmt(element, f),
                 Self::IsPersistent(element) => ::core::fmt::Display::fmt(element, f),
                 Self::KeyExists(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Label(element) => ::core::fmt::Display::fmt(element, f),
@@ -12470,6 +12629,11 @@ pub mod hevm {
             Self::EthGetLogs(value)
         }
     }
+    impl ::core::convert::From<ExistsCall> for HEVMCalls {
+        fn from(value: ExistsCall) -> Self {
+            Self::Exists(value)
+        }
+    }
     impl ::core::convert::From<ExpectCall0Call> for HEVMCalls {
         fn from(value: ExpectCall0Call) -> Self {
             Self::ExpectCall0(value)
@@ -12613,6 +12777,16 @@ pub mod hevm {
     impl ::core::convert::From<GetRecordedLogsCall> for HEVMCalls {
         fn from(value: GetRecordedLogsCall) -> Self {
             Self::GetRecordedLogs(value)
+        }
+    }
+    impl ::core::convert::From<IsDirCall> for HEVMCalls {
+        fn from(value: IsDirCall) -> Self {
+            Self::IsDir(value)
+        }
+    }
+    impl ::core::convert::From<IsFileCall> for HEVMCalls {
+        fn from(value: IsFileCall) -> Self {
+            Self::IsFile(value)
         }
     }
     impl ::core::convert::From<IsPersistentCall> for HEVMCalls {
@@ -13778,6 +13952,18 @@ pub mod hevm {
             ),
         >,
     );
+    ///Container type for all return fields from the `exists` function with signature `exists(string)` and selector `0x261a323e`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct ExistsReturn(pub bool);
     ///Container type for all return fields from the `ffi` function with signature `ffi(string[])` and selector `0x89160467`
     #[derive(
         Clone,
@@ -13850,6 +14036,30 @@ pub mod hevm {
     pub struct GetRecordedLogsReturn(
         pub ::std::vec::Vec<(::std::vec::Vec<[u8; 32]>, ::ethers_core::types::Bytes)>,
     );
+    ///Container type for all return fields from the `isDir` function with signature `isDir(string)` and selector `0x7d15d019`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct IsDirReturn(pub bool);
+    ///Container type for all return fields from the `isFile` function with signature `isFile(string)` and selector `0xe0eb04d4`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct IsFileReturn(pub bool);
     ///Container type for all return fields from the `isPersistent` function with signature `isPersistent(address)` and selector `0xd92d8efd`
     #[derive(
         Clone,
