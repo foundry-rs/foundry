@@ -38,7 +38,7 @@ use tui::{
 /// Trait for starting the UI
 pub trait Ui {
     /// Start the agent that will now take over
-    fn start(self) -> Result<TUIExitReason>;
+    fn launch(&mut self) -> Result<TUIExitReason>;
 }
 
 /// Used to indicate why the UI stopped
@@ -50,6 +50,9 @@ pub enum TUIExitReason {
 mod op_effects;
 use op_effects::stack_indices_affected;
 
+use self::debugger::ContractSources;
+mod debugger;
+
 pub struct Tui {
     debug_arena: Vec<(Address, Vec<DebugStep>, CallKind)>,
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
@@ -58,11 +61,17 @@ pub struct Tui {
     /// Current step in the debug steps
     current_step: usize,
     identified_contracts: HashMap<Address, String>,
-    known_contracts: HashMap<String, ContractBytecodeSome>,
-    known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
+    /// Source map of contract sources
+    contracts_sources: ContractSources,
     /// A mapping of source -> (PC -> IC map for deploy code, PC -> IC map for runtime code)
     pc_ic_maps: BTreeMap<String, (PCICMap, PCICMap)>,
     breakpoints: Breakpoints,
+    draw_memory: DrawMemory,
+    opcode_list: Vec<String>,
+    last_index: usize,
+    stack_labels: bool,
+    mem_utf: bool,
+    show_shortcuts: bool,
 }
 
 impl Tui {
@@ -72,8 +81,7 @@ impl Tui {
         debug_arena: Vec<(Address, Vec<DebugStep>, CallKind)>,
         current_step: usize,
         identified_contracts: HashMap<Address, String>,
-        known_contracts: HashMap<String, ContractBytecodeSome>,
-        known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
+        contracts_sources: ContractSources,
         breakpoints: Breakpoints,
     ) -> Result<Self> {
         enable_raw_mode()?;
@@ -82,40 +90,47 @@ impl Tui {
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
         terminal.hide_cursor();
-        let pc_ic_maps = known_contracts
+        let pc_ic_maps = contracts_sources
             .iter()
-            .filter_map(|(contract_name, bytecode)| {
-                Some((
-                    contract_name.clone(),
-                    (
-                        build_pc_ic_map(
-                            SpecId::LATEST,
-                            bytecode.bytecode.object.as_bytes()?.as_ref(),
+            .flat_map(|(contract_name, files_sources)| {
+                files_sources.iter().filter_map(|(_, (_, contract))| {
+                    Some((
+                        contract_name.clone(),
+                        (
+                            build_pc_ic_map(
+                                SpecId::LATEST,
+                                contract.bytecode.object.as_bytes()?.as_ref(),
+                            ),
+                            build_pc_ic_map(
+                                SpecId::LATEST,
+                                contract
+                                    .deployed_bytecode
+                                    .bytecode
+                                    .as_ref()?
+                                    .object
+                                    .as_bytes()?
+                                    .as_ref(),
+                            ),
                         ),
-                        build_pc_ic_map(
-                            SpecId::LATEST,
-                            bytecode
-                                .deployed_bytecode
-                                .bytecode
-                                .as_ref()?
-                                .object
-                                .as_bytes()?
-                                .as_ref(),
-                        ),
-                    ),
-                ))
+                    ))
+                })
             })
             .collect();
         Ok(Tui {
-            debug_arena,
+            debug_arena: debug_arena.clone(),
             terminal,
             key_buffer: String::new(),
             current_step,
             identified_contracts,
-            known_contracts,
-            known_contracts_sources,
+            contracts_sources,
             pc_ic_maps,
             breakpoints,
+            draw_memory: DrawMemory::default(),
+            opcode_list: debug_arena[0].1.iter().map(|step| step.pretty_opcode()).collect(),
+            last_index: 0,
+            mem_utf: false,
+            stack_labels: false,
+            show_shortcuts: false,
         })
     }
 
@@ -138,9 +153,8 @@ impl Tui {
         f: &mut Frame<B>,
         address: Address,
         identified_contracts: &HashMap<Address, String>,
-        known_contracts: &HashMap<String, ContractBytecodeSome>,
         pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
-        known_contracts_sources: &HashMap<String, BTreeMap<u32, String>>,
+        contracts_sources: &ContractSources,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
@@ -156,9 +170,8 @@ impl Tui {
                 f,
                 address,
                 identified_contracts,
-                known_contracts,
                 pc_ic_maps,
-                known_contracts_sources,
+                contracts_sources,
                 debug_steps,
                 opcode_list,
                 current_step,
@@ -173,9 +186,8 @@ impl Tui {
                 f,
                 address,
                 identified_contracts,
-                known_contracts,
                 pc_ic_maps,
-                known_contracts_sources,
+                contracts_sources,
                 debug_steps,
                 opcode_list,
                 current_step,
@@ -193,9 +205,8 @@ impl Tui {
         f: &mut Frame<B>,
         address: Address,
         identified_contracts: &HashMap<Address, String>,
-        known_contracts: &HashMap<String, ContractBytecodeSome>,
         pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
-        known_contracts_sources: &HashMap<String, BTreeMap<u32, String>>,
+        contracts_sources: &ContractSources,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
@@ -235,9 +246,8 @@ impl Tui {
                     f,
                     address,
                     identified_contracts,
-                    known_contracts,
                     pc_ic_maps,
-                    known_contracts_sources,
+                    contracts_sources,
                     debug_steps[current_step].pc,
                     call_kind,
                     src_pane,
@@ -273,9 +283,8 @@ impl Tui {
         f: &mut Frame<B>,
         address: Address,
         identified_contracts: &HashMap<Address, String>,
-        known_contracts: &HashMap<String, ContractBytecodeSome>,
         pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
-        known_contracts_sources: &HashMap<String, BTreeMap<u32, String>>,
+        contracts_sources: &ContractSources,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
@@ -320,9 +329,8 @@ impl Tui {
                             f,
                             address,
                             identified_contracts,
-                            known_contracts,
                             pc_ic_maps,
-                            known_contracts_sources,
+                            contracts_sources,
                             debug_steps[current_step].pc,
                             call_kind,
                             src_pane,
@@ -384,9 +392,8 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
         f: &mut Frame<B>,
         address: Address,
         identified_contracts: &HashMap<Address, String>,
-        known_contracts: &HashMap<String, ContractBytecodeSome>,
         pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
-        known_contracts_sources: &HashMap<String, BTreeMap<u32, String>>,
+        contracts_sources: &ContractSources,
         pc: usize,
         call_kind: CallKind,
         area: Rect,
@@ -404,286 +411,286 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
         let mut text_output: Text = Text::from("");
 
         if let Some(contract_name) = identified_contracts.get(&address) {
-            if let (Some(known), Some(source_code)) =
-                (known_contracts.get(contract_name), known_contracts_sources.get(contract_name))
-            {
+            if let Some(files_source_code) = contracts_sources.get(contract_name) {
                 let pc_ic_map = pc_ic_maps.get(contract_name);
-                // grab either the creation source map or runtime sourcemap
-                if let Some((sourcemap, ic)) =
-                    if matches!(call_kind, CallKind::Create | CallKind::Create2) {
-                        known.bytecode.source_map().zip(pc_ic_map.and_then(|(c, _)| c.get(&pc)))
-                    } else {
-                        known
-                            .deployed_bytecode
-                            .bytecode
-                            .as_ref()
-                            .expect("no bytecode")
-                            .source_map()
-                            .zip(pc_ic_map.and_then(|(_, r)| r.get(&pc)))
-                    }
-                {
-                    match sourcemap {
-                        Ok(sourcemap) => {
-                            // we are handed a vector of SourceElements that give
-                            // us a span of sourcecode that is currently being executed
-                            // This includes an offset and length. This vector is in
-                            // instruction pointer order, meaning the location of
-                            // the instruction - sum(push_bytes[..pc])
-                            if let Some(source_idx) = sourcemap[*ic].index {
-                                if let Some(source) = source_code.get(&source_idx) {
-                                    let offset = sourcemap[*ic].offset;
-                                    let len = sourcemap[*ic].length;
-                                    let max = source.len();
-
-                                    // split source into before, relevant, and after chunks
-                                    // split by line as well to do some formatting stuff
-                                    let mut before = source[..std::cmp::min(offset, max)]
-                                        .split_inclusive('\n')
-                                        .collect::<Vec<&str>>();
-                                    let actual = source[std::cmp::min(offset, max)..
-                                        std::cmp::min(offset + len, max)]
-                                        .split_inclusive('\n')
-                                        .map(|s| s.to_string())
-                                        .collect::<Vec<String>>();
-                                    let mut after = source[std::cmp::min(offset + len, max)..]
-                                        .split_inclusive('\n')
-                                        .collect::<VecDeque<&str>>();
-
-                                    let mut line_number = 0;
-
-                                    let num_lines = before.len() + actual.len() + after.len();
-                                    let height = area.height as usize;
-                                    let needed_highlight = actual.len();
-                                    let mid_len = before.len() + actual.len();
-
-                                    // adjust what text we show of the source code
-                                    let (start_line, end_line) = if needed_highlight > height {
-                                        // highlighted section is more lines than we have avail
-                                        (before.len(), before.len() + needed_highlight)
-                                    } else if height > num_lines {
-                                        // we can fit entire source
-                                        (0, num_lines)
-                                    } else {
-                                        let remaining = height - needed_highlight;
-                                        let mut above = remaining / 2;
-                                        let mut below = remaining / 2;
-                                        if below > after.len() {
-                                            // unused space below the highlight
-                                            above += below - after.len();
-                                        } else if above > before.len() {
-                                            // we have unused space above the highlight
-                                            below += above - before.len();
-                                        } else {
-                                            // no unused space
-                                        }
-
-                                        (before.len().saturating_sub(above), mid_len + below)
-                                    };
-
-                                    let max_line_num = num_lines.to_string().len();
-                                    // We check if there is other text on the same line before the
-                                    // highlight starts
-                                    if let Some(last) = before.pop() {
-                                        if !last.ends_with('\n') {
-                                            before.iter().skip(start_line).for_each(|line| {
-                                                text_output.lines.push(Spans::from(vec![
-                                                    Span::styled(
-                                                        format!(
-                                                            "{: >max_line_num$}",
-                                                            line_number.to_string(),
-                                                            max_line_num = max_line_num
-                                                        ),
-                                                        Style::default()
-                                                            .fg(Color::Gray)
-                                                            .bg(Color::DarkGray),
-                                                    ),
-                                                    Span::styled(
-                                                        "\u{2800} ".to_string() + line,
-                                                        Style::default()
-                                                            .add_modifier(Modifier::DIM),
-                                                    ),
-                                                ]));
-                                                line_number += 1;
-                                            });
-
-                                            text_output.lines.push(Spans::from(vec![
-                                                Span::styled(
-                                                    format!(
-                                                        "{: >max_line_num$}",
-                                                        line_number.to_string(),
-                                                        max_line_num = max_line_num
-                                                    ),
-                                                    Style::default()
-                                                        .fg(Color::Cyan)
-                                                        .bg(Color::DarkGray)
-                                                        .add_modifier(Modifier::BOLD),
-                                                ),
-                                                Span::raw("\u{2800} "),
-                                                Span::raw(last),
-                                                Span::styled(
-                                                    actual[0].to_string(),
-                                                    Style::default()
-                                                        .fg(Color::Cyan)
-                                                        .add_modifier(Modifier::BOLD),
-                                                ),
-                                            ]));
-                                            line_number += 1;
-
-                                            actual.iter().skip(1).for_each(|s| {
-                                                text_output.lines.push(Spans::from(vec![
-                                                    Span::styled(
-                                                        format!(
-                                                            "{: >max_line_num$}",
-                                                            line_number.to_string(),
-                                                            max_line_num = max_line_num
-                                                        ),
-                                                        Style::default()
-                                                            .fg(Color::Cyan)
-                                                            .bg(Color::DarkGray)
-                                                            .add_modifier(Modifier::BOLD),
-                                                    ),
-                                                    Span::raw("\u{2800} "),
-                                                    Span::styled(
-                                                        // this is a hack to add coloring
-                                                        // because tui does weird trimming
-                                                        if s.is_empty() || s == "\n" {
-                                                            "\u{2800} \n".to_string()
-                                                        } else {
-                                                            s.to_string()
-                                                        },
-                                                        Style::default()
-                                                            .fg(Color::Cyan)
-                                                            .add_modifier(Modifier::BOLD),
-                                                    ),
-                                                ]));
-                                                line_number += 1;
-                                            });
-                                        } else {
-                                            before.push(last);
-                                            before.iter().skip(start_line).for_each(|line| {
-                                                text_output.lines.push(Spans::from(vec![
-                                                    Span::styled(
-                                                        format!(
-                                                            "{: >max_line_num$}",
-                                                            line_number.to_string(),
-                                                            max_line_num = max_line_num
-                                                        ),
-                                                        Style::default()
-                                                            .fg(Color::Gray)
-                                                            .bg(Color::DarkGray),
-                                                    ),
-                                                    Span::styled(
-                                                        "\u{2800} ".to_string() + line,
-                                                        Style::default()
-                                                            .add_modifier(Modifier::DIM),
-                                                    ),
-                                                ]));
-
-                                                line_number += 1;
-                                            });
-                                            actual.iter().for_each(|s| {
-                                                text_output.lines.push(Spans::from(vec![
-                                                    Span::styled(
-                                                        format!(
-                                                            "{: >max_line_num$}",
-                                                            line_number.to_string(),
-                                                            max_line_num = max_line_num
-                                                        ),
-                                                        Style::default()
-                                                            .fg(Color::Cyan)
-                                                            .bg(Color::DarkGray)
-                                                            .add_modifier(Modifier::BOLD),
-                                                    ),
-                                                    Span::raw("\u{2800} "),
-                                                    Span::styled(
-                                                        if s.is_empty() || s == "\n" {
-                                                            "\u{2800} \n".to_string()
-                                                        } else {
-                                                            s.to_string()
-                                                        },
-                                                        Style::default()
-                                                            .fg(Color::Cyan)
-                                                            .add_modifier(Modifier::BOLD),
-                                                    ),
-                                                ]));
-                                                line_number += 1;
-                                            });
-                                        }
-                                    } else {
-                                        actual.iter().for_each(|s| {
-                                            text_output.lines.push(Spans::from(vec![
-                                                Span::styled(
-                                                    format!(
-                                                        "{: >max_line_num$}",
-                                                        line_number.to_string(),
-                                                        max_line_num = max_line_num
-                                                    ),
-                                                    Style::default()
-                                                        .fg(Color::Cyan)
-                                                        .bg(Color::DarkGray)
-                                                        .add_modifier(Modifier::BOLD),
-                                                ),
-                                                Span::raw("\u{2800} "),
-                                                Span::styled(
-                                                    if s.is_empty() || s == "\n" {
-                                                        "\u{2800} \n".to_string()
-                                                    } else {
-                                                        s.to_string()
-                                                    },
-                                                    Style::default()
-                                                        .fg(Color::Cyan)
-                                                        .add_modifier(Modifier::BOLD),
-                                                ),
-                                            ]));
-                                            line_number += 1;
-                                        });
-                                    }
-
-                                    // fill in the rest of the line as unhighlighted
-                                    if let Some(last) = actual.last() {
-                                        if !last.ends_with('\n') {
-                                            if let Some(post) = after.pop_front() {
-                                                if let Some(last) = text_output.lines.last_mut() {
-                                                    last.0.push(Span::raw(post));
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // add after highlighted text
-                                    while mid_len + after.len() > end_line {
-                                        after.pop_back();
-                                    }
-                                    after.iter().for_each(|line| {
-                                        text_output.lines.push(Spans::from(vec![
-                                            Span::styled(
-                                                format!(
-                                                    "{: >max_line_num$}",
-                                                    line_number.to_string(),
-                                                    max_line_num = max_line_num
-                                                ),
-                                                Style::default()
-                                                    .fg(Color::Gray)
-                                                    .bg(Color::DarkGray),
-                                            ),
-                                            Span::styled(
-                                                "\u{2800} ".to_string() + line,
-                                                Style::default().add_modifier(Modifier::DIM),
-                                            ),
-                                        ]));
-                                        line_number += 1;
-                                    });
+                // find the contract source with the correct source_element's file_id
+                if let Some((source_element, source_code)) = files_source_code.iter().find_map(
+                    |(file_id, (source_code, contract_source))| {
+                        // grab either the creation source map or runtime sourcemap
+                        if let Some((Ok(source_map), ic)) =
+                            if matches!(call_kind, CallKind::Create | CallKind::Create2) {
+                                contract_source
+                                    .bytecode
+                                    .source_map()
+                                    .zip(pc_ic_map.and_then(|(c, _)| c.get(&pc)))
+                            } else {
+                                contract_source
+                                    .deployed_bytecode
+                                    .bytecode
+                                    .as_ref()
+                                    .expect("no bytecode")
+                                    .source_map()
+                                    .zip(pc_ic_map.and_then(|(_, r)| r.get(&pc)))
+                            }
+                        {
+                            let source_element = source_map[*ic].clone();
+                            if let Some(index) = source_element.index {
+                                if *file_id == index {
+                                    Some((source_element, source_code))
                                 } else {
-                                    text_output.extend(Text::from("No source for srcmap index"));
+                                    None
                                 }
                             } else {
-                                text_output.extend(Text::from("No srcmap index"));
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    },
+                ) {
+                    // we are handed a vector of SourceElements that give
+                    // us a span of sourcecode that is currently being executed
+                    // This includes an offset and length. This vector is in
+                    // instruction pointer order, meaning the location of
+                    // the instruction - sum(push_bytes[..pc])
+                    let offset = source_element.offset;
+                    let len = source_element.length;
+                    let max = source_code.len();
+
+                    // split source into before, relevant, and after chunks
+                    // split by line as well to do some formatting stuff
+                    let mut before = source_code[..std::cmp::min(offset, max)]
+                        .split_inclusive('\n')
+                        .collect::<Vec<&str>>();
+                    let actual = source_code
+                        [std::cmp::min(offset, max)..std::cmp::min(offset + len, max)]
+                        .split_inclusive('\n')
+                        .map(|s| s.to_string())
+                        .collect::<Vec<String>>();
+                    let mut after = source_code[std::cmp::min(offset + len, max)..]
+                        .split_inclusive('\n')
+                        .collect::<VecDeque<&str>>();
+
+                    let mut line_number = 0;
+
+                    let num_lines = before.len() + actual.len() + after.len();
+                    let height = area.height as usize;
+                    let needed_highlight = actual.len();
+                    let mid_len = before.len() + actual.len();
+
+                    // adjust what text we show of the source code
+                    let (start_line, end_line) = if needed_highlight > height {
+                        // highlighted section is more lines than we have avail
+                        (before.len(), before.len() + needed_highlight)
+                    } else if height > num_lines {
+                        // we can fit entire source
+                        (0, num_lines)
+                    } else {
+                        let remaining = height - needed_highlight;
+                        let mut above = remaining / 2;
+                        let mut below = remaining / 2;
+                        if below > after.len() {
+                            // unused space below the highlight
+                            above += below - after.len();
+                        } else if above > before.len() {
+                            // we have unused space above the highlight
+                            below += above - before.len();
+                        } else {
+                            // no unused space
+                        }
+
+                        (before.len().saturating_sub(above), mid_len + below)
+                    };
+
+                    let max_line_num = num_lines.to_string().len();
+                    // We check if there is other text on the same line before the
+                    // highlight starts
+                    if let Some(last) = before.pop() {
+                        if !last.ends_with('\n') {
+                            before.iter().skip(start_line).for_each(|line| {
+                                text_output.lines.push(Spans::from(vec![
+                                    Span::styled(
+                                        format!(
+                                            "{: >max_line_num$}",
+                                            line_number.to_string(),
+                                            max_line_num = max_line_num
+                                        ),
+                                        Style::default().fg(Color::Gray).bg(Color::DarkGray),
+                                    ),
+                                    Span::styled(
+                                        "\u{2800} ".to_string() + line,
+                                        Style::default().add_modifier(Modifier::DIM),
+                                    ),
+                                ]));
+                                line_number += 1;
+                            });
+
+                            text_output.lines.push(Spans::from(vec![
+                                Span::styled(
+                                    format!(
+                                        "{: >max_line_num$}",
+                                        line_number.to_string(),
+                                        max_line_num = max_line_num
+                                    ),
+                                    Style::default()
+                                        .fg(Color::Cyan)
+                                        .bg(Color::DarkGray)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Span::raw("\u{2800} "),
+                                Span::raw(last),
+                                Span::styled(
+                                    actual[0].to_string(),
+                                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                                ),
+                            ]));
+                            line_number += 1;
+
+                            actual.iter().skip(1).for_each(|s| {
+                                text_output.lines.push(Spans::from(vec![
+                                    Span::styled(
+                                        format!(
+                                            "{: >max_line_num$}",
+                                            line_number.to_string(),
+                                            max_line_num = max_line_num
+                                        ),
+                                        Style::default()
+                                            .fg(Color::Cyan)
+                                            .bg(Color::DarkGray)
+                                            .add_modifier(Modifier::BOLD),
+                                    ),
+                                    Span::raw("\u{2800} "),
+                                    Span::styled(
+                                        // this is a hack to add coloring
+                                        // because tui does weird trimming
+                                        if s.is_empty() || s == "\n" {
+                                            "\u{2800} \n".to_string()
+                                        } else {
+                                            s.to_string()
+                                        },
+                                        Style::default()
+                                            .fg(Color::Cyan)
+                                            .add_modifier(Modifier::BOLD),
+                                    ),
+                                ]));
+                                line_number += 1;
+                            });
+                        } else {
+                            before.push(last);
+                            before.iter().skip(start_line).for_each(|line| {
+                                text_output.lines.push(Spans::from(vec![
+                                    Span::styled(
+                                        format!(
+                                            "{: >max_line_num$}",
+                                            line_number.to_string(),
+                                            max_line_num = max_line_num
+                                        ),
+                                        Style::default().fg(Color::Gray).bg(Color::DarkGray),
+                                    ),
+                                    Span::styled(
+                                        "\u{2800} ".to_string() + line,
+                                        Style::default().add_modifier(Modifier::DIM),
+                                    ),
+                                ]));
+
+                                line_number += 1;
+                            });
+                            actual.iter().for_each(|s| {
+                                text_output.lines.push(Spans::from(vec![
+                                    Span::styled(
+                                        format!(
+                                            "{: >max_line_num$}",
+                                            line_number.to_string(),
+                                            max_line_num = max_line_num
+                                        ),
+                                        Style::default()
+                                            .fg(Color::Cyan)
+                                            .bg(Color::DarkGray)
+                                            .add_modifier(Modifier::BOLD),
+                                    ),
+                                    Span::raw("\u{2800} "),
+                                    Span::styled(
+                                        if s.is_empty() || s == "\n" {
+                                            "\u{2800} \n".to_string()
+                                        } else {
+                                            s.to_string()
+                                        },
+                                        Style::default()
+                                            .fg(Color::Cyan)
+                                            .add_modifier(Modifier::BOLD),
+                                    ),
+                                ]));
+                                line_number += 1;
+                            });
+                        }
+                    } else {
+                        actual.iter().for_each(|s| {
+                            text_output.lines.push(Spans::from(vec![
+                                Span::styled(
+                                    format!(
+                                        "{: >max_line_num$}",
+                                        line_number.to_string(),
+                                        max_line_num = max_line_num
+                                    ),
+                                    Style::default()
+                                        .fg(Color::Cyan)
+                                        .bg(Color::DarkGray)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Span::raw("\u{2800} "),
+                                Span::styled(
+                                    if s.is_empty() || s == "\n" {
+                                        "\u{2800} \n".to_string()
+                                    } else {
+                                        s.to_string()
+                                    },
+                                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                                ),
+                            ]));
+                            line_number += 1;
+                        });
+                    }
+
+                    // fill in the rest of the line as unhighlighted
+                    if let Some(last) = actual.last() {
+                        if !last.ends_with('\n') {
+                            if let Some(post) = after.pop_front() {
+                                if let Some(last) = text_output.lines.last_mut() {
+                                    last.0.push(Span::raw(post));
+                                }
                             }
                         }
-                        Err(e) => text_output.extend(Text::from(format!(
-                            "Error in source map parsing: '{e}', please open an issue"
-                        ))),
                     }
+
+                    // add after highlighted text
+                    while mid_len + after.len() > end_line {
+                        after.pop_back();
+                    }
+                    after.iter().for_each(|line| {
+                        text_output.lines.push(Spans::from(vec![
+                            Span::styled(
+                                format!(
+                                    "{: >max_line_num$}",
+                                    line_number.to_string(),
+                                    max_line_num = max_line_num
+                                ),
+                                Style::default().fg(Color::Gray).bg(Color::DarkGray),
+                            ),
+                            Span::styled(
+                                "\u{2800} ".to_string() + line,
+                                Style::default().add_modifier(Modifier::DIM),
+                            ),
+                        ]));
+                        line_number += 1;
+                    });
+                    // TODO: if file_id not here
+                    // } else {
+                    //     text_output.extend(Text::from("No srcmap index"));
+                    // }
+                    // TODO: if source_element don't match
+                    // Err(e) => text_output.extend(Text::from(format!(
+                    //     "Error in source map parsing: '{e}', please open an issue"
+                    // ))),
                 } else {
                     text_output.extend(Text::from("No sourcemap for contract"));
                 }
@@ -984,7 +991,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
 }
 
 impl Ui for Tui {
-    fn start(mut self) -> Result<TUIExitReason> {
+    fn launch(&mut self) -> eyre::Result<TUIExitReason> {
         // If something panics inside here, we should do everything we can to
         // not corrupt the user's terminal.
         std::panic::set_hook(Box::new(|e| {
@@ -1001,8 +1008,8 @@ impl Ui for Tui {
         thread::spawn(move || {
             let mut last_tick = Instant::now();
             loop {
-                // Poll events since last tick - if last tick is greater than tick_rate, we demand
-                // immediate availability of the event. This may affect
+                // Poll events since last tick - if last tick is greater than tick_rate, we
+                // demand immediate availability of the event. This may affect
                 // interactivity, but I'm not sure as it is hard to test.
                 if event::poll(tick_rate.saturating_sub(last_tick.elapsed())).unwrap() {
                     let event = event::read().unwrap();
@@ -1027,25 +1034,16 @@ impl Ui for Tui {
         });
 
         self.terminal.clear()?;
-        let mut draw_memory: DrawMemory = DrawMemory::default();
 
-        let debug_call: Vec<(Address, Vec<DebugStep>, CallKind)> = self.debug_arena.clone();
-        let mut opcode_list: Vec<String> =
-            debug_call[0].1.iter().map(|step| step.pretty_opcode()).collect();
-        let mut last_index = 0;
-
-        let mut stack_labels = false;
-        let mut mem_utf = false;
-        let mut show_shortcuts = true;
         // UI thread that manages drawing
         loop {
-            if last_index != draw_memory.inner_call_index {
-                opcode_list = debug_call[draw_memory.inner_call_index]
+            if self.last_index != self.draw_memory.inner_call_index {
+                self.opcode_list = self.debug_arena[self.draw_memory.inner_call_index]
                     .1
                     .iter()
                     .map(|step| step.pretty_opcode())
                     .collect();
-                last_index = draw_memory.inner_call_index;
+                self.last_index = self.draw_memory.inner_call_index;
             }
             // Grab interrupt
 
@@ -1053,15 +1051,15 @@ impl Ui for Tui {
 
             if let Some(c) = receiver.char_press() {
                 if self.key_buffer.ends_with('\'') {
-                    // Find the location of the called breakpoint in the whole debug arena (at this
-                    // address with this pc)
+                    // Find the location of the called breakpoint in the whole debug arena (at
+                    // this address with this pc)
                     if let Some((caller, pc)) = self.breakpoints.get(&c) {
-                        for (i, (_caller, debug_steps, _)) in debug_call.iter().enumerate() {
+                        for (i, (_caller, debug_steps, _)) in self.debug_arena.iter().enumerate() {
                             if _caller == caller {
                                 if let Some(step) =
                                     debug_steps.iter().position(|step| step.pc == *pc)
                                 {
-                                    draw_memory.inner_call_index = i;
+                                    self.draw_memory.inner_call_index = i;
                                     self.current_step = step;
                                     break
                                 }
@@ -1086,19 +1084,22 @@ impl Ui for Tui {
                             // Grab number of times to do it
                             for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
                                 if event.modifiers.contains(KeyModifiers::CONTROL) {
-                                    let max_mem = (debug_call[draw_memory.inner_call_index].1
-                                        [self.current_step]
+                                    let max_mem = (self.debug_arena
+                                        [self.draw_memory.inner_call_index]
+                                        .1[self.current_step]
                                         .memory
                                         .len() /
                                         32)
                                     .saturating_sub(1);
-                                    if draw_memory.current_mem_startline < max_mem {
-                                        draw_memory.current_mem_startline += 1;
+                                    if self.draw_memory.current_mem_startline < max_mem {
+                                        self.draw_memory.current_mem_startline += 1;
                                     }
-                                } else if self.current_step < opcode_list.len() - 1 {
+                                } else if self.current_step < self.opcode_list.len() - 1 {
                                     self.current_step += 1;
-                                } else if draw_memory.inner_call_index < debug_call.len() - 1 {
-                                    draw_memory.inner_call_index += 1;
+                                } else if self.draw_memory.inner_call_index <
+                                    self.debug_arena.len() - 1
+                                {
+                                    self.draw_memory.inner_call_index += 1;
                                     self.current_step = 0;
                                 }
                             }
@@ -1106,13 +1107,13 @@ impl Ui for Tui {
                         }
                         KeyCode::Char('J') => {
                             for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                                let max_stack = debug_call[draw_memory.inner_call_index].1
-                                    [self.current_step]
+                                let max_stack = self.debug_arena[self.draw_memory.inner_call_index]
+                                    .1[self.current_step]
                                     .stack
                                     .len()
                                     .saturating_sub(1);
-                                if draw_memory.current_stack_startline < max_stack {
-                                    draw_memory.current_stack_startline += 1;
+                                if self.draw_memory.current_stack_startline < max_stack {
+                                    self.draw_memory.current_stack_startline += 1;
                                 }
                             }
                             self.key_buffer.clear();
@@ -1121,50 +1122,53 @@ impl Ui for Tui {
                         KeyCode::Char('k') | KeyCode::Up => {
                             for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
                                 if event.modifiers.contains(KeyModifiers::CONTROL) {
-                                    draw_memory.current_mem_startline =
-                                        draw_memory.current_mem_startline.saturating_sub(1);
+                                    self.draw_memory.current_mem_startline =
+                                        self.draw_memory.current_mem_startline.saturating_sub(1);
                                 } else if self.current_step > 0 {
                                     self.current_step -= 1;
-                                } else if draw_memory.inner_call_index > 0 {
-                                    draw_memory.inner_call_index -= 1;
-                                    self.current_step =
-                                        debug_call[draw_memory.inner_call_index].1.len() - 1;
+                                } else if self.draw_memory.inner_call_index > 0 {
+                                    self.draw_memory.inner_call_index -= 1;
+                                    self.current_step = self.debug_arena
+                                        [self.draw_memory.inner_call_index]
+                                        .1
+                                        .len() -
+                                        1;
                                 }
                             }
                             self.key_buffer.clear();
                         }
                         KeyCode::Char('K') => {
                             for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                                draw_memory.current_stack_startline =
-                                    draw_memory.current_stack_startline.saturating_sub(1);
+                                self.draw_memory.current_stack_startline =
+                                    self.draw_memory.current_stack_startline.saturating_sub(1);
                             }
                             self.key_buffer.clear();
                         }
                         // Go to top of file
                         KeyCode::Char('g') => {
-                            draw_memory.inner_call_index = 0;
+                            self.draw_memory.inner_call_index = 0;
                             self.current_step = 0;
                             self.key_buffer.clear();
                         }
                         // Go to bottom of file
                         KeyCode::Char('G') => {
-                            draw_memory.inner_call_index = debug_call.len() - 1;
+                            self.draw_memory.inner_call_index = self.debug_arena.len() - 1;
                             self.current_step =
-                                debug_call[draw_memory.inner_call_index].1.len() - 1;
+                                self.debug_arena[self.draw_memory.inner_call_index].1.len() - 1;
                             self.key_buffer.clear();
                         }
                         // Go to previous call
                         KeyCode::Char('c') => {
-                            draw_memory.inner_call_index =
-                                draw_memory.inner_call_index.saturating_sub(1);
+                            self.draw_memory.inner_call_index =
+                                self.draw_memory.inner_call_index.saturating_sub(1);
                             self.current_step =
-                                debug_call[draw_memory.inner_call_index].1.len() - 1;
+                                self.debug_arena[self.draw_memory.inner_call_index].1.len() - 1;
                             self.key_buffer.clear();
                         }
                         // Go to next call
                         KeyCode::Char('C') => {
-                            if debug_call.len() > draw_memory.inner_call_index + 1 {
-                                draw_memory.inner_call_index += 1;
+                            if self.debug_arena.len() > self.draw_memory.inner_call_index + 1 {
+                                self.draw_memory.inner_call_index += 1;
                                 self.current_step = 0;
                             }
                             self.key_buffer.clear();
@@ -1173,7 +1177,7 @@ impl Ui for Tui {
                         KeyCode::Char('s') => {
                             for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
                                 let remaining_ops =
-                                    opcode_list[self.current_step..].to_vec().clone();
+                                    self.opcode_list[self.current_step..].to_vec().clone();
                                 self.current_step += remaining_ops
                                     .iter()
                                     .enumerate()
@@ -1190,9 +1194,9 @@ impl Ui for Tui {
                                             None
                                         }
                                     })
-                                    .unwrap_or(opcode_list.len() - 1);
-                                if self.current_step > opcode_list.len() {
-                                    self.current_step = opcode_list.len() - 1
+                                    .unwrap_or(self.opcode_list.len() - 1);
+                                if self.current_step > self.opcode_list.len() {
+                                    self.current_step = self.opcode_list.len() - 1
                                 };
                             }
                             self.key_buffer.clear();
@@ -1200,7 +1204,8 @@ impl Ui for Tui {
                         // Step backwards
                         KeyCode::Char('a') => {
                             for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                                let prev_ops = opcode_list[..self.current_step].to_vec().clone();
+                                let prev_ops =
+                                    self.opcode_list[..self.current_step].to_vec().clone();
                                 self.current_step = prev_ops
                                     .iter()
                                     .enumerate()
@@ -1225,15 +1230,15 @@ impl Ui for Tui {
                         }
                         // toggle stack labels
                         KeyCode::Char('t') => {
-                            stack_labels = !stack_labels;
+                            self.stack_labels = !self.stack_labels;
                         }
                         // toggle memory utf8 decoding
                         KeyCode::Char('m') => {
-                            mem_utf = !mem_utf;
+                            self.mem_utf = !self.mem_utf;
                         }
                         // toggle help notice
                         KeyCode::Char('h') => {
-                            show_shortcuts = !show_shortcuts;
+                            self.show_shortcuts = !self.show_shortcuts;
                         }
                         KeyCode::Char(other) => match other {
                             '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '\'' => {
@@ -1255,21 +1260,22 @@ impl Ui for Tui {
                         MouseEventKind::ScrollUp => {
                             if self.current_step > 0 {
                                 self.current_step -= 1;
-                            } else if draw_memory.inner_call_index > 0 {
-                                draw_memory.inner_call_index -= 1;
-                                draw_memory.current_mem_startline = 0;
-                                draw_memory.current_stack_startline = 0;
+                            } else if self.draw_memory.inner_call_index > 0 {
+                                self.draw_memory.inner_call_index -= 1;
+                                self.draw_memory.current_mem_startline = 0;
+                                self.draw_memory.current_stack_startline = 0;
                                 self.current_step =
-                                    debug_call[draw_memory.inner_call_index].1.len() - 1;
+                                    self.debug_arena[self.draw_memory.inner_call_index].1.len() - 1;
                             }
                         }
                         MouseEventKind::ScrollDown => {
-                            if self.current_step < opcode_list.len() - 1 {
+                            if self.current_step < self.opcode_list.len() - 1 {
                                 self.current_step += 1;
-                            } else if draw_memory.inner_call_index < debug_call.len() - 1 {
-                                draw_memory.inner_call_index += 1;
-                                draw_memory.current_mem_startline = 0;
-                                draw_memory.current_stack_startline = 0;
+                            } else if self.draw_memory.inner_call_index < self.debug_arena.len() - 1
+                            {
+                                self.draw_memory.inner_call_index += 1;
+                                self.draw_memory.current_mem_startline = 0;
+                                self.draw_memory.current_stack_startline = 0;
                                 self.current_step = 0;
                             }
                         }
@@ -1285,19 +1291,18 @@ impl Ui for Tui {
             self.terminal.draw(|f| {
                 Tui::draw_layout(
                     f,
-                    debug_call[draw_memory.inner_call_index].0,
+                    self.debug_arena[self.draw_memory.inner_call_index].0,
                     &self.identified_contracts,
-                    &self.known_contracts,
                     &self.pc_ic_maps,
-                    &self.known_contracts_sources,
-                    &debug_call[draw_memory.inner_call_index].1[..],
-                    &opcode_list,
+                    &self.contracts_sources,
+                    &self.debug_arena[self.draw_memory.inner_call_index].1[..],
+                    &self.opcode_list,
                     current_step,
-                    debug_call[draw_memory.inner_call_index].2,
-                    &mut draw_memory,
-                    stack_labels,
-                    mem_utf,
-                    show_shortcuts,
+                    self.debug_arena[self.draw_memory.inner_call_index].2,
+                    &mut self.draw_memory,
+                    self.stack_labels,
+                    self.mem_utf,
+                    self.show_shortcuts,
                 )
             })?;
         }

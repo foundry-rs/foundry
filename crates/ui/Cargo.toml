@@ -19,3 +19,4 @@ crossterm = "0.26"
 eyre = "0.6"
 revm = { version = "3", features = ["std", "serde"] }
 tui = { version = "0.19", default-features = false, features = ["crossterm"] }
+tracing = "0.1"
