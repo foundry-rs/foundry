@@ -225,7 +225,7 @@ where
         .nonce(tx.nonce);
 
     if let Some(code) = code {
-        let mut data = hex::decode(code.strip_prefix("0x").unwrap_or(&code))?;
+        let mut data = hex::decode(code)?;
 
         if let Some((sig, args)) = params {
             let (mut sigdata, _) = builder.create_args(sig, args).await?;

@@ -29,6 +29,7 @@ impl<DB: Database> Inspector<DB> for ChiselState {
         eval: InstructionResult,
     ) -> InstructionResult {
         // If we are at the final pc of the REPL contract execution, set the state.
+        // Subtraction can't overflow because `pc` is always at least 1 in `step_end`.
         if self.final_pc == interp.program_counter() - 1 {
             self.state = Some((interp.stack().clone(), interp.memory.clone(), eval))
         }

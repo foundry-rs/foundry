@@ -38,12 +38,11 @@ fn try_ffi(state: &Cheatcodes, args: &[String]) -> Result {
 
     // The stdout might be encoded on valid hex, or it might just be a string,
     // so we need to determine which it is to avoid improperly encoding later.
-    let encoded_stdout: Token =
-        if let Ok(hex) = hex::decode(trimmed_stdout.strip_prefix("0x").unwrap_or(trimmed_stdout)) {
-            Token::Bytes(hex)
-        } else {
-            Token::Bytes(trimmed_stdout.into())
-        };
+    let encoded_stdout: Token = if let Ok(hex) = hex::decode(trimmed_stdout) {
+        Token::Bytes(hex)
+    } else {
+        Token::Bytes(trimmed_stdout.into())
+    };
 
     let res = abi::encode(&[Token::Tuple(vec![
         Token::Int(exit_code.into()),
@@ -82,7 +81,7 @@ fn ffi(state: &Cheatcodes, args: &[String]) -> Result {
 
     let output = String::from_utf8(output.stdout)?;
     let trimmed = output.trim();
-    if let Ok(hex) = hex::decode(trimmed.strip_prefix("0x").unwrap_or(trimmed)) {
+    if let Ok(hex) = hex::decode(trimmed) {
         Ok(abi::encode(&[Token::Bytes(hex)]).into())
     } else {
         Ok(trimmed.encode().into())

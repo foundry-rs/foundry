@@ -85,16 +85,14 @@ impl Tracer {
     fn start_step<DB: Database>(&mut self, interp: &Interpreter, data: &EVMData<'_, DB>) {
         let trace_idx =
             *self.trace_stack.last().expect("can't start step without starting a trace first");
-        let trace = &mut self.traces.arena[trace_idx];
+        let node = &mut self.traces.arena[trace_idx];
 
-        self.step_stack.push((trace_idx, trace.trace.steps.len()));
+        self.step_stack.push((trace_idx, node.trace.steps.len()));
 
-        let pc = interp.program_counter();
-
-        trace.trace.steps.push(CallTraceStep {
+        node.trace.steps.push(CallTraceStep {
             depth: data.journaled_state.depth(),
-            pc,
-            op: OpCode(interp.contract.bytecode.bytecode()[pc]),
+            pc: interp.program_counter(),
+            op: OpCode(interp.current_opcode()),
             contract: b160_to_h160(interp.contract.address),
             stack: interp.stack.clone(),
             memory: interp.memory.clone(),
@@ -116,30 +114,26 @@ impl Tracer {
             self.step_stack.pop().expect("can't fill step without starting a step first");
         let step = &mut self.traces.arena[trace_idx].trace.steps[step_idx];
 
-        if let Some(pc) = interp.program_counter().checked_sub(1) {
-            let op = interp.contract.bytecode.bytecode()[pc];
+        let op = interp.current_opcode();
+        let journal_entry = data
+            .journaled_state
+            .journal
+            .last()
+            // This should always work because revm initializes it as `vec![vec![]]`
+            .unwrap()
+            .last();
+        step.state_diff = match (op, journal_entry) {
+            (
+                opcode::SLOAD | opcode::SSTORE,
+                Some(JournalEntry::StorageChange { address, key, .. }),
+            ) => {
+                let value = data.journaled_state.state[address].storage[key].present_value();
+                Some((ru256_to_u256(*key), value.into()))
+            }
+            _ => None,
+        };
 
-            let journal_entry = data
-                .journaled_state
-                .journal
-                .last()
-                // This should always work because revm initializes it as `vec![vec![]]`
-                .unwrap()
-                .last();
-
-            step.state_diff = match (op, journal_entry) {
-                (
-                    opcode::SLOAD | opcode::SSTORE,
-                    Some(JournalEntry::StorageChange { address, key, .. }),
-                ) => {
-                    let value = data.journaled_state.state[address].storage[key].present_value();
-                    Some((ru256_to_u256(*key), value.into()))
-                }
-                _ => None,
-            };
-
-            step.gas_cost = step.gas - interp.gas.remaining();
-        }
+        step.gas_cost = step.gas - interp.gas.remaining();
 
         // Error codes only
         if status as u8 > InstructionResult::OutOfGas as u8 {

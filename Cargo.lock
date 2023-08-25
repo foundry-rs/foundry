@@ -77,9 +77,9 @@ checksum = "0942ffc6dcaadf03badf6e6a2d0228460359d5e34b57ccdc720b7382dfbd5ec5"
 
 [[package]]
 name = "alloy-primitives"
-version = "0.3.2"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d66a8edd8b35a3338cd596d6c60c4c6f491f7a773a505ddcde9d19554c3ef19f"
+checksum = "e416903084d3392ebd32d94735c395d6709415b76c7728e594d3f996f2b03e65"
 dependencies = [
  "alloy-rlp",
  "bytes",
@@ -153,16 +153,15 @@ checksum = "4b46cbb362ab8752921c97e041f5e366ee6297bd428a31275b9fcf1e380f7299"
 
 [[package]]
 name = "anstream"
-version = "0.3.2"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ca84f3628370c59db74ee214b3263d58f9aadd9b4fe7e711fd87dc452b7f163"
+checksum = "b1f58811cfac344940f1a400b6e6231ce35171f614f26439e80f8c1465c5cc0c"
 dependencies = [
  "anstyle",
  "anstyle-parse",
  "anstyle-query",
  "anstyle-wincon",
  "colorchoice",
- "is-terminal",
  "utf8parse",
 ]
 
@@ -192,9 +191,9 @@ dependencies = [
 
 [[package]]
 name = "anstyle-wincon"
-version = "1.0.2"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c677ab05e09154296dd37acecd46420c17b9713e8366facafa8fc0885167cf4c"
+checksum = "58f54d10c6dfa51283a066ceab3ec1ab78d13fae00aa49243a45e4571fb79dfd"
 dependencies = [
  "anstyle",
  "windows-sys 0.48.0",
@@ -838,9 +837,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.3.24"
+version = "4.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb690e81c7840c0d7aade59f242ea3b41b9bc27bcd5997890e7702ae4b32e487"
+checksum = "1d5f1946157a96594eb2d2c10eb7ad9a2b27518cb3000209dec700c35df9197d"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -849,9 +848,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.3.24"
+version = "4.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ed2e96bc16d8d740f6f48d663eddf4b8a0983e79210fd55479b7bcd0a69860e"
+checksum = "78116e32a042dd73c2901f0dc30790d20ff3447f3e3472fad359e8c3d282bcd6"
 dependencies = [
  "anstream",
  "anstyle",
@@ -865,18 +864,18 @@ dependencies = [
 
 [[package]]
 name = "clap_complete"
-version = "4.3.2"
+version = "4.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fc443334c81a804575546c5a8a79b4913b50e28d69232903604cada1de817ce"
+checksum = "586a385f7ef2f8b4d86bddaa0c094794e7ccbfe5ffef1f434fe928143fc783a5"
 dependencies = [
  "clap",
 ]
 
 [[package]]
 name = "clap_complete_fig"
-version = "4.3.1"
+version = "4.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99fee1d30a51305a6c2ed3fc5709be3c8af626c9c958e04dd9ae94e27bcbce9f"
+checksum = "9e9bae21b3f6eb417ad3054c8b1094aa0542116eba4979b1b271baefbfa6b965"
 dependencies = [
  "clap",
  "clap_complete",
@@ -884,9 +883,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.3.12"
+version = "4.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54a9bb5758fc5dfe728d1019941681eccaf0cf8a4189b692a0ee2f2ecf90a050"
+checksum = "c9fd1a5729c4548118d7d70ff234a44868d00489a4b6597b0b020918a0e91a1a"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -896,9 +895,9 @@ dependencies = [
 
 [[package]]
 name = "clap_lex"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2da6da31387c7e4ef160ffab6d5e7f00c42626fe39aea70a7b0f1773f7dd6c1b"
+checksum = "cd7cc57abe963c6d3b9d8be5b06ba7c8957a930305ca90304f24ef040aa6f961"
 
 [[package]]
 name = "clearscreen"
@@ -1758,7 +1757,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "2.0.9"
-source = "git+https://github.com/gakonst/ethers-rs#f2d412c8cf732167288f68aee826eb6615b4b2e4"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1773,7 +1772,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "2.0.9"
-source = "git+https://github.com/gakonst/ethers-rs#f2d412c8cf732167288f68aee826eb6615b4b2e4"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1784,7 +1783,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "2.0.9"
-source = "git+https://github.com/gakonst/ethers-rs#f2d412c8cf732167288f68aee826eb6615b4b2e4"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "const-hex",
  "ethers-contract-abigen",
@@ -1802,7 +1801,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "2.0.9"
-source = "git+https://github.com/gakonst/ethers-rs#f2d412c8cf732167288f68aee826eb6615b4b2e4"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "Inflector",
  "const-hex",
@@ -1825,7 +1824,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "2.0.9"
-source = "git+https://github.com/gakonst/ethers-rs#f2d412c8cf732167288f68aee826eb6615b4b2e4"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "Inflector",
  "const-hex",
@@ -1840,7 +1839,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "2.0.9"
-source = "git+https://github.com/gakonst/ethers-rs#f2d412c8cf732167288f68aee826eb6615b4b2e4"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "arrayvec",
  "bytes",
@@ -1869,7 +1868,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "2.0.9"
-source = "git+https://github.com/gakonst/ethers-rs#f2d412c8cf732167288f68aee826eb6615b4b2e4"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -1884,7 +1883,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "2.0.9"
-source = "git+https://github.com/gakonst/ethers-rs#f2d412c8cf732167288f68aee826eb6615b4b2e4"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1910,7 +1909,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "2.0.9"
-source = "git+https://github.com/gakonst/ethers-rs#f2d412c8cf732167288f68aee826eb6615b4b2e4"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1948,7 +1947,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "2.0.9"
-source = "git+https://github.com/gakonst/ethers-rs#f2d412c8cf732167288f68aee826eb6615b4b2e4"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1975,7 +1974,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "2.0.9"
-source = "git+https://github.com/gakonst/ethers-rs#f2d412c8cf732167288f68aee826eb6615b4b2e4"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "cfg-if",
  "const-hex",
@@ -4669,9 +4668,9 @@ dependencies = [
 
 [[package]]
 name = "pin-project-lite"
-version = "0.2.12"
+version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12cc1b0bf1727a77a54b6654e7b5f1af8604923edc8b81885f8ec92f9e3f0a05"
+checksum = "8afb450f006bf6385ca15ef45d71d2288452bc3683ce2e2cacc0d18e4be60b58"
 
 [[package]]
 name = "pin-utils"
@@ -5174,7 +5173,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "3.3.0"
-source = "git+https://github.com/bluealloy/revm/?branch=reintrouduce_alloy#6b7e4b555566c6ad3335086c6f57e89a2f761526"
+source = "git+https://github.com/bluealloy/revm/?branch=reintrouduce_alloy#9e0ef9980b7f96486ba723653b31e2fb7cef2a09"
 dependencies = [
  "auto_impl",
  "once_cell",
@@ -5188,7 +5187,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "1.1.2"
-source = "git+https://github.com/bluealloy/revm/?branch=reintrouduce_alloy#6b7e4b555566c6ad3335086c6f57e89a2f761526"
+source = "git+https://github.com/bluealloy/revm/?branch=reintrouduce_alloy#9e0ef9980b7f96486ba723653b31e2fb7cef2a09"
 dependencies = [
  "derive_more",
  "enumn",
@@ -5199,7 +5198,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "2.0.3"
-source = "git+https://github.com/bluealloy/revm/?branch=reintrouduce_alloy#6b7e4b555566c6ad3335086c6f57e89a2f761526"
+source = "git+https://github.com/bluealloy/revm/?branch=reintrouduce_alloy#9e0ef9980b7f96486ba723653b31e2fb7cef2a09"
 dependencies = [
  "k256",
  "num",
@@ -5214,7 +5213,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "1.1.2"
-source = "git+https://github.com/bluealloy/revm/?branch=reintrouduce_alloy#6b7e4b555566c6ad3335086c6f57e89a2f761526"
+source = "git+https://github.com/bluealloy/revm/?branch=reintrouduce_alloy#9e0ef9980b7f96486ba723653b31e2fb7cef2a09"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -6045,11 +6044,11 @@ dependencies = [
 
 [[package]]
 name = "solang-parser"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c792fe9fae2a2f716846f214ca10d5a1e21133e0bf36cef34bcc4a852467b21"
+checksum = "7cb9fa2fa2fa6837be8a2495486ff92e3ffe68a99b6eeba288e139efdd842457"
 dependencies = [
- "itertools 0.10.5",
+ "itertools 0.11.0",
  "lalrpop",
  "lalrpop-util",
  "phf 0.11.2",
@@ -7443,9 +7442,9 @@ checksum = "ed94fce61571a4006852b7389a063ab983c02eb1bb37b47f8272ce92d06d9538"
 
 [[package]]
 name = "winnow"
-version = "0.5.14"
+version = "0.5.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d09770118a7eb1ccaf4a594a221334119a44a814fcb0d31c5b85e83e97227a97"
+checksum = "7c2e3184b9c4e92ad5167ca73039d0c42476302ab603e2fec4487511f38ccefc"
 dependencies = [
  "memchr",
 ]

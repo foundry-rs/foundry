@@ -667,4 +667,13 @@ interface Vm {
 
     // Gets the map key and parent of a mapping at a given slot, for a given address.
     function getMappingKeyAndParentOf(address target, bytes32 slot) external returns (bool, bytes32, bytes32);
+
+    // Returns true if the given path points to an existing entity, else returns false
+    function exists(string calldata path) external returns (bool);
+
+    // Returns true if the path exists on disk and is pointing at a regular file, else returns false
+    function isFile(string calldata path) external returns (bool);
+
+    // Returns true if the path exists on disk and is pointing at a directory, else returns false
+    function isDir(string calldata path) external returns (bool);
 }
