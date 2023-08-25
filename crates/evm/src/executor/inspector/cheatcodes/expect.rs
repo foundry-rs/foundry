@@ -118,6 +118,16 @@ pub struct ExpectedEmit {
     pub found: bool,
 }
 
+fn expect_emit(
+    state: &mut Cheatcodes,
+    address: Option<H160>,
+    depth: u64,
+    checks: [bool; 4],
+) -> Result {
+    state.expected_emits.push_back(ExpectedEmit { depth, address, checks, ..Default::default() });
+    Ok(Bytes::new())
+}
+
 pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address) {
     // Fill or check the expected emits.
     // We expect for emit checks to be filled as they're declared (from oldest to newest),
@@ -210,6 +220,8 @@ pub struct ExpectedCallData {
     pub count: u64,
     /// The type of call
     pub call_type: ExpectedCallType,
+    /// The depth at which this call must be checked
+    pub depth: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -287,6 +299,7 @@ fn expect_call(
     min_gas: Option<u64>,
     count: u64,
     call_type: ExpectedCallType,
+    depth: u64,
 ) -> Result {
     match call_type {
         ExpectedCallType::Count => {
@@ -298,8 +311,10 @@ fn expect_call(
                 !expecteds.contains_key(&calldata),
                 "Counted expected calls can only bet set once."
             );
-            expecteds
-                .insert(calldata, (ExpectedCallData { value, gas, min_gas, count, call_type }, 0));
+            expecteds.insert(
+                calldata,
+                (ExpectedCallData { value, gas, min_gas, count, call_type, depth }, 0),
+            );
             Ok(Bytes::new())
         }
         ExpectedCallType::NonCount => {
@@ -317,7 +332,7 @@ fn expect_call(
                 // If it does not exist, then create it.
                 expecteds.insert(
                     calldata,
-                    (ExpectedCallData { value, gas, min_gas, count, call_type }, 0),
+                    (ExpectedCallData { value, gas, min_gas, count, call_type, depth }, 0),
                 );
             }
             Ok(Bytes::new())
@@ -340,39 +355,26 @@ pub fn apply<DB: DatabaseExt>(
             expect_revert(state, Some(inner.0.into()), data.journaled_state.depth())
         }
         HEVMCalls::ExpectEmit0(_) => {
-            state.expected_emits.push_back(ExpectedEmit {
-                depth: data.journaled_state.depth(),
-                checks: [true, true, true, true],
-                ..Default::default()
-            });
-            Ok(Bytes::new())
+            expect_emit(state, None, data.journaled_state.depth(), [true, true, true, true])
         }
-        HEVMCalls::ExpectEmit1(inner) => {
-            state.expected_emits.push_back(ExpectedEmit {
-                depth: data.journaled_state.depth(),
-                checks: [true, true, true, true],
-                address: Some(inner.0),
-                ..Default::default()
-            });
-            Ok(Bytes::new())
-        }
-        HEVMCalls::ExpectEmit2(inner) => {
-            state.expected_emits.push_back(ExpectedEmit {
-                depth: data.journaled_state.depth(),
-                checks: [inner.0, inner.1, inner.2, inner.3],
-                ..Default::default()
-            });
-            Ok(Bytes::new())
-        }
-        HEVMCalls::ExpectEmit3(inner) => {
-            state.expected_emits.push_back(ExpectedEmit {
-                depth: data.journaled_state.depth(),
-                checks: [inner.0, inner.1, inner.2, inner.3],
-                address: Some(inner.4),
-                ..Default::default()
-            });
-            Ok(Bytes::new())
-        }
+        HEVMCalls::ExpectEmit1(inner) => expect_emit(
+            state,
+            Some(inner.0),
+            data.journaled_state.depth(),
+            [true, true, true, true],
+        ),
+        HEVMCalls::ExpectEmit2(inner) => expect_emit(
+            state,
+            None,
+            data.journaled_state.depth(),
+            [inner.0, inner.1, inner.2, inner.3],
+        ),
+        HEVMCalls::ExpectEmit3(inner) => expect_emit(
+            state,
+            Some(inner.4),
+            data.journaled_state.depth(),
+            [inner.0, inner.1, inner.2, inner.3],
+        ),
         HEVMCalls::ExpectCall0(inner) => expect_call(
             state,
             inner.0,
@@ -382,6 +384,7 @@ pub fn apply<DB: DatabaseExt>(
             None,
             1,
             ExpectedCallType::NonCount,
+            data.journaled_state.depth(),
         ),
         HEVMCalls::ExpectCall1(inner) => expect_call(
             state,
@@ -392,6 +395,7 @@ pub fn apply<DB: DatabaseExt>(
             None,
             inner.2,
             ExpectedCallType::Count,
+            data.journaled_state.depth(),
         ),
         HEVMCalls::ExpectCall2(inner) => expect_call(
             state,
@@ -402,6 +406,7 @@ pub fn apply<DB: DatabaseExt>(
             None,
             1,
             ExpectedCallType::NonCount,
+            data.journaled_state.depth(),
         ),
         HEVMCalls::ExpectCall3(inner) => expect_call(
             state,
@@ -412,13 +417,13 @@ pub fn apply<DB: DatabaseExt>(
             None,
             inner.3,
             ExpectedCallType::Count,
+            data.journaled_state.depth(),
         ),
         HEVMCalls::ExpectCall4(inner) => {
             let value = inner.1;
             // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
             // to ensure that the basic fallback function can be called.
             let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
-
             expect_call(
                 state,
                 inner.0,
@@ -428,6 +433,7 @@ pub fn apply<DB: DatabaseExt>(
                 None,
                 1,
                 ExpectedCallType::NonCount,
+                data.journaled_state.depth(),
             )
         }
         HEVMCalls::ExpectCall5(inner) => {
@@ -435,7 +441,6 @@ pub fn apply<DB: DatabaseExt>(
             // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
             // to ensure that the basic fallback function can be called.
             let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
-
             expect_call(
                 state,
                 inner.0,
@@ -445,6 +450,7 @@ pub fn apply<DB: DatabaseExt>(
                 None,
                 inner.4,
                 ExpectedCallType::Count,
+                data.journaled_state.depth(),
             )
         }
         HEVMCalls::ExpectCallMinGas0(inner) => {
@@ -452,7 +458,6 @@ pub fn apply<DB: DatabaseExt>(
             // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
             // to ensure that the basic fallback function can be called.
             let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
-
             expect_call(
                 state,
                 inner.0,
@@ -462,6 +467,7 @@ pub fn apply<DB: DatabaseExt>(
                 Some(inner.2 + positive_value_cost_stipend),
                 1,
                 ExpectedCallType::NonCount,
+                data.journaled_state.depth(),
             )
         }
         HEVMCalls::ExpectCallMinGas1(inner) => {
@@ -469,7 +475,6 @@ pub fn apply<DB: DatabaseExt>(
             // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
             // to ensure that the basic fallback function can be called.
             let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
-
             expect_call(
                 state,
                 inner.0,
@@ -479,6 +484,7 @@ pub fn apply<DB: DatabaseExt>(
                 Some(inner.2 + positive_value_cost_stipend),
                 inner.4,
                 ExpectedCallType::Count,
+                data.journaled_state.depth(),
             )
         }
         HEVMCalls::MockCall0(inner) => {
