@@ -81,6 +81,15 @@ impl CodeLocationExt for pt::SourceUnitPart {
     }
 }
 
+impl CodeLocationExt for pt::ImportPath {
+    fn loc(&self) -> pt::Loc {
+        match self {
+            Self::Filename(s) => s.loc(),
+            Self::Path(i) => i.loc(),
+        }
+    }
+}
+
 macro_rules! impl_delegate {
     ($($t:ty),+ $(,)?) => {$(
         impl CodeLocationExt for $t {
