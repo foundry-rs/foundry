@@ -1,6 +1,5 @@
 use crate::{
     coverage::HitMaps,
-    debug::DebugArena,
     decode::{self, decode_console_logs},
     executor::{Executor, RawCallResult},
     trace::CallTraceArena,
@@ -11,49 +10,22 @@ use ethers::{
     types::{Address, Bytes, Log},
 };
 use eyre::Result;
-use foundry_common::{calc, contracts::ContractsByAddress, evm::Breakpoints};
+use foundry_common::{calc, contracts::ContractsByAddress};
 use foundry_config::FuzzConfig;
 pub use proptest::test_runner::Reason;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use revm::interpreter::InstructionResult;
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::BTreeMap, fmt};
 use strategies::{
     build_initial_state, collect_state_from_call, fuzz_calldata, fuzz_calldata_from_state,
     EvmFuzzState,
 };
+use types::{CaseOutcome, CounterExampleOutcome, FuzzCase, FuzzOutcome};
 
 pub mod error;
 pub mod invariant;
 pub mod strategies;
-
-/// Returned by a single fuzz in the case of a successful run
-#[derive(Debug)]
-pub struct CaseOutcome {
-    pub case: FuzzCase,
-    pub gas_used: u64,
-    pub stipend: u64,
-    pub traces: Option<CallTraceArena>,
-    pub coverage: Option<HitMaps>,
-    pub debug: Option<DebugArena>,
-    pub breakpoints: Breakpoints,
-}
-
-/// Returned by a single fuzz when a counterexample has been discovered
-#[derive(Debug)]
-pub struct CounterExampleOutcome {
-    pub counterexample: (ethers::types::Bytes, RawCallResult),
-    pub exit_reason: InstructionResult,
-    pub debug: Option<DebugArena>,
-    pub breakpoints: Breakpoints,
-}
-
-/// Outcome of a single fuzz
-#[derive(Debug)]
-pub enum FuzzOutcome {
-    Case(CaseOutcome),
-    CounterExample(CounterExampleOutcome),
-}
+pub mod types;
 
 /// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
 ///
@@ -220,6 +192,8 @@ impl<'a> FuzzedExecutor<'a> {
         result
     }
 
+    /// Granular and single-step function that runs only one fuzz and returns either a `CaseOutcome`
+    /// or a `CounterExampleOutcome`
     pub fn single_fuzz(
         &self,
         state: &EvmFuzzState,
@@ -501,15 +475,4 @@ impl FuzzedCases {
     pub fn lowest_gas(&self) -> u64 {
         self.lowest().map(|c| c.gas).unwrap_or_default()
     }
-}
-
-/// Data of a single fuzz test case
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct FuzzCase {
-    /// The calldata used for this fuzz test
-    pub calldata: Bytes,
-    /// Consumed gas
-    pub gas: u64,
-    /// The initial gas stipend for the transaction
-    pub stipend: u64,
 }
