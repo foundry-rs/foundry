@@ -14,7 +14,7 @@ use ethers::{
 };
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_cli::utils::now;
-use foundry_common::{fs, shell, SELECTOR_LEN};
+use foundry_common::{fs, SELECTOR_LEN};
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -174,8 +174,8 @@ impl ScriptSequence {
         //../run-[timestamp].json
         fs::copy(&self.sensitive_path, self.sensitive_path.with_file_name(&ts_name))?;
 
-        shell::println(format!("\nTransactions saved to: {}\n", self.path.display()))?;
-        shell::println(format!("Sensitive values saved to: {}\n", self.sensitive_path.display()))?;
+        sh_eprintln!("\nTransactions saved to: {}\n", self.path.display())?;
+        sh_eprintln!("Sensitive values saved to: {}\n", self.sensitive_path.display())?;
 
         Ok(())
     }

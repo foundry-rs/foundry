@@ -21,6 +21,7 @@ use crate::cmd::{
     verify::{VerifyArgs, VerifyCheckArgs},
 };
 use clap::{Parser, Subcommand, ValueHint};
+use foundry_cli::opts::ShellOptions;
 use std::path::PathBuf;
 
 const VERSION_MESSAGE: &str = concat!(
@@ -32,19 +33,22 @@ const VERSION_MESSAGE: &str = concat!(
     ")"
 );
 
-#[derive(Debug, Parser)]
-#[clap(name = "forge", version = VERSION_MESSAGE)]
+/// Build, test, fuzz, debug and deploy Solidity contracts.
+#[derive(Parser)]
+#[clap(
+    name = "forge",
+    version = VERSION_MESSAGE,
+    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html",
+    next_display_order = None,
+)]
 pub struct Opts {
     #[clap(subcommand)]
     pub sub: Subcommands,
+    #[clap(flatten)]
+    pub shell: ShellOptions,
 }
 
-#[derive(Debug, Subcommand)]
-#[clap(
-    about = "Build, test, fuzz, debug and deploy Solidity contracts.",
-    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html",
-    next_display_order = None
-)]
+#[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
     /// Run the project's tests.

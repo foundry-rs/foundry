@@ -20,7 +20,7 @@ use foundry_cli::{
 use foundry_common::{
     compile::{self, ProjectCompiler},
     evm::EvmArgs,
-    get_contract_name, get_file_name, shell,
+    get_contract_name, get_file_name,
 };
 use foundry_config::{
     figment,
@@ -117,7 +117,6 @@ impl TestArgs {
 
     pub async fn run(self) -> Result<TestOutcome> {
         trace!(target: "forge::test", "executing test command");
-        shell::set_shell(shell::Shell::from_args(self.opts.silent, self.json))?;
         self.execute_tests().await
     }
 
@@ -139,9 +138,7 @@ impl TestArgs {
         let mut project = config.project()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
-            config.auto_detect_remappings
-        {
+        if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
             project = config.project()?;
@@ -377,7 +374,7 @@ impl TestOutcome {
             return Ok(())
         }
 
-        if !shell::verbosity().is_normal() {
+        if foundry_cli::Shell::get().verbosity().is_quiet() {
             // skip printing and exit early
             std::process::exit(1);
         }

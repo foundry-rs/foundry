@@ -19,7 +19,7 @@ use forge::{
     CallKind,
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
-use foundry_common::{shell, RpcUrl};
+use foundry_common::RpcUrl;
 use foundry_evm::utils::evm_spec;
 use futures::future::join_all;
 use parking_lot::RwLock;
@@ -248,9 +248,7 @@ impl ScriptArgs {
     async fn build_runners(&self, script_config: &ScriptConfig) -> HashMap<RpcUrl, ScriptRunner> {
         let sender = script_config.evm_opts.sender;
 
-        if !shell::verbosity().is_silent() {
-            eprintln!("\n## Setting up ({}) EVMs.", script_config.total_rpcs.len());
-        }
+        let _ = sh_eprintln!("\n## Setting up ({}) EVMs.", script_config.total_rpcs.len());
 
         let futs = script_config
             .total_rpcs

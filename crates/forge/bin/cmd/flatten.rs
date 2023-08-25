@@ -47,7 +47,6 @@ impl FlattenArgs {
             libraries: vec![],
             via_ir: false,
             revert_strings: None,
-            silent: false,
             build_info: false,
             build_info_path: None,
         };

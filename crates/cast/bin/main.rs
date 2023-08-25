@@ -26,13 +26,21 @@ pub mod opts;
 use opts::{Opts, Subcommands, ToBaseArgs};
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
+    if let Err(err) = run().await {
+        let _ = foundry_cli::Shell::get().error(&err);
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<()> {
     utils::load_dotenv();
     handler::install()?;
     utils::subscriber();
     utils::enable_paint();
 
     let opts = Opts::parse();
+    opts.shell.set_global_shell();
     match opts.sub {
         // Constants
         Subcommands::MaxInt { r#type } => {

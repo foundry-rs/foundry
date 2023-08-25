@@ -8,9 +8,7 @@ use foundry_cli::{
 use foundry_common::{
     compile,
     selectors::{import_selectors, SelectorImportData},
-    shell,
 };
-use yansi::Paint;
 
 /// CLI arguments for `forge upload-selectors`.
 #[derive(Debug, Clone, Parser)]
@@ -30,7 +28,7 @@ pub struct UploadSelectorsArgs {
 impl UploadSelectorsArgs {
     /// Builds a contract and uploads the ABI to selector database
     pub async fn run(self) -> Result<()> {
-        shell::println(Paint::yellow("Warning! This command is deprecated and will be removed in v1, use `forge selectors upload` instead"))?;
+        sh_warn!("This command is deprecated and will be removed in v1, use `forge selectors upload` instead")?;
 
         let UploadSelectorsArgs { contract, all, project_paths } = self;
 

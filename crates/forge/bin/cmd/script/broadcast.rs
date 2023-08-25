@@ -14,7 +14,7 @@ use foundry_cli::{
     update_progress,
     utils::{has_batch_support, has_different_gas_calc},
 };
-use foundry_common::{estimate_eip1559_fees, shell, try_get_http_provider, RetryProvider};
+use foundry_common::{estimate_eip1559_fees, try_get_http_provider, RetryProvider};
 use futures::StreamExt;
 use std::{cmp::min, collections::HashSet, ops::Mul, sync::Arc};
 use tracing::trace;
@@ -136,11 +136,11 @@ impl ScriptArgs {
             {
                 let mut pending_transactions = vec![];
 
-                shell::println(format!(
+                sh_eprintln!(
                     "##\nSending transactions [{} - {}].",
                     batch_number * batch_size,
                     batch_number * batch_size + min(batch_size, batch.len()) - 1
-                ))?;
+                )?;
                 for (tx, kind, is_fixed_gas_limit) in batch.into_iter() {
                     let tx_hash = self.send_transaction(
                         provider.clone(),
@@ -180,7 +180,7 @@ impl ScriptArgs {
                     deployment_sequence.save()?;
 
                     if !sequential_broadcast {
-                        shell::println("##\nWaiting for receipts.")?;
+                        sh_eprintln!("##\nWaiting for receipts.")?;
                         clear_pendings(provider.clone(), deployment_sequence, None).await?;
                     }
                 }
@@ -190,8 +190,8 @@ impl ScriptArgs {
             }
         }
 
-        shell::println("\n\n==========================")?;
-        shell::println("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
+        sh_eprintln!("\n\n==========================")?;
+        sh_eprintln!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
 
         let (total_gas, total_gas_price, total_paid) = deployment_sequence.receipts.iter().fold(
             (U256::zero(), U256::zero(), U256::zero()),
@@ -204,12 +204,12 @@ impl ScriptArgs {
         let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
         let avg_gas_price = format_units(total_gas_price / deployment_sequence.receipts.len(), 9)
             .unwrap_or_else(|_| "N/A".to_string());
-        shell::println(format!(
+        sh_eprintln!(
             "Total Paid: {} ETH ({} gas * avg {} gwei)",
             paid.trim_end_matches('0'),
             total_gas,
             avg_gas_price.trim_end_matches('0').trim_end_matches('.')
-        ))?;
+        )?;
 
         Ok(())
     }
@@ -320,10 +320,10 @@ impl ScriptArgs {
                 }
 
                 if !self.broadcast {
-                    shell::println("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
+                    sh_eprintln!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
                 }
             } else {
-                shell::println("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
+                sh_eprintln!("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
             }
         }
         Ok(())
@@ -398,7 +398,7 @@ impl ScriptArgs {
         known_contracts: &ContractsByArtifact,
     ) -> Result<VecDeque<TransactionWithMetadata>> {
         let gas_filled_txs = if self.skip_simulation {
-            shell::println("\nSKIPPING ON CHAIN SIMULATION.")?;
+            sh_eprintln!("\nSKIPPING ON CHAIN SIMULATION.")?;
             txs.into_iter()
                 .map(|btx| {
                     let mut tx = TransactionWithMetadata::from_typed_transaction(btx.transaction);
@@ -538,24 +538,23 @@ impl ScriptArgs {
                     provider_info.gas_price()?
                 };
 
-                shell::println("\n==========================")?;
-                shell::println(format!("\nChain {}", provider_info.chain))?;
+                sh_eprintln!("\nChain {}", provider_info.chain)?;
 
-                shell::println(format!(
+                sh_eprintln!(
                     "\nEstimated gas price: {} gwei",
                     format_units(per_gas, 9)
                         .unwrap_or_else(|_| "[Could not calculate]".to_string())
                         .trim_end_matches('0')
                         .trim_end_matches('.')
-                ))?;
-                shell::println(format!("\nEstimated total gas used for script: {total_gas}"))?;
-                shell::println(format!(
+                )?;
+                sh_eprintln!("\nEstimated total gas used for script: {total_gas}")?;
+                sh_eprintln!(
                     "\nEstimated amount required: {} ETH",
                     format_units(total_gas.saturating_mul(per_gas), 18)
                         .unwrap_or_else(|_| "[Could not calculate]".to_string())
                         .trim_end_matches('0')
-                ))?;
-                shell::println("\n==========================")?;
+                )?;
+                sh_eprintln!("\n==========================")?;
             }
         }
         Ok(deployments)

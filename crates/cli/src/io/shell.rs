@@ -58,6 +58,26 @@ pub enum Verbosity {
     Quiet,
 }
 
+impl Verbosity {
+    /// Returns true if the verbosity level is `Verbose`.
+    #[inline]
+    pub fn is_verbose(self) -> bool {
+        self == Verbosity::Verbose
+    }
+
+    /// Returns true if the verbosity level is `Normal`.
+    #[inline]
+    pub fn is_normal(self) -> bool {
+        self == Verbosity::Normal
+    }
+
+    /// Returns true if the verbosity level is `Quiet`.
+    #[inline]
+    pub fn is_quiet(self) -> bool {
+        self == Verbosity::Quiet
+    }
+}
+
 /// An abstraction around console output that remembers preferences for output
 /// verbosity and color.
 pub struct Shell {
@@ -102,7 +122,7 @@ pub enum ColorChoice {
     Always,
     /// Force disable color output.
     Never,
-    /// Intelligently guess whether to use color output.
+    /// Intelligently guess whether to use color output (default).
     #[default]
     Auto,
 }

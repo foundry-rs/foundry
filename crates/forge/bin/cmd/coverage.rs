@@ -22,7 +22,6 @@ use forge::{
 };
 use foundry_cli::{
     opts::CoreBuildArgs,
-    p_println,
     utils::{LoadConfig, STATIC_FUZZ_SEED},
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
@@ -31,7 +30,6 @@ use foundry_evm::utils::evm_spec;
 use semver::Version;
 use std::{collections::HashMap, sync::mpsc::channel};
 use tracing::trace;
-use yansi::Paint;
 
 /// A map, keyed by contract ID, to a tuple of the deployment source map and the runtime source map.
 type SourceMaps = HashMap<ContractId, (SourceMap, SourceMap)>;
@@ -70,9 +68,7 @@ impl CoverageArgs {
         let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
-            config.auto_detect_remappings
-        {
+        if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
         }
@@ -81,10 +77,10 @@ impl CoverageArgs {
         config.fuzz.seed = Some(U256::from_big_endian(&STATIC_FUZZ_SEED));
 
         let (project, output) = self.build(&config)?;
-        p_println!(!self.opts.silent => "Analysing contracts...");
+        sh_eprintln!("Analysing contracts...")?;
         let report = self.prepare(&config, output.clone())?;
 
-        p_println!(!self.opts.silent => "Running tests...");
+        sh_eprintln!("Running tests...")?;
         self.collect(project, output, report, config, evm_opts).await
     }
 
@@ -107,15 +103,13 @@ impl CoverageArgs {
                 }
 
                 // print warning message
-                p_println!(!self.opts.silent => "{}",
-                Paint::yellow(
-                concat!(
-                "Warning! \"--ir-minimum\" flag enables viaIR with minimum optimization, which can result in inaccurate source mappings.\n",
-                "Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n",
-                "Note that \"viaIR\" is only available in Solidity 0.8.13 and above.\n",
-                "See more:\n",
-                "https://github.com/foundry-rs/foundry/issues/3357\n"
-                )));
+                sh_warn!(concat!(
+                    "Warning! \"--ir-minimum\" flag enables viaIR with minimum optimization, which can result in inaccurate source mappings.\n",
+                    "Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n",
+                    "Note that \"viaIR\" is only available in Solidity 0.8.13 and above.\n",
+                    "See more:\n",
+                    "https://github.com/foundry-rs/foundry/issues/3357\n"
+                ))?;
 
                 // Enable viaIR with minimum optimization
                 // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350

@@ -1,7 +1,7 @@
 use crate::shell::{ColorChoice, Shell, Verbosity};
 use clap::Parser;
 
-/// Shell options.
+/// Global shell options.
 #[derive(Clone, Copy, Debug, Parser)]
 pub struct ShellOptions {
     /// Use verbose output.
@@ -9,12 +9,12 @@ pub struct ShellOptions {
     pub verbose: bool,
 
     /// Do not print log messages.
-    #[clap(long, short, global = true, conflicts_with = "verbose")]
+    #[clap(long, short, global = true, alias = "silent", conflicts_with = "verbose")]
     pub quiet: bool,
 
     /// Log messages coloring.
-    #[clap(long, global = true)]
-    pub color: ColorChoice,
+    #[clap(long, global = true, value_enum)]
+    pub color: Option<ColorChoice>,
 }
 
 impl ShellOptions {
@@ -25,7 +25,7 @@ impl ShellOptions {
             (false, false) => Verbosity::Normal,
             (true, true) => unreachable!(),
         };
-        Shell::new_with(self.color, verbosity)
+        Shell::new_with(self.color.unwrap_or_default(), verbosity)
     }
 
     pub fn set_global_shell(self) {

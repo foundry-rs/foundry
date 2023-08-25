@@ -30,8 +30,6 @@ pub use suggestions::*;
 #[doc(hidden)]
 pub use foundry_config::utils::*;
 
-use crate::Shell;
-
 /// Deterministic fuzzer seed used for gas snapshots and coverage reports.
 ///
 /// The keccak256 hash of "foundry rulez"
@@ -164,30 +162,6 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
     rt.block_on(future)
 }
 
-/// Conditionally print a message
-///
-/// This macro accepts a predicate and the message to print if the predicate is tru
-///
-/// ```ignore
-/// let quiet = true;
-/// p_println!(!quiet => "message");
-/// ```
-#[macro_export]
-macro_rules! p_println {
-    ($p:expr => $($arg:tt)*) => {{
-        if $p {
-            println!($($arg)*)
-        }
-    }}
-}
-
-pub fn exit_on_err(run: impl FnOnce() -> Result<()>) {
-    if let Err(err) = run() {
-        let _ = Shell::get().error(&err);
-        std::process::exit(1);
-    }
-}
-
 /// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
 ///
 /// We could use `tracing::warn!` here, but that would imply that the dotenv file can't configure
@@ -228,7 +202,7 @@ pub fn enable_paint() {
 pub fn print_receipt(chain: Chain, receipt: &TransactionReceipt) {
     let gas_used = receipt.gas_used.unwrap_or_default();
     let gas_price = receipt.effective_gas_price.unwrap_or_default();
-    foundry_common::shell::println(format!(
+    crate::sh_println!(
         "\n##### {chain}\n{status}Hash: {tx_hash:?}{caddr}\nBlock: {bn}\n{gas}\n",
         status = if receipt.status.map_or(true, |s| s.is_zero()) {
             "❌  [Failed]"
@@ -253,7 +227,7 @@ pub fn print_receipt(chain: Chain, receipt: &TransactionReceipt) {
                 gas_price.trim_end_matches('0').trim_end_matches('.')
             )
         },
-    ))
+    )
     .expect("could not print receipt");
 }
 
@@ -318,14 +292,13 @@ impl CommandUtils for Command {
 #[derive(Clone, Copy, Debug)]
 pub struct Git<'a> {
     pub root: &'a Path,
-    pub quiet: bool,
     pub shallow: bool,
 }
 
 impl<'a> Git<'a> {
     #[inline]
     pub fn new(root: &'a Path) -> Self {
-        Self { root, quiet: false, shallow: false }
+        Self { root, shallow: false }
     }
 
     #[inline]
@@ -360,11 +333,6 @@ impl<'a> Git<'a> {
     #[inline]
     pub fn root(self, root: &Path) -> Git<'_> {
         Git { root, ..self }
-    }
-
-    #[inline]
-    pub fn quiet(self, quiet: bool) -> Self {
-        Self { quiet, ..self }
     }
 
     /// True to perform shallow clones
@@ -488,7 +456,7 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
         path: impl AsRef<OsStr>,
     ) -> Result<()> {
         self.cmd()
-            .stderr(self.stderr())
+            .stderr(Self::stderr())
             .args(["submodule", "add"])
             .args(self.shallow.then_some("--depth=1"))
             .args(force.then_some("--force"))
@@ -504,7 +472,7 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
         S: AsRef<OsStr>,
     {
         self.cmd()
-            .stderr(self.stderr())
+            .stderr(Self::stderr())
             .args(["submodule", "update", "--progress", "--init", "--recursive"])
             .args(self.shallow.then_some("--depth=1"))
             .args(force.then_some("--force"))
@@ -527,11 +495,11 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
     }
 
     // don't set this in cmd() because it's not wanted for all commands
-    fn stderr(self) -> Stdio {
-        if self.quiet {
-            Stdio::piped()
-        } else {
+    fn stderr() -> Stdio {
+        if crate::Shell::get().verbosity().is_verbose() {
             Stdio::inherit()
+        } else {
+            Stdio::piped()
         }
     }
 }

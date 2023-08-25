@@ -37,7 +37,7 @@ use foundry_common::{
     contracts::get_contract_name,
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
-    shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_config::{
     figment,
@@ -288,7 +288,7 @@ impl ScriptArgs {
                 }
             }
             Err(_) => {
-                shell::println(format!("{:x?}", (&returned)))?;
+                sh_eprintln!("{:x?}", (&returned))?;
             }
         }
 
@@ -309,7 +309,7 @@ impl ScriptArgs {
                 eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
             }
 
-            shell::println("Traces:")?;
+            sh_eprintln!("Traces:")?;
             for (kind, trace) in &mut result.traces {
                 let should_include = match kind {
                     TraceKind::Setup => verbosity >= 5,
@@ -319,22 +319,22 @@ impl ScriptArgs {
 
                 if should_include {
                     decoder.decode(trace).await;
-                    shell::println(format!("{trace}"))?;
+                    sh_eprintln!("{trace}")?;
                 }
             }
-            shell::println(String::new())?;
+            sh_eprintln!()?;
         }
 
         if result.success {
-            shell::println(format!("{}", Paint::green("Script ran successfully.")))?;
+            sh_eprintln!("{}", Paint::green("Script ran successfully."))?;
         }
 
         if script_config.evm_opts.fork_url.is_none() {
-            shell::println(format!("Gas used: {}", result.gas_used))?;
+            sh_eprintln!("Gas used: {}", result.gas_used)?;
         }
 
         if result.success && !result.returned.is_empty() {
-            shell::println("\n== Return ==")?;
+            sh_eprintln!("\n== Return ==")?;
             match func.decode_output(&result.returned) {
                 Ok(decoded) => {
                     for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
@@ -345,24 +345,24 @@ impl ScriptArgs {
                         } else {
                             index.to_string()
                         };
-                        shell::println(format!(
+                        sh_eprintln!(
                             "{}: {internal_type} {}",
                             label.trim_end(),
                             format_token(token)
-                        ))?;
+                        )?;
                     }
                 }
                 Err(_) => {
-                    shell::println(format!("{:x?}", (&result.returned)))?;
+                    sh_eprintln!("{:x?}", (&result.returned))?;
                 }
             }
         }
 
         let console_logs = decode_console_logs(&result.logs);
         if !console_logs.is_empty() {
-            shell::println("\n== Logs ==")?;
+            sh_eprintln!("\n== Logs ==")?;
             for log in console_logs {
-                shell::println(format!("  {log}"))?;
+                sh_eprintln!("  {log}")?;
             }
         }
 
@@ -382,10 +382,7 @@ impl ScriptArgs {
 
         let console_logs = decode_console_logs(&result.logs);
         let output = JsonResult { logs: console_logs, gas_used: result.gas_used, returns };
-        let j = serde_json::to_string(&output)?;
-        shell::println(j)?;
-
-        Ok(())
+        foundry_cli::Shell::get().print_json(&output)
     }
 
     /// It finds the deployer from the running script and uses it to predeploy libraries.
@@ -410,7 +407,7 @@ impl ScriptArgs {
                                 let sender = tx.from.expect("no sender");
                                 if let Some(ns) = new_sender {
                                     if sender != ns {
-                                        shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
+                                        sh_eprintln!("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
                                         return Ok(None)
                                     }
                                 } else if sender != evm_opts.sender {
@@ -617,12 +614,12 @@ impl ScriptArgs {
 
                 if deployment_size > max_size {
                     prompt_user = self.broadcast;
-                    shell::println(format!(
+                    sh_eprintln!(
                         "{}",
                         Paint::red(format!(
                             "`{name}` is above the contract size limit ({deployment_size} > {max_size})."
                         ))
-                    ))?;
+                    )?;
                 }
             }
         }
@@ -719,12 +716,7 @@ impl ScriptConfig {
     /// error. [library support]
     fn check_multi_chain_constraints(&self, libraries: &Libraries) -> Result<()> {
         if self.has_multiple_rpcs() || (self.missing_rpc && !self.total_rpcs.is_empty()) {
-            shell::eprintln(format!(
-                "{}",
-                Paint::yellow(
-                    "Multi chain deployment is still under development. Use with caution."
-                )
-            ))?;
+            sh_warn!("Multi chain deployment is still under development. Use with caution.")?;
             if !libraries.libs.is_empty() {
                 eyre::bail!(
                     "Multi chain deployment does not support library linking at the moment."
@@ -761,20 +753,19 @@ impl ScriptConfig {
 
         // At least one chain ID is unsupported, therefore we print the message.
         if chain_id_unsupported {
-            let msg = format!(
-                r#"
+            let ids = chain_ids
+                .iter()
+                .filter(|(supported, _)| !supported)
+                .map(|(_, chain)| format!("{}", *chain as u64))
+                .collect::<Vec<_>>()
+                .join(", ");
+            sh_warn!(
+                "
 EIP-3855 is not supported in one or more of the RPCs used.
-Unsupported Chain IDs: {}.
+Unsupported Chain IDs: {ids}.
 Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
-For more information, please see https://eips.ethereum.org/EIPS/eip-3855"#,
-                chain_ids
-                    .iter()
-                    .filter(|(supported, _)| !supported)
-                    .map(|(_, chain)| format!("{}", *chain as u64))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-            shell::println(Paint::yellow(msg))?;
+For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
+            )?;
         }
         Ok(())
     }

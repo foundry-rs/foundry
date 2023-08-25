@@ -384,7 +384,7 @@ pub fn compile_target_with_filter(
     let graph = Graph::resolve(&project.paths)?;
 
     // Checking if it's a standalone script, or part of a project.
-    if graph.files().get(target_path).is_none() {
+    if !graph.files().contains_key(target_path) {
         if verify {
             eyre::bail!("You can only verify deployments from inside a project! Make sure it exists with `forge tree`.");
         }
