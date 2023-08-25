@@ -758,7 +758,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(prank) = &self.prank {
             if data.journaled_state.depth() == prank.depth {
                 data.env.tx.caller = h160_to_b160(prank.prank_origin);
-                
+
                 // Clean single-call prank once we have returned to the original depth
                 if prank.single_call {
                     std::mem::take(&mut self.prank);
@@ -1058,7 +1058,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(broadcast) = &self.broadcast {
             if data.journaled_state.depth() == broadcast.depth {
                 data.env.tx.caller = h160_to_b160(broadcast.original_origin);
-                
+
                 // Clean single-call broadcast once we have returned to the original depth
                 if broadcast.single_call {
                     std::mem::take(&mut self.broadcast);
