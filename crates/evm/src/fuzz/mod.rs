@@ -223,8 +223,10 @@ impl<'a> FuzzedExecutor<'a> {
             return Err(TestCaseError::reject(FuzzError::AssumeReject))
         }
 
-        let breakpoints =
-            call.cheatcodes.as_ref().map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
+        let breakpoints = call
+            .cheatcodes
+            .as_ref()
+            .map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
 
         let success =
             self.executor.is_success(address, call.reverted, state_changeset.clone(), should_fail);
