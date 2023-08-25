@@ -8,7 +8,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ethers::{solc::artifacts::ContractBytecodeSome, types::Address};
+use ethers::types::Address;
 use eyre::Result;
 use foundry_common::evm::Breakpoints;
 use foundry_evm::{
@@ -991,7 +991,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
 }
 
 impl Ui for Tui {
-    fn launch(&mut self) -> eyre::Result<TUIExitReason> {
+    fn launch(&mut self) -> Result<TUIExitReason> {
         // If something panics inside here, we should do everything we can to
         // not corrupt the user's terminal.
         std::panic::set_hook(Box::new(|e| {

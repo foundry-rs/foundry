@@ -122,6 +122,9 @@ pub struct TestResult {
     /// Labeled addresses
     pub labeled_addresses: BTreeMap<Address, String>,
 
+    /// The debug nodes of the call
+    pub debug: Option<DebugArena>,
+
     /// pc breakpoint char map
     pub breakpoints: Breakpoints,
 }

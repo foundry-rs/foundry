@@ -17,7 +17,7 @@ use futures::{
 };
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -60,10 +60,14 @@ impl EtherscanIdentifier {
     /// Etherscan and compiles them locally, for usage in the debugger.
     pub async fn get_compiled_contracts(
         &self,
-    ) -> eyre::Result<(BTreeMap<ArtifactId, String>, BTreeMap<ArtifactId, ContractBytecodeSome>)>
-    {
+    ) -> eyre::Result<(
+        // TODO should use `ContractSources` but has circular import.
+        // Maybe move it lower
+        HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>,
+        BTreeMap<ArtifactId, ContractBytecodeSome>,
+    )> {
         let mut compiled_contracts = BTreeMap::new();
-        let mut sources = BTreeMap::new();
+        let mut sources = HashMap::new();
 
         // TODO: Add caching so we dont double-fetch contracts.
         let contracts_iter = self
@@ -90,9 +94,10 @@ impl EtherscanIdentifier {
         // construct the map
         for (results, (_, metadata)) in artifacts.into_iter().zip(contracts_iter) {
             // get the inner type
-            let (artifact_id, bytecode) = results?;
-            compiled_contracts.insert(artifact_id.clone(), bytecode);
-            sources.insert(artifact_id, metadata.source_code());
+            let (artifact_id, file_id, bytecode) = results?;
+            compiled_contracts.insert(artifact_id.clone(), bytecode.clone());
+            let inner_map = sources.entry(artifact_id.clone().name).or_insert_with(HashMap::new);
+            inner_map.insert(file_id, (metadata.source_code(), bytecode));
         }
 
         Ok((sources, compiled_contracts))

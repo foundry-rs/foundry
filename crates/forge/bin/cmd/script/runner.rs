@@ -167,6 +167,7 @@ impl ScriptRunner {
                 debug,
                 address: None,
                 script_wallets,
+                breakpoints: Default::default(),
             },
         ))
     }
@@ -240,6 +241,7 @@ impl ScriptRunner {
                 transactions: Default::default(),
                 address: Some(address),
                 script_wallets: vec![],
+                breakpoints: Default::default(),
             })
         } else {
             eyre::bail!("ENS not supported.");
@@ -284,6 +286,7 @@ impl ScriptRunner {
             script_wallets,
             ..
         } = res;
+        let breakpoints = res.cheatcodes.map(|cheats| cheats.breakpoints).unwrap_or_default();
 
         Ok(ScriptResult {
             returned: result,
@@ -302,6 +305,7 @@ impl ScriptRunner {
             transactions,
             address: None,
             script_wallets,
+            breakpoints,
         })
     }
 
