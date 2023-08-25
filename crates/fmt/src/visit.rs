@@ -37,7 +37,7 @@ pub trait Visitor {
     fn visit_import_plain(
         &mut self,
         _loc: Loc,
-        _import: &mut StringLiteral,
+        _import: &mut ImportPath,
     ) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -45,7 +45,7 @@ pub trait Visitor {
     fn visit_import_global(
         &mut self,
         _loc: Loc,
-        _global: &mut StringLiteral,
+        _global: &mut ImportPath,
         _alias: &mut Identifier,
     ) -> Result<(), Self::Error> {
         Ok(())
@@ -55,7 +55,7 @@ pub trait Visitor {
         &mut self,
         _loc: Loc,
         _imports: &mut [(Identifier, Option<Identifier>)],
-        _from: &mut StringLiteral,
+        _from: &mut ImportPath,
     ) -> Result<(), Self::Error> {
         Ok(())
     }
