@@ -2,7 +2,7 @@ use clap::{Parser, ValueHint};
 use ethers::contract::{Abigen, ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts};
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
-use foundry_common::{compile, fs::json_files};
+use foundry_common::{compile::ProjectCompiler, fs::json_files};
 use foundry_config::impl_figment_convert;
 use std::{
     fs,
@@ -184,7 +184,7 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
         if !self.skip_build {
             // run `forge build`
             let project = self.build_args.project()?;
-            compile::compile(&project, false, false)?;
+            ProjectCompiler::new().compile(&project)?;
         }
 
         let artifacts = self.try_load_config_emit_warnings()?.out;

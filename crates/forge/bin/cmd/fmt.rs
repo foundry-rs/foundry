@@ -2,7 +2,7 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge_fmt::{format, parse, print_diagnostics_report};
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
-use foundry_common::{fs, term::cli_warn};
+use foundry_common::fs;
 use foundry_config::impl_figment_convert_basic;
 use foundry_utils::glob::expand_globs;
 use rayon::prelude::*;
@@ -112,7 +112,7 @@ impl FmtArgs {
                     let mut lines = source[..loc.start().min(source.len())].split('\n');
                     let col = lines.next_back().unwrap().len() + 1;
                     let row = lines.count() + 1;
-                    cli_warn!("[{}:{}:{}] {}", name, row, col, warning);
+                    sh_warn!("[{name}:{row}:{col}] {warning}")?;
                 }
             }
 
@@ -145,12 +145,11 @@ impl FmtArgs {
             Input::Stdin(source) => format(source, None).map(|diff| vec![diff]),
             Input::Paths(paths) => {
                 if paths.is_empty() {
-                    cli_warn!(
+                    return sh_warn!(
                         "Nothing to format.\n\
                          HINT: If you are working outside of the project, \
                          try providing paths to your source files: `forge fmt <paths>`"
-                    );
-                    return Ok(())
+                    )
                 }
                 paths
                     .par_iter()

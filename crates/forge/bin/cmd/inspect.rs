@@ -16,7 +16,7 @@ use ethers::{
 };
 use eyre::Result;
 use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
-use foundry_common::compile;
+use foundry_common::compile::ProjectCompiler;
 use serde_json::{to_value, Value};
 use std::fmt;
 use tracing::trace;
@@ -67,16 +67,16 @@ impl InspectArgs {
 
         // Build the project
         let project = modified_build_args.project()?;
-        let outcome = if let Some(ref mut contract_path) = contract.path {
+        let mut compiler = ProjectCompiler::new().quiet(true);
+        if let Some(contract_path) = &mut contract.path {
             let target_path = canonicalize(&*contract_path)?;
             *contract_path = target_path.to_string_lossy().to_string();
-            compile::compile_files(&project, vec![target_path], true)
-        } else {
-            compile::suppress_compile(&project)
-        }?;
+            compiler = compiler.files([target_path]);
+        }
+        let output = compiler.compile(&project)?;
 
         // Find the artifact
-        let found_artifact = outcome.find_contract(&contract);
+        let found_artifact = output.find_contract(&contract);
 
         trace!(target: "forge", artifact=?found_artifact, input=?contract, "Found contract");
 

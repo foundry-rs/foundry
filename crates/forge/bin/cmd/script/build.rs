@@ -13,7 +13,7 @@ use ethers::{
 };
 use eyre::{Context, ContextCompat, Result};
 use foundry_cli::utils::get_cached_entry_by_name;
-use foundry_common::compile;
+use foundry_common::compile::{self, ProjectCompiler};
 use foundry_utils::{PostLinkInput, ResolvedDependency};
 use std::{collections::BTreeMap, fs, str::FromStr};
 use tracing::{trace, warn};
@@ -213,7 +213,6 @@ impl ScriptArgs {
             let output = compile::compile_target_with_filter(
                 &target_contract,
                 &project,
-                self.opts.args.silent,
                 self.verify,
                 filters,
             )?;
@@ -231,23 +230,14 @@ impl ScriptArgs {
         if let Some(path) = contract.path {
             let path =
                 dunce::canonicalize(path).wrap_err("Could not canonicalize the target path")?;
-            let output = compile::compile_target_with_filter(
-                &path,
-                &project,
-                self.opts.args.silent,
-                self.verify,
-                filters,
-            )?;
+            let output =
+                compile::compile_target_with_filter(&path, &project, self.verify, filters)?;
             self.path = path.to_string_lossy().to_string();
             return Ok((project, output))
         }
 
         // We received `contract_name`, and need to find its file path.
-        let output = if self.opts.args.silent {
-            compile::suppress_compile(&project)
-        } else {
-            compile::compile(&project, false, false)
-        }?;
+        let output = ProjectCompiler::new().compile(&project)?;
         let cache =
             SolFilesCache::read_joined(&project.paths).wrap_err("Could not open compiler cache")?;
 

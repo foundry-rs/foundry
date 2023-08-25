@@ -17,11 +17,7 @@ use foundry_cli::{
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
-use foundry_common::{
-    compile::{self, ProjectCompiler},
-    evm::EvmArgs,
-    get_contract_name, get_file_name,
-};
+use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, get_contract_name, get_file_name};
 use foundry_config::{
     figment,
     figment::{
@@ -144,14 +140,10 @@ impl TestArgs {
             project = config.project()?;
         }
 
-        let compiler = ProjectCompiler::default();
-        let output = if config.sparse_mode {
-            compiler.compile_sparse(&project, filter.clone())
-        } else if self.opts.silent {
-            compile::suppress_compile(&project)
-        } else {
-            compiler.compile(&project)
-        }?;
+        let output = ProjectCompiler::new()
+            .sparse(config.sparse_mode)
+            // .filters(filter) // TODO: sparse filter
+            .compile(&project)?;
 
         // Create test options from general project settings
         // and compiler output
@@ -213,15 +205,13 @@ impl TestArgs {
                     };
 
                     // Run the debugger
-                    let mut opts = self.opts.clone();
-                    opts.silent = true;
                     let debugger = DebugArgs {
                         path: PathBuf::from(runner.source_paths.get(&id).unwrap()),
                         target_contract: Some(get_contract_name(&id).to_string()),
                         sig,
                         args: Vec::new(),
                         debug: true,
-                        opts,
+                        opts: self.opts.clone(), // TODO: silent?
                         evm_opts: self.evm_opts,
                     };
                     debugger.debug(breakpoints).await?;

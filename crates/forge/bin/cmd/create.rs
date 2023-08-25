@@ -12,7 +12,7 @@ use foundry_cli::{
     opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
-use foundry_common::{abi::parse_tokens, compile, estimate_eip1559_fees};
+use foundry_common::{abi::parse_tokens, compile::ProjectCompiler, estimate_eip1559_fees};
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 
@@ -72,12 +72,7 @@ impl CreateArgs {
     pub async fn run(mut self) -> Result<()> {
         // Find Project & Compile
         let project = self.opts.project()?;
-        let mut output = if self.json || self.opts.silent {
-            // Suppress compile stdout messages when printing json output or when silent
-            compile::suppress_compile(&project)
-        } else {
-            compile::compile(&project, false, false)
-        }?;
+        let mut output = ProjectCompiler::new().quiet_if(self.json).compile(&project)?;
 
         if let Some(ref mut path) = self.contract.path {
             // paths are absolute in the project's output

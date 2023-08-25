@@ -20,6 +20,9 @@ use foundry_common::{
 use foundry_config::Config;
 use std::time::Instant;
 
+#[macro_use]
+extern crate foundry_cli;
+
 pub mod cmd;
 pub mod opts;
 

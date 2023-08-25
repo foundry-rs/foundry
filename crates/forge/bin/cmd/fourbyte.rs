@@ -6,7 +6,7 @@ use foundry_cli::{
     utils::FoundryPathExt,
 };
 use foundry_common::{
-    compile,
+    compile::ProjectCompiler,
     selectors::{import_selectors, SelectorImportData},
 };
 
@@ -42,9 +42,9 @@ impl UploadSelectorsArgs {
         };
 
         let project = build_args.project()?;
-        let outcome = compile::suppress_compile(&project)?;
+        let output = ProjectCompiler::new().quiet(true).compile(&project)?;
         let artifacts = if all {
-            outcome
+            output
                 .into_artifacts_with_files()
                 .filter(|(file, _, _)| {
                     let is_sources_path =
@@ -57,7 +57,7 @@ impl UploadSelectorsArgs {
                 .collect()
         } else {
             let contract = contract.unwrap();
-            let found_artifact = outcome.find_first(&contract);
+            let found_artifact = output.find_first(&contract);
             let artifact = found_artifact
                 .ok_or_else(|| {
                     eyre::eyre!("Could not find artifact `{contract}` in the compiled artifacts")
