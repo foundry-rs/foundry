@@ -629,6 +629,12 @@ derive_ast_eq! { enum SourceUnitPart {
     Annotation(annotation),
     _
 }}
+derive_ast_eq! { enum ImportPath {
+    _
+    Filename(lit),
+    Path(path),
+    _
+}}
 derive_ast_eq! { enum Import {
     _
     Plain(string, loc),

@@ -57,7 +57,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         data: &mut EVMData<'_, DB>,
     ) -> InstructionResult {
         let pc = interpreter.program_counter();
-        let op = interpreter.contract.bytecode.bytecode()[pc];
+        let op = interpreter.current_opcode();
 
         // Get opcode information
         let opcode_infos = spec_opcode_gas(data.env.cfg.spec_id);

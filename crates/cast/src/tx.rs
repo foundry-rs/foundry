@@ -12,8 +12,6 @@ use foundry_common::abi::{encode_args, get_func, get_func_etherscan};
 use foundry_config::Chain;
 use futures::future::join_all;
 
-use crate::strip_0x;
-
 pub struct TxBuilder<'a, M: Middleware> {
     to: Option<H160>,
     chain: Chain,
@@ -200,7 +198,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         };
 
         if sig.starts_with("0x") {
-            Ok((hex::decode(strip_0x(sig))?, func))
+            Ok((hex::decode(sig)?, func))
         } else {
             Ok((encode_args(&func, &args)?, func))
         }

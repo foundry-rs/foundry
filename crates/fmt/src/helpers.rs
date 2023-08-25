@@ -98,3 +98,10 @@ pub fn print_diagnostics_report(
     }
     Ok(())
 }
+
+pub fn import_path_string(path: &ImportPath) -> String {
+    match path {
+        ImportPath::Filename(s) => s.string.clone(),
+        ImportPath::Path(p) => p.to_string(),
+    }
+}

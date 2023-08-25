@@ -92,7 +92,7 @@ impl EstimateArgs {
             Some(EstimateSubcommands::Create { code, sig, args, value }) => {
                 builder.value(value);
 
-                let mut data = hex::decode(code.strip_prefix("0x").unwrap_or(&code))?;
+                let mut data = hex::decode(code)?;
 
                 if let Some(s) = sig {
                     let (mut sigdata, _func) = builder.create_args(&s, args).await?;

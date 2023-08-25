@@ -1159,7 +1159,7 @@ version = "6.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e959d788268e3bf9d35ace83e81b124190378e4c91c9067524675e33394b8ba"
 dependencies = [
- "crossterm 0.26.1",
+ "crossterm",
  "strum 0.24.1",
  "strum_macros 0.24.3",
  "unicode-width",
@@ -1361,22 +1361,6 @@ dependencies = [
 
 [[package]]
 name = "crossterm"
-version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e64e6c0fbe2c17357405f7c758c1ef960fce08bdfb2c03d88d2a18d7e09c4b67"
-dependencies = [
- "bitflags 1.3.2",
- "crossterm_winapi",
- "libc",
- "mio",
- "parking_lot",
- "signal-hook",
- "signal-hook-mio",
- "winapi",
-]
-
-[[package]]
-name = "crossterm"
 version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a84cda67535339806297f1b331d6dd6320470d2a0fe65381e79ee9e156dd3d13"
@@ -1487,9 +1471,9 @@ dependencies = [
 
 [[package]]
 name = "dashmap"
-version = "5.5.0"
+version = "5.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6943ae99c34386c84a470c499d3414f66502a41340aa895406e0d2e4a207b91d"
+checksum = "edd72493923899c6f10c641bdbdeddc7183d6396641d99c1a0d1597f37f92e28"
 dependencies = [
  "cfg-if",
  "hashbrown 0.14.0",
@@ -1901,8 +1885,8 @@ dependencies = [
 
 [[package]]
 name = "ethers"
-version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#7603af021be920ca39b610f88c0012328b337cd6"
+version = "2.0.9"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1916,8 +1900,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-addressbook"
-version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#7603af021be920ca39b610f88c0012328b337cd6"
+version = "2.0.9"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1927,8 +1911,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-contract"
-version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#7603af021be920ca39b610f88c0012328b337cd6"
+version = "2.0.9"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "const-hex",
  "ethers-contract-abigen",
@@ -1945,8 +1929,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-contract-abigen"
-version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#7603af021be920ca39b610f88c0012328b337cd6"
+version = "2.0.9"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "Inflector",
  "const-hex",
@@ -1968,8 +1952,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-contract-derive"
-version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#7603af021be920ca39b610f88c0012328b337cd6"
+version = "2.0.9"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "Inflector",
  "const-hex",
@@ -1983,8 +1967,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-core"
-version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#7603af021be920ca39b610f88c0012328b337cd6"
+version = "2.0.9"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "arrayvec",
  "bytes",
@@ -2012,8 +1996,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-etherscan"
-version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#7603af021be920ca39b610f88c0012328b337cd6"
+version = "2.0.9"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -2027,8 +2011,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-middleware"
-version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#7603af021be920ca39b610f88c0012328b337cd6"
+version = "2.0.9"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -2053,8 +2037,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-providers"
-version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#7603af021be920ca39b610f88c0012328b337cd6"
+version = "2.0.9"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -2078,7 +2062,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
- "tokio-tungstenite 0.19.0",
+ "tokio-tungstenite 0.20.0",
  "tracing",
  "tracing-futures",
  "url",
@@ -2091,8 +2075,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-signers"
-version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#7603af021be920ca39b610f88c0012328b337cd6"
+version = "2.0.9"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -2118,8 +2102,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-solc"
-version = "2.0.8"
-source = "git+https://github.com/gakonst/ethers-rs#7603af021be920ca39b610f88c0012328b337cd6"
+version = "2.0.9"
+source = "git+https://github.com/gakonst/ethers-rs#ade111281604ee1e5bb304d554d2618d8ea8b411"
 dependencies = [
  "cfg-if",
  "const-hex",
@@ -3570,6 +3554,12 @@ dependencies = [
  "portable-atomic",
  "unicode-width",
 ]
+
+[[package]]
+name = "indoc"
+version = "2.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c785eefb63ebd0e33416dfcb8d6da0bf27ce752843a45632a67bf10d4d4b5c4"
 
 [[package]]
 name = "inlinable_string"
@@ -5150,6 +5140,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ratatui"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8285baa38bdc9f879d92c0e37cb562ef38aa3aeefca22b3200186bc39242d3d5"
+dependencies = [
+ "bitflags 2.4.0",
+ "cassowary",
+ "crossterm",
+ "indoc",
+ "paste",
+ "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
 name = "rayon"
 version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5304,7 +5309,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "3.3.0"
-source = "git+https://github.com/bluealloy/revm/?rev=eb6a9f09e8ac2227bc1c353b698ad9e68a9574b2#eb6a9f09e8ac2227bc1c353b698ad9e68a9574b2"
+source = "git+https://github.com/bluealloy/revm/?rev=6b55b9c0ab264c000e087c2f54f2d8dc24b869aa#6b55b9c0ab264c000e087c2f54f2d8dc24b869aa"
 dependencies = [
  "auto_impl",
  "once_cell",
@@ -5318,7 +5323,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "1.1.2"
-source = "git+https://github.com/bluealloy/revm/?rev=eb6a9f09e8ac2227bc1c353b698ad9e68a9574b2#eb6a9f09e8ac2227bc1c353b698ad9e68a9574b2"
+source = "git+https://github.com/bluealloy/revm/?rev=6b55b9c0ab264c000e087c2f54f2d8dc24b869aa#6b55b9c0ab264c000e087c2f54f2d8dc24b869aa"
 dependencies = [
  "derive_more",
  "enumn",
@@ -5330,7 +5335,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "2.0.3"
-source = "git+https://github.com/bluealloy/revm/?rev=eb6a9f09e8ac2227bc1c353b698ad9e68a9574b2#eb6a9f09e8ac2227bc1c353b698ad9e68a9574b2"
+source = "git+https://github.com/bluealloy/revm/?rev=6b55b9c0ab264c000e087c2f54f2d8dc24b869aa#6b55b9c0ab264c000e087c2f54f2d8dc24b869aa"
 dependencies = [
  "k256",
  "num",
@@ -5346,7 +5351,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "1.1.2"
-source = "git+https://github.com/bluealloy/revm/?rev=eb6a9f09e8ac2227bc1c353b698ad9e68a9574b2#eb6a9f09e8ac2227bc1c353b698ad9e68a9574b2"
+source = "git+https://github.com/bluealloy/revm/?rev=6b55b9c0ab264c000e087c2f54f2d8dc24b869aa#6b55b9c0ab264c000e087c2f54f2d8dc24b869aa"
 dependencies = [
  "auto_impl",
  "bitflags 2.4.0",
@@ -5642,7 +5647,7 @@ checksum = "1d1feddffcfcc0b33f5c6ce9a29e341e4cd59c3f78e7ee45f4a40c038b1d6cbb"
 dependencies = [
  "log",
  "ring",
- "rustls-webpki 0.101.3",
+ "rustls-webpki 0.101.4",
  "sct",
 ]
 
@@ -5669,9 +5674,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.100.1"
+version = "0.100.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6207cd5ed3d8dca7816f8f3725513a34609c0c765bf652b8c3cb4cfd87db46b"
+checksum = "e98ff011474fa39949b7e5c0428f9b4937eda7da7848bbb947786b7be0b27dab"
 dependencies = [
  "ring",
  "untrusted",
@@ -5679,9 +5684,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.101.3"
+version = "0.101.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "261e9e0888cba427c3316e6322805653c9425240b6fd96cee7cb671ab70ab8d0"
+checksum = "7d93931baf2d282fff8d3a532bbfd7653f734643161b87e3e01e59a04439bf0d"
 dependencies = [
  "ring",
  "untrusted",
@@ -6161,9 +6166,9 @@ checksum = "7bd3e3206899af3f8b12af284fafc038cc1dc2b41d1b89dd17297221c5d225de"
 
 [[package]]
 name = "slab"
-version = "0.4.8"
+version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6528351c9bc8ab22353f9d776db39a20288e8d6c37ef8cfe3317cf875eecfc2d"
+checksum = "8f92a496fb766b417c996b9c5e57daf2f7ad3b0bebe1ccfca4856390e3d3bb67"
 dependencies = [
  "autocfg",
 ]
@@ -6214,11 +6219,11 @@ dependencies = [
 
 [[package]]
 name = "solang-parser"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c792fe9fae2a2f716846f214ca10d5a1e21133e0bf36cef34bcc4a852467b21"
+checksum = "7cb9fa2fa2fa6837be8a2495486ff92e3ffe68a99b6eeba288e139efdd842457"
 dependencies = [
- "itertools 0.10.5",
+ "itertools 0.11.0",
  "lalrpop",
  "lalrpop-util",
  "phf 0.11.2",
@@ -6713,9 +6718,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-tungstenite"
-version = "0.19.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec509ac96e9a0c43427c74f003127d953a265737636129424288d27cb5c4b12c"
+checksum = "2b2dbec703c26b00d74844519606ef15d09a7d6857860f84ad223dec002ddea2"
 dependencies = [
  "futures-util",
  "log",
@@ -6724,7 +6729,7 @@ dependencies = [
  "tokio",
  "tokio-native-tls",
  "tokio-rustls 0.24.1",
- "tungstenite 0.19.0",
+ "tungstenite 0.20.0",
  "webpki-roots 0.23.1",
 ]
 
@@ -6995,19 +7000,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3528ecfd12c466c6f163363caf2d02a71161dd5e1cc6ae7b34207ea2d42d81ed"
 
 [[package]]
-name = "tui"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ccdd26cbd674007e649a272da4475fb666d3aa0ad0531da7136db6fab0e5bad1"
-dependencies = [
- "bitflags 1.3.2",
- "cassowary",
- "crossterm 0.25.0",
- "unicode-segmentation",
- "unicode-width",
-]
-
-[[package]]
 name = "tungstenite"
 version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7047,9 +7039,9 @@ dependencies = [
 
 [[package]]
 name = "tungstenite"
-version = "0.19.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15fba1a6d6bb030745759a9a2a588bfe8490fc8b4751a277db3a0be1c9ebbf67"
+checksum = "e862a1c4128df0112ab625f55cd5c934bcb4312ba80b39ae4b4835a3fd58e649"
 dependencies = [
  "byteorder",
  "bytes",
@@ -7064,7 +7056,6 @@ dependencies = [
  "thiserror",
  "url",
  "utf-8",
- "webpki",
 ]
 
 [[package]]
@@ -7083,13 +7074,13 @@ checksum = "ed646292ffc8188ef8ea4d1e0e0150fb15a5c2e12ad9b8fc191ae7a8a7f3c4b9"
 name = "ui"
 version = "0.2.0"
 dependencies = [
- "crossterm 0.26.1",
+ "crossterm",
  "ethers",
  "eyre",
  "foundry-common",
  "foundry-evm",
+ "ratatui",
  "revm",
- "tui",
 ]
 
 [[package]]
@@ -7121,9 +7112,9 @@ dependencies = [
 
 [[package]]
 name = "unicase"
-version = "2.6.0"
+version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50f37be617794602aabbeee0be4f259dc1778fabe05e2d67ee8f79326d5cb4f6"
+checksum = "f7d2d4dafb69621809a81864c9c1b864479e1235c0dd4e199924b9742439ed89"
 dependencies = [
  "version_check",
 ]
@@ -7452,7 +7443,7 @@ version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b03058f88386e5ff5310d9111d53f48b17d732b401aeb83a8d5190f2ac459338"
 dependencies = [
- "rustls-webpki 0.100.1",
+ "rustls-webpki 0.100.2",
 ]
 
 [[package]]

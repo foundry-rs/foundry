@@ -16,6 +16,15 @@ use foundry_evm::{
     utils::{build_pc_ic_map, PCICMap},
     CallKind,
 };
+use ratatui::{
+    backend::{Backend, CrosstermBackend},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    terminal::Frame,
+    text::{Line, Span, Text},
+    widgets::{Block, Borders, Paragraph, Wrap},
+    Terminal,
+};
 use revm::{interpreter::opcode, primitives::SpecId};
 use std::{
     cmp::{max, min},
@@ -24,15 +33,6 @@ use std::{
     sync::mpsc,
     thread,
     time::{Duration, Instant},
-};
-use tui::{
-    backend::{Backend, CrosstermBackend},
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    terminal::Frame,
-    text::{Span, Spans, Text},
-    widgets::{Block, Borders, Paragraph, Wrap},
-    Terminal,
 };
 
 /// Trait for starting the UI
@@ -367,9 +367,9 @@ impl Tui {
     fn draw_footer<B: Backend>(f: &mut Frame<B>, area: Rect) {
         let block_controls = Block::default();
 
-        let text_output = vec![Spans::from(Span::styled(
+        let text_output = vec![Line::from(Span::styled(
             "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end", Style::default().add_modifier(Modifier::DIM))),
-Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint | [h] toggle help", Style::default().add_modifier(Modifier::DIM)))];
+Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint | [h] toggle help", Style::default().add_modifier(Modifier::DIM)))];
 
         let paragraph = Paragraph::new(text_output)
             .block(block_controls)
@@ -486,7 +486,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                                     if let Some(last) = before.pop() {
                                         if !last.ends_with('\n') {
                                             before.iter().skip(start_line).for_each(|line| {
-                                                text_output.lines.push(Spans::from(vec![
+                                                text_output.lines.push(Line::from(vec![
                                                     Span::styled(
                                                         format!(
                                                             "{: >max_line_num$}",
@@ -506,7 +506,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                                                 line_number += 1;
                                             });
 
-                                            text_output.lines.push(Spans::from(vec![
+                                            text_output.lines.push(Line::from(vec![
                                                 Span::styled(
                                                     format!(
                                                         "{: >max_line_num$}",
@@ -530,7 +530,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                                             line_number += 1;
 
                                             actual.iter().skip(1).for_each(|s| {
-                                                text_output.lines.push(Spans::from(vec![
+                                                text_output.lines.push(Line::from(vec![
                                                     Span::styled(
                                                         format!(
                                                             "{: >max_line_num$}",
@@ -561,7 +561,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                                         } else {
                                             before.push(last);
                                             before.iter().skip(start_line).for_each(|line| {
-                                                text_output.lines.push(Spans::from(vec![
+                                                text_output.lines.push(Line::from(vec![
                                                     Span::styled(
                                                         format!(
                                                             "{: >max_line_num$}",
@@ -582,7 +582,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                                                 line_number += 1;
                                             });
                                             actual.iter().for_each(|s| {
-                                                text_output.lines.push(Spans::from(vec![
+                                                text_output.lines.push(Line::from(vec![
                                                     Span::styled(
                                                         format!(
                                                             "{: >max_line_num$}",
@@ -611,7 +611,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                                         }
                                     } else {
                                         actual.iter().for_each(|s| {
-                                            text_output.lines.push(Spans::from(vec![
+                                            text_output.lines.push(Line::from(vec![
                                                 Span::styled(
                                                     format!(
                                                         "{: >max_line_num$}",
@@ -644,7 +644,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                                         if !last.ends_with('\n') {
                                             if let Some(post) = after.pop_front() {
                                                 if let Some(last) = text_output.lines.last_mut() {
-                                                    last.0.push(Span::raw(post));
+                                                    last.spans.push(Span::raw(post));
                                                 }
                                             }
                                         }
@@ -655,7 +655,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                                         after.pop_back();
                                     }
                                     after.iter().for_each(|line| {
-                                        text_output.lines.push(Spans::from(vec![
+                                        text_output.lines.push(Line::from(vec![
                                             Span::styled(
                                                 format!(
                                                     "{: >max_line_num$}",
@@ -721,7 +721,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                 debug_steps[current_step].total_gas_used,
             ))
             .borders(Borders::ALL);
-        let mut text_output: Vec<Spans> = Vec::new();
+        let mut text_output: Vec<Line> = Vec::new();
 
         // Scroll:
         // Focused line is line that should always be at the center of the screen.
@@ -776,12 +776,12 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
             };
 
             if let Some(op) = opcode_list.get(line_number) {
-                text_output.push(Spans::from(Span::styled(
+                text_output.push(Line::from(Span::styled(
                     format!("{line_number_format}{op}"),
                     Style::default().fg(Color::White).bg(bg_color),
                 )));
             } else {
-                text_output.push(Spans::from(Span::styled(
+                text_output.push(Line::from(Span::styled(
                     line_number_format,
                     Style::default().fg(Color::White).bg(bg_color),
                 )));
@@ -818,7 +818,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                 vec![]
             };
 
-        let text: Vec<Spans> = stack
+        let text: Vec<Line> = stack
             .iter()
             .rev()
             .enumerate()
@@ -861,7 +861,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                 spans.extend(words);
                 spans.push(Span::raw("\n"));
 
-                Spans::from(spans)
+                Line::from(spans)
             })
             .collect();
 
@@ -923,7 +923,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
         let height = area.height as usize;
         let end_line = draw_mem.current_mem_startline + height;
 
-        let text: Vec<Spans> = memory
+        let text: Vec<Line> = memory
             .chunks(32)
             .enumerate()
             .skip(draw_mem.current_mem_startline)
@@ -975,7 +975,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
 
                 spans.push(Span::raw("\n"));
 
-                Spans::from(spans)
+                Line::from(spans)
             })
             .collect();
         let paragraph = Paragraph::new(text).block(stack_space).wrap(Wrap { trim: true });
@@ -998,33 +998,36 @@ impl Ui for Tui {
 
         // Setup a channel to send interrupts
         let (tx, rx) = mpsc::channel();
-        thread::spawn(move || {
-            let mut last_tick = Instant::now();
-            loop {
-                // Poll events since last tick - if last tick is greater than tick_rate, we demand
-                // immediate availability of the event. This may affect
-                // interactivity, but I'm not sure as it is hard to test.
-                if event::poll(tick_rate.saturating_sub(last_tick.elapsed())).unwrap() {
-                    let event = event::read().unwrap();
-                    if let Event::Key(key) = event {
-                        if tx.send(Interrupt::KeyPressed(key)).is_err() {
-                            return
-                        }
-                    } else if let Event::Mouse(mouse) = event {
-                        if tx.send(Interrupt::MouseEvent(mouse)).is_err() {
-                            return
+        thread::Builder::new()
+            .name("event-listener".into())
+            .spawn(move || {
+                let mut last_tick = Instant::now();
+                loop {
+                    // Poll events since last tick - if last tick is greater than tick_rate, we
+                    // demand immediate availability of the event. This may affect interactivity,
+                    // but I'm not sure as it is hard to test.
+                    if event::poll(tick_rate.saturating_sub(last_tick.elapsed())).unwrap() {
+                        let event = event::read().unwrap();
+                        if let Event::Key(key) = event {
+                            if tx.send(Interrupt::KeyPressed(key)).is_err() {
+                                return
+                            }
+                        } else if let Event::Mouse(mouse) = event {
+                            if tx.send(Interrupt::MouseEvent(mouse)).is_err() {
+                                return
+                            }
                         }
                     }
-                }
-                // Force update if time has passed
-                if last_tick.elapsed() > tick_rate {
-                    if tx.send(Interrupt::IntervalElapsed).is_err() {
-                        return
+                    // Force update if time has passed
+                    if last_tick.elapsed() > tick_rate {
+                        if tx.send(Interrupt::IntervalElapsed).is_err() {
+                            return
+                        }
+                        last_tick = Instant::now();
                     }
-                    last_tick = Instant::now();
                 }
-            }
-        });
+            })
+            .expect("failed to spawn thread");
 
         self.terminal.clear()?;
         let mut draw_memory: DrawMemory = DrawMemory::default();

@@ -12,6 +12,9 @@ repository.workspace = true
 
 [lib]
 proc-macro = true
+# proc-macro tests aren't fully supported by cargo-nextest archives
+test = false
+doc = false
 
 [dependencies]
 proc-macro2 = "1.0"

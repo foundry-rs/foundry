@@ -10,12 +10,12 @@ pub mod pt {
         Annotation, Base, CatchClause, Comment, ContractDefinition, ContractPart, ContractTy,
         EnumDefinition, ErrorDefinition, ErrorParameter, EventDefinition, EventParameter,
         Expression, FunctionAttribute, FunctionDefinition, FunctionTy, HexLiteral, Identifier,
-        IdentifierPath, Import, Loc, Mutability, NamedArgument, OptionalCodeLocation, Parameter,
-        ParameterList, SourceUnit, SourceUnitPart, Statement, StorageLocation, StringLiteral,
-        StructDefinition, Type, TypeDefinition, UserDefinedOperator, Using, UsingFunction,
-        UsingList, VariableAttribute, VariableDeclaration, VariableDefinition, Visibility,
-        YulBlock, YulExpression, YulFor, YulFunctionCall, YulFunctionDefinition, YulStatement,
-        YulSwitch, YulSwitchOptions, YulTypedIdentifier,
+        IdentifierPath, Import, ImportPath, Loc, Mutability, NamedArgument, OptionalCodeLocation,
+        Parameter, ParameterList, SourceUnit, SourceUnitPart, Statement, StorageLocation,
+        StringLiteral, StructDefinition, Type, TypeDefinition, UserDefinedOperator, Using,
+        UsingFunction, UsingList, VariableAttribute, VariableDeclaration, VariableDefinition,
+        Visibility, YulBlock, YulExpression, YulFor, YulFunctionCall, YulFunctionDefinition,
+        YulStatement, YulSwitch, YulSwitchOptions, YulTypedIdentifier,
     };
 }
 

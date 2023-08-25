@@ -479,6 +479,7 @@ mod tests {
             "chain_id": "0x539",
             "spec_id": "LATEST",
             "perf_all_precompiles_have_balance": false,
+            "disable_coinbase_tip": false,
             "perf_analyse_created_bytecodes": "Analyse",
             "limit_contract_code_size": 18446744073709551615,
             "memory_limit": 4294967295
