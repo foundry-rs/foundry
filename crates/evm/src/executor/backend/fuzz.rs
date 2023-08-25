@@ -12,7 +12,7 @@ use ethers::prelude::{H256, U256};
 
 use revm::{
     db::DatabaseRef,
-    primitives::{AccountInfo, Bytecode, Env, ResultAndState, B160, B256, U256 as rU256},
+    primitives::{AccountInfo, Bytecode, Env, ResultAndState, Address as aB160, B256, U256 as rU256},
     Database, Inspector, JournaledState,
 };
 use std::borrow::Cow;
@@ -231,7 +231,7 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
 impl<'a> DatabaseRef for FuzzBackendWrapper<'a> {
     type Error = DatabaseError;
 
-    fn basic(&self, address: B160) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic(&self, address: aB160) -> Result<Option<AccountInfo>, Self::Error> {
         DatabaseRef::basic(self.backend.as_ref(), address)
     }
 
@@ -239,7 +239,7 @@ impl<'a> DatabaseRef for FuzzBackendWrapper<'a> {
         DatabaseRef::code_by_hash(self.backend.as_ref(), code_hash)
     }
 
-    fn storage(&self, address: B160, index: rU256) -> Result<rU256, Self::Error> {
+    fn storage(&self, address: aB160, index: rU256) -> Result<rU256, Self::Error> {
         DatabaseRef::storage(self.backend.as_ref(), address, index)
     }
 
@@ -251,7 +251,7 @@ impl<'a> DatabaseRef for FuzzBackendWrapper<'a> {
 impl<'a> Database for FuzzBackendWrapper<'a> {
     type Error = DatabaseError;
 
-    fn basic(&mut self, address: B160) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic(&mut self, address: aB160) -> Result<Option<AccountInfo>, Self::Error> {
         DatabaseRef::basic(self, address)
     }
 
@@ -259,7 +259,7 @@ impl<'a> Database for FuzzBackendWrapper<'a> {
         DatabaseRef::code_by_hash(self, code_hash)
     }
 
-    fn storage(&mut self, address: B160, index: rU256) -> Result<rU256, Self::Error> {
+    fn storage(&mut self, address: aB160, index: rU256) -> Result<rU256, Self::Error> {
         DatabaseRef::storage(self, address, index)
     }
 

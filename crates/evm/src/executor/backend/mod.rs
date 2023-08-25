@@ -20,7 +20,7 @@ use revm::{
     precompile::{Precompiles, SpecId},
     primitives::{
         Account, AccountInfo, Bytecode, CreateScheme, Env, HashMap as Map, Log, ResultAndState,
-        TransactTo, B160, B256, KECCAK_EMPTY, U256 as rU256,
+        TransactTo, Address as aB160, B256, KECCAK_EMPTY, U256 as rU256,
     },
     Database, DatabaseCommit, Inspector, JournaledState, EVM,
 };
@@ -478,12 +478,12 @@ impl Backend {
         value: U256,
     ) -> Result<(), DatabaseError> {
         let ret = if let Some(db) = self.active_fork_db_mut() {
-            db.insert_account_storage(h160_to_b160(address), slot.into(), value.into())
+            db.insert_account_storage(h160_to_b160(address), u256_to_ru256(slot), u256_to_ru256(value))
         } else {
-            self.mem_db.insert_account_storage(h160_to_b160(address), slot.into(), value.into())
+            self.mem_db.insert_account_storage(h160_to_b160(address), u256_to_ru256(slot), u256_to_ru256(value))
         };
 
-        debug_assert!(self.storage(h160_to_b160(address), slot.into()).unwrap() == value.into());
+        debug_assert!(self.storage(h160_to_b160(address), u256_to_ru256(slot)).unwrap() == u256_to_ru256(value));
 
         ret
     }
@@ -573,7 +573,7 @@ impl Backend {
             bool private _failed;
          }
         */
-        let value = self.storage(h160_to_b160(address), U256::zero().into()).unwrap_or_default();
+        let value = self.storage(h160_to_b160(address), rU256::ZERO).unwrap_or_default();
         value.as_le_bytes()[1] != 0
     }
 
@@ -607,7 +607,7 @@ impl Backend {
     /// See <https://github.com/dapphub/ds-test/blob/9310e879db8ba3ea6d5c6489a579118fd264a3f5/src/test.sol#L66-L72>
     pub fn is_global_failure(&self, current_state: &JournaledState) -> bool {
         let index: rU256 =
-            U256::from_str_radix(GLOBAL_FAILURE_SLOT, 16).expect("This is a bug.").into();
+            u256_to_ru256(U256::from_str_radix(GLOBAL_FAILURE_SLOT, 16).expect("This is a bug."));
         if let Some(account) = current_state.state.get(&h160_to_b160(CHEATCODE_ADDRESS)) {
             let value = account.storage.get(&index).cloned().unwrap_or_default().present_value();
             return value == revm::primitives::U256::from(1)
@@ -756,7 +756,7 @@ impl Backend {
     }
 
     /// Returns true if the address is a precompile
-    pub fn is_existing_precompile(&self, addr: &B160) -> bool {
+    pub fn is_existing_precompile(&self, addr: &aB160) -> bool {
         self.inner.precompiles().contains(addr)
     }
 
@@ -1133,12 +1133,12 @@ impl DatabaseExt for Backend {
         self.roll_fork(Some(id), fork_block.as_u64().into(), env, journaled_state)?;
 
         // update the block's env accordingly
-        env.block.timestamp = block.timestamp.into();
+        env.block.timestamp = u256_to_ru256(block.timestamp);
         env.block.coinbase = h160_to_b160(block.author.unwrap_or_default());
-        env.block.difficulty = block.difficulty.into();
+        env.block.difficulty = u256_to_ru256(block.difficulty);
         env.block.prevrandao = block.mix_hash.map(h256_to_b256);
-        env.block.basefee = block.base_fee_per_gas.unwrap_or_default().into();
-        env.block.gas_limit = block.gas_limit.into();
+        env.block.basefee = u256_to_ru256(block.base_fee_per_gas.unwrap_or_default());
+        env.block.gas_limit = u256_to_ru256(block.gas_limit);
         env.block.number = u256_to_ru256(block.number.unwrap_or(fork_block).as_u64().into());
 
         // replay all transactions that came before
@@ -1279,7 +1279,7 @@ impl DatabaseExt for Backend {
 impl DatabaseRef for Backend {
     type Error = DatabaseError;
 
-    fn basic(&self, address: B160) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic(&self, address: aB160) -> Result<Option<AccountInfo>, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             db.basic(address)
         } else {
@@ -1295,7 +1295,7 @@ impl DatabaseRef for Backend {
         }
     }
 
-    fn storage(&self, address: B160, index: rU256) -> Result<rU256, Self::Error> {
+    fn storage(&self, address: aB160, index: rU256) -> Result<rU256, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::storage(db, address, index)
         } else {
@@ -1314,7 +1314,7 @@ impl DatabaseRef for Backend {
 
 impl<'a> DatabaseRef for &'a mut Backend {
     type Error = DatabaseError;
-    fn basic(&self, address: B160) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic(&self, address: aB160) -> Result<Option<AccountInfo>, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::basic(db, address)
         } else {
@@ -1330,7 +1330,7 @@ impl<'a> DatabaseRef for &'a mut Backend {
         }
     }
 
-    fn storage(&self, address: B160, index: rU256) -> Result<rU256, Self::Error> {
+    fn storage(&self, address: aB160, index: rU256) -> Result<rU256, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::storage(db, address, index)
         } else {
@@ -1348,7 +1348,7 @@ impl<'a> DatabaseRef for &'a mut Backend {
 }
 
 impl DatabaseCommit for Backend {
-    fn commit(&mut self, changes: Map<B160, Account>) {
+    fn commit(&mut self, changes: Map<aB160, Account>) {
         if let Some(db) = self.active_fork_db_mut() {
             db.commit(changes)
         } else {
@@ -1359,7 +1359,7 @@ impl DatabaseCommit for Backend {
 
 impl Database for Backend {
     type Error = DatabaseError;
-    fn basic(&mut self, address: B160) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic(&mut self, address: aB160) -> Result<Option<AccountInfo>, Self::Error> {
         if let Some(db) = self.active_fork_db_mut() {
             db.basic(address)
         } else {
@@ -1375,7 +1375,7 @@ impl Database for Backend {
         }
     }
 
-    fn storage(&mut self, address: B160, index: rU256) -> Result<rU256, Self::Error> {
+    fn storage(&mut self, address: aB160, index: rU256) -> Result<rU256, Self::Error> {
         if let Some(db) = self.active_fork_db_mut() {
             Database::storage(db, address, index)
         } else {
