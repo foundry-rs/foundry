@@ -397,13 +397,6 @@ impl TestOutcome {
             }
             println!();
         }
-
-        let successes = self.successes().count();
-        println!(
-            "Encountered a total of {} failing tests, {} tests succeeded",
-            Paint::red(failures.to_string()),
-            Paint::green(successes.to_string())
-        );
         std::process::exit(1);
     }
 
