@@ -71,6 +71,12 @@ interface Vm {
         bytes stderr;
     }
 
+    struct Call {
+        address account;
+        uint256 value;
+        bytes data;
+    }
+
     // Set block.timestamp (newTimestamp)
     function warp(uint256) external;
 
@@ -245,7 +251,7 @@ interface Vm {
     function accesses(address) external returns (bytes32[] memory reads, bytes32[] memory writes);
 
     function recordCalls() external;
-    function getRecordedCalls() external returns (address[] memory);
+    function getRecordedCalls() external returns (Call[] memory);
 
     // Record all the transaction logs
     function recordLogs() external;

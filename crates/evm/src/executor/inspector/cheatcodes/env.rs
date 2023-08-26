@@ -262,7 +262,15 @@ fn accesses(state: &mut Cheatcodes, address: Address) -> Bytes {
 
 #[derive(Clone, Debug, Default)]
 pub struct RecordedCalls {
-    pub calls: Vec<Address>,
+    pub calls: Vec<RecordedCall>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RecordedCall {
+    pub account: Address,
+    pub value: U256,
+    // TODO: balance
+    pub data: Bytes,
 }
 
 fn start_record_calls(state: &mut Cheatcodes) {
@@ -271,7 +279,21 @@ fn start_record_calls(state: &mut Cheatcodes) {
 
 fn get_recorded_calls(state: &mut Cheatcodes) -> Bytes {
     if let Some(recorded_calls) = state.recorded_calls.replace(Default::default()) {
-        abi::encode(&[Token::Array(recorded_calls.calls.into_tokens())]).into()
+        abi::encode(
+            &recorded_calls
+                .calls
+                .iter()
+                .map(|call| {
+                    Token::Tuple(vec![
+                        call.account.into_token(),
+                        call.value.into_token(),
+                        Token::Bytes(call.data.to_vec()),
+                    ])
+                })
+                .collect::<Vec<Token>>()
+                .into_tokens(),
+        )
+        .into()
     } else {
         abi::encode(&[Token::Array(vec![])]).into()
     }

@@ -40,7 +40,7 @@ use std::{
 
 /// Cheatcodes related to the execution environment.
 mod env;
-pub use env::{Log, Prank, RecordAccess, RecordedCalls};
+pub use env::{Log, Prank, RecordAccess, RecordedCalls,RecordedCall};
 /// Assertion helpers (such as `expectEmit`)
 mod expect;
 pub use expect::{
@@ -410,17 +410,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
-        // Record called addresses if `recordCalls` has been called
-        if let Some(recorded_calls) = &mut self.recorded_calls {
-            match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
-                opcode::CALL | opcode::CALLCODE | opcode::DELEGATECALL | opcode::STATICCALL => {
-                    let address = try_or_continue!(interpreter.stack().peek(1));
-                    recorded_calls.calls.push(b256_to_h160(address.into()));
-                }
-                _ => (),
-            }
-        }
-
+        
         // If the allowed memory writes cheatcode is active at this context depth, check to see
         // if the current opcode can either mutate directly or expand memory. If the opcode at
         // the current program counter is a match, check if the modified memory lies within the
@@ -744,6 +734,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         );
                     }
                 }
+            }
+
+            // Record called addresses if `recordCalls` has been called
+            if let Some(recorded_calls) = &mut self.recorded_calls {
+                recorded_calls.calls.push(RecordedCall{account:call.contract.into(), value:call.transfer.value.into(), data:call.input.clone().into()})
             }
 
             (InstructionResult::Continue, Gas::new(call.gas_limit), bytes::Bytes::new())
