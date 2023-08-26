@@ -419,9 +419,9 @@ impl TestOutcome {
         format!(
             "Test result: {}. {} passed; {} failed; {} skipped; finished in {:.2?}",
             result,
-            self.successes().count(),
-            failed,
-            self.skips().count(),
+            Paint::green(self.successes().count()),
+            Paint::red(failed),
+            Paint::blue(self.skips().count()),
             self.duration()
         )
     }
@@ -472,12 +472,16 @@ fn format_aggregated_summary(
 ) -> String {
     let total_tests = total_passed + total_failed + total_skipped;
     format!(
-        "Ran {} test suites: {} tests passed, {} failed, {} skipped ({} total tests)",
-        num_test_suites, total_passed, total_failed, total_skipped, total_tests
+        " \nRan {} test suites: {} tests passed, {} failed, {} skipped ({} total tests)",
+        num_test_suites,
+        Paint::green(total_passed),
+        Paint::red(total_failed),
+        Paint::blue(total_skipped),
+        total_tests
     )
 }
 
-/// Lists all matching tests
+/// Lists all matching tests    
 fn list(
     runner: MultiContractRunner,
     filter: ProjectPathsAwareFilter,
