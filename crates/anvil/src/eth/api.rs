@@ -67,7 +67,7 @@ use foundry_evm::{
 };
 use futures::channel::mpsc::Receiver;
 use parking_lot::RwLock;
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 use tracing::{trace, warn};
 
 use super::{backend::mem::BlockRequest, sign::build_typed_transaction};
@@ -528,11 +528,12 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_accounts`
     pub fn accounts(&self) -> Result<Vec<Address>> {
         node_info!("eth_accounts");
-        let mut accounts = Vec::new();
+        let mut accounts = HashSet::new();
         for signer in self.signers.iter() {
-            accounts.append(&mut signer.accounts());
+            accounts.extend(signer.accounts());
         }
-        Ok(accounts)
+        accounts.extend(self.backend.cheats().impersonated_accounts());
+        Ok(accounts.into_iter().collect())
     }
 
     /// Returns the number of most recent block.
