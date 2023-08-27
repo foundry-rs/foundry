@@ -18,21 +18,28 @@ pub struct FuzzCase {
 /// Returned by a single fuzz in the case of a successful run
 #[derive(Debug)]
 pub struct CaseOutcome {
+    /// Data of a single fuzz test case
     pub case: FuzzCase,
-    pub gas_used: u64,
-    pub stipend: u64,
+    /// The traces of the call
     pub traces: Option<CallTraceArena>,
+    /// The coverage info collected during the call
     pub coverage: Option<HitMaps>,
+    /// The debug nodes of the call
     pub debug: Option<DebugArena>,
+    /// Breakpoints char pc map
     pub breakpoints: Breakpoints,
 }
 
 /// Returned by a single fuzz when a counterexample has been discovered
 #[derive(Debug)]
 pub struct CounterExampleOutcome {
+    /// Minimal reproduction test case for failing test
     pub counterexample: (ethers::types::Bytes, RawCallResult),
+    /// The status of the call
     pub exit_reason: InstructionResult,
+    /// The debug nodes of the call
     pub debug: Option<DebugArena>,
+    /// Breakpoints char pc map
     pub breakpoints: Breakpoints,
 }
 

@@ -234,7 +234,6 @@ impl<'a> FuzzedExecutor<'a> {
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
                 case: FuzzCase { calldata, gas: call.gas_used, stipend: call.stipend },
-                gas_used: call.gas_used,
                 stipend: call.stipend,
                 traces: call.traces,
                 coverage: call.coverage,
