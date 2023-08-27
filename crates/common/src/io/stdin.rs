@@ -19,6 +19,7 @@ where
     }
 }
 
+/// Shortcut for `(unwrap(a), unwrap(b))`.
 #[inline]
 pub fn unwrap2<A, B>(a: Option<A>, b: Option<B>) -> Result<(A, B)>
 where

@@ -4,7 +4,7 @@ use eyre::Result;
 use foundry_cli::{handler, utils};
 
 #[macro_use]
-extern crate foundry_cli;
+extern crate foundry_common;
 
 mod cmd;
 mod opts;
@@ -14,7 +14,7 @@ use opts::{Opts, Subcommands};
 
 fn main() {
     if let Err(err) = run() {
-        let _ = foundry_cli::Shell::get().error(&err);
+        let _ = foundry_common::Shell::get().error(&err);
         std::process::exit(1);
     }
 }

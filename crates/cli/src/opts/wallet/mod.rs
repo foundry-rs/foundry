@@ -45,11 +45,7 @@ pub struct RawWallet {
     pub interactive: bool,
 
     /// Use the provided private key.
-    #[clap(
-        long,
-        value_name = "RAW_PRIVATE_KEY",
-        value_parser = foundry_common::clap_helpers::strip_0x_prefix
-    )]
+    #[clap(long, value_name = "RAW_PRIVATE_KEY")]
     pub private_key: Option<String>,
 
     /// Use the mnemonic phrase of mnemonic file at the specified path.

@@ -110,12 +110,7 @@ pub struct ScriptArgs {
     pub target_contract: Option<String>,
 
     /// The signature of the function you want to call in the contract, or raw calldata.
-    #[clap(
-        long,
-        short,
-        default_value = "run()",
-        value_parser = foundry_common::clap_helpers::strip_0x_prefix
-    )]
+    #[clap(long, short, default_value = "run()")]
     pub sig: String,
 
     /// Max priority fee per gas for EIP1559 transactions.
@@ -382,7 +377,7 @@ impl ScriptArgs {
 
         let console_logs = decode_console_logs(&result.logs);
         let output = JsonResult { logs: console_logs, gas_used: result.gas_used, returns };
-        foundry_cli::Shell::get().print_json(&output)
+        foundry_common::Shell::get().print_json(&output)
     }
 
     /// It finds the deployer from the running script and uses it to predeploy libraries.

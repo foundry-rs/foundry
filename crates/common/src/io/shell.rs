@@ -18,13 +18,18 @@ use termcolor::{
 
 static GLOBAL_SHELL: Lazy<Mutex<Shell>> = Lazy::new(|| Mutex::new(Shell::new()));
 
+/// Terminal width.
 pub enum TtyWidth {
+    /// Not a terminal, or could not determine size.
     NoTty,
+    /// A known width.
     Known(usize),
+    /// A guess at the width.
     Guess(usize),
 }
 
 impl TtyWidth {
+    /// Returns the width of the terminal from the environment, if known.
     pub fn get() -> Self {
         // use stderr
         #[cfg(unix)]
@@ -141,6 +146,7 @@ impl Shell {
         Self::new_with(ColorChoice::Auto, Verbosity::Verbose)
     }
 
+    /// Creates a new shell with the given color choice and verbosity.
     pub fn new_with(color: ColorChoice, verbosity: Verbosity) -> Self {
         Self {
             output: ShellOut::Stream {
@@ -257,6 +263,7 @@ impl Shell {
         self.print(&status, Some(&message), Green, true)
     }
 
+    /// Shortcut to right-align and color cyan a status without a message.
     pub fn status_header<T>(&mut self, status: T) -> Result<()>
     where
         T: fmt::Display,
@@ -358,7 +365,7 @@ impl Shell {
         }
     }
 
-    /// Whether the shell supports color.
+    /// Whether `stderr` supports color.
     pub fn err_supports_color(&self) -> bool {
         match &self.output {
             ShellOut::Write(_) => false,
@@ -366,6 +373,7 @@ impl Shell {
         }
     }
 
+    /// Whether `stdout` supports color.
     pub fn out_supports_color(&self) -> bool {
         match &self.output {
             ShellOut::Write(_) => false,
@@ -380,6 +388,7 @@ impl Shell {
         self.output.write_stdout(fragment, color)
     }
 
+    /// Write a styled fragment with the default color.
     pub fn print_out(&mut self, fragment: impl fmt::Display) -> Result<()> {
         self.write_stdout(fragment, &ColorSpec::new())
     }
@@ -391,6 +400,7 @@ impl Shell {
         self.output.write_stderr(fragment, color)
     }
 
+    /// Write a styled fragment with the default color.
     pub fn print_err(&mut self, fragment: impl fmt::Display) -> Result<()> {
         self.write_stderr(fragment, &ColorSpec::new())
     }
@@ -423,6 +433,7 @@ impl Shell {
         Ok(())
     }
 
+    /// Serializes an object to JSON and prints it to `stdout`.
     pub fn print_json<T: serde::ser::Serialize>(&mut self, obj: &T) -> Result<()> {
         // Path may fail to serialize to JSON ...
         let encoded = serde_json::to_string(&obj)?;

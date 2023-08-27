@@ -364,7 +364,7 @@ impl TestOutcome {
             return Ok(())
         }
 
-        if foundry_cli::Shell::get().verbosity().is_quiet() {
+        if foundry_common::Shell::get().verbosity().is_quiet() {
             // skip printing and exit early
             std::process::exit(1);
         }

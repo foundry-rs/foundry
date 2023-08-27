@@ -1,3 +1,5 @@
+//! Utilities for working with standard input, output, and error.
+
 mod macros;
 
 pub mod shell;

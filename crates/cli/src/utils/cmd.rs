@@ -1,4 +1,3 @@
-use crate::sh_warn;
 use ethers::{
     abi::Abi,
     core::types::Chain,

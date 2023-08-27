@@ -1,5 +1,5 @@
-use crate::shell::{ColorChoice, Shell, Verbosity};
 use clap::Parser;
+use foundry_common::shell::{ColorChoice, Shell, Verbosity};
 
 /// Global shell options.
 #[derive(Clone, Copy, Debug, Parser)]

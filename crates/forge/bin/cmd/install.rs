@@ -2,7 +2,6 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::{
     opts::Dependency,
-    prompt,
     utils::{CommandUtils, Git, LoadConfig},
 };
 use foundry_common::fs;
@@ -176,7 +175,7 @@ impl DependencyInstallOpts {
             }
 
             // TODO: make this a shell note
-            if !foundry_cli::Shell::get().verbosity().is_quiet() {
+            if !foundry_common::Shell::get().verbosity().is_quiet() {
                 let mut msg = format!("    {} {}", Paint::green("Installed"), dep.name);
                 if let Some(tag) = dep.tag.or(installed_tag) {
                     msg.push(' ');

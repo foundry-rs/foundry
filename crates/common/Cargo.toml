@@ -27,9 +27,11 @@ reqwest = { version = "0.11", default-features = false }
 # cli
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 comfy-table = "6"
+tempfile = "3"
+termcolor = "1"
+terminal_size = "0.2"
 tracing = "0.1"
 yansi = "0.5"
-tempfile = "3"
 
 #  misc
 auto_impl = "1.1.0"
@@ -45,6 +47,9 @@ regex = "1"
 globset = "0.4"
 # Using const-hex instead of hex for speed
 hex.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+fwdansi = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

@@ -202,7 +202,7 @@ pub fn enable_paint() {
 pub fn print_receipt(chain: Chain, receipt: &TransactionReceipt) {
     let gas_used = receipt.gas_used.unwrap_or_default();
     let gas_price = receipt.effective_gas_price.unwrap_or_default();
-    crate::sh_println!(
+    sh_println!(
         "\n##### {chain}\n{status}Hash: {tx_hash:?}{caddr}\nBlock: {bn}\n{gas}\n",
         status = if receipt.status.map_or(true, |s| s.is_zero()) {
             "❌  [Failed]"
@@ -496,7 +496,7 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
 
     // don't set this in cmd() because it's not wanted for all commands
     fn stderr() -> Stdio {
-        if crate::Shell::get().verbosity().is_verbose() {
+        if foundry_common::Shell::get().verbosity().is_verbose() {
             Stdio::inherit()
         } else {
             Stdio::piped()

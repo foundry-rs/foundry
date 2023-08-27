@@ -4,7 +4,6 @@
 
 pub mod abi;
 pub mod calc;
-pub mod clap_helpers;
 pub mod compile;
 pub mod constants;
 pub mod contracts;
@@ -13,6 +12,7 @@ pub mod evm;
 pub mod fmt;
 pub mod fs;
 pub mod glob;
+pub mod io;
 pub mod provider;
 pub mod selectors;
 pub mod term;
@@ -24,3 +24,5 @@ pub use contracts::*;
 pub use provider::*;
 pub use traits::*;
 pub use transactions::*;
+
+pub use io::{shell, stdin, Shell};

@@ -8,7 +8,7 @@ use ethers::{
     utils::keccak256,
 };
 use eyre::Result;
-use foundry_cli::{handler, prompt, stdin, utils};
+use foundry_cli::{handler, utils};
 use foundry_common::{
     abi::{format_tokens, get_event},
     fs,
@@ -16,12 +16,13 @@ use foundry_common::{
         decode_calldata, decode_event_topic, decode_function_selector, import_selectors,
         parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
     },
+    stdin,
 };
 use foundry_config::Config;
 use std::time::Instant;
 
 #[macro_use]
-extern crate foundry_cli;
+extern crate foundry_common;
 
 pub mod cmd;
 pub mod opts;
@@ -31,7 +32,7 @@ use opts::{Opts, Subcommands, ToBaseArgs};
 #[tokio::main]
 async fn main() {
     if let Err(err) = run().await {
-        let _ = foundry_cli::Shell::get().error(&err);
+        let _ = foundry_common::Shell::get().error(&err);
         std::process::exit(1);
     }
 }
