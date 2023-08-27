@@ -108,10 +108,10 @@ impl<'a> FuzzedExecutor<'a> {
             match fuzz_res {
                 FuzzOutcome::Case(case) => {
                     let mut first_case = first_case.borrow_mut();
+                    gas_by_case.borrow_mut().push((case.case.gas, case.case.stipend));
                     if first_case.is_none() {
                         first_case.replace(case.case);
                     }
-                    gas_by_case.borrow_mut().push((case.gas_used, case.stipend));
 
                     traces.replace(case.traces);
 
@@ -234,7 +234,6 @@ impl<'a> FuzzedExecutor<'a> {
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
                 case: FuzzCase { calldata, gas: call.gas_used, stipend: call.stipend },
-                stipend: call.stipend,
                 traces: call.traces,
                 coverage: call.coverage,
                 debug: call.debug,
