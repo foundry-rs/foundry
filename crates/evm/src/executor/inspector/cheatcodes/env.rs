@@ -260,10 +260,6 @@ fn accesses(state: &mut Cheatcodes, address: Address) -> Bytes {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct RecordedCalls {
-    pub calls: Vec<RecordedCall>,
-}
 
 #[derive(Clone, Debug, Default)]
 pub struct RecordedCall {
@@ -281,7 +277,6 @@ fn get_recorded_calls(state: &mut Cheatcodes) -> Bytes {
     if let Some(recorded_calls) = state.recorded_calls.replace(Default::default()) {
         abi::encode(
             &recorded_calls
-                .calls
                 .iter()
                 .map(|call| {
                     Token::Tuple(vec![
@@ -300,13 +295,9 @@ fn get_recorded_calls(state: &mut Cheatcodes) -> Bytes {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct RecordedAccesses {
-    pub accesses: Vec<RecordedAccess>,
-}
 
 #[derive(Clone, Debug, Default)]
-pub struct RecordedAccess {
+pub struct RecordedStorageAccess {
     pub account: Address,
     pub slot: U256,
     pub write: bool,
@@ -322,7 +313,6 @@ fn get_recorded_storage_accesses(state: &mut Cheatcodes) -> Bytes {
     if let Some(recorded_accesses) = state.recorded_accesses.replace(Default::default()) {
         abi::encode(
             &recorded_accesses
-                .accesses
                 .iter()
                 .map(|access| {
                     Token::Tuple(vec![

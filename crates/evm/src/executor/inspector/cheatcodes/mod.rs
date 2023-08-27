@@ -40,7 +40,7 @@ use std::{
 
 /// Cheatcodes related to the execution environment.
 mod env;
-pub use env::{Log, Prank, RecordAccess, RecordedCalls,RecordedCall,RecordedAccesses,RecordedAccess};
+pub use env::{Log, Prank, RecordAccess,RecordedCall,RecordedStorageAccess};
 /// Assertion helpers (such as `expectEmit`)
 mod expect;
 pub use expect::{
@@ -139,10 +139,10 @@ pub struct Cheatcodes {
     pub accesses: Option<RecordAccess>,
 
     /// Recorded calls
-    pub recorded_calls: Option<RecordedCalls>,
+    pub recorded_calls: Option<Vec<RecordedCall>>,
 
     /// Recorded accesses
-    pub recorded_accesses: Option<RecordedAccesses>,
+    pub recorded_accesses: Option<Vec<RecordedStorageAccess>>,
 
     /// Recorded logs
     pub recorded_logs: Option<RecordedLogs>,
@@ -418,7 +418,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 opcode::SLOAD => {
                     let key = try_or_continue!(interpreter.stack().peek(0));
                     recorded_accesses
-                        .accesses.push(RecordedAccess {
+                        .push(RecordedStorageAccess {
                             account: b160_to_h160(interpreter.contract().address),
                             slot: key.into(),
                             write: false,
@@ -437,7 +437,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         }
                         
                     recorded_accesses
-                        .accesses.push(RecordedAccess {
+                        .push(RecordedStorageAccess {
                             account: b160_to_h160(interpreter.contract().address),
                             slot: key.into(),
                             write: true,
@@ -783,7 +783,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 } else {
                     initialized = false;
                 }
-                recorded_calls.calls.push(RecordedCall{account:call.contract.into(), initialized:initialized, value:call.transfer.value.into(), data:call.input.clone().into()})
+                recorded_calls.push(RecordedCall{account:call.contract.into(), initialized:initialized, value:call.transfer.value.into(), data:call.input.clone().into()})
             }
 
             (InstructionResult::Continue, Gas::new(call.gas_limit), bytes::Bytes::new())
