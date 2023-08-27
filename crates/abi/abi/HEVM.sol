@@ -6,6 +6,7 @@ struct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; u
 struct Wallet { address addr; uint256 publicKeyX; uint256 publicKeyY; uint256 privateKey; }
 struct FfiResult { int32 exitCode; bytes stdout; bytes stderr; }
 struct Call { address account; uint256 value; bytes data; }
+struct StorageAccess { address account; bytes32 slot; bool isWrite, bytes32 previousValue, bytes32 newValue; }
 
 allowCheatcodes(address)
 
@@ -86,6 +87,9 @@ skip(bool)
 
 recordCalls()
 getRecordedCalls()(Call[])
+
+recordAccesses()
+getRecordedAccesses()(StorageAccess[])
 
 recordLogs()
 getRecordedLogs()(Log[])

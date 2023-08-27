@@ -77,6 +77,14 @@ interface Vm {
         bytes data;
     }
 
+    struct StorageAccess {
+        address account;
+        bytes32 slot;
+        bool isWrite;
+        bytes32 previousValue;
+        bytes32 newValue;
+    }
+
     // Set block.timestamp (newTimestamp)
     function warp(uint256) external;
 
@@ -252,6 +260,9 @@ interface Vm {
 
     function recordCalls() external;
     function getRecordedCalls() external returns (Call[] memory);
+
+    function recordAccesses() external;
+    function getRecordedAccesses() external returns (StorageAccess[] memory);
 
     // Record all the transaction logs
     function recordLogs() external;

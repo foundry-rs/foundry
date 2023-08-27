@@ -300,6 +300,48 @@ fn get_recorded_calls(state: &mut Cheatcodes) -> Bytes {
 }
 
 #[derive(Clone, Debug, Default)]
+pub struct RecordedAccesses {
+    pub accesses: Vec<RecordedAccess>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RecordedAccess {
+    pub account: Address,
+    pub slot: U256,
+    pub write: bool,
+    pub previous_value: U256,
+    pub new_value: U256,
+}
+
+fn start_record_accesses(state: &mut Cheatcodes) {
+    state.recorded_accesses = Some(Default::default());
+}
+
+fn get_recorded_accesses(state: &mut Cheatcodes) -> Bytes {
+    if let Some(recorded_accesses) = state.recorded_accesses.replace(Default::default()) {
+        abi::encode(
+            &recorded_accesses
+                .accesses
+                .iter()
+                .map(|access| {
+                    Token::Tuple(vec![
+                        access.account.into_token(),
+                        access.slot.into_token(),
+                        access.write.into_token(),
+                        access.previous_value.into_token(),
+                        access.new_value.into_token(),
+                    ])
+                })
+                .collect::<Vec<Token>>()
+                .into_tokens(),
+        )
+        .into()
+    } else {
+        abi::encode(&[Token::Array(vec![])]).into()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct RecordedLogs {
     pub entries: Vec<Log>,
 }
@@ -511,6 +553,11 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::GetRecordedCalls(_) => get_recorded_calls(state),
+        HEVMCalls::RecordAccesses(_) => {
+            start_record_accesses(state);
+            Bytes::new()
+        }
+        HEVMCalls::GetRecordedAccesses(_) => get_recorded_accesses(state),
         HEVMCalls::GetRecordedLogs(_) => get_recorded_logs(state),
         HEVMCalls::SetNonce(inner) => {
             with_journaled_account(

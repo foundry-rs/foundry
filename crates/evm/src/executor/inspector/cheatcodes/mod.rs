@@ -10,7 +10,7 @@ use crate::{
         backend::DatabaseExt, inspector::cheatcodes::env::RecordedLogs, CHEATCODE_ADDRESS,
         HARDHAT_CONSOLE_ADDRESS,
     },
-    utils::{b160_to_h160, b256_to_h160, b256_to_h256, h160_to_b160, ru256_to_u256},
+    utils::{b160_to_h160, b256_to_h256, h160_to_b160, ru256_to_u256},
 };
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
@@ -25,7 +25,7 @@ use foundry_utils::error::SolError;
 use itertools::Itertools;
 use revm::{
     interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
-    primitives::{BlockEnv, TransactTo, B160, B256},
+    primitives::{BlockEnv, TransactTo, B160, B256, StorageSlot, ruint::Uint},
     EVMData, Inspector,
 };
 use serde_json::Value;
@@ -40,7 +40,7 @@ use std::{
 
 /// Cheatcodes related to the execution environment.
 mod env;
-pub use env::{Log, Prank, RecordAccess, RecordedCalls,RecordedCall};
+pub use env::{Log, Prank, RecordAccess, RecordedCalls,RecordedCall,RecordedAccesses,RecordedAccess};
 /// Assertion helpers (such as `expectEmit`)
 mod expect;
 pub use expect::{
@@ -140,6 +140,9 @@ pub struct Cheatcodes {
 
     /// Recorded calls
     pub recorded_calls: Option<RecordedCalls>,
+
+    /// Recorded accesses
+    pub recorded_accesses: Option<RecordedAccesses>,
 
     /// Recorded logs
     pub recorded_logs: Option<RecordedLogs>,
@@ -410,7 +413,42 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
-        
+        if let Some(recorded_accesses) = &mut self.recorded_accesses {
+            match interpreter.current_opcode() {
+                opcode::SLOAD => {
+                    let key = try_or_continue!(interpreter.stack().peek(0));
+                    recorded_accesses
+                        .accesses.push(RecordedAccess {
+                            account: b160_to_h160(interpreter.contract().address),
+                            slot: key.into(),
+                            write: false,
+                            previous_value: 0.into(),
+                            new_value: 0.into()
+                        });
+                }
+                opcode::SSTORE => {
+                    let key = try_or_continue!(interpreter.stack().peek(0));
+                    let value = try_or_continue!(interpreter.stack().peek(1));
+                    let previous_value;
+                    if let Some(acc) = data.journaled_state.state.get(&interpreter.contract().address) {
+                         previous_value = acc.storage.get(&key).unwrap_or(&StorageSlot::default()).present_value()
+                        } else {
+                            previous_value = Uint::ZERO
+                        }
+                        
+                    recorded_accesses
+                        .accesses.push(RecordedAccess {
+                            account: b160_to_h160(interpreter.contract().address),
+                            slot: key.into(),
+                            write: true,
+                            previous_value: previous_value.into(),
+                            new_value: value.into()
+                        })
+                }
+                _ => (),
+            }
+        }
+
         // If the allowed memory writes cheatcode is active at this context depth, check to see
         // if the current opcode can either mutate directly or expand memory. If the opcode at
         // the current program counter is a match, check if the modified memory lies within the
