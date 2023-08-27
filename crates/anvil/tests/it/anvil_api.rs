@@ -82,6 +82,7 @@ async fn can_impersonate_account() {
     res.unwrap_err();
 
     api.anvil_impersonate_account(impersonate).await.unwrap();
+    assert!(api.accounts().unwrap().contains(&impersonate));
 
     let res = provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
     assert_eq!(res.from, impersonate);
