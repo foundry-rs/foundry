@@ -268,8 +268,8 @@ pub struct RecordedCalls {
 #[derive(Clone, Debug, Default)]
 pub struct RecordedCall {
     pub account: Address,
+    pub initialized: bool,
     pub value: U256,
-    // TODO: balance
     pub data: Bytes,
 }
 
@@ -286,6 +286,7 @@ fn get_recorded_calls(state: &mut Cheatcodes) -> Bytes {
                 .map(|call| {
                     Token::Tuple(vec![
                         call.account.into_token(),
+                        call.initialized.into_token(),
                         call.value.into_token(),
                         Token::Bytes(call.data.to_vec()),
                     ])

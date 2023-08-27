@@ -25,7 +25,7 @@ use foundry_utils::error::SolError;
 use itertools::Itertools;
 use revm::{
     interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
-    primitives::{BlockEnv, TransactTo, B160, B256, StorageSlot, ruint::Uint},
+    primitives::{BlockEnv, TransactTo, B160, B256, StorageSlot, ruint::Uint, KECCAK_EMPTY, Bytecode},
     EVMData, Inspector,
 };
 use serde_json::Value;
@@ -776,7 +776,14 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
             // Record called addresses if `recordCalls` has been called
             if let Some(recorded_calls) = &mut self.recorded_calls {
-                recorded_calls.calls.push(RecordedCall{account:call.contract.into(), value:call.transfer.value.into(), data:call.input.clone().into()})
+                let initialized;
+                if let Some(acc) = data.journaled_state.state.get(&call.contract) {
+                    let info = &acc.info;
+                    initialized =  !(info.balance == Uint::ZERO && info.nonce == 0 && info.code_hash == KECCAK_EMPTY && info.code.as_ref().unwrap_or(&Bytecode::default()).is_empty());
+                } else {
+                    initialized = false;
+                }
+                recorded_calls.calls.push(RecordedCall{account:call.contract.into(), initialized:initialized, value:call.transfer.value.into(), data:call.input.clone().into()})
             }
 
             (InstructionResult::Continue, Gas::new(call.gas_limit), bytes::Bytes::new())

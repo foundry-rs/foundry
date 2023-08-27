@@ -73,6 +73,7 @@ interface Vm {
 
     struct Call {
         address account;
+        bool initialized;
         uint256 value;
         bytes data;
     }

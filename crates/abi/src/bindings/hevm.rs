@@ -2308,6 +2308,8 @@ pub mod hevm {
                                                     ::ethers_core::abi::ethabi::ParamType::Address,
                                                     ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
                                                     ::ethers_core::abi::ethabi::ParamType::Bool,
+                                                    ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
+                                                    ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
                                                 ],
                                             ),
                                         ),
@@ -2334,6 +2336,7 @@ pub mod hevm {
                                             ::ethers_core::abi::ethabi::ParamType::Tuple(
                                                 ::std::vec![
                                                     ::ethers_core::abi::ethabi::ParamType::Address,
+                                                    ::ethers_core::abi::ethabi::ParamType::Bool,
                                                     ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
                                                     ::ethers_core::abi::ethabi::ParamType::Bytes,
                                                 ],
@@ -6336,7 +6339,9 @@ pub mod hevm {
             &self,
         ) -> ::ethers_contract::builders::ContractCall<
             M,
-            ::std::vec::Vec<(::ethers_core::types::Address, [u8; 32], bool)>,
+            ::std::vec::Vec<
+                (::ethers_core::types::Address, [u8; 32], bool, [u8; 32], [u8; 32]),
+            >,
         > {
             self.0
                 .method_hash([157, 131, 190, 190], ())
@@ -6350,6 +6355,7 @@ pub mod hevm {
             ::std::vec::Vec<
                 (
                     ::ethers_core::types::Address,
+                    bool,
                     ::ethers_core::types::U256,
                     ::ethers_core::types::Bytes,
                 ),
@@ -14270,7 +14276,9 @@ pub mod hevm {
         Hash
     )]
     pub struct GetRecordedAccessesReturn(
-        pub ::std::vec::Vec<(::ethers_core::types::Address, [u8; 32], bool)>,
+        pub ::std::vec::Vec<
+            (::ethers_core::types::Address, [u8; 32], bool, [u8; 32], [u8; 32]),
+        >,
     );
     ///Container type for all return fields from the `getRecordedCalls` function with signature `getRecordedCalls()` and selector `0x4360b7ec`
     #[derive(
@@ -14287,6 +14295,7 @@ pub mod hevm {
         pub ::std::vec::Vec<
             (
                 ::ethers_core::types::Address,
+                bool,
                 ::ethers_core::types::U256,
                 ::ethers_core::types::Bytes,
             ),
@@ -15062,7 +15071,7 @@ pub mod hevm {
     pub struct TryFfiReturn(
         pub (i32, ::ethers_core::types::Bytes, ::ethers_core::types::Bytes),
     );
-    ///`Call(address,uint256,bytes)`
+    ///`Call(address,bool,uint256,bytes)`
     #[derive(
         Clone,
         ::ethers_contract::EthAbiType,
@@ -15075,6 +15084,7 @@ pub mod hevm {
     )]
     pub struct Call {
         pub account: ::ethers_core::types::Address,
+        pub initialized: bool,
         pub value: ::ethers_core::types::U256,
         pub data: ::ethers_core::types::Bytes,
     }
@@ -15184,7 +15194,7 @@ pub mod hevm {
         pub name: ::std::string::String,
         pub url: ::std::string::String,
     }
-    ///`StorageAccess(address,bytes32,bool)`
+    ///`StorageAccess(address,bytes32,bool,bytes32,bytes32)`
     #[derive(
         Clone,
         ::ethers_contract::EthAbiType,
@@ -15198,7 +15208,9 @@ pub mod hevm {
     pub struct StorageAccess {
         pub account: ::ethers_core::types::Address,
         pub slot: [u8; 32],
-        pub new_value: bool,
+        pub is_write: bool,
+        pub previous_value: [u8; 32],
+        pub new_value: [u8; 32],
     }
     ///`Wallet(address,uint256,uint256,uint256)`
     #[derive(
