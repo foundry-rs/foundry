@@ -65,7 +65,7 @@ impl ProjectCompiler {
             verify: None,
             print_names: None,
             print_sizes: None,
-            quiet: None, // TODO: set quiet from Shell
+            quiet: Some(crate::Shell::get().verbosity().is_quiet()),
             filters: Vec::new(),
             files: Vec::new(),
         }
@@ -187,8 +187,7 @@ impl ProjectCompiler {
         let reporter = if quiet {
             Report::new(NoReporter::default())
         } else {
-            // TODO: stderr.is_terminal()
-            if true {
+            if crate::Shell::get().is_err_tty() {
                 Report::new(SpinnerReporter::spawn())
             } else {
                 Report::new(BasicStdoutReporter::default())

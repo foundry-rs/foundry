@@ -71,8 +71,9 @@ impl Spinner {
 
         let indicator = Paint::green(self.indicator[self.idx % self.indicator.len()]);
         let indicator = Paint::new(format!("[{indicator}]")).bold();
-        print!("\r\x33[2K\r{indicator} {}", self.message);
-        io::stdout().flush().unwrap();
+        let mut stderr = io::stderr().lock();
+        write!(stderr, "\r\x33[2K\r{indicator} {}", self.message);
+        stderr.flush().unwrap();
 
         self.idx = self.idx.wrapping_add(1);
     }
