@@ -18,7 +18,7 @@ contract StorageAccessor {
     }
 }
 
-contract RecordAccessesTest is DSTest {
+contract RecordStorageAccessesTest is DSTest {
     Vm constant cheats = Vm(HEVM_ADDRESS);
     StorageAccessor test1;
     StorageAccessor test2;
@@ -31,13 +31,13 @@ contract RecordAccessesTest is DSTest {
     function testRecordAccesses() public {
         StorageAccessor one = test1;
         StorageAccessor two = test2;
-        cheats.recordAccesses();
+        cheats.recordStorageAccesses();
         one.read(bytes32(uint256(1234)));
         one.write(bytes32(uint256(1235)), bytes32(uint256(5678)));
         two.write(bytes32(uint256(5678)), bytes32(uint256(123469)));
         two.write(bytes32(uint256(5678)), bytes32(uint256(1234)));
 
-        Vm.StorageAccess[] memory accessed = cheats.getRecordedAccesses();
+        Vm.StorageAccess[] memory accessed = cheats.getRecordedStorageAccesses();
         assertEq(accessed.length, 4, "incorrect length");
         Vm.StorageAccess memory access = accessed[0];
         assertEq(access.account, address(one), "incorrect account");

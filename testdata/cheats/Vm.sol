@@ -71,7 +71,7 @@ interface Vm {
         bytes stderr;
     }
 
-    struct Call {
+    struct RecordedCall {
         address account;
         bool initialized;
         uint256 value;
@@ -260,10 +260,10 @@ interface Vm {
     function accesses(address) external returns (bytes32[] memory reads, bytes32[] memory writes);
 
     function recordCalls() external;
-    function getRecordedCalls() external returns (Call[] memory);
+    function getRecordedCalls() external returns (RecordedCall[] memory);
 
-    function recordAccesses() external;
-    function getRecordedAccesses() external returns (StorageAccess[] memory);
+    function recordStorageAccesses() external;
+    function getRecordedStorageAccesses() external returns (StorageAccess[] memory);
 
     // Record all the transaction logs
     function recordLogs() external;

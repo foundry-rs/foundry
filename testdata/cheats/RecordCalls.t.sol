@@ -4,20 +4,14 @@ pragma solidity 0.8.18;
 import {DSTest} from "ds-test/test.sol";
 import {Vm} from "./Vm.sol";
 
-interface CodeHashLogger {
-    function reportCodehash() external;
-}
-
-contract ConstructorCaller {
-    constructor(CodeHashLogger callMe) {
-        callMe.reportCodehash();
-        address(this).call("");
-    }
-}
-
 contract SelfCaller {
     constructor() {
-        address(this).call("");
+        assembly {
+            // call self to test that the cheatcote correctly reports the
+            // account as initialized even when there is no code at the
+            // contract address
+            pop(call(gas(), address(), 0, 0, 0, 0, 0))
+        }
     }
 }
 
@@ -27,17 +21,16 @@ contract RecordCallsTest is DSTest {
     function testRecordCalls() public {
         cheats.recordCalls();
 
-        assertEq(address(5678).codehash, bytes32(0), "nonzero codehash");
-
-        address(1234).call("");
-        address(5678).call{value: 1 ether}("");
-        address(123469).call("hello world");
-        address(5678).call("");
+        (bool succ,) = address(1234).call("");
+        (succ,) = address(5678).call{value: 1 ether}("");
+        (succ,) = address(123469).call("hello world");
+        (succ,) = address(5678).call("");
+        // contract calls to self in constructor
         SelfCaller caller = new SelfCaller();
 
-        Vm.Call[] memory called = cheats.getRecordedCalls();
+        Vm.RecordedCall[] memory called = cheats.getRecordedCalls();
         assertEq(called.length, 5);
-        Vm.Call memory call = called[0];
+        Vm.RecordedCall memory call = called[0];
         assertEq(call.account, address(1234), "incorrect account");
         assertEq(call.initialized, false);
         assertEq(call.value, 0);
@@ -62,9 +55,5 @@ contract RecordCallsTest is DSTest {
         assertEq(call.initialized, true);
         assertEq(call.value, 0);
         assertEq(call.data, "");
-    }
-
-    function reportCodehash() public {
-        emit log_bytes32(msg.sender.codehash);
     }
 }

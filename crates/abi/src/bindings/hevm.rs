@@ -2291,38 +2291,6 @@ pub mod hevm {
                     ],
                 ),
                 (
-                    ::std::borrow::ToOwned::to_owned("getRecordedAccesses"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Function {
-                            name: ::std::borrow::ToOwned::to_owned(
-                                "getRecordedAccesses",
-                            ),
-                            inputs: ::std::vec![],
-                            outputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::Param {
-                                    name: ::std::string::String::new(),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Array(
-                                        ::std::boxed::Box::new(
-                                            ::ethers_core::abi::ethabi::ParamType::Tuple(
-                                                ::std::vec![
-                                                    ::ethers_core::abi::ethabi::ParamType::Address,
-                                                    ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
-                                                    ::ethers_core::abi::ethabi::ParamType::Bool,
-                                                    ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
-                                                    ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
-                                                ],
-                                            ),
-                                        ),
-                                    ),
-                                    internal_type: ::core::option::Option::None,
-                                },
-                            ],
-                            constant: ::core::option::Option::None,
-                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
-                        },
-                    ],
-                ),
-                (
                     ::std::borrow::ToOwned::to_owned("getRecordedCalls"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -2370,6 +2338,38 @@ pub mod hevm {
                                                         ),
                                                     ),
                                                     ::ethers_core::abi::ethabi::ParamType::Bytes,
+                                                ],
+                                            ),
+                                        ),
+                                    ),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
+                    ::std::borrow::ToOwned::to_owned("getRecordedStorageAccesses"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned(
+                                "getRecordedStorageAccesses",
+                            ),
+                            inputs: ::std::vec![],
+                            outputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Array(
+                                        ::std::boxed::Box::new(
+                                            ::ethers_core::abi::ethabi::ParamType::Tuple(
+                                                ::std::vec![
+                                                    ::ethers_core::abi::ethabi::ParamType::Address,
+                                                    ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
+                                                    ::ethers_core::abi::ethabi::ParamType::Bool,
+                                                    ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
+                                                    ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
                                                 ],
                                             ),
                                         ),
@@ -3752,18 +3752,6 @@ pub mod hevm {
                     ],
                 ),
                 (
-                    ::std::borrow::ToOwned::to_owned("recordAccesses"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Function {
-                            name: ::std::borrow::ToOwned::to_owned("recordAccesses"),
-                            inputs: ::std::vec![],
-                            outputs: ::std::vec![],
-                            constant: ::core::option::Option::None,
-                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
-                        },
-                    ],
-                ),
-                (
                     ::std::borrow::ToOwned::to_owned("recordCalls"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -3780,6 +3768,20 @@ pub mod hevm {
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
                             name: ::std::borrow::ToOwned::to_owned("recordLogs"),
+                            inputs: ::std::vec![],
+                            outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
+                    ::std::borrow::ToOwned::to_owned("recordStorageAccesses"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned(
+                                "recordStorageAccesses",
+                            ),
                             inputs: ::std::vec![],
                             outputs: ::std::vec![],
                             constant: ::core::option::Option::None,
@@ -6334,19 +6336,6 @@ pub mod hevm {
                 .method_hash([45, 3, 53, 171], p0)
                 .expect("method not found (this should never happen)")
         }
-        ///Calls the contract's `getRecordedAccesses` (0x9d83bebe) function
-        pub fn get_recorded_accesses(
-            &self,
-        ) -> ::ethers_contract::builders::ContractCall<
-            M,
-            ::std::vec::Vec<
-                (::ethers_core::types::Address, [u8; 32], bool, [u8; 32], [u8; 32]),
-            >,
-        > {
-            self.0
-                .method_hash([157, 131, 190, 190], ())
-                .expect("method not found (this should never happen)")
-        }
         ///Calls the contract's `getRecordedCalls` (0x4360b7ec) function
         pub fn get_recorded_calls(
             &self,
@@ -6374,6 +6363,19 @@ pub mod hevm {
         > {
             self.0
                 .method_hash([25, 21, 83, 164], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `getRecordedStorageAccesses` (0x03f1500a) function
+        pub fn get_recorded_storage_accesses(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<
+                (::ethers_core::types::Address, [u8; 32], bool, [u8; 32], [u8; 32]),
+            >,
+        > {
+            self.0
+                .method_hash([3, 241, 80, 10], ())
                 .expect("method not found (this should never happen)")
         }
         ///Calls the contract's `isDir` (0x7d15d019) function
@@ -6920,14 +6922,6 @@ pub mod hevm {
                 .method_hash([38, 108, 241, 9], ())
                 .expect("method not found (this should never happen)")
         }
-        ///Calls the contract's `recordAccesses` (0x8cc0271a) function
-        pub fn record_accesses(
-            &self,
-        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
-            self.0
-                .method_hash([140, 192, 39, 26], ())
-                .expect("method not found (this should never happen)")
-        }
         ///Calls the contract's `recordCalls` (0x36c9aad8) function
         pub fn record_calls(&self) -> ::ethers_contract::builders::ContractCall<M, ()> {
             self.0
@@ -6938,6 +6932,14 @@ pub mod hevm {
         pub fn record_logs(&self) -> ::ethers_contract::builders::ContractCall<M, ()> {
             self.0
                 .method_hash([65, 175, 47, 82], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `recordStorageAccesses` (0x71009b87) function
+        pub fn record_storage_accesses(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([113, 0, 155, 135], ())
                 .expect("method not found (this should never happen)")
         }
         ///Calls the contract's `rememberKey` (0x22100064) function
@@ -8892,19 +8894,6 @@ pub mod hevm {
     )]
     #[ethcall(name = "getNonce", abi = "getNonce(address)")]
     pub struct GetNonce1Call(pub ::ethers_core::types::Address);
-    ///Container type for all input parameters for the `getRecordedAccesses` function with signature `getRecordedAccesses()` and selector `0x9d83bebe`
-    #[derive(
-        Clone,
-        ::ethers_contract::EthCall,
-        ::ethers_contract::EthDisplay,
-        Default,
-        Debug,
-        PartialEq,
-        Eq,
-        Hash
-    )]
-    #[ethcall(name = "getRecordedAccesses", abi = "getRecordedAccesses()")]
-    pub struct GetRecordedAccessesCall;
     ///Container type for all input parameters for the `getRecordedCalls` function with signature `getRecordedCalls()` and selector `0x4360b7ec`
     #[derive(
         Clone,
@@ -8931,6 +8920,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "getRecordedLogs", abi = "getRecordedLogs()")]
     pub struct GetRecordedLogsCall;
+    ///Container type for all input parameters for the `getRecordedStorageAccesses` function with signature `getRecordedStorageAccesses()` and selector `0x03f1500a`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "getRecordedStorageAccesses", abi = "getRecordedStorageAccesses()")]
+    pub struct GetRecordedStorageAccessesCall;
     ///Container type for all input parameters for the `isDir` function with signature `isDir(string)` and selector `0x7d15d019`
     #[derive(
         Clone,
@@ -9674,19 +9676,6 @@ pub mod hevm {
     )]
     #[ethcall(name = "record", abi = "record()")]
     pub struct RecordCall;
-    ///Container type for all input parameters for the `recordAccesses` function with signature `recordAccesses()` and selector `0x8cc0271a`
-    #[derive(
-        Clone,
-        ::ethers_contract::EthCall,
-        ::ethers_contract::EthDisplay,
-        Default,
-        Debug,
-        PartialEq,
-        Eq,
-        Hash
-    )]
-    #[ethcall(name = "recordAccesses", abi = "recordAccesses()")]
-    pub struct RecordAccessesCall;
     ///Container type for all input parameters for the `recordCalls` function with signature `recordCalls()` and selector `0x36c9aad8`
     #[derive(
         Clone,
@@ -9713,6 +9702,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "recordLogs", abi = "recordLogs()")]
     pub struct RecordLogsCall;
+    ///Container type for all input parameters for the `recordStorageAccesses` function with signature `recordStorageAccesses()` and selector `0x71009b87`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "recordStorageAccesses", abi = "recordStorageAccesses()")]
+    pub struct RecordStorageAccessesCall;
     ///Container type for all input parameters for the `rememberKey` function with signature `rememberKey(uint256)` and selector `0x22100064`
     #[derive(
         Clone,
@@ -10745,9 +10747,9 @@ pub mod hevm {
         GetMappingSlotAt(GetMappingSlotAtCall),
         GetNonce0(GetNonce0Call),
         GetNonce1(GetNonce1Call),
-        GetRecordedAccesses(GetRecordedAccessesCall),
         GetRecordedCalls(GetRecordedCallsCall),
         GetRecordedLogs(GetRecordedLogsCall),
+        GetRecordedStorageAccesses(GetRecordedStorageAccessesCall),
         IsDir(IsDirCall),
         IsFile(IsFileCall),
         IsPersistent(IsPersistentCall),
@@ -10800,9 +10802,9 @@ pub mod hevm {
         ReadLine(ReadLineCall),
         ReadLink(ReadLinkCall),
         Record(RecordCall),
-        RecordAccesses(RecordAccessesCall),
         RecordCalls(RecordCallsCall),
         RecordLogs(RecordLogsCall),
+        RecordStorageAccesses(RecordStorageAccessesCall),
         RememberKey(RememberKeyCall),
         RemoveDir(RemoveDirCall),
         RemoveFile(RemoveFileCall),
@@ -11250,18 +11252,18 @@ pub mod hevm {
                 return Ok(Self::GetNonce1(decoded));
             }
             if let Ok(decoded)
-                = <GetRecordedAccessesCall as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
-                return Ok(Self::GetRecordedAccesses(decoded));
-            }
-            if let Ok(decoded)
                 = <GetRecordedCallsCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::GetRecordedCalls(decoded));
             }
             if let Ok(decoded)
                 = <GetRecordedLogsCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::GetRecordedLogs(decoded));
+            }
+            if let Ok(decoded)
+                = <GetRecordedStorageAccessesCall as ::ethers_core::abi::AbiDecode>::decode(
+                    data,
+                ) {
+                return Ok(Self::GetRecordedStorageAccesses(decoded));
             }
             if let Ok(decoded)
                 = <IsDirCall as ::ethers_core::abi::AbiDecode>::decode(data) {
@@ -11486,16 +11488,18 @@ pub mod hevm {
                 return Ok(Self::Record(decoded));
             }
             if let Ok(decoded)
-                = <RecordAccessesCall as ::ethers_core::abi::AbiDecode>::decode(data) {
-                return Ok(Self::RecordAccesses(decoded));
-            }
-            if let Ok(decoded)
                 = <RecordCallsCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::RecordCalls(decoded));
             }
             if let Ok(decoded)
                 = <RecordLogsCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::RecordLogs(decoded));
+            }
+            if let Ok(decoded)
+                = <RecordStorageAccessesCall as ::ethers_core::abi::AbiDecode>::decode(
+                    data,
+                ) {
+                return Ok(Self::RecordStorageAccesses(decoded));
             }
             if let Ok(decoded)
                 = <RememberKeyCall as ::ethers_core::abi::AbiDecode>::decode(data) {
@@ -11989,13 +11993,13 @@ pub mod hevm {
                 Self::GetNonce1(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
-                Self::GetRecordedAccesses(element) => {
-                    ::ethers_core::abi::AbiEncode::encode(element)
-                }
                 Self::GetRecordedCalls(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
                 Self::GetRecordedLogs(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
+                Self::GetRecordedStorageAccesses(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
                 Self::IsDir(element) => ::ethers_core::abi::AbiEncode::encode(element),
@@ -12124,13 +12128,13 @@ pub mod hevm {
                 Self::ReadLine(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::ReadLink(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::Record(element) => ::ethers_core::abi::AbiEncode::encode(element),
-                Self::RecordAccesses(element) => {
-                    ::ethers_core::abi::AbiEncode::encode(element)
-                }
                 Self::RecordCalls(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
                 Self::RecordLogs(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
+                Self::RecordStorageAccesses(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
                 Self::RememberKey(element) => {
@@ -12401,11 +12405,11 @@ pub mod hevm {
                 Self::GetMappingSlotAt(element) => ::core::fmt::Display::fmt(element, f),
                 Self::GetNonce0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::GetNonce1(element) => ::core::fmt::Display::fmt(element, f),
-                Self::GetRecordedAccesses(element) => {
-                    ::core::fmt::Display::fmt(element, f)
-                }
                 Self::GetRecordedCalls(element) => ::core::fmt::Display::fmt(element, f),
                 Self::GetRecordedLogs(element) => ::core::fmt::Display::fmt(element, f),
+                Self::GetRecordedStorageAccesses(element) => {
+                    ::core::fmt::Display::fmt(element, f)
+                }
                 Self::IsDir(element) => ::core::fmt::Display::fmt(element, f),
                 Self::IsFile(element) => ::core::fmt::Display::fmt(element, f),
                 Self::IsPersistent(element) => ::core::fmt::Display::fmt(element, f),
@@ -12470,9 +12474,11 @@ pub mod hevm {
                 Self::ReadLine(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ReadLink(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Record(element) => ::core::fmt::Display::fmt(element, f),
-                Self::RecordAccesses(element) => ::core::fmt::Display::fmt(element, f),
                 Self::RecordCalls(element) => ::core::fmt::Display::fmt(element, f),
                 Self::RecordLogs(element) => ::core::fmt::Display::fmt(element, f),
+                Self::RecordStorageAccesses(element) => {
+                    ::core::fmt::Display::fmt(element, f)
+                }
                 Self::RememberKey(element) => ::core::fmt::Display::fmt(element, f),
                 Self::RemoveDir(element) => ::core::fmt::Display::fmt(element, f),
                 Self::RemoveFile(element) => ::core::fmt::Display::fmt(element, f),
@@ -12996,11 +13002,6 @@ pub mod hevm {
             Self::GetNonce1(value)
         }
     }
-    impl ::core::convert::From<GetRecordedAccessesCall> for HEVMCalls {
-        fn from(value: GetRecordedAccessesCall) -> Self {
-            Self::GetRecordedAccesses(value)
-        }
-    }
     impl ::core::convert::From<GetRecordedCallsCall> for HEVMCalls {
         fn from(value: GetRecordedCallsCall) -> Self {
             Self::GetRecordedCalls(value)
@@ -13009,6 +13010,11 @@ pub mod hevm {
     impl ::core::convert::From<GetRecordedLogsCall> for HEVMCalls {
         fn from(value: GetRecordedLogsCall) -> Self {
             Self::GetRecordedLogs(value)
+        }
+    }
+    impl ::core::convert::From<GetRecordedStorageAccessesCall> for HEVMCalls {
+        fn from(value: GetRecordedStorageAccessesCall) -> Self {
+            Self::GetRecordedStorageAccesses(value)
         }
     }
     impl ::core::convert::From<IsDirCall> for HEVMCalls {
@@ -13271,11 +13277,6 @@ pub mod hevm {
             Self::Record(value)
         }
     }
-    impl ::core::convert::From<RecordAccessesCall> for HEVMCalls {
-        fn from(value: RecordAccessesCall) -> Self {
-            Self::RecordAccesses(value)
-        }
-    }
     impl ::core::convert::From<RecordCallsCall> for HEVMCalls {
         fn from(value: RecordCallsCall) -> Self {
             Self::RecordCalls(value)
@@ -13284,6 +13285,11 @@ pub mod hevm {
     impl ::core::convert::From<RecordLogsCall> for HEVMCalls {
         fn from(value: RecordLogsCall) -> Self {
             Self::RecordLogs(value)
+        }
+    }
+    impl ::core::convert::From<RecordStorageAccessesCall> for HEVMCalls {
+        fn from(value: RecordStorageAccessesCall) -> Self {
+            Self::RecordStorageAccesses(value)
         }
     }
     impl ::core::convert::From<RememberKeyCall> for HEVMCalls {
@@ -14264,22 +14270,6 @@ pub mod hevm {
         Hash
     )]
     pub struct GetNonce0Return(pub u64);
-    ///Container type for all return fields from the `getRecordedAccesses` function with signature `getRecordedAccesses()` and selector `0x9d83bebe`
-    #[derive(
-        Clone,
-        ::ethers_contract::EthAbiType,
-        ::ethers_contract::EthAbiCodec,
-        Default,
-        Debug,
-        PartialEq,
-        Eq,
-        Hash
-    )]
-    pub struct GetRecordedAccessesReturn(
-        pub ::std::vec::Vec<
-            (::ethers_core::types::Address, [u8; 32], bool, [u8; 32], [u8; 32]),
-        >,
-    );
     ///Container type for all return fields from the `getRecordedCalls` function with signature `getRecordedCalls()` and selector `0x4360b7ec`
     #[derive(
         Clone,
@@ -14314,6 +14304,22 @@ pub mod hevm {
     )]
     pub struct GetRecordedLogsReturn(
         pub ::std::vec::Vec<(::std::vec::Vec<[u8; 32]>, ::ethers_core::types::Bytes)>,
+    );
+    ///Container type for all return fields from the `getRecordedStorageAccesses` function with signature `getRecordedStorageAccesses()` and selector `0x03f1500a`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct GetRecordedStorageAccessesReturn(
+        pub ::std::vec::Vec<
+            (::ethers_core::types::Address, [u8; 32], bool, [u8; 32], [u8; 32]),
+        >,
     );
     ///Container type for all return fields from the `isDir` function with signature `isDir(string)` and selector `0x7d15d019`
     #[derive(
@@ -15071,23 +15077,6 @@ pub mod hevm {
     pub struct TryFfiReturn(
         pub (i32, ::ethers_core::types::Bytes, ::ethers_core::types::Bytes),
     );
-    ///`Call(address,bool,uint256,bytes)`
-    #[derive(
-        Clone,
-        ::ethers_contract::EthAbiType,
-        ::ethers_contract::EthAbiCodec,
-        Default,
-        Debug,
-        PartialEq,
-        Eq,
-        Hash
-    )]
-    pub struct Call {
-        pub account: ::ethers_core::types::Address,
-        pub initialized: bool,
-        pub value: ::ethers_core::types::U256,
-        pub data: ::ethers_core::types::Bytes,
-    }
     ///`DirEntry(string,string,uint64,bool,bool)`
     #[derive(
         Clone,
@@ -15177,6 +15166,23 @@ pub mod hevm {
     )]
     pub struct Log {
         pub topics: ::std::vec::Vec<[u8; 32]>,
+        pub data: ::ethers_core::types::Bytes,
+    }
+    ///`RecordedCall(address,bool,uint256,bytes)`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct RecordedCall {
+        pub account: ::ethers_core::types::Address,
+        pub initialized: bool,
+        pub value: ::ethers_core::types::U256,
         pub data: ::ethers_core::types::Bytes,
     }
     ///`Rpc(string,string)`
