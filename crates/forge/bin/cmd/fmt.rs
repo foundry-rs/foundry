@@ -99,7 +99,7 @@ impl FmtArgs {
                 Some(path) => {
                     path.strip_prefix(&config.__root.0).unwrap_or(path).display().to_string()
                 }
-                None => "stdin".to_string(),
+                None => "<stdin>".to_string(),
             };
 
             let parsed = parse(&source).map_err(|diagnostics| {
@@ -112,17 +112,18 @@ impl FmtArgs {
                     let mut lines = source[..loc.start().min(source.len())].split('\n');
                     let col = lines.next_back().unwrap().len() + 1;
                     let row = lines.count() + 1;
-                    sh_warn!("[{name}:{row}:{col}] {warning}")?;
+                    sh_warn!("[{name}:{row}:{col}]: {warning}")?;
                 }
             }
 
             let mut output = String::new();
             format(&mut output, parsed, config.fmt.clone()).unwrap();
 
-            solang_parser::parse(&output, 0).map_err(|diags| {
+            // validate
+            let _ = solang_parser::parse(&output, 0).map_err(|diags| {
+                tracing::debug!(?diags);
                 eyre::eyre!(
-                    "Failed to construct valid Solidity code for {name}. Leaving source unchanged.\n\
-                     Debug info: {diags:?}"
+                    "Failed to construct valid Solidity code for {name}. Leaving source unchanged."
                 )
             })?;
 
@@ -145,11 +146,12 @@ impl FmtArgs {
             Input::Stdin(source) => format(source, None).map(|diff| vec![diff]),
             Input::Paths(paths) => {
                 if paths.is_empty() {
-                    return sh_warn!(
-                        "Nothing to format.\n\
-                         HINT: If you are working outside of the project, \
-                         try providing paths to your source files: `forge fmt <paths>`"
-                    )
+                    sh_eprintln!("Nothing to format")?;
+                    sh_note!(
+                        "if you are working outside of the project, \
+                         try providing paths to your source files: `forge fmt <paths>...`"
+                    )?;
+                    return Ok(())
                 }
                 paths
                     .par_iter()

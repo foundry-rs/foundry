@@ -316,6 +316,7 @@ impl Test {
 }
 
 /// Represents the bundled results of all tests
+#[derive(Default)]
 pub struct TestOutcome {
     /// Whether failures are allowed
     pub allow_failure: bool,
@@ -500,29 +501,29 @@ async fn test(
     fail_fast: bool,
 ) -> Result<TestOutcome> {
     trace!(target: "forge::test", "running all tests");
+
     if runner.count_filtered_tests(&filter) == 0 {
         let filter_str = filter.to_string();
         if filter_str.is_empty() {
-            println!(
-                "\nNo tests found in project! Forge looks for functions that starts with `test`."
-            );
+            sh_eprintln!("No tests found in project.")?;
+            sh_note!("Forge looks for functions that start with `test`.")?;
         } else {
-            println!("\nNo tests match the provided pattern:");
-            println!("{filter_str}");
+            sh_eprintln!("No tests match the provided pattern:\n{filter_str}")?;
             // Try to suggest a test when there's no match
-            if let Some(ref test_pattern) = filter.args().test_pattern {
+            if let Some(test_pattern) = &filter.args().test_pattern {
                 let test_name = test_pattern.as_str();
                 let candidates = runner.get_tests(&filter);
-                if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
-                    println!("\nDid you mean `{suggestion}`?");
+                if let Some(suggestion) = utils::did_you_mean(test_name, candidates).last() {
+                    sh_note!("\nDid you mean `{suggestion}`?")?;
                 }
             }
         }
+        return Ok(Default::default())
     }
 
     if json {
         let results = runner.test(filter, None, test_options).await;
-        println!("{}", serde_json::to_string(&results)?);
+        foundry_common::Shell::get().print_json(&results)?;
         return Ok(TestOutcome::new(results, allow_failure))
     }
 
@@ -548,17 +549,19 @@ async fn test(
     let mut total_failed = 0;
     let mut total_skipped = 0;
 
+    let mut shell = foundry_common::Shell::get();
     'outer: for (contract_name, suite_result) in rx {
         results.insert(contract_name.clone(), suite_result.clone());
 
         let mut tests = suite_result.test_results.clone();
-        println!();
+        let _ = shell.print_out("\n");
         for warning in suite_result.warnings.iter() {
-            eprintln!("{} {warning}", Paint::yellow("Warning:").bold());
+            let _ = shell.warn(warning);
         }
         if !tests.is_empty() {
-            let term = if tests.len() > 1 { "tests" } else { "test" };
-            println!("Running {} {term} for {contract_name}", tests.len());
+            let n_tests = tests.len();
+            let term = if n_tests > 1 { "tests" } else { "test" };
+            let _ = shell.print_out(format!("Running {n_tests} {term} for {contract_name}"));
         }
         for (name, result) in &mut tests {
             short_test_result(name, result);
@@ -648,16 +651,18 @@ async fn test(
     }
 
     if gas_reporting {
-        println!("{}", gas_report.finalize());
+        let _ = shell.print_out(gas_report.finalize());
     }
 
     let num_test_suites = results.len();
 
     if num_test_suites > 0 {
-        println!(
-            "{}",
-            format_aggregated_summary(num_test_suites, total_passed, total_failed, total_skipped)
-        );
+        let _ = shell.print_out(format_aggregated_summary(
+            num_test_suites,
+            total_passed,
+            total_failed,
+            total_skipped,
+        ));
     }
 
     // reattach the thread

@@ -111,12 +111,14 @@ mod tests {
         sh_print!("print -").unwrap();
         sh_print!("print {} -", "arg").unwrap();
 
+        sh_println!().unwrap();
         sh_println!("println").unwrap();
         sh_println!("println {}", "arg").unwrap();
 
         sh_eprint!("eprint -").unwrap();
         sh_eprint!("eprint {} -", "arg").unwrap();
 
+        sh_eprintln!().unwrap();
         sh_eprintln!("eprintln").unwrap();
         sh_eprintln!("eprintln {}", "arg").unwrap();
     }

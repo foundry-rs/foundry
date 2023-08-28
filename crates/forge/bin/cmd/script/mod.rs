@@ -282,9 +282,7 @@ impl ScriptArgs {
                     );
                 }
             }
-            Err(_) => {
-                sh_eprintln!("{:x?}", (&returned))?;
-            }
+            Err(_) => sh_eprintln!("{returned:x?}")?,
         }
 
         Ok(returns)
@@ -308,7 +306,7 @@ impl ScriptArgs {
             for (kind, trace) in &mut result.traces {
                 let should_include = match kind {
                     TraceKind::Setup => verbosity >= 5,
-                    TraceKind::Execution => verbosity > 3,
+                    TraceKind::Execution => verbosity >= 4,
                     _ => false,
                 } || !result.success;
 
@@ -347,9 +345,7 @@ impl ScriptArgs {
                         )?;
                     }
                 }
-                Err(_) => {
-                    sh_eprintln!("{:x?}", (&result.returned))?;
-                }
+                Err(_) => sh_eprintln!("{:x?}", result.returned)?,
             }
         }
 
@@ -609,12 +605,7 @@ impl ScriptArgs {
 
                 if deployment_size > max_size {
                     prompt_user = self.broadcast;
-                    sh_eprintln!(
-                        "{}",
-                        Paint::red(format!(
-                            "`{name}` is above the contract size limit ({deployment_size} > {max_size})."
-                        ))
-                    )?;
+                    sh_warn!("`{name}` is above the contract size limit ({deployment_size} > {max_size})")?;
                 }
             }
         }
@@ -755,7 +746,7 @@ impl ScriptConfig {
                 .collect::<Vec<_>>()
                 .join(", ");
             sh_warn!(
-                "
+                "\
 EIP-3855 is not supported in one or more of the RPCs used.
 Unsupported Chain IDs: {ids}.
 Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.

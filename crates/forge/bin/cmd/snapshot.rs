@@ -330,8 +330,8 @@ fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>, tolerance: Option<u32>) ->
         {
             let source_gas = test.result.kind.report();
             if !within_tolerance(source_gas.gas(), target_gas.gas(), tolerance) {
-                eprintln!(
-                    "Diff in \"{}::{}\": consumed \"{}\" gas, expected \"{}\" gas ",
+                let _ = sh_eprintln!(
+                    "Diff in \"{}::{}\": consumed \"{}\" gas, expected \"{}\" gas",
                     test.contract_name(),
                     test.signature,
                     source_gas,
@@ -340,7 +340,7 @@ fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>, tolerance: Option<u32>) ->
                 has_diff = true;
             }
         } else {
-            eprintln!(
+            let _ = sh_eprintln!(
                 "No matching snapshot entry found for \"{}::{}\" in snapshot file",
                 test.contract_name(),
                 test.signature

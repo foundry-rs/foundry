@@ -174,8 +174,8 @@ impl ScriptSequence {
         //../run-[timestamp].json
         fs::copy(&self.sensitive_path, self.sensitive_path.with_file_name(&ts_name))?;
 
-        sh_eprintln!("\nTransactions saved to: {}\n", self.path.display())?;
-        sh_eprintln!("Sensitive values saved to: {}\n", self.sensitive_path.display())?;
+        sh_note!("Transactions saved to: {}", self.path.display())?;
+        sh_note!("Sensitive values saved to: {}", self.sensitive_path.display())?;
 
         Ok(())
     }

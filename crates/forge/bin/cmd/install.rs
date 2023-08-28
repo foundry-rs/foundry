@@ -15,7 +15,6 @@ use std::{
     str,
 };
 use tracing::{trace, warn};
-use yansi::Paint;
 
 static DEPENDENCY_VERSION_TAG_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^v?\d+(\.\d+)*$").unwrap());
@@ -126,12 +125,15 @@ impl DependencyInstallOpts {
             let rel_path = path
                 .strip_prefix(git.root)
                 .wrap_err("Library directory is not relative to the repository root")?;
-            sh_eprintln!(
-                "Installing {} in {} (url: {:?}, tag: {:?})",
-                dep.name,
-                path.display(),
-                dep.url,
-                dep.tag
+            foundry_common::Shell::get().status(
+                "Installing",
+                format!(
+                    "Installing {} in {} (url: {:?}, tag: {:?})",
+                    dep.name,
+                    path.display(),
+                    dep.url,
+                    dep.tag
+                ),
             )?;
 
             // this tracks the actual installed tag
@@ -174,14 +176,14 @@ impl DependencyInstallOpts {
                 }
             }
 
-            // TODO: make this a shell note
-            if !foundry_common::Shell::get().verbosity().is_quiet() {
-                let mut msg = format!("    {} {}", Paint::green("Installed"), dep.name);
+            let mut shell = foundry_common::Shell::get();
+            if !shell.verbosity().is_quiet() {
+                let mut msg = dep.name;
                 if let Some(tag) = dep.tag.or(installed_tag) {
                     msg.push(' ');
-                    msg.push_str(tag.as_str());
+                    msg.push_str(&tag);
                 }
-                sh_eprintln!("{msg}")?;
+                shell.status("Installed", msg)?;
             }
         }
 

@@ -6,7 +6,6 @@ use foundry_config::{impl_figment_convert_basic, Config};
 use itertools::Itertools;
 use rayon::prelude::*;
 use std::path::PathBuf;
-use yansi::Paint;
 
 mod error;
 
@@ -91,7 +90,7 @@ impl GeigerArgs {
         let sources = self.sources(&config).wrap_err("Failed to resolve files")?;
 
         if config.ffi {
-            eprintln!("{}\n", Paint::red("ffi enabled"));
+            sh_note!("Enabled FFI.")?;
         }
 
         let root = config.__root.0;
@@ -108,7 +107,7 @@ impl GeigerArgs {
                     len
                 }
                 Err(err) => {
-                    eprintln!("{err}");
+                    let _ = sh_err!("{err}");
                     0
                 }
             })

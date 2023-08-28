@@ -434,7 +434,7 @@ impl Shell {
     }
 
     /// Serializes an object to JSON and prints it to `stdout`.
-    pub fn print_json<T: serde::ser::Serialize>(&mut self, obj: &T) -> Result<()> {
+    pub fn print_json<T: serde::Serialize>(&mut self, obj: &T) -> Result<()> {
         // Path may fail to serialize to JSON ...
         let encoded = serde_json::to_string(&obj)?;
         // ... but don't fail due to a closed pipe.

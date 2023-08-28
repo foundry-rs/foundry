@@ -70,17 +70,19 @@ impl MultiContractRunner {
             .count()
     }
 
-    // Get all tests of matching path and contract
-    pub fn get_tests(&self, filter: &impl TestFilter) -> Vec<String> {
+    // Returns an iterator over all test function signatures that match the given `filter`.
+    pub fn get_tests<'a>(
+        &'a self,
+        filter: &'a impl TestFilter,
+    ) -> impl Iterator<Item = &'a str> + 'a {
         self.contracts
             .iter()
             .filter(|(id, _)| {
                 filter.matches_path(id.source.to_string_lossy()) &&
                     filter.matches_contract(&id.name)
             })
-            .flat_map(|(_, (abi, _, _))| abi.functions().map(|func| func.name.clone()))
+            .flat_map(|(_, (abi, _, _))| abi.functions().map(|func| &func.name[..]))
             .filter(|sig| sig.is_test())
-            .collect()
     }
 
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
