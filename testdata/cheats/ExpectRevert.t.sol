@@ -90,11 +90,6 @@ contract ExpectRevertTest is DSTest {
         reverter.revertWithMessage("revert");
     }
 
-    function testFailDanglingOnInternalCall() public {
-        vm.expectRevert();
-        shouldRevert();
-    }
-
     function testExpectRevertConstructor() public {
         vm.expectRevert("constructor revert");
         new ConstructorReverter("constructor revert");

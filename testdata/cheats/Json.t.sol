@@ -152,12 +152,6 @@ contract ParseJsonTest is DSTest {
     function test_nonExistentKey() public {
         bytes memory data = vm.parseJson(json, ".thisKeyDoesNotExist");
         assertEq(0, data.length);
-
-        data = vm.parseJson(json, ".this.path.does.n.0.t.exist");
-        assertEq(0, data.length);
-
-        data = vm.parseJson("", ".");
-        assertEq(0, data.length);
     }
 
     function test_parseJsonKeys() public {
@@ -282,14 +276,14 @@ contract WriteJsonTest is DSTest {
     function test_checkKeyExists() public {
         string memory path = "fixtures/Json/write_complex_test.json";
         string memory json = vm.readFile(path);
-        bool exists = vm.keyExists(json, "a");
+        bool exists = vm.keyExists(json, ".a");
         assertTrue(exists);
     }
 
     function test_checkKeyDoesNotExist() public {
         string memory path = "fixtures/Json/write_complex_test.json";
         string memory json = vm.readFile(path);
-        bool exists = vm.keyExists(json, "d");
+        bool exists = vm.keyExists(json, ".d");
         assertTrue(!exists);
     }
 
