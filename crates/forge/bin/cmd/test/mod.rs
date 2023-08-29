@@ -414,7 +414,7 @@ impl TestOutcome {
             result,
             Paint::green(self.successes().count()),
             Paint::red(failed),
-            Paint::blue(self.skips().count()),
+            Paint::yellow(self.skips().count()),
             self.duration()
         )
     }
@@ -469,7 +469,7 @@ fn format_aggregated_summary(
         num_test_suites,
         Paint::green(total_passed),
         Paint::red(total_failed),
-        Paint::blue(total_skipped),
+        Paint::yellow(total_skipped),
         total_tests
     )
 }
