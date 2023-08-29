@@ -167,8 +167,10 @@ impl ScriptArgs {
                     }
                 }
 
-                let tc: ContractBytecode = contract.into();
-                highlevel_known_contracts.insert(id, tc.unwrap());
+                if let Ok(tc) = ContractBytecode::from(contract).try_into() {
+                    highlevel_known_contracts.insert(id, tc);
+                }
+
                 Ok(())
             },
             project.root(),

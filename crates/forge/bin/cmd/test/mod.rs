@@ -385,13 +385,13 @@ impl TestOutcome {
             }
             sh_println!()?;
         }
-
         let successes = self.successes().count();
         sh_println!(
             "Encountered a total of {} failing tests, {} tests succeeded",
             Paint::red(failures.to_string()),
             Paint::green(successes.to_string())
         )?;
+
         std::process::exit(1);
     }
 
@@ -407,9 +407,9 @@ impl TestOutcome {
         format!(
             "Test result: {}. {} passed; {} failed; {} skipped; finished in {:.2?}",
             result,
-            self.successes().count(),
-            failed,
-            self.skips().count(),
+            Paint::green(self.successes().count()),
+            Paint::red(failed),
+            Paint::yellow(self.skips().count()),
             self.duration()
         )
     }
@@ -460,8 +460,12 @@ fn format_aggregated_summary(
 ) -> String {
     let total_tests = total_passed + total_failed + total_skipped;
     format!(
-        "Ran {} test suites: {} tests passed, {} failed, {} skipped ({} total tests)",
-        num_test_suites, total_passed, total_failed, total_skipped, total_tests
+        " \nRan {} test suites: {} tests passed, {} failed, {} skipped ({} total tests)",
+        num_test_suites,
+        Paint::green(total_passed),
+        Paint::red(total_failed),
+        Paint::yellow(total_skipped),
+        total_tests
     )
 }
 

@@ -25,6 +25,10 @@ use foundry_config::{
 use rustyline::{config::Configurer, error::ReadlineError, Editor};
 use yansi::Paint;
 
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(ChiselParser, opts, evm_opts);
 

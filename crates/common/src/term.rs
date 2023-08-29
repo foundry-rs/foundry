@@ -99,9 +99,6 @@ pub struct SpinnerReporter {
     solc_io_report: SolcCompilerIoReporter,
 }
 
-// `mpsc::Sender: Sync` was stabilized in 1.72 https://github.com/rust-lang/rust/pull/111087
-unsafe impl Sync for SpinnerReporter {}
-
 impl SpinnerReporter {
     /// Spawns the [`Spinner`] on a new thread
     ///
