@@ -124,9 +124,8 @@ pub fn needs_setup(abi: &Abi) -> bool {
 
     for setup_fn in setup_fns.iter() {
         if setup_fn.name != "setUp" {
-            println!(
-                "{} Found invalid setup function \"{}\" did you mean \"setUp()\"?",
-                Paint::yellow("Warning:").bold(),
+            let _ = sh_warn!(
+                "Found invalid setup function \"{}\" did you mean \"setUp()\"?",
                 setup_fn.signature()
             );
         }
@@ -415,25 +414,24 @@ pub async fn print_traces(
         panic!("No traces found")
     }
 
-    println!("Traces:");
+    sh_println!("Traces:")?;
     for (_, trace) in &mut result.traces {
         decoder.decode(trace).await;
-        if !verbose {
-            println!("{trace}");
+        if verbose {
+            sh_println!("{trace:#}")?;
         } else {
-            println!("{trace:#}");
+            sh_println!("{trace}")?;
         }
     }
-    println!();
+    sh_println!()?;
 
     if result.success {
-        println!("{}", Paint::green("Transaction successfully executed."));
+        sh_println!("{}", Paint::green("Transaction successfully executed."))?;
     } else {
-        println!("{}", Paint::red("Transaction failed."));
+        sh_println!("{}", Paint::red("Transaction failed."))?;
     }
 
-    println!("Gas used: {}", result.gas_used);
-    Ok(())
+    sh_println!("Gas used: {}", result.gas_used)
 }
 
 pub fn run_debugger(

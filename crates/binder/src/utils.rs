@@ -396,13 +396,12 @@ impl Retry {
 
     pub fn r#try<T>(&mut self, f: impl FnOnce() -> eyre::Result<T>) -> eyre::Result<Option<T>> {
         match f() {
-            Err(ref e) if maybe_spurious(e) && self.remaining > 0 => {
-                let msg = format!(
+            Err(e) if maybe_spurious(&e) && self.remaining > 0 => {
+                println!(
                     "spurious network error ({} tries remaining): {}",
                     self.remaining,
                     e.root_cause(),
                 );
-                println!("{msg}");
                 self.remaining -= 1;
                 Ok(None)
             }

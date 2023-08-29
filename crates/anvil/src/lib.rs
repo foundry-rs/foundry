@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_macros)]
+
 use crate::{
     eth::{
         backend::{info::StorageInfo, mem},

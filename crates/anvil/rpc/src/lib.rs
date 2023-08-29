@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_macros)]
+
 /// JSON-RPC request bindings
 pub mod request;
 

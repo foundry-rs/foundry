@@ -72,17 +72,13 @@ impl EtherscanIdentifier {
             // filter out vyper files
             .filter(|(_, metadata)| !metadata.is_vyper());
 
-        let outputs_fut = contracts_iter
-            .clone()
-            .map(|(address, metadata)| {
-                println!("Compiling: {} {address:?}", metadata.contract_name);
-                let err_msg = format!(
-                    "Failed to compile contract {} from {address:?}",
-                    metadata.contract_name
-                );
-                compile::compile_from_source(metadata).map_err(move |err| err.wrap_err(err_msg))
+        let outputs_fut = contracts_iter.clone().map(|(address, metadata)| {
+            let name = &metadata.contract_name;
+            let _ = sh_status!("Compiling" => "{name} ({address:?})");
+            compile::compile_from_source(metadata).map_err(move |e| {
+                e.wrap_err(format!("Failed to compile contract {name} from {address:?}"))
             })
-            .collect::<Vec<_>>();
+        });
 
         // poll all the futures concurrently
         let artifacts = join_all(outputs_fut).await;

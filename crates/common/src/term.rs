@@ -1,4 +1,8 @@
-//! terminal utils
+//! Terminal utils.
+
+// TODO
+#![allow(clippy::disallowed_macros)]
+
 use ethers_solc::{
     remappings::Remapping,
     report::{self, BasicStdoutReporter, Reporter, SolcCompilerIoReporter},

@@ -1,3 +1,6 @@
+// TODO
+#![allow(clippy::disallowed_macros)]
+
 use cast::{Cast, SimpleCast};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;

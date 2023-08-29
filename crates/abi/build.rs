@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_macros)]
+
 use ethers_contract_abigen::MultiAbigen;
 
 /// Includes a JSON ABI as a string literal.

@@ -1,6 +1,8 @@
 #![warn(unused_crate_dependencies)]
 
 #[macro_use]
+extern crate foundry_common;
+#[macro_use]
 extern crate tracing;
 
 /// Decoding helpers

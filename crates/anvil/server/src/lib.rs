@@ -1,5 +1,6 @@
 //! Bootstrap [axum] RPC servers
 
+#![allow(clippy::disallowed_macros)]
 #![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
 use anvil_rpc::{

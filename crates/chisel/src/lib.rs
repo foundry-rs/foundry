@@ -1,8 +1,6 @@
 #![doc = include_str!("../README.md")]
-#![warn(missing_docs)]
-#![warn(unused_extern_crates)]
-#![forbid(unsafe_code)]
-#![forbid(where_clauses_object_safety)]
+#![allow(clippy::disallowed_macros)]
+#![warn(missing_docs, unused_extern_crates)]
 
 /// REPL input dispatcher module
 pub mod dispatcher;

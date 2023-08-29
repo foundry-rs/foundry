@@ -3,6 +3,8 @@
 //! This module contains the core readline loop for the Chisel CLI as well as the
 //! executable's `main` function.
 
+#![allow(clippy::disallowed_macros)]
+
 use chisel::{
     history::chisel_history_file,
     prelude::{ChiselCommand, ChiselDispatcher, DispatchResult, SolidityHelper},

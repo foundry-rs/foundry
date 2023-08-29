@@ -1,6 +1,7 @@
-#![allow(missing_docs)]
 //! Support for handling/identifying selectors
-use crate::{abi::abi_decode, sh_eprintln, sh_status};
+#![allow(missing_docs)]
+
+use crate::abi::abi_decode;
 use ethers_solc::artifacts::LosslessAbi;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -240,13 +241,14 @@ impl SignEthClient {
 
     /// Pretty print calldata and if available, fetch possible function signatures
     ///
-    /// ```no_run
-    /// 
+    /// ```
     /// use foundry_common::selectors::SignEthClient;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    ///   let pretty_data = SignEthClient::new()?.pretty_calldata("0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5".to_string(), false).await?;
-    ///   println!("{}",pretty_data);
+    /// SignEthClient::new()?.pretty_calldata(
+    ///     "0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5",
+    ///     false,
+    /// ).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -387,13 +389,14 @@ pub async fn decode_event_topic(topic: &str) -> eyre::Result<Vec<String>> {
 
 /// Pretty print calldata and if available, fetch possible function signatures
 ///
-/// ```no_run
-/// 
+/// ```
 /// use foundry_common::selectors::pretty_calldata;
 ///
 /// # async fn foo() -> eyre::Result<()> {
-///   let pretty_data = pretty_calldata("0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5".to_string(), false).await?;
-///   println!("{}",pretty_data);
+/// pretty_calldata(
+///     "0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5",
+///     false,
+/// ).await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -579,7 +582,6 @@ mod tests {
 
         let abi: LosslessAbi = serde_json::from_str(r#"[{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function", "methodIdentifiers": {"transfer(address,uint256)(uint256)": "0xa9059cbb"}}]"#).unwrap();
         let result = import_selectors(SelectorImportData::Abi(vec![abi])).await;
-        println!("{:?}", result);
         assert_eq!(
             result.unwrap().result.function.duplicated.get("transfer(address,uint256)").unwrap(),
             "0xa9059cbb"

@@ -2,6 +2,9 @@
 
 #![warn(missing_docs, unused_crate_dependencies)]
 
+#[macro_use]
+pub mod io;
+
 pub mod abi;
 pub mod calc;
 pub mod compile;
@@ -12,7 +15,6 @@ pub mod evm;
 pub mod fmt;
 pub mod fs;
 pub mod glob;
-pub mod io;
 pub mod provider;
 pub mod selectors;
 pub mod term;

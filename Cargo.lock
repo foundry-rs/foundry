@@ -2361,6 +2361,7 @@ dependencies = [
  "ethers-solc",
  "eyre",
  "forge-fmt",
+ "foundry-common",
  "foundry-config",
  "foundry-utils",
  "futures-util",

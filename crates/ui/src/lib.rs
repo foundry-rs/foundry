@@ -29,11 +29,14 @@ use revm::{interpreter::opcode, primitives::SpecId};
 use std::{
     cmp::{max, min},
     collections::{BTreeMap, HashMap, VecDeque},
-    io,
+    io, panic,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
+
+#[macro_use]
+extern crate foundry_common;
 
 /// Trait for starting the UI
 pub trait Ui {
@@ -987,12 +990,8 @@ impl Ui for Tui {
     fn start(mut self) -> Result<TUIExitReason> {
         // If something panics inside here, we should do everything we can to
         // not corrupt the user's terminal.
-        std::panic::set_hook(Box::new(|e| {
-            disable_raw_mode().expect("Unable to disable raw mode");
-            execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)
-                .expect("unable to execute disable mouse capture");
-            println!("{e}");
-        }));
+        let _hook = PanicHook::new();
+
         // This is the recommend tick rate from tui-rs, based on their examples
         let tick_rate = Duration::from_millis(200);
 
@@ -1303,6 +1302,30 @@ impl Ui for Tui {
                     show_shortcuts,
                 )
             })?;
+        }
+    }
+}
+
+struct PanicHook {
+    previous: Option<Box<dyn Fn(&panic::PanicInfo<'_>) + 'static + Sync + Send>>,
+}
+
+impl PanicHook {
+    fn new() -> Self {
+        let previous = panic::take_hook();
+        panic::set_hook(Box::new(|e| {
+            let _ = disable_raw_mode();
+            let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+            let _ = sh_println!("{e}");
+        }));
+        Self { previous: Some(previous) }
+    }
+}
+
+impl Drop for PanicHook {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            panic::set_hook(previous);
         }
     }
 }

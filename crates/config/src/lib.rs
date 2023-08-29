@@ -1,5 +1,6 @@
 //! Foundry configuration.
 
+#![allow(clippy::disallowed_macros)]
 #![warn(missing_docs, unused_crate_dependencies)]
 
 use crate::cache::StorageCachingConfig;

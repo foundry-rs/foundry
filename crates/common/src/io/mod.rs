@@ -1,5 +1,6 @@
 //! Utilities for working with standard input, output, and error.
 
+#[macro_use]
 mod macros;
 
 pub mod shell;

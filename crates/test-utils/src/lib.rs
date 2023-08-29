@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_macros)]
 #![warn(unused_crate_dependencies)]
 
 // Macros useful for testing.
