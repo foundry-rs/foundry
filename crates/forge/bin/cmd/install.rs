@@ -125,16 +125,7 @@ impl DependencyInstallOpts {
             let rel_path = path
                 .strip_prefix(git.root)
                 .wrap_err("Library directory is not relative to the repository root")?;
-            foundry_common::Shell::get().status(
-                "Installing",
-                format!(
-                    "Installing {} in {} (url: {:?}, tag: {:?})",
-                    dep.name,
-                    path.display(),
-                    dep.url,
-                    dep.tag
-                ),
-            )?;
+            sh_status!("Installing" => "{dep} ({})", path.display())?;
 
             // this tracks the actual installed tag
             let installed_tag;
@@ -176,15 +167,7 @@ impl DependencyInstallOpts {
                 }
             }
 
-            let mut shell = foundry_common::Shell::get();
-            if !shell.verbosity().is_quiet() {
-                let mut msg = dep.name;
-                if let Some(tag) = dep.tag.or(installed_tag) {
-                    msg.push(' ');
-                    msg.push_str(&tag);
-                }
-                shell.status("Installed", msg)?;
-            }
+            let _ = installed_tag;
         }
 
         // update `libs` in config if not included yet
@@ -383,9 +366,9 @@ impl Installer<'_> {
 
         // multiple candidates, ask the user to choose one or skip
         candidates.insert(0, String::from("SKIP AND USE ORIGINAL TAG"));
-        println!("There are multiple matching tags:");
+        sh_println!("There are multiple matching tags:")?;
         for (i, candidate) in candidates.iter().enumerate() {
-            println!("[{i}] {candidate}");
+            sh_println!("[{i}] {candidate}")?;
         }
 
         let n_candidates = candidates.len();
@@ -400,7 +383,7 @@ impl Installer<'_> {
                 Ok(0) => return Ok(tag.into()),
                 Ok(i) if (1..=n_candidates).contains(&i) => {
                     let c = &candidates[i];
-                    println!("[{i}] {c} selected");
+                    sh_println!("[{i}] {c} selected")?;
                     return Ok(c.clone())
                 }
                 _ => continue,
@@ -445,9 +428,9 @@ impl Installer<'_> {
 
         // multiple candidates, ask the user to choose one or skip
         candidates.insert(0, format!("{tag} (original branch)"));
-        println!("There are multiple matching branches:");
+        sh_println!("There are multiple matching branches:")?;
         for (i, candidate) in candidates.iter().enumerate() {
-            println!("[{i}] {candidate}");
+            sh_println!("[{i}] {candidate}")?;
         }
 
         let n_candidates = candidates.len();
@@ -459,7 +442,7 @@ impl Installer<'_> {
 
         // default selection, return None
         if input.is_empty() {
-            println!("Canceled branch matching");
+            sh_println!("Canceled branch matching")?;
             return Ok(None)
         }
 
@@ -468,7 +451,7 @@ impl Installer<'_> {
             Ok(0) => Ok(Some(tag.into())),
             Ok(i) if (1..=n_candidates).contains(&i) => {
                 let c = &candidates[i];
-                println!("[{i}] {c} selected");
+                sh_println!("[{i}] {c} selected")?;
                 Ok(Some(c.clone()))
             }
             _ => Ok(None),

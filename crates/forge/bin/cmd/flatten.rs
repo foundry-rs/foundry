@@ -55,19 +55,16 @@ impl FlattenArgs {
 
         let paths = config.project_paths();
         let target_path = dunce::canonicalize(target_path)?;
-        let flattened = paths
-            .flatten(&target_path)
-            .map_err(|err| eyre::Error::msg(format!("Failed to flatten the file: {err}")))?;
+        let flattened =
+            paths.flatten(&target_path).map_err(|err| eyre::eyre!("Failed to flatten: {err}"))?;
 
         match output {
             Some(output) => {
                 fs::create_dir_all(output.parent().unwrap())?;
                 fs::write(&output, flattened)?;
-                println!("Flattened file written at {}", output.display());
+                sh_note!("Wrote flattened file to {}", output.display())
             }
-            None => println!("{flattened}"),
-        };
-
-        Ok(())
+            None => sh_println!("{flattened}"),
+        }
     }
 }

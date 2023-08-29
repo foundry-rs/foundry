@@ -39,12 +39,13 @@ async fn main() {
 
 async fn run() -> Result<()> {
     utils::load_dotenv();
-    handler::install()?;
+    handler::install();
     utils::subscriber();
     utils::enable_paint();
 
     let opts = Opts::parse();
-    opts.shell.set_global_shell();
+    // SAFETY: See [foundry_common::Shell::set].
+    unsafe { opts.shell.shell().set() };
     match opts.sub {
         // Constants
         Subcommands::MaxInt { r#type } => {
@@ -396,10 +397,10 @@ async fn run() -> Result<()> {
             let signatures = stdin::unwrap_vec(signatures)?;
             let ParsedSignatures { signatures, abis } = parse_signatures(signatures);
             if !abis.is_empty() {
-                import_selectors(SelectorImportData::Abi(abis)).await?.describe();
+                import_selectors(SelectorImportData::Abi(abis)).await?.describe()?;
             }
             if !signatures.is_empty() {
-                import_selectors(SelectorImportData::Raw(signatures)).await?.describe();
+                import_selectors(SelectorImportData::Raw(signatures)).await?.describe()?;
             }
         }
 

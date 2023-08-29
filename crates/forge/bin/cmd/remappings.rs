@@ -1,5 +1,4 @@
 use clap::{Parser, ValueHint};
-use ethers::solc::remappings::RelativeRemapping;
 use eyre::Result;
 use foundry_cli::utils::LoadConfig;
 use foundry_config::impl_figment_convert_basic;
@@ -22,34 +21,30 @@ pub struct RemappingArgs {
 impl_figment_convert_basic!(RemappingArgs);
 
 impl RemappingArgs {
-    // TODO: Do people use `forge remappings >> file`?
     pub fn run(self) -> Result<()> {
         let config = self.try_load_config_emit_warnings()?;
 
         if self.pretty {
-            let groups = config.remappings.into_iter().fold(
-                HashMap::new(),
-                |mut groups: HashMap<Option<String>, Vec<RelativeRemapping>>, remapping| {
-                    groups.entry(remapping.context.clone()).or_default().push(remapping);
-                    groups
-                },
-            );
-            for (group, remappings) in groups.into_iter() {
+            let mut groups = HashMap::<_, Vec<_>>::with_capacity(config.remappings.len());
+            for remapping in config.remappings {
+                groups.entry(remapping.context.clone()).or_default().push(remapping);
+            }
+            for (group, remappings) in groups {
                 if let Some(group) = group {
-                    println!("Context: {group}");
+                    sh_println!("Context: {group}")?;
                 } else {
-                    println!("Global:");
+                    sh_println!("Global:")?;
                 }
 
                 for mut remapping in remappings.into_iter() {
                     remapping.context = None; // avoid writing context twice
-                    println!("- {remapping}");
+                    sh_println!("- {remapping}")?;
                 }
-                println!();
+                sh_println!()?;
             }
         } else {
             for remapping in config.remappings.into_iter() {
-                println!("{remapping}");
+                sh_println!("{remapping}")?;
             }
         }
 

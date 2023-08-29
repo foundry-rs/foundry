@@ -147,7 +147,7 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
     /// Check that the existing bindings match the expected abigen output
     fn check_existing_bindings(&self, artifacts: impl AsRef<Path>) -> Result<()> {
         let bindings = self.get_multi(&artifacts)?.build()?;
-        println!("Checking bindings for {} contracts.", bindings.len());
+        sh_eprintln!("Checking bindings for {} contracts.", bindings.len())?;
         if !self.module {
             bindings.ensure_consistent_crate(
                 &self.crate_name,
@@ -159,25 +159,23 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
         } else {
             bindings.ensure_consistent_module(self.bindings_root(&artifacts), self.single_file)?;
         }
-        println!("OK.");
-        Ok(())
+        sh_eprintln!("OK.")
     }
 
     /// Generate the bindings
     fn generate_bindings(&self, artifacts: impl AsRef<Path>) -> Result<()> {
         let bindings = self.get_multi(&artifacts)?.build()?;
-        println!("Generating bindings for {} contracts", bindings.len());
+        sh_println!("Generating bindings for {} contracts", bindings.len())?;
         if !self.module {
             bindings.write_to_crate(
                 &self.crate_name,
                 &self.crate_version,
                 self.bindings_root(&artifacts),
                 self.single_file,
-            )?;
+            )
         } else {
-            bindings.write_to_module(self.bindings_root(&artifacts), self.single_file)?;
+            bindings.write_to_module(self.bindings_root(&artifacts), self.single_file)
         }
-        Ok(())
     }
 
     pub fn run(self) -> Result<()> {
@@ -190,7 +188,7 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
         let artifacts = self.try_load_config_emit_warnings()?.out;
 
         if !self.overwrite && self.bindings_exist(&artifacts) {
-            println!("Bindings found. Checking for consistency.");
+            sh_eprintln!("Bindings found. Checking for consistency.")?;
             return self.check_existing_bindings(&artifacts)
         }
 
@@ -200,10 +198,6 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
 
         self.generate_bindings(&artifacts)?;
 
-        println!(
-            "Bindings have been output to {}",
-            self.bindings_root(&artifacts).to_str().unwrap()
-        );
-        Ok(())
+        sh_eprintln!("Bindings have been written to {}", self.bindings_root(&artifacts).display())
     }
 }

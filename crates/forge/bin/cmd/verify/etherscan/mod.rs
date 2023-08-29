@@ -11,7 +11,7 @@ use ethers::{
     solc::{artifacts::CompactContract, cache::CacheEntry, Project, Solc},
     utils::to_checksum,
 };
-use eyre::{eyre, Context, Result};
+use eyre::{bail, eyre, Context, Result};
 use foundry_cli::utils::{get_cached_entry_by_name, read_constructor_args_file, LoadConfig};
 use foundry_common::abi::encode_args;
 use foundry_config::{Chain, Config, SolcReq};
@@ -63,49 +63,50 @@ impl VerificationProvider for EtherscanVerificationProvider {
         let (etherscan, verify_args) = self.prepare_request(&args).await?;
 
         if self.is_contract_verified(&etherscan, &verify_args).await? {
-            println!(
+            return sh_println!(
                 "\nContract [{}] {:?} is already verified. Skipping verification.",
                 verify_args.contract_name,
                 to_checksum(&verify_args.address, None)
-            );
-
-            return Ok(())
+            )
         }
 
-        trace!(target : "forge::verify", ?verify_args,  "submitting verification request");
+        trace!(target: "forge::verify", ?verify_args,  "submitting verification request");
 
         let retry: Retry = args.retry.into();
         let resp = retry.run_async(|| {
             async {
-                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, to_checksum(&verify_args.address, None));
+                sh_println!(
+                    "\nSubmitting verification for [{}] {:?}.",
+                    verify_args.contract_name,
+                    to_checksum(&verify_args.address, None)
+                )?;
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await
                     .wrap_err_with(|| {
                         // valid json
                         let args = serde_json::to_string(&verify_args).unwrap();
-                        error!(target : "forge::verify",  ?args, "Failed to submit verification");
+                        error!(target: "forge::verify",  ?args, "Failed to submit verification");
                         format!("Failed to submit contract verification, payload:\n{args}")
                     })?;
 
-                trace!(target : "forge::verify",  ?resp, "Received verification response");
+                trace!(target: "forge::verify",  ?resp, "Received verification response");
 
                 if resp.status == "0" {
+                    tracing::debug!("{resp:?}");
+
                     if resp.result == "Contract source code already verified" {
                         return Ok(None)
                     }
 
                     if resp.result.starts_with("Unable to locate ContractCode at") {
-                        warn!("{}", resp.result);
-                        return Err(eyre!("Etherscan could not detect the deployment."))
+                        bail!("Etherscan could not detect the deployment.")
                     }
 
-                    warn!("Failed verify submission: {:?}", resp);
-                    eprintln!(
+                    bail!(
                         "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
                         resp.message, resp.result
                     );
-                    std::process::exit(1);
                 }
 
                 Ok(Some(resp))
@@ -114,13 +115,12 @@ impl VerificationProvider for EtherscanVerificationProvider {
         }).await?;
 
         if let Some(resp) = resp {
-            println!(
-                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL:
-        {}",
+            sh_println!(
+                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
                 resp.message,
                 resp.result,
                 etherscan.address_url(args.address)
-            );
+            )?;
 
             if args.watch {
                 let check_args = VerifyCheckArgs {
@@ -133,7 +133,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 return self.check(check_args).await
             }
         } else {
-            println!("Contract source code already verified");
+            sh_println!("Contract source code already verified")?;
         }
 
         Ok(())
@@ -157,33 +157,32 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         .await
                         .wrap_err("Failed to request verification status")?;
 
-                    trace!(target : "forge::verify",  ?resp, "Received verification response");
+                    trace!(target: "forge::verify",  ?resp, "Received verification response");
 
-                    eprintln!(
+                    sh_println!(
                         "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
-                        resp.message, resp.result
-                    );
+                        resp.message,
+                        resp.result
+                    )?;
+
+                    if resp.status == "0" {
+                        bail!("Contract failed to verify.")
+                    }
 
                     if resp.result == "Pending in queue" {
-                        return Err(eyre!("Verification is still pending...",))
+                        bail!("Verification is still pending...")
                     }
 
                     if resp.result == "Unable to verify" {
-                        return Err(eyre!("Unable to verify.",))
+                        bail!("Unable to verify.")
                     }
 
                     if resp.result == "Already Verified" {
-                        println!("Contract source code already verified");
-                        return Ok(())
-                    }
-
-                    if resp.status == "0" {
-                        println!("Contract failed to verify.");
-                        std::process::exit(1);
+                        return sh_println!("Contract source code already verified")
                     }
 
                     if resp.result == "Pass - Verified" {
-                        println!("Contract successfully verified");
+                        return sh_println!("Contract successfully verified")
                     }
 
                     Ok(())

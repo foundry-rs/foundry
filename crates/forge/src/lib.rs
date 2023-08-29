@@ -8,6 +8,8 @@ use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use std::path::Path;
 
 #[macro_use]
+extern crate foundry_common;
+#[macro_use]
 extern crate tracing;
 
 /// Gas reports

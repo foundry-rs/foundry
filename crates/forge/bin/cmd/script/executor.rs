@@ -108,8 +108,8 @@ impl ScriptArgs {
         );
 
         if script_config.evm_opts.verbosity > 3 {
-            println!("==========================");
-            println!("Simulated On-chain Traces:\n");
+            sh_println!("==========================")?;
+            sh_println!("Simulated On-chain Traces:\n")?;
         }
 
         let address_to_abi: BTreeMap<Address, ArtifactInfo> = decoder
@@ -188,7 +188,7 @@ impl ScriptArgs {
                         tx.gas =
                             Some(U256::from(result.gas_used * self.gas_estimate_multiplier / 100));
                     } else {
-                        println!("Gas limit was set in script to {:}", tx.gas.unwrap());
+                        sh_println!("Gas limit was set in script to {:}", tx.gas.unwrap())?;
                     }
 
                     let tx = TransactionWithMetadata::new(
@@ -226,7 +226,7 @@ impl ScriptArgs {
 
                 for (_kind, trace) in &mut traces {
                     decoder.decode(trace).await;
-                    println!("{trace}");
+                    sh_println!("{trace}")?;
                 }
             }
 

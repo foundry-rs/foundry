@@ -102,9 +102,7 @@ impl MultiChainSequence {
         fs::create_dir_all(file.parent().unwrap())?;
         fs::copy(&self.path, &file)?;
 
-        println!("\nTransactions saved to: {}\n", self.path.display());
-
-        Ok(())
+        sh_println!("\nTransactions saved to: {}\n", self.path.display())
     }
 }
 

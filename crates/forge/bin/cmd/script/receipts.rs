@@ -38,7 +38,7 @@ pub async fn wait_for_pending(
     if deployment_sequence.pending.is_empty() {
         return Ok(())
     }
-    println!("##\nChecking previously pending transactions.");
+    sh_println!("##\nChecking previously pending transactions.")?;
     clear_pendings(provider, deployment_sequence, None).await
 }
 

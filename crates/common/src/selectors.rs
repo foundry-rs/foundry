@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 //! Support for handling/identifying selectors
-use crate::abi::abi_decode;
+use crate::{abi::abi_decode, sh_eprintln, sh_status};
 use ethers_solc::artifacts::LosslessAbi;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -450,25 +450,21 @@ pub struct SelectorImportResponse {
 
 impl SelectorImportResponse {
     /// Print info about the functions which were uploaded or already known
-    pub fn describe(&self) {
-        self.result
-            .function
-            .imported
-            .iter()
-            .for_each(|(k, v)| println!("Imported: Function {k}: {v}"));
-        self.result.event.imported.iter().for_each(|(k, v)| println!("Imported: Event {k}: {v}"));
-        self.result
-            .function
-            .duplicated
-            .iter()
-            .for_each(|(k, v)| println!("Duplicated: Function {k}: {v}"));
-        self.result
-            .event
-            .duplicated
-            .iter()
-            .for_each(|(k, v)| println!("Duplicated: Event {k}: {v}"));
+    pub fn describe(&self) -> eyre::Result<()> {
+        for (k, v) in &self.result.function.imported {
+            sh_status!("Imported" => "Function {k}: {v}")?;
+        }
+        for (k, v) in &self.result.event.imported {
+            sh_status!("Imported" => "Event {k}: {v}")?;
+        }
+        for (k, v) in &self.result.function.duplicated {
+            sh_status!("Duplicated" => "Function {k}: {v}")?;
+        }
+        for (k, v) in &self.result.event.duplicated {
+            sh_status!("Duplicated" => "Event {k}: {v}")?;
+        }
 
-        println!("Selectors successfully uploaded to https://api.openchain.xyz");
+        sh_eprintln!("Selectors successfully uploaded to https://api.openchain.xyz")
     }
 }
 

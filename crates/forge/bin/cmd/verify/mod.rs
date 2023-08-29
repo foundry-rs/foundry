@@ -134,19 +134,18 @@ impl VerifyArgs {
         if self.show_standard_json_input {
             let args =
                 EtherscanVerificationProvider::default().create_verify_request(&self, None).await?;
-            println!("{}", args.source);
-            return Ok(())
+            return sh_println!("{}", args.source)
         }
 
         let verifier_url = self.verifier.verifier_url.clone();
-        println!("Start verifying contract `{:?}` deployed on {chain}", self.address);
+        sh_println!("Start verifying contract `{:?}` deployed on {chain}", self.address)?;
         self.verifier.verifier.client(&self.etherscan.key)?.verify(self).await.map_err(|err| {
             if let Some(verifier_url) = verifier_url {
                  match Url::parse(&verifier_url) {
                     Ok(url) => {
                         if is_host_only(&url) {
                             return err.wrap_err(format!(
-                                "Provided URL `{verifier_url}` is host only.\n Did you mean to use the API endpoint`{verifier_url}/api` ?"
+                                "Provided URL `{verifier_url}` is host only.\nDid you mean to use the API endpoint`{verifier_url}/api`?"
                             ))
                         }
                     }
@@ -193,7 +192,10 @@ impl_figment_convert_cast!(VerifyCheckArgs);
 impl VerifyCheckArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> Result<()> {
-        println!("Checking verification status on {}", self.etherscan.chain.unwrap_or_default());
+        sh_println!(
+            "Checking verification status on {}",
+            self.etherscan.chain.unwrap_or_default()
+        )?;
         self.verifier.verifier.client(&self.etherscan.key)?.check(self).await
     }
 }

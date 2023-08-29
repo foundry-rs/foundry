@@ -45,8 +45,7 @@ impl CoverageReporter for SummaryReporter {
         }
 
         self.add_row("Total", self.total.clone());
-        println!("{}", self.table);
-        Ok(())
+        sh_println!("{}", self.table)
     }
 }
 
@@ -128,9 +127,7 @@ impl<'a> CoverageReporter for LcovReporter<'a> {
             writeln!(self.destination, "end_of_record")?;
         }
 
-        println!("Wrote LCOV report.");
-
-        Ok(())
+        sh_println!("Wrote LCOV report.")
     }
 }
 
@@ -140,29 +137,27 @@ pub struct DebugReporter;
 impl CoverageReporter for DebugReporter {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
         for (path, items) in report.items_by_source() {
-            println!("Uncovered for {path}:");
-            items.iter().for_each(|item| {
+            sh_println!("\nUncovered for {path}:")?;
+            for item in items {
                 if item.hits == 0 {
-                    println!("- {item}");
+                    sh_println!("- {item}")?;
                 }
-            });
-            println!();
+            }
         }
 
         for (contract_id, anchors) in &report.anchors {
-            println!("Anchors for {contract_id}:");
-            anchors.iter().for_each(|anchor| {
-                println!("- {anchor}");
-                println!(
+            sh_println!("\nAnchors for {contract_id}:")?;
+            for anchor in anchors {
+                sh_println!("- {anchor}")?;
+                sh_println!(
                     "  - Refers to item: {}",
                     report
                         .items
                         .get(&contract_id.version)
                         .and_then(|items| items.get(anchor.item_id))
                         .map_or("None".to_owned(), |item| item.to_string())
-                );
-            });
-            println!();
+                )?;
+            }
         }
 
         Ok(())

@@ -51,14 +51,14 @@ impl GasReport {
         }
 
         if let Some(name) = &trace.contract {
-            let contract_name = name.rsplit(':').next().unwrap_or(name.as_str()).to_string();
+            let contract_name = name.rsplit(':').next().unwrap().to_string();
             // If the user listed the contract in 'gas_reports' (the foundry.toml field) a
             // report for the contract is generated even if it's listed in the ignore
             // list. This is addressed this way because getting a report you don't expect is
             // preferable than not getting one you expect. A warning is printed to stderr
             // indicating the "double listing".
             if self.report_for.contains(&contract_name) && self.ignore.contains(&contract_name) {
-                eprintln!(
+                let _ = sh_eprintln!(
                     "{}: {} is listed in both 'gas_reports' and 'gas_reports_ignore'.",
                     yansi::Paint::yellow("warning").bold(),
                     contract_name

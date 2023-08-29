@@ -76,13 +76,13 @@ impl UploadSelectorsArgs {
                 continue
             }
 
-            println!("Uploading selectors for {contract}...");
+            sh_status!("Uploading" => "{contract}")?;
 
             // upload abi to selector database
-            import_selectors(SelectorImportData::Abi(vec![abi])).await?.describe();
+            import_selectors(SelectorImportData::Abi(vec![abi])).await?.describe()?;
 
             if artifacts.peek().is_some() {
-                println!()
+                sh_eprintln!()?;
             }
         }
 

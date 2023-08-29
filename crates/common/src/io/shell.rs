@@ -4,19 +4,31 @@
 
 use clap::ValueEnum;
 use eyre::Result;
-use once_cell::sync::Lazy;
 use std::{
     fmt,
     io::{prelude::*, IsTerminal},
     ops::DerefMut,
-    sync::Mutex,
+    sync::atomic::{AtomicBool, Ordering},
 };
 use termcolor::{
     Color::{self, Cyan, Green, Red, Yellow},
     ColorSpec, StandardStream, WriteColor,
 };
 
-static GLOBAL_SHELL: Lazy<Mutex<Shell>> = Lazy::new(|| Mutex::new(Shell::new()));
+/// The global shell instance.
+///
+/// # Safety
+///
+/// This instance is only ever initialized in `main`, and its fields are as follows:
+/// - `output`
+///   - `Stream`'s fields are not modified, and the underlying streams can only be the standard ones
+///     which lock on write
+///   - `Write` is not thread safe, but it's only used in tests (as of writing, not even there)
+/// - `verbosity` cannot modified after initialization
+/// - `needs_clear` is an atomic boolean
+///
+/// In general this is probably fine.
+static mut GLOBAL_SHELL: Option<Shell> = None;
 
 /// Terminal width.
 pub enum TtyWidth {
@@ -89,11 +101,13 @@ pub struct Shell {
     /// Wrapper around stdout/stderr. This helps with supporting sending
     /// output to a memory buffer which is useful for tests.
     output: ShellOut,
+
     /// How verbose messages should be.
     verbosity: Verbosity,
+
     /// Flag that indicates the current line needs to be cleared before
     /// printing. Used when a progress bar is currently displayed.
-    needs_clear: bool,
+    needs_clear: AtomicBool,
 }
 
 impl fmt::Debug for Shell {
@@ -109,8 +123,6 @@ impl fmt::Debug for Shell {
 
 /// A `Write`able object, either with or without color support.
 enum ShellOut {
-    /// A plain write object without color support.
-    Write(Box<dyn Write + Send + Sync + 'static>),
     /// Color-enabled stdio, with information on whether color should be used.
     Stream {
         stdout: StandardStream,
@@ -118,18 +130,20 @@ enum ShellOut {
         stderr_tty: bool,
         color_choice: ColorChoice,
     },
+    /// A plain write object without color support.
+    Write(Box<dyn Write + Send + Sync + 'static>),
 }
 
 /// Whether messages should use color output.
 #[derive(Debug, Default, PartialEq, Clone, Copy, ValueEnum)]
 pub enum ColorChoice {
+    /// Intelligently guess whether to use color output (default).
+    #[default]
+    Auto,
     /// Force color output.
     Always,
     /// Force disable color output.
     Never,
-    /// Intelligently guess whether to use color output (default).
-    #[default]
-    Auto,
 }
 
 impl Default for Shell {
@@ -142,11 +156,13 @@ impl Default for Shell {
 impl Shell {
     /// Creates a new shell (color choice and verbosity), defaulting to 'auto' color and verbose
     /// output.
+    #[inline]
     pub fn new() -> Self {
         Self::new_with(ColorChoice::Auto, Verbosity::Verbose)
     }
 
     /// Creates a new shell with the given color choice and verbosity.
+    #[inline]
     pub fn new_with(color: ColorChoice, verbosity: Verbosity) -> Self {
         Self {
             output: ShellOut::Stream {
@@ -156,27 +172,287 @@ impl Shell {
                 stderr_tty: std::io::stderr().is_terminal(),
             },
             verbosity,
-            needs_clear: false,
+            needs_clear: AtomicBool::new(false),
         }
     }
 
     /// Creates a shell from a plain writable object, with no color, and max verbosity.
+    ///
+    /// Not thread safe, so not exposed outside of tests.
+    #[inline]
     pub fn from_write(out: Box<dyn Write + Send + Sync + 'static>) -> Self {
-        Self { output: ShellOut::Write(out), verbosity: Verbosity::Verbose, needs_clear: false }
+        let needs_clear = AtomicBool::new(false);
+        Self { output: ShellOut::Write(out), verbosity: Verbosity::Verbose, needs_clear }
     }
 
     /// Get a static reference to the global shell.
     #[inline]
     #[track_caller]
     pub fn get() -> impl DerefMut<Target = Self> + 'static {
-        GLOBAL_SHELL.lock().unwrap()
+        // SAFETY: See [GLOBAL_SHELL]
+        match unsafe { &mut GLOBAL_SHELL } {
+            Some(shell) => shell,
+            // This shouldn't happen outside of tests
+            none => {
+                if cfg!(test) {
+                    none.insert(Self::new())
+                } else {
+                    // use `expect` to get `#[cold]`
+                    none.as_mut().expect("attempted to get global shell before it was set")
+                }
+            }
+        }
     }
 
     /// Set the global shell.
+    ///
+    /// # Safety
+    ///
+    /// See [GLOBAL_SHELL].
     #[inline]
     #[track_caller]
-    pub fn set(self) {
-        *GLOBAL_SHELL.lock().unwrap() = self;
+    pub unsafe fn set(self) {
+        let shell = unsafe { &mut GLOBAL_SHELL };
+        if shell.is_none() {
+            *shell = Some(self);
+        } else {
+            panic!("attempted to set global shell twice");
+        }
+    }
+
+    /// Sets whether the next print should clear the current line and returns the previous value.
+    #[inline]
+    pub fn set_needs_clear(&mut self, needs_clear: bool) -> bool {
+        self.needs_clear.swap(needs_clear, Ordering::Relaxed)
+    }
+
+    /// Returns `true` if the `needs_clear` flag is set.
+    #[inline]
+    pub fn needs_clear(&self) -> bool {
+        self.needs_clear.load(Ordering::Relaxed)
+    }
+
+    /// Returns `true` if the `needs_clear` flag is unset.
+    #[inline]
+    pub fn is_cleared(&self) -> bool {
+        !self.needs_clear()
+    }
+
+    /// Returns the width of the terminal in spaces, if any.
+    #[inline]
+    pub fn err_width(&self) -> TtyWidth {
+        match self.output {
+            ShellOut::Stream { stderr_tty: true, .. } => TtyWidth::get(),
+            _ => TtyWidth::NoTty,
+        }
+    }
+
+    /// Gets the verbosity of the shell.
+    #[inline]
+    pub fn verbosity(&self) -> Verbosity {
+        self.verbosity
+    }
+
+    /// Gets the current color choice.
+    ///
+    /// If we are not using a color stream, this will always return `Never`, even if the color
+    /// choice has been set to something else.
+    #[inline]
+    pub fn color_choice(&self) -> ColorChoice {
+        match self.output {
+            ShellOut::Stream { color_choice, .. } => color_choice,
+            ShellOut::Write(_) => ColorChoice::Never,
+        }
+    }
+
+    /// Returns `true` if stderr is a tty.
+    #[inline]
+    pub fn is_err_tty(&self) -> bool {
+        match self.output {
+            ShellOut::Stream { stderr_tty, .. } => stderr_tty,
+            ShellOut::Write(_) => false,
+        }
+    }
+
+    /// Whether `stderr` supports color.
+    #[inline]
+    pub fn err_supports_color(&self) -> bool {
+        match &self.output {
+            ShellOut::Stream { stderr, .. } => stderr.supports_color(),
+            ShellOut::Write(_) => false,
+        }
+    }
+
+    /// Whether `stdout` supports color.
+    #[inline]
+    pub fn out_supports_color(&self) -> bool {
+        match &self.output {
+            ShellOut::Stream { stdout, .. } => stdout.supports_color(),
+            ShellOut::Write(_) => false,
+        }
+    }
+
+    /// Gets a reference to the underlying stdout writer.
+    #[inline]
+    pub fn out(&mut self) -> &mut dyn Write {
+        self.maybe_err_erase_line();
+        self.output.stdout()
+    }
+
+    /// Gets a reference to the underlying stderr writer.
+    #[inline]
+    pub fn err(&mut self) -> &mut dyn Write {
+        self.maybe_err_erase_line();
+        self.output.stderr()
+    }
+
+    /// Erase from cursor to end of line if needed.
+    #[inline]
+    pub fn maybe_err_erase_line(&mut self) {
+        if self.err_supports_color() && self.set_needs_clear(false) {
+            // This is the "EL - Erase in Line" sequence. It clears from the cursor
+            // to the end of line.
+            // https://en.wikipedia.org/wiki/ANSI_escape_code#CSI_sequences
+            let _ = self.output.stderr().write_all(b"\x1B[K");
+        }
+    }
+
+    /// Shortcut to right-align and color green a status message.
+    #[inline]
+    pub fn status<T, U>(&mut self, status: T, message: U) -> Result<()>
+    where
+        T: fmt::Display,
+        U: fmt::Display,
+    {
+        self.print(&status, Some(&message), Green, true)
+    }
+
+    /// Shortcut to right-align and color cyan a status without a message.
+    #[inline]
+    pub fn status_header(&mut self, status: impl fmt::Display) -> Result<()> {
+        self.print(&status, None, Cyan, true)
+    }
+
+    /// Shortcut to right-align a status message.
+    #[inline]
+    pub fn status_with_color<T, U>(&mut self, status: T, message: U, color: Color) -> Result<()>
+    where
+        T: fmt::Display,
+        U: fmt::Display,
+    {
+        self.print(&status, Some(&message), color, true)
+    }
+
+    /// Runs the callback only if we are in verbose mode.
+    #[inline]
+    pub fn verbose(&mut self, mut callback: impl FnMut(&mut Shell) -> Result<()>) -> Result<()> {
+        match self.verbosity {
+            Verbosity::Verbose => callback(self),
+            _ => Ok(()),
+        }
+    }
+
+    /// Runs the callback if we are not in verbose mode.
+    #[inline]
+    pub fn concise(&mut self, mut callback: impl FnMut(&mut Shell) -> Result<()>) -> Result<()> {
+        match self.verbosity {
+            Verbosity::Verbose => Ok(()),
+            _ => callback(self),
+        }
+    }
+
+    /// Prints a red 'error' message. Use the [`sh_err!`] macro instead.
+    #[inline]
+    pub fn error(&mut self, message: impl fmt::Display) -> Result<()> {
+        self.maybe_err_erase_line();
+        self.output.message_stderr(&"error", Some(&message), Red, false)
+    }
+
+    /// Prints an amber 'warning' message. Use the [`sh_warn!`] macro instead.
+    #[inline]
+    pub fn warn(&mut self, message: impl fmt::Display) -> Result<()> {
+        match self.verbosity {
+            Verbosity::Quiet => Ok(()),
+            _ => self.print(&"warning", Some(&message), Yellow, false),
+        }
+    }
+
+    /// Prints a cyan 'note' message. Use the [`sh_note!`] macro instead.
+    #[inline]
+    pub fn note(&mut self, message: impl fmt::Display) -> Result<()> {
+        self.print(&"note", Some(&message), Cyan, false)
+    }
+
+    /// Write a styled fragment.
+    ///
+    /// Caller is responsible for deciding whether [`Shell::verbosity`] is affects output.
+    #[inline]
+    pub fn write_stdout(&mut self, fragment: impl fmt::Display, color: &ColorSpec) -> Result<()> {
+        self.output.write_stdout(fragment, color)
+    }
+
+    /// Write a styled fragment with the default color. Use the [`sh_print!`] macro instead.
+    ///
+    /// **Note**: `verbosity` is ignored.
+    #[inline]
+    pub fn print_out(&mut self, fragment: impl fmt::Display) -> Result<()> {
+        self.write_stdout(fragment, &ColorSpec::new())
+    }
+
+    /// Write a styled fragment
+    ///
+    /// Caller is responsible for deciding whether [`Shell::verbosity`] is affects output.
+    #[inline]
+    pub fn write_stderr(&mut self, fragment: impl fmt::Display, color: &ColorSpec) -> Result<()> {
+        self.output.write_stderr(fragment, color)
+    }
+
+    /// Write a styled fragment with the default color. Use the [`sh_eprint!`] macro instead.
+    ///
+    /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
+    #[inline]
+    pub fn print_err(&mut self, fragment: impl fmt::Display) -> Result<()> {
+        if self.verbosity == Verbosity::Quiet {
+            Ok(())
+        } else {
+            self.write_stderr(fragment, &ColorSpec::new())
+        }
+    }
+
+    /// Prints a message to stderr and translates ANSI escape code into console colors.
+    #[inline]
+    pub fn print_ansi_stderr(&mut self, message: &[u8]) -> Result<()> {
+        self.maybe_err_erase_line();
+        #[cfg(windows)]
+        if let ShellOut::Stream { stderr, .. } = &self.output {
+            ::fwdansi::write_ansi(stderr, message)?;
+            return Ok(())
+        }
+        self.err().write_all(message)?;
+        Ok(())
+    }
+
+    /// Prints a message to stdout and translates ANSI escape code into console colors.
+    #[inline]
+    pub fn print_ansi_stdout(&mut self, message: &[u8]) -> Result<()> {
+        self.maybe_err_erase_line();
+        #[cfg(windows)]
+        if let ShellOut::Stream { stdout, .. } = &self.output {
+            ::fwdansi::write_ansi(stdout, message)?;
+            return Ok(())
+        }
+        self.out().write_all(message)?;
+        Ok(())
+    }
+
+    /// Serializes an object to JSON and prints it to `stdout`.
+    #[inline]
+    pub fn print_json(&mut self, obj: &impl serde::Serialize) -> Result<()> {
+        // Path may fail to serialize to JSON ...
+        let encoded = serde_json::to_string(&obj)?;
+        // ... but don't fail due to a closed pipe.
+        let _ = writeln!(self.out(), "{encoded}");
+        Ok(())
     }
 
     /// Prints a message, where the status will have `color` color, and can be justified. The
@@ -191,255 +467,10 @@ impl Shell {
         match self.verbosity {
             Verbosity::Quiet => Ok(()),
             _ => {
-                if self.needs_clear {
-                    self.err_erase_line();
-                }
+                self.maybe_err_erase_line();
                 self.output.message_stderr(status, message, color, justified)
             }
         }
-    }
-
-    /// Sets whether the next print should clear the current line.
-    pub fn set_needs_clear(&mut self, needs_clear: bool) {
-        self.needs_clear = needs_clear;
-    }
-
-    /// Returns `true` if the `needs_clear` flag is unset.
-    pub fn is_cleared(&self) -> bool {
-        !self.needs_clear
-    }
-
-    /// Returns the width of the terminal in spaces, if any.
-    pub fn err_width(&self) -> TtyWidth {
-        match self.output {
-            ShellOut::Stream { stderr_tty: true, .. } => TtyWidth::get(),
-            _ => TtyWidth::NoTty,
-        }
-    }
-
-    /// Returns `true` if stderr is a tty.
-    pub fn is_err_tty(&self) -> bool {
-        match self.output {
-            ShellOut::Stream { stderr_tty, .. } => stderr_tty,
-            _ => false,
-        }
-    }
-
-    /// Gets a reference to the underlying stdout writer.
-    #[inline]
-    pub fn out(&mut self) -> &mut dyn Write {
-        if self.needs_clear {
-            self.err_erase_line();
-        }
-        self.output.stdout()
-    }
-
-    /// Gets a reference to the underlying stderr writer.
-    #[inline]
-    pub fn err(&mut self) -> &mut dyn Write {
-        if self.needs_clear {
-            self.err_erase_line();
-        }
-        self.output.stderr()
-    }
-
-    /// Erase from cursor to end of line.
-    pub fn err_erase_line(&mut self) {
-        if self.err_supports_color() {
-            // This is the "EL - Erase in Line" sequence. It clears from the cursor
-            // to the end of line.
-            // https://en.wikipedia.org/wiki/ANSI_escape_code#CSI_sequences
-            let _ = self.output.stderr().write_all(b"\x1B[K");
-            self.set_needs_clear(false);
-        }
-    }
-
-    /// Shortcut to right-align and color green a status message.
-    pub fn status<T, U>(&mut self, status: T, message: U) -> Result<()>
-    where
-        T: fmt::Display,
-        U: fmt::Display,
-    {
-        self.print(&status, Some(&message), Green, true)
-    }
-
-    /// Shortcut to right-align and color cyan a status without a message.
-    pub fn status_header<T>(&mut self, status: T) -> Result<()>
-    where
-        T: fmt::Display,
-    {
-        self.print(&status, None, Cyan, true)
-    }
-
-    /// Shortcut to right-align a status message.
-    pub fn status_with_color<T, U>(&mut self, status: T, message: U, color: Color) -> Result<()>
-    where
-        T: fmt::Display,
-        U: fmt::Display,
-    {
-        self.print(&status, Some(&message), color, true)
-    }
-
-    /// Runs the callback only if we are in verbose mode.
-    pub fn verbose<F>(&mut self, mut callback: F) -> Result<()>
-    where
-        F: FnMut(&mut Shell) -> Result<()>,
-    {
-        match self.verbosity {
-            Verbosity::Verbose => callback(self),
-            _ => Ok(()),
-        }
-    }
-
-    /// Runs the callback if we are not in verbose mode.
-    pub fn concise<F>(&mut self, mut callback: F) -> Result<()>
-    where
-        F: FnMut(&mut Shell) -> Result<()>,
-    {
-        match self.verbosity {
-            Verbosity::Verbose => Ok(()),
-            _ => callback(self),
-        }
-    }
-
-    /// Prints a red 'error' message.
-    pub fn error<T: fmt::Display>(&mut self, message: T) -> Result<()> {
-        if self.needs_clear {
-            self.err_erase_line();
-        }
-        self.output.message_stderr(&"error", Some(&message), Red, false)
-    }
-
-    /// Prints an amber 'warning' message.
-    pub fn warn<T: fmt::Display>(&mut self, message: T) -> Result<()> {
-        match self.verbosity {
-            Verbosity::Quiet => Ok(()),
-            _ => self.print(&"warning", Some(&message), Yellow, false),
-        }
-    }
-
-    /// Prints a cyan 'note' message.
-    pub fn note<T: fmt::Display>(&mut self, message: T) -> Result<()> {
-        self.print(&"note", Some(&message), Cyan, false)
-    }
-
-    /// Updates the verbosity of the shell.
-    pub fn set_verbosity(&mut self, verbosity: Verbosity) {
-        self.verbosity = verbosity;
-    }
-
-    /// Gets the verbosity of the shell.
-    pub fn verbosity(&self) -> Verbosity {
-        self.verbosity
-    }
-
-    /// Updates the color choice (always, never, or auto) from a string..
-    pub fn set_color_choice(&mut self, color: Option<&str>) -> Result<()> {
-        if let ShellOut::Stream { stdout, stderr, color_choice, .. } = &mut self.output {
-            let cfg = match color {
-                Some("always") => ColorChoice::Always,
-                Some("never") => ColorChoice::Never,
-
-                Some("auto") | None => ColorChoice::Auto,
-
-                Some(arg) => eyre::bail!(
-                    "argument for --color must be auto, always, or \
-                     never, but found `{arg}`",
-                ),
-            };
-            *color_choice = cfg;
-            *stdout = StandardStream::stdout(cfg.to_termcolor_color_choice(Stream::Stdout));
-            *stderr = StandardStream::stderr(cfg.to_termcolor_color_choice(Stream::Stderr));
-        }
-        Ok(())
-    }
-
-    /// Gets the current color choice.
-    ///
-    /// If we are not using a color stream, this will always return `Never`, even if the color
-    /// choice has been set to something else.
-    pub fn color_choice(&self) -> ColorChoice {
-        match self.output {
-            ShellOut::Stream { color_choice, .. } => color_choice,
-            ShellOut::Write(_) => ColorChoice::Never,
-        }
-    }
-
-    /// Whether `stderr` supports color.
-    pub fn err_supports_color(&self) -> bool {
-        match &self.output {
-            ShellOut::Write(_) => false,
-            ShellOut::Stream { stderr, .. } => stderr.supports_color(),
-        }
-    }
-
-    /// Whether `stdout` supports color.
-    pub fn out_supports_color(&self) -> bool {
-        match &self.output {
-            ShellOut::Write(_) => false,
-            ShellOut::Stream { stdout, .. } => stdout.supports_color(),
-        }
-    }
-
-    /// Write a styled fragment
-    ///
-    /// Caller is responsible for deciding whether [`Shell::verbosity`] is affects output.
-    pub fn write_stdout(&mut self, fragment: impl fmt::Display, color: &ColorSpec) -> Result<()> {
-        self.output.write_stdout(fragment, color)
-    }
-
-    /// Write a styled fragment with the default color.
-    pub fn print_out(&mut self, fragment: impl fmt::Display) -> Result<()> {
-        self.write_stdout(fragment, &ColorSpec::new())
-    }
-
-    /// Write a styled fragment
-    ///
-    /// Caller is responsible for deciding whether [`Shell::verbosity`] is affects output.
-    pub fn write_stderr(&mut self, fragment: impl fmt::Display, color: &ColorSpec) -> Result<()> {
-        self.output.write_stderr(fragment, color)
-    }
-
-    /// Write a styled fragment with the default color.
-    pub fn print_err(&mut self, fragment: impl fmt::Display) -> Result<()> {
-        self.write_stderr(fragment, &ColorSpec::new())
-    }
-
-    /// Prints a message to stderr and translates ANSI escape code into console colors.
-    pub fn print_ansi_stderr(&mut self, message: &[u8]) -> Result<()> {
-        if self.needs_clear {
-            self.err_erase_line();
-        }
-        #[cfg(windows)]
-        if let ShellOut::Stream { stderr, .. } = &self.output {
-            ::fwdansi::write_ansi(stderr, message)?;
-            return Ok(())
-        }
-        self.err().write_all(message)?;
-        Ok(())
-    }
-
-    /// Prints a message to stdout and translates ANSI escape code into console colors.
-    pub fn print_ansi_stdout(&mut self, message: &[u8]) -> Result<()> {
-        if self.needs_clear {
-            self.err_erase_line();
-        }
-        #[cfg(windows)]
-        if let ShellOut::Stream { stdout, .. } = &self.output {
-            ::fwdansi::write_ansi(stdout, message)?;
-            return Ok(())
-        }
-        self.out().write_all(message)?;
-        Ok(())
-    }
-
-    /// Serializes an object to JSON and prints it to `stdout`.
-    pub fn print_json<T: serde::Serialize>(&mut self, obj: &T) -> Result<()> {
-        // Path may fail to serialize to JSON ...
-        let encoded = serde_json::to_string(&obj)?;
-        // ... but don't fail due to a closed pipe.
-        let _ = writeln!(self.out(), "{encoded}");
-        Ok(())
     }
 }
 
@@ -472,6 +503,7 @@ impl ShellOut {
                     writeln!(stderr, "{message}")?;
                 }
             }
+
             Self::Write(w) => {
                 if justified { write!(w, "{status:>12}") } else { write!(w, "{status}:") }?;
                 w.write_all(b" ")?;
@@ -492,6 +524,7 @@ impl ShellOut {
                 write!(stdout, "{fragment}")?;
                 stdout.reset()?;
             }
+
             Self::Write(w) => {
                 write!(w, "{fragment}")?;
             }
@@ -508,6 +541,7 @@ impl ShellOut {
                 write!(stderr, "{fragment}")?;
                 stderr.reset()?;
             }
+
             Self::Write(w) => {
                 write!(w, "{fragment}")?;
             }
@@ -520,6 +554,7 @@ impl ShellOut {
     fn stdout(&mut self) -> &mut dyn Write {
         match self {
             Self::Stream { stdout, .. } => stdout,
+
             Self::Write(w) => w,
         }
     }
@@ -529,6 +564,7 @@ impl ShellOut {
     fn stderr(&mut self) -> &mut dyn Write {
         match self {
             Self::Stream { stderr, .. } => stderr,
+
             Self::Write(w) => w,
         }
     }

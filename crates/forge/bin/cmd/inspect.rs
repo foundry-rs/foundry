@@ -1,7 +1,7 @@
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
 use ethers::{
-    abi::RawAbi,
+    abi::{ErrorExt, EventExt, RawAbi},
     prelude::{
         artifacts::output_selection::{
             BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
@@ -16,9 +16,8 @@ use ethers::{
 };
 use eyre::Result;
 use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
-use foundry_common::compile::ProjectCompiler;
-use serde_json::{to_value, Value};
-use std::fmt;
+use foundry_common::{compile::ProjectCompiler, Shell};
+use std::{collections::BTreeMap, fmt};
 use tracing::trace;
 
 /// CLI arguments for `forge inspect`.
@@ -76,126 +75,81 @@ impl InspectArgs {
         let output = compiler.compile(&project)?;
 
         // Find the artifact
-        let found_artifact = output.find_contract(&contract);
-
-        trace!(target: "forge", artifact=?found_artifact, input=?contract, "Found contract");
-
-        // Unwrap the inner artifact
-        let artifact = found_artifact.ok_or_else(|| {
+        let artifact = output.find_contract(&contract).ok_or_else(|| {
             eyre::eyre!("Could not find artifact `{contract}` in the compiled artifacts")
         })?;
 
-        // Match on ContractArtifactFields and Pretty Print
+        // Match on ContractArtifactFields and pretty-print
         match field {
             ContractArtifactField::Abi => {
                 let abi = artifact
                     .abi
                     .as_ref()
                     .ok_or_else(|| eyre::eyre!("Failed to fetch lossless ABI"))?;
-                print_abi(abi, pretty)?;
+                let abi_json = &abi.abi_value;
+                if pretty {
+                    let abi_json: RawAbi = serde_json::from_value(abi_json.clone())?;
+                    let source: String = foundry_utils::abi::abi_to_solidity(&abi_json, "")?;
+                    Shell::get().write_stdout(source, &Default::default())
+                } else {
+                    Shell::get().print_json(abi_json)
+                }?;
             }
             ContractArtifactField::Bytecode => {
-                let tval: Value = to_value(&artifact.bytecode)?;
-                println!(
-                    "{}",
-                    tval.get("object").unwrap_or(&tval).as_str().ok_or_else(|| eyre::eyre!(
-                        "Failed to extract artifact bytecode as a string"
-                    ))?
-                );
+                print_json_str(&artifact.bytecode, Some("object"))?;
             }
             ContractArtifactField::DeployedBytecode => {
-                let tval: Value = to_value(&artifact.deployed_bytecode)?;
-                println!(
-                    "{}",
-                    tval.get("object").unwrap_or(&tval).as_str().ok_or_else(|| eyre::eyre!(
-                        "Failed to extract artifact deployed bytecode as a string"
-                    ))?
-                );
+                print_json_str(&artifact.deployed_bytecode, Some("object"))?;
             }
             ContractArtifactField::Assembly | ContractArtifactField::AssemblyOptimized => {
-                println!(
-                    "{}",
-                    to_value(&artifact.assembly)?.as_str().ok_or_else(|| eyre::eyre!(
-                        "Failed to extract artifact assembly as a string"
-                    ))?
-                );
+                print_json(&artifact.assembly)?;
             }
             ContractArtifactField::MethodIdentifiers => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&to_value(&artifact.method_identifiers)?)?
-                );
+                print_json(&artifact.method_identifiers)?;
             }
             ContractArtifactField::GasEstimates => {
-                println!("{}", serde_json::to_string_pretty(&to_value(&artifact.gas_estimates)?)?);
+                print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
                 print_storage_layout(&artifact.storage_layout, pretty)?;
             }
             ContractArtifactField::DevDoc => {
-                println!("{}", serde_json::to_string_pretty(&to_value(&artifact.devdoc)?)?);
+                print_json(&artifact.devdoc)?;
             }
             ContractArtifactField::Ir => {
-                println!(
-                    "{}",
-                    to_value(&artifact.ir)?
-                        .as_str()
-                        .ok_or_else(|| eyre::eyre!("Failed to extract artifact ir as a string"))?
-                );
+                print_json(&artifact.ir)?;
             }
             ContractArtifactField::IrOptimized => {
-                println!(
-                    "{}",
-                    to_value(&artifact.ir_optimized)?.as_str().ok_or_else(|| eyre::eyre!(
-                        "Failed to extract artifact optimized ir as a string"
-                    ))?
-                );
+                print_json_str(&artifact.ir_optimized, None)?;
             }
             ContractArtifactField::Metadata => {
-                println!("{}", serde_json::to_string_pretty(&to_value(&artifact.metadata)?)?);
+                print_json(&artifact.metadata)?;
             }
             ContractArtifactField::UserDoc => {
-                println!("{}", serde_json::to_string_pretty(&to_value(&artifact.userdoc)?)?);
+                print_json(&artifact.userdoc)?;
             }
             ContractArtifactField::Ewasm => {
-                println!(
-                    "{}",
-                    to_value(&artifact.ewasm)?.as_str().ok_or_else(|| eyre::eyre!(
-                        "Failed to extract artifact ewasm as a string"
-                    ))?
-                );
+                print_json_str(&artifact.ewasm, None)?;
             }
             ContractArtifactField::Errors => {
-                let mut out = serde_json::Map::new();
-                if let Some(LosslessAbi { abi, .. }) = &artifact.abi {
-                    // Print the signature of all errors
-                    for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
-                        let types =
-                            er.inputs.iter().map(|p| p.kind.to_string()).collect::<Vec<_>>();
-                        let sig = format!("{:x}", er.signature());
-                        let sig_trimmed = &sig[0..8];
-                        out.insert(
-                            format!("{}({})", er.name, types.join(",")),
-                            sig_trimmed.to_string().into(),
-                        );
-                    }
-                }
-                println!("{}", serde_json::to_string_pretty(&out)?);
+                let Some(LosslessAbi { abi, .. }) = &artifact.abi else {
+                    return sh_println!("{{}}")
+                };
+                let map = abi
+                    .errors()
+                    .map(|error| (error.abi_signature(), hex::encode(error.selector())))
+                    .collect::<BTreeMap<_, _>>();
+                print_json(&map)?;
             }
             ContractArtifactField::Events => {
-                let mut out = serde_json::Map::new();
-                if let Some(LosslessAbi { abi, .. }) = &artifact.abi {
-                    // print the signature of all events including anonymous
-                    for ev in abi.events.iter().flat_map(|(_, events)| events) {
-                        let types =
-                            ev.inputs.iter().map(|p| p.kind.to_string()).collect::<Vec<_>>();
-                        out.insert(
-                            format!("{}({})", ev.name, types.join(",")),
-                            format!("{:?}", ev.signature()).into(),
-                        );
-                    }
-                }
-                println!("{}", serde_json::to_string_pretty(&out)?);
+                let Some(LosslessAbi { abi, .. }) = &artifact.abi else {
+                    return sh_println!("{{}}")
+                };
+                let map = abi
+                    .events()
+                    .map(|event| (event.abi_signature(), hex::encode(event.signature())))
+                    .collect::<BTreeMap<_, _>>();
+                print_json(&map)?;
             }
         };
 
@@ -203,30 +157,13 @@ impl InspectArgs {
     }
 }
 
-pub fn print_abi(abi: &LosslessAbi, pretty: bool) -> Result<()> {
-    let abi_json = to_value(abi)?;
-    if !pretty {
-        println!("{}", serde_json::to_string_pretty(&abi_json)?);
-        return Ok(())
-    }
-
-    let abi_json: RawAbi = serde_json::from_value(abi_json)?;
-    let source = foundry_utils::abi::abi_to_solidity(&abi_json, "")?;
-    println!("{}", source);
-
-    Ok(())
-}
-
 pub fn print_storage_layout(storage_layout: &Option<StorageLayout>, pretty: bool) -> Result<()> {
-    if storage_layout.is_none() {
+    let Some(storage_layout) = storage_layout.as_ref() else {
         eyre::bail!("Could not get storage layout")
-    }
-
-    let storage_layout = storage_layout.as_ref().unwrap();
+    };
 
     if !pretty {
-        println!("{}", serde_json::to_string_pretty(&to_value(storage_layout)?)?);
-        return Ok(())
+        return print_json(&storage_layout)
     }
 
     let mut table = Table::new();
@@ -237,17 +174,15 @@ pub fn print_storage_layout(storage_layout: &Option<StorageLayout>, pretty: bool
         let storage_type = storage_layout.types.get(&slot.storage_type);
         table.add_row(vec![
             slot.label.clone(),
-            storage_type.as_ref().map_or("?".to_string(), |t| t.label.clone()),
+            storage_type.as_ref().map_or_else(|| "?".into(), |t| t.label.clone()),
             slot.slot.clone(),
             slot.offset.to_string(),
-            storage_type.as_ref().map_or("?".to_string(), |t| t.number_of_bytes.clone()),
+            storage_type.as_ref().map_or_else(|| "?".into(), |t| t.number_of_bytes.clone()),
             slot.contract.clone(),
         ]);
     }
 
-    println!("{table}");
-
-    Ok(())
+    Shell::get().write_stdout(table, &Default::default())
 }
 
 /// Contract level output selection
@@ -418,6 +353,22 @@ impl ContractArtifactField {
     pub const fn is_default(&self) -> bool {
         matches!(self, Self::Bytecode | Self::DeployedBytecode)
     }
+}
+
+fn print_json(obj: &impl serde::Serialize) -> Result<()> {
+    Shell::get().print_json(obj)
+}
+
+fn print_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<()> {
+    let value = serde_json::to_value(obj)?;
+    let mut value_ref = &value;
+    if let Some(key) = key {
+        if let Some(value2) = value.get(key) {
+            value_ref = value2;
+        }
+    }
+    let s = value_ref.as_str().ok_or_else(|| eyre::eyre!("not a string: {value}"))?;
+    sh_println!("{s}")
 }
 
 #[cfg(test)]

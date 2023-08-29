@@ -31,7 +31,7 @@ macro_rules! prompt {
 #[macro_export]
 macro_rules! sh_err {
     ($($args:tt)*) => {
-        $crate::Shell::error(&mut *$crate::Shell::get(), ::core::format_args!($($args)*))
+        $crate::__sh_dispatch!(error $($args)*)
     };
 }
 
@@ -39,7 +39,7 @@ macro_rules! sh_err {
 #[macro_export]
 macro_rules! sh_warn {
     ($($args:tt)*) => {
-        $crate::Shell::warn(&mut *$crate::Shell::get(), ::core::format_args!($($args)*))
+        $crate::__sh_dispatch!(warn $($args)*)
     };
 }
 
@@ -47,58 +47,114 @@ macro_rules! sh_warn {
 #[macro_export]
 macro_rules! sh_note {
     ($($args:tt)*) => {
-        $crate::Shell::note(&mut *$crate::Shell::get(), ::core::format_args!($($args)*))
+        $crate::__sh_dispatch!(note $($args)*)
     };
 }
 
 /// Prints a raw formatted message to stdout.
+///
+/// **Note**: This macro is **not** affected by the `--quiet` flag.
 #[macro_export]
 macro_rules! sh_print {
     ($($args:tt)*) => {
-        $crate::Shell::print_out(&mut *$crate::Shell::get(), ::core::format_args!($($args)*))
+        $crate::__sh_dispatch!(print_out $($args)*)
     };
 }
 
 /// Prints a raw formatted message to stderr.
+///
+/// **Note**: This macro **is** affected by the `--quiet` flag.
 #[macro_export]
 macro_rules! sh_eprint {
     ($($args:tt)*) => {
-        $crate::Shell::print_err(&mut *$crate::Shell::get(), ::core::format_args!($($args)*))
+        $crate::__sh_dispatch!(print_err $($args)*)
     };
 }
 
 /// Prints a raw formatted message to stdout, with a trailing newline.
+///
+/// **Note**: This macro is **not** affected by the `--quiet` flag.
 #[macro_export]
 macro_rules! sh_println {
     () => {
         $crate::sh_print!("\n")
     };
 
-    ($($t:tt)*) => {
-        $crate::sh_print!("{}\n", ::core::format_args!($($t)*))
+    ($fmt:literal $($args:tt)*) => {
+        $crate::sh_print!("{}\n", ::core::format_args!($fmt $($args)*))
+    };
+
+    ($shell:expr $(,)?) => {
+        $crate::sh_print!($shell, "\n")
+    };
+
+    ($shell:expr, $($args:tt)*) => {
+        $crate::sh_print!($shell, "{}\n", ::core::format_args!($($args)*))
+    };
+
+    ($($args:tt)*) => {
+        $crate::sh_print!("{}\n", ::core::format_args!($($args)*))
     };
 }
 
 /// Prints a raw formatted message to stderr, with a trailing newline.
+///
+/// **Note**: This macro **is** affected by the `--quiet` flag.
 #[macro_export]
 macro_rules! sh_eprintln {
     () => {
         $crate::sh_eprint!("\n")
     };
 
-    ($($t:tt)+) => {
-        $crate::sh_eprint!("{}\n", ::core::format_args!($($t)+))
+    ($fmt:literal $($args:tt)*) => {
+        $crate::sh_eprint!("{}\n", ::core::format_args!($fmt $($args)*))
+    };
+
+    ($shell:expr $(,)?) => {
+        $crate::sh_eprint!($shell, "\n")
+    };
+
+    ($shell:expr, $($args:tt)*) => {
+        $crate::sh_eprint!($shell, "{}\n", ::core::format_args!($($args)*))
+    };
+
+    ($($args:tt)*) => {
+        $crate::sh_eprint!("{}\n", ::core::format_args!($($args)*))
+    };
+}
+
+/// Prints a justified status header with an optional message.
+#[macro_export]
+macro_rules! sh_status {
+    ($header:expr) => {
+        $crate::Shell::status_header(&mut *$crate::Shell::get(), $header)
+    };
+
+    ($header:expr => $($args:tt)*) => {
+        $crate::Shell::status(&mut *$crate::Shell::get(), $header, ::core::format_args!($($args)*))
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __sh_dispatch {
+    ($f:ident $fmt:literal $($args:tt)*) => {
+        $crate::Shell::$f(&mut *$crate::Shell::get(), ::core::format_args!($fmt $($args)*))
+    };
+
+    ($f:ident $shell:expr, $($args:tt)*) => {
+        $crate::Shell::$f($shell, ::core::format_args!($($args)*))
+    };
+
+    ($f:ident $($args:tt)*) => {
+        $crate::Shell::$f(&mut *$crate::Shell::get(), ::core::format_args!($($args)*))
     };
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::Shell;
-
     #[test]
     fn macros() {
-        Shell::new().set();
-
         sh_err!("err").unwrap();
         sh_err!("err {}", "arg").unwrap();
 
@@ -121,5 +177,15 @@ mod tests {
         sh_eprintln!().unwrap();
         sh_eprintln!("eprintln").unwrap();
         sh_eprintln!("eprintln {}", "arg").unwrap();
+    }
+
+    #[test]
+    fn macros_with_shell() {
+        let shell = &mut crate::Shell::new();
+        sh_eprintln!(shell).unwrap();
+        sh_eprintln!(shell,).unwrap();
+        sh_eprintln!(shell, "shelled eprintln").unwrap();
+        sh_eprintln!(shell, "shelled eprintln {}", "arg").unwrap();
+        sh_eprintln!(&mut crate::Shell::new(), "shelled eprintln {}", "arg").unwrap();
     }
 }

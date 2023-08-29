@@ -21,12 +21,13 @@ fn main() {
 
 fn run() -> Result<()> {
     utils::load_dotenv();
-    handler::install()?;
+    handler::install();
     utils::subscriber();
     utils::enable_paint();
 
     let opts = Opts::parse();
-    opts.shell.set_global_shell();
+    // SAFETY: See [foundry_common::Shell::set].
+    unsafe { opts.shell.shell().set() };
     match opts.sub {
         Subcommands::Test(cmd) => {
             if cmd.is_watch() {

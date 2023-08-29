@@ -381,21 +381,20 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> Result<()> {
         overall_gas_change += gas_change;
         overall_gas_used += diff.target_gas_used.gas() as i128;
         let gas_diff = diff.gas_diff();
-        println!(
+        sh_println!(
             "{} (gas: {} ({})) ",
             diff.signature,
             fmt_change(gas_change),
             fmt_pct_change(gas_diff)
-        );
+        )?;
     }
 
     let overall_gas_diff = overall_gas_change as f64 / overall_gas_used as f64;
-    println!(
+    sh_println!(
         "Overall gas change: {} ({})",
         fmt_change(overall_gas_change),
         fmt_pct_change(overall_gas_diff)
-    );
-    Ok(())
+    )
 }
 
 fn fmt_pct_change(change: f64) -> String {

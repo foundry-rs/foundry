@@ -329,26 +329,27 @@ impl TestOutcome {
         Self { results, allow_failure }
     }
 
-    /// Iterator over all succeeding tests and their names
+    /// Returns an iterator over all succeeding tests and their names.
     pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.tests().filter(|(_, t)| t.status == TestStatus::Success)
     }
 
-    /// Iterator over all failing tests and their names
+    /// Returns an iterator over all failing tests and their names.
     pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.tests().filter(|(_, t)| t.status == TestStatus::Failure)
     }
 
+    /// Returns an iterator over all skipped tests and their names.
     pub fn skips(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.tests().filter(|(_, t)| t.status == TestStatus::Skipped)
     }
 
-    /// Iterator over all tests and their names
+    /// Returns an iterator over all tests and their names.
     pub fn tests(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.results.values().flat_map(|suite| suite.tests())
     }
 
-    /// Returns an iterator over all `Test`
+    /// Returns an iterator over all `Test`s.
     pub fn into_tests(self) -> impl Iterator<Item = Test> {
         self.results
             .into_iter()
@@ -370,8 +371,7 @@ impl TestOutcome {
             std::process::exit(1);
         }
 
-        println!();
-        println!("Failing tests:");
+        sh_println!("\nFailing tests:")?;
         for (suite_name, suite) in self.results.iter() {
             let failures = suite.failures().count();
             if failures == 0 {
@@ -379,19 +379,19 @@ impl TestOutcome {
             }
 
             let term = if failures > 1 { "tests" } else { "test" };
-            println!("Encountered {failures} failing {term} in {suite_name}");
+            sh_println!("Encountered {failures} failing {term} in {suite_name}")?;
             for (name, result) in suite.failures() {
                 short_test_result(name, result);
             }
-            println!();
+            sh_println!()?;
         }
 
         let successes = self.successes().count();
-        println!(
+        sh_println!(
             "Encountered a total of {} failing tests, {} tests succeeded",
             Paint::red(failures.to_string()),
             Paint::green(successes.to_string())
-        );
+        )?;
         std::process::exit(1);
     }
 
@@ -446,7 +446,7 @@ fn short_test_result(name: &str, result: &TestResult) {
         Paint::red(format!("[FAIL. {reason}{counterexample}"))
     };
 
-    println!("{status} {name} {}", result.kind.report());
+    let _ = sh_println!("{status} {name} {}", result.kind.report());
 }
 
 /**
@@ -474,13 +474,13 @@ fn list(
     let results = runner.list(&filter);
 
     if json {
-        println!("{}", serde_json::to_string(&results)?);
+        foundry_common::Shell::get().print_json(&results)?;
     } else {
-        for (file, contracts) in results.iter() {
-            println!("{file}");
+        for (file, contracts) in &results {
+            sh_println!("{file}")?;
             for (contract, tests) in contracts.iter() {
-                println!("  {contract}");
-                println!("    {}\n", tests.join("\n    "));
+                sh_println!("  {contract}")?;
+                sh_println!("    {}\n", tests.join("\n    "))?;
             }
         }
     }
@@ -505,10 +505,10 @@ async fn test(
     if runner.count_filtered_tests(&filter) == 0 {
         let filter_str = filter.to_string();
         if filter_str.is_empty() {
-            sh_eprintln!("No tests found in project.")?;
+            sh_println!("No tests found in project.")?;
             sh_note!("Forge looks for functions that start with `test`.")?;
         } else {
-            sh_eprintln!("No tests match the provided pattern:\n{filter_str}")?;
+            sh_println!("No tests match the provided pattern:\n{filter_str}")?;
             // Try to suggest a test when there's no match
             if let Some(test_pattern) = &filter.args().test_pattern {
                 let test_name = test_pattern.as_str();
@@ -549,19 +549,23 @@ async fn test(
     let mut total_failed = 0;
     let mut total_skipped = 0;
 
-    let mut shell = foundry_common::Shell::get();
+    // skip printing test results if verbosity is quiet
+    if foundry_common::Shell::get().verbosity().is_quiet() {
+        return Ok(TestOutcome::new(handle.await?, allow_failure))
+    }
+
     'outer: for (contract_name, suite_result) in rx {
         results.insert(contract_name.clone(), suite_result.clone());
 
         let mut tests = suite_result.test_results.clone();
-        let _ = shell.print_out("\n");
+        sh_println!()?;
         for warning in suite_result.warnings.iter() {
-            let _ = shell.warn(warning);
+            sh_warn!("{warning}")?;
         }
         if !tests.is_empty() {
             let n_tests = tests.len();
             let term = if n_tests > 1 { "tests" } else { "test" };
-            let _ = shell.print_out(format!("Running {n_tests} {term} for {contract_name}"));
+            sh_println!("Running {n_tests} {term} for {contract_name}")?;
         }
         for (name, result) in &mut tests {
             short_test_result(name, result);
@@ -576,11 +580,11 @@ async fn test(
                 // We only decode logs from Hardhat and DS-style console events
                 let console_logs = decode_console_logs(&result.logs);
                 if !console_logs.is_empty() {
-                    println!("Logs:");
+                    sh_println!("Logs:")?;
                     for log in console_logs {
-                        println!("  {log}");
+                        sh_println!("  {log}")?;
                     }
-                    println!();
+                    sh_println!()?;
                 }
             }
 
@@ -633,8 +637,10 @@ async fn test(
             }
 
             if !decoded_traces.is_empty() {
-                println!("Traces:");
-                decoded_traces.into_iter().for_each(|trace| println!("{trace}"));
+                sh_println!("Traces:")?;
+                for trace in decoded_traces {
+                    sh_println!("  {trace}")?;
+                }
             }
 
             if gas_reporting {
@@ -647,22 +653,20 @@ async fn test(
         total_failed += block_outcome.failures().count();
         total_skipped += block_outcome.skips().count();
 
-        println!("{}", block_outcome.summary());
+        sh_println!("{}", block_outcome.summary())?;
     }
 
     if gas_reporting {
-        let _ = shell.print_out(gas_report.finalize());
+        sh_println!("{}", gas_report.finalize())?;
     }
 
     let num_test_suites = results.len();
 
     if num_test_suites > 0 {
-        let _ = shell.print_out(format_aggregated_summary(
-            num_test_suites,
-            total_passed,
-            total_failed,
-            total_skipped,
-        ));
+        sh_println!(
+            "{}",
+            format_aggregated_summary(num_test_suites, total_passed, total_failed, total_skipped,)
+        )?;
     }
 
     // reattach the thread

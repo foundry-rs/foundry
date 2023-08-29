@@ -96,13 +96,13 @@ impl SelectorsSubcommands {
                         continue
                     }
 
-                    println!("Uploading selectors for {contract}...");
+                    sh_status!("Uploading" => "{contract}")?;
 
                     // upload abi to selector database
-                    import_selectors(SelectorImportData::Abi(vec![abi])).await?.describe();
+                    import_selectors(SelectorImportData::Abi(vec![abi])).await?.describe()?;
 
                     if artifacts.peek().is_some() {
-                        println!()
+                        sh_eprintln!()?;
                     }
                 }
             }
@@ -147,7 +147,7 @@ impl SelectorsSubcommands {
                     .collect();
 
                 if colliding_methods.is_empty() {
-                    println!("No colliding method selectors between the two contracts.");
+                    sh_println!("No colliding method selectors between the two contracts.")?;
                 } else {
                     let mut table = Table::new();
                     table.set_header(vec![
@@ -155,11 +155,10 @@ impl SelectorsSubcommands {
                         first_contract.name,
                         second_contract.name,
                     ]);
-                    colliding_methods.iter().for_each(|t| {
+                    for &t in &colliding_methods {
                         table.add_row(vec![t.0, t.1, t.2]);
-                    });
-                    println!("{} collisions found:", colliding_methods.len());
-                    println!("{table}");
+                    }
+                    sh_println!("{} collisions found:\n{table}", colliding_methods.len())?;
                 }
             }
         }

@@ -270,18 +270,18 @@ impl CreateArgs {
                 "deployedTo": to_checksum(&address, None),
                 "transactionHash": receipt.transaction_hash
             });
-            println!("{output}");
+            sh_println!("{output}")?;
         } else {
-            println!("Deployer: {}", to_checksum(&deployer_address, None));
-            println!("Deployed to: {}", to_checksum(&address, None));
-            println!("Transaction hash: {:?}", receipt.transaction_hash);
+            sh_println!("Deployer: {}", to_checksum(&deployer_address, None))?;
+            sh_println!("Deployed to: {}", to_checksum(&address, None))?;
+            sh_println!("Transaction hash: {:?}", receipt.transaction_hash)?;
         };
 
         if !self.verify {
             return Ok(())
         }
 
-        println!("Starting contract verification...");
+        sh_println!("Starting contract verification...")?;
 
         let num_of_optimizations =
             if self.opts.compiler.optimize { self.opts.compiler.optimizer_runs } else { None };
@@ -302,7 +302,7 @@ impl CreateArgs {
             verifier: self.verifier,
             show_standard_json_input: false,
         };
-        println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier);
+        sh_println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier)?;
         verify.run().await
     }
 
