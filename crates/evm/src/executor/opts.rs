@@ -1,6 +1,6 @@
 use crate::{
     executor::fork::CreateFork,
-    utils::{h160_to_b160, h256_to_b256, RuntimeOrHandle},
+    utils::{h160_to_b160, h256_to_b256, u256_to_ru256, RuntimeOrHandle},
 };
 use ethers::{
     providers::{Middleware, Provider},
@@ -111,7 +111,7 @@ impl EvmOpts {
                 difficulty: rU256::from(self.env.block_difficulty),
                 prevrandao: Some(h256_to_b256(self.env.block_prevrandao)),
                 basefee: rU256::from(self.env.block_base_fee_per_gas),
-                gas_limit: self.gas_limit().into(),
+                gas_limit: u256_to_ru256(self.gas_limit()),
             },
             cfg,
             tx: TxEnv {

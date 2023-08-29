@@ -149,7 +149,7 @@ where
             BackendRequest::BlockHash(number, sender) => {
                 let hash = self.db.block_hashes().read().get(&rU256::from(number)).cloned();
                 if let Some(hash) = hash {
-                    let _ = sender.send(Ok(hash.into()));
+                    let _ = sender.send(Ok(b256_to_h256(hash)));
                 } else {
                     self.request_hash(number, sender);
                 }
@@ -351,11 +351,13 @@ where
                             // update the cache
                             let acc = AccountInfo {
                                 nonce: nonce.as_u64(),
-                                balance: balance.into(),
-                                code: code.map(|bytes| Bytecode::new_raw(bytes).to_checked()),
+                                balance: u256_to_ru256(balance),
+                                code: code.map(|bytes| {
+                                    Bytecode::new_raw(alloy_primitives::Bytes(bytes)).to_checked()
+                                }),
                                 code_hash,
                             };
-                            pin.db.accounts().write().insert(addr.into(), acc.clone());
+                            pin.db.accounts().write().insert(h160_to_b160(addr), acc.clone());
 
                             // notify all listeners
                             if let Some(listeners) = pin.account_requests.remove(&addr) {
@@ -392,9 +394,9 @@ where
                             pin.db
                                 .storage()
                                 .write()
-                                .entry(addr.into())
+                                .entry(h160_to_b160(addr))
                                 .or_default()
-                                .insert(idx.into(), value.into());
+                                .insert(u256_to_ru256(idx), u256_to_ru256(value));
 
                             // notify all listeners
                             if let Some(listeners) = pin.storage_requests.remove(&(addr, idx)) {
@@ -425,7 +427,10 @@ where
                             };
 
                             // update the cache
-                            pin.db.block_hashes().write().insert(rU256::from(number), value.into());
+                            pin.db
+                                .block_hashes()
+                                .write()
+                                .insert(rU256::from(number), h256_to_b256(value));
 
                             // notify all listeners
                             if let Some(listeners) = pin.block_requests.remove(&number) {
@@ -660,14 +665,14 @@ impl DatabaseRef for SharedBackend {
 
     fn storage(&self, address: aB160, index: rU256) -> Result<rU256, Self::Error> {
         trace!( target: "sharedbackend", "request storage {:?} at {:?}", address, index);
-        match self.do_get_storage(b160_to_h160(address), index.into()).map_err(|err| {
+        match self.do_get_storage(b160_to_h160(address), ru256_to_u256(index)).map_err(|err| {
             error!( target: "sharedbackend", ?err, ?address, ?index, "Failed to send/recv `storage`");
             if err.is_possibly_non_archive_node_error() {
                 error!(target: "sharedbackend", "{NON_ARCHIVE_NODE_WARNING}");
             }
           err
         }) {
-            Ok(val) => Ok(val.into()),
+            Ok(val) => Ok(u256_to_ru256(val)),
             Err(err) => Err(err),
         }
     }
@@ -676,7 +681,7 @@ impl DatabaseRef for SharedBackend {
         if number > rU256::from(u64::MAX) {
             return Ok(KECCAK_EMPTY)
         }
-        let number: U256 = number.into();
+        let number: U256 = ru256_to_u256(number);
         let number = number.as_u64();
         trace!( target: "sharedbackend", "request block hash for number {:?}", number);
         match self.do_get_block_hash(number).map_err(|err| {

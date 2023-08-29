@@ -70,16 +70,16 @@ where
         cfg,
         block: BlockEnv {
             number: u256_to_ru256(block.number.expect("block number not found").as_u64().into()),
-            timestamp: block.timestamp.into(),
+            timestamp: u256_to_ru256(block.timestamp),
             coinbase: h160_to_b160(block.author.unwrap_or_default()),
-            difficulty: block.difficulty.into(),
+            difficulty: u256_to_ru256(block.difficulty),
             prevrandao: Some(block.mix_hash.map(h256_to_b256).unwrap_or_default()),
-            basefee: block.base_fee_per_gas.unwrap_or_default().into(),
-            gas_limit: block.gas_limit.into(),
+            basefee: u256_to_ru256(block.base_fee_per_gas.unwrap_or_default()),
+            gas_limit: u256_to_ru256(block.gas_limit),
         },
         tx: TxEnv {
             caller: h160_to_b160(origin),
-            gas_price: gas_price.map(U256::from).unwrap_or(fork_gas_price).into(),
+            gas_price: u256_to_ru256(gas_price.map(U256::from).unwrap_or(fork_gas_price)),
             chain_id: Some(override_chain_id.unwrap_or(rpc_chain_id.as_u64())),
             gas_limit: block.gas_limit.as_u64(),
             ..Default::default()
