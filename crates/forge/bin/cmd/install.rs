@@ -125,7 +125,7 @@ impl DependencyInstallOpts {
             let rel_path = path
                 .strip_prefix(git.root)
                 .wrap_err("Library directory is not relative to the repository root")?;
-            sh_status!("Installing" => "{dep} ({})", path.display())?;
+            sh_status!("Installing" => "{dep} to {}", path.display())?;
 
             // this tracks the actual installed tag
             let installed_tag;

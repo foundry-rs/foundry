@@ -37,7 +37,7 @@ impl RemoveArgs {
 
         // remove all the dependencies from .git/modules
         for (dep, path) in self.dependencies.iter().zip(&paths) {
-            sh_status!("Removing" => "{dep} ({})", path.display())?;
+            sh_status!("Removing" => "{dep} from {}", path.display())?;
             std::fs::remove_dir_all(git_modules.join(path))?;
         }
 

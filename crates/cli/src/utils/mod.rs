@@ -496,10 +496,10 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
 
     // don't set this in cmd() because it's not wanted for all commands
     fn stderr() -> Stdio {
-        if foundry_common::Shell::get().verbosity().is_verbose() {
-            Stdio::inherit()
-        } else {
+        if foundry_common::Shell::get().verbosity().is_quiet() {
             Stdio::piped()
+        } else {
+            Stdio::inherit()
         }
     }
 }
