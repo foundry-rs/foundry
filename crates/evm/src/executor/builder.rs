@@ -1,5 +1,5 @@
 use super::{inspector::InspectorStackBuilder, Executor};
-use crate::executor::backend::Backend;
+use crate::{executor::backend::Backend, utils::ru256_to_u256};
 use ethers::types::U256;
 use revm::primitives::{Env, SpecId};
 
@@ -67,8 +67,8 @@ impl ExecutorBuilder {
         let Self { mut stack, gas_limit, spec_id } = self;
         env.cfg.spec_id = spec_id;
         stack.block = Some(env.block.clone());
-        stack.gas_price = Some(env.tx.gas_price.into());
-        let gas_limit = gas_limit.unwrap_or(env.block.gas_limit.into());
+        stack.gas_price = Some(ru256_to_u256(env.tx.gas_price));
+        let gas_limit = gas_limit.unwrap_or(ru256_to_u256(env.block.gas_limit));
         Executor::new(db, env, stack.build(), gas_limit)
     }
 }

@@ -141,6 +141,8 @@ hex = { package = "const-hex", version = "1.6", features = ["hex"] }
 itertools = "0.11"
 solang-parser = "=0.3.2"
 
+alloy-primitives = { version = "0.3", default-features = false }
+
 #[patch."https://github.com/gakonst/ethers-rs"]
 #ethers = { path = "../ethers-rs/ethers" }
 #ethers-addressbook = { path = "../ethers-rs/ethers-addressbook" }

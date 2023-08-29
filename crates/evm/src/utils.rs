@@ -1,13 +1,14 @@
 use ethers::{
     abi::{Abi, FixedBytes, Function},
     solc::EvmVersion,
-    types::{Block, Chain, H256, U256},
+    types::{Block, Chain, H256, U256, H160},
 };
 use eyre::ContextCompat;
 use revm::{
     interpreter::{opcode, opcode::spec_opcode_gas, InstructionResult},
     primitives::{Eval, Halt, SpecId},
 };
+use alloy_primitives::Address;
 use std::collections::BTreeMap;
 
 /// Small helper function to convert [U256] into [H256].
@@ -40,14 +41,14 @@ pub fn h256_to_u256_le(storage: H256) -> U256 {
 
 /// Small helper function to convert revm's [B160] into ethers's [H160].
 #[inline]
-pub fn b160_to_h160(b: revm::primitives::B160) -> ethers::types::H160 {
-    ethers::types::H160(b.0)
+pub fn b160_to_h160(b: alloy_primitives::Address) -> ethers::types::H160 {
+    H160::from_slice(b.as_slice())
 }
 
 /// Small helper function to convert ethers's [H160] into revm's [B160].
 #[inline]
-pub fn h160_to_b160(h: ethers::types::H160) -> revm::primitives::B160 {
-    revm::primitives::B160(h.0)
+pub fn h160_to_b160(h: ethers::types::H160) -> Address {
+    Address::from_slice(h.as_bytes())
 }
 
 /// Small helper function to convert revm's [B256] into ethers's [H256].
@@ -59,7 +60,7 @@ pub fn b256_to_h256(b: revm::primitives::B256) -> ethers::types::H256 {
 /// Small helper function to convert ether's [H256] into revm's [B256].
 #[inline]
 pub fn h256_to_b256(h: ethers::types::H256) -> revm::primitives::B256 {
-    revm::primitives::B256(h.0)
+    revm::primitives::Address(h.0)
 }
 
 /// Small helper function to convert ether's [U256] into revm's [U256].

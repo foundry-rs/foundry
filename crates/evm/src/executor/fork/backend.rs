@@ -21,7 +21,7 @@ use futures::{
 };
 use revm::{
     db::DatabaseRef,
-    primitives::{AccountInfo, Bytecode, B160, B256, KECCAK_EMPTY, U256 as rU256},
+    primitives::{AccountInfo, Bytecode, Address as aB160, B256, KECCAK_EMPTY, U256 as rU256},
 };
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
@@ -643,7 +643,7 @@ impl SharedBackend {
 impl DatabaseRef for SharedBackend {
     type Error = DatabaseError;
 
-    fn basic(&self, address: B160) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic(&self, address: aB160) -> Result<Option<AccountInfo>, Self::Error> {
         trace!( target: "sharedbackend", "request basic {:?}", address);
         self.do_get_basic(b160_to_h160(address)).map_err(|err| {
             error!(target: "sharedbackend",  ?err, ?address,  "Failed to send/recv `basic`");
@@ -658,7 +658,7 @@ impl DatabaseRef for SharedBackend {
         Err(DatabaseError::MissingCode(b256_to_h256(hash)))
     }
 
-    fn storage(&self, address: B160, index: rU256) -> Result<rU256, Self::Error> {
+    fn storage(&self, address: aB160, index: rU256) -> Result<rU256, Self::Error> {
         trace!( target: "sharedbackend", "request storage {:?} at {:?}", address, index);
         match self.do_get_storage(b160_to_h160(address), index.into()).map_err(|err| {
             error!( target: "sharedbackend", ?err, ?address, ?index, "Failed to send/recv `storage`");
@@ -719,7 +719,7 @@ mod tests {
         let backend = SharedBackend::spawn_backend(Arc::new(provider), db.clone(), None).await;
 
         // some rng contract from etherscan
-        let address: B160 = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
+        let address: aB160 = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 
         let idx = rU256::from(0u64);
         let value = backend.storage(address, idx).unwrap();
@@ -778,7 +778,7 @@ mod tests {
         let backend = Backend::spawn(Some(fork)).await;
 
         // some rng contract from etherscan
-        let address: B160 = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
+        let address: aB160 = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 
         let idx = rU256::from(0u64);
         let _value = backend.storage(address, idx);
