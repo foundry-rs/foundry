@@ -140,6 +140,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 hex = { package = "const-hex", version = "1.6", features = ["hex"] }
 itertools = "0.11"
 solang-parser = "=0.3.2"
+tikv-jemallocator = "0.5.4"
 
 #[patch."https://github.com/gakonst/ethers-rs"]
 #ethers = { path = "../ethers-rs/ethers" }
