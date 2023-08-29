@@ -1,5 +1,5 @@
 use revm::{
-    primitives::{AccountInfo, Env, HashMap as Map, Address, B256, U256},
+    primitives::{AccountInfo, Address, Env, HashMap as Map, B256, U256},
     JournaledState,
 };
 use serde::{Deserialize, Serialize};

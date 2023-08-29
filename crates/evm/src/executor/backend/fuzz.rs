@@ -12,7 +12,9 @@ use ethers::prelude::{H256, U256};
 
 use revm::{
     db::DatabaseRef,
-    primitives::{AccountInfo, Bytecode, Env, ResultAndState, Address as aB160, B256, U256 as rU256},
+    primitives::{
+        AccountInfo, Address as aB160, Bytecode, Env, ResultAndState, B256, U256 as rU256,
+    },
     Database, Inspector, JournaledState,
 };
 use std::borrow::Cow;

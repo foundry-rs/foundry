@@ -19,8 +19,8 @@ use revm::{
     db::{CacheDB, DatabaseRef},
     precompile::{Precompiles, SpecId},
     primitives::{
-        Account, AccountInfo, Bytecode, CreateScheme, Env, HashMap as Map, Log, ResultAndState,
-        TransactTo, Address as aB160, B256, KECCAK_EMPTY, U256 as rU256,
+        Account, AccountInfo, Address as aB160, Bytecode, CreateScheme, Env, HashMap as Map, Log,
+        ResultAndState, TransactTo, B256, KECCAK_EMPTY, U256 as rU256,
     },
     Database, DatabaseCommit, Inspector, JournaledState, EVM,
 };
@@ -478,12 +478,23 @@ impl Backend {
         value: U256,
     ) -> Result<(), DatabaseError> {
         let ret = if let Some(db) = self.active_fork_db_mut() {
-            db.insert_account_storage(h160_to_b160(address), u256_to_ru256(slot), u256_to_ru256(value))
+            db.insert_account_storage(
+                h160_to_b160(address),
+                u256_to_ru256(slot),
+                u256_to_ru256(value),
+            )
         } else {
-            self.mem_db.insert_account_storage(h160_to_b160(address), u256_to_ru256(slot), u256_to_ru256(value))
+            self.mem_db.insert_account_storage(
+                h160_to_b160(address),
+                u256_to_ru256(slot),
+                u256_to_ru256(value),
+            )
         };
 
-        debug_assert!(self.storage(h160_to_b160(address), u256_to_ru256(slot)).unwrap() == u256_to_ru256(value));
+        debug_assert!(
+            self.storage(h160_to_b160(address), u256_to_ru256(slot)).unwrap() ==
+                u256_to_ru256(value)
+        );
 
         ret
     }

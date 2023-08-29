@@ -2,7 +2,7 @@
 use crate::executor::backend::error::DatabaseError;
 use revm::{
     db::{CacheDB, DatabaseRef, EmptyDB},
-    primitives::{Account, AccountInfo, Bytecode, HashMap as Map, B256, U256, Address},
+    primitives::{Account, AccountInfo, Address, Bytecode, HashMap as Map, B256, U256},
     Database, DatabaseCommit,
 };
 

@@ -1,14 +1,13 @@
 use ethers::{
     abi::{Abi, FixedBytes, Function},
     solc::EvmVersion,
-    types::{Block, Chain, H256, U256, H160},
+    types::{Block, Chain, H160, H256, U256},
 };
 use eyre::ContextCompat;
 use revm::{
     interpreter::{opcode, opcode::spec_opcode_gas, InstructionResult},
     primitives::{Eval, Halt, SpecId},
 };
-use alloy_primitives::Address;
 use std::collections::BTreeMap;
 
 /// Small helper function to convert [U256] into [H256].
@@ -47,8 +46,8 @@ pub fn b160_to_h160(b: alloy_primitives::Address) -> ethers::types::H160 {
 
 /// Small helper function to convert ethers's [H160] into revm's [B160].
 #[inline]
-pub fn h160_to_b160(h: ethers::types::H160) -> Address {
-    Address::from_slice(h.as_bytes())
+pub fn h160_to_b160(h: ethers::types::H160) -> alloy_primitives::Address {
+    alloy_primitives::Address::from_slice(h.as_bytes())
 }
 
 /// Small helper function to convert revm's [B256] into ethers's [H256].
@@ -59,8 +58,8 @@ pub fn b256_to_h256(b: revm::primitives::B256) -> ethers::types::H256 {
 
 /// Small helper function to convert ether's [H256] into revm's [B256].
 #[inline]
-pub fn h256_to_b256(h: ethers::types::H256) -> revm::primitives::B256 {
-    revm::primitives::Address(h.0)
+pub fn h256_to_b256(h: ethers::types::H256) -> alloy_primitives::B256 {
+    alloy_primitives::B256::from_slice(h.as_bytes())
 }
 
 /// Small helper function to convert ether's [U256] into revm's [U256].
@@ -159,7 +158,7 @@ pub fn apply_chain_and_block_specific_env_changes<T>(
                 // `l1BlockNumber` field
                 if let Some(l1_block_number) = block.other.get("l1BlockNumber").cloned() {
                     if let Ok(l1_block_number) = serde_json::from_value::<U256>(l1_block_number) {
-                        env.block.number = l1_block_number.into();
+                        env.block.number = u256_to_ru256(l1_block_number);
                     }
                 }
             }

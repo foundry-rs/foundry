@@ -21,7 +21,7 @@ use futures::{
 };
 use revm::{
     db::DatabaseRef,
-    primitives::{AccountInfo, Bytecode, Address as aB160, B256, KECCAK_EMPTY, U256 as rU256},
+    primitives::{AccountInfo, Address as aB160, Bytecode, B256, KECCAK_EMPTY, U256 as rU256},
 };
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
