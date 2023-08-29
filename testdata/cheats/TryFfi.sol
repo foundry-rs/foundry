@@ -21,13 +21,12 @@ contract TryFfiTest is DSTest {
     }
 
     function testTryFfiFail() public {
-        string[] memory inputs = new string[](3);
-        inputs[0] = "bash";
-        inputs[1] = "-c";
-        inputs[2] = "quikmafs";
+        string[] memory inputs = new string[](2);
+        inputs[0] = "ls";
+        inputs[1] = "wad";
 
         Vm.FfiResult memory f = vm.tryFfi(inputs);
         assert(f.exit_code != 0);
-        assertEq(string(f.stderr), string("bash: quikmafs: command not found\n"));
+        assertEq(string(f.stderr), string("ls: wad: No such file or directory\n"));
     }
 }
