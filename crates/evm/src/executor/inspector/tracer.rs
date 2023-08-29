@@ -8,7 +8,6 @@ use crate::{
     utils::{b160_to_h160, b256_to_h256, ru256_to_u256},
     CallKind,
 };
-use bytes::Bytes;
 use ethers::{
     abi::RawLog,
     types::{Address, U256},
@@ -18,7 +17,7 @@ use revm::{
         opcode, return_ok, CallInputs, CallScheme, CreateInputs, Gas, InstructionResult,
         Interpreter,
     },
-    primitives::{B160, B256},
+    primitives::{Address as rAddress, B256, Bytes},
     Database, EVMData, Inspector, JournalEntry,
 };
 
@@ -128,7 +127,7 @@ impl Tracer {
                 Some(JournalEntry::StorageChange { address, key, .. }),
             ) => {
                 let value = data.journaled_state.state[address].storage[key].present_value();
-                Some((ru256_to_u256(*key), value.into()))
+                Some((ru256_to_u256(*key), ru256_to_u256(value)))
             }
             _ => None,
         };
@@ -165,7 +164,7 @@ impl<DB: Database> Inspector<DB> for Tracer {
     }
 
     #[inline]
-    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &B160, topics: &[B256], data: &Bytes) {
+    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &rAddress, topics: &[B256], data: &Bytes) {
         let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
         let topics: Vec<_> = topics.iter().copied().map(b256_to_h256).collect();
         node.ordering.push(LogCallOrder::Log(node.logs.len()));
@@ -189,7 +188,7 @@ impl<DB: Database> Inspector<DB> for Tracer {
             data.journaled_state.depth() as usize,
             b160_to_h160(to),
             inputs.input.to_vec(),
-            inputs.transfer.value.into(),
+            ru256_to_u256(inputs.transfer.value),
             inputs.context.scheme.into(),
             b160_to_h160(from),
         );
@@ -221,7 +220,7 @@ impl<DB: Database> Inspector<DB> for Tracer {
         &mut self,
         data: &mut EVMData<'_, DB>,
         inputs: &mut CreateInputs,
-    ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<rAddress>, Gas, Bytes) {
         // TODO: Does this increase gas cost?
         let _ = data.journaled_state.load_account(inputs.caller, data.db);
         let nonce = data.journaled_state.account(inputs.caller).info.nonce;
@@ -229,7 +228,7 @@ impl<DB: Database> Inspector<DB> for Tracer {
             data.journaled_state.depth() as usize,
             get_create_address(inputs, nonce),
             inputs.init_code.to_vec(),
-            inputs.value.into(),
+            ru256_to_u256(inputs.value),
             inputs.scheme.into(),
             b160_to_h160(inputs.caller),
         );
@@ -243,10 +242,10 @@ impl<DB: Database> Inspector<DB> for Tracer {
         data: &mut EVMData<'_, DB>,
         _inputs: &CreateInputs,
         status: InstructionResult,
-        address: Option<B160>,
+        address: Option<rAddress>,
         gas: Gas,
         retdata: Bytes,
-    ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<rAddress>, Gas, Bytes) {
         let code = match address {
             Some(address) => data
                 .journaled_state

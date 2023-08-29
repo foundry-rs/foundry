@@ -6,7 +6,7 @@ use ethers_core::{
     },
 };
 use foundry_evm::utils::{h160_to_b160, h256_to_u256_be, u256_to_ru256};
-use revm::primitives::{B160, U256 as rU256};
+use revm::primitives::{Address as rAddress, U256 as rU256};
 
 pub fn enveloped<T: Encodable>(id: u8, v: &T, s: &mut RlpStream) {
     let encoded = rlp::encode(v);
@@ -22,7 +22,7 @@ pub fn to_access_list(list: Vec<AccessListItem>) -> Vec<(Address, Vec<U256>)> {
         .collect()
 }
 
-pub fn to_revm_access_list(list: Vec<AccessListItem>) -> Vec<(B160, Vec<rU256>)> {
+pub fn to_revm_access_list(list: Vec<AccessListItem>) -> Vec<(rAddress, Vec<rU256>)> {
     list.into_iter()
         .map(|item| {
             (

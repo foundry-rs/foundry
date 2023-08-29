@@ -73,7 +73,7 @@ use foundry_evm::{
     },
     utils::{
         eval_to_instruction_result, h256_to_b256, halt_to_instruction_result, ru256_to_u256,
-        u256_to_h256_be, u256_to_ru256,
+        u256_to_h256_be, u256_to_ru256, h160_to_b160, b160_to_h160,
     },
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
@@ -264,7 +264,7 @@ impl Backend {
                 // accounts concurrently by spawning the job to a new task
                 genesis_accounts_futures.push(tokio::task::spawn(async move {
                     let db = db.read().await;
-                    let info = db.basic(address.into())?.unwrap_or_default();
+                    let info = db.basic(h160_to_b160(address))?.unwrap_or_default();
                     Ok::<_, DatabaseError>((address, info))
                 }));
             }
@@ -338,7 +338,7 @@ impl Backend {
 
     /// Returns the `AccountInfo` from the database
     pub async fn get_account(&self, address: Address) -> DatabaseResult<AccountInfo> {
-        Ok(self.db.read().await.basic(address.into())?.unwrap_or_default())
+        Ok(self.db.read().await.basic(h160_to_b160(address))?.unwrap_or_default())
     }
 
     /// Whether we're forked off some remote client
@@ -369,9 +369,9 @@ impl Backend {
 
                 env.block = BlockEnv {
                     number: rU256::from(fork_block_number),
-                    timestamp: fork_block.timestamp.into(),
-                    gas_limit: fork_block.gas_limit.into(),
-                    difficulty: fork_block.difficulty.into(),
+                    timestamp: u256_to_ru256(fork_block.timestamp),
+                    gas_limit: u256_to_ru256(fork_block.gas_limit),
+                    difficulty: u256_to_ru256(fork_block.difficulty),
                     prevrandao: fork_block.mix_hash.map(h256_to_b256),
                     // Keep previous `coinbase` and `basefee` value
                     coinbase: env.block.coinbase,
@@ -379,7 +379,7 @@ impl Backend {
                 };
 
                 self.time.reset(ru256_to_u256(env.block.timestamp).as_u64());
-                self.fees.set_base_fee(env.block.basefee.into());
+                self.fees.set_base_fee(ru256_to_u256(env.block.basefee));
 
                 // also reset the total difficulty
                 self.blockchain.storage.write().total_difficulty = fork.total_difficulty();
@@ -450,17 +450,17 @@ impl Backend {
     /// Sets the block number
     pub fn set_block_number(&self, number: U256) {
         let mut env = self.env.write();
-        env.block.number = number.into();
+        env.block.number = u256_to_ru256(number);
     }
 
     /// Returns the client coinbase address.
     pub fn coinbase(&self) -> Address {
-        self.env.read().block.coinbase.into()
+        b160_to_h160(self.env.read().block.coinbase)
     }
 
     /// Returns the client coinbase address.
     pub fn chain_id(&self) -> U256 {
-        self.env.read().cfg.chain_id.into()
+        ru256_to_u256(self.env.read().cfg.chain_id)
     }
 
     /// Returns balance of the given account.

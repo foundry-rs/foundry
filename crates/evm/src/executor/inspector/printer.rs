@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use revm::{
     interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
-    primitives::B160,
+    primitives::Address,
     Database, EVMData, Inspector,
 };
 
@@ -38,7 +38,7 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         &mut self,
         _data: &mut EVMData<'_, DB>,
         inputs: &mut CallInputs,
-    ) -> (InstructionResult, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, alloy_primitives::Bytes) {
         println!(
             "SM CALL:   {:?},context:{:?}, is_static:{:?}, transfer:{:?}, input_size:{:?}",
             inputs.contract,
@@ -47,14 +47,14 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
             inputs.transfer,
             inputs.input.len(),
         );
-        (InstructionResult::Continue, Gas::new(0), Bytes::new())
+        (InstructionResult::Continue, Gas::new(0), alloy_primitives::Bytes::new())
     }
 
     fn create(
         &mut self,
         _data: &mut EVMData<'_, DB>,
         inputs: &mut CreateInputs,
-    ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<Address>, Gas, alloy_primitives::Bytes) {
         println!(
             "CREATE CALL: caller:{:?}, scheme:{:?}, value:{:?}, init_code:{:?}, gas:{:?}",
             inputs.caller,
@@ -63,6 +63,6 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
             hex::encode(&inputs.init_code),
             inputs.gas_limit
         );
-        (InstructionResult::Continue, None, Gas::new(0), Bytes::new())
+        (InstructionResult::Continue, None, Gas::new(0), alloy_primitives::Bytes(Bytes::new()))
     }
 }

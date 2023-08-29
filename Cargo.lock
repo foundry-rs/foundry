@@ -203,6 +203,7 @@ dependencies = [
 name = "anvil"
 version = "0.2.0"
 dependencies = [
+ "alloy-primitives",
  "anvil-core",
  "anvil-rpc",
  "anvil-server",
@@ -250,6 +251,7 @@ dependencies = [
 name = "anvil-core"
 version = "0.2.0"
 dependencies = [
+ "alloy-primitives",
  "bytes",
  "ethers-core",
  "foundry-evm",

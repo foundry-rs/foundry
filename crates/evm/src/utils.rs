@@ -72,7 +72,7 @@ pub fn u256_to_ru256(u: ethers::types::U256) -> revm::primitives::U256 {
 
 /// Small helper function to convert revm's [U256] into ethers's [U256].
 #[inline]
-pub fn ru256_to_u256(u: revm::primitives::U256) -> ethers::types::U256 {
+pub fn ru256_to_u256(u: alloy_primitives::U256) -> ethers::types::U256 {
     ethers::types::U256::from_little_endian(&u.as_le_bytes())
 }
 

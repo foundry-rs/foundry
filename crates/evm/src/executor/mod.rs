@@ -3,7 +3,7 @@ use crate::{
     debug::DebugArena,
     decode,
     trace::CallTraceArena,
-    utils::{b160_to_h160, eval_to_instruction_result, h160_to_b160, halt_to_instruction_result},
+    utils::{b160_to_h160, eval_to_instruction_result, h160_to_b160, halt_to_instruction_result, u256_to_ru256, ru256_to_u256},
     CALLER,
 };
 pub use abi::{
@@ -16,7 +16,7 @@ use ethers::{
     abi::{Abi, Contract, Detokenize, Function, Tokenize},
     prelude::{decode_function_data, encode_function_data, Address, U256},
     signers::LocalWallet,
-    types::Log,
+    types::{Log},
 };
 use foundry_common::{abi::IntoFunction, evm::Breakpoints};
 use revm::primitives::hex_literal::hex;
@@ -27,7 +27,7 @@ pub use revm::{
     interpreter::{return_ok, CreateScheme, InstructionResult, Memory, Stack},
     primitives::{
         Account, BlockEnv, Bytecode, ExecutionResult, HashMap, Output, ResultAndState, TransactTo,
-        TxEnv, B160, U256 as rU256,
+        TxEnv, Address as rAddress, U256 as rU256,
     },
 };
 use std::collections::BTreeMap;
@@ -60,7 +60,7 @@ use crate::{
 pub use builder::ExecutorBuilder;
 
 /// A mapping of addresses to their changed state.
-pub type StateChangeset = HashMap<B160, Account>;
+pub type StateChangeset = HashMap<rAddress, Account>;
 
 /// The initcode of the default create2 deployer.
 pub const DEFAULT_CREATE2_DEPLOYER_CODE: &[u8] = &hex!("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3");
@@ -103,7 +103,7 @@ impl Executor {
         backend.insert_account_info(
             CHEATCODE_ADDRESS,
             revm::primitives::AccountInfo {
-                code: Some(Bytecode::new_raw(Bytes::from_static(&[0])).to_checked()),
+                code: Some(Bytecode::new_raw(alloy_primitives::Bytes(Bytes::from_static(&[0]))).to_checked()),
                 ..Default::default()
             },
         );
@@ -140,7 +140,7 @@ impl Executor {
     pub fn set_balance(&mut self, address: Address, amount: U256) -> DatabaseResult<&mut Self> {
         trace!(?address, ?amount, "setting account balance");
         let mut account = self.backend.basic(h160_to_b160(address))?.unwrap_or_default();
-        account.balance = amount.into();
+        account.balance = u256_to_ru256(amount);
 
         self.backend.insert_account_info(address, account);
         Ok(self)
@@ -151,7 +151,7 @@ impl Executor {
         Ok(self
             .backend
             .basic(h160_to_b160(address))?
-            .map(|acc| acc.balance.into())
+            .map(|acc| ru256_to_u256(acc.balance))
             .unwrap_or_default())
     }
 
@@ -408,7 +408,7 @@ impl Executor {
 
         let result = match &out {
             Some(Output::Create(data, _)) => data.to_owned(),
-            _ => Bytes::default(),
+            _ => alloy_primitives::Bytes(Bytes::default()),
         };
 
         let address = match exit_reason {
@@ -570,14 +570,14 @@ impl Executor {
             // the cheatcode handler if it is enabled
             block: BlockEnv {
                 basefee: rU256::from(0),
-                gas_limit: self.gas_limit.into(),
+                gas_limit: u256_to_ru256(self.gas_limit),
                 ..self.env.block.clone()
             },
             tx: TxEnv {
                 caller: h160_to_b160(caller),
                 transact_to,
-                data,
-                value: value.into(),
+                data: alloy_primitives::Bytes(data),
+                value: u256_to_ru256(value),
                 // As above, we set the gas price to 0.
                 gas_price: rU256::from(0),
                 gas_priority_fee: None,
@@ -778,7 +778,7 @@ fn convert_executed_result(
 
     let result = match out {
         Some(Output::Call(ref data)) => data.to_owned(),
-        _ => Bytes::default(),
+        _ => alloy_primitives::Bytes(Bytes::default()),
     };
 
     let InspectorData {
@@ -802,7 +802,7 @@ fn convert_executed_result(
     Ok(RawCallResult {
         exit_reason,
         reverted: !matches!(exit_reason, return_ok!()),
-        result,
+        result: result.0,
         gas_used,
         gas_refunded,
         stipend,

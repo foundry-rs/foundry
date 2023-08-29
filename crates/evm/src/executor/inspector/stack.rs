@@ -5,9 +5,8 @@ use crate::{
     coverage::HitMaps,
     debug::DebugArena,
     executor::{backend::DatabaseExt, inspector::CoverageCollector},
-    trace::CallTraceArena,
+    trace::CallTraceArena, utils::ru256_to_u256,
 };
-use bytes::Bytes;
 use ethers::{
     signers::LocalWallet,
     types::{Address, Log, U256},
@@ -16,7 +15,7 @@ use revm::{
     interpreter::{
         return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, Stack,
     },
-    primitives::{BlockEnv, Env, B160, B256},
+    primitives::{BlockEnv, Env, Address as rAddress, B256, Bytes},
     EVMData, Inspector,
 };
 use std::{collections::BTreeMap, sync::Arc};
@@ -229,7 +228,7 @@ impl InspectorStack {
     #[inline]
     pub fn set_env(&mut self, env: &Env) {
         self.set_block(&env.block);
-        self.set_gas_price(env.tx.gas_price.into());
+        self.set_gas_price(ru256_to_u256(env.tx.gas_price));
     }
 
     /// Sets the block for the relevant inspectors.
@@ -414,7 +413,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
     fn log(
         &mut self,
         evm_data: &mut EVMData<'_, DB>,
-        address: &B160,
+        address: &rAddress,
         topics: &[B256],
         data: &Bytes,
     ) {
@@ -508,7 +507,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
-    ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<rAddress>, Gas, Bytes) {
         call_inspectors!(
             [
                 &mut self.debugger,
@@ -536,10 +535,10 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
         data: &mut EVMData<'_, DB>,
         call: &CreateInputs,
         status: InstructionResult,
-        address: Option<B160>,
+        address: Option<rAddress>,
         remaining_gas: Gas,
         retdata: Bytes,
-    ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<rAddress>, Gas, Bytes) {
         call_inspectors!(
             [
                 &mut self.debugger,
@@ -568,7 +567,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
         (status, address, remaining_gas, retdata)
     }
 
-    fn selfdestruct(&mut self, contract: B160, target: B160) {
+    fn selfdestruct(&mut self, contract: rAddress, target: rAddress) {
         call_inspectors!(
             [
                 &mut self.debugger,

@@ -2,8 +2,8 @@ use crate::{
     fuzz::{invariant::RandomCallGenerator, strategies::EvmFuzzState},
     utils::{self, b160_to_h160, h160_to_b160},
 };
-use bytes::Bytes;
 use revm::{
+    primitives::Bytes,
     interpreter::{CallInputs, CallScheme, Gas, InstructionResult, Interpreter},
     Database, EVMData, Inspector,
 };
@@ -103,7 +103,7 @@ impl Fuzzer {
                 if let Some((sender, (contract, input))) = call_generator
                     .next(b160_to_h160(call.context.caller), b160_to_h160(call.contract))
                 {
-                    call.input = input.0;
+                    *call.input = input.0;
                     call.context.caller = h160_to_b160(sender);
                     call.contract = h160_to_b160(contract);
 

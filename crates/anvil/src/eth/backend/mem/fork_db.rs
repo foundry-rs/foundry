@@ -12,7 +12,7 @@ use foundry_evm::{
         backend::{snapshot::StateSnapshot, DatabaseResult},
         fork::database::ForkDbSnapshot,
     },
-    revm::Database,
+    revm::Database, utils::{h160_to_b160, u256_to_ru256, h256_to_b256, b160_to_h160, ru256_to_u256},
 };
 
 /// Implement the helper for the fork database
@@ -23,12 +23,12 @@ impl Db for ForkedDatabase {
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()> {
         // this ensures the account is loaded first
-        let _ = Database::basic(self, address.into())?;
+        let _ = Database::basic(self, h160_to_b160(address))?;
         self.database_mut().set_storage_at(address, slot, val)
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: H256) {
-        self.inner().block_hashes().write().insert(number.into(), hash.into());
+        self.inner().block_hashes().write().insert(u256_to_ru256(number), h256_to_b256(hash));
     }
 
     fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
@@ -46,15 +46,15 @@ impl Db for ForkedDatabase {
                 }
                 .to_checked();
                 Ok((
-                    k.into(),
+                    b160_to_h160(k),
                     SerializableAccountRecord {
                         nonce: v.info.nonce,
-                        balance: v.info.balance.into(),
+                        balance: ru256_to_u256(v.info.balance),
                         code: code.bytes()[..code.len()].to_vec().into(),
                         storage: v
                             .storage
                             .into_iter()
-                            .map(|kv| (kv.0.into(), kv.1.into()))
+                            .map(|kv| (ru256_to_u256(kv.0), ru256_to_u256(kv.1)))
                             .collect(),
                     },
                 ))

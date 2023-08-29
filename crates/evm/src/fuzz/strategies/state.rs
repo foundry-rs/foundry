@@ -164,7 +164,7 @@ pub fn collect_state_from_call(
             // Insert push bytes
             if let Some(code) = &account.info.code {
                 if state.addresses_mut().insert(b160_to_h160(*address)) {
-                    for push_byte in collect_push_bytes(code.bytes().clone()) {
+                    for push_byte in collect_push_bytes(code.bytes().clone().0) {
                         state.values_mut().insert(push_byte);
                     }
                 }
@@ -174,7 +174,7 @@ pub fn collect_state_from_call(
         if config.include_storage && state.state_values.len() < config.max_fuzz_dictionary_values {
             // Insert storage
             for (slot, value) in &account.storage {
-                let slot = (*slot).into();
+                let slot = ru256_to_u256(*slot).into();
                 let value = ru256_to_u256(value.present_value());
                 state.values_mut().insert(utils::u256_to_h256_be(slot).into());
                 state.values_mut().insert(utils::u256_to_h256_be(value).into());
