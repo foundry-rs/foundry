@@ -100,7 +100,7 @@ pub fn build_initial_state<DB: DatabaseRef>(
     let mut state = FuzzDictionary::default();
 
     for (address, account) in db.accounts.iter() {
-        let address: Address = (*address).into();
+        let address: Address = b160_to_h160(*address);
         // Insert basic account information
         state.values_mut().insert(H256::from(address).into());
 
@@ -108,7 +108,7 @@ pub fn build_initial_state<DB: DatabaseRef>(
         if config.include_push_bytes {
             if let Some(code) = &account.info.code {
                 if state.addresses_mut().insert(address) {
-                    for push_byte in collect_push_bytes(code.bytes().clone()) {
+                    for push_byte in collect_push_bytes(code.bytes().clone().0) {
                         state.values_mut().insert(push_byte);
                     }
                 }
@@ -118,8 +118,8 @@ pub fn build_initial_state<DB: DatabaseRef>(
         if config.include_storage {
             // Insert storage
             for (slot, value) in &account.storage {
-                let slot = (*slot).into();
-                let value = (*value).into();
+                let slot = ru256_to_u256(*slot);
+                let value = ru256_to_u256(*value);
                 state.values_mut().insert(utils::u256_to_h256_be(slot).into());
                 state.values_mut().insert(utils::u256_to_h256_be(value).into());
                 // also add the value below and above the storage value to the dictionary.
