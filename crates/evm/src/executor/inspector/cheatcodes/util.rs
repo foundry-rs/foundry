@@ -35,7 +35,7 @@ use revm::{
     primitives::{Account, TransactTo},
     Database, EVMData, JournaledState,
 };
-use std::{collections::VecDeque, str::FromStr};
+use std::{collections::VecDeque, str::FromStr, path::Path};
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
@@ -182,6 +182,9 @@ impl FromStr for WordlistLang {
 fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
     let derivation_path =
         if path.ends_with('/') { format!("{path}{index}") } else { format!("{path}/{index}") };
+
+    let path = Path::new(mnemonic).canonicalize().unwrap_or_default();
+    println!("exists: {} {}", path.exists(), path.display());
 
     let wallet = MnemonicBuilder::<W>::default()
         .phrase(mnemonic)
