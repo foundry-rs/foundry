@@ -1,10 +1,10 @@
 //! forge tests for cheat codes
 
-use foundry_config::{Config, FsPermissions, fs_permissions::PathPermission};
+use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 
 use crate::{
     config::*,
-    test_helpers::{filter::Filter, RE_PATH_SEPARATOR, PROJECT},
+    test_helpers::{filter::Filter, PROJECT, RE_PATH_SEPARATOR},
 };
 
 /// Executes all cheat code tests but not fork cheat codes

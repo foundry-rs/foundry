@@ -35,7 +35,7 @@ use revm::{
     primitives::{Account, TransactTo},
     Database, EVMData, JournaledState,
 };
-use std::{collections::VecDeque, str::FromStr, path::Path};
+use std::{collections::VecDeque, path::Path, str::FromStr};
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
