@@ -513,7 +513,11 @@ contract {} {{
                         pt::Import::Plain(s, _) |
                         pt::Import::Rename(s, _, _) |
                         pt::Import::GlobalSymbol(s, _, _) => {
-                            let path = PathBuf::from(s.string);
+                            let s = match s {
+                                pt::ImportPath::Filename(s) => s.string.clone(),
+                                pt::ImportPath::Path(p) => p.to_string(),
+                            };
+                            let path = PathBuf::from(s);
 
                             match fs::read_to_string(path) {
                                 Ok(source) => {

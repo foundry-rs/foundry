@@ -257,8 +257,8 @@ fn fs_metadata(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
 ///
 /// Note: This function does not verify if a user has necessary permissions to access the path,
 /// only that such a path exists
-fn exists(path: impl AsRef<Path>) -> Result {
-    let path = path.as_ref();
+fn exists(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
+    let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
     Ok(abi::encode(&[Token::Bool(path.exists())]).into())
 }
@@ -270,8 +270,8 @@ fn exists(path: impl AsRef<Path>) -> Result {
 ///
 /// Note: This function does not verify if a user has necessary permissions to access the file,
 /// only that such a file exists on disk
-fn is_file(path: impl AsRef<Path>) -> Result {
-    let path = path.as_ref();
+fn is_file(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
+    let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
     Ok(abi::encode(&[Token::Bool(path.is_file())]).into())
 }
@@ -283,8 +283,8 @@ fn is_file(path: impl AsRef<Path>) -> Result {
 ///
 /// Note: This function does not verify if a user has necessary permissions to access the directory,
 /// only that such a directory exists
-fn is_dir(path: impl AsRef<Path>) -> Result {
-    let path = path.as_ref();
+fn is_dir(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
+    let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
     Ok(abi::encode(&[Token::Bool(path.is_dir())]).into())
 }
@@ -309,9 +309,9 @@ pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
         HEVMCalls::ReadDir0(inner) => read_dir(state, &inner.0, 1, false),
         HEVMCalls::ReadDir1(inner) => read_dir(state, &inner.0, inner.1, false),
         HEVMCalls::ReadDir2(inner) => read_dir(state, &inner.0, inner.1, inner.2),
-        HEVMCalls::Exists(inner) => exists(&inner.0),
-        HEVMCalls::IsFile(inner) => is_file(&inner.0),
-        HEVMCalls::IsDir(inner) => is_dir(&inner.0),
+        HEVMCalls::Exists(inner) => exists(state, &inner.0),
+        HEVMCalls::IsFile(inner) => is_file(state, &inner.0),
+        HEVMCalls::IsDir(inner) => is_dir(state, &inner.0),
 
         _ => return None,
     };

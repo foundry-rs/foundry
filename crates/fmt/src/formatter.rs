@@ -6,6 +6,7 @@ use crate::{
     comments::{
         CommentPosition, CommentState, CommentStringExt, CommentType, CommentWithMetadata, Comments,
     },
+    helpers::import_path_string,
     macros::*,
     solang_ext::{pt::*, *},
     string::{QuoteState, QuotedStringExt},
@@ -15,6 +16,7 @@ use crate::{
 use ethers_core::{types::H160, utils::to_checksum};
 use foundry_config::fmt::{MultilineFuncHeaderStyle, SingleLineBlockStyle};
 use itertools::{Either, Itertools};
+use solang_parser::pt::ImportPath;
 use std::{fmt::Write, str::FromStr};
 use thiserror::Error;
 
@@ -1810,12 +1812,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     #[instrument(name = "import_plain", skip_all)]
-    fn visit_import_plain(&mut self, loc: Loc, import: &mut StringLiteral) -> Result<()> {
+    fn visit_import_plain(&mut self, loc: Loc, import: &mut ImportPath) -> Result<()> {
         return_source_if_disabled!(self, loc, ';');
 
         self.grouped(|fmt| {
-            write_chunk!(fmt, loc.start(), import.loc.start(), "import")?;
-            fmt.write_quoted_str(import.loc, None, &import.string)?;
+            write_chunk!(fmt, loc.start(), import.loc().start(), "import")?;
+            fmt.write_quoted_str(import.loc(), None, &import_path_string(import))?;
             fmt.write_semicolon()?;
             Ok(())
         })?;
@@ -1826,14 +1828,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_import_global(
         &mut self,
         loc: Loc,
-        global: &mut StringLiteral,
+        global: &mut ImportPath,
         alias: &mut Identifier,
     ) -> Result<()> {
         return_source_if_disabled!(self, loc, ';');
 
         self.grouped(|fmt| {
-            write_chunk!(fmt, loc.start(), global.loc.start(), "import")?;
-            fmt.write_quoted_str(global.loc, None, &global.string)?;
+            write_chunk!(fmt, loc.start(), global.loc().start(), "import")?;
+            fmt.write_quoted_str(global.loc(), None, &import_path_string(global))?;
             write_chunk!(fmt, loc.start(), alias.loc.start(), "as")?;
             alias.visit(fmt)?;
             fmt.write_semicolon()?;
@@ -1847,7 +1849,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         &mut self,
         loc: Loc,
         imports: &mut [(Identifier, Option<Identifier>)],
-        from: &mut StringLiteral,
+        from: &mut ImportPath,
     ) -> Result<()> {
         return_source_if_disabled!(self, loc, ';');
 
@@ -1855,8 +1857,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             self.grouped(|fmt| {
                 write_chunk!(fmt, loc.start(), "import")?;
                 fmt.write_empty_brackets()?;
-                write_chunk!(fmt, loc.start(), from.loc.start(), "from")?;
-                fmt.write_quoted_str(from.loc, None, &from.string)?;
+                write_chunk!(fmt, loc.start(), from.loc().start(), "from")?;
+                fmt.write_quoted_str(from.loc(), None, &import_path_string(from))?;
                 fmt.write_semicolon()?;
                 Ok(())
             })?;
@@ -1869,7 +1871,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         self.surrounded(
             SurroundingChunk::new("{", Some(imports_start), None),
-            SurroundingChunk::new("}", None, Some(from.loc.start())),
+            SurroundingChunk::new("}", None, Some(from.loc().start())),
             |fmt, _multiline| {
                 let mut imports = imports.iter_mut().peekable();
                 let mut import_chunks = Vec::new();
@@ -1892,7 +1894,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
 
                 let multiline = fmt.are_chunks_separated_multiline(
-                    &format!("{{}} }} from \"{}\";", from.string),
+                    &format!("{{}} }} from \"{}\";", import_path_string(from)),
                     &import_chunks,
                     ",",
                 )?;
@@ -1902,8 +1904,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         )?;
 
         self.grouped(|fmt| {
-            write_chunk!(fmt, imports_start, from.loc.start(), "from")?;
-            fmt.write_quoted_str(from.loc, None, &from.string)?;
+            write_chunk!(fmt, imports_start, from.loc().start(), "from")?;
+            fmt.write_quoted_str(from.loc(), None, &import_path_string(from))?;
             fmt.write_semicolon()?;
             Ok(())
         })?;
