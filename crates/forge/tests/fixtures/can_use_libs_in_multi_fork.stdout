@@ -5,5 +5,5 @@ Compiler run successful!
 Running 1 test for test/Contract.t.sol:ContractTest
 [PASS] test() (gas: 70373)
 Test result: ok. 1 passed; 0 failed; 0 skipped; finished in 3.21s
-
+ 
 Ran 1 test suites: 1 tests passed, 0 failed, 0 skipped (1 total tests)
