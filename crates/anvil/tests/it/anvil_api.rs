@@ -132,6 +132,10 @@ async fn can_auto_impersonate_account() {
     api.anvil_auto_impersonate_account(false).await.unwrap();
     let res = provider.send_transaction(tx, None).await;
     res.unwrap_err();
+
+    // explicitly impersonated accounts get returned by `eth_accounts`
+    api.anvil_impersonate_account(impersonate).await.unwrap();
+    assert!(api.accounts().unwrap().contains(&impersonate));
 }
 
 #[tokio::test(flavor = "multi_thread")]
