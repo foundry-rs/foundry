@@ -4,7 +4,7 @@ use crate::{
     executor::{
         backend::DatabaseExt, fork::CreateFork, inspector::cheatcodes::ext::value_to_token,
     },
-    utils::{b160_to_h160, RuntimeOrHandle},
+    utils::RuntimeOrHandle,
 };
 use ethers::{
     abi::{self, AbiEncode, Token, Tokenizable, Tokenize},
@@ -269,10 +269,8 @@ fn eth_getlogs<DB: DatabaseExt>(data: &EVMData<DB>, inner: &EthGetLogsCall) -> R
     }
 
     let provider = ProviderBuilder::new(url).build()?;
-    let mut filter = Filter::new()
-        .address(b160_to_h160(inner.2.into()))
-        .from_block(inner.0.as_u64())
-        .to_block(inner.1.as_u64());
+    let mut filter =
+        Filter::new().address(inner.2).from_block(inner.0.as_u64()).to_block(inner.1.as_u64());
     for (i, item) in inner.3.iter().enumerate() {
         match i {
             0 => filter = filter.topic0(U256::from(item)),

@@ -59,8 +59,8 @@ pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
     env.tx.caller = h160_to_b160(tx.from);
     env.tx.gas_limit = tx.gas.as_u64();
-    env.tx.gas_price = tx.gas_price.unwrap_or_default().into();
-    env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(Into::into);
+    env.tx.gas_price = u256_to_ru256(tx.gas_price.unwrap_or_default());
+    env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(u256_to_ru256);
     env.tx.nonce = Some(tx.nonce.as_u64());
     env.tx.access_list = tx
         .access_list
@@ -75,8 +75,8 @@ pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
             )
         })
         .collect();
-    env.tx.value = tx.value.into();
-    env.tx.data = tx.input.0.clone();
+    env.tx.value = u256_to_ru256(tx.value);
+    env.tx.data = alloy_primitives::Bytes(tx.input.0.clone());
     env.tx.transact_to =
         tx.to.map(h160_to_b160).map(TransactTo::Call).unwrap_or_else(TransactTo::create)
 }
@@ -249,7 +249,9 @@ pub fn apply<DB: Database>(
     Some(match call {
         HEVMCalls::Addr(inner) => addr(inner.0),
         // [function sign(uint256,bytes32)] Used to sign bytes32 digests using the given private key
-        HEVMCalls::Sign0(inner) => sign(inner.0, inner.1.into(), data.env.cfg.chain_id.into()),
+        HEVMCalls::Sign0(inner) => {
+            sign(inner.0, inner.1.into(), ru256_to_u256(data.env.cfg.chain_id))
+        }
         // [function createWallet(string)] Used to derive private key and label the wallet with the
         // same string
         HEVMCalls::CreateWallet0(inner) => {
@@ -263,7 +265,7 @@ pub fn apply<DB: Database>(
         // [function sign(uint256,bytes32)] Used to sign bytes32 digests using the given Wallet's
         // private key
         HEVMCalls::Sign1(inner) => {
-            sign(inner.0.private_key, inner.1.into(), data.env.cfg.chain_id.into())
+            sign(inner.0.private_key, inner.1.into(), ru256_to_u256(data.env.cfg.chain_id))
         }
         HEVMCalls::DeriveKey0(inner) => {
             derive_key::<English>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
@@ -275,7 +277,9 @@ pub fn apply<DB: Database>(
         HEVMCalls::DeriveKey3(inner) => {
             derive_key_with_wordlist(&inner.0, &inner.1, inner.2, &inner.3)
         }
-        HEVMCalls::RememberKey(inner) => remember_key(state, inner.0, data.env.cfg.chain_id.into()),
+        HEVMCalls::RememberKey(inner) => {
+            remember_key(state, inner.0, ru256_to_u256(data.env.cfg.chain_id))
+        }
         HEVMCalls::Label(inner) => {
             state.labels.insert(inner.0, inner.1.clone());
             Ok(Default::default())
@@ -464,8 +468,8 @@ pub fn check_if_fixed_gas_limit<DB: DatabaseExt>(
     // time of the call, which should be rather close to configured gas limit.
     // TODO: Find a way to reliably make this determination. (for example by
     // generating it in the compilation or evm simulation process)
-    U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit.into() &&
-        U256::from(call_gas_limit) <= data.env.block.gas_limit.into()
+    U256::from(data.env.tx.gas_limit) > ru256_to_u256(data.env.block.gas_limit) &&
+        U256::from(call_gas_limit) <= ru256_to_u256(data.env.block.gas_limit)
         // Transfers in forge scripts seem to be estimated at 2300 by revm leading to "Intrinsic
         // gas too low" failure when simulated on chain
         && call_gas_limit > 2300
