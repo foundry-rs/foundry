@@ -474,7 +474,7 @@ fn format_aggregated_summary(
     )
 }
 
-/// Lists all matching tests    
+/// Lists all matching tests
 fn list(
     runner: MultiContractRunner,
     filter: ProjectPathsAwareFilter,
