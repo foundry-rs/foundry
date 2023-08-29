@@ -65,7 +65,7 @@ impl InitArgs {
             p_println!(!quiet => "Initializing {} from {}...", root.display(), template);
 
             if let Some(branch) = branch {
-                Git::clone_with_branch(shallow, &template, &branch, Some(&root))?;
+                Git::clone_with_branch(shallow, &template, branch, Some(&root))?;
             } else {
                 Git::clone(shallow, &template, Some(&root))?;
             }
