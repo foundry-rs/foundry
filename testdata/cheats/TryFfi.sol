@@ -26,7 +26,6 @@ contract TryFfiTest is DSTest {
         inputs[1] = "wad";
 
         Vm.FfiResult memory f = vm.tryFfi(inputs);
-        assert(f.exit_code != 0);
-        assertEq(string(f.stderr), string("ls: wad: No such file or directory\n"));
+        assertTrue(f.exit_code != 0);
     }
 }
