@@ -385,7 +385,8 @@ forgetest!(can_init_template, |prj: TestProject, mut cmd: TestCommand| {
 // checks that forge can init with template and branch
 forgetest!(can_init_template_with_branch, |prj: TestProject, mut cmd: TestCommand| {
     prj.wipe();
-    cmd.args(["init", "--template", "foundry-rs/forge-template", "--branch", "test/deployments"]).arg(prj.root());
+    cmd.args(["init", "--template", "foundry-rs/forge-template", "--branch", "test/deployments"])
+        .arg(prj.root());
     cmd.assert_non_empty_stdout();
     assert!(prj.root().join(".git").exists());
     assert!(prj.root().join(".dapprc").exists());
