@@ -1,5 +1,5 @@
 use crate::{
-    abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier, CallKind,
+    abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier, CallKind, utils::ru256_to_u256,
 };
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{
@@ -429,7 +429,7 @@ impl From<&CallTraceStep> for StructLog {
             } else {
                 None
             },
-            stack: Some(step.stack.data().iter().copied().map(|data| data.into()).collect()),
+            stack: Some(step.stack.data().iter().copied().map(|data| ru256_to_u256(data)).collect()),
             // Filled in `CallTraceArena::geth_trace` as a result of compounding all slot changes
             storage: None,
         }
