@@ -114,7 +114,7 @@ impl DependencyInstallOpts {
         let libs = git.root.join(install_lib_dir);
 
         if dependencies.is_empty() && !self.no_git {
-            sh_eprintln!("Updating dependencies in {}", libs.display())?;
+            sh_status!("Updating" => "dependencies in {}", libs.display())?;
             git.submodule_update(false, false, Some(&libs))?;
         }
         fs::create_dir_all(&libs)?;

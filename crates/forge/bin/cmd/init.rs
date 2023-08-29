@@ -5,8 +5,10 @@ use eyre::Result;
 use foundry_cli::utils::Git;
 use foundry_common::fs;
 use foundry_config::Config;
-use std::path::{Path, PathBuf};
-use yansi::Paint;
+use std::{
+    fmt::Write,
+    path::{Path, PathBuf},
+};
 
 /// CLI arguments for `forge init`.
 #[derive(Debug, Clone, Parser)]
@@ -50,19 +52,19 @@ impl InitArgs {
         if !root.exists() {
             fs::create_dir_all(&root)?;
         }
-        let root = dunce::canonicalize(root)?;
+        let root_rel = &root;
+        let root = dunce::canonicalize(&root)?;
         let git = Git::new(&root).shallow(shallow);
 
         // if a template is provided, then this command clones the template repo, removes the .git
         // folder, and initializes a new git repo—-this ensures there is no history from the
         // template and the template is not set as a remote.
-        if let Some(template) = template {
+        if let Some(template) = &template {
             let template = if template.contains("://") {
-                template
+                template.clone()
             } else {
                 "https://github.com/".to_string() + &template
             };
-            sh_eprintln!("Initializing {} from {}...", root.display(), template)?;
 
             if let Some(branch) = branch {
                 Git::clone_with_branch(shallow, &template, branch, Some(&root))?;
@@ -87,15 +89,13 @@ impl InitArgs {
                     );
                 }
 
-                sh_eprintln!("Target directory is not empty, but `--force` was specified")?;
+                sh_note!("Target directory is not empty, but `--force` was specified")?;
             }
 
             // ensure git status is clean before generating anything
             if !no_git && !no_commit && !force && git.is_in_repo()? {
                 git.ensure_clean()?;
             }
-
-            sh_eprintln!("Initializing {}...", root.display())?;
 
             // make the dirs
             let src = root.join("src");
@@ -136,7 +136,7 @@ impl InitArgs {
             // install forge-std
             if !offline {
                 if root.join("lib/forge-std").exists() {
-                    sh_eprintln!("\"lib/forge-std\" already exists, skipping install....")?;
+                    sh_status!("Skipping" => "forge-std install")?;
                     self.opts.install(&mut config, vec![])?;
                 } else {
                     let dep = "https://github.com/foundry-rs/forge-std".parse()?;
@@ -150,8 +150,14 @@ impl InitArgs {
             }
         }
 
-        sh_eprintln!("    {} forge project", Paint::green("Initialized"))?;
-        Ok(())
+        let mut msg = "Foundry project".to_string();
+        if let Some(template) = &template {
+            write!(msg, " from {template}").unwrap();
+        }
+        if root_rel != Path::new(".") {
+            write!(msg, " in {}", root_rel.display()).unwrap();
+        }
+        sh_status!("Created" => "{msg}")
     }
 }
 

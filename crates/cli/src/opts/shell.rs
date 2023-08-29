@@ -1,6 +1,8 @@
 use clap::Parser;
 use foundry_common::shell::{ColorChoice, Shell, Verbosity};
 
+// note: `verbose` and `quiet` cannot have `short` because of conflicts with multiple commands.
+
 /// Global shell options.
 #[derive(Clone, Copy, Debug, Parser)]
 pub struct ShellOptions {
@@ -9,7 +11,7 @@ pub struct ShellOptions {
     pub verbose: bool,
 
     /// Do not print log messages.
-    #[clap(long, short, global = true, alias = "silent", conflicts_with = "verbose")]
+    #[clap(long, global = true, alias = "silent", conflicts_with = "verbose")]
     pub quiet: bool,
 
     /// Log messages coloring.

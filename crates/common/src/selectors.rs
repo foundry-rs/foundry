@@ -400,7 +400,6 @@ pub async fn decode_event_topic(topic: &str) -> eyre::Result<Vec<String>> {
 /// # Ok(())
 /// # }
 /// ```
-
 pub async fn pretty_calldata(
     calldata: impl AsRef<str>,
     offline: bool,
@@ -455,16 +454,16 @@ impl SelectorImportResponse {
     /// Print info about the functions which were uploaded or already known
     pub fn describe(&self) -> eyre::Result<()> {
         for (k, v) in &self.result.function.imported {
-            sh_status!("Imported" => "Function {k}: {v}")?;
+            sh_status!("Imported" => "function {k}: {v}")?;
         }
         for (k, v) in &self.result.event.imported {
-            sh_status!("Imported" => "Event {k}: {v}")?;
+            sh_status!("Imported" => "event {k}: {v}")?;
         }
         for (k, v) in &self.result.function.duplicated {
-            sh_status!("Duplicated" => "Function {k}: {v}")?;
+            sh_status!("Duplicated" => "function {k}: {v}")?;
         }
         for (k, v) in &self.result.event.duplicated {
-            sh_status!("Duplicated" => "Event {k}: {v}")?;
+            sh_status!("Duplicated" => "event {k}: {v}")?;
         }
 
         sh_eprintln!("Selectors successfully uploaded to https://api.openchain.xyz")
