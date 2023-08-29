@@ -1,1 +1,9 @@
 msrv = "1.72"
+
+disallowed-macros = [
+    # See `foundry_common::shell`
+    { path = "std::print", reason = "use `sh_print` or similar macros instead" },
+    { path = "std::eprint", reason = "use `sh_eprint` or similar macros instead" },
+    { path = "std::println", reason = "use `sh_println` or similar macros instead" },
+    { path = "std::eprintln", reason = "use `sh_eprintln` or similar macros instead" },
+]

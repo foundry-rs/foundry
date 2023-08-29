@@ -1306,6 +1306,7 @@ impl Ui for Tui {
     }
 }
 
+#[allow(clippy::type_complexity)] // standard panic handler type
 struct PanicHook {
     previous: Option<Box<dyn Fn(&panic::PanicInfo<'_>) + 'static + Sync + Send>>,
 }

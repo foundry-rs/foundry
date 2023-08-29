@@ -185,6 +185,7 @@ impl ProjectCompiler {
         }
 
         let quiet = self.quiet.unwrap_or(false);
+        #[allow(clippy::collapsible_else_if)]
         let reporter = if quiet {
             Report::new(NoReporter::default())
         } else {

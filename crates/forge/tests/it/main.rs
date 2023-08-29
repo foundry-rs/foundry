@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_macros)]
+
 mod cheats;
 pub mod config;
 mod core;

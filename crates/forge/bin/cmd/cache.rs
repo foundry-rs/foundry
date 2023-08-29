@@ -101,8 +101,7 @@ impl LsArgs {
                 ChainOrAll::All => cache = Config::list_foundry_cache()?,
             }
         }
-        print!("{cache}");
-        Ok(())
+        sh_print!("{cache}")
     }
 }
 

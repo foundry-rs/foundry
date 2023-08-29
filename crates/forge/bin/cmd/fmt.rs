@@ -129,7 +129,7 @@ impl FmtArgs {
 
             if self.check || path.is_none() {
                 if self.raw {
-                    print!("{output}");
+                    sh_print!("{output}")?;
                 }
 
                 let diff = TextDiff::from_lines(&source, &output);

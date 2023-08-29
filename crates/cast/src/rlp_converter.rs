@@ -134,7 +134,6 @@ mod test {
             assert_eq!(rlp::decode::<Item>(&encoded)?, params.2);
             let decoded = rlp::decode::<Item>(&params.1);
             assert_eq!(rlp::encode::<Item>(&decoded?), params.1);
-            println!("case {} validated", params.0)
         }
 
         Ok(())
@@ -164,7 +163,6 @@ mod test {
             let val = serde_json::from_str(params.1)?;
             let item = Item::value_to_item(&val).unwrap();
             assert_eq!(item, params.2);
-            println!("case {} validated", params.0);
         }
 
         Ok(())

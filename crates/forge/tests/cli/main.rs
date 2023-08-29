@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_macros)]
+
 pub mod constants;
 pub mod utils;
 

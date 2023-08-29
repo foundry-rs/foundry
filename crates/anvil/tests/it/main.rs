@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_macros)]
+
 mod abi;
 mod anvil;
 mod anvil_api;

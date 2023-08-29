@@ -213,7 +213,7 @@ impl MultiWallet {
         mut addresses: HashSet<Address>,
         script_wallets: &[LocalWallet],
     ) -> Result<HashMap<Address, WalletSigner>> {
-        println!("\n###\nFinding wallets for all the necessary addresses...");
+        sh_println!("\n###\nFinding wallets for all the necessary addresses...")?;
         let chain = provider.get_chainid().await?.as_u64();
 
         let mut local_wallets = HashMap::new();

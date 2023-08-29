@@ -100,9 +100,11 @@ impl GeigerArgs {
             .map(|file| match find_cheatcodes_in_file(file) {
                 Ok(metrics) => {
                     let len = metrics.cheatcodes.len();
-                    let printer = SolFileMetricsPrinter { metrics: &metrics, root: &root };
                     if self.full || len == 0 {
-                        eprint!("{printer}");
+                        let _ = sh_eprint!(
+                            "{}",
+                            SolFileMetricsPrinter { metrics: &metrics, root: &root }
+                        );
                     }
                     len
                 }

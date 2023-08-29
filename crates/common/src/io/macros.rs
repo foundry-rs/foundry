@@ -19,7 +19,7 @@ macro_rules! prompt {
     };
 
     ($($tt:tt)+) => {{
-        ::std::print!($($tt)+);
+        let _ = $crate::sh_print!($($tt)+);
         match ::std::io::Write::flush(&mut ::std::io::stdout()) {
             ::core::result::Result::Ok(()) => $crate::prompt!(),
             ::core::result::Result::Err(e) => ::core::result::Result::Err(::eyre::eyre!("Could not flush stdout: {e}"))

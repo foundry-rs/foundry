@@ -45,6 +45,7 @@ impl TtyWidth {
     pub fn get() -> Self {
         // use stderr
         #[cfg(unix)]
+        #[allow(clippy::useless_conversion)]
         let opt = terminal_size::terminal_size_using_fd(2.into());
         #[cfg(not(unix))]
         let opt = terminal_size::terminal_size();
@@ -520,7 +521,7 @@ impl ShellOut {
         match self {
             Self::Stream { stdout, .. } => {
                 stdout.reset()?;
-                stdout.set_color(&color)?;
+                stdout.set_color(color)?;
                 write!(stdout, "{fragment}")?;
                 stdout.reset()?;
             }
@@ -537,7 +538,7 @@ impl ShellOut {
         match self {
             Self::Stream { stderr, .. } => {
                 stderr.reset()?;
-                stderr.set_color(&color)?;
+                stderr.set_color(color)?;
                 write!(stderr, "{fragment}")?;
                 stderr.reset()?;
             }
@@ -587,6 +588,7 @@ impl ColorChoice {
     }
 }
 
+#[derive(Clone, Copy)]
 enum Stream {
     Stdout,
     Stderr,

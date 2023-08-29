@@ -1,7 +1,7 @@
 //! Chisel CLI
 //!
-//! This module contains the core readline loop for the Chisel CLI as well as the
-//! executable's `main` function.
+//! This module contains the core readline loop for the Chisel CLI as well as the executable's
+//! `main` function.
 
 #![allow(clippy::disallowed_macros)]
 

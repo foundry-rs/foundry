@@ -1,4 +1,5 @@
-//! Generate [ethers-rs]("https://github.com/gakonst/ethers-rs") bindings for solidity projects in a build script.
+//! Generate [ethers-rs](https://github.com/gakonst/ethers-rs) bindings for solidity projects in a
+//! build script.
 
 #![allow(clippy::disallowed_macros)]
 

@@ -1,5 +1,7 @@
 //! Contains various tests for checking cast commands
 
+#![allow(clippy::disallowed_macros)]
+
 use foundry_test_utils::{
     casttest,
     util::{OutputExt, TestCommand, TestProject},
