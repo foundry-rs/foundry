@@ -19,6 +19,11 @@ pub struct InitArgs {
     #[clap(long, short)]
     template: Option<String>,
 
+    /// Branch argument that can only be used with template option.
+    /// If not specified, the default branch is used.
+    #[clap(long, short, requires = "template")]
+    branch: Option<String>,
+
     /// Do not install dependencies from the network.
     #[clap(long, conflicts_with = "template", visible_alias = "no-deps")]
     offline: bool,
@@ -38,7 +43,7 @@ pub struct InitArgs {
 
 impl InitArgs {
     pub fn run(self) -> Result<()> {
-        let InitArgs { root, template, opts, offline, force, vscode } = self;
+        let InitArgs { root, template, branch, opts, offline, force, vscode } = self;
         let DependencyInstallOpts { shallow, no_git, no_commit } = opts;
 
         // create the root dir if it does not exist
@@ -59,8 +64,11 @@ impl InitArgs {
             };
             sh_eprintln!("Initializing {} from {}...", root.display(), template)?;
 
-            Git::clone(shallow, &template, Some(&root))?;
-
+            if let Some(branch) = branch {
+                Git::clone_with_branch(shallow, &template, branch, Some(&root))?;
+            } else {
+                Git::clone(shallow, &template, Some(&root))?;
+            }
             // Modify the git history.
             let commit_hash = git.commit_hash(true)?;
             std::fs::remove_dir_all(".git")?;
