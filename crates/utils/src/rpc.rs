@@ -70,6 +70,13 @@ pub fn next_http_rpc_endpoint() -> String {
     next_rpc_endpoint("mainnet")
 }
 
+/// Returns the next _mainnet_ rpc endpoint in inline
+///
+/// This will rotate all available rpc endpoints
+pub fn next_ws_rpc_endpoint() -> String {
+    next_ws_endpoint("mainnet")
+}
+
 pub fn next_rpc_endpoint(network: &str) -> String {
     let idx = next() % num_keys();
     if idx < INFURA_KEYS.len() {
@@ -80,10 +87,26 @@ pub fn next_rpc_endpoint(network: &str) -> String {
     }
 }
 
+pub fn next_ws_endpoint(network: &str) -> String {
+    let idx = next() % num_keys();
+    if idx < INFURA_KEYS.len() {
+        format!("wss://{network}.infura.io/v3/{}", INFURA_KEYS[idx])
+    } else {
+        let idx = idx - INFURA_KEYS.len();
+        format!("wss://eth-{network}.alchemyapi.io/v2/{}", ALCHEMY_MAINNET_KEYS[idx])
+    }
+}
+
 /// Returns endpoint that has access to archive state
 pub fn next_http_archive_rpc_endpoint() -> String {
     let idx = next() % ALCHEMY_MAINNET_KEYS.len();
     format!("https://eth-mainnet.alchemyapi.io/v2/{}", ALCHEMY_MAINNET_KEYS[idx])
+}
+
+/// Returns endpoint that has access to archive state
+pub fn next_ws_archive_rpc_endpoint() -> String {
+    let idx = next() % ALCHEMY_MAINNET_KEYS.len();
+    format!("wss://eth-mainnet.alchemyapi.io/v2/{}", ALCHEMY_MAINNET_KEYS[idx])
 }
 
 #[cfg(test)]

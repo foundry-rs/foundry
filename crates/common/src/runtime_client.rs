@@ -7,12 +7,11 @@ use ethers_providers::{
     JsonRpcError, JwtAuth, JwtKey, ProviderError, PubsubClient, RetryClient, RetryClientBuilder,
     RpcError, Ws,
 };
-use reqwest::header::HeaderValue;
+use reqwest::{header::HeaderValue, Url};
 use serde::{de::DeserializeOwned, Serialize};
-use std::{fmt::Debug, path, sync::Arc, time::Duration};
+use std::{fmt::Debug, sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::sync::RwLock;
-use url::Url;
 
 /// Enum representing a the client types supported by the runtime provider
 #[derive(Debug)]
@@ -33,7 +32,16 @@ pub enum RuntimeClientError {
     ProviderError(ProviderError),
 
     /// Failed to lock the client
+    #[error("Failed to lock the client")]
     LockError,
+
+    /// Invalid URL scheme
+    #[error("URL scheme is not supported: {0}")]
+    BadScheme(String),
+
+    /// Invalid file path
+    #[error("Invalid IPC file path: {0}")]
+    BadPath(String),
 }
 
 impl RpcError for RuntimeClientError {
@@ -52,26 +60,18 @@ impl RpcError for RuntimeClientError {
     }
 }
 
-impl std::fmt::Display for RuntimeClientError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-
 impl From<RuntimeClientError> for ProviderError {
     fn from(src: RuntimeClientError) -> Self {
         match src {
             RuntimeClientError::ProviderError(err) => err,
-            RuntimeClientError::LockError => {
-                ProviderError::CustomError("Failed to lock the client".to_string())
-            }
+            _ => ProviderError::JsonRpcClientError(Box::new(src)),
         }
     }
 }
 
 /// A provider that connects on first request allowing handling of different provider types at
 /// runtime
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub struct RuntimeClient {
     client: Arc<RwLock<Option<InnerClient>>>,
     url: Url,
@@ -176,13 +176,18 @@ impl RuntimeClient {
                 Ok(InnerClient::Ws(client))
             }
             "file" => {
-                let client = Ipc::connect(path::Path::new(&self.url.to_string()))
+                let path = self
+                    .url
+                    .to_file_path()
+                    .map_err(|_| RuntimeClientError::BadPath(self.url.to_string()))?;
+
+                let client = Ipc::connect(path)
                     .await
                     .map_err(|e| RuntimeClientError::ProviderError(e.into()))?;
 
                 Ok(InnerClient::Ipc(client))
             }
-            _ => Err(RuntimeClientError::ProviderError(ProviderError::UnsupportedNodeClient)),
+            _ => Err(RuntimeClientError::BadScheme(self.url.to_string())),
         }
     }
 }

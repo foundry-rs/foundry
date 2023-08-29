@@ -4,7 +4,7 @@ use foundry_test_utils::{
     casttest,
     util::{OutputExt, TestCommand, TestProject},
 };
-use foundry_utils::rpc::next_http_rpc_endpoint;
+use foundry_utils::rpc::{next_http_rpc_endpoint, next_ws_rpc_endpoint};
 use std::{io::Write, path::Path};
 
 // tests `--help` is printed to std out
@@ -236,6 +236,16 @@ casttest!(cast_rlp, |_: TestProject, mut cmd: TestCommand| {
 // test for cast_rpc without arguments
 casttest!(cast_rpc_no_args, |_: TestProject, mut cmd: TestCommand| {
     let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Call `cast rpc eth_chainId`
+    cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_chainId"]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim_end(), r#""0x1""#);
+});
+
+// test for cast_rpc without arguments using websocket
+casttest!(cast_ws_rpc_no_args, |_: TestProject, mut cmd: TestCommand| {
+    let eth_rpc_url = next_ws_rpc_endpoint();
 
     // Call `cast rpc eth_chainId`
     cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_chainId"]);
