@@ -1,8 +1,7 @@
 use super::*;
 use ethers::{
     prelude::{
-        artifacts::Libraries, cache::SolFilesCache, ArtifactId, Graph, Project,
-        ProjectCompileOutput,
+        artifacts::Libraries, cache::SolFilesCache, ArtifactId, Project, ProjectCompileOutput,
     },
     solc::{
         artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
