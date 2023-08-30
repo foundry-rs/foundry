@@ -71,8 +71,9 @@ interface Vm {
         bytes stderr;
     }
 
-    struct RecordedCall {
+    struct AccountAccess {
         address account;
+        bool isCreate;
         bool initialized;
         uint256 value;
         bytes data;
@@ -259,8 +260,8 @@ interface Vm {
     // Gets all accessed reads and write slot from a recording session, for a given address
     function accesses(address) external returns (bytes32[] memory reads, bytes32[] memory writes);
 
-    function recordCalls() external;
-    function getRecordedCalls() external returns (RecordedCall[] memory);
+    function recordAccountAccesses() external;
+    function getRecordedAccountAccesses() external returns (AccountAccess[] memory);
 
     function recordStorageAccesses() external;
     function getRecordedStorageAccesses() external returns (StorageAccess[] memory);

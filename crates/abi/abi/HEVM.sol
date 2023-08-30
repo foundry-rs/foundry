@@ -5,7 +5,7 @@ struct DirEntry { string errorMessage; string path; uint64 depth; bool isDir; bo
 struct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created; }
 struct Wallet { address addr; uint256 publicKeyX; uint256 publicKeyY; uint256 privateKey; }
 struct FfiResult { int32 exitCode; bytes stdout; bytes stderr; }
-struct RecordedCall { address account; bool initialized; uint256 value; bytes data; }
+struct AccountAccess { address account; bool isCreate; bool initialized;  uint256 value; bytes data; }
 struct StorageAccess { address account; bytes32 slot; bool isWrite; bytes32 previousValue; bytes32 newValue; }
 
 allowCheatcodes(address)
@@ -85,8 +85,8 @@ record()
 accesses(address)(bytes32[],bytes32[])
 skip(bool)
 
-recordCalls()
-getRecordedCalls()(RecordedCall[])
+recordAccountAccesses()
+getRecordedAccountAccesses()(AccountAccess[])
 
 recordStorageAccesses()
 getRecordedStorageAccesses()(StorageAccess[])

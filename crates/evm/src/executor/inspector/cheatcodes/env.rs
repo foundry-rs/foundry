@@ -260,30 +260,31 @@ fn accesses(state: &mut Cheatcodes, address: Address) -> Bytes {
     }
 }
 
-
 #[derive(Clone, Debug, Default)]
-pub struct RecordedCall {
+pub struct AccountAccess {
     pub account: Address,
+    pub is_create: bool,
     pub initialized: bool,
     pub value: U256,
     pub data: Bytes,
 }
 
-fn start_record_calls(state: &mut Cheatcodes) {
-    state.recorded_calls = Some(Default::default());
+fn start_record_account_accesses(state: &mut Cheatcodes) {
+    state.recorded_account_accesses = Some(Default::default());
 }
 
-fn get_recorded_calls(state: &mut Cheatcodes) -> Bytes {
-    if let Some(recorded_calls) = state.recorded_calls.replace(Default::default()) {
+fn get_recorded_account_accesses(state: &mut Cheatcodes) -> Bytes {
+    if let Some(recorded_account_accesses) = state.recorded_account_accesses.replace(Default::default()) {
         abi::encode(
-            &recorded_calls
+            &recorded_account_accesses
                 .iter()
-                .map(|call| {
+                .map(|access| {
                     Token::Tuple(vec![
-                        call.account.into_token(),
-                        call.initialized.into_token(),
-                        call.value.into_token(),
-                        Token::Bytes(call.data.to_vec()),
+                        access.account.into_token(),
+                        access.is_create.into_token(),
+                        access.initialized.into_token(),
+                        access.value.into_token(),
+                        Token::Bytes(access.data.to_vec()),
                     ])
                 })
                 .collect::<Vec<Token>>()
@@ -294,7 +295,6 @@ fn get_recorded_calls(state: &mut Cheatcodes) -> Bytes {
         abi::encode(&[Token::Array(vec![])]).into()
     }
 }
-
 
 #[derive(Clone, Debug, Default)]
 pub struct RecordedStorageAccess {
@@ -539,11 +539,11 @@ pub fn apply<DB: DatabaseExt>(
             start_record_logs(state);
             Bytes::new()
         }
-        HEVMCalls::RecordCalls(_) => {
-            start_record_calls(state);
+        HEVMCalls::RecordAccountAccesses(_) => {
+            start_record_account_accesses(state);
             Bytes::new()
         }
-        HEVMCalls::GetRecordedCalls(_) => get_recorded_calls(state),
+        HEVMCalls::GetRecordedAccountAccesses(_) => get_recorded_account_accesses(state),
         HEVMCalls::RecordStorageAccesses(_) => {
             start_record_storage_accesses(state);
             Bytes::new()
