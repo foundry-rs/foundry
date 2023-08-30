@@ -251,7 +251,7 @@ mod tests {
             u256_to_ru256(Into::<U256>::into("0x1"))
         );
         assert_eq!(
-            db.storage(h160_to_b160(test_addr2), u256_to_ru256(Into::<U256>::into("0x1234568")))
+            db.storage(h160_to_b160(test_addr), u256_to_ru256(Into::<U256>::into("0x1234568")))
                 .unwrap(),
             u256_to_ru256(Into::<U256>::into("0x5"))
         );
