@@ -81,7 +81,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
 
         self.arena.arena[self.head].steps.push(DebugStep {
             pc,
-            stack: interpreter.stack().data().iter().copied().map(|d| ru256_to_u256(d)).collect(),
+            stack: interpreter.stack().data().iter().copied().map(ru256_to_u256).collect(),
             memory: interpreter.memory.clone(),
             instruction: Instruction::OpCode(op),
             push_bytes,

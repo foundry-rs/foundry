@@ -475,7 +475,7 @@ impl Backend {
 
     /// Sets the coinbase address
     pub fn set_coinbase(&self, address: Address) {
-        self.env.write().block.coinbase = h160_to_b160(address.into());
+        self.env.write().block.coinbase = h160_to_b160(address);
     }
 
     /// Sets the nonce of the given address
@@ -546,7 +546,7 @@ impl Backend {
 
     /// Sets the block gas limit
     pub fn set_gas_limit(&self, gas_limit: U256) {
-        self.env.write().block.gas_limit = u256_to_ru256(gas_limit.into());
+        self.env.write().block.gas_limit = u256_to_ru256(gas_limit);
     }
 
     /// Returns the current base fee
@@ -1605,7 +1605,7 @@ impl Backend {
         };
         let block_number: U256 = self.convert_block_number(block_number).into();
 
-        if u256_to_ru256(block_number) < self.env.read().block.number.into() {
+        if u256_to_ru256(block_number) < self.env.read().block.number {
             {
                 let mut states = self.states.write();
 
@@ -1665,7 +1665,7 @@ impl Backend {
     ) -> Result<H256, BlockchainError> {
         self.with_database_at(block_request, |db, _| {
             trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
-            let val = db.storage(h160_to_b160(address), u256_to_ru256(index.into()))?;
+            let val = db.storage(h160_to_b160(address), u256_to_ru256(index))?;
             Ok(u256_to_h256_be(ru256_to_u256(val)))
         })
         .await?
@@ -2207,7 +2207,7 @@ impl TransactionValidator for Backend {
         }
 
         if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
-            if tx.gas_price() < ru256_to_u256(env.block.basefee.into()) {
+            if tx.gas_price() < ru256_to_u256(env.block.basefee) {
                 warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
                 return Err(InvalidTransactionError::FeeCapTooLow)
             }

@@ -431,7 +431,7 @@ impl From<&CallTraceStep> for StructLog {
                 None
             },
             stack: Some(
-                step.stack.data().iter().copied().map(|data| ru256_to_u256(data)).collect(),
+                step.stack.data().iter().copied().map(ru256_to_u256).collect(),
             ),
             // Filled in `CallTraceArena::geth_trace` as a result of compounding all slot changes
             storage: None,

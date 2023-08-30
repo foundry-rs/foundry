@@ -198,7 +198,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             extra_data: Default::default(),
             mix_hash: Default::default(),
             nonce: Default::default(),
-            base_fee: base_fee.map(|x| ru256_to_u256(x)),
+            base_fee: base_fee.map(ru256_to_u256),
         };
 
         let block = Block::new(partial_header, transactions.clone(), ommers);

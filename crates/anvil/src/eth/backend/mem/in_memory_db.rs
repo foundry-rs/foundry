@@ -56,7 +56,7 @@ impl Db for MemDb {
                         storage: v
                             .storage
                             .into_iter()
-                            .map(|k| (ru256_to_u256(k.0.into()), ru256_to_u256(k.1.into())))
+                            .map(|k| (ru256_to_u256(k.0), ru256_to_u256(k.1)))
                             .collect(),
                     },
                 ))
@@ -174,7 +174,7 @@ mod tests {
         assert_eq!(
             load_db
                 .storage(
-                    h160_to_b160(test_addr).into(),
+                    h160_to_b160(test_addr),
                     u256_to_ru256(Into::<U256>::into("0x1234567"))
                 )
                 .unwrap(),

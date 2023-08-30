@@ -174,7 +174,7 @@ pub fn collect_state_from_call(
         if config.include_storage && state.state_values.len() < config.max_fuzz_dictionary_values {
             // Insert storage
             for (slot, value) in &account.storage {
-                let slot = ru256_to_u256(*slot).into();
+                let slot = ru256_to_u256(*slot);
                 let value = ru256_to_u256(value.present_value());
                 state.values_mut().insert(utils::u256_to_h256_be(slot).into());
                 state.values_mut().insert(utils::u256_to_h256_be(value).into());

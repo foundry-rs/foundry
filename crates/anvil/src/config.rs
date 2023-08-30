@@ -39,7 +39,7 @@ use foundry_evm::{
     revm,
     revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv, U256 as rU256},
     utils::{
-        apply_chain_and_block_specific_env_changes, h256_to_b256, ru256_to_u256, u256_to_ru256,
+        apply_chain_and_block_specific_env_changes, h256_to_b256, u256_to_ru256,
     },
 };
 use parking_lot::RwLock;
