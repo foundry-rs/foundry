@@ -230,7 +230,7 @@ impl TestArgs {
         let remote_chain_id = runner.evm_opts.get_remote_chain_id();
 
         let outcome = self
-            .run_tests(runner, &config, verbosity, filter.clone(), test_options.clone())
+            .run_tests(runner, config.clone(), verbosity, filter.clone(), test_options.clone())
             .await?;
         let tests = outcome.clone().into_tests();
 
@@ -328,7 +328,7 @@ impl TestArgs {
     pub async fn run_tests(
         &self,
         mut runner: MultiContractRunner,
-        config: &Config,
+        config: Config,
         verbosity: u8,
         mut filter: ProjectPathsAwareFilter,
         test_options: TestOptions,
@@ -343,7 +343,7 @@ impl TestArgs {
             list(runner, filter, self.json)
         } else {
             test(
-                config.clone(),
+                config,
                 runner,
                 verbosity,
                 filter,
