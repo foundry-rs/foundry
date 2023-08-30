@@ -820,6 +820,7 @@ where
 
 pub struct InterfaceSource {
     pub name: String,
+    pub json_abi: String,
     pub source: String,
 }
 
@@ -1535,7 +1536,11 @@ impl SimpleCast {
             .zip(contract_names)
             .map(|(contract_abi, name)| {
                 let source = foundry_utils::abi::abi_to_solidity(contract_abi, &name)?;
-                Ok(InterfaceSource { name, source })
+                Ok(InterfaceSource {
+                    name,
+                    json_abi: serde_json::to_string_pretty(contract_abi)?,
+                    source,
+                })
             })
             .collect::<Result<Vec<InterfaceSource>>>()
     }
