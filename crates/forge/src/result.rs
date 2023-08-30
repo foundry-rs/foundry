@@ -6,7 +6,7 @@ use foundry_common::evm::Breakpoints;
 use foundry_evm::{
     coverage::HitMaps,
     executor::EvmError,
-    fuzz::{CounterExample, FuzzCase},
+    fuzz::{types::FuzzCase, CounterExample},
     trace::{TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
