@@ -32,7 +32,7 @@ use proptest::{
     test_runner::{TestCaseError, TestRunner},
 };
 use revm::{
-    primitives::{HashMap, Address as rAddress},
+    primitives::{Address as rAddress, HashMap},
     DatabaseCommit,
 };
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};

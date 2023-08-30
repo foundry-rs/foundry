@@ -138,7 +138,12 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         // TODO: Does this increase gas cost?
         if let Err(err) = data.journaled_state.load_account(call.caller, data.db) {
             let gas = Gas::new(call.gas_limit);
-            return (InstructionResult::Revert, None, gas, alloy_primitives::Bytes(err.encode_string().0))
+            return (
+                InstructionResult::Revert,
+                None,
+                gas,
+                alloy_primitives::Bytes(err.encode_string().0),
+            )
         }
 
         let nonce = data.journaled_state.account(call.caller).info.nonce;

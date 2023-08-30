@@ -3,8 +3,8 @@ use crate::{
     utils::{self, b160_to_h160, h160_to_b160},
 };
 use revm::{
-    primitives::Bytes,
     interpreter::{CallInputs, CallScheme, Gas, InstructionResult, Interpreter},
+    primitives::Bytes,
     Database, EVMData, Inspector,
 };
 

@@ -14,7 +14,10 @@ use ethers_core::{
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
-use foundry_evm::{trace::CallTraceArena, utils::{h160_to_b160, u256_to_ru256}};
+use foundry_evm::{
+    trace::CallTraceArena,
+    utils::{h160_to_b160, u256_to_ru256},
+};
 use revm::{
     interpreter::InstructionResult,
     primitives::{CreateScheme, TransactTo, TxEnv},

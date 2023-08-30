@@ -5,7 +5,8 @@ use crate::{
     coverage::HitMaps,
     debug::DebugArena,
     executor::{backend::DatabaseExt, inspector::CoverageCollector},
-    trace::CallTraceArena, utils::ru256_to_u256,
+    trace::CallTraceArena,
+    utils::ru256_to_u256,
 };
 use ethers::{
     signers::LocalWallet,
@@ -15,7 +16,7 @@ use revm::{
     interpreter::{
         return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, Stack,
     },
-    primitives::{BlockEnv, Env, Address as rAddress, B256, Bytes},
+    primitives::{Address as rAddress, BlockEnv, Bytes, Env, B256},
     EVMData, Inspector,
 };
 use std::{collections::BTreeMap, sync::Arc};

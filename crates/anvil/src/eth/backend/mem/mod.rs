@@ -72,8 +72,8 @@ use foundry_evm::{
         },
     },
     utils::{
-        eval_to_instruction_result, h256_to_b256, halt_to_instruction_result, ru256_to_u256,
-        u256_to_h256_be, u256_to_ru256, h160_to_b160, b160_to_h160,
+        b160_to_h160, eval_to_instruction_result, h160_to_b160, h256_to_b256,
+        halt_to_instruction_result, ru256_to_u256, u256_to_h256_be, u256_to_ru256,
     },
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
@@ -465,7 +465,7 @@ impl Backend {
 
     /// Returns balance of the given account.
     pub async fn current_balance(&self, address: Address) -> DatabaseResult<U256> {
-        Ok(self.get_account(address).await?.balance.into())
+        Ok(self.get_account(address).await?.balance).map(ru256_to_u256)
     }
 
     /// Returns balance of the given account.
@@ -475,7 +475,7 @@ impl Backend {
 
     /// Sets the coinbase address
     pub fn set_coinbase(&self, address: Address) {
-        self.env.write().block.coinbase = address.into();
+        self.env.write().block.coinbase = h160_to_b160(address.into());
     }
 
     /// Sets the nonce of the given address
@@ -541,12 +541,12 @@ impl Backend {
 
     /// Returns the block gas limit
     pub fn gas_limit(&self) -> U256 {
-        self.env.read().block.gas_limit.into()
+        ru256_to_u256(self.env.read().block.gas_limit)
     }
 
     /// Sets the block gas limit
     pub fn set_gas_limit(&self, gas_limit: U256) {
-        self.env.write().block.gas_limit = gas_limit.into();
+        self.env.write().block.gas_limit = u256_to_ru256(gas_limit.into());
     }
 
     /// Returns the current base fee
@@ -685,7 +685,7 @@ impl Backend {
         let mut env = self.env.read().clone();
         // increase block number for this block
         env.block.number = env.block.number.saturating_add(rU256::from(1));
-        env.block.basefee = self.base_fee().into();
+        env.block.basefee = u256_to_ru256(self.base_fee());
         env.block.timestamp = rU256::from(self.time.current_call_timestamp());
         env
     }
@@ -712,7 +712,7 @@ impl Backend {
         };
         let state = result_and_state.state;
         let state: revm::primitives::HashMap<H160, Account> =
-            state.into_iter().map(|kv| (kv.0.into(), kv.1)).collect();
+            state.into_iter().map(|kv| (b160_to_h160(kv.0), kv.1)).collect();
         let (exit_reason, gas_used, out, logs) = match result_and_state.result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
                 (eval_to_instruction_result(reason), gas_used, Some(output), Some(logs))
@@ -801,7 +801,7 @@ impl Backend {
 
             // increase block number for this block
             env.block.number = env.block.number.saturating_add(rU256::from(1));
-            env.block.basefee = current_base_fee.into();
+            env.block.basefee = u256_to_ru256(current_base_fee);
             env.block.timestamp = rU256::from(self.time.next_timestamp());
 
             let best_hash = self.blockchain.storage.read().best_hash;
@@ -1007,7 +1007,7 @@ impl Backend {
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
 
-        let gas_limit = gas.unwrap_or(block_env.gas_limit.into());
+        let gas_limit = gas.unwrap_or(ru256_to_u256(block_env.gas_limit));
         let mut env = self.env.read().clone();
         env.block = block_env;
         // we want to disable this in eth_call, since this is common practice used by other node
@@ -1015,22 +1015,22 @@ impl Backend {
         env.cfg.disable_block_gas_limit = true;
 
         if let Some(base) = max_fee_per_gas {
-            env.block.basefee = base.into();
+            env.block.basefee = u256_to_ru256(base);
         }
 
         let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| self.gas_price());
         let caller = from.unwrap_or_default();
 
         env.tx = TxEnv {
-            caller: caller.into(),
+            caller: h160_to_b160(caller),
             gas_limit: gas_limit.as_u64(),
-            gas_price: gas_price.into(),
+            gas_price: u256_to_ru256(gas_price),
             gas_priority_fee: max_priority_fee_per_gas.map(u256_to_ru256),
             transact_to: match to {
-                Some(addr) => TransactTo::Call(addr.into()),
+                Some(addr) => TransactTo::Call(h160_to_b160(addr)),
                 None => TransactTo::Create(CreateScheme::Create),
             },
-            value: value.unwrap_or_default().into(),
+            value: value.map(u256_to_ru256).unwrap_or_default(),
             data: data.unwrap_or_default().to_vec().into(),
             chain_id: None,
             nonce: nonce.map(|n| n.as_u64()),
@@ -1072,7 +1072,7 @@ impl Backend {
         };
         let state = result_and_state.state;
         let state: revm::primitives::HashMap<H160, Account> =
-            state.into_iter().map(|kv| (kv.0.into(), kv.1)).collect();
+            state.into_iter().map(|kv| (b160_to_h160(kv.0), kv.1)).collect();
         let (exit_reason, gas_used, out) = match result_and_state.result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (eval_to_instruction_result(reason), gas_used, Some(output))
@@ -1138,7 +1138,7 @@ impl Backend {
         let to = if let Some(to) = request.to {
             to
         } else {
-            let nonce = state.basic(from.into())?.unwrap_or_default().nonce;
+            let nonce = state.basic(h160_to_b160(from))?.unwrap_or_default().nonce;
             get_contract_address(from, nonce)
         };
 
@@ -1585,13 +1585,15 @@ impl Backend {
                     .with_pending_block(pool_transactions, |state, block| {
                         let block = block.block;
                         let block = BlockEnv {
-                            number: block.header.number.into(),
-                            coinbase: block.header.beneficiary.into(),
+                            number: u256_to_ru256(block.header.number),
+                            coinbase: h160_to_b160(block.header.beneficiary),
                             timestamp: rU256::from(block.header.timestamp),
-                            difficulty: block.header.difficulty.into(),
-                            prevrandao: Some(block.header.mix_hash.into()),
-                            basefee: block.header.base_fee_per_gas.unwrap_or_default().into(),
-                            gas_limit: block.header.gas_limit.into(),
+                            difficulty: u256_to_ru256(block.header.difficulty),
+                            prevrandao: Some(block.header.mix_hash).map(h256_to_b256),
+                            basefee: u256_to_ru256(
+                                block.header.base_fee_per_gas.unwrap_or_default(),
+                            ),
+                            gas_limit: u256_to_ru256(block.header.gas_limit),
                         };
                         f(state, block)
                     })
@@ -1603,7 +1605,7 @@ impl Backend {
         };
         let block_number: U256 = self.convert_block_number(block_number).into();
 
-        if block_number < self.env.read().block.number.into() {
+        if u256_to_ru256(block_number) < self.env.read().block.number.into() {
             {
                 let mut states = self.states.write();
 
@@ -1612,13 +1614,13 @@ impl Backend {
                     .and_then(|block| Some((states.get(&block.header.hash())?, block)))
                 {
                     let block = BlockEnv {
-                        number: block.header.number.into(),
-                        coinbase: block.header.beneficiary.into(),
+                        number: u256_to_ru256(block.header.number),
+                        coinbase: h160_to_b160(block.header.beneficiary),
                         timestamp: rU256::from(block.header.timestamp),
-                        difficulty: block.header.difficulty.into(),
-                        prevrandao: Some(block.header.mix_hash).map(Into::into),
-                        basefee: block.header.base_fee_per_gas.unwrap_or_default().into(),
-                        gas_limit: block.header.gas_limit.into(),
+                        difficulty: u256_to_ru256(block.header.difficulty),
+                        prevrandao: Some(block.header.mix_hash).map(h256_to_b256),
+                        basefee: u256_to_ru256(block.header.base_fee_per_gas.unwrap_or_default()),
+                        gas_limit: u256_to_ru256(block.header.gas_limit),
                     };
                     return Ok(f(Box::new(state), block))
                 }
@@ -1635,9 +1637,9 @@ impl Backend {
                     let db = self.db.read().await;
                     let gen_db = self.genesis.state_db_at_genesis(Box::new(&*db));
 
-                    block.number = block_number.into();
+                    block.number = u256_to_ru256(block_number);
                     block.timestamp = rU256::from(fork.timestamp());
-                    block.basefee = fork.base_fee().unwrap_or_default().into();
+                    block.basefee = u256_to_ru256(fork.base_fee().unwrap_or_default());
 
                     return Ok(f(Box::new(&gen_db), block))
                 }
@@ -1663,7 +1665,7 @@ impl Backend {
     ) -> Result<H256, BlockchainError> {
         self.with_database_at(block_request, |db, _| {
             trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
-            let val = db.storage(address.into(), index.into())?;
+            let val = db.storage(h160_to_b160(address), u256_to_ru256(index.into()))?;
             Ok(u256_to_h256_be(ru256_to_u256(val)))
         })
         .await?
@@ -1690,7 +1692,7 @@ impl Backend {
         D: DatabaseRef<Error = DatabaseError>,
     {
         trace!(target: "backend", "get code for {:?}", address);
-        let account = state.basic(address.into())?.unwrap_or_default();
+        let account = state.basic(h160_to_b160(address))?.unwrap_or_default();
         if account.code_hash == KECCAK_EMPTY {
             // if the code hash is `KECCAK_EMPTY`, we check no further
             return Ok(Default::default())
@@ -1724,7 +1726,7 @@ impl Backend {
         D: DatabaseRef<Error = DatabaseError>,
     {
         trace!(target: "backend", "get balance for {:?}", address);
-        Ok(state.basic(address.into())?.unwrap_or_default().balance.into())
+        Ok(state.basic(h160_to_b160(address))?.unwrap_or_default().balance).map(ru256_to_u256)
     }
 
     /// Returns the nonce of the address
@@ -1747,7 +1749,7 @@ impl Backend {
         };
         self.with_database_at(final_block_request, |db, _| {
             trace!(target: "backend", "get nonce for {:?}", address);
-            Ok(db.basic(address.into())?.unwrap_or_default().nonce.into())
+            Ok(db.basic(h160_to_b160(address))?.unwrap_or_default().nonce.into())
         })
         .await?
     }
@@ -2189,7 +2191,7 @@ impl TransactionValidator for Backend {
         }
 
         // Check gas limit, iff block gas limit is set.
-        if !env.cfg.disable_block_gas_limit && tx.gas_limit() > env.block.gas_limit.into() {
+        if !env.cfg.disable_block_gas_limit && tx.gas_limit() > ru256_to_u256(env.block.gas_limit) {
             warn!(target: "backend", "[{:?}] gas too high", tx.hash());
             return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
                 detail: String::from("tx.gas_limit > env.block.gas_limit"),
@@ -2205,7 +2207,7 @@ impl TransactionValidator for Backend {
         }
 
         if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
-            if tx.gas_price() < env.block.basefee.into() {
+            if tx.gas_price() < ru256_to_u256(env.block.basefee.into()) {
                 warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
                 return Err(InvalidTransactionError::FeeCapTooLow)
             }
@@ -2229,7 +2231,7 @@ impl TransactionValidator for Backend {
             InvalidTransactionError::InsufficientFunds
         })?;
 
-        if account.balance < req_funds.into() {
+        if account.balance < u256_to_ru256(req_funds) {
             warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
             return Err(InvalidTransactionError::InsufficientFunds)
         }

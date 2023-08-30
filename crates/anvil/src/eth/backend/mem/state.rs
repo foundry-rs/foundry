@@ -12,9 +12,9 @@ use foundry_evm::{
     executor::{backend::DatabaseError, DatabaseRef},
     revm::{
         db::{CacheDB, DbAccount},
-        primitives::{AccountInfo, Bytecode, Log, B160, U256 as rU256},
+        primitives::{AccountInfo, Address as rAddress, Bytecode, Log, U256 as rU256},
     },
-    utils::{b160_to_h160, b256_to_h256, ru256_to_u256, u256_to_ru256},
+    utils::{b160_to_h160, b256_to_h256, h160_to_b160, ru256_to_u256, u256_to_ru256},
     HashMap as Map,
 };
 use memory_db::HashKey;
@@ -31,7 +31,7 @@ pub fn log_rlp_hash(logs: Vec<Log>) -> H256 {
         stream.begin_list(3);
         stream.append(&b160_to_h160(log.address));
         stream.append_list(&topics);
-        stream.append(&log.data);
+        stream.append(&log.data.0);
     }
     stream.finalize_unbounded_list();
     let out = stream.out().freeze();
@@ -52,7 +52,7 @@ pub fn storage_trie_db(storage: &Map<rU256, rU256>) -> (AsHashDB, H256) {
                 let mut temp: [u8; 32] = [0; 32];
                 ru256_to_u256(*k).to_big_endian(&mut temp);
                 let key = H256::from(temp);
-                let value = rlp::encode(v);
+                let value = rlp::encode(&ru256_to_u256(*v));
                 trie.insert(key.as_bytes(), value.as_ref()).unwrap();
             }
         }
@@ -63,7 +63,7 @@ pub fn storage_trie_db(storage: &Map<rU256, rU256>) -> (AsHashDB, H256) {
 }
 
 /// Returns the account data as `HashDB`
-pub fn trie_hash_db(accounts: &Map<B160, DbAccount>) -> (AsHashDB, H256) {
+pub fn trie_hash_db(accounts: &Map<rAddress, DbAccount>) -> (AsHashDB, H256) {
     let accounts = trie_accounts(accounts);
 
     // Populate DB with full trie from entries.
@@ -83,7 +83,7 @@ pub fn trie_hash_db(accounts: &Map<B160, DbAccount>) -> (AsHashDB, H256) {
 }
 
 /// Returns all RLP-encoded Accounts
-pub fn trie_accounts(accounts: &Map<B160, DbAccount>) -> Vec<(B160, Bytes)> {
+pub fn trie_accounts(accounts: &Map<rAddress, DbAccount>) -> Vec<(rAddress, Bytes)> {
     accounts
         .iter()
         .map(|(address, account)| {
@@ -93,7 +93,7 @@ pub fn trie_accounts(accounts: &Map<B160, DbAccount>) -> Vec<(B160, Bytes)> {
         .collect()
 }
 
-pub fn state_merkle_trie_root(accounts: &Map<B160, DbAccount>) -> H256 {
+pub fn state_merkle_trie_root(accounts: &Map<rAddress, DbAccount>) -> H256 {
     trie_hash_db(accounts).1
 }
 
@@ -101,9 +101,9 @@ pub fn state_merkle_trie_root(accounts: &Map<B160, DbAccount>) -> H256 {
 pub fn trie_account_rlp(info: &AccountInfo, storage: &Map<rU256, rU256>) -> Bytes {
     let mut stream = RlpStream::new_list(4);
     stream.append(&info.nonce);
-    stream.append(&info.balance);
+    stream.append(&ru256_to_u256(info.balance));
     stream.append(&storage_trie_db(storage).1);
-    stream.append(&info.code_hash.as_bytes());
+    stream.append(&info.code_hash.as_slice());
     stream.out().freeze()
 }
 
@@ -117,7 +117,7 @@ where
 {
     let mut cache_db = CacheDB::new(state);
     for (account, account_overrides) in overrides.iter() {
-        let mut account_info = cache_db.basic((*account).into())?.unwrap_or_default();
+        let mut account_info = cache_db.basic(h160_to_b160(*account))?.unwrap_or_default();
 
         if let Some(nonce) = account_overrides.nonce {
             account_info.nonce = nonce;
@@ -126,10 +126,10 @@ where
             account_info.code = Some(Bytecode::new_raw(code.to_vec().into()));
         }
         if let Some(balance) = account_overrides.balance {
-            account_info.balance = balance.into();
+            account_info.balance = u256_to_ru256(balance);
         }
 
-        cache_db.insert_account_info((*account).into(), account_info);
+        cache_db.insert_account_info(h160_to_b160(*account), account_info);
 
         // We ensure that not both state and state_diff are set.
         // If state is set, we must mark the account as "NewlyCreated", so that the old storage
@@ -143,7 +143,7 @@ where
             (None, None) => (),
             (Some(new_account_state), None) => {
                 cache_db.replace_account_storage(
-                    (*account).into(),
+                    h160_to_b160(*account),
                     new_account_state
                         .iter()
                         .map(|(key, value)| {
@@ -155,9 +155,9 @@ where
             (None, Some(account_state_diff)) => {
                 for (key, value) in account_state_diff.iter() {
                     cache_db.insert_account_storage(
-                        (*account).into(),
-                        key.into_uint().into(),
-                        value.into_uint().into(),
+                        h160_to_b160(*account),
+                        u256_to_ru256(key.into_uint()),
+                        u256_to_ru256(value.into_uint()),
                     )?;
                 }
             }

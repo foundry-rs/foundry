@@ -3,7 +3,10 @@ use crate::{
     debug::DebugArena,
     decode,
     trace::CallTraceArena,
-    utils::{b160_to_h160, eval_to_instruction_result, h160_to_b160, halt_to_instruction_result, u256_to_ru256, ru256_to_u256},
+    utils::{
+        b160_to_h160, eval_to_instruction_result, h160_to_b160, halt_to_instruction_result,
+        ru256_to_u256, u256_to_ru256,
+    },
     CALLER,
 };
 pub use abi::{
@@ -16,7 +19,7 @@ use ethers::{
     abi::{Abi, Contract, Detokenize, Function, Tokenize},
     prelude::{decode_function_data, encode_function_data, Address, U256},
     signers::LocalWallet,
-    types::{Log},
+    types::Log,
 };
 use foundry_common::{abi::IntoFunction, evm::Breakpoints};
 use revm::primitives::hex_literal::hex;
@@ -26,8 +29,8 @@ pub use revm::{
     db::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, CreateScheme, InstructionResult, Memory, Stack},
     primitives::{
-        Account, BlockEnv, Bytecode, ExecutionResult, HashMap, Output, ResultAndState, TransactTo,
-        TxEnv, Address as rAddress, U256 as rU256,
+        Account, Address as rAddress, BlockEnv, Bytecode, ExecutionResult, HashMap, Output,
+        ResultAndState, TransactTo, TxEnv, U256 as rU256,
     },
 };
 use std::collections::BTreeMap;
@@ -103,7 +106,10 @@ impl Executor {
         backend.insert_account_info(
             CHEATCODE_ADDRESS,
             revm::primitives::AccountInfo {
-                code: Some(Bytecode::new_raw(alloy_primitives::Bytes(Bytes::from_static(&[0]))).to_checked()),
+                code: Some(
+                    Bytecode::new_raw(alloy_primitives::Bytes(Bytes::from_static(&[0])))
+                        .to_checked(),
+                ),
                 ..Default::default()
             },
         );

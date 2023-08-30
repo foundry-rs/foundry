@@ -6,7 +6,7 @@ use ethers_core::{
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
-use foundry_evm::utils::{b256_to_h256, h256_to_b256, b160_to_h160, h160_to_b160};
+use foundry_evm::utils::{b160_to_h160, b256_to_h256, h160_to_b160, h256_to_b256};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]

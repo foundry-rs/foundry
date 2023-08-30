@@ -9,7 +9,7 @@ use foundry_evm::{
     revm,
     revm::{
         interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
-        primitives::{Address as rAddress, B256, Bytes},
+        primitives::{Address as rAddress, Bytes, B256},
         EVMData,
     },
 };

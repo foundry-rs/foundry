@@ -4,12 +4,12 @@ use crate::{
 };
 use ethers::{
     abi::{AbiDecode, Token},
-    types::{Log, H256, Bytes as ethersBytes},
+    types::{Bytes as ethersBytes, Log, H256},
 };
 use foundry_macros::ConsoleFmt;
 use revm::{
     interpreter::{CallInputs, Gas, InstructionResult},
-    primitives::{Address, B256, Bytes},
+    primitives::{Address, Bytes, B256},
     Database, EVMData, Inspector,
 };
 

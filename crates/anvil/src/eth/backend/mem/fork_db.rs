@@ -12,7 +12,8 @@ use foundry_evm::{
         backend::{snapshot::StateSnapshot, DatabaseResult},
         fork::database::ForkDbSnapshot,
     },
-    revm::Database, utils::{h160_to_b160, u256_to_ru256, h256_to_b256, b160_to_h160, ru256_to_u256},
+    revm::Database,
+    utils::{b160_to_h160, h160_to_b160, h256_to_b256, ru256_to_u256, u256_to_ru256},
 };
 
 /// Implement the helper for the fork database
