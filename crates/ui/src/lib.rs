@@ -671,19 +671,11 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                         ]));
                         line_number += 1;
                     });
-                    // TODO: if file_id not here
-                    // } else {
-                    //     text_output.extend(Text::from("No srcmap index"));
-                    // }
-                    // TODO: if source_element don't match
-                    // Err(e) => text_output.extend(Text::from(format!(
-                    //     "Error in source map parsing: '{e}', please open an issue"
-                    // ))),
                 } else {
                     text_output.extend(Text::from("No sourcemap for contract"));
                 }
             } else {
-                text_output.extend(Text::from(format!("Unknown contract at address {address:?}")));
+                text_output.extend(Text::from("No srcmap index for contract {contract_name}"));
             }
         } else {
             text_output.extend(Text::from(format!("Unknown contract at address {address:?}")));
