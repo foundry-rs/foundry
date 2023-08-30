@@ -18,7 +18,7 @@ use foundry_evm::{
         primitives::{Address as B160, Bytecode, B256, KECCAK_EMPTY, U256 as rU256},
         Database, DatabaseCommit,
     },
-    utils::{h160_to_b160, h256_to_b256, ru256_to_u256, u256_to_ru256},
+    utils::{h160_to_b160, h256_to_b256, u256_to_ru256},
     HashMap,
 };
 use hash_db::HashDB;

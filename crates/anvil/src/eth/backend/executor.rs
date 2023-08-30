@@ -170,8 +170,8 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                 traces: CallTraceArena { arena: traces },
                 exit,
                 out: match out {
-                    Some(Output::Call(b)) => Some(b.into()),
-                    Some(Output::Create(b, _)) => Some(b.into()),
+                    Some(Output::Call(b)) => Some(ethers::types::Bytes(b.0)),
+                    Some(Output::Create(b, _)) => Some(ethers::types::Bytes(b.0)),
                     _ => None,
                 },
             };
@@ -190,15 +190,15 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             state_root: self.db.maybe_state_root().unwrap_or_default(),
             receipts_root,
             logs_bloom: bloom,
-            difficulty: difficulty.into(),
-            number: block_number.into(),
-            gas_limit: gas_limit.into(),
+            difficulty: ru256_to_u256(difficulty),
+            number: ru256_to_u256(block_number),
+            gas_limit: ru256_to_u256(gas_limit),
             gas_used: cumulative_gas_used,
             timestamp,
             extra_data: Default::default(),
             mix_hash: Default::default(),
             nonce: Default::default(),
-            base_fee: base_fee.map(|x| x.into()),
+            base_fee: base_fee.map(|x| ru256_to_u256(x)),
         };
 
         let block = Block::new(partial_header, transactions.clone(), ommers);
@@ -238,7 +238,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         let env = self.env_for(&transaction.pending_transaction);
         // check that we comply with the block's gas limit
         let max_gas = self.gas_used.saturating_add(U256::from(env.tx.gas_limit));
-        if max_gas > env.block.gas_limit.into() {
+        if max_gas > ru256_to_u256(env.block.gas_limit) {
             return Some(TransactionExecutionOutcome::Exhausted(transaction))
         }
 

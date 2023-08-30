@@ -38,7 +38,9 @@ use foundry_evm::{
     },
     revm,
     revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv, U256 as rU256},
-    utils::{apply_chain_and_block_specific_env_changes, h256_to_b256, u256_to_ru256},
+    utils::{
+        apply_chain_and_block_specific_env_changes, h256_to_b256, ru256_to_u256, u256_to_ru256,
+    },
 };
 use parking_lot::RwLock;
 use serde_json::{json, to_writer, Value};
@@ -795,8 +797,8 @@ impl NodeConfig {
         let mut env = revm::primitives::Env {
             cfg,
             block: BlockEnv {
-                gas_limit: self.gas_limit.into(),
-                basefee: self.get_base_fee().into(),
+                gas_limit: u256_to_ru256(self.gas_limit),
+                basefee: u256_to_ru256(self.get_base_fee()),
                 ..Default::default()
             },
             tx: TxEnv { chain_id: self.get_chain_id().into(), ..Default::default() },
@@ -884,8 +886,8 @@ latest block number: {latest_block}"
 
                 env.block = BlockEnv {
                     number: rU256::from(fork_block_number),
-                    timestamp: block.timestamp.into(),
-                    difficulty: block.difficulty.into(),
+                    timestamp: u256_to_ru256(block.timestamp),
+                    difficulty: u256_to_ru256(block.difficulty),
                     // ensures prevrandao is set
                     prevrandao: Some(block.mix_hash.unwrap_or_default()).map(h256_to_b256),
                     gas_limit,
@@ -992,7 +994,7 @@ latest block number: {latest_block}"
 
         let genesis = GenesisConfig {
             timestamp: self.get_genesis_timestamp(),
-            balance: self.genesis_balance.into(),
+            balance: u256_to_ru256(self.genesis_balance),
             accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
             fork_genesis_account_infos: Arc::new(Default::default()),
             genesis_init: self.genesis.clone(),
