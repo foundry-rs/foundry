@@ -15,9 +15,10 @@ use foundry_evm::{
     },
     revm::{
         db::{CacheDB, DbAccount},
-        primitives::{Bytecode, B160, B256, KECCAK_EMPTY, U256 as rU256},
+        primitives::{Address as B160, Bytecode, B256, KECCAK_EMPTY, U256 as rU256},
         Database, DatabaseCommit,
     },
+    utils::{h160_to_b160, h256_to_b256, ru256_to_u256, u256_to_ru256},
     HashMap,
 };
 use hash_db::HashDB;
@@ -84,7 +85,7 @@ pub trait Db:
 
     /// Sets the nonce of the given address
     fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<()> {
-        let mut info = self.basic(address.into())?.unwrap_or_default();
+        let mut info = self.basic(h160_to_b160(address))?.unwrap_or_default();
         info.nonce = nonce;
         self.insert_account(address, info);
         Ok(())
@@ -92,22 +93,22 @@ pub trait Db:
 
     /// Sets the balance of the given address
     fn set_balance(&mut self, address: Address, balance: U256) -> DatabaseResult<()> {
-        let mut info = self.basic(address.into())?.unwrap_or_default();
-        info.balance = balance.into();
+        let mut info = self.basic(h160_to_b160(address))?.unwrap_or_default();
+        info.balance = u256_to_ru256(balance);
         self.insert_account(address, info);
         Ok(())
     }
 
     /// Sets the balance of the given address
     fn set_code(&mut self, address: Address, code: Bytes) -> DatabaseResult<()> {
-        let mut info = self.basic(address.into())?.unwrap_or_default();
+        let mut info = self.basic(h160_to_b160(address))?.unwrap_or_default();
         let code_hash = if code.as_ref().is_empty() {
             KECCAK_EMPTY
         } else {
             B256::from_slice(&keccak256(code.as_ref())[..])
         };
         info.code_hash = code_hash;
-        info.code = Some(Bytecode::new_raw(code.0).to_checked());
+        info.code = Some(Bytecode::new_raw(alloy_primitives::Bytes(code.0)).to_checked());
         self.insert_account(address, info);
         Ok(())
     }
@@ -124,7 +125,7 @@ pub trait Db:
     /// Deserialize and add all chain data to the backend storage
     fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
         for (addr, account) in state.accounts.into_iter() {
-            let old_account_nonce = DatabaseRef::basic(self, addr.into())
+            let old_account_nonce = DatabaseRef::basic(self, h160_to_b160(addr))
                 .ok()
                 .and_then(|acc| acc.map(|acc| acc.nonce))
                 .unwrap_or_default();
@@ -135,12 +136,14 @@ pub trait Db:
             self.insert_account(
                 addr,
                 AccountInfo {
-                    balance: account.balance.into(),
+                    balance: u256_to_ru256(account.balance),
                     code_hash: KECCAK_EMPTY, // will be set automatically
                     code: if account.code.0.is_empty() {
                         None
                     } else {
-                        Some(Bytecode::new_raw(account.code.0).to_checked())
+                        Some(
+                            Bytecode::new_raw(alloy_primitives::Bytes(account.code.0)).to_checked(),
+                        )
                     },
                     nonce,
                 },
@@ -176,15 +179,15 @@ pub trait Db:
 /// [Backend::pending_block()](crate::eth::backend::mem::Backend::pending_block())
 impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> Db for CacheDB<T> {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
-        self.insert_account_info(address.into(), account)
+        self.insert_account_info(h160_to_b160(address), account)
     }
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()> {
-        self.insert_account_storage(address.into(), slot.into(), val.into())
+        self.insert_account_storage(h160_to_b160(address), u256_to_ru256(slot), u256_to_ru256(val))
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: H256) {
-        self.block_hashes.insert(number.into(), hash.into());
+        self.block_hashes.insert(u256_to_ru256(number), h256_to_b256(hash));
     }
 
     fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
