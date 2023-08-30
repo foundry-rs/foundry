@@ -1,5 +1,5 @@
 use super::{bail, ensure, fmt_err, Cheatcodes, Result};
-use crate::{abi::HEVMCalls, executor::inspector::cheatcodes::util};
+use crate::{abi::HEVMCalls, executor::inspector::cheatcodes::parsing};
 use ethers::{
     abi::{self, AbiEncode, JsonAbi, ParamType, Token},
     prelude::artifacts::CompactContractBytecode,
@@ -190,9 +190,9 @@ fn get_env(key: &str, ty: ParamType, delim: Option<&str>, default: Option<String
         })
     })?;
     if let Some(d) = delim {
-        util::parse_array(val.split(d).map(str::trim), &ty)
+        parsing::parse_array(val.split(d).map(str::trim), &ty)
     } else {
-        util::parse(&val, &ty)
+        parsing::parse(&val, &ty)
     }
 }
 
@@ -342,9 +342,9 @@ fn parse_json(json_str: &str, key: &str, coerce: Option<ParamType>) -> Result {
                 };
                 trace!(target : "forge::evm", ?values, "parsign values");
                 return if let Some(array) = values[0].as_array() {
-                    util::parse_array(array.iter().map(to_string), &coercion_type)
+                    parsing::parse_array(array.iter().map(to_string), &coercion_type)
                 } else {
-                    util::parse(&to_string(values[0]), &coercion_type)
+                    parsing::parse(&to_string(values[0]), &coercion_type)
                 }
             }
 
@@ -482,7 +482,7 @@ fn key_exists(json_str: &str, key: &str) -> Result {
     let json: Value =
         serde_json::from_str(json_str).map_err(|e| format!("Could not convert to JSON: {e}"))?;
     let values = jsonpath_lib::select(&json, &canonicalize_json_key(key))?;
-    let exists = util::parse(&(!values.is_empty()).to_string(), &ParamType::Bool)?;
+    let exists = parsing::parse(&(!values.is_empty()).to_string(), &ParamType::Bool)?;
     Ok(exists)
 }
 
