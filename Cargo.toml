@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.package]
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.71"
+rust-version = "1.72"
 authors = ["Foundry Contributors"]
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/foundry-rs/foundry"
@@ -139,7 +139,8 @@ ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features =
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 hex = { package = "const-hex", version = "1.6", features = ["hex"] }
 itertools = "0.11"
-solang-parser = "=0.3.1"
+solang-parser = "=0.3.2"
+tikv-jemallocator = "0.5.4"
 
 #[patch."https://github.com/gakonst/ethers-rs"]
 #ethers = { path = "../ethers-rs/ethers" }
@@ -154,4 +155,4 @@ solang-parser = "=0.3.1"
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-revm = { git = "https://github.com/bluealloy/revm/", rev = "eb6a9f09e8ac2227bc1c353b698ad9e68a9574b2" }
+revm = { git = "https://github.com/bluealloy/revm/", rev = "6b55b9c0ab264c000e087c2f54f2d8dc24b869aa" }

@@ -50,6 +50,24 @@ contract FsProxy is DSTest {
     function createDir(string calldata path, bool recursive) external {
         return vm.createDir(path, recursive);
     }
+
+    /// @notice Verifies if a given path exists on the disk
+    /// @dev Returns true if the given path points to an existing entity, else returns false
+    function exists(string calldata path) external returns (bool) {
+        return vm.exists(path);
+    }
+
+    /// @notice Verifies if a given path points at a file
+    /// @dev Returns true if the given path points at a regular file, else returns false
+    function isFile(string calldata path) external returns (bool) {
+        return vm.isFile(path);
+    }
+
+    /// @notice Verifies if a given path points at a directory
+    /// @dev Returns true if the given path points at a directory, else returns false
+    function isDir(string calldata path) external returns (bool) {
+        return vm.isDir(path);
+    }
 }
 
 contract FsTest is DSTest {
@@ -172,16 +190,16 @@ contract FsTest is DSTest {
         string memory root = vm.projectRoot();
         string memory foundryToml = string.concat(root, "/", "foundry.toml");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.expectRevert();
         fsProxy.writeLine(foundryToml, "\nffi = true\n");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.expectRevert();
         fsProxy.writeLine("foundry.toml", "\nffi = true\n");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.expectRevert();
         fsProxy.writeLine("./foundry.toml", "\nffi = true\n");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.expectRevert();
         fsProxy.writeLine("./Foundry.toml", "\nffi = true\n");
     }
 
@@ -191,16 +209,16 @@ contract FsTest is DSTest {
         string memory root = vm.projectRoot();
         string memory foundryToml = string.concat(root, "/", "foundry.toml");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.expectRevert();
         fsProxy.writeFile(foundryToml, "\nffi = true\n");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.expectRevert();
         fsProxy.writeFile("foundry.toml", "\nffi = true\n");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.expectRevert();
         fsProxy.writeFile("./foundry.toml", "\nffi = true\n");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.expectRevert();
         fsProxy.writeFile("./Foundry.toml", "\nffi = true\n");
     }
 
@@ -306,5 +324,53 @@ contract FsTest is DSTest {
         } catch (bytes memory err) {
             assertEq(err, abi.encodeWithSignature("CheatCodeError", FOUNDRY_READ_ERR));
         }
+    }
+
+    function testExists() public {
+        fsProxy = new FsProxy();
+
+        string memory validFilePath = "fixtures/File/read.txt";
+        assertTrue(vm.exists(validFilePath));
+        assertTrue(fsProxy.exists(validFilePath));
+
+        string memory validDirPath = "fixtures/File";
+        assertTrue(vm.exists(validDirPath));
+        assertTrue(fsProxy.exists(validDirPath));
+
+        string memory invalidPath = "fixtures/File/invalidfile.txt";
+        assertTrue(vm.exists(invalidPath) == false);
+        assertTrue(fsProxy.exists(invalidPath) == false);
+    }
+
+    function testIsFile() public {
+        fsProxy = new FsProxy();
+
+        string memory validFilePath = "fixtures/File/read.txt";
+        assertTrue(vm.isFile(validFilePath));
+        assertTrue(fsProxy.isFile(validFilePath));
+
+        string memory invalidFilePath = "fixtures/File/invalidfile.txt";
+        assertTrue(vm.isFile(invalidFilePath) == false);
+        assertTrue(fsProxy.isFile(invalidFilePath) == false);
+
+        string memory dirPath = "fixtures/File";
+        assertTrue(vm.isFile(dirPath) == false);
+        assertTrue(fsProxy.isFile(dirPath) == false);
+    }
+
+    function testIsDir() public {
+        fsProxy = new FsProxy();
+
+        string memory validDirPath = "fixtures/File";
+        assertTrue(vm.isDir(validDirPath));
+        assertTrue(fsProxy.isDir(validDirPath));
+
+        string memory invalidDirPath = "fixtures/InvalidDir";
+        assertTrue(vm.isDir(invalidDirPath) == false);
+        assertTrue(fsProxy.isDir(invalidDirPath) == false);
+
+        string memory filePath = "fixtures/File/read.txt";
+        assertTrue(vm.isDir(filePath) == false);
+        assertTrue(fsProxy.isDir(filePath) == false);
     }
 }

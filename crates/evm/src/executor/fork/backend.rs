@@ -551,16 +551,16 @@ impl SharedBackend {
         // spawn a light-weight thread with a thread-local async runtime just for
         // sending and receiving data from the remote client
         std::thread::Builder::new()
-            .name("fork-backend-thread".to_string())
+            .name("fork-backend".into())
             .spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
-                    .expect("failed to create fork-backend-thread tokio runtime");
+                    .expect("failed to build tokio runtime");
 
                 rt.block_on(handler);
             })
-            .expect("failed to spawn backendhandler thread");
+            .expect("failed to spawn thread");
         trace!(target: "backendhandler", "spawned Backendhandler thread");
 
         shared

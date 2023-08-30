@@ -41,7 +41,7 @@ impl DebuggerArgs<'_> {
 
         let contract_sources = self.sources.clone();
 
-        let mut tui = Tui::new(
+        let tui = Tui::new(
             flattened,
             0,
             identified_contracts,
@@ -49,6 +49,6 @@ impl DebuggerArgs<'_> {
             self.breakpoints.clone(),
         )?;
 
-        tui.launch()
+        tui.start()
     }
 }

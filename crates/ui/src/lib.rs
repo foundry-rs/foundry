@@ -16,6 +16,15 @@ use foundry_evm::{
     utils::{build_pc_ic_map, PCICMap},
     CallKind,
 };
+use ratatui::{
+    backend::{Backend, CrosstermBackend},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    terminal::Frame,
+    text::{Line, Span, Text},
+    widgets::{Block, Borders, Paragraph, Wrap},
+    Terminal,
+};
 use revm::{interpreter::opcode, primitives::SpecId};
 use std::{
     cmp::{max, min},
@@ -25,20 +34,11 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tui::{
-    backend::{Backend, CrosstermBackend},
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    terminal::Frame,
-    text::{Span, Spans, Text},
-    widgets::{Block, Borders, Paragraph, Wrap},
-    Terminal,
-};
 
 /// Trait for starting the UI
 pub trait Ui {
     /// Start the agent that will now take over
-    fn launch(&mut self) -> Result<TUIExitReason>;
+    fn start(self) -> Result<TUIExitReason>;
 }
 
 /// Used to indicate why the UI stopped
@@ -66,12 +66,6 @@ pub struct Tui {
     /// A mapping of source -> (PC -> IC map for deploy code, PC -> IC map for runtime code)
     pc_ic_maps: BTreeMap<String, (PCICMap, PCICMap)>,
     breakpoints: Breakpoints,
-    draw_memory: DrawMemory,
-    opcode_list: Vec<String>,
-    last_index: usize,
-    stack_labels: bool,
-    mem_utf: bool,
-    show_shortcuts: bool,
 }
 
 impl Tui {
@@ -117,7 +111,7 @@ impl Tui {
             })
             .collect();
         Ok(Tui {
-            debug_arena: debug_arena.clone(),
+            debug_arena,
             terminal,
             key_buffer: String::new(),
             current_step,
@@ -125,12 +119,6 @@ impl Tui {
             contracts_sources,
             pc_ic_maps,
             breakpoints,
-            draw_memory: DrawMemory::default(),
-            opcode_list: debug_arena[0].1.iter().map(|step| step.pretty_opcode()).collect(),
-            last_index: 0,
-            mem_utf: false,
-            stack_labels: false,
-            show_shortcuts: false,
         })
     }
 
@@ -375,9 +363,9 @@ impl Tui {
     fn draw_footer<B: Backend>(f: &mut Frame<B>, area: Rect) {
         let block_controls = Block::default();
 
-        let text_output = vec![Spans::from(Span::styled(
+        let text_output = vec![Line::from(Span::styled(
             "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end", Style::default().add_modifier(Modifier::DIM))),
-Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint | [h] toggle help", Style::default().add_modifier(Modifier::DIM)))];
+Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint | [h] toggle help", Style::default().add_modifier(Modifier::DIM)))];
 
         let paragraph = Paragraph::new(text_output)
             .block(block_controls)
@@ -508,7 +496,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                     if let Some(last) = before.pop() {
                         if !last.ends_with('\n') {
                             before.iter().skip(start_line).for_each(|line| {
-                                text_output.lines.push(Spans::from(vec![
+                                text_output.lines.push(Line::from(vec![
                                     Span::styled(
                                         format!(
                                             "{: >max_line_num$}",
@@ -525,7 +513,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                                 line_number += 1;
                             });
 
-                            text_output.lines.push(Spans::from(vec![
+                            text_output.lines.push(Line::from(vec![
                                 Span::styled(
                                     format!(
                                         "{: >max_line_num$}",
@@ -547,7 +535,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                             line_number += 1;
 
                             actual.iter().skip(1).for_each(|s| {
-                                text_output.lines.push(Spans::from(vec![
+                                text_output.lines.push(Line::from(vec![
                                     Span::styled(
                                         format!(
                                             "{: >max_line_num$}",
@@ -578,7 +566,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                         } else {
                             before.push(last);
                             before.iter().skip(start_line).for_each(|line| {
-                                text_output.lines.push(Spans::from(vec![
+                                text_output.lines.push(Line::from(vec![
                                     Span::styled(
                                         format!(
                                             "{: >max_line_num$}",
@@ -596,7 +584,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                                 line_number += 1;
                             });
                             actual.iter().for_each(|s| {
-                                text_output.lines.push(Spans::from(vec![
+                                text_output.lines.push(Line::from(vec![
                                     Span::styled(
                                         format!(
                                             "{: >max_line_num$}",
@@ -625,7 +613,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                         }
                     } else {
                         actual.iter().for_each(|s| {
-                            text_output.lines.push(Spans::from(vec![
+                            text_output.lines.push(Line::from(vec![
                                 Span::styled(
                                     format!(
                                         "{: >max_line_num$}",
@@ -656,7 +644,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                         if !last.ends_with('\n') {
                             if let Some(post) = after.pop_front() {
                                 if let Some(last) = text_output.lines.last_mut() {
-                                    last.0.push(Span::raw(post));
+                                    last.spans.push(Span::raw(post));
                                 }
                             }
                         }
@@ -667,7 +655,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                         after.pop_back();
                     }
                     after.iter().for_each(|line| {
-                        text_output.lines.push(Spans::from(vec![
+                        text_output.lines.push(Line::from(vec![
                             Span::styled(
                                 format!(
                                     "{: >max_line_num$}",
@@ -728,7 +716,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                 debug_steps[current_step].total_gas_used,
             ))
             .borders(Borders::ALL);
-        let mut text_output: Vec<Spans> = Vec::new();
+        let mut text_output: Vec<Line> = Vec::new();
 
         // Scroll:
         // Focused line is line that should always be at the center of the screen.
@@ -783,12 +771,12 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
             };
 
             if let Some(op) = opcode_list.get(line_number) {
-                text_output.push(Spans::from(Span::styled(
+                text_output.push(Line::from(Span::styled(
                     format!("{line_number_format}{op}"),
                     Style::default().fg(Color::White).bg(bg_color),
                 )));
             } else {
-                text_output.push(Spans::from(Span::styled(
+                text_output.push(Line::from(Span::styled(
                     line_number_format,
                     Style::default().fg(Color::White).bg(bg_color),
                 )));
@@ -825,7 +813,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                 vec![]
             };
 
-        let text: Vec<Spans> = stack
+        let text: Vec<Line> = stack
             .iter()
             .rev()
             .enumerate()
@@ -868,7 +856,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
                 spans.extend(words);
                 spans.push(Span::raw("\n"));
 
-                Spans::from(spans)
+                Line::from(spans)
             })
             .collect();
 
@@ -930,7 +918,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
         let height = area.height as usize;
         let end_line = draw_mem.current_mem_startline + height;
 
-        let text: Vec<Spans> = memory
+        let text: Vec<Line> = memory
             .chunks(32)
             .enumerate()
             .skip(draw_mem.current_mem_startline)
@@ -982,7 +970,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
 
                 spans.push(Span::raw("\n"));
 
-                Spans::from(spans)
+                Line::from(spans)
             })
             .collect();
         let paragraph = Paragraph::new(text).block(stack_space).wrap(Wrap { trim: true });
@@ -991,7 +979,7 @@ Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/
 }
 
 impl Ui for Tui {
-    fn launch(&mut self) -> Result<TUIExitReason> {
+    fn start(mut self) -> Result<TUIExitReason> {
         // If something panics inside here, we should do everything we can to
         // not corrupt the user's terminal.
         std::panic::set_hook(Box::new(|e| {
@@ -1005,45 +993,57 @@ impl Ui for Tui {
 
         // Setup a channel to send interrupts
         let (tx, rx) = mpsc::channel();
-        thread::spawn(move || {
-            let mut last_tick = Instant::now();
-            loop {
-                // Poll events since last tick - if last tick is greater than tick_rate, we
-                // demand immediate availability of the event. This may affect
-                // interactivity, but I'm not sure as it is hard to test.
-                if event::poll(tick_rate.saturating_sub(last_tick.elapsed())).unwrap() {
-                    let event = event::read().unwrap();
-                    if let Event::Key(key) = event {
-                        if tx.send(Interrupt::KeyPressed(key)).is_err() {
-                            return
-                        }
-                    } else if let Event::Mouse(mouse) = event {
-                        if tx.send(Interrupt::MouseEvent(mouse)).is_err() {
-                            return
+        thread::Builder::new()
+            .name("event-listener".into())
+            .spawn(move || {
+                let mut last_tick = Instant::now();
+                loop {
+                    // Poll events since last tick - if last tick is greater than tick_rate, we
+                    // demand immediate availability of the event. This may affect interactivity,
+                    // but I'm not sure as it is hard to test.
+                    if event::poll(tick_rate.saturating_sub(last_tick.elapsed())).unwrap() {
+                        let event = event::read().unwrap();
+                        if let Event::Key(key) = event {
+                            if tx.send(Interrupt::KeyPressed(key)).is_err() {
+                                return
+                            }
+                        } else if let Event::Mouse(mouse) = event {
+                            if tx.send(Interrupt::MouseEvent(mouse)).is_err() {
+                                return
+                            }
                         }
                     }
-                }
-                // Force update if time has passed
-                if last_tick.elapsed() > tick_rate {
-                    if tx.send(Interrupt::IntervalElapsed).is_err() {
-                        return
+                    // Force update if time has passed
+                    if last_tick.elapsed() > tick_rate {
+                        if tx.send(Interrupt::IntervalElapsed).is_err() {
+                            return
+                        }
+                        last_tick = Instant::now();
                     }
-                    last_tick = Instant::now();
                 }
-            }
-        });
+            })
+            .expect("failed to spawn thread");
 
         self.terminal.clear()?;
+        let mut draw_memory: DrawMemory = DrawMemory::default();
 
+        let debug_call: Vec<(Address, Vec<DebugStep>, CallKind)> = self.debug_arena.clone();
+        let mut opcode_list: Vec<String> =
+            debug_call[0].1.iter().map(|step| step.pretty_opcode()).collect();
+        let mut last_index = 0;
+
+        let mut stack_labels = false;
+        let mut mem_utf = false;
+        let mut show_shortcuts = true;
         // UI thread that manages drawing
         loop {
-            if self.last_index != self.draw_memory.inner_call_index {
-                self.opcode_list = self.debug_arena[self.draw_memory.inner_call_index]
+            if last_index != draw_memory.inner_call_index {
+                opcode_list = debug_call[draw_memory.inner_call_index]
                     .1
                     .iter()
                     .map(|step| step.pretty_opcode())
                     .collect();
-                self.last_index = self.draw_memory.inner_call_index;
+                last_index = draw_memory.inner_call_index;
             }
             // Grab interrupt
 
@@ -1051,15 +1051,15 @@ impl Ui for Tui {
 
             if let Some(c) = receiver.char_press() {
                 if self.key_buffer.ends_with('\'') {
-                    // Find the location of the called breakpoint in the whole debug arena (at
-                    // this address with this pc)
+                    // Find the location of the called breakpoint in the whole debug arena (at this
+                    // address with this pc)
                     if let Some((caller, pc)) = self.breakpoints.get(&c) {
-                        for (i, (_caller, debug_steps, _)) in self.debug_arena.iter().enumerate() {
+                        for (i, (_caller, debug_steps, _)) in debug_call.iter().enumerate() {
                             if _caller == caller {
                                 if let Some(step) =
                                     debug_steps.iter().position(|step| step.pc == *pc)
                                 {
-                                    self.draw_memory.inner_call_index = i;
+                                    draw_memory.inner_call_index = i;
                                     self.current_step = step;
                                     break
                                 }
@@ -1084,22 +1084,19 @@ impl Ui for Tui {
                             // Grab number of times to do it
                             for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
                                 if event.modifiers.contains(KeyModifiers::CONTROL) {
-                                    let max_mem = (self.debug_arena
-                                        [self.draw_memory.inner_call_index]
-                                        .1[self.current_step]
+                                    let max_mem = (debug_call[draw_memory.inner_call_index].1
+                                        [self.current_step]
                                         .memory
                                         .len() /
                                         32)
                                     .saturating_sub(1);
-                                    if self.draw_memory.current_mem_startline < max_mem {
-                                        self.draw_memory.current_mem_startline += 1;
+                                    if draw_memory.current_mem_startline < max_mem {
+                                        draw_memory.current_mem_startline += 1;
                                     }
-                                } else if self.current_step < self.opcode_list.len() - 1 {
+                                } else if self.current_step < opcode_list.len() - 1 {
                                     self.current_step += 1;
-                                } else if self.draw_memory.inner_call_index <
-                                    self.debug_arena.len() - 1
-                                {
-                                    self.draw_memory.inner_call_index += 1;
+                                } else if draw_memory.inner_call_index < debug_call.len() - 1 {
+                                    draw_memory.inner_call_index += 1;
                                     self.current_step = 0;
                                 }
                             }
@@ -1107,13 +1104,13 @@ impl Ui for Tui {
                         }
                         KeyCode::Char('J') => {
                             for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                                let max_stack = self.debug_arena[self.draw_memory.inner_call_index]
-                                    .1[self.current_step]
+                                let max_stack = debug_call[draw_memory.inner_call_index].1
+                                    [self.current_step]
                                     .stack
                                     .len()
                                     .saturating_sub(1);
-                                if self.draw_memory.current_stack_startline < max_stack {
-                                    self.draw_memory.current_stack_startline += 1;
+                                if draw_memory.current_stack_startline < max_stack {
+                                    draw_memory.current_stack_startline += 1;
                                 }
                             }
                             self.key_buffer.clear();
@@ -1122,53 +1119,50 @@ impl Ui for Tui {
                         KeyCode::Char('k') | KeyCode::Up => {
                             for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
                                 if event.modifiers.contains(KeyModifiers::CONTROL) {
-                                    self.draw_memory.current_mem_startline =
-                                        self.draw_memory.current_mem_startline.saturating_sub(1);
+                                    draw_memory.current_mem_startline =
+                                        draw_memory.current_mem_startline.saturating_sub(1);
                                 } else if self.current_step > 0 {
                                     self.current_step -= 1;
-                                } else if self.draw_memory.inner_call_index > 0 {
-                                    self.draw_memory.inner_call_index -= 1;
-                                    self.current_step = self.debug_arena
-                                        [self.draw_memory.inner_call_index]
-                                        .1
-                                        .len() -
-                                        1;
+                                } else if draw_memory.inner_call_index > 0 {
+                                    draw_memory.inner_call_index -= 1;
+                                    self.current_step =
+                                        debug_call[draw_memory.inner_call_index].1.len() - 1;
                                 }
                             }
                             self.key_buffer.clear();
                         }
                         KeyCode::Char('K') => {
                             for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                                self.draw_memory.current_stack_startline =
-                                    self.draw_memory.current_stack_startline.saturating_sub(1);
+                                draw_memory.current_stack_startline =
+                                    draw_memory.current_stack_startline.saturating_sub(1);
                             }
                             self.key_buffer.clear();
                         }
                         // Go to top of file
                         KeyCode::Char('g') => {
-                            self.draw_memory.inner_call_index = 0;
+                            draw_memory.inner_call_index = 0;
                             self.current_step = 0;
                             self.key_buffer.clear();
                         }
                         // Go to bottom of file
                         KeyCode::Char('G') => {
-                            self.draw_memory.inner_call_index = self.debug_arena.len() - 1;
+                            draw_memory.inner_call_index = debug_call.len() - 1;
                             self.current_step =
-                                self.debug_arena[self.draw_memory.inner_call_index].1.len() - 1;
+                                debug_call[draw_memory.inner_call_index].1.len() - 1;
                             self.key_buffer.clear();
                         }
                         // Go to previous call
                         KeyCode::Char('c') => {
-                            self.draw_memory.inner_call_index =
-                                self.draw_memory.inner_call_index.saturating_sub(1);
+                            draw_memory.inner_call_index =
+                                draw_memory.inner_call_index.saturating_sub(1);
                             self.current_step =
-                                self.debug_arena[self.draw_memory.inner_call_index].1.len() - 1;
+                                debug_call[draw_memory.inner_call_index].1.len() - 1;
                             self.key_buffer.clear();
                         }
                         // Go to next call
                         KeyCode::Char('C') => {
-                            if self.debug_arena.len() > self.draw_memory.inner_call_index + 1 {
-                                self.draw_memory.inner_call_index += 1;
+                            if debug_call.len() > draw_memory.inner_call_index + 1 {
+                                draw_memory.inner_call_index += 1;
                                 self.current_step = 0;
                             }
                             self.key_buffer.clear();
@@ -1177,7 +1171,7 @@ impl Ui for Tui {
                         KeyCode::Char('s') => {
                             for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
                                 let remaining_ops =
-                                    self.opcode_list[self.current_step..].to_vec().clone();
+                                    opcode_list[self.current_step..].to_vec().clone();
                                 self.current_step += remaining_ops
                                     .iter()
                                     .enumerate()
@@ -1194,9 +1188,9 @@ impl Ui for Tui {
                                             None
                                         }
                                     })
-                                    .unwrap_or(self.opcode_list.len() - 1);
-                                if self.current_step > self.opcode_list.len() {
-                                    self.current_step = self.opcode_list.len() - 1
+                                    .unwrap_or(opcode_list.len() - 1);
+                                if self.current_step > opcode_list.len() {
+                                    self.current_step = opcode_list.len() - 1
                                 };
                             }
                             self.key_buffer.clear();
@@ -1204,8 +1198,7 @@ impl Ui for Tui {
                         // Step backwards
                         KeyCode::Char('a') => {
                             for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                                let prev_ops =
-                                    self.opcode_list[..self.current_step].to_vec().clone();
+                                let prev_ops = opcode_list[..self.current_step].to_vec().clone();
                                 self.current_step = prev_ops
                                     .iter()
                                     .enumerate()
@@ -1230,15 +1223,15 @@ impl Ui for Tui {
                         }
                         // toggle stack labels
                         KeyCode::Char('t') => {
-                            self.stack_labels = !self.stack_labels;
+                            stack_labels = !stack_labels;
                         }
                         // toggle memory utf8 decoding
                         KeyCode::Char('m') => {
-                            self.mem_utf = !self.mem_utf;
+                            mem_utf = !mem_utf;
                         }
                         // toggle help notice
                         KeyCode::Char('h') => {
-                            self.show_shortcuts = !self.show_shortcuts;
+                            show_shortcuts = !show_shortcuts;
                         }
                         KeyCode::Char(other) => match other {
                             '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '\'' => {
@@ -1260,22 +1253,21 @@ impl Ui for Tui {
                         MouseEventKind::ScrollUp => {
                             if self.current_step > 0 {
                                 self.current_step -= 1;
-                            } else if self.draw_memory.inner_call_index > 0 {
-                                self.draw_memory.inner_call_index -= 1;
-                                self.draw_memory.current_mem_startline = 0;
-                                self.draw_memory.current_stack_startline = 0;
+                            } else if draw_memory.inner_call_index > 0 {
+                                draw_memory.inner_call_index -= 1;
+                                draw_memory.current_mem_startline = 0;
+                                draw_memory.current_stack_startline = 0;
                                 self.current_step =
-                                    self.debug_arena[self.draw_memory.inner_call_index].1.len() - 1;
+                                    debug_call[draw_memory.inner_call_index].1.len() - 1;
                             }
                         }
                         MouseEventKind::ScrollDown => {
-                            if self.current_step < self.opcode_list.len() - 1 {
+                            if self.current_step < opcode_list.len() - 1 {
                                 self.current_step += 1;
-                            } else if self.draw_memory.inner_call_index < self.debug_arena.len() - 1
-                            {
-                                self.draw_memory.inner_call_index += 1;
-                                self.draw_memory.current_mem_startline = 0;
-                                self.draw_memory.current_stack_startline = 0;
+                            } else if draw_memory.inner_call_index < debug_call.len() - 1 {
+                                draw_memory.inner_call_index += 1;
+                                draw_memory.current_mem_startline = 0;
+                                draw_memory.current_stack_startline = 0;
                                 self.current_step = 0;
                             }
                         }
@@ -1291,18 +1283,18 @@ impl Ui for Tui {
             self.terminal.draw(|f| {
                 Tui::draw_layout(
                     f,
-                    self.debug_arena[self.draw_memory.inner_call_index].0,
+                    debug_call[draw_memory.inner_call_index].0,
                     &self.identified_contracts,
                     &self.pc_ic_maps,
                     &self.contracts_sources,
-                    &self.debug_arena[self.draw_memory.inner_call_index].1[..],
-                    &self.opcode_list,
+                    &debug_call[draw_memory.inner_call_index].1[..],
+                    &opcode_list,
                     current_step,
-                    self.debug_arena[self.draw_memory.inner_call_index].2,
-                    &mut self.draw_memory,
-                    self.stack_labels,
-                    self.mem_utf,
-                    self.show_shortcuts,
+                    debug_call[draw_memory.inner_call_index].2,
+                    &mut draw_memory,
+                    stack_labels,
+                    mem_utf,
+                    show_shortcuts,
                 )
             })?;
         }

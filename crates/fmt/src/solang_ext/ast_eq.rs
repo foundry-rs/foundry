@@ -22,7 +22,7 @@ fn to_num_reversed(string: &str) -> U256 {
 /// Helper to filter [ParameterList] to omit empty
 /// parameters
 fn filter_params(list: &ParameterList) -> ParameterList {
-    list.iter().cloned().filter(|(_, param)| param.is_some()).collect::<Vec<_>>()
+    list.iter().filter(|(_, param)| param.is_some()).cloned().collect::<Vec<_>>()
 }
 
 /// Check if two ParseTrees are equal ignoring location information or ordering if ordering does
@@ -627,6 +627,12 @@ derive_ast_eq! { enum SourceUnitPart {
     Using(using),
     StraySemicolon(loc),
     Annotation(annotation),
+    _
+}}
+derive_ast_eq! { enum ImportPath {
+    _
+    Filename(lit),
+    Path(path),
     _
 }}
 derive_ast_eq! { enum Import {

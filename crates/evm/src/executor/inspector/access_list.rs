@@ -57,10 +57,7 @@ impl<DB: Database> Inspector<DB> for AccessListTracer {
         interpreter: &mut Interpreter,
         _data: &mut EVMData<'_, DB>,
     ) -> InstructionResult {
-        let pc = interpreter.program_counter();
-        let op = interpreter.contract.bytecode.bytecode()[pc];
-
-        match op {
+        match interpreter.current_opcode() {
             opcode::SLOAD | opcode::SSTORE => {
                 if let Ok(slot) = interpreter.stack().peek(0) {
                     let cur_contract = interpreter.contract.address;

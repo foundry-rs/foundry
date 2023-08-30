@@ -275,7 +275,7 @@ macro_rules! impl_value_enum {
     (enum $name:ident { $($field:ident => $main:literal $(| $alias:literal)*),+ $(,)? }) => {
         impl $name {
             /// All the variants of this enum.
-            pub const ALL: &[Self] = &[$(Self::$field),+];
+            pub const ALL: &'static [Self] = &[$(Self::$field),+];
 
             /// Returns the string representation of `self`.
             #[inline]
