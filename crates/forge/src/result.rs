@@ -5,6 +5,7 @@ use ethers::prelude::Log;
 use foundry_common::evm::Breakpoints;
 use foundry_evm::{
     coverage::HitMaps,
+    debug::DebugArena,
     executor::EvmError,
     fuzz::{types::FuzzCase, CounterExample},
     trace::{TraceKind, Traces},

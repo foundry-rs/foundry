@@ -82,11 +82,7 @@ impl<'a> FuzzedExecutor<'a> {
         let coverage: RefCell<Option<HitMaps>> = RefCell::default();
 
         // Stores fuzz state for use with [fuzz_calldata_from_state]
-        let state: EvmFuzzState = if let Some(fork_db) = self.executor.backend.active_fork_db() {
-            build_initial_state(fork_db, &self.config.dictionary)
-        } else {
-            build_initial_state(self.executor.backend.mem_db(), &self.config.dictionary)
-        };
+        let state = self.build_fuzz_state();
 
         let mut weights = vec![];
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
@@ -108,10 +104,10 @@ impl<'a> FuzzedExecutor<'a> {
             match fuzz_res {
                 FuzzOutcome::Case(case) => {
                     let mut first_case = first_case.borrow_mut();
+                    gas_by_case.borrow_mut().push((case.case.gas, case.case.stipend));
                     if first_case.is_none() {
                         first_case.replace(case.case);
                     }
-                    gas_by_case.borrow_mut().push((case.gas_used, case.stipend));
 
                     traces.replace(case.traces);
 
@@ -234,8 +230,6 @@ impl<'a> FuzzedExecutor<'a> {
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
                 case: FuzzCase { calldata, gas: call.gas_used, stipend: call.stipend },
-                gas_used: call.gas_used,
-                stipend: call.stipend,
                 traces: call.traces,
                 coverage: call.coverage,
                 debug: call.debug,
@@ -248,6 +242,14 @@ impl<'a> FuzzedExecutor<'a> {
                 counterexample: (calldata, call),
                 breakpoints,
             }))
+        }
+    }
+
+    pub fn build_fuzz_state(&self) -> EvmFuzzState {
+        if let Some(fork_db) = self.executor.backend.active_fork_db() {
+            build_initial_state(fork_db, &self.config.dictionary)
+        } else {
+            build_initial_state(self.executor.backend.mem_db(), &self.config.dictionary)
         }
     }
 }

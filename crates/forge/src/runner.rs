@@ -47,7 +47,6 @@ pub struct ContractRunner<'a> {
     pub contract: &'a Abi,
     /// All known errors, used to decode reverts
     pub errors: Option<&'a Abi>,
-
     /// The initial balance of the test contract
     pub initial_balance: U256,
     /// The address which will be used as the `from` field in all EVM calls
@@ -246,20 +245,18 @@ impl<'a> ContractRunner<'a> {
             )
         }
 
-        let mut test_results = self
-            .contract
-            .functions
+        let functions: Vec<_> = self.contract.functions().collect();
+        let mut test_results = functions
             .par_iter()
-            .flat_map(|(_, f)| f)
-            .filter(|&func| func.is_test() && filter.matches_test(func.signature()))
-            .map(|func| {
+            .filter(|&&func| func.is_test() && filter.matches_test(func.signature()))
+            .map(|&func| {
                 let should_fail = func.is_test_fail();
                 let res = if func.is_fuzz_test() {
                     let runner = test_options.fuzz_runner(self.name, &func.name);
                     let fuzz_config = test_options.fuzz_config(self.name, &func.name);
                     self.run_fuzz_test(func, should_fail, runner, setup.clone(), *fuzz_config)
                 } else {
-                    self.clone().run_test(func, should_fail, setup.clone())
+                    self.run_test(func, should_fail, setup.clone())
                 };
                 (func.signature(), res)
             })
@@ -309,72 +306,78 @@ impl<'a> ContractRunner<'a> {
     /// State modifications are not committed to the evm database but discarded after the call,
     /// similar to `eth_call`.
     #[instrument(name = "test", skip_all, fields(name = %func.signature(), %should_fail))]
-    pub fn run_test(mut self, func: &Function, should_fail: bool, setup: TestSetup) -> TestResult {
+    pub fn run_test(&self, func: &Function, should_fail: bool, setup: TestSetup) -> TestResult {
         let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
 
         // Run unit test
+        let mut executor = self.executor.clone();
         let start = Instant::now();
         let mut debug_arena = None;
-        let (reverted, reason, gas, stipend, coverage, state_changeset, breakpoints) = match self
-            .executor
-            .execute_test::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), self.errors)
-        {
-            Ok(CallResult {
-                reverted,
-                gas_used: gas,
-                stipend,
-                logs: execution_logs,
-                traces: execution_trace,
-                coverage,
-                labels: new_labels,
-                state_changeset,
-                debug,
-                breakpoints,
-                ..
-            }) => {
-                traces.extend(execution_trace.map(|traces| (TraceKind::Execution, traces)));
-                labeled_addresses.extend(new_labels);
-                logs.extend(execution_logs);
-                debug_arena = debug;
-                (reverted, None, gas, stipend, coverage, state_changeset, breakpoints)
-            }
-            Err(EvmError::Execution(err)) => {
-                traces.extend(err.traces.map(|traces| (TraceKind::Execution, traces)));
-                labeled_addresses.extend(err.labels);
-                logs.extend(err.logs);
-                (
-                    err.reverted,
-                    Some(err.reason),
-                    err.gas_used,
-                    err.stipend,
-                    None,
-                    err.state_changeset,
-                    HashMap::new(),
-                )
-            }
-            Err(EvmError::SkipError) => {
-                return TestResult {
-                    status: TestStatus::Skipped,
-                    reason: None,
-                    decoded_logs: decode_console_logs(&logs),
-                    traces,
-                    labeled_addresses,
-                    kind: TestKind::Standard(0),
-                    ..Default::default()
+        let (reverted, reason, gas, stipend, coverage, state_changeset, breakpoints) =
+            match executor.execute_test::<(), _, _>(
+                self.sender,
+                address,
+                func.clone(),
+                (),
+                0.into(),
+                self.errors,
+            ) {
+                Ok(CallResult {
+                    reverted,
+                    gas_used: gas,
+                    stipend,
+                    logs: execution_logs,
+                    traces: execution_trace,
+                    coverage,
+                    labels: new_labels,
+                    state_changeset,
+                    debug,
+                    breakpoints,
+                    ..
+                }) => {
+                    traces.extend(execution_trace.map(|traces| (TraceKind::Execution, traces)));
+                    labeled_addresses.extend(new_labels);
+                    logs.extend(execution_logs);
+                    debug_arena = debug;
+                    (reverted, None, gas, stipend, coverage, state_changeset, breakpoints)
                 }
-            }
-            Err(err) => {
-                return TestResult {
-                    status: TestStatus::Failure,
-                    reason: Some(err.to_string()),
-                    decoded_logs: decode_console_logs(&logs),
-                    traces,
-                    labeled_addresses,
-                    kind: TestKind::Standard(0),
-                    ..Default::default()
+                Err(EvmError::Execution(err)) => {
+                    traces.extend(err.traces.map(|traces| (TraceKind::Execution, traces)));
+                    labeled_addresses.extend(err.labels);
+                    logs.extend(err.logs);
+                    (
+                        err.reverted,
+                        Some(err.reason),
+                        err.gas_used,
+                        err.stipend,
+                        None,
+                        err.state_changeset,
+                        HashMap::new(),
+                    )
                 }
-            }
-        };
+                Err(EvmError::SkipError) => {
+                    return TestResult {
+                        status: TestStatus::Skipped,
+                        reason: None,
+                        decoded_logs: decode_console_logs(&logs),
+                        traces,
+                        labeled_addresses,
+                        kind: TestKind::Standard(0),
+                        ..Default::default()
+                    }
+                }
+                Err(err) => {
+                    return TestResult {
+                        status: TestStatus::Failure,
+                        reason: Some(err.to_string()),
+                        decoded_logs: decode_console_logs(&logs),
+                        traces,
+                        labeled_addresses,
+                        kind: TestKind::Standard(0),
+                        ..Default::default()
+                    }
+                }
+            };
 
         let success = executor.is_success(
             setup.address,
@@ -537,6 +540,8 @@ impl<'a> ContractRunner<'a> {
             traces,
             labeled_addresses: labeled_addresses.clone(),
             breakpoints: Default::default(),
+            // TODO
+            debug: Default::default(),
         }
     }
 
@@ -553,13 +558,10 @@ impl<'a> ContractRunner<'a> {
 
         // Run fuzz test
         let start = Instant::now();
-        let mut result = FuzzedExecutor::new(
-            &self.executor,
-            runner.clone(),
-            self.sender,
-            fuzz_config,
-        )
-        .fuzz(func, address, should_fail, self.errors);
+        let fuzzed_executor =
+            FuzzedExecutor::new(&self.executor, runner.clone(), self.sender, fuzz_config);
+        let state = fuzzed_executor.build_fuzz_state();
+        let mut result = fuzzed_executor.fuzz(func, address, should_fail, self.errors);
 
         let mut debug = Default::default();
         let mut breakpoints = Default::default();
@@ -601,7 +603,7 @@ impl<'a> ContractRunner<'a> {
                 self.sender,
                 fuzz_config,
             )
-            .single_fuzz(&result.state, address, should_fail, calldata);
+            .single_fuzz(&state, address, should_fail, calldata);
 
             (debug, breakpoints) = match debug_result {
                 Ok(fuzz_outcome) => match fuzz_outcome {

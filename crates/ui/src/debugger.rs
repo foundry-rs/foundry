@@ -1,3 +1,4 @@
+use crate::Ui;
 use ethers::solc::artifacts::ContractBytecodeSome;
 use foundry_common::{evm::Breakpoints, get_contract_name};
 use foundry_evm::{debug::DebugArena, trace::CallTraceDecoder};

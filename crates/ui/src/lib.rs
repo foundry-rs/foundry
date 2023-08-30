@@ -50,8 +50,8 @@ pub enum TUIExitReason {
 mod op_effects;
 use op_effects::stack_indices_affected;
 
-use self::debugger::ContractSources;
 mod debugger;
+pub use debugger::*;
 
 pub struct Tui {
     debug_arena: Vec<(Address, Vec<DebugStep>, CallKind)>,

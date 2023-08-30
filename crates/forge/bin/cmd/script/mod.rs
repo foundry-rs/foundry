@@ -1,7 +1,4 @@
-use self::{
-    build::{filter_sources_and_artifacts, BuildOutput},
-    runner::ScriptRunner,
-};
+use self::{build::BuildOutput, runner::ScriptRunner};
 use super::{build::BuildArgs, retry::RetryArgs};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
@@ -56,12 +53,7 @@ use foundry_evm::{
 };
 use futures::future;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
-    path::PathBuf,
-};
-use tracing::log::trace;
-use ui::{TUIExitReason, Tui, Ui};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use yansi::Paint;
 
 mod artifacts;
