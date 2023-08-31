@@ -4,7 +4,7 @@ use crate::{
     executor::Executor,
     fuzz::*,
     trace::{load_contracts, TraceKind, Traces},
-    CALLER,
+    CALLER, utils::b160_to_h160,
 };
 use ethers::{
     abi::{Abi, Function},
@@ -66,7 +66,7 @@ pub fn assert_invariants(
     let func = invariant_contract.invariant_function;
     let mut call_result = executor
         .call_raw(
-            CALLER,
+            b160_to_h160(CALLER),
             invariant_contract.address,
             func.encode_input(&[]).expect("invariant should have no inputs").into(),
             U256::zero(),
@@ -134,7 +134,7 @@ pub fn replay_run(
         // Checks the invariant.
         let error_call_result = executor
             .call_raw(
-                CALLER,
+                b160_to_h160(CALLER),
                 invariant_contract.address,
                 func.encode_input(&[]).expect("invariant should have no inputs").into(),
                 U256::zero(),

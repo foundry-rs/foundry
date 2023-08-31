@@ -1,6 +1,6 @@
 use crate::{
     abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier,
-    utils::ru256_to_u256, CallKind,
+    utils::{ru256_to_u256, b160_to_h160}, CallKind,
 };
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{
@@ -597,7 +597,7 @@ impl TraceKind {
 
 /// Chooses the color of the trace depending on the destination address and status of the call.
 fn trace_color(trace: &CallTrace) -> Color {
-    if trace.address == CHEATCODE_ADDRESS {
+    if trace.address == b160_to_h160(CHEATCODE_ADDRESS) {
         Color::Blue
     } else if trace.success {
         Color::Green

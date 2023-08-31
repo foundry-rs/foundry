@@ -23,7 +23,7 @@ use foundry_evm::{
         FuzzedExecutor,
     },
     trace::{load_contracts, TraceKind},
-    CALLER,
+    CALLER, utils::b160_to_h160,
 };
 use proptest::test_runner::{TestError, TestRunner};
 use rayon::prelude::*;
@@ -93,7 +93,7 @@ impl<'a> ContractRunner<'a> {
 
         // We max out their balance so that they can deploy and make calls.
         self.executor.set_balance(self.sender, U256::MAX)?;
-        self.executor.set_balance(CALLER, U256::MAX)?;
+        self.executor.set_balance(b160_to_h160(CALLER), U256::MAX)?;
 
         // We set the nonce of the deployer accounts to 1 to get the same addresses as DappTools
         self.executor.set_nonce(self.sender, 1)?;
@@ -134,7 +134,7 @@ impl<'a> ContractRunner<'a> {
         // balance to the initial balance we want
         self.executor.set_balance(address, self.initial_balance)?;
         self.executor.set_balance(self.sender, self.initial_balance)?;
-        self.executor.set_balance(CALLER, self.initial_balance)?;
+        self.executor.set_balance(b160_to_h160(CALLER), self.initial_balance)?;
 
         self.executor.deploy_create2_deployer()?;
 

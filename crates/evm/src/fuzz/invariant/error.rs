@@ -4,7 +4,7 @@ use crate::{
     executor::{Executor, RawCallResult},
     fuzz::{invariant::set_up_inner_replay, *},
     trace::{load_contracts, TraceKind, Traces},
-    CALLER,
+    CALLER, utils::b160_to_h160,
 };
 use ethers::{
     abi::Function,
@@ -134,7 +134,7 @@ impl InvariantFuzzError {
             // Checks the invariant.
             if let Some(func) = &self.func {
                 let error_call_result = executor
-                    .call_raw(CALLER, self.addr, func.0.clone(), U256::zero())
+                    .call_raw(b160_to_h160(CALLER), self.addr, func.0.clone(), U256::zero())
                     .expect("bad call to evm");
 
                 traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
@@ -175,7 +175,7 @@ impl InvariantFuzzError {
             // Checks the invariant. If we exit before the last call, all the better.
             if let Some(func) = &self.func {
                 let error_call_result = executor
-                    .call_raw(CALLER, self.addr, func.0.clone(), 0.into())
+                    .call_raw(b160_to_h160(CALLER), self.addr, func.0.clone(), 0.into())
                     .expect("bad call to evm");
 
                 if error_call_result.reverted {

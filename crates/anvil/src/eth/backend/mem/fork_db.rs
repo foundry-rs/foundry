@@ -65,11 +65,11 @@ impl Db for ForkedDatabase {
     }
 
     fn snapshot(&mut self) -> U256 {
-        self.insert_snapshot()
+        ru256_to_u256(self.insert_snapshot())
     }
 
     fn revert(&mut self, id: U256) -> bool {
-        self.revert_snapshot(id)
+        self.revert_snapshot(u256_to_ru256(id))
     }
 
     fn current_state(&self) -> StateDb {

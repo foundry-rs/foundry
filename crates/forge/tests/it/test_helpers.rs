@@ -14,7 +14,7 @@ use foundry_evm::{
         DatabaseRef, Executor, ExecutorBuilder,
     },
     fuzz::FuzzedExecutor,
-    CALLER,
+    CALLER, utils::b160_to_h160,
 };
 use std::{path::PathBuf, str::FromStr};
 
@@ -82,7 +82,7 @@ pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor) -> FuzzedExecutor {
     FuzzedExecutor::new(
         executor,
         proptest::test_runner::TestRunner::new(cfg),
-        CALLER,
+        b160_to_h160(CALLER),
         config::test_opts().fuzz,
     )
 }

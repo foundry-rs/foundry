@@ -16,7 +16,7 @@ use crate::{
         },
         FuzzCase, FuzzedCases,
     },
-    utils::{get_function, h160_to_b160},
+    utils::{get_function, h160_to_b160, b160_to_h160},
     CALLER,
 };
 use ethers::{
@@ -417,8 +417,8 @@ impl<'a> InvariantExecutor<'a> {
             .into_iter()
             .filter(|(addr, (identifier, _))| {
                 *addr != invariant_address &&
-                    *addr != CHEATCODE_ADDRESS &&
-                    *addr != HARDHAT_CONSOLE_ADDRESS &&
+                    *addr != b160_to_h160(CHEATCODE_ADDRESS) &&
+                    *addr != b160_to_h160(HARDHAT_CONSOLE_ADDRESS) &&
                     (selected.is_empty() || selected.contains(addr)) &&
                     (self.artifact_filters.targeted.is_empty() ||
                         self.artifact_filters.targeted.contains_key(identifier)) &&
@@ -559,7 +559,7 @@ impl<'a> InvariantExecutor<'a> {
     {
         if let Some(func) = abi.functions().find(|func| func.name == method_name) {
             if let Ok(call_result) = self.executor.call::<Vec<T>, _, _>(
-                CALLER,
+                b160_to_h160(CALLER),
                 address,
                 func.clone(),
                 (),

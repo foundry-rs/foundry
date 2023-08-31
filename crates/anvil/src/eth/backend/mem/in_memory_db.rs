@@ -70,11 +70,11 @@ impl Db for MemDb {
     fn snapshot(&mut self) -> U256 {
         let id = self.snapshots.insert(self.inner.clone());
         trace!(target: "backend::memdb", "Created new snapshot {}", id);
-        id
+        ru256_to_u256(id)
     }
 
     fn revert(&mut self, id: U256) -> bool {
-        if let Some(snapshot) = self.snapshots.remove(id) {
+        if let Some(snapshot) = self.snapshots.remove(u256_to_ru256(id)) {
             self.inner = snapshot;
             trace!(target: "backend::memdb", "Reverted snapshot {}", id);
             true

@@ -27,7 +27,7 @@ use std::collections::VecDeque;
 pub const MAGIC_SKIP_BYTES: &[u8] = b"FOUNDRY::SKIP";
 
 /// Address of the default CREATE2 deployer 0x4e59b44847b379578588920ca78fbf26c0b4956c
-pub const DEFAULT_CREATE2_DEPLOYER: aB160 = aB160::from_slice(&[
+pub const DEFAULT_CREATE2_DEPLOYER: aB160 = aB160::new([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
 ]);
 

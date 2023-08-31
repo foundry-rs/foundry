@@ -38,7 +38,7 @@ use foundry_evm::{
     },
     revm,
     revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv, U256 as rU256},
-    utils::{apply_chain_and_block_specific_env_changes, h256_to_b256, u256_to_ru256},
+    utils::{apply_chain_and_block_specific_env_changes, h256_to_b256, u256_to_ru256, b160_to_h160},
 };
 use parking_lot::RwLock;
 use serde_json::{json, to_writer, Value};
@@ -1016,7 +1016,7 @@ latest block number: {latest_block}"
         // if the option is not disabled and we are not forking.
         if !self.disable_default_create2_deployer && self.eth_rpc_url.is_none() {
             backend
-                .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER)
+                .set_create2_deployer(b160_to_h160(DEFAULT_CREATE2_DEPLOYER))
                 .await
                 .expect("Failed to create default create2 deployer");
         }

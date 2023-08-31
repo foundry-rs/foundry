@@ -52,7 +52,7 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::MakePersistent1(acc) => {
             data.db.extend_persistent_accounts(
-                (acc.0.into_iter().map(h160_to_b160)).collect::<Vec<_>>(),
+                (acc.0.clone().into_iter().map(h160_to_b160)).collect::<Vec<_>>(),
             );
             Ok(Bytes::new())
         }
@@ -76,7 +76,7 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::RevokePersistent1(acc) => {
             data.db.remove_persistent_accounts(
-                acc.0.into_iter().map(h160_to_b160).collect::<Vec<_>>(),
+                acc.0.clone().into_iter().map(h160_to_b160).collect::<Vec<_>>(),
             );
             Ok(Bytes::new())
         }
