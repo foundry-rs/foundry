@@ -332,6 +332,25 @@ impl<'a> Git<'a> {
         Ok(PathBuf::from(output))
     }
 
+    pub fn clone_with_branch(
+        shallow: bool,
+        from: impl AsRef<OsStr>,
+        branch: impl AsRef<OsStr>,
+        to: Option<impl AsRef<OsStr>>,
+    ) -> Result<()> {
+        Self::cmd_no_root()
+            .stderr(Stdio::inherit())
+            .args(["clone", "--recurse-submodules"])
+            .args(shallow.then_some("--depth=1"))
+            .args(shallow.then_some("--shallow-submodules"))
+            .arg("-b")
+            .arg(branch)
+            .arg(from)
+            .args(to)
+            .exec()
+            .map(drop)
+    }
+
     pub fn clone(
         shallow: bool,
         from: impl AsRef<OsStr>,

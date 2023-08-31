@@ -57,10 +57,15 @@ mod fs;
 mod fuzz;
 /// Mapping related cheatcodes
 mod mapping;
+/// Parsing related cheatcodes.
+/// Does not include JSON-related cheatcodes to cut complexity.
+mod parse;
 /// Snapshot related cheatcodes
 mod snapshot;
-/// Utility cheatcodes (`sign` etc.)
+/// Utility functions and constants.
 pub mod util;
+/// Wallet / key management related cheatcodes
+mod wallet;
 pub use util::{BroadcastableTransaction, DEFAULT_CREATE2_DEPLOYER};
 
 mod config;
@@ -219,10 +224,11 @@ impl Cheatcodes {
 
         let opt = env::apply(self, data, caller, &decoded)
             .transpose()
-            .or_else(|| util::apply(self, data, &decoded))
+            .or_else(|| wallet::apply(self, data, &decoded))
+            .or_else(|| parse::apply(self, data, &decoded))
             .or_else(|| expect::apply(self, data, &decoded))
             .or_else(|| fuzz::apply(&decoded))
-            .or_else(|| ext::apply(self, &decoded))
+            .or_else(|| ext::apply(self, data, &decoded))
             .or_else(|| fs::apply(self, &decoded))
             .or_else(|| snapshot::apply(data, &decoded))
             .or_else(|| fork::apply(self, data, &decoded));
@@ -761,9 +767,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(prank) = &self.prank {
             if data.journaled_state.depth() == prank.depth {
                 data.env.tx.caller = h160_to_b160(prank.prank_origin);
-            }
-            if prank.single_call {
-                std::mem::take(&mut self.prank);
+
+                // Clean single-call prank once we have returned to the original depth
+                if prank.single_call {
+                    std::mem::take(&mut self.prank);
+                }
             }
         }
 
@@ -771,10 +779,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(broadcast) = &self.broadcast {
             if data.journaled_state.depth() == broadcast.depth {
                 data.env.tx.caller = h160_to_b160(broadcast.original_origin);
-            }
 
-            if broadcast.single_call {
-                std::mem::take(&mut self.broadcast);
+                // Clean single-call broadcast once we have returned to the original depth
+                if broadcast.single_call {
+                    std::mem::take(&mut self.broadcast);
+                }
             }
         }
 
@@ -1059,9 +1068,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(prank) = &self.prank {
             if data.journaled_state.depth() == prank.depth {
                 data.env.tx.caller = h160_to_b160(prank.prank_origin);
-            }
-            if prank.single_call {
-                std::mem::take(&mut self.prank);
+
+                // Clean single-call prank once we have returned to the original depth
+                if prank.single_call {
+                    std::mem::take(&mut self.prank);
+                }
             }
         }
 
@@ -1069,10 +1080,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(broadcast) = &self.broadcast {
             if data.journaled_state.depth() == broadcast.depth {
                 data.env.tx.caller = h160_to_b160(broadcast.original_origin);
-            }
 
-            if broadcast.single_call {
-                std::mem::take(&mut self.broadcast);
+                // Clean single-call broadcast once we have returned to the original depth
+                if broadcast.single_call {
+                    std::mem::take(&mut self.broadcast);
+                }
             }
         }
 

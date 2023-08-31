@@ -33,14 +33,24 @@ pub struct InterfaceArgs {
     )]
     output: Option<PathBuf>,
 
+    /// If specified, the interface will be output as JSON rather than Solidity.
+    #[clap(long, short)]
+    json: bool,
+
     #[clap(flatten)]
     etherscan: EtherscanOpts,
 }
 
 impl InterfaceArgs {
     pub async fn run(self) -> Result<()> {
-        let InterfaceArgs { path_or_address, name, pragma, output: output_location, etherscan } =
-            self;
+        let InterfaceArgs {
+            path_or_address,
+            name,
+            pragma,
+            output: output_location,
+            etherscan,
+            json,
+        } = self;
         let config = Config::from(&etherscan);
         let chain = config.chain_id.unwrap_or_default();
         let source = if Path::new(&path_or_address).exists() {
@@ -53,10 +63,17 @@ impl InterfaceArgs {
         let interfaces = SimpleCast::generate_interface(source).await?;
 
         // put it all together
-        let pragma = format!("pragma solidity {pragma};");
-        let interfaces =
-            interfaces.iter().map(|iface| iface.source.to_string()).collect::<Vec<_>>().join("\n");
-        let res = format!("{pragma}\n\n{interfaces}");
+        let res = if json {
+            interfaces.into_iter().map(|iface| iface.json_abi).collect::<Vec<_>>().join("\n")
+        } else {
+            let pragma = format!("pragma solidity {pragma};");
+            let interfaces = interfaces
+                .iter()
+                .map(|iface| iface.source.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("{pragma}\n\n{interfaces}")
+        };
 
         // print or write to file
         if let Some(loc) = output_location {

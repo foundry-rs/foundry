@@ -429,9 +429,61 @@ impl<'a> InvariantExecutor<'a> {
             .map(|(addr, (identifier, abi))| (addr, (identifier, abi, vec![])))
             .collect();
 
+        self.target_interfaces(invariant_address, abi, &mut contracts)?;
+
         self.select_selectors(invariant_address, abi, &mut contracts)?;
 
         Ok((SenderFilters::new(targeted_senders, excluded_senders), contracts))
+    }
+
+    /// Extends the contracts and selectors to fuzz with the addresses and ABIs specified in
+    /// `targetInterfaces() -> (address, string[])[]`. Enables targeting of addresses that are
+    /// not deployed during `setUp` such as when fuzzing in a forked environment. Also enables
+    /// targeting of delegate proxies and contracts deployed with `create` or `create2`.
+    pub fn target_interfaces(
+        &self,
+        invariant_address: Address,
+        abi: &Abi,
+        targeted_contracts: &mut TargetedContracts,
+    ) -> eyre::Result<()> {
+        let interfaces =
+            self.get_list::<(Address, Vec<String>)>(invariant_address, abi, "targetInterfaces");
+
+        // Since `targetInterfaces` returns a tuple array there is no guarantee
+        // that the addresses are unique this map is used to merge functions of
+        // the specified interfaces for the same address. For example:
+        // `[(addr1, ["IERC20", "IOwnable"])]` and `[(addr1, ["IERC20"]), (addr1, ("IOwnable"))]`
+        // should be equivalent.
+        let mut combined: TargetedContracts = BTreeMap::new();
+
+        // Loop through each address and its associated artifact identifiers.
+        // We're borrowing here to avoid taking full ownership.
+        for (addr, identifiers) in &interfaces {
+            // Identifiers are specified as an array, so we loop through them.
+            for identifier in identifiers {
+                // Try to find the contract by name or identifier in the project's contracts.
+                if let Some((_, (abi, _))) =
+                    self.project_contracts.find_by_name_or_identifier(identifier)?
+                {
+                    combined
+                        // Check if there's an entry for the given key in the 'combined' map.
+                        .entry(*addr)
+                        // If the entry exists, extends its ABI with the function list.
+                        .and_modify(|entry| {
+                            let (_, contract_abi, _) = entry;
+
+                            // Extend the ABI's function list with the new functions.
+                            contract_abi.functions.extend(abi.functions.clone());
+                        })
+                        // Otherwise insert it into the map.
+                        .or_insert_with(|| (identifier.clone(), abi.clone(), vec![]));
+                }
+            }
+        }
+
+        targeted_contracts.extend(combined);
+
+        Ok(())
     }
 
     /// Selects the functions to fuzz based on the contract method `targetSelectors()` and

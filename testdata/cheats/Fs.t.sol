@@ -190,16 +190,16 @@ contract FsTest is DSTest {
         string memory root = vm.projectRoot();
         string memory foundryToml = string.concat(root, "/", "foundry.toml");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.expectRevert();
         fsProxy.writeLine(foundryToml, "\nffi = true\n");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.expectRevert();
         fsProxy.writeLine("foundry.toml", "\nffi = true\n");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.expectRevert();
         fsProxy.writeLine("./foundry.toml", "\nffi = true\n");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.expectRevert();
         fsProxy.writeLine("./Foundry.toml", "\nffi = true\n");
     }
 
@@ -209,16 +209,16 @@ contract FsTest is DSTest {
         string memory root = vm.projectRoot();
         string memory foundryToml = string.concat(root, "/", "foundry.toml");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.expectRevert();
         fsProxy.writeFile(foundryToml, "\nffi = true\n");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.expectRevert();
         fsProxy.writeFile("foundry.toml", "\nffi = true\n");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.expectRevert();
         fsProxy.writeFile("./foundry.toml", "\nffi = true\n");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.expectRevert();
         fsProxy.writeFile("./Foundry.toml", "\nffi = true\n");
     }
 

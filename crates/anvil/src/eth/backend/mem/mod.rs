@@ -304,7 +304,7 @@ impl Backend {
     ///
     /// Returns `true` if the account is already impersonated
     pub async fn impersonate(&self, addr: Address) -> DatabaseResult<bool> {
-        if self.cheats.is_impersonated(addr) {
+        if self.cheats.impersonated_accounts().contains(&addr) {
             return Ok(true)
         }
         // Ensure EIP-3607 is disabled
