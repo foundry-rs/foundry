@@ -57,15 +57,15 @@ mod fs;
 mod fuzz;
 /// Mapping related cheatcodes
 mod mapping;
-/// Snapshot related cheatcodes
-mod snapshot;
-/// Wallet / key management related cheatcodes
-mod wallet;
 /// Parsing related cheatcodes.
 /// Does not include JSON-related cheatcodes to cut complexity.
 mod parsing;
+/// Snapshot related cheatcodes
+mod snapshot;
 /// Utility functions and constants.
 pub mod util;
+/// Wallet / key management related cheatcodes
+mod wallet;
 pub use util::{BroadcastableTransaction, DEFAULT_CREATE2_DEPLOYER};
 
 mod config;
