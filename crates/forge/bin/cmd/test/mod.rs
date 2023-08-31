@@ -30,7 +30,10 @@ use foundry_config::{
     },
     get_available_profiles, Config,
 };
-use foundry_evm::{fuzz::CounterExample, utils::evm_spec};
+use foundry_evm::{
+    fuzz::CounterExample,
+    utils::{b160_to_h160, evm_spec, ru256_to_u256},
+};
 use regex::Regex;
 use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, time::Duration};
 use tracing::trace;
@@ -180,9 +183,9 @@ impl TestArgs {
         let evm_spec = evm_spec(config.evm_version);
 
         let mut runner = MultiContractRunnerBuilder::default()
-            .initial_balance(evm_opts.initial_balance)
+            .initial_balance(ru256_to_u256(evm_opts.initial_balance))
             .evm_spec(evm_spec)
-            .sender(evm_opts.sender)
+            .sender(b160_to_h160(evm_opts.sender))
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
             .with_test_options(test_options.clone())

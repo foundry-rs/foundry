@@ -261,7 +261,7 @@ impl Cheatcodes {
             return
         }
 
-        data.db.allow_cheatcode_access(h160_to_b160(created_address));
+        data.db.allow_cheatcode_access(created_address);
     }
 
     /// Called when there was a revert.

@@ -5,17 +5,15 @@ use crate::{
         inspector::utils::{gas_used, get_create_address},
         CHEATCODE_ADDRESS,
     },
-    utils::{b160_to_h160, ru256_to_u256},
     CallKind,
 };
-use ethers::types::Address;
 use foundry_utils::error::SolError;
 use revm::{
     interpreter::{
         opcode::{self, spec_opcode_gas},
         CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory,
     },
-    primitives::{Address as rAddress, Bytes},
+    primitives::{Address, Bytes},
     EVMData, Inspector,
 };
 
@@ -81,7 +79,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
 
         self.arena.arena[self.head].steps.push(DebugStep {
             pc,
-            stack: interpreter.stack().data().iter().copied().map(ru256_to_u256).collect(),
+            stack: interpreter.stack().data().clone(),
             memory: interpreter.memory.clone(),
             instruction: Instruction::OpCode(op),
             push_bytes,
@@ -99,7 +97,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
     ) -> (InstructionResult, Gas, Bytes) {
         self.enter(
             data.journaled_state.depth() as usize,
-            b160_to_h160(call.context.code_address),
+            call.context.code_address,
             call.context.scheme.into(),
         );
         if CHEATCODE_ADDRESS == call.contract {
@@ -134,7 +132,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
-    ) -> (InstructionResult, Option<rAddress>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         // TODO: Does this increase gas cost?
         if let Err(err) = data.journaled_state.load_account(call.caller, data.db) {
             let gas = Gas::new(call.gas_limit);
@@ -162,10 +160,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         _: &mut EVMData<'_, DB>,
         _: &CreateInputs,
         status: InstructionResult,
-        address: Option<rAddress>,
+        address: Option<Address>,
         gas: Gas,
         retdata: Bytes,
-    ) -> (InstructionResult, Option<rAddress>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         self.exit();
 
         (status, address, gas, retdata)

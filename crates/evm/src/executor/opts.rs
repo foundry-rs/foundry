@@ -1,15 +1,15 @@
 use crate::{
     executor::fork::CreateFork,
-    utils::{h160_to_b160, h256_to_b256, u256_to_ru256, RuntimeOrHandle},
+    utils::{b160_to_h160, RuntimeOrHandle},
 };
 use ethers::{
     providers::{Middleware, Provider},
-    types::{Address, Block, Chain, TxHash, H256, U256},
+    types::{Block, Chain, TxHash},
 };
 use eyre::WrapErr;
 use foundry_common::{self, ProviderBuilder, RpcUrl, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::Config;
-use revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv, U256 as rU256};
+use revm::primitives::{Address, BlockEnv, CfgEnv, SpecId, TxEnv, B256, U256};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::fork::environment;
@@ -83,7 +83,7 @@ impl EvmOpts {
             self.env.gas_price,
             self.env.chain_id,
             self.fork_block_number,
-            self.sender,
+            b160_to_h160(self.sender),
         )
         .await
         .wrap_err_with(|| {
@@ -94,7 +94,7 @@ impl EvmOpts {
     /// Returns the `revm::Env` configured with only local settings
     pub fn local_evm_env(&self) -> revm::primitives::Env {
         let mut cfg = CfgEnv::default();
-        cfg.chain_id = rU256::from(self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID));
+        cfg.chain_id = U256::from(self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID));
         cfg.spec_id = SpecId::MERGE;
         cfg.limit_contract_code_size = self.env.code_size_limit.or(Some(usize::MAX));
         cfg.memory_limit = self.memory_limit;
@@ -105,19 +105,19 @@ impl EvmOpts {
 
         revm::primitives::Env {
             block: BlockEnv {
-                number: rU256::from(self.env.block_number),
-                coinbase: h160_to_b160(self.env.block_coinbase),
-                timestamp: rU256::from(self.env.block_timestamp),
-                difficulty: rU256::from(self.env.block_difficulty),
-                prevrandao: Some(h256_to_b256(self.env.block_prevrandao)),
-                basefee: rU256::from(self.env.block_base_fee_per_gas),
-                gas_limit: u256_to_ru256(self.gas_limit()),
+                number: U256::from(self.env.block_number),
+                coinbase: self.env.block_coinbase,
+                timestamp: U256::from(self.env.block_timestamp),
+                difficulty: U256::from(self.env.block_difficulty),
+                prevrandao: Some(self.env.block_prevrandao),
+                basefee: U256::from(self.env.block_base_fee_per_gas),
+                gas_limit: self.gas_limit(),
             },
             cfg,
             tx: TxEnv {
-                gas_price: rU256::from(self.env.gas_price.unwrap_or_default()),
-                gas_limit: self.gas_limit().as_u64(),
-                caller: h160_to_b160(self.sender),
+                gas_price: U256::from(self.env.gas_price.unwrap_or_default()),
+                gas_limit: self.gas_limit().to(),
+                caller: self.sender,
                 ..Default::default()
             },
         }
@@ -144,7 +144,7 @@ impl EvmOpts {
 
     /// Returns the gas limit to use
     pub fn gas_limit(&self) -> U256 {
-        self.env.block_gas_limit.unwrap_or(self.env.gas_limit).into()
+        U256::from(self.env.block_gas_limit.unwrap_or(self.env.gas_limit))
     }
 
     /// Returns the configured chain id, which will be
@@ -228,7 +228,7 @@ pub struct Env {
     pub block_difficulty: u64,
 
     /// Previous block beacon chain random value. Before merge this field is used for mix_hash
-    pub block_prevrandao: H256,
+    pub block_prevrandao: B256,
 
     /// the block.gaslimit value during EVM execution
     #[serde(

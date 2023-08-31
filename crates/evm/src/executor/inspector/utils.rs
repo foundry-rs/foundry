@@ -1,13 +1,11 @@
-use ethers::{
-    types::Address,
-    utils::{get_contract_address, get_create2_address},
-};
+use bytes::Buf;
+
 use revm::{
     interpreter::CreateInputs,
-    primitives::{CreateScheme, SpecId},
+    primitives::{Address, CreateScheme, SpecId},
 };
 
-use crate::utils::{b160_to_h160, ru256_to_u256};
+use crate::utils::{ru256_to_u256};
 
 /// Returns [InstructionResult::Continue] on an error, discarding the error.
 ///
@@ -25,12 +23,15 @@ macro_rules! try_or_continue {
 /// Get the address of a contract creation
 pub fn get_create_address(call: &CreateInputs, nonce: u64) -> Address {
     match call.scheme {
-        CreateScheme::Create => get_contract_address(b160_to_h160(call.caller), nonce),
+        CreateScheme::Create => Address::create(&call.caller, nonce),
         CreateScheme::Create2 { salt } => {
             let salt = ru256_to_u256(salt);
             let mut salt_bytes = [0u8; 32];
             salt.to_big_endian(&mut salt_bytes);
-            get_create2_address(b160_to_h160(call.caller), salt_bytes, call.init_code.clone())
+            let init_code =
+                alloy_primitives::Bytes(call.init_code.clone().0).to_owned().0.copy_to_bytes(32);
+            let init_code_hash = alloy_primitives::keccak256(init_code);
+            Address::create2(&call.caller, salt_bytes, init_code_hash)
         }
     }
 }

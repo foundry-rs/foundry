@@ -78,6 +78,7 @@ use foundry_evm::{
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
+use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
 use std::{
     collections::HashMap,
@@ -1144,9 +1145,9 @@ impl Backend {
 
         let mut tracer = AccessListTracer::new(
             AccessList(request.access_list.clone().unwrap_or_default()),
-            from,
-            to,
-            self.precompiles(),
+            h160_to_b160(from),
+            h160_to_b160(to),
+            self.precompiles().into_iter().map(h160_to_b160).collect(),
         );
 
         let mut evm = revm::EVM::new();

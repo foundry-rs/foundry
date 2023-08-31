@@ -19,6 +19,7 @@ use foundry_evm::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
+    utils::b160_to_h160,
 };
 use std::{collections::BTreeMap, fmt::Write, path::PathBuf, str::FromStr};
 use tracing::trace;
@@ -439,7 +440,7 @@ pub fn run_debugger(
     let calls: Vec<DebugArena> = vec![result.debug];
     let flattened = calls.last().expect("we should have collected debug info").flatten(0);
     let tui = Tui::new(
-        flattened,
+        flattened.into_iter().map(|f| (b160_to_h160(f.0), f.1, f.2)).collect(),
         0,
         decoder.contracts,
         known_contracts.into_iter().map(|(id, artifact)| (id.name, artifact)).collect(),

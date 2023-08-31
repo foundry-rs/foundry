@@ -887,7 +887,7 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
         let min_len = format!("{:x}", max_i * 32).len();
 
         // color memory words based on write/read
-        let mut word = None;
+        let mut word: Option<usize> = None;
         let mut color = None;
         if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
             let stack_len = debug_steps[current_step].stack.len();
@@ -895,11 +895,11 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                 let w = debug_steps[current_step].stack[stack_len - 1];
                 match op {
                     opcode::MLOAD => {
-                        word = Some(w.as_usize());
+                        word = Some(w.to());
                         color = Some(Color::Cyan);
                     }
                     opcode::MSTORE => {
-                        word = Some(w.as_usize());
+                        word = Some(w.to());
                         color = Some(Color::Red);
                     }
                     _ => {}
@@ -914,7 +914,7 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
             if let Instruction::OpCode(op) = debug_steps[prev_step].instruction {
                 if op == opcode::MSTORE {
                     let prev_top = debug_steps[prev_step].stack[stack_len - 1];
-                    word = Some(prev_top.as_usize());
+                    word = Some(prev_top.to());
                     color = Some(Color::Green);
                 }
             }

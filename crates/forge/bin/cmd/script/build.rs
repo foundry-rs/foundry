@@ -14,6 +14,7 @@ use ethers::{
 use eyre::{Context, ContextCompat, Result};
 use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::compile;
+use foundry_evm::utils::b160_to_h160;
 use foundry_utils::{PostLinkInput, ResolvedDependency};
 use std::{collections::BTreeMap, fs, str::FromStr};
 use tracing::{trace, warn};
@@ -57,7 +58,7 @@ impl ScriptArgs {
             project,
             contracts,
             script_config.config.parsed_libraries()?,
-            script_config.evm_opts.sender,
+            b160_to_h160(script_config.evm_opts.sender),
             script_config.sender_nonce,
         )?;
 
