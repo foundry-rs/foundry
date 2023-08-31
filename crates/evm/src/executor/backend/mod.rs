@@ -8,10 +8,10 @@ use crate::{
         inspector::{cheatcodes::Cheatcodes, DEFAULT_CREATE2_DEPLOYER},
         snapshot::Snapshots,
     },
-    utils::{h160_to_b160, h256_to_b256, ru256_to_u256, u256_to_ru256, b256_to_h256, u64_to_ru64},
+    utils::{b256_to_h256, h160_to_b160, h256_to_b256, ru256_to_u256, u256_to_ru256, u64_to_ru64},
     CALLER, TEST_CONTRACT_ADDRESS,
 };
-use alloy_primitives::{U64, U256};
+use alloy_primitives::{U256, U64};
 use ethers::{
     prelude::Block,
     types::{BlockNumber, Transaction},
@@ -481,23 +481,12 @@ impl Backend {
         value: U256,
     ) -> Result<(), DatabaseError> {
         let ret = if let Some(db) = self.active_fork_db_mut() {
-            db.insert_account_storage(
-                address,
-                slot,
-                value,
-            )
+            db.insert_account_storage(address, slot, value)
         } else {
-            self.mem_db.insert_account_storage(
-                address,
-                slot,
-                value,
-            )
+            self.mem_db.insert_account_storage(address, slot, value)
         };
 
-        debug_assert!(
-            self.storage(address, slot).unwrap() ==
-                value
-        );
+        debug_assert!(self.storage(address, slot).unwrap() == value);
 
         ret
     }
@@ -620,8 +609,7 @@ impl Backend {
     /// in "failed"
     /// See <https://github.com/dapphub/ds-test/blob/9310e879db8ba3ea6d5c6489a579118fd264a3f5/src/test.sol#L66-L72>
     pub fn is_global_failure(&self, current_state: &JournaledState) -> bool {
-        let index: U256 =
-            U256::from_str_radix(GLOBAL_FAILURE_SLOT, 16).expect("This is a bug.");
+        let index: U256 = U256::from_str_radix(GLOBAL_FAILURE_SLOT, 16).expect("This is a bug.");
         if let Some(account) = current_state.state.get(&CHEATCODE_ADDRESS) {
             let value = account.storage.get(&index).cloned().unwrap_or_default().present_value();
             return value == revm::primitives::U256::from(1)
@@ -788,9 +776,7 @@ impl Backend {
             .fork_init_journaled_state
             .state
             .iter()
-            .filter(|(addr, _)| {
-                !self.is_existing_precompile(addr) && !self.is_persistent(addr)
-            })
+            .filter(|(addr, _)| !self.is_existing_precompile(addr) && !self.is_persistent(addr))
             .map(|(addr, _)| addr)
             .copied()
             .collect::<Vec<_>>();

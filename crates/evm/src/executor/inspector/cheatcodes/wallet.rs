@@ -167,7 +167,9 @@ pub fn apply<DB: Database>(
     Some(match call {
         HEVMCalls::Addr(inner) => addr(inner.0),
         // [function sign(uint256,bytes32)] Used to sign bytes32 digests using the given private key
-        HEVMCalls::Sign0(inner) => sign(inner.0, inner.1.into(), ru256_to_u256(data.env.cfg.chain_id.into())),
+        HEVMCalls::Sign0(inner) => {
+            sign(inner.0, inner.1.into(), ru256_to_u256(data.env.cfg.chain_id.into()))
+        }
         // [function createWallet(string)] Used to derive private key and label the wallet with the
         // same string
         HEVMCalls::CreateWallet0(inner) => {
@@ -193,7 +195,9 @@ pub fn apply<DB: Database>(
         HEVMCalls::DeriveKey3(inner) => {
             derive_key_with_wordlist(&inner.0, &inner.1, inner.2, &inner.3)
         }
-        HEVMCalls::RememberKey(inner) => remember_key(state, inner.0, ru256_to_u256(data.env.cfg.chain_id)),
+        HEVMCalls::RememberKey(inner) => {
+            remember_key(state, inner.0, ru256_to_u256(data.env.cfg.chain_id))
+        }
         HEVMCalls::Label(inner) => {
             state.labels.insert(inner.0, inner.1.clone());
             Ok(Default::default())

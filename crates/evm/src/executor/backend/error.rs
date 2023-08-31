@@ -1,5 +1,5 @@
-use ethers::types::BlockId;
 use alloy_primitives::{Address, B256, U256};
+use ethers::types::BlockId;
 use foundry_utils::error::SolError;
 use futures::channel::mpsc::{SendError, TrySendError};
 use std::{

@@ -122,7 +122,7 @@ impl Executor {
         trace!("deploying local create2 deployer");
         let create2_deployer_account = self
             .backend
-            .basic(h160_to_b160(DEFAULT_CREATE2_DEPLOYER))?
+            .basic(DEFAULT_CREATE2_DEPLOYER)?
             .ok_or(DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
         // if the deployer is not currently deployed, deploy the default one
@@ -148,7 +148,7 @@ impl Executor {
         let mut account = self.backend.basic(h160_to_b160(address))?.unwrap_or_default();
         account.balance = u256_to_ru256(amount);
 
-        self.backend.insert_account_info(address, account);
+        self.backend.insert_account_info(h160_to_b160(address), account);
         Ok(self)
     }
 
@@ -166,7 +166,7 @@ impl Executor {
         let mut account = self.backend.basic(h160_to_b160(address))?.unwrap_or_default();
         account.nonce = nonce;
 
-        self.backend.insert_account_info(address, account);
+        self.backend.insert_account_info(h160_to_b160(address), account);
         Ok(self)
     }
 
@@ -207,8 +207,8 @@ impl Executor {
     ) -> Result<CallResult<()>, EvmError> {
         trace!(?from, ?to, "setting up contract");
 
-        let from = from.unwrap_or(CALLER);
-        self.backend.set_test_contract(to).set_caller(from);
+        let from = from.unwrap_or(b160_to_h160(CALLER));
+        self.backend.set_test_contract(h160_to_b160(to)).set_caller(h160_to_b160(from));
         let res = self.call_committing::<(), _, _>(from, to, "setUp()", (), 0.into(), None)?;
 
         // record any changes made to the block's environment during setup
@@ -460,7 +460,7 @@ impl Executor {
 
         // also mark this library as persistent, this will ensure that the state of the library is
         // persistent across fork swaps in forking mode
-        self.backend.add_persistent_account(b160_to_h160(address));
+        self.backend.add_persistent_account(address);
 
         trace!(address=?address, "deployed contract");
 
@@ -532,8 +532,8 @@ impl Executor {
 
         // we only clone the test contract and cheatcode accounts, that's all we need to evaluate
         // success
-        for addr in [address, CHEATCODE_ADDRESS] {
-            let acc = self.backend.basic(h160_to_b160(addr))?.unwrap_or_default();
+        for addr in [h160_to_b160(address), CHEATCODE_ADDRESS] {
+            let acc = self.backend.basic(addr)?.unwrap_or_default();
             backend.insert_account_info(addr, acc);
         }
 
@@ -547,8 +547,14 @@ impl Executor {
         let mut success = !reverted;
         if success {
             // Check if a DSTest assertion failed
-            let call =
-                executor.call::<bool, _, _>(CALLER, address, "failed()(bool)", (), 0.into(), None);
+            let call = executor.call::<bool, _, _>(
+                b160_to_h160(CALLER),
+                address,
+                "failed()(bool)",
+                (),
+                0.into(),
+                None,
+            );
 
             if let Ok(CallResult { result: failed, .. }) = call {
                 success = !failed;

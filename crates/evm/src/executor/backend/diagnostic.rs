@@ -1,4 +1,7 @@
-use crate::executor::{backend::LocalForkId, inspector::Cheatcodes};
+use crate::{
+    executor::{backend::LocalForkId, inspector::Cheatcodes},
+    utils::b160_to_h160,
+};
 use alloy_primitives::Address;
 use foundry_common::fmt::UIfmt;
 
@@ -27,7 +30,7 @@ impl RevertDiagnostic {
 
         match self {
             RevertDiagnostic::ContractExistsOnOtherForks { contract, active, available_on } => {
-                let contract_label = get_label(contract);
+                let contract_label = get_label(&b160_to_h160(*contract));
 
                 format!(
                     r#"Contract {contract_label} does not exist on active fork with id `{active}`
@@ -35,7 +38,7 @@ impl RevertDiagnostic {
                 )
             }
             RevertDiagnostic::ContractDoesNotExist { contract, persistent, .. } => {
-                let contract_label = get_label(contract);
+                let contract_label = get_label(&b160_to_h160(*contract));
                 if *persistent {
                     format!("Contract {contract_label} does not exist")
                 } else {

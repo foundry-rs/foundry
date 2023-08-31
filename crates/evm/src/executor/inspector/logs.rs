@@ -1,6 +1,6 @@
 use crate::{
     executor::{patch_hardhat_console_selector, HardhatConsoleCalls, HARDHAT_CONSOLE_ADDRESS},
-    utils::{b160_to_h160, b256_to_h256, h160_to_b160},
+    utils::{b160_to_h160, b256_to_h256},
 };
 use ethers::{
     abi::{AbiDecode, Token},

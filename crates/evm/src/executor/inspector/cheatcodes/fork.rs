@@ -4,17 +4,19 @@ use crate::{
     executor::{
         backend::DatabaseExt, fork::CreateFork, inspector::cheatcodes::ext::value_to_token,
     },
-    utils::{RuntimeOrHandle, b160_to_h160, h160_to_b160, ru256_to_u256, u256_to_ru256},
+    utils::{h160_to_b160, ru256_to_u256, u256_to_ru256, RuntimeOrHandle},
 };
 use ethers::{
     abi::{self, AbiEncode, Token, Tokenizable, Tokenize},
-    prelude::U256,
     providers::Middleware,
-    types::{Bytes, Filter, H256},
+    types::{Bytes, Filter, U256 as eU256},
 };
 use foundry_abi::hevm::{EthGetLogsCall, RpcCall};
 use foundry_common::ProviderBuilder;
-use revm::EVMData;
+use revm::{
+    primitives::{B256, U256},
+    EVMData,
+};
 use serde_json::Value;
 
 fn empty<T>(_: T) -> Bytes {
@@ -43,13 +45,15 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::CreateSelectFork2(fork) => {
             create_select_fork_at_transaction(state, data, fork.0.clone(), fork.1.into())
         }
-        HEVMCalls::SelectFork(fork_id) => select_fork(state, data, fork_id.0),
+        HEVMCalls::SelectFork(fork_id) => select_fork(state, data, u256_to_ru256(fork_id.0)),
         HEVMCalls::MakePersistent0(acc) => {
             data.db.add_persistent_account(h160_to_b160(acc.0));
             Ok(Bytes::new())
         }
         HEVMCalls::MakePersistent1(acc) => {
-            data.db.extend_persistent_accounts((acc.0.into_iter().map(h160_to_b160)).collect::<Vec<_>>());
+            data.db.extend_persistent_accounts(
+                (acc.0.into_iter().map(h160_to_b160)).collect::<Vec<_>>(),
+            );
             Ok(Bytes::new())
         }
         HEVMCalls::MakePersistent2(acc) => {
@@ -63,13 +67,17 @@ pub fn apply<DB: DatabaseExt>(
             data.db.add_persistent_account(h160_to_b160(acc.0));
             Ok(Bytes::new())
         }
-        HEVMCalls::IsPersistent(acc) => Ok(data.db.is_persistent(&h160_to_b160(acc.0)).encode().into()),
+        HEVMCalls::IsPersistent(acc) => {
+            Ok(data.db.is_persistent(&h160_to_b160(acc.0)).encode().into())
+        }
         HEVMCalls::RevokePersistent0(acc) => {
             data.db.remove_persistent_account(&h160_to_b160(acc.0));
             Ok(Bytes::new())
         }
         HEVMCalls::RevokePersistent1(acc) => {
-            data.db.remove_persistent_accounts(acc.0.into_iter().map(h160_to_b160).collect::<Vec<_>>());
+            data.db.remove_persistent_accounts(
+                acc.0.into_iter().map(h160_to_b160).collect::<Vec<_>>(),
+            );
             Ok(Bytes::new())
         }
         HEVMCalls::ActiveFork(_) => data
@@ -89,7 +97,12 @@ pub fn apply<DB: DatabaseExt>(
             .map_err(Into::into),
         HEVMCalls::RollFork2(fork) => data
             .db
-            .roll_fork(Some(fork.0).map(u256_to_ru256), u256_to_ru256(fork.1), data.env, &mut data.journaled_state)
+            .roll_fork(
+                Some(fork.0).map(u256_to_ru256),
+                u256_to_ru256(fork.1),
+                data.env,
+                &mut data.journaled_state,
+            )
             .map(empty)
             .map_err(Into::into),
         HEVMCalls::RollFork3(fork) => data
@@ -187,7 +200,7 @@ fn create_select_fork<DB: DatabaseExt>(
 
     let fork = create_fork_request(state, url_or_alias, block, data)?;
     let id = data.db.create_select_fork(fork, data.env, &mut data.journaled_state)?;
-    Ok(id.encode().into())
+    Ok(ru256_to_u256(id).encode().into())
 }
 
 /// Creates a new fork
@@ -199,14 +212,14 @@ fn create_fork<DB: DatabaseExt>(
 ) -> Result {
     let fork = create_fork_request(state, url_or_alias, block, data)?;
     let id = data.db.create_fork(fork)?;
-    Ok(id.encode().into())
+    Ok(ru256_to_u256(id).encode().into())
 }
 /// Creates and then also selects the new fork at the given transaction
 fn create_select_fork_at_transaction<DB: DatabaseExt>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
     url_or_alias: String,
-    transaction: H256,
+    transaction: B256,
 ) -> Result {
     if state.broadcast.is_some() {
         return Err(Error::SelectForkDuringBroadcast)
@@ -222,7 +235,7 @@ fn create_select_fork_at_transaction<DB: DatabaseExt>(
         &mut data.journaled_state,
         transaction,
     )?;
-    Ok(id.encode().into())
+    Ok(ru256_to_u256(id).encode().into())
 }
 
 /// Creates a new fork at the given transaction
@@ -230,11 +243,11 @@ fn create_fork_at_transaction<DB: DatabaseExt>(
     state: &Cheatcodes,
     data: &mut EVMData<'_, DB>,
     url_or_alias: String,
-    transaction: H256,
+    transaction: B256,
 ) -> Result {
     let fork = create_fork_request(state, url_or_alias, None, data)?;
     let id = data.db.create_fork_at_transaction(fork, transaction)?;
-    Ok(id.encode().into())
+    Ok(ru256_to_u256(id).encode().into())
 }
 
 /// Creates the request object for a new fork request
@@ -260,7 +273,9 @@ fn create_fork_request<DB: DatabaseExt>(
 /// Equivalent to eth_getLogs but on a cheatcode.
 fn eth_getlogs<DB: DatabaseExt>(data: &EVMData<DB>, inner: &EthGetLogsCall) -> Result {
     let url = data.db.active_fork_url().ok_or(fmt_err!("No active fork url found"))?;
-    if inner.0 > U256::from(u64::MAX) || inner.1 > U256::from(u64::MAX) {
+    if u256_to_ru256(inner.0) > U256::from(u64::MAX) ||
+        u256_to_ru256(inner.1) > U256::from(u64::MAX)
+    {
         return Err(fmt_err!("Blocks in block range must be less than 2^64 - 1"))
     }
     // Cannot possibly have more than 4 topics in the topics array.
@@ -273,10 +288,10 @@ fn eth_getlogs<DB: DatabaseExt>(data: &EVMData<DB>, inner: &EthGetLogsCall) -> R
         Filter::new().address(inner.2).from_block(inner.0.as_u64()).to_block(inner.1.as_u64());
     for (i, item) in inner.3.iter().enumerate() {
         match i {
-            0 => filter = filter.topic0(U256::from(item)),
-            1 => filter = filter.topic1(U256::from(item)),
-            2 => filter = filter.topic2(U256::from(item)),
-            3 => filter = filter.topic3(U256::from(item)),
+            0 => filter = filter.topic0(eU256::from(item)),
+            1 => filter = filter.topic1(eU256::from(item)),
+            2 => filter = filter.topic2(eU256::from(item)),
+            3 => filter = filter.topic3(eU256::from(item)),
             _ => return Err(fmt_err!("Topics array should be less than 4 elements")),
         };
     }

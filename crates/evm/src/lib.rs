@@ -32,7 +32,10 @@ pub mod utils;
 pub use ethers::types::Address;
 pub use hashbrown;
 use revm::interpreter::{CallScheme, CreateScheme};
-pub use revm::{self, primitives::{HashMap, Address as aB160}};
+pub use revm::{
+    self,
+    primitives::{Address as aB160, HashMap},
+};
 use serde::{Deserialize, Serialize};
 
 /// Stores the caller address to be used as _sender_ account for:

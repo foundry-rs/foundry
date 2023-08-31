@@ -1,5 +1,9 @@
 use super::Result;
-use crate::{abi::HEVMCalls, executor::backend::DatabaseExt, utils::{ru256_to_u256, u256_to_ru256}};
+use crate::{
+    abi::HEVMCalls,
+    executor::backend::DatabaseExt,
+    utils::{ru256_to_u256, u256_to_ru256},
+};
 use ethers::abi::AbiEncode;
 use revm::EVMData;
 

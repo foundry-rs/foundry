@@ -220,7 +220,7 @@ impl Cheatcodes {
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
-        data.db.ensure_cheatcode_access_forking_mode(caller)?;
+        data.db.ensure_cheatcode_access_forking_mode(h160_to_b160(caller))?;
 
         let opt = env::apply(self, data, caller, &decoded)
             .transpose()
@@ -255,15 +255,13 @@ impl Cheatcodes {
             .unwrap_or_default();
         let created_address = get_create_address(inputs, old_nonce);
 
-        if data.journaled_state.depth > 1 &&
-            !data.db.has_cheatcode_access(b160_to_h160(inputs.caller))
-        {
+        if data.journaled_state.depth > 1 && !data.db.has_cheatcode_access(inputs.caller) {
             // we only grant cheat code access for new contracts if the caller also has
             // cheatcode access and the new contract is created in top most call
             return
         }
 
-        data.db.allow_cheatcode_access(created_address);
+        data.db.allow_cheatcode_access(h160_to_b160(created_address));
     }
 
     /// Called when there was a revert.
@@ -573,7 +571,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
     ) -> (InstructionResult, Gas, alloy_primitives::Bytes) {
-        if call.contract == h160_to_b160(CHEATCODE_ADDRESS) {
+        if call.contract == CHEATCODE_ADDRESS {
             let gas = Gas::new(call.gas_limit);
             match self.apply_cheatcode(data, b160_to_h160(call.context.caller), call) {
                 Ok(retdata) => (InstructionResult::Return, gas, alloy_primitives::Bytes(retdata.0)),
@@ -581,7 +579,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     (InstructionResult::Revert, gas, alloy_primitives::Bytes(err.encode_error().0))
                 }
             }
-        } else if call.contract != h160_to_b160(HARDHAT_CONSOLE_ADDRESS) {
+        } else if call.contract != HARDHAT_CONSOLE_ADDRESS {
             // Handle expected calls
 
             // Grab the different calldatas expected.
@@ -749,9 +747,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         status: InstructionResult,
         retdata: alloy_primitives::Bytes,
     ) -> (InstructionResult, Gas, alloy_primitives::Bytes) {
-        if call.contract == h160_to_b160(CHEATCODE_ADDRESS) ||
-            call.contract == h160_to_b160(HARDHAT_CONSOLE_ADDRESS)
-        {
+        if call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS {
             return (status, remaining_gas, retdata)
         }
 
@@ -957,7 +953,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 call.contract != test_contract
             {
                 self.fork_revert_diagnostic =
-                    data.db.diagnose_revert(b160_to_h160(call.contract), &data.journaled_state);
+                    data.db.diagnose_revert(call.contract, &data.journaled_state);
             }
         }
 

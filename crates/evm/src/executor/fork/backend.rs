@@ -332,7 +332,7 @@ where
                                     if let Some(listeners) = pin.account_requests.remove(&addr) {
                                         listeners.into_iter().for_each(|l| {
                                             let _ = l.send(Err(DatabaseError::GetAccount(
-                                                addr,
+                                                h160_to_b160(addr),
                                                 Arc::clone(&err),
                                             )));
                                         })
@@ -380,8 +380,8 @@ where
                                     {
                                         listeners.into_iter().for_each(|l| {
                                             let _ = l.send(Err(DatabaseError::GetStorage(
-                                                addr,
-                                                idx,
+                                                h160_to_b160(addr),
+                                                u256_to_ru256(idx),
                                                 Arc::clone(&err),
                                             )));
                                         })
@@ -459,10 +459,12 @@ where
                         if let Poll::Ready((sender, tx, tx_hash)) = fut.poll_unpin(cx) {
                             let msg = match tx {
                                 Ok(Some(tx)) => Ok(tx),
-                                Ok(None) => Err(DatabaseError::TransactionNotFound(tx_hash)),
+                                Ok(None) => {
+                                    Err(DatabaseError::TransactionNotFound(h256_to_b256(tx_hash)))
+                                }
                                 Err(err) => {
                                     let err = Arc::new(eyre::Error::new(err));
-                                    Err(DatabaseError::GetTransaction(tx_hash, err))
+                                    Err(DatabaseError::GetTransaction(h256_to_b256(tx_hash), err))
                                 }
                             };
                             let _ = sender.send(msg);
@@ -660,7 +662,7 @@ impl DatabaseRef for SharedBackend {
     }
 
     fn code_by_hash(&self, hash: B256) -> Result<Bytecode, Self::Error> {
-        Err(DatabaseError::MissingCode(b256_to_h256(hash)))
+        Err(DatabaseError::MissingCode(hash))
     }
 
     fn storage(&self, address: aB160, index: rU256) -> Result<rU256, Self::Error> {

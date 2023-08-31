@@ -4,7 +4,7 @@ use crate::{
         error::{DatabaseError, DatabaseResult},
         DatabaseExt,
     },
-    utils::{h160_to_b160, h256_to_u256_be, ru256_to_u256, u256_to_ru256, b160_to_h160},
+    utils::{b160_to_h160, h160_to_b160, h256_to_u256_be, ru256_to_u256, u256_to_ru256},
 };
 use bytes::{BufMut, Bytes, BytesMut};
 use ethers::{
@@ -19,7 +19,7 @@ use ethers::{
 use foundry_common::RpcUrl;
 use revm::{
     interpreter::CreateInputs,
-    primitives::{Account, TransactTo, Address as aB160},
+    primitives::{Account, Address as aB160, TransactTo},
     Database, EVMData, JournaledState,
 };
 use std::collections::VecDeque;
@@ -138,7 +138,11 @@ where
             calldata.put_slice(&salt_bytes);
             calldata.put(bytecode);
 
-            Ok((calldata.freeze(), Some(NameOrAddress::Address(b160_to_h160(DEFAULT_CREATE2_DEPLOYER))), nonce))
+            Ok((
+                calldata.freeze(),
+                Some(NameOrAddress::Address(b160_to_h160(DEFAULT_CREATE2_DEPLOYER))),
+                nonce,
+            ))
         }
     }
 }

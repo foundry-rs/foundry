@@ -173,10 +173,7 @@ mod tests {
         assert_eq!(loaded_account.nonce, 1234);
         assert_eq!(
             load_db
-                .storage(
-                    h160_to_b160(test_addr),
-                    u256_to_ru256(Into::<U256>::into("0x1234567"))
-                )
+                .storage(h160_to_b160(test_addr), u256_to_ru256(Into::<U256>::into("0x1234567")))
                 .unwrap(),
             u256_to_ru256(Into::<U256>::into("0x1"))
         );

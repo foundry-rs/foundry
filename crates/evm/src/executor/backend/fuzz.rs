@@ -1,17 +1,15 @@
 //! A wrapper around `Backend` that is clone-on-write used for fuzzing.
 
 use crate::executor::{
-        backend::{
-            diagnostic::RevertDiagnostic, error::DatabaseError, Backend, DatabaseExt, LocalForkId,
-        },
-        fork::{CreateFork, ForkId},
-        inspector::cheatcodes::Cheatcodes,
-    };
+    backend::{
+        diagnostic::RevertDiagnostic, error::DatabaseError, Backend, DatabaseExt, LocalForkId,
+    },
+    fork::{CreateFork, ForkId},
+    inspector::cheatcodes::Cheatcodes,
+};
 use revm::{
     db::DatabaseRef,
-    primitives::{
-        AccountInfo, Address, Bytecode, Env, ResultAndState, B256, U256,
-    },
+    primitives::{AccountInfo, Address, Bytecode, Env, ResultAndState, B256, U256},
     Database, Inspector, JournaledState,
 };
 use std::borrow::Cow;
