@@ -59,7 +59,7 @@ mod fuzz;
 mod mapping;
 /// Parsing related cheatcodes.
 /// Does not include JSON-related cheatcodes to cut complexity.
-mod parsing;
+mod parse;
 /// Snapshot related cheatcodes
 mod snapshot;
 /// Utility functions and constants.
@@ -225,7 +225,7 @@ impl Cheatcodes {
         let opt = env::apply(self, data, caller, &decoded)
             .transpose()
             .or_else(|| wallet::apply(self, data, &decoded))
-            .or_else(|| parsing::apply(self, data, &decoded))
+            .or_else(|| parse::apply(self, data, &decoded))
             .or_else(|| expect::apply(self, data, &decoded))
             .or_else(|| fuzz::apply(&decoded))
             .or_else(|| ext::apply(self, data, &decoded))
