@@ -23,7 +23,7 @@ use ethers::{
     abi::{Abi, Address, Detokenize, FixedBytes, Tokenizable, TokenizableItem},
     prelude::U256,
 };
-use eyre::{ContextCompat, Result};
+use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::{FuzzDictionaryConfig, InvariantConfig};
 use parking_lot::{Mutex, RwLock};
@@ -99,6 +99,11 @@ impl<'a> InvariantExecutor<'a> {
         &mut self,
         invariant_contract: InvariantContract,
     ) -> Result<InvariantFuzzTestResult> {
+        // Throw an error to abort test run if the invariant function accepts input params
+        if !invariant_contract.invariant_function.inputs.is_empty() {
+            return Err(eyre!("Invariant test function should have no inputs"))
+        }
+
         let (fuzz_state, targeted_contracts, strat) = self.prepare_fuzzing(&invariant_contract)?;
 
         // Stores the consumed gas and calldata of every successful fuzz call.
