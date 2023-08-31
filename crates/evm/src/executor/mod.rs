@@ -1,3 +1,6 @@
+//! Main Foundry executor abstractions, which can execute calls.
+//! Used for running tests, scripts, and interacting with the inner backend which holds the state.
+
 use self::inspector::{cheatcodes::util::BroadcastableTransactions, Cheatcodes, InspectorData};
 use crate::{
     debug::DebugArena,
@@ -17,7 +20,7 @@ use backend::FuzzBackendWrapper;
 use bytes::Bytes;
 use ethers::{
     abi::{Abi, Contract, Detokenize, Function, Tokenize},
-    prelude::{decode_function_data, encode_function_data, Address, U256},
+    prelude::{decode_function_data, encode_function_data},
     signers::LocalWallet,
     types::Log,
 };
@@ -29,8 +32,8 @@ pub use revm::{
     db::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, CreateScheme, InstructionResult, Memory, Stack},
     primitives::{
-        Account, Address as rAddress, BlockEnv, Bytecode, ExecutionResult, HashMap, Output,
-        ResultAndState, TransactTo, TxEnv, U256 as rU256,
+        Account, Address, BlockEnv, Bytecode, ExecutionResult, HashMap, Output,
+        ResultAndState, TransactTo, TxEnv, U256,
     },
 };
 use std::collections::BTreeMap;
@@ -63,7 +66,7 @@ use crate::{
 pub use builder::ExecutorBuilder;
 
 /// A mapping of addresses to their changed state.
-pub type StateChangeset = HashMap<rAddress, Account>;
+pub type StateChangeset = HashMap<Address, Account>;
 
 /// The initcode of the default create2 deployer.
 pub const DEFAULT_CREATE2_DEPLOYER_CODE: &[u8] = &hex!("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3");
@@ -134,7 +137,7 @@ impl Executor {
 
             self.set_balance(creator, U256::MAX)?;
             let res =
-                self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::zero(), None)?;
+                self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::ZERO, None)?;
             trace!(create2=?res.address, "deployed local create2 deployer");
 
             self.set_balance(creator, initial_balance)?;
@@ -145,10 +148,10 @@ impl Executor {
     /// Set the balance of an account.
     pub fn set_balance(&mut self, address: Address, amount: U256) -> DatabaseResult<&mut Self> {
         trace!(?address, ?amount, "setting account balance");
-        let mut account = self.backend.basic(h160_to_b160(address))?.unwrap_or_default();
-        account.balance = u256_to_ru256(amount);
+        let mut account = self.backend.basic(address)?.unwrap_or_default();
+        account.balance = amount;
 
-        self.backend.insert_account_info(h160_to_b160(address), account);
+        self.backend.insert_account_info(address, account);
         Ok(self)
     }
 
@@ -156,17 +159,17 @@ impl Executor {
     pub fn get_balance(&self, address: Address) -> DatabaseResult<U256> {
         Ok(self
             .backend
-            .basic(h160_to_b160(address))?
-            .map(|acc| ru256_to_u256(acc.balance))
+            .basic(address)?
+            .map(|acc| acc.balance)
             .unwrap_or_default())
     }
 
     /// Set the nonce of an account.
     pub fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<&mut Self> {
-        let mut account = self.backend.basic(h160_to_b160(address))?.unwrap_or_default();
+        let mut account = self.backend.basic(address)?.unwrap_or_default();
         account.nonce = nonce;
 
-        self.backend.insert_account_info(h160_to_b160(address), account);
+        self.backend.insert_account_info(address, account);
         Ok(self)
     }
 
@@ -207,9 +210,9 @@ impl Executor {
     ) -> Result<CallResult<()>, EvmError> {
         trace!(?from, ?to, "setting up contract");
 
-        let from = from.unwrap_or(b160_to_h160(CALLER));
-        self.backend.set_test_contract(h160_to_b160(to)).set_caller(h160_to_b160(from));
-        let res = self.call_committing::<(), _, _>(from, to, "setUp()", (), 0.into(), None)?;
+        let from = from.unwrap_or(CALLER);
+        self.backend.set_test_contract(to).set_caller(from);
+        let res = self.call_committing::<(), _, _>(from, to, "setUp()", (), U256::ZERO, None)?;
 
         // record any changes made to the block's environment during setup
         self.env.block = res.env.block.clone();
@@ -272,7 +275,7 @@ impl Executor {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult> {
-        let env = self.build_test_env(from, TransactTo::Call(h160_to_b160(to)), calldata, value);
+        let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
         let mut result = self.call_raw_with_env(env)?;
         self.commit(&mut result);
         Ok(result)
@@ -294,7 +297,7 @@ impl Executor {
         // execute the call
         let env = self.build_test_env(
             from,
-            TransactTo::Call(h160_to_b160(test_contract)),
+            TransactTo::Call(test_contract),
             calldata,
             value,
         );
@@ -333,7 +336,7 @@ impl Executor {
         let mut inspector = self.inspector.clone();
         // Build VM
         let mut env =
-            self.build_test_env(from, TransactTo::Call(h160_to_b160(to)), calldata, value);
+            self.build_test_env(from, TransactTo::Call(to), calldata, value);
         let mut db = FuzzBackendWrapper::new(&self.backend);
         let result = db.inspect_ref(&mut env, &mut inspector)?;
 
@@ -465,7 +468,7 @@ impl Executor {
         trace!(address=?address, "deployed contract");
 
         Ok(DeployResult {
-            address: b160_to_h160(address),
+            address: address,
             gas_used,
             gas_refunded,
             logs,
@@ -532,7 +535,7 @@ impl Executor {
 
         // we only clone the test contract and cheatcode accounts, that's all we need to evaluate
         // success
-        for addr in [h160_to_b160(address), CHEATCODE_ADDRESS] {
+        for addr in [address, CHEATCODE_ADDRESS] {
             let acc = self.backend.basic(addr)?.unwrap_or_default();
             backend.insert_account_info(addr, acc);
         }
@@ -548,11 +551,11 @@ impl Executor {
         if success {
             // Check if a DSTest assertion failed
             let call = executor.call::<bool, _, _>(
-                b160_to_h160(CALLER),
+                CALLER,
                 address,
                 "failed()(bool)",
                 (),
-                0.into(),
+                U256::ZERO,
                 None,
             );
 
@@ -581,19 +584,19 @@ impl Executor {
             // network conditions - the actual gas price is kept in `self.block` and is applied by
             // the cheatcode handler if it is enabled
             block: BlockEnv {
-                basefee: rU256::from(0),
-                gas_limit: u256_to_ru256(self.gas_limit),
+                basefee: U256::from(0),
+                gas_limit: self.gas_limit,
                 ..self.env.block.clone()
             },
             tx: TxEnv {
-                caller: h160_to_b160(caller),
+                caller: caller,
                 transact_to,
                 data: alloy_primitives::Bytes(data),
-                value: u256_to_ru256(value),
+                value: value,
                 // As above, we set the gas price to 0.
-                gas_price: rU256::from(0),
+                gas_price: U256::from(0),
                 gas_priority_fee: None,
-                gas_limit: self.gas_limit.as_u64(),
+                gas_limit: self.gas_limit.to(),
                 ..self.env.tx.clone()
             },
         }
@@ -819,7 +822,7 @@ fn convert_executed_result(
         gas_refunded,
         stipend,
         logs: logs.to_vec(),
-        labels,
+        labels: labels.into_iter().map(|label| (h160_to_b160(label.0), label.1)).collect(),
         traces,
         coverage,
         debug,
