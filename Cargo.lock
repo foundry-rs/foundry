@@ -205,7 +205,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
- "tikv-jemallocator",
  "tokio",
  "tower",
  "tower-http 0.4.3",
