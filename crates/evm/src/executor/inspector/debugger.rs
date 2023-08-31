@@ -102,7 +102,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
             b160_to_h160(call.context.code_address),
             call.context.scheme.into(),
         );
-        if CHEATCODE_ADDRESS == b160_to_h160(call.contract) {
+        if CHEATCODE_ADDRESS == call.contract {
             self.arena.arena[self.head].steps.push(DebugStep {
                 memory: Memory::new(),
                 instruction: Instruction::Cheatcode(

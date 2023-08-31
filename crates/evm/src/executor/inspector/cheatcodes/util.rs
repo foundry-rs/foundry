@@ -4,7 +4,7 @@ use crate::{
         error::{DatabaseError, DatabaseResult},
         DatabaseExt,
     },
-    utils::{h160_to_b160, h256_to_u256_be, ru256_to_u256, u256_to_ru256},
+    utils::{h160_to_b160, h256_to_u256_be, ru256_to_u256, u256_to_ru256, b160_to_h160},
 };
 use bytes::{BufMut, Bytes, BytesMut};
 use ethers::{
@@ -19,7 +19,7 @@ use ethers::{
 use foundry_common::RpcUrl;
 use revm::{
     interpreter::CreateInputs,
-    primitives::{Account, TransactTo},
+    primitives::{Account, TransactTo, Address as aB160},
     Database, EVMData, JournaledState,
 };
 use std::collections::VecDeque;
@@ -27,7 +27,7 @@ use std::collections::VecDeque;
 pub const MAGIC_SKIP_BYTES: &[u8] = b"FOUNDRY::SKIP";
 
 /// Address of the default CREATE2 deployer 0x4e59b44847b379578588920ca78fbf26c0b4956c
-pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
+pub const DEFAULT_CREATE2_DEPLOYER: aB160 = aB160::from_slice(&[
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
 ]);
 
@@ -103,9 +103,9 @@ where
         }
         revm::primitives::CreateScheme::Create2 { salt } => {
             // Sanity checks for our CREATE2 deployer
-            data.journaled_state.load_account(h160_to_b160(DEFAULT_CREATE2_DEPLOYER), data.db)?;
+            data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, data.db)?;
 
-            let info = &data.journaled_state.account(h160_to_b160(DEFAULT_CREATE2_DEPLOYER)).info;
+            let info = &data.journaled_state.account(DEFAULT_CREATE2_DEPLOYER).info;
             match &info.code {
                 Some(code) => {
                     if code.is_empty() {
@@ -122,7 +122,7 @@ where
                 }
             }
 
-            call.caller = h160_to_b160(DEFAULT_CREATE2_DEPLOYER);
+            call.caller = DEFAULT_CREATE2_DEPLOYER;
 
             // We have to increment the nonce of the user address, since this create2 will be done
             // by the create2_deployer
@@ -138,7 +138,7 @@ where
             calldata.put_slice(&salt_bytes);
             calldata.put(bytecode);
 
-            Ok((calldata.freeze(), Some(NameOrAddress::Address(DEFAULT_CREATE2_DEPLOYER)), nonce))
+            Ok((calldata.freeze(), Some(NameOrAddress::Address(b160_to_h160(DEFAULT_CREATE2_DEPLOYER))), nonce))
         }
     }
 }

@@ -50,6 +50,7 @@ revm = { version = "3", default-features = false, features = [
 ] }
 
 alloy-primitives = { version = "0.3", default-features = false, features = ["std", "serde"] }
+alloy-rlp = { version = "0.3", default-features = false, features = ["std", "derive"] }
 
 # Fuzzer
 proptest = "1"

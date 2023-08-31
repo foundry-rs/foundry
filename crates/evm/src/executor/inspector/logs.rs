@@ -57,7 +57,7 @@ impl<DB: Database> Inspector<DB> for LogCollector {
         _: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
-        if call.contract == h160_to_b160(HARDHAT_CONSOLE_ADDRESS) {
+        if call.contract == HARDHAT_CONSOLE_ADDRESS {
             let (status, reason) = self.hardhat_log(call.input.to_vec());
             (status, Gas::new(call.gas_limit), reason)
         } else {

@@ -4,7 +4,7 @@ use crate::{
     executor::{
         backend::DatabaseExt, fork::CreateFork, inspector::cheatcodes::ext::value_to_token,
     },
-    utils::RuntimeOrHandle,
+    utils::{RuntimeOrHandle, b160_to_h160, h160_to_b160, ru256_to_u256, u256_to_ru256},
 };
 use ethers::{
     abi::{self, AbiEncode, Token, Tokenizable, Tokenize},
@@ -45,41 +45,41 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::SelectFork(fork_id) => select_fork(state, data, fork_id.0),
         HEVMCalls::MakePersistent0(acc) => {
-            data.db.add_persistent_account(acc.0);
+            data.db.add_persistent_account(h160_to_b160(acc.0));
             Ok(Bytes::new())
         }
         HEVMCalls::MakePersistent1(acc) => {
-            data.db.extend_persistent_accounts(acc.0.clone());
+            data.db.extend_persistent_accounts((acc.0.into_iter().map(h160_to_b160)).collect::<Vec<_>>());
             Ok(Bytes::new())
         }
         HEVMCalls::MakePersistent2(acc) => {
-            data.db.add_persistent_account(acc.0);
-            data.db.add_persistent_account(acc.1);
+            data.db.add_persistent_account(h160_to_b160(acc.0));
+            data.db.add_persistent_account(h160_to_b160(acc.0));
             Ok(Bytes::new())
         }
         HEVMCalls::MakePersistent3(acc) => {
-            data.db.add_persistent_account(acc.0);
-            data.db.add_persistent_account(acc.1);
-            data.db.add_persistent_account(acc.2);
+            data.db.add_persistent_account(h160_to_b160(acc.0));
+            data.db.add_persistent_account(h160_to_b160(acc.0));
+            data.db.add_persistent_account(h160_to_b160(acc.0));
             Ok(Bytes::new())
         }
-        HEVMCalls::IsPersistent(acc) => Ok(data.db.is_persistent(&acc.0).encode().into()),
+        HEVMCalls::IsPersistent(acc) => Ok(data.db.is_persistent(&h160_to_b160(acc.0)).encode().into()),
         HEVMCalls::RevokePersistent0(acc) => {
-            data.db.remove_persistent_account(&acc.0);
+            data.db.remove_persistent_account(&h160_to_b160(acc.0));
             Ok(Bytes::new())
         }
         HEVMCalls::RevokePersistent1(acc) => {
-            data.db.remove_persistent_accounts(acc.0.clone());
+            data.db.remove_persistent_accounts(acc.0.into_iter().map(h160_to_b160).collect::<Vec<_>>());
             Ok(Bytes::new())
         }
         HEVMCalls::ActiveFork(_) => data
             .db
             .active_fork_id()
-            .map(|id| id.encode().into())
+            .map(|id| ru256_to_u256(id).encode().into())
             .ok_or_else(|| fmt_err!("No active fork")),
         HEVMCalls::RollFork0(fork) => data
             .db
-            .roll_fork(None, fork.0, data.env, &mut data.journaled_state)
+            .roll_fork(None, u256_to_ru256(fork.0), data.env, &mut data.journaled_state)
             .map(empty)
             .map_err(Into::into),
         HEVMCalls::RollFork1(fork) => data
@@ -89,13 +89,13 @@ pub fn apply<DB: DatabaseExt>(
             .map_err(Into::into),
         HEVMCalls::RollFork2(fork) => data
             .db
-            .roll_fork(Some(fork.0), fork.1, data.env, &mut data.journaled_state)
+            .roll_fork(Some(fork.0).map(u256_to_ru256), u256_to_ru256(fork.1), data.env, &mut data.journaled_state)
             .map(empty)
             .map_err(Into::into),
         HEVMCalls::RollFork3(fork) => data
             .db
             .roll_fork_to_transaction(
-                Some(fork.0),
+                Some(fork.0).map(u256_to_ru256),
                 fork.1.into(),
                 data.env,
                 &mut data.journaled_state,
@@ -128,7 +128,7 @@ pub fn apply<DB: DatabaseExt>(
             Ok(urls.encode().into())
         }
         HEVMCalls::AllowCheatcodes(addr) => {
-            data.db.allow_cheatcode_access(addr.0);
+            data.db.allow_cheatcode_access(h160_to_b160(addr.0));
             Ok(Bytes::new())
         }
         HEVMCalls::Transact0(inner) => data
@@ -139,7 +139,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::Transact1(inner) => data
             .db
             .transact(
-                Some(inner.0),
+                Some(u256_to_ru256(inner.0)),
                 inner.1.into(),
                 data.env,
                 &mut data.journaled_state,

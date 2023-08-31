@@ -70,6 +70,12 @@ pub fn u256_to_ru256(u: ethers::types::U256) -> revm::primitives::U256 {
     revm::primitives::U256::from_le_bytes(buffer)
 }
 
+// Small helper function to convert ethers's [U64] into alloy's [U64].
+#[inline]
+pub fn u64_to_ru64(u: ethers::types::U64) -> alloy_primitives::U64 {
+    alloy_primitives::U64::from(u.as_u64())
+}
+
 /// Small helper function to convert revm's [U256] into ethers's [U256].
 #[inline]
 pub fn ru256_to_u256(u: alloy_primitives::U256) -> ethers::types::U256 {

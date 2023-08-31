@@ -1,7 +1,5 @@
-use crate::{
-    executor::{backend::LocalForkId, inspector::Cheatcodes},
-    Address,
-};
+use crate::executor::{backend::LocalForkId, inspector::Cheatcodes};
+use alloy_primitives::Address;
 use foundry_common::fmt::UIfmt;
 
 /// Represents possible diagnostic cases on revert
