@@ -240,6 +240,17 @@ contract WriteJsonTest is DSTest {
         vm.removeFile(path);
     }
 
+    function test_serializeRootObject() public {
+        string memory serialized = vm.serializeJson(json1, '{"foo": "bar"}');
+        assertEq(serialized, '{"foo":"bar"}');
+        serialized = vm.serializeBool(json1, "boolean", true);
+        assertEq(vm.parseJsonString(serialized, ".foo"), "bar");
+        assertEq(vm.parseJsonBool(serialized, ".boolean"), true);
+
+        string memory overwritten = vm.serializeJson(json1, '{"value": 123}');
+        assertEq(overwritten, '{"value":123}');
+    }
+
     struct simpleJson {
         uint256 a;
         string b;

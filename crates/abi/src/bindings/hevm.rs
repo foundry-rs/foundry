@@ -4408,6 +4408,35 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("serializeJson"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("serializeJson"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("serializeString"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -7090,6 +7119,16 @@ pub mod hevm {
         ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
             self.0
                 .method_hash([118, 118, 225, 39], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `serializeJson` (0x9b3358b0) function
+        pub fn serialize_json(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([155, 51, 88, 176], (p0, p1))
                 .expect("method not found (this should never happen)")
         }
         ///Calls the contract's `serializeString` (0x88da6d35) function
@@ -9950,6 +9989,19 @@ pub mod hevm {
         pub ::std::string::String,
         pub ::std::vec::Vec<::ethers_core::types::I256>,
     );
+    ///Container type for all input parameters for the `serializeJson` function with signature `serializeJson(string,string)` and selector `0x9b3358b0`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "serializeJson", abi = "serializeJson(string,string)")]
+    pub struct SerializeJsonCall(pub ::std::string::String, pub ::std::string::String);
     ///Container type for all input parameters for the `serializeString` function with signature `serializeString(string,string,string)` and selector `0x88da6d35`
     #[derive(
         Clone,
@@ -10645,6 +10697,7 @@ pub mod hevm {
         SerializeBytes321(SerializeBytes321Call),
         SerializeInt0(SerializeInt0Call),
         SerializeInt1(SerializeInt1Call),
+        SerializeJson(SerializeJsonCall),
         SerializeString0(SerializeString0Call),
         SerializeString1(SerializeString1Call),
         SerializeUint0(SerializeUint0Call),
@@ -11420,6 +11473,10 @@ pub mod hevm {
                 return Ok(Self::SerializeInt1(decoded));
             }
             if let Ok(decoded)
+                = <SerializeJsonCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::SerializeJson(decoded));
+            }
+            if let Ok(decoded)
                 = <SerializeString0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::SerializeString0(decoded));
             }
@@ -11991,6 +12048,9 @@ pub mod hevm {
                 Self::SerializeInt1(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
+                Self::SerializeJson(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
                 Self::SerializeString0(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
@@ -12279,6 +12339,7 @@ pub mod hevm {
                 Self::SerializeBytes321(element) => ::core::fmt::Display::fmt(element, f),
                 Self::SerializeInt0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::SerializeInt1(element) => ::core::fmt::Display::fmt(element, f),
+                Self::SerializeJson(element) => ::core::fmt::Display::fmt(element, f),
                 Self::SerializeString0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::SerializeString1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::SerializeUint0(element) => ::core::fmt::Display::fmt(element, f),
@@ -13182,6 +13243,11 @@ pub mod hevm {
     impl ::core::convert::From<SerializeInt1Call> for HEVMCalls {
         fn from(value: SerializeInt1Call) -> Self {
             Self::SerializeInt1(value)
+        }
+    }
+    impl ::core::convert::From<SerializeJsonCall> for HEVMCalls {
+        fn from(value: SerializeJsonCall) -> Self {
+            Self::SerializeJson(value)
         }
     }
     impl ::core::convert::From<SerializeString0Call> for HEVMCalls {
@@ -14694,6 +14760,18 @@ pub mod hevm {
         Hash
     )]
     pub struct SerializeInt1Return(pub ::std::string::String);
+    ///Container type for all return fields from the `serializeJson` function with signature `serializeJson(string,string)` and selector `0x9b3358b0`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct SerializeJsonReturn(pub ::std::string::String);
     ///Container type for all return fields from the `serializeString` function with signature `serializeString(string,string,string)` and selector `0x88da6d35`
     #[derive(
         Clone,

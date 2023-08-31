@@ -387,29 +387,41 @@ fn parse_json_keys(json_str: &str, key: &str) -> Result {
     Ok(abi_encoded.into())
 }
 
-/// Serializes a key:value pair to a specific object. By calling this function multiple times,
+/// Serializes a key:value pair to a specific object. If the key is None, the value is expected to
+/// be an object, which will be set as the root object for the provided object key, overriding
+/// the whole root object if the object key already exists. By calling this function multiple times,
 /// the user can serialize multiple KV pairs to the same object. The value can be of any type, even
-/// a new object in itself. The function will return
-/// a stringified version of the object, so that the user can use that as a value to a new
-/// invocation of the same function with a new object key. This enables the user to reuse the same
-/// function to crate arbitrarily complex object structures (JSON).
+/// a new object in itself. The function will return a stringified version of the object, so that
+/// the user can use that as a value to a new invocation of the same function with a new object key.
+/// This enables the user to reuse the same function to crate arbitrarily complex object structures
+/// (JSON).
 fn serialize_json(
     state: &mut Cheatcodes,
     object_key: &str,
-    value_key: &str,
+    value_key: Option<&str>,
     value: &str,
 ) -> Result {
-    let parsed_value =
-        serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_string()));
-    let json = if let Some(serialization) = state.serialized_jsons.get_mut(object_key) {
-        serialization.insert(value_key.to_string(), parsed_value);
-        serialization.clone()
+    let json = if let Some(key) = value_key {
+        let parsed_value =
+            serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_string()));
+        if let Some(serialization) = state.serialized_jsons.get_mut(object_key) {
+            serialization.insert(key.to_string(), parsed_value);
+            serialization.clone()
+        } else {
+            let mut serialization = BTreeMap::new();
+            serialization.insert(key.to_string(), parsed_value);
+            state.serialized_jsons.insert(object_key.to_string(), serialization.clone());
+            serialization.clone()
+        }
     } else {
-        let mut serialization = BTreeMap::new();
-        serialization.insert(value_key.to_string(), parsed_value);
+        // value must be a JSON object
+        let parsed_value: BTreeMap<String, Value> = serde_json::from_str(value)
+            .map_err(|err| fmt_err!("Failed to parse JSON object: {err}"))?;
+        let serialization = parsed_value;
         state.serialized_jsons.insert(object_key.to_string(), serialization.clone());
         serialization.clone()
     };
+
     let stringified = serde_json::to_string(&json)
         .map_err(|err| fmt_err!("Failed to stringify hashmap: {err}"))?;
     Ok(abi::encode(&[Token::String(stringified)]).into())
@@ -634,47 +646,48 @@ pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
         HEVMCalls::ParseJsonBytes32Array(inner) => {
             parse_json(&inner.0, &inner.1, Some(ParamType::FixedBytes(32)))
         }
+        HEVMCalls::SerializeJson(inner) => serialize_json(state, &inner.0, None, &inner.1.pretty()),
         HEVMCalls::SerializeBool0(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
+            serialize_json(state, &inner.0, Some(&inner.1), &inner.2.pretty())
         }
         HEVMCalls::SerializeBool1(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &array_eval_to_str(&inner.2))
+            serialize_json(state, &inner.0, Some(&inner.1), &array_eval_to_str(&inner.2))
         }
         HEVMCalls::SerializeUint0(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
+            serialize_json(state, &inner.0, Some(&inner.1), &inner.2.pretty())
         }
         HEVMCalls::SerializeUint1(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &array_eval_to_str(&inner.2))
+            serialize_json(state, &inner.0, Some(&inner.1), &array_eval_to_str(&inner.2))
         }
         HEVMCalls::SerializeInt0(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
+            serialize_json(state, &inner.0, Some(&inner.1), &inner.2.pretty())
         }
         HEVMCalls::SerializeInt1(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &array_eval_to_str(&inner.2))
+            serialize_json(state, &inner.0, Some(&inner.1), &array_eval_to_str(&inner.2))
         }
         HEVMCalls::SerializeAddress0(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
+            serialize_json(state, &inner.0, Some(&inner.1), &inner.2.pretty())
         }
         HEVMCalls::SerializeAddress1(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
+            serialize_json(state, &inner.0, Some(&inner.1), &array_str_to_str(&inner.2))
         }
         HEVMCalls::SerializeBytes320(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
+            serialize_json(state, &inner.0, Some(&inner.1), &inner.2.pretty())
         }
         HEVMCalls::SerializeBytes321(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
+            serialize_json(state, &inner.0, Some(&inner.1), &array_str_to_str(&inner.2))
         }
         HEVMCalls::SerializeString0(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
+            serialize_json(state, &inner.0, Some(&inner.1), &inner.2.pretty())
         }
         HEVMCalls::SerializeString1(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
+            serialize_json(state, &inner.0, Some(&inner.1), &array_str_to_str(&inner.2))
         }
         HEVMCalls::SerializeBytes0(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
+            serialize_json(state, &inner.0, Some(&inner.1), &inner.2.pretty())
         }
         HEVMCalls::SerializeBytes1(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
+            serialize_json(state, &inner.0, Some(&inner.1), &array_str_to_str(&inner.2))
         }
         HEVMCalls::Sleep(inner) => sleep(&inner.0),
         HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
