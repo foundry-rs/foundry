@@ -5,7 +5,8 @@ use crate::{
         utils, utils::decode_cheatcode_outputs, CallTrace, LogCallOrder, RawOrDecodedCall,
         RawOrDecodedLog, RawOrDecodedReturnData,
     },
-    CallKind, utils::b160_to_h160,
+    utils::b160_to_h160,
+    CallKind,
 };
 use ethers::{
     abi::{Abi, Function},
@@ -136,7 +137,7 @@ impl CallTraceNode {
 
             if let RawOrDecodedReturnData::Raw(bytes) = &self.trace.output {
                 if !bytes.is_empty() && self.trace.success {
-                    if self.trace.address ==  b160_to_h160(CHEATCODE_ADDRESS) {
+                    if self.trace.address == b160_to_h160(CHEATCODE_ADDRESS) {
                         if let Some(decoded) = funcs
                             .iter()
                             .find_map(|func| decode_cheatcode_outputs(func, bytes, verbosity))

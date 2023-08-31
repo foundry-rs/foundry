@@ -14,7 +14,8 @@ use foundry_evm::{
         DatabaseRef, Executor, ExecutorBuilder,
     },
     fuzz::FuzzedExecutor,
-    CALLER, utils::b160_to_h160,
+    utils::b160_to_h160,
+    CALLER,
 };
 use std::{path::PathBuf, str::FromStr};
 

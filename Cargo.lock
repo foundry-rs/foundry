@@ -2179,6 +2179,8 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 name = "forge"
 version = "0.2.0"
 dependencies = [
+ "alloy-primitives",
+ "alloy-rlp",
  "anvil",
  "async-trait",
  "bytes",

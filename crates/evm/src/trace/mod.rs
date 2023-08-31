@@ -1,6 +1,9 @@
 use crate::{
-    abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier,
-    utils::{ru256_to_u256, b160_to_h160}, CallKind,
+    abi::CHEATCODE_ADDRESS,
+    debug::Instruction,
+    trace::identifier::LocalTraceIdentifier,
+    utils::{b160_to_h160, ru256_to_u256},
+    CallKind,
 };
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{

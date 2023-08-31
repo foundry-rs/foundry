@@ -6,10 +6,7 @@ use crate::{
     debug::DebugArena,
     decode,
     trace::CallTraceArena,
-    utils::{
-        b160_to_h160, eval_to_instruction_result, h160_to_b160, halt_to_instruction_result,
-        ru256_to_u256, u256_to_ru256,
-    },
+    utils::{eval_to_instruction_result, h160_to_b160, halt_to_instruction_result},
     CALLER,
 };
 pub use abi::{
@@ -32,8 +29,8 @@ pub use revm::{
     db::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, CreateScheme, InstructionResult, Memory, Stack},
     primitives::{
-        Account, Address, BlockEnv, Bytecode, ExecutionResult, HashMap, Output,
-        ResultAndState, TransactTo, TxEnv, U256,
+        Account, Address, BlockEnv, Bytecode, ExecutionResult, HashMap, Output, ResultAndState,
+        TransactTo, TxEnv, U256,
     },
 };
 use std::collections::BTreeMap;
@@ -157,11 +154,7 @@ impl Executor {
 
     /// Gets the balance of an account
     pub fn get_balance(&self, address: Address) -> DatabaseResult<U256> {
-        Ok(self
-            .backend
-            .basic(address)?
-            .map(|acc| acc.balance)
-            .unwrap_or_default())
+        Ok(self.backend.basic(address)?.map(|acc| acc.balance).unwrap_or_default())
     }
 
     /// Set the nonce of an account.
@@ -295,12 +288,7 @@ impl Executor {
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
 
         // execute the call
-        let env = self.build_test_env(
-            from,
-            TransactTo::Call(test_contract),
-            calldata,
-            value,
-        );
+        let env = self.build_test_env(from, TransactTo::Call(test_contract), calldata, value);
         let call_result = self.call_raw_with_env(env)?;
         convert_call_result(abi, &func, call_result)
     }
@@ -335,8 +323,7 @@ impl Executor {
     ) -> eyre::Result<RawCallResult> {
         let mut inspector = self.inspector.clone();
         // Build VM
-        let mut env =
-            self.build_test_env(from, TransactTo::Call(to), calldata, value);
+        let mut env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
         let mut db = FuzzBackendWrapper::new(&self.backend);
         let result = db.inspect_ref(&mut env, &mut inspector)?;
 
@@ -467,15 +454,7 @@ impl Executor {
 
         trace!(address=?address, "deployed contract");
 
-        Ok(DeployResult {
-            address: address,
-            gas_used,
-            gas_refunded,
-            logs,
-            traces,
-            debug,
-            env,
-        })
+        Ok(DeployResult { address, gas_used, gas_refunded, logs, traces, debug, env })
     }
 
     /// Deploys a contract and commits the new state to the underlying database.
@@ -589,10 +568,10 @@ impl Executor {
                 ..self.env.block.clone()
             },
             tx: TxEnv {
-                caller: caller,
+                caller,
                 transact_to,
                 data: alloy_primitives::Bytes(data),
-                value: value,
+                value,
                 // As above, we set the gas price to 0.
                 gas_price: U256::from(0),
                 gas_priority_fee: None,

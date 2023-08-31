@@ -4,14 +4,16 @@ use crate::{
     executor::Executor,
     fuzz::*,
     trace::{load_contracts, TraceKind, Traces},
-    CALLER, utils::b160_to_h160,
+    utils::h160_to_b160,
+    CALLER,
 };
 use ethers::{
     abi::{Abi, Function},
-    types::{Address, Bytes, U256},
+    types::{Address, Bytes},
 };
 use foundry_common::ContractsByArtifact;
 use parking_lot::Mutex;
+use revm::primitives::U256;
 use std::{collections::BTreeMap, sync::Arc};
 
 pub use proptest::test_runner::Config as FuzzConfig;
@@ -66,17 +68,17 @@ pub fn assert_invariants(
     let func = invariant_contract.invariant_function;
     let mut call_result = executor
         .call_raw(
-            b160_to_h160(CALLER),
-            invariant_contract.address,
+            CALLER,
+            h160_to_b160(invariant_contract.address),
             func.encode_input(&[]).expect("invariant should have no inputs").into(),
-            U256::zero(),
+            U256::ZERO,
         )
         .expect("EVM error");
 
     // This will panic and get caught by the executor
     let is_err = call_result.reverted ||
         !executor.is_success(
-            invariant_contract.address,
+            h160_to_b160(invariant_contract.address),
             call_result.reverted,
             call_result.state_changeset.take().expect("we should have a state changeset"),
             false,
@@ -119,7 +121,12 @@ pub fn replay_run(
     // Replay each call from the sequence until we break the invariant.
     for (sender, (addr, bytes)) in inputs.iter() {
         let call_result = executor
-            .call_raw_committing(*sender, *addr, bytes.0.clone(), U256::zero())
+            .call_raw_committing(
+                h160_to_b160(*sender),
+                h160_to_b160(*addr),
+                bytes.0.clone(),
+                U256::ZERO,
+            )
             .expect("bad call to evm");
 
         logs.extend(call_result.logs);
@@ -134,10 +141,10 @@ pub fn replay_run(
         // Checks the invariant.
         let error_call_result = executor
             .call_raw(
-                b160_to_h160(CALLER),
-                invariant_contract.address,
+                CALLER,
+                h160_to_b160(invariant_contract.address),
                 func.encode_input(&[]).expect("invariant should have no inputs").into(),
-                U256::zero(),
+                U256::ZERO,
             )
             .expect("bad call to evm");
 

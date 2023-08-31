@@ -168,7 +168,7 @@ pub fn apply<DB: Database>(
         HEVMCalls::Addr(inner) => addr(inner.0),
         // [function sign(uint256,bytes32)] Used to sign bytes32 digests using the given private key
         HEVMCalls::Sign0(inner) => {
-            sign(inner.0, inner.1.into(), ru256_to_u256(data.env.cfg.chain_id.into()))
+            sign(inner.0, inner.1.into(), ru256_to_u256(data.env.cfg.chain_id))
         }
         // [function createWallet(string)] Used to derive private key and label the wallet with the
         // same string

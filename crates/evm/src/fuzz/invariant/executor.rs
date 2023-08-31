@@ -16,13 +16,10 @@ use crate::{
         },
         FuzzCase, FuzzedCases,
     },
-    utils::{get_function, h160_to_b160, b160_to_h160},
+    utils::{b160_to_h160, get_function, h160_to_b160},
     CALLER,
 };
-use ethers::{
-    abi::{Abi, Address, Detokenize, FixedBytes, Tokenizable, TokenizableItem},
-    prelude::U256,
-};
+use ethers::abi::{Abi, Address, Detokenize, FixedBytes, Tokenizable, TokenizableItem};
 use eyre::{ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::{FuzzDictionaryConfig, InvariantConfig};
@@ -32,7 +29,7 @@ use proptest::{
     test_runner::{TestCaseError, TestRunner},
 };
 use revm::{
-    primitives::{Address as rAddress, HashMap},
+    primitives::{Address as rAddress, HashMap, U256 as rU256},
     DatabaseCommit,
 };
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
@@ -146,7 +143,12 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Executes the call from the randomly generated sequence.
                 let call_result = executor
-                    .call_raw(*sender, *address, calldata.0.clone(), U256::zero())
+                    .call_raw(
+                        h160_to_b160(*sender),
+                        h160_to_b160(*address),
+                        calldata.0.clone(),
+                        rU256::ZERO,
+                    )
                     .expect("could not make raw evm call");
 
                 // Collect data for fuzzing from the state changeset.
@@ -559,11 +561,11 @@ impl<'a> InvariantExecutor<'a> {
     {
         if let Some(func) = abi.functions().find(|func| func.name == method_name) {
             if let Ok(call_result) = self.executor.call::<Vec<T>, _, _>(
-                b160_to_h160(CALLER),
-                address,
+                CALLER,
+                h160_to_b160(address),
                 func.clone(),
                 (),
-                U256::zero(),
+                rU256::ZERO,
                 Some(abi),
             ) {
                 return call_result.result
@@ -629,10 +631,9 @@ fn can_continue(
     let mut call_results = None;
 
     // Detect handler assertion failures first.
-    let handlers_failed = targeted_contracts
-        .lock()
-        .iter()
-        .any(|contract| !executor.is_success(*contract.0, false, state_changeset.clone(), false));
+    let handlers_failed = targeted_contracts.lock().iter().any(|contract| {
+        !executor.is_success(h160_to_b160(*contract.0), false, state_changeset.clone(), false)
+    });
 
     // Assert invariants IFF the call did not revert and the handlers did not fail.
     if !call_result.reverted && !handlers_failed {

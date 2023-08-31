@@ -19,7 +19,7 @@ pub mod coverage;
 /// Forge test execution backends
 pub mod executor;
 
-use ethers::types::{ActionType, CallType, H160};
+use ethers::types::{ActionType, CallType};
 pub use executor::abi;
 
 /// Fuzzing wrapper for executors

@@ -7,7 +7,8 @@ use crate::{
     decode,
     executor::inspector::DEFAULT_CREATE2_DEPLOYER,
     trace::{node::CallTraceNode, utils},
-    CALLER, TEST_CONTRACT_ADDRESS, utils::b160_to_h160,
+    utils::b160_to_h160,
+    CALLER, TEST_CONTRACT_ADDRESS,
 };
 use ethers::{
     abi::{Abi, Address, Event, Function, Param, ParamType, Token},
