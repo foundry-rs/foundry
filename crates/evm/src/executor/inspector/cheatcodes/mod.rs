@@ -59,14 +59,12 @@ mod fuzz;
 mod mapping;
 /// Snapshot related cheatcodes
 mod snapshot;
-
 /// Wallet / key management related cheatcodes
 mod wallet;
-
 /// Parsing related cheatcodes.
 /// Does not include JSON-related cheatcodes to cut complexity.
 mod parsing;
-/// Utility cheatcodes (`sign` etc.)
+/// Utility functions and constants.
 pub mod util;
 pub use util::{BroadcastableTransaction, DEFAULT_CREATE2_DEPLOYER};
 
@@ -226,12 +224,11 @@ impl Cheatcodes {
 
         let opt = env::apply(self, data, caller, &decoded)
             .transpose()
-            .or_else(|| util::apply(self, data, &decoded))
             .or_else(|| wallet::apply(self, data, &decoded))
             .or_else(|| parsing::apply(self, data, &decoded))
             .or_else(|| expect::apply(self, data, &decoded))
             .or_else(|| fuzz::apply(&decoded))
-            .or_else(|| ext::apply(self, &decoded))
+            .or_else(|| ext::apply(self, data, &decoded))
             .or_else(|| fs::apply(self, &decoded))
             .or_else(|| snapshot::apply(data, &decoded))
             .or_else(|| fork::apply(self, data, &decoded));

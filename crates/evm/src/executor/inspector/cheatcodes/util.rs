@@ -1,6 +1,5 @@
-use super::{ensure, Cheatcodes, Error, Result};
+use super::{ensure, Result};
 use crate::{
-    abi::HEVMCalls,
     executor::backend::{
         error::{DatabaseError, DatabaseResult},
         DatabaseExt,
@@ -25,12 +24,12 @@ use revm::{
 };
 use std::collections::VecDeque;
 
+pub const MAGIC_SKIP_BYTES: &[u8] = b"FOUNDRY::SKIP";
+
 /// Address of the default CREATE2 deployer 0x4e59b44847b379578588920ca78fbf26c0b4956c
 pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
 ]);
-
-pub const MAGIC_SKIP_BYTES: &[u8] = b"FOUNDRY::SKIP";
 
 /// Helps collecting transactions from different forks.
 #[derive(Debug, Clone, Default)]
@@ -84,34 +83,6 @@ where
     journaled_state.touch(&addr);
     let account = journaled_state.state.get_mut(&addr).expect("account loaded;");
     Ok(f(account))
-}
-
-/// Skip the current test, by returning a magic value that will be checked by the test runner.
-pub fn skip(state: &mut Cheatcodes, depth: u64, skip: bool) -> Result {
-    if !skip {
-        return Ok(b"".into())
-    }
-
-    // Skip should not work if called deeper than at test level.
-    // As we're not returning the magic skip bytes, this will cause a test failure.
-    if depth > 1 {
-        return Err(Error::custom("The skip cheatcode can only be used at test level"))
-    }
-
-    state.skip = true;
-    Err(Error::custom_bytes(MAGIC_SKIP_BYTES))
-}
-
-#[instrument(level = "error", name = "util", target = "evm::cheatcodes", skip_all)]
-pub fn apply<DB: Database>(
-    state: &mut Cheatcodes,
-    data: &mut EVMData<'_, DB>,
-    call: &HEVMCalls,
-) -> Option<Result> {
-    Some(match call {
-        HEVMCalls::Skip(inner) => skip(state, data.journaled_state.depth(), inner.0),
-        _ => return None,
-    })
 }
 
 pub fn process_create<DB>(

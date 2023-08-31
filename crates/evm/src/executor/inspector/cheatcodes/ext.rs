@@ -1,4 +1,4 @@
-use super::{bail, ensure, fmt_err, Cheatcodes, Result};
+use super::{bail, ensure, fmt_err, util::MAGIC_SKIP_BYTES, Cheatcodes, Error, Result};
 use crate::{abi::HEVMCalls, executor::inspector::cheatcodes::parsing};
 use ethers::{
     abi::{self, AbiEncode, JsonAbi, ParamType, Token},
@@ -7,6 +7,7 @@ use ethers::{
 };
 use foundry_common::{fmt::*, fs, get_artifact_path};
 use foundry_config::fs_permissions::FsAccessKind;
+use revm::{Database, EVMData};
 use serde::Deserialize;
 use serde_json::Value;
 use std::{collections::BTreeMap, env, path::Path, process::Command};
@@ -494,8 +495,28 @@ fn sleep(milliseconds: &U256) -> Result {
     Ok(Default::default())
 }
 
+/// Skip the current test, by returning a magic value that will be checked by the test runner.
+pub fn skip(state: &mut Cheatcodes, depth: u64, skip: bool) -> Result {
+    if !skip {
+        return Ok(b"".into())
+    }
+
+    // Skip should not work if called deeper than at test level.
+    // As we're not returning the magic skip bytes, this will cause a test failure.
+    if depth > 1 {
+        return Err(Error::custom("The skip cheatcode can only be used at test level"))
+    }
+
+    state.skip = true;
+    Err(Error::custom_bytes(MAGIC_SKIP_BYTES))
+}
+
 #[instrument(level = "error", name = "ext", target = "evm::cheatcodes", skip_all)]
-pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
+pub fn apply<DB: Database>(
+    state: &mut Cheatcodes,
+    data: &mut EVMData<'_, DB>,
+    call: &HEVMCalls,
+) -> Option<Result> {
     Some(match call {
         HEVMCalls::Ffi(inner) => {
             if state.config.ffi {
@@ -680,6 +701,7 @@ pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
         HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
         HEVMCalls::WriteJson1(inner) => write_json(state, &inner.0, &inner.1, Some(&inner.2)),
         HEVMCalls::KeyExists(inner) => key_exists(&inner.0, &inner.1),
+        HEVMCalls::Skip(inner) => skip(state, data.journaled_state.depth(), inner.0),
         _ => return None,
     })
 }
