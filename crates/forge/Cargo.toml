@@ -39,8 +39,7 @@ forge-doc.workspace = true
 foundry-cli.workspace = true
 ui.workspace = true
 
-alloy-primitives = { version = "0.3", default-features = false, features = ["std", "serde"] }
-alloy-rlp = { version = "0.3", default-features = false, features = ["std", "derive"] }
+alloy-primitives = { workspace = true, default-features = false, features = ["std", "serde"] }
 
 async-trait = "0.1"
 bytes = "1.4"

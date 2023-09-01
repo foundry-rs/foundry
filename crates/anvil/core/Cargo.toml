@@ -13,7 +13,7 @@ repository.workspace = true
 # foundry internal
 foundry-evm = { path = "../../evm" }
 revm = { version = "3", default-features = false, features = ["std", "serde", "memory_limit"] }
-alloy-primitives = { version = "0.3", default-features = false, features = ["std", "serde"] }
+alloy-primitives = { workspace = true, default-features = false, features = ["std", "serde"] }
 
 ethers-core.workspace = true
 serde = { version = "1", features = ["derive"], optional = true }
