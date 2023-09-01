@@ -1076,9 +1076,6 @@ impl DatabaseExt for Backend {
         if let Some((active_id, active_idx)) = self.active_fork_ids {
             // the currently active fork is the targeted fork of this call
             if active_id == id {
-                let current_remote_block_number =
-                    U256::from(self.inner.get_fork(active_idx).db.db.get_remote_block_height()?);
-
                 // need to update the block's env settings right away, which is otherwise set when
                 // forks are selected `select_fork`
                 update_current_env_with_fork_env(env, fork_env);
@@ -1102,7 +1099,7 @@ impl DatabaseExt for Backend {
                 // We need to copy **all** the accounts over iff the fork is ahead of the current
                 // remote block else weve already copied all the persistent addrs
                 // This will dump all state written in accounts that werent perestied across rolls
-                let to_copy = current_remote_block_number > block_number;
+                let to_copy = active.remote_block_height()? > block_number;
 
                 for (addr, acc) in journaled_state.state.iter() {
                     if acc.is_touched() {
@@ -1436,6 +1433,10 @@ impl Fork {
             }
         }
         is_contract_in_state(&self.journaled_state, acc)
+    }
+
+    pub fn remote_block_height(&self) -> eyre::Result<U256> {
+        Ok(U256::from(self.db.db.get_remote_block_height()?))
     }
 }
 
