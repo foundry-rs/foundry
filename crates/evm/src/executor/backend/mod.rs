@@ -1099,7 +1099,7 @@ impl DatabaseExt for Backend {
                 // We need to copy **all** the accounts over iff the fork is ahead of the current
                 // remote block else weve already copied all the persistent addrs
                 // This will dump all state written in accounts that werent perestied across rolls
-                let to_copy = active.remote_block_height()? > block_number;
+                let to_copy = active.remote_block_height()? < block_number;
 
                 for (addr, acc) in journaled_state.state.iter() {
                     if acc.is_touched() {
