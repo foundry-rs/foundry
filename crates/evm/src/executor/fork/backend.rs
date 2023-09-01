@@ -47,12 +47,16 @@ type FullBlockFuture<Err> = Pin<
 type TransactionFuture<Err> = Pin<
     Box<dyn Future<Output = (TransactionSender, Result<Option<Transaction>, Err>, H256)> + Send>,
 >;
+type BlockHeightFuture<Err> = Pin<
+    Box<dyn Future<Output = (U64Sender, Result<u64, Err>)> + Send>,
+>;
 
 type AccountInfoSender = OneshotSender<DatabaseResult<AccountInfo>>;
 type StorageSender = OneshotSender<DatabaseResult<U256>>;
 type BlockHashSender = OneshotSender<DatabaseResult<H256>>;
 type FullBlockSender = OneshotSender<DatabaseResult<Block<Transaction>>>;
 type TransactionSender = OneshotSender<DatabaseResult<Transaction>>;
+type U64Sender = OneshotSender<DatabaseResult<u64>>;
 
 /// Request variants that are executed by the provider
 enum ProviderRequest<Err> {
@@ -61,6 +65,7 @@ enum ProviderRequest<Err> {
     BlockHash(BlockHashFuture<Err>),
     FullBlock(FullBlockFuture<Err>),
     Transaction(TransactionFuture<Err>),
+    BlockHeight(BlockHeightFuture<Err>),
 }
 
 /// The Request type the Backend listens for
@@ -78,6 +83,8 @@ enum BackendRequest {
     Transaction(H256, TransactionSender),
     /// Sets the pinned block to fetch data from
     SetPinnedBlock(BlockId),
+    /// Fetch the remote block height
+    BlockHeight(U64Sender),
 }
 
 /// Handles an internal provider and listens for requests.
@@ -174,6 +181,9 @@ where
                     // account present but not storage -> fetch storage
                     self.request_account_storage(addr, idx, sender);
                 }
+            },
+            BackendRequest::BlockHeight(sender) => {
+                self.request_block_height(sender);
             }
             BackendRequest::SetPinnedBlock(block_id) => {
                 self.block_id = Some(block_id);
@@ -287,6 +297,17 @@ where
                 self.pending_requests.push(ProviderRequest::BlockHash(fut));
             }
         }
+    }
+
+    fn request_block_height(&mut self, sender: U64Sender) {
+        let provider = self.provider.clone();
+        let fut = Box::pin(async move {
+            let block = provider.get_block_number().await;
+            
+            (sender, block.map(|block| block.as_u64()))
+        });
+
+        self.pending_requests.push(ProviderRequest::BlockHeight(fut));
     }
 }
 
@@ -464,6 +485,19 @@ where
                             continue
                         }
                     }
+                    ProviderRequest::BlockHeight(fut) => {
+                        if let Poll::Ready((sender, block_height)) = fut.poll_unpin(cx) {
+                            let msg = match block_height {
+                                Ok(block_height) => Ok(block_height),
+                                Err(err) => {
+                                    let err = Arc::new(eyre::Error::new(err));
+                                    Err(DatabaseError::Message(err.to_string()))
+                                }
+                            };
+                            let _ = sender.send(msg);
+                            continue
+                        }
+                    }
                 }
                 // not ready, insert and poll again
                 pin.pending_requests.push(request);
@@ -607,6 +641,15 @@ impl SharedBackend {
         })
     }
 
+    pub fn get_remote_block_height(&self) -> DatabaseResult<u64> {
+        tokio::task::block_in_place(|| {
+            let (sender, rx) = oneshot_channel();
+            let req = BackendRequest::BlockHeight(sender);
+            self.backend.clone().try_send(req)?;
+            rx.recv()?
+        })
+    }
+        
     fn do_get_basic(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
         tokio::task::block_in_place(|| {
             let (sender, rx) = oneshot_channel();
