@@ -1069,8 +1069,9 @@ impl DatabaseExt for Backend {
         let id = self.ensure_fork(id)?;
         let (fork_id, backend, fork_env) =
             self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number.as_u64())?;
-        // this will update the local mapping
-        self.inner.roll_fork(id, fork_id, backend)?;
+
+        // this will update the db with the persistent accounts
+        self.inner.roll_fork(id, fork_id.clone(), backend)?;
 
         if let Some((active_id, active_idx)) = self.active_fork_ids {
             // the currently active fork is the targeted fork of this call
@@ -1094,22 +1095,34 @@ impl DatabaseExt for Backend {
                 for addr in persistent_addrs {
                     merge_journaled_state_data(addr, journaled_state, &mut active.journaled_state);
                 }
+                
+                // We need to copy all the accounts over iff the fork is ahead of the current remote block
+                // This will dump all state written in accounts that werent perestied across rolls 
+                let current_remote_block_number = U256::zero();  //todo: can probbaly get this from the mutlifork handler
 
-                // ensure all previously loaded accounts are present in the journaled state to
-                // prevent issues in the new journalstate, e.g. assumptions that accounts are loaded
-                // if the account is not touched, we reload it, if it's touched we clone it
+                let to_copy = current_remote_block_number > block_number;
+
                 for (addr, acc) in journaled_state.state.iter() {
                     if acc.is_touched() {
-                        merge_journaled_state_data(
-                            b160_to_h160(*addr),
-                            journaled_state,
-                            &mut active.journaled_state,
-                        );
+                        if to_copy { 
+                            merge_journaled_state_data(
+                                b160_to_h160(*addr),
+                                journaled_state,
+                                &mut active.journaled_state,
+                            );   
+                        } else {
+                            // even if the account is touched, just load it, this will force a db read after the roll
+                            // if this is a persistent account, it will have no affect, since theyve already been copied over
+                            let _ = active.journaled_state.load_account(*addr, &mut active.db);
+                        }
                     } else {
+                        // account is present in the journaled_state but not touched, so load it
                         let _ = active.journaled_state.load_account(*addr, &mut active.db);
                     }
                 }
-
+                
+                // set the current journaled state to the active fork's journaled state
+                // this is what revm will use after the roll
                 *journaled_state = active.journaled_state.clone();
             }
         }
