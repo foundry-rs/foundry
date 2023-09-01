@@ -34,7 +34,7 @@ ethers = { workspace = true, features = ["rustls", "ws", "ipc"] }
 trie-db = { version = "0.23" }
 hash-db = { version = "0.15" }
 memory-db = { version = "0.29" }
-alloy-primitives = { version = "0.3", default-features = false, features = ["std", "serde"] }
+alloy-primitives = { workspace = true, default-features = false, features = ["std", "serde"] }
 
 # axum related
 axum = { version = "0.5", features = ["ws"] }

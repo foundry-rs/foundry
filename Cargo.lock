@@ -2180,7 +2180,6 @@ name = "forge"
 version = "0.2.0"
 dependencies = [
  "alloy-primitives",
- "alloy-rlp",
  "anvil",
  "async-trait",
  "bytes",
@@ -2414,7 +2413,6 @@ name = "foundry-evm"
 version = "0.2.0"
 dependencies = [
  "alloy-primitives",
- "alloy-rlp",
  "auto_impl",
  "bytes",
  "const-hex",
