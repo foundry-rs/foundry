@@ -49,8 +49,7 @@ revm = { version = "3", default-features = false, features = [
   "optional_no_base_fee",
 ] }
 
-alloy-primitives = { version = "0.3", default-features = false, features = ["std", "serde"] }
-alloy-rlp = { version = "0.3", default-features = false, features = ["std", "derive"] }
+alloy-primitives = { workspace = true, default-features = false, features = ["std", "serde"] }
 
 # Fuzzer
 proptest = "1"
