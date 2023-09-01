@@ -70,7 +70,7 @@ impl<DB: Database> Inspector<DB> for AccessListTracer {
             opcode::BALANCE |
             opcode::SELFDESTRUCT => {
                 if let Ok(slot) = interpreter.stack().peek(0) {
-                    let addr: Address = Address::from_slice(&slot.to_be_bytes::<32>());
+                    let addr: Address = Address::from_word(B256::from(slot));
                     if !self.excluded.contains(&addr) {
                         self.access_list.entry(addr).or_default();
                     }
@@ -78,7 +78,7 @@ impl<DB: Database> Inspector<DB> for AccessListTracer {
             }
             opcode::DELEGATECALL | opcode::CALL | opcode::STATICCALL | opcode::CALLCODE => {
                 if let Ok(slot) = interpreter.stack().peek(1) {
-                    let addr: Address = Address::from_slice(&slot.to_be_bytes::<32>());
+                    let addr: Address = Address::from_word(B256::from(slot));
                     if !self.excluded.contains(&addr) {
                         self.access_list.entry(addr).or_default();
                     }
