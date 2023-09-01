@@ -5,7 +5,7 @@ use revm::{
     primitives::{Address, CreateScheme, SpecId},
 };
 
-use crate::utils::{ru256_to_u256};
+use crate::utils::ru256_to_u256;
 
 /// Returns [InstructionResult::Continue] on an error, discarding the error.
 ///

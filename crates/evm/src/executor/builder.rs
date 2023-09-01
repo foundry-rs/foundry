@@ -1,5 +1,5 @@
 use super::{inspector::InspectorStackBuilder, Executor};
-use crate::{executor::backend::Backend};
+use crate::executor::backend::Backend;
 use revm::primitives::{Env, SpecId, U256};
 
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional

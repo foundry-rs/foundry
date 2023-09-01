@@ -1,7 +1,4 @@
-use crate::{
-    executor::fork::CreateFork,
-    utils::{b160_to_h160, RuntimeOrHandle},
-};
+use crate::{executor::fork::CreateFork, utils::RuntimeOrHandle};
 use ethers::{
     providers::{Middleware, Provider},
     types::{Block, Chain, TxHash},
@@ -83,7 +80,7 @@ impl EvmOpts {
             self.env.gas_price,
             self.env.chain_id,
             self.fork_block_number,
-            b160_to_h160(self.sender),
+            self.sender,
         )
         .await
         .wrap_err_with(|| {

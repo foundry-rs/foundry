@@ -1,4 +1,4 @@
-//! Support for running multiple fork backend
+//! Support for running multiple fork backends
 //!
 //! The design is similar to the single `SharedBackend`, `BackendHandler` but supports multiple
 //! concurrently active pairs at once.
