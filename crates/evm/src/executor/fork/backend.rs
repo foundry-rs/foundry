@@ -47,9 +47,7 @@ type FullBlockFuture<Err> = Pin<
 type TransactionFuture<Err> = Pin<
     Box<dyn Future<Output = (TransactionSender, Result<Option<Transaction>, Err>, H256)> + Send>,
 >;
-type BlockHeightFuture<Err> = Pin<
-    Box<dyn Future<Output = (U64Sender, Result<u64, Err>)> + Send>,
->;
+type BlockHeightFuture<Err> = Pin<Box<dyn Future<Output = (U64Sender, Result<u64, Err>)> + Send>>;
 
 type AccountInfoSender = OneshotSender<DatabaseResult<AccountInfo>>;
 type StorageSender = OneshotSender<DatabaseResult<U256>>;
@@ -181,7 +179,7 @@ where
                     // account present but not storage -> fetch storage
                     self.request_account_storage(addr, idx, sender);
                 }
-            },
+            }
             BackendRequest::BlockHeight(sender) => {
                 self.request_block_height(sender);
             }
@@ -303,7 +301,7 @@ where
         let provider = self.provider.clone();
         let fut = Box::pin(async move {
             let block = provider.get_block_number().await;
-            
+
             (sender, block.map(|block| block.as_u64()))
         });
 
@@ -649,7 +647,7 @@ impl SharedBackend {
             rx.recv()?
         })
     }
-        
+
     fn do_get_basic(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
         tokio::task::block_in_place(|| {
             let (sender, rx) = oneshot_channel();

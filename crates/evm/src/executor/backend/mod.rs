@@ -1076,7 +1076,8 @@ impl DatabaseExt for Backend {
         if let Some((active_id, active_idx)) = self.active_fork_ids {
             // the currently active fork is the targeted fork of this call
             if active_id == id {
-                let current_remote_block_number = U256::from(self.inner.get_fork(active_idx).db.db.get_remote_block_height()?);
+                let current_remote_block_number =
+                    U256::from(self.inner.get_fork(active_idx).db.db.get_remote_block_height()?);
 
                 // need to update the block's env settings right away, which is otherwise set when
                 // forks are selected `select_fork`
@@ -1097,23 +1098,25 @@ impl DatabaseExt for Backend {
                 for addr in persistent_addrs {
                     merge_journaled_state_data(addr, journaled_state, &mut active.journaled_state);
                 }
-                
-                // We need to copy **all** the accounts over iff the fork is ahead of the current remote block
-                // else weve already copied all the persistent addrs
-                // This will dump all state written in accounts that werent perestied across rolls 
+
+                // We need to copy **all** the accounts over iff the fork is ahead of the current
+                // remote block else weve already copied all the persistent addrs
+                // This will dump all state written in accounts that werent perestied across rolls
                 let to_copy = current_remote_block_number > block_number;
 
                 for (addr, acc) in journaled_state.state.iter() {
                     if acc.is_touched() {
-                        if to_copy { 
+                        if to_copy {
                             merge_journaled_state_data(
                                 b160_to_h160(*addr),
                                 journaled_state,
                                 &mut active.journaled_state,
-                            );   
+                            );
                         } else {
-                            // even if the account is touched, just load it, this will force a db read after the roll
-                            // if this is a persistent account, it will have no affect, since theyve already been copied over
+                            // even if the account is touched, just load it, this will force a db
+                            // read after the roll if this is a
+                            // persistent account, it will have no affect, since theyve already been
+                            // copied over
                             let _ = active.journaled_state.load_account(*addr, &mut active.db);
                         }
                     } else {
@@ -1121,7 +1124,7 @@ impl DatabaseExt for Backend {
                         let _ = active.journaled_state.load_account(*addr, &mut active.db);
                     }
                 }
-                
+
                 // set the current journaled state to the active fork's journaled state
                 // this is what revm will use after the roll
                 *journaled_state = active.journaled_state.clone();
