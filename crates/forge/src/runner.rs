@@ -540,8 +540,7 @@ impl<'a> ContractRunner<'a> {
             traces,
             labeled_addresses: labeled_addresses.clone(),
             breakpoints: Default::default(),
-            // TODO
-            debug: Default::default(),
+            debug: Default::default(), // TODO collect debug traces on the last run or error
         }
     }
 
