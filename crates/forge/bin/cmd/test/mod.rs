@@ -296,7 +296,7 @@ impl TestArgs {
 
         if should_debug {
             let mut sources = HashMap::new();
-            output.into_artifacts().for_each(|(id, artifact)| {
+            for (id, artifact) in output.into_artifacts() {
                 // Sources are only required for the debugger, but it *might* mean that there's
                 // something wrong with the build and/or artifacts.
                 if let Some(source) = artifact.source_file() {
@@ -304,10 +304,10 @@ impl TestArgs {
                     let abs_path = source.ast.unwrap().absolute_path;
                     let source_code = fs::read_to_string(abs_path).unwrap();
                     let contract = artifact.clone().into_contract_bytecode();
-                    let source_contract = compact_to_contract(contract);
+                    let source_contract = compact_to_contract(contract)?;
                     inner_map.insert(source.id, (source_code, source_contract));
                 }
-            });
+            }
 
             let test = outcome.clone().into_tests().next().unwrap();
             let result = test.result;

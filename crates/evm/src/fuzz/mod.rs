@@ -81,7 +81,6 @@ impl<'a> FuzzedExecutor<'a> {
         // Stores coverage information for all fuzz cases
         let coverage: RefCell<Option<HitMaps>> = RefCell::default();
 
-        // Stores fuzz state for use with [fuzz_calldata_from_state]
         let state = self.build_fuzz_state();
 
         let mut weights = vec![];
@@ -245,6 +244,7 @@ impl<'a> FuzzedExecutor<'a> {
         }
     }
 
+    /// Stores fuzz state for use with [fuzz_calldata_from_state]
     pub fn build_fuzz_state(&self) -> EvmFuzzState {
         if let Some(fork_db) = self.executor.backend.active_fork_db() {
             build_initial_state(fork_db, &self.config.dictionary)

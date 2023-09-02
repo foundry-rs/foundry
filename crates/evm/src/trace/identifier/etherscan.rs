@@ -7,7 +7,7 @@ use ethers::{
     prelude::{artifacts::ContractBytecodeSome, errors::EtherscanError, ArtifactId},
     types::H160,
 };
-use foundry_common::compile;
+use foundry_common::compile::{self, ContractSources};
 use foundry_config::{Chain, Config};
 use futures::{
     future::{join_all, Future},
@@ -60,12 +60,7 @@ impl EtherscanIdentifier {
     /// Etherscan and compiles them locally, for usage in the debugger.
     pub async fn get_compiled_contracts(
         &self,
-    ) -> eyre::Result<(
-        // TODO should use `ContractSources` but has circular import.
-        // Maybe move it lower
-        HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>,
-        BTreeMap<ArtifactId, ContractBytecodeSome>,
-    )> {
+    ) -> eyre::Result<(ContractSources, BTreeMap<ArtifactId, ContractBytecodeSome>)> {
         let mut compiled_contracts = BTreeMap::new();
         let mut sources = HashMap::new();
 

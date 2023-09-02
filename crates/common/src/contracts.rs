@@ -270,10 +270,15 @@ mod tests {
 }
 
 /// Helper function to convert CompactContractBytecode ~> ContractBytecodeSome
-pub fn compact_to_contract(contract: CompactContractBytecode) -> ContractBytecodeSome {
-    ContractBytecodeSome {
-        abi: contract.abi.unwrap(),
-        bytecode: contract.bytecode.unwrap().into(),
-        deployed_bytecode: contract.deployed_bytecode.unwrap().into(),
-    }
+pub fn compact_to_contract(
+    contract: CompactContractBytecode,
+) -> eyre::Result<ContractBytecodeSome> {
+    Ok(ContractBytecodeSome {
+        abi: contract.abi.ok_or(eyre::eyre!("No contract abi"))?,
+        bytecode: contract.bytecode.ok_or(eyre::eyre!("No contract bytecode"))?.into(),
+        deployed_bytecode: contract
+            .deployed_bytecode
+            .ok_or(eyre::eyre!("No contract deployed bytecode"))?
+            .into(),
+    })
 }

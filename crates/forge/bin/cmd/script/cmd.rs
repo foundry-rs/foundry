@@ -86,7 +86,7 @@ impl ScriptArgs {
 
         if self.debug {
             let debugger = DebuggerArgs {
-                debug: result.debug.clone().unwrap_or(vec![]),
+                debug: result.debug.clone().unwrap_or_default(),
                 decoder: &decoder,
                 sources,
                 breakpoints: result.breakpoints.clone(),

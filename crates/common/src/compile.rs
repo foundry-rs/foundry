@@ -11,7 +11,7 @@ use ethers_solc::{
 };
 use eyre::Result;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     convert::Infallible,
     fmt::Display,
     path::{Path, PathBuf},
@@ -398,10 +398,16 @@ pub fn compile_target_with_filter(
     }
 }
 
+/// Id to map from the bytecode to the source file
+pub type FileId = u32;
+
+/// Map over artifcats contract sources name -> file_id -> (source, contract)
+pub type ContractSources = HashMap<String, HashMap<FileId, (String, ContractBytecodeSome)>>;
+
 /// Creates and compiles a project from an Etherscan source.
 pub async fn compile_from_source(
     metadata: &Metadata,
-) -> Result<(ArtifactId, u32, ContractBytecodeSome)> {
+) -> Result<(ArtifactId, FileId, ContractBytecodeSome)> {
     let root = tempfile::tempdir()?;
     let root_path = root.path();
     let project = etherscan_project(metadata, root_path)?;
@@ -419,7 +425,7 @@ pub async fn compile_from_source(
             (aid, art.source_file().expect("no source file").id, art.into_contract_bytecode())
         })
         .expect("there should be a contract with bytecode");
-    let bytecode = compact_to_contract(contract);
+    let bytecode = compact_to_contract(contract)?;
 
     root.close()?;
 

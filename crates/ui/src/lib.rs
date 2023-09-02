@@ -10,7 +10,7 @@ use crossterm::{
 };
 use ethers::types::Address;
 use eyre::Result;
-use foundry_common::evm::Breakpoints;
+use foundry_common::{compile::ContractSources, evm::Breakpoints};
 use foundry_evm::{
     debug::{DebugStep, Instruction},
     utils::{build_pc_ic_map, PCICMap},

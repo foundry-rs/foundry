@@ -12,7 +12,10 @@ use ethers::{
 };
 use eyre::{Context, ContextCompat, Result};
 use foundry_cli::utils::get_cached_entry_by_name;
-use foundry_common::{compact_to_contract, compile};
+use foundry_common::{
+    compact_to_contract,
+    compile::{self, FileId},
+};
 use foundry_utils::{PostLinkInput, ResolvedDependency};
 use std::{collections::BTreeMap, fs, str::FromStr};
 use tracing::{trace, warn};
@@ -30,7 +33,7 @@ impl ScriptArgs {
         let (project, output) = self.get_project_and_output(script_config)?;
         let output = output.with_stripped_file_prefixes(project.root());
 
-        let mut sources: HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>> =
+        let mut sources: HashMap<String, HashMap<FileId, (String, ContractBytecodeSome)>> =
             HashMap::new();
 
         let contracts = output
@@ -44,9 +47,9 @@ impl ScriptArgs {
                         .ast
                         .ok_or(eyre::eyre!("Source from artifact has no AST."))?
                         .absolute_path;
-                    let source_code = fs::read_to_string(abs_path).unwrap();
+                    let source_code = fs::read_to_string(abs_path)?;
                     let contract = artifact.clone().into_contract_bytecode();
-                    let source_contract = compact_to_contract(contract);
+                    let source_contract = compact_to_contract(contract)?;
                     inner_map.insert(source.id, (source_code, source_contract));
                 } else {
                     warn!("source not found for artifact={:?}", id);
@@ -280,5 +283,5 @@ pub struct BuildOutput {
     pub highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     pub libraries: Libraries,
     pub predeploy_libraries: Vec<ethers::types::Bytes>,
-    pub sources: HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>,
+    pub sources: HashMap<String, HashMap<FileId, (String, ContractBytecodeSome)>>,
 }

@@ -1,14 +1,9 @@
 use crate::Ui;
-use ethers::solc::artifacts::ContractBytecodeSome;
-use foundry_common::{evm::Breakpoints, get_contract_name};
+use foundry_common::{compile::ContractSources, evm::Breakpoints, get_contract_name};
 use foundry_evm::{debug::DebugArena, trace::CallTraceDecoder};
-use std::collections::HashMap;
 use tracing::trace;
 
 use crate::{TUIExitReason, Tui};
-
-/// Map over debugger contract sources name -> file_id -> (source, contract)
-pub type ContractSources = HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>;
 
 /// Standardized way of firing up the debugger
 pub struct DebuggerArgs<'a> {
