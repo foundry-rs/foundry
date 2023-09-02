@@ -236,8 +236,7 @@ impl<'a> ContractRunner<'a> {
                         traces: setup.traces,
                         coverage: None,
                         labeled_addresses: setup.labeled_addresses,
-                        breakpoints: Default::default(),
-                        debug: Default::default(),
+                        ..Default::default()
                     },
                 )]
                 .into(),
@@ -539,8 +538,7 @@ impl<'a> ContractRunner<'a> {
             coverage: None, // TODO ?
             traces,
             labeled_addresses: labeled_addresses.clone(),
-            breakpoints: Default::default(),
-            debug: Default::default(), // TODO collect debug traces on the last run or error
+            ..Default::default() // TODO collect debug traces on the last run or error
         }
     }
 

@@ -167,7 +167,7 @@ impl ScriptRunner {
                 debug,
                 address: None,
                 script_wallets,
-                breakpoints: Default::default(),
+                ..Default::default()
             },
         ))
     }
@@ -237,11 +237,8 @@ impl ScriptRunner {
                     })
                     .unwrap_or_default(),
                 debug: vec![debug].into_iter().collect(),
-                labeled_addresses: Default::default(),
-                transactions: Default::default(),
                 address: Some(address),
-                script_wallets: vec![],
-                breakpoints: Default::default(),
+                ..Default::default()
             })
         } else {
             eyre::bail!("ENS not supported.");

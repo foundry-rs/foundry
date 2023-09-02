@@ -605,6 +605,7 @@ impl Provider for ScriptArgs {
     }
 }
 
+#[derive(Default)]
 pub struct ScriptResult {
     pub success: bool,
     pub logs: Vec<Log>,

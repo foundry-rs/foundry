@@ -14,7 +14,7 @@ use eyre::{Context, ContextCompat, Result};
 use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::{
     compact_to_contract,
-    compile::{self, FileId},
+    compile::{self, ContractSources},
 };
 use foundry_utils::{PostLinkInput, ResolvedDependency};
 use std::{collections::BTreeMap, fs, str::FromStr};
@@ -33,8 +33,7 @@ impl ScriptArgs {
         let (project, output) = self.get_project_and_output(script_config)?;
         let output = output.with_stripped_file_prefixes(project.root());
 
-        let mut sources: HashMap<String, HashMap<FileId, (String, ContractBytecodeSome)>> =
-            HashMap::new();
+        let mut sources: ContractSources = HashMap::new();
 
         let contracts = output
             .into_artifacts()
@@ -283,5 +282,5 @@ pub struct BuildOutput {
     pub highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     pub libraries: Libraries,
     pub predeploy_libraries: Vec<ethers::types::Bytes>,
-    pub sources: HashMap<String, HashMap<FileId, (String, ContractBytecodeSome)>>,
+    pub sources: ContractSources,
 }
