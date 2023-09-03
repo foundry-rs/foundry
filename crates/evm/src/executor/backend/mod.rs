@@ -1058,6 +1058,7 @@ impl DatabaseExt for Backend {
     }
 
     /// This is effectively the same as [`Self::create_select_fork()`] but updating an existing fork
+    /// Non persistent accounts are not copied over,
     fn roll_fork(
         &mut self,
         id: Option<LocalForkId>,
@@ -1070,7 +1071,7 @@ impl DatabaseExt for Backend {
         let (fork_id, backend, fork_env) =
             self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number.as_u64())?;
 
-        // this will update the db with the persistent accounts
+        // creates a new db and copies all the persistent accounts over
         self.inner.roll_fork(id, fork_id.clone(), backend)?;
 
         if let Some((active_id, active_idx)) = self.active_fork_ids {
@@ -1080,25 +1081,22 @@ impl DatabaseExt for Backend {
                 // forks are selected `select_fork`
                 update_current_env_with_fork_env(env, fork_env);
 
-                // we also need to update the journaled_state right away, this has essentially the
-                // same effect as selecting (`select_fork`) by discarding
-                // non-persistent storage from the journaled_state. This which will
-                // reset cached state from the previous block
                 let mut persistent_addrs = self.inner.persistent_accounts.clone();
+
                 // we also want to copy the caller state here
                 persistent_addrs.extend(self.caller_address());
 
                 let active = self.inner.get_fork_mut(active_idx);
                 active.journaled_state = self.fork_init_journaled_state.clone();
 
+                // copy all the journaled states of persistent accounts
                 active.journaled_state.depth = journaled_state.depth;
                 for addr in persistent_addrs {
                     merge_journaled_state_data(addr, journaled_state, &mut active.journaled_state);
                 }
 
                 // We need to copy **all** the accounts over iff the fork is ahead of the current
-                // remote block else weve already copied all the persistent addrs
-                // This will dump all state written in accounts that werent perestied across rolls
+                // remote block; else we've already copied all the persistent addrs
                 let to_copy = active.remote_block_height()? < block_number;
 
                 for (addr, acc) in journaled_state.state.iter() {
@@ -1111,9 +1109,10 @@ impl DatabaseExt for Backend {
                             );
                         } else {
                             // even if the account is touched, just load it, this will force a db
-                            // read after the roll if this is a
-                            // persistent account, it will have no affect, since theyve already been
-                            // copied over
+                            // read after the roll
+                            //
+                            // if this is a persistent account, it will have no affect,
+                            // since theyve already been copied over
                             let _ = active.journaled_state.load_account(*addr, &mut active.db);
                         }
                     } else {
@@ -1122,8 +1121,8 @@ impl DatabaseExt for Backend {
                     }
                 }
 
-                // set the current journaled state to the active fork's journaled state
-                // this is what revm will use after the roll
+                // set the journaled state back to the fort_init_journaled_state + persistent
+                // accounts this is what revm will use in subsequent steps
                 *journaled_state = active.journaled_state.clone();
             }
         }
