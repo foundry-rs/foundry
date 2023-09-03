@@ -19,7 +19,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     compact_to_contract,
-    compile::{self, ProjectCompiler},
+    compile::{self, ContractSources, ProjectCompiler},
     evm::EvmArgs,
     get_contract_name, get_file_name, shell,
 };
@@ -33,12 +33,7 @@ use foundry_config::{
 };
 use foundry_evm::{fuzz::CounterExample, utils::evm_spec};
 use regex::Regex;
-use std::{
-    collections::{BTreeMap, HashMap},
-    fs,
-    sync::mpsc::channel,
-    time::Duration,
-};
+use std::{collections::BTreeMap, fs, sync::mpsc::channel, time::Duration};
 use tracing::trace;
 use ui::DebuggerArgs;
 use watchexec::config::{InitConfig, RuntimeConfig};
@@ -295,17 +290,23 @@ impl TestArgs {
         }
 
         if should_debug {
-            let mut sources = HashMap::new();
+            let mut sources: ContractSources = Default::default();
             for (id, artifact) in output.into_artifacts() {
                 // Sources are only required for the debugger, but it *might* mean that there's
                 // something wrong with the build and/or artifacts.
                 if let Some(source) = artifact.source_file() {
-                    let inner_map = sources.entry(id.clone().name).or_insert_with(HashMap::new);
-                    let abs_path = source.ast.unwrap().absolute_path;
-                    let source_code = fs::read_to_string(abs_path).unwrap();
+                    let abs_path = source
+                        .ast
+                        .ok_or(eyre::eyre!("Source from artifact has no AST."))?
+                        .absolute_path;
+                    let source_code = fs::read_to_string(abs_path)?;
                     let contract = artifact.clone().into_contract_bytecode();
                     let source_contract = compact_to_contract(contract)?;
-                    inner_map.insert(source.id, (source_code, source_contract));
+                    sources
+                        .0
+                        .entry(id.clone().name)
+                        .or_default()
+                        .insert(source.id, (source_code, source_contract));
                 }
             }
 

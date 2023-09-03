@@ -171,6 +171,10 @@ impl ProjectCompiler {
     }
 }
 
+/// Map over artifcats contract sources name -> file_id -> (source, contract)
+#[derive(Default, Debug, Clone)]
+pub struct ContractSources(pub HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>);
+
 // https://eips.ethereum.org/EIPS/eip-170
 const CONTRACT_SIZE_LIMIT: usize = 24576;
 
@@ -398,16 +402,10 @@ pub fn compile_target_with_filter(
     }
 }
 
-/// Id to map from the bytecode to the source file
-pub type FileId = u32;
-
-/// Map over artifcats contract sources name -> file_id -> (source, contract)
-pub type ContractSources = HashMap<String, HashMap<FileId, (String, ContractBytecodeSome)>>;
-
 /// Creates and compiles a project from an Etherscan source.
 pub async fn compile_from_source(
     metadata: &Metadata,
-) -> Result<(ArtifactId, FileId, ContractBytecodeSome)> {
+) -> Result<(ArtifactId, u32, ContractBytecodeSome)> {
     let root = tempfile::tempdir()?;
     let root_path = root.path();
     let project = etherscan_project(metadata, root_path)?;

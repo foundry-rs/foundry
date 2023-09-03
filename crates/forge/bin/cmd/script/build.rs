@@ -33,7 +33,7 @@ impl ScriptArgs {
         let (project, output) = self.get_project_and_output(script_config)?;
         let output = output.with_stripped_file_prefixes(project.root());
 
-        let mut sources: ContractSources = HashMap::new();
+        let mut sources: ContractSources = Default::default();
 
         let contracts = output
             .into_artifacts()
@@ -41,7 +41,6 @@ impl ScriptArgs {
                 // Sources are only required for the debugger, but it *might* mean that there's
                 // something wrong with the build and/or artifacts.
                 if let Some(source) = artifact.source_file() {
-                    let inner_map = sources.entry(id.clone().name).or_default();
                     let abs_path = source
                         .ast
                         .ok_or(eyre::eyre!("Source from artifact has no AST."))?
@@ -49,7 +48,11 @@ impl ScriptArgs {
                     let source_code = fs::read_to_string(abs_path)?;
                     let contract = artifact.clone().into_contract_bytecode();
                     let source_contract = compact_to_contract(contract)?;
-                    inner_map.insert(source.id, (source_code, source_contract));
+                    sources
+                        .0
+                        .entry(id.clone().name)
+                        .or_default()
+                        .insert(source.id, (source_code, source_contract));
                 } else {
                     warn!("source not found for artifact={:?}", id);
                 }
@@ -199,7 +202,7 @@ impl ScriptArgs {
             known_contracts: contracts,
             highlevel_known_contracts: ArtifactContracts(highlevel_known_contracts),
             predeploy_libraries,
-            sources: HashMap::new(),
+            sources: Default::default(),
             project,
             libraries: new_libraries,
         })

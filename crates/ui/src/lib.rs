@@ -85,6 +85,7 @@ impl Tui {
         let mut terminal = Terminal::new(backend)?;
         terminal.hide_cursor();
         let pc_ic_maps = contracts_sources
+            .0
             .iter()
             .flat_map(|(contract_name, files_sources)| {
                 files_sources.iter().filter_map(|(_, (_, contract))| {
@@ -399,7 +400,7 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
         let mut text_output: Text = Text::from("");
 
         if let Some(contract_name) = identified_contracts.get(&address) {
-            if let Some(files_source_code) = contracts_sources.get(contract_name) {
+            if let Some(files_source_code) = contracts_sources.0.get(contract_name) {
                 let pc_ic_map = pc_ic_maps.get(contract_name);
                 // find the contract source with the correct source_element's file_id
                 if let Some((source_element, source_code)) = files_source_code.iter().find_map(

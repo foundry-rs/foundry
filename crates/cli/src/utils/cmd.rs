@@ -391,7 +391,7 @@ pub async fn handle_traces(
     }
 
     if debug {
-        let (sources, _compiled_contracts) = etherscan_identifier.get_compiled_contracts().await?;
+        let sources = etherscan_identifier.get_compiled_contracts().await?;
         let debugger = DebuggerArgs {
             debug: vec![result.debug],
             decoder: &decoder,

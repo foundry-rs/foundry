@@ -34,13 +34,11 @@ impl DebuggerArgs<'_> {
             .map(|(addr, identifier)| (*addr, get_contract_name(identifier).to_string()))
             .collect();
 
-        let contract_sources = self.sources.clone();
-
         let tui = Tui::new(
             flattened,
             0,
             identified_contracts,
-            contract_sources,
+            self.sources.clone(),
             self.breakpoints.clone(),
         )?;
 
