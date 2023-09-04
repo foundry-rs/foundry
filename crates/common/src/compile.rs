@@ -402,7 +402,8 @@ pub fn compile_target_with_filter(
     }
 }
 
-/// Creates and compiles a project from an Etherscan source.
+/// Compiles an Etherscan source from metadata by creating a project.
+/// Returns the artifact_id, the file_id, and the bytecode
 pub async fn compile_from_source(
     metadata: &Metadata,
 ) -> Result<(ArtifactId, u32, ContractBytecodeSome)> {
