@@ -240,6 +240,8 @@ contract WriteJsonTest is DSTest {
         vm.removeFile(path);
     }
 
+    // The serializeJson cheatcode was added to support assigning an existing json string to an object key.
+    // Github issue: https://github.com/foundry-rs/foundry/issues/5745
     function test_serializeRootObject() public {
         string memory serialized = vm.serializeJson(json1, '{"foo": "bar"}');
         assertEq(serialized, '{"foo":"bar"}');
