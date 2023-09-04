@@ -171,7 +171,7 @@ impl ProjectCompiler {
     }
 }
 
-/// Map over artifcats contract sources name -> file_id -> (source, contract)
+/// Map over artifacts contract sources name -> file_id -> (source, contract)
 #[derive(Default, Debug, Clone)]
 pub struct ContractSources(pub HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>);
 

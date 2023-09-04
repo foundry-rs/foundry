@@ -326,6 +326,7 @@ impl TestArgs {
         Ok(outcome)
     }
 
+    /// Run all tests that matches the filter predicate from a test runner
     pub async fn run_tests(
         &self,
         mut runner: MultiContractRunner,
