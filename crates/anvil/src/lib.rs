@@ -17,10 +17,10 @@ use eth::backend::fork::ClientFork;
 use ethers::{
     core::k256::ecdsa::SigningKey,
     prelude::Wallet,
-    providers::{Http, Provider, Ws},
     signers::Signer,
     types::{Address, U256},
 };
+use foundry_common::{ProviderBuilder, RetryProvider};
 use foundry_evm::revm;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
@@ -267,27 +267,23 @@ impl NodeHandle {
     }
 
     /// Returns a Provider for the http endpoint
-    pub fn http_provider(&self) -> Provider<Http> {
-        Provider::<Http>::try_from(self.http_endpoint())
-            .unwrap()
+    pub fn http_provider(&self) -> RetryProvider {
+        ProviderBuilder::new(self.http_endpoint())
+            .build()
+            .expect("Failed to connect using http provider")
             .interval(Duration::from_millis(500))
     }
 
     /// Connects to the websocket Provider of the node
-    pub async fn ws_provider(&self) -> Provider<Ws> {
-        Provider::new(
-            Ws::connect(self.ws_endpoint()).await.expect("Failed to connect to node's websocket"),
-        )
+    pub async fn ws_provider(&self) -> RetryProvider {
+        ProviderBuilder::new(self.ws_endpoint())
+            .build()
+            .expect("Failed to connect to node's websocket")
     }
 
     /// Connects to the ipc endpoint of the node, if spawned
-    pub async fn ipc_provider(&self) -> Option<Provider<ethers::providers::Ipc>> {
-        let ipc_path = self.config.get_ipc_path()?;
-        tracing::trace!(target: "ipc", ?ipc_path, "connecting ipc provider");
-        let provider = Provider::connect_ipc(&ipc_path).await.unwrap_or_else(|err| {
-            panic!("Failed to connect to node's ipc endpoint {ipc_path}: {err:?}")
-        });
-        Some(provider)
+    pub async fn ipc_provider(&self) -> Option<RetryProvider> {
+        ProviderBuilder::new(self.config.get_ipc_path()?).build().ok()
     }
 
     /// Signer accounts that can sign messages/transactions from the EVM node
