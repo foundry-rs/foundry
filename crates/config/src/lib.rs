@@ -76,6 +76,7 @@ pub mod fix;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
+use revm_primitives::SpecId;
 use tracing::warn;
 
 /// config providers
@@ -683,6 +684,23 @@ impl Config {
         }
 
         Ok(None)
+    }
+
+    /// Returns the [SpecId] derived from the configured [EvmVersion]
+    pub fn evm_spec_id(&self) -> SpecId {
+        match self.evm_version {
+            EvmVersion::Homestead => SpecId::HOMESTEAD,
+            EvmVersion::TangerineWhistle => SpecId::TANGERINE,
+            EvmVersion::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
+            EvmVersion::Byzantium => SpecId::BYZANTIUM,
+            EvmVersion::Constantinople => SpecId::CONSTANTINOPLE,
+            EvmVersion::Petersburg => SpecId::PETERSBURG,
+            EvmVersion::Istanbul => SpecId::ISTANBUL,
+            EvmVersion::Berlin => SpecId::BERLIN,
+            EvmVersion::London => SpecId::LONDON,
+            EvmVersion::Paris => SpecId::MERGE,
+            EvmVersion::Shanghai => SpecId::SHANGHAI,
+        }
     }
 
     /// Returns whether the compiler version should be auto-detected
