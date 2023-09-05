@@ -1,18 +1,16 @@
 //! Commonly used helpers to construct `Provider`s
 
-use crate::{ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
+use crate::{runtime_client::RuntimeClient, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
 use ethers_core::types::{Chain, U256};
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
-use ethers_providers::{
-    is_local_endpoint, Authorization, Http, HttpRateLimitRetryPolicy, JwtAuth, JwtKey, Middleware,
-    Provider, RetryClient, RetryClientBuilder, DEFAULT_LOCAL_POLL_INTERVAL,
-};
+use ethers_providers::{is_local_endpoint, Middleware, Provider, DEFAULT_LOCAL_POLL_INTERVAL};
 use eyre::WrapErr;
-use reqwest::{header::HeaderValue, IntoUrl, Url};
-use std::{borrow::Cow, time::Duration};
+use reqwest::{IntoUrl, Url};
+use std::{borrow::Cow, env, path::Path, time::Duration};
+use url::ParseError;
 
 /// Helper type alias for a retry provider
-pub type RetryProvider = Provider<RetryClient<Http>>;
+pub type RetryProvider = Provider<RuntimeClient>;
 
 /// Helper type alias for a rpc url
 pub type RpcUrl = String;
@@ -68,9 +66,38 @@ impl ProviderBuilder {
             // prefix
             return Self::new(format!("http://{url_str}"))
         }
-        let err = format!("Invalid provider url: {url_str}");
+
+        let url = Url::parse(url_str)
+            .or_else(|err| {
+                match err {
+                    ParseError::RelativeUrlWithoutBase => {
+                        let path = Path::new(url_str);
+                        let absolute_path = if path.is_absolute() {
+                            path.to_path_buf()
+                        } else {
+                            // Assume the path is relative to the current directory.
+                            // Don't use `std::fs::canonicalize` as it requires the path to exist.
+                            // It should be possible to construct a provider and only
+                            // attempt to establish a connection later
+                            let current_dir =
+                                env::current_dir().expect("Current directory should exist");
+                            current_dir.join(path)
+                        };
+
+                        let path_str =
+                            absolute_path.to_str().expect("Path should be a valid string");
+
+                        // invalid url: non-prefixed URL scheme is not allowed, so we assume the URL
+                        // is for a local file
+                        Url::parse(format!("file://{path_str}").as_str())
+                    }
+                    _ => Err(err),
+                }
+            })
+            .wrap_err(format!("Invalid provider url: {url_str}"));
+
         Self {
-            url: url.into_url().wrap_err(err),
+            url,
             chain: Chain::Mainnet,
             max_retry: 100,
             timeout_retry: 5,
@@ -176,42 +203,17 @@ impl ProviderBuilder {
         } = self;
         let url = url?;
 
-        let mut client_builder = reqwest::Client::builder().timeout(timeout);
+        let mut provider = Provider::new(RuntimeClient::new(
+            url.clone(),
+            max_retry,
+            timeout_retry,
+            initial_backoff,
+            timeout,
+            compute_units_per_second,
+            jwt,
+        ));
 
-        // Set the JWT auth as a header if present
-        if let Some(jwt) = jwt {
-            // Decode jwt from hex, then generate claims (iat with current timestamp)
-            let jwt = hex::decode(jwt)?;
-            let secret =
-                JwtKey::from_slice(&jwt).map_err(|err| eyre::eyre!("Invalid JWT: {}", err))?;
-            let auth = JwtAuth::new(secret, None, None);
-            let token = auth.generate_token()?;
-
-            // Essentially unrolled ethers-rs new_with_auth to accomodate the custom timeout
-            let auth = Authorization::Bearer(token);
-            let mut auth_value = HeaderValue::from_str(&auth.to_string())?;
-            auth_value.set_sensitive(true);
-
-            let mut headers = reqwest::header::HeaderMap::new();
-            headers.insert(reqwest::header::AUTHORIZATION, auth_value);
-
-            client_builder = client_builder.default_headers(headers);
-        }
-
-        let client = client_builder.build()?;
         let is_local = is_local_endpoint(url.as_str());
-
-        let provider = Http::new_with_client(url, client);
-
-        #[allow(clippy::box_default)]
-        let mut provider = Provider::new(
-            RetryClientBuilder::default()
-                .initial_backoff(Duration::from_millis(initial_backoff))
-                .rate_limit_retries(max_retry)
-                .timeout_retries(timeout_retry)
-                .compute_units_per_second(compute_units_per_second)
-                .build(provider, Box::new(HttpRateLimitRetryPolicy)),
-        );
 
         if is_local {
             provider = provider.interval(DEFAULT_LOCAL_POLL_INTERVAL);

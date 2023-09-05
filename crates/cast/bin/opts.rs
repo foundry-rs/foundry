@@ -336,7 +336,7 @@ pub enum Subcommands {
     /// ABI-encode a function with arguments.
     #[clap(name = "calldata", visible_alias = "cd")]
     CalldataEncode {
-        /// The function signature in the form <name>(<types...>)
+        /// The function signature in the format `<name>(<in-types>)(<out-types>)`
         sig: String,
 
         /// The arguments to encode.

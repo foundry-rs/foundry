@@ -70,9 +70,6 @@ fdlimit = { version = "0.2", optional = true }
 clap_complete_fig = "4"
 ethereum-forkid = "0.12"
 
-[target.'cfg(not(target_env = "msvc"))'.dependencies]
-tikv-jemallocator = { workspace = true, optional = true }
-
 [dev-dependencies]
 ethers = { workspace = true, features = ["abigen"] }
 ethers-solc = { workspace = true, features = ["project-util", "full"] }
@@ -81,7 +78,6 @@ tokio = { version = "1", features = ["full"] }
 crc = "3.0.1"
 
 [features]
-default = ["cli", "jemalloc"]
-jemalloc = ["dep:tikv-jemallocator"]
+default = ["cli"]
 cmd = ["clap", "clap_complete", "ctrlc", "anvil-server/clap"]
 cli = ["tokio/full", "cmd", "fdlimit"]
