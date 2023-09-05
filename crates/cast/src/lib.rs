@@ -6,7 +6,7 @@ use ethers_core::{
         token::{LenientTokenizer, Tokenizer},
         Function, HumanReadableParser, ParamType, RawAbi, Token,
     },
-    types::{Chain, *},
+    types::{transaction::eip2718::TypedTransaction, Chain, *},
     utils::{
         format_bytes32_string, format_units, get_contract_address, keccak256, parse_bytes32_string,
         parse_units, rlp, Units,
@@ -1823,6 +1823,17 @@ impl SimpleCast {
             Some((_nonce, selector, signature)) => Ok((selector, signature)),
             None => eyre::bail!("No selector found"),
         }
+    }
+
+    pub fn decode_tx(tx: String) -> Result<(String, String)> {
+        let tx_hex = hex::decode(strip_0x(&tx))?;
+        let tx_rlp = rlp::Rlp::new(tx_hex.as_slice());
+        let (tx, sig) = TypedTransaction::decode_signed(&tx_rlp)?;
+
+        let tx = serde_json::to_string_pretty(&tx)?;
+        let sig = serde_json::to_string_pretty(&sig)?;
+
+        Ok((tx, sig))
     }
 }
 

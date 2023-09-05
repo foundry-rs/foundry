@@ -489,6 +489,12 @@ async fn main() -> Result<()> {
             &mut std::io::stdout(),
         ),
         Subcommands::Logs(cmd) => cmd.run().await?,
+        Subcommands::Decode { tx } => {
+            let tx = stdin::unwrap_line(tx)?;
+            let (tx, sig) = SimpleCast::decode_tx(tx)?;
+            println!("Transaction: {}", tx);
+            println!("Signature: {}", sig);
+        }
     };
     Ok(())
 }
