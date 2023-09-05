@@ -1072,7 +1072,7 @@ impl DatabaseExt for Backend {
             self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number.as_u64())?;
 
         // creates a new db and copies all the persistent accounts over
-        self.inner.roll_fork(id, fork_id.clone(), backend)?;
+        self.inner.roll_fork(id, fork_id, backend)?;
 
         if let Some((active_id, active_idx)) = self.active_fork_ids {
             // the currently active fork is the targeted fork of this call
@@ -1434,6 +1434,7 @@ impl Fork {
         is_contract_in_state(&self.journaled_state, acc)
     }
 
+    /// Returns the block number of the fork
     pub fn remote_block_height(&self) -> eyre::Result<U256> {
         Ok(U256::from(self.db.db.get_remote_block_height()?))
     }
