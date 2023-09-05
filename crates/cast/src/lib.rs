@@ -1825,15 +1825,24 @@ impl SimpleCast {
         }
     }
 
-    pub fn decode_tx(tx: String) -> Result<(String, String)> {
-        let tx_hex = hex::decode(strip_0x(&tx))?;
+    /// Decodes a raw EIP2718 transaction payload
+    /// Returns details about the typed transaction and ECSDA signature components
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     let tx = "0x02f8f582a86a82058d8459682f008508351050808303fd84948e42f2f4101563bf679975178e880fd87d3efd4e80b884659ac74b00000000000000000000000080f0c1c49891dcfdd40b6e0f960f84e6042bcb6f000000000000000000000000b97ef9ef8734c71904d8002f8b6bc66dd9c48a6e00000000000000000000000000000000000000000000000000000000007ff4e20000000000000000000000000000000000000000000000000000000000000064c001a05d429597befe2835396206781b199122f2e8297327ed4a05483339e7a8b2022aa04c23a7f70fb29dda1b4ee342fb10a625e9b8ddc6a603fb4e170d4f6f37700cb8";
+    ///     let (tx, sig) = Cast::decode_raw_transaction(&tx);
+    ///     println!("{:?}", tx);
+    ///     println!("{:?}", sig);
+    /// }
+    pub fn decode_raw_transaction(tx: &str) -> Result<(TypedTransaction, Signature)> {
+        let tx_hex = hex::decode(strip_0x(tx))?;
         let tx_rlp = rlp::Rlp::new(tx_hex.as_slice());
-        let (tx, sig) = TypedTransaction::decode_signed(&tx_rlp)?;
-
-        let tx = serde_json::to_string_pretty(&tx)?;
-        let sig = serde_json::to_string_pretty(&sig)?;
-
-        Ok((tx, sig))
+        Ok(TypedTransaction::decode_signed(&tx_rlp)?)
     }
 }
 

@@ -489,11 +489,15 @@ async fn main() -> Result<()> {
             &mut std::io::stdout(),
         ),
         Subcommands::Logs(cmd) => cmd.run().await?,
-        Subcommands::Decode { tx } => {
+        Subcommands::DecodeTransaction { tx } => {
             let tx = stdin::unwrap_line(tx)?;
-            let (tx, sig) = SimpleCast::decode_tx(tx)?;
-            println!("Transaction: {}", tx);
-            println!("Signature: {}", sig);
+            let (tx, sig) = SimpleCast::decode_raw_transaction(&tx)?;
+
+            // Serialise tx and sig as json strings and reformat to print as a single json object
+            let mut tx = serde_json::to_string_pretty(&tx)?;
+            tx.truncate(tx.len() - 2);
+            let sig = serde_json::to_string_pretty(&sig)?[2..].to_string();
+            println!("{},\n{}", tx, sig);
         }
     };
     Ok(())

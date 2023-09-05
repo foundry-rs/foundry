@@ -861,8 +861,8 @@ pub enum Subcommands {
     },
 
     /// Decodes a raw signed EIP 2718 typed transaction
-    #[clap(visible_alias = "d")]
-    Decode { tx: Option<String> },
+    #[clap(visible_alias = "dt")]
+    DecodeTransaction { tx: Option<String> },
 }
 
 /// CLI arguments for `cast --to-base`.
