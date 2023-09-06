@@ -278,6 +278,9 @@ fn get_recorded_account_accesses(state: &mut Cheatcodes) -> Bytes {
     if let Some(recorded_account_accesses) =
         state.recorded_account_accesses.replace(Default::default())
     {
+        // If `getRecordedAccountAccesses` is called at a lower depth than `recordAccountAccesses`,
+        // there will be multiple Vec<RecordedAccountAccesses> that need to be flattened in order
+        // to preserve the order of the accesses
         abi::encode(
             &recorded_account_accesses
                 .iter()
@@ -317,6 +320,9 @@ fn start_record_storage_accesses(state: &mut Cheatcodes) {
 
 fn get_recorded_storage_accesses(state: &mut Cheatcodes) -> Bytes {
     if let Some(recorded_accesses) = state.recorded_storage_accesses.replace(Default::default()) {
+        // If `getRecordedStorageAccesses` is called at a lower depth than `recordStorageAccesses`,
+        // there will be multiple Vec<RecordedStorageAccesses> that need to be flattened in order
+        // to preserve the order of the accesses
         abi::encode(
             &recorded_accesses
                 .iter()

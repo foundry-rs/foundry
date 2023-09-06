@@ -138,10 +138,10 @@ pub struct Cheatcodes {
     /// Recorded storage reads and writes
     pub accesses: Option<RecordAccess>,
 
-    /// Recorded calls
+    /// Recorded account accesses (calls, creates) by relative call depth
     pub recorded_account_accesses: Option<Vec<Vec<RecordedAccountAccess>>>,
 
-    /// Recorded accesses
+    /// Recorded storage accesses by relative call depth
     pub recorded_storage_accesses: Option<Vec<Vec<RecordedStorageAccess>>>,
 
     /// Recorded logs
@@ -446,7 +446,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     if let Some(last) = &mut recorded_storage_accesses.last_mut() {
                         last.push(access);
                     } else {
-                        // Otherwise append this access as a one-element vector to the empty 2d
+                        // Otherwise, append this access as a one-element vector to the empty 2d
                         // vector
                         recorded_storage_accesses.push(vec![access]);
                     }
@@ -941,8 +941,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     last_recorded_depth.iter_mut().for_each(|element| element.reverted = true)
                 }
                 // Merge the last depth's AccountAccesses into the AccountAccesses at the current
-                // depth, or push them back onto the pending vector if higher depths
-                // were not recorded
+                // depth, or push them back onto the pending vector if higher depths were not
+                // recorded. This preserves ordering of accesses.
                 if let Some(last) = recorded_account_accesses.last_mut() {
                     last.append(last_recorded_depth);
                 } else {
@@ -956,19 +956,19 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(recorded_storage_accesses) = &mut self.recorded_storage_accesses {
             // Depending on what depth the cheat was called at, there may not be any pending storage
             // accesses to update if execution has percolated up to a higher depth
-            if let Some(last_recorded_depth) = &mut recorded_storage_accesses.pop() {
+            if let Some(last_depth) = &mut recorded_storage_accesses.pop() {
                 // Update the reverted status of all deeper accesses if this call reverted, in
                 // accordance with EVM behavior
                 if status.is_revert() {
-                    last_recorded_depth.iter_mut().for_each(|element| element.reverted = true)
+                    last_depth.iter_mut().for_each(|element| element.reverted = true)
                 }
                 // Merge the last depth's StorageAccesses into the StorageAccesses at the current
-                // depth, or push them back onto the pending vector if higher depths
-                // were not recorded
-                if let Some(last) = recorded_storage_accesses.last_mut() {
-                    last.append(last_recorded_depth);
+                // depth, or push them back onto the pending vector if higher depths were not
+                // recorded. This preserves ordering of accesses.
+                if let Some(previous_depth) = recorded_storage_accesses.last_mut() {
+                    previous_depth.append(last_depth);
                 } else {
-                    recorded_storage_accesses.push(last_recorded_depth.to_vec());
+                    recorded_storage_accesses.push(last_depth.to_vec());
                 }
             }
         }
@@ -1299,8 +1299,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     last_depth.iter_mut().for_each(|element| element.reverted = true)
                 }
                 // Merge the last depth's AccountAccesses into the AccountAccesses at the current
-                // depth, or push them back onto the pending vector if higher depths
-                // were not recorded
+                // depth, or push them back onto the pending vector if higher depths were not
+                // recorded. This preserves ordering of accesses.
                 if let Some(last) = recorded_account_accesses.last_mut() {
                     last.append(last_depth);
                 } else {
@@ -1320,8 +1320,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     last_depth.iter_mut().for_each(|element| element.reverted = true)
                 }
                 // Merge the last depth's StorageAccesses into the StorageAccesses at the current
-                // depth, or push them back onto the pending vector if higher depths
-                // were not recorded
+                // depth, or push them back onto the pending vector if higher depths were not
+                // recorded. This preserves ordering of accesses.
                 if let Some(last) = recorded_storage_accesses.last_mut() {
                     last.append(last_depth);
                 } else {

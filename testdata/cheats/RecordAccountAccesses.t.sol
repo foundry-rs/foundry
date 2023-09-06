@@ -220,7 +220,8 @@ contract RecordAccountAccessesTest is DSTest {
      * @notice Test that nested account accesses are correctly recorded
      */
     function testNested() public {
-        runNested(false);
+        cheats.recordAccountAccesses();
+        runNested(false, false);
     }
 
     /**
@@ -228,20 +229,35 @@ contract RecordAccountAccessesTest is DSTest {
      *         the first call reverts
      */
     function testNested_Revert() public {
-        runNested(true);
+        cheats.recordAccountAccesses();
+        runNested(true, false);
     }
 
     /**
      * @notice Helper function to test nested account accesses
      * @param shouldRevert Whether the first call should revert
      */
-    function runNested(bool shouldRevert) public {
-        cheats.recordAccountAccesses();
+    function runNested(bool shouldRevert, bool expectFirstCall) public {
         try runner.run{value: 1 ether}(shouldRevert) {} catch {}
         Vm.AccountAccess[] memory called = cheats.getRecordedAccountAccesses();
-        assertEq(called.length, 7, "incorrect length");
+        assertEq(called.length, 7 + toUint(expectFirstCall), "incorrect length");
+        if (expectFirstCall) {
+            assertEq(
+                called[0],
+                Vm.AccountAccess({
+                    account: address(1234),
+                    isCreate: false,
+                    initialized: false,
+                    value: 0,
+                    data: "",
+                    reverted: false
+                })
+            );
+        }
+
+        uint256 startingIndex = toUint(expectFirstCall);
         assertEq(
-            called[0],
+            called[startingIndex],
             Vm.AccountAccess({
                 account: address(runner),
                 isCreate: false,
@@ -252,7 +268,7 @@ contract RecordAccountAccessesTest is DSTest {
             })
         );
         assertEq(
-            called[1],
+            called[startingIndex + 1],
             Vm.AccountAccess({
                 account: address(runner.reverter()),
                 isCreate: false,
@@ -263,7 +279,7 @@ contract RecordAccountAccessesTest is DSTest {
             })
         );
         assertEq(
-            called[2],
+            called[startingIndex + 2],
             Vm.AccountAccess({
                 account: address(runner.doer()),
                 isCreate: false,
@@ -274,7 +290,7 @@ contract RecordAccountAccessesTest is DSTest {
             })
         );
         assertEq(
-            called[3],
+            called[startingIndex + 3],
             Vm.AccountAccess({
                 account: address(runner.doer()),
                 isCreate: false,
@@ -286,7 +302,7 @@ contract RecordAccountAccessesTest is DSTest {
         );
 
         assertEq(
-            called[4],
+            called[startingIndex + 4],
             Vm.AccountAccess({
                 account: address(runner.succeeder()),
                 isCreate: false,
@@ -297,7 +313,7 @@ contract RecordAccountAccessesTest is DSTest {
             })
         );
         assertEq(
-            called[5],
+            called[startingIndex + 5],
             Vm.AccountAccess({
                 account: address(runner.doer()),
                 isCreate: false,
@@ -308,7 +324,7 @@ contract RecordAccountAccessesTest is DSTest {
             })
         );
         assertEq(
-            called[6],
+            called[startingIndex + 6],
             Vm.AccountAccess({
                 account: address(runner.doer()),
                 isCreate: false,
@@ -327,9 +343,9 @@ contract RecordAccountAccessesTest is DSTest {
      */
     function testNested_LowerDepth() public {
         this.startRecordingFromLowerDepth();
-        testNested();
+        runNested(true, true);
         this.startRecordingFromLowerDepth();
-        testNested_Revert();
+        runNested(false, true);
     }
 
     /**
@@ -368,6 +384,9 @@ contract RecordAccountAccessesTest is DSTest {
 
     function startRecordingFromLowerDepth() external {
         cheats.recordAccountAccesses();
+        assembly {
+            pop(call(gas(), 1234, 0, 0, 0, 0, 0))
+        }
     }
 
     function revertingCall(address target, bytes memory data) external payable {

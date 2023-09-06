@@ -125,11 +125,13 @@ contract RecordStorageAccessesTest is DSTest {
     StorageAccessor test1;
     StorageAccessor test2;
     NestedRunner runner;
+    uint256 counter;
 
     function setUp() public {
         test1 = new StorageAccessor();
         test2 = new StorageAccessor();
         runner = new NestedRunner();
+        counter = 5;
     }
 
     /**
@@ -218,7 +220,8 @@ contract RecordStorageAccessesTest is DSTest {
      *         reverting, but overall successful.
      */
     function testNested() public {
-        runNested(false);
+        cheats.recordStorageAccesses();
+        runNested(false, false);
     }
 
     /**
@@ -227,7 +230,9 @@ contract RecordStorageAccessesTest is DSTest {
      *
      */
     function testNested_Revert() public {
-        runNested(true);
+        cheats.recordStorageAccesses();
+
+        runNested(true, false);
     }
 
     /**
@@ -270,7 +275,7 @@ contract RecordStorageAccessesTest is DSTest {
      */
     function testNested_LowerDepth() public {
         this.startRecordingFromLowerDepth();
-        runNested(false);
+        runNested(false, true);
     }
 
     /**
@@ -280,20 +285,38 @@ contract RecordStorageAccessesTest is DSTest {
      */
     function testNested_LowerDepth_Revert() public {
         this.startRecordingFromLowerDepth();
-        runNested(true);
+        runNested(true, true);
     }
 
-    function runNested(bool shouldRevert) internal {
-        cheats.recordStorageAccesses();
+    function runNested(bool shouldRevert, bool expectFirst) internal {
         try runner.run(shouldRevert) {} catch {}
         Vm.StorageAccess[] memory accessed = cheats.getRecordedStorageAccesses();
-        assertEq(accessed.length, 15, "incorrect length");
+        assertEq(accessed.length, 15 + toUint(expectFirst), "incorrect length");
+
+        uint256 startingIndex = toUint(expectFirst);
+        if (expectFirst) {
+            bytes32 counterSlot;
+            assembly {
+                counterSlot := counter.slot
+            }
+            assertEq(
+                accessed[0],
+                Vm.StorageAccess({
+                    account: address(this),
+                    slot: counterSlot,
+                    isWrite: false,
+                    previousValue: bytes32(uint256(5)),
+                    newValue: bytes32(uint256(5)),
+                    reverted: false
+                })
+            );
+        }
         bytes32 runnerSlot;
         assembly {
             runnerSlot := runner.slot
         }
         assertEq(
-            accessed[0],
+            accessed[startingIndex],
             Vm.StorageAccess({
                 account: address(this),
                 slot: runnerSlot,
@@ -305,8 +328,8 @@ contract RecordStorageAccessesTest is DSTest {
         );
 
         assertIncrementEq(
-            accessed[1],
-            accessed[2],
+            accessed[startingIndex + 1],
+            accessed[startingIndex + 2],
             Vm.StorageAccess({
                 account: address(runner),
                 slot: keccak256(abi.encodePacked(bytes32("runner"), bytes32(0))),
@@ -317,8 +340,8 @@ contract RecordStorageAccessesTest is DSTest {
             })
         );
         assertIncrementEq(
-            accessed[3],
-            accessed[4],
+            accessed[startingIndex + 3],
+            accessed[startingIndex + 4],
             Vm.StorageAccess({
                 account: address(runner.doer()),
                 slot: keccak256(abi.encodePacked(bytes32("doer 1"), uint256(10))),
@@ -330,8 +353,8 @@ contract RecordStorageAccessesTest is DSTest {
         );
 
         assertIncrementEq(
-            accessed[5],
-            accessed[6],
+            accessed[startingIndex + 5],
+            accessed[startingIndex + 6],
             Vm.StorageAccess({
                 account: address(runner.doer()),
                 slot: keccak256(abi.encodePacked(bytes32("doer 2"), uint256(10))),
@@ -343,8 +366,8 @@ contract RecordStorageAccessesTest is DSTest {
         );
 
         assertIncrementEq(
-            accessed[7],
-            accessed[8],
+            accessed[startingIndex + 7],
+            accessed[startingIndex + 8],
             Vm.StorageAccess({
                 account: address(runner.reverter()),
                 slot: keccak256(abi.encodePacked(bytes32("reverter"), uint256(0))),
@@ -356,8 +379,8 @@ contract RecordStorageAccessesTest is DSTest {
         );
 
         assertIncrementEq(
-            accessed[9],
-            accessed[10],
+            accessed[startingIndex + 9],
+            accessed[startingIndex + 10],
             Vm.StorageAccess({
                 account: address(runner.succeeder()),
                 slot: keccak256(abi.encodePacked(bytes32("succeeder"), uint256(0))),
@@ -377,11 +400,11 @@ contract RecordStorageAccessesTest is DSTest {
             reverted: shouldRevert
         });
 
-        assertIncrementEq(accessed[11], accessed[12], expected);
+        assertIncrementEq(accessed[startingIndex + 11], accessed[startingIndex + 12], expected);
 
         assertIncrementEq(
-            accessed[13],
-            accessed[14],
+            accessed[startingIndex + 13],
+            accessed[startingIndex + 14],
             Vm.StorageAccess({
                 account: address(runner.doer()),
                 slot: keccak256(abi.encodePacked(bytes32("doer 2"), uint256(10))),
@@ -393,10 +416,12 @@ contract RecordStorageAccessesTest is DSTest {
         );
     }
 
-    event Idk(Vm.StorageAccess access);
-
-    function startRecordingFromLowerDepth() external {
+    function startRecordingFromLowerDepth() external returns (uint256 value) {
         cheats.recordStorageAccesses();
+        assembly {
+            // assign to a return value otherwise optimizer will remove
+            value := sload(counter.slot)
+        }
     }
 
     function assertIncrementEq(
