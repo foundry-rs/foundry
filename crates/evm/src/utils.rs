@@ -75,12 +75,6 @@ pub fn ru256_to_u256(u: revm::primitives::U256) -> ethers::types::U256 {
     ethers::types::U256::from_little_endian(&u.as_le_bytes())
 }
 
-/// Small helper function to convert revm's [B256] into ethers's [H160].
-#[inline]
-pub fn b256_to_h160(u: revm::primitives::B256) -> ethers::types::H160 {
-    ethers::types::H160::from_slice(&u.0[12..])
-}
-
 /// Small helper function to convert an Eval into an InstructionResult
 #[inline]
 pub fn eval_to_instruction_result(eval: Eval) -> InstructionResult {
