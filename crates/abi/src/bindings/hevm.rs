@@ -2310,6 +2310,7 @@ pub mod hevm {
                                                     ::ethers_core::abi::ethabi::ParamType::Bool,
                                                     ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
                                                     ::ethers_core::abi::ethabi::ParamType::Bytes,
+                                                    ::ethers_core::abi::ethabi::ParamType::Bool,
                                                 ],
                                             ),
                                         ),
@@ -2373,6 +2374,7 @@ pub mod hevm {
                                                     ::ethers_core::abi::ethabi::ParamType::Bool,
                                                     ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
                                                     ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
+                                                    ::ethers_core::abi::ethabi::ParamType::Bool,
                                                 ],
                                             ),
                                         ),
@@ -6353,6 +6355,7 @@ pub mod hevm {
                     bool,
                     ::ethers_core::types::U256,
                     ::ethers_core::types::Bytes,
+                    bool,
                 ),
             >,
         > {
@@ -6377,7 +6380,7 @@ pub mod hevm {
         ) -> ::ethers_contract::builders::ContractCall<
             M,
             ::std::vec::Vec<
-                (::ethers_core::types::Address, [u8; 32], bool, [u8; 32], [u8; 32]),
+                (::ethers_core::types::Address, [u8; 32], bool, [u8; 32], [u8; 32], bool),
             >,
         > {
             self.0
@@ -14305,6 +14308,7 @@ pub mod hevm {
                 bool,
                 ::ethers_core::types::U256,
                 ::ethers_core::types::Bytes,
+                bool,
             ),
         >,
     );
@@ -14335,7 +14339,7 @@ pub mod hevm {
     )]
     pub struct GetRecordedStorageAccessesReturn(
         pub ::std::vec::Vec<
-            (::ethers_core::types::Address, [u8; 32], bool, [u8; 32], [u8; 32]),
+            (::ethers_core::types::Address, [u8; 32], bool, [u8; 32], [u8; 32], bool),
         >,
     );
     ///Container type for all return fields from the `isDir` function with signature `isDir(string)` and selector `0x7d15d019`
@@ -15094,7 +15098,7 @@ pub mod hevm {
     pub struct TryFfiReturn(
         pub (i32, ::ethers_core::types::Bytes, ::ethers_core::types::Bytes),
     );
-    ///`AccountAccess(address,bool,bool,uint256,bytes)`
+    ///`AccountAccess(address,bool,bool,uint256,bytes,bool)`
     #[derive(
         Clone,
         ::ethers_contract::EthAbiType,
@@ -15111,6 +15115,7 @@ pub mod hevm {
         pub initialized: bool,
         pub value: ::ethers_core::types::U256,
         pub data: ::ethers_core::types::Bytes,
+        pub reverted: bool,
     }
     ///`DirEntry(string,string,uint64,bool,bool)`
     #[derive(
@@ -15218,7 +15223,7 @@ pub mod hevm {
         pub name: ::std::string::String,
         pub url: ::std::string::String,
     }
-    ///`StorageAccess(address,bytes32,bool,bytes32,bytes32)`
+    ///`StorageAccess(address,bytes32,bool,bytes32,bytes32,bool)`
     #[derive(
         Clone,
         ::ethers_contract::EthAbiType,
@@ -15235,6 +15240,7 @@ pub mod hevm {
         pub is_write: bool,
         pub previous_value: [u8; 32],
         pub new_value: [u8; 32],
+        pub reverted: bool,
     }
     ///`Wallet(address,uint256,uint256,uint256)`
     #[derive(

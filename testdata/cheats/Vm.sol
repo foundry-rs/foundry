@@ -77,6 +77,7 @@ interface Vm {
         bool initialized;
         uint256 value;
         bytes data;
+        bool reverted;
     }
 
     struct StorageAccess {
@@ -85,6 +86,7 @@ interface Vm {
         bool isWrite;
         bytes32 previousValue;
         bytes32 newValue;
+        bool reverted;
     }
 
     // Set block.timestamp (newTimestamp)

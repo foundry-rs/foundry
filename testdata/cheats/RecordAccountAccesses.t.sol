@@ -19,7 +19,7 @@ contract RecordAccountAccessesTest is DSTest {
     Vm constant cheats = Vm(HEVM_ADDRESS);
 
     function testRecordAccountAccesses() public {
-        cheats.recordAccountAccesses();
+        cheats.recordAccountAccesses(false);
 
         (bool succ,) = address(1234).call("");
         (succ,) = address(5678).call{value: 1 ether}("");
@@ -32,13 +32,27 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(called.length, 6);
         assertEq(
             called[0],
-            Vm.AccountAccess({account: address(1234), isCreate: false, initialized: false, value: 0, data: ""}),
+            Vm.AccountAccess({
+                account: address(1234),
+                isCreate: false,
+                initialized: false,
+                value: 0,
+                data: "",
+                reverted: false
+            }),
             0
         );
 
         assertEq(
             called[1],
-            Vm.AccountAccess({account: address(5678), isCreate: false, initialized: false, value: 1 ether, data: ""}),
+            Vm.AccountAccess({
+                account: address(5678),
+                isCreate: false,
+                initialized: false,
+                value: 1 ether,
+                data: "",
+                reverted: false
+            }),
             1
         );
         assertEq(
@@ -48,13 +62,21 @@ contract RecordAccountAccessesTest is DSTest {
                 isCreate: false,
                 initialized: false,
                 value: 0,
-                data: "hello world"
+                data: "hello world",
+                reverted: false
             }),
             2
         );
         assertEq(
             called[3],
-            Vm.AccountAccess({account: address(5678), isCreate: false, initialized: true, value: 0, data: ""}),
+            Vm.AccountAccess({
+                account: address(5678),
+                isCreate: false,
+                initialized: true,
+                value: 0,
+                data: "",
+                reverted: false
+            }),
             3
         );
         assertEq(
@@ -64,19 +86,27 @@ contract RecordAccountAccessesTest is DSTest {
                 isCreate: true,
                 initialized: false,
                 value: 2 ether,
-                data: abi.encodePacked(type(SelfCaller).creationCode, abi.encode("hello2 world2"))
+                data: abi.encodePacked(type(SelfCaller).creationCode, abi.encode("hello2 world2")),
+                reverted: false
             }),
             4
         );
         assertEq(
             called[5],
-            Vm.AccountAccess({account: address(caller), isCreate: false, initialized: true, value: 0, data: ""}),
+            Vm.AccountAccess({
+                account: address(caller),
+                isCreate: false,
+                initialized: true,
+                value: 0,
+                data: "",
+                reverted: false
+            }),
             5
         );
     }
 
     function testRevertingBehavior() public {
-        cheats.recordAccountAccesses();
+        cheats.recordAccountAccesses(true);
         (bool succ,) = address(this).call(abi.encodeCall(this.revertingCall, (address(1234), "")));
         assertTrue(!succ);
         Vm.AccountAccess[] memory called = cheats.getRecordedAccountAccesses();
