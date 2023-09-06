@@ -25,9 +25,7 @@ use foundry_utils::error::SolError;
 use itertools::Itertools;
 use revm::{
     interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
-    primitives::{
-        ruint::Uint, Account, BlockEnv, Bytecode, StorageSlot, TransactTo, B160, B256, KECCAK_EMPTY,
-    },
+    primitives::{ruint::Uint, BlockEnv, Bytecode, TransactTo, B160, B256, KECCAK_EMPTY},
     EVMData, Inspector,
 };
 use serde_json::Value;
@@ -420,12 +418,22 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             match interpreter.current_opcode() {
                 opcode::SLOAD => {
                     let key = try_or_continue!(interpreter.stack().peek(0));
+
+                    let mut present_value = Uint::ZERO;
+                    let address = interpreter.contract().address;
+                    if let Ok(_) = data.journaled_state.load_account(address, data.db) {
+                        if let Ok((previous, _)) = data.journaled_state.sload(address, key, data.db)
+                        {
+                            present_value = previous;
+                        }
+                    }
+
                     let access = RecordedStorageAccess {
                         account: b160_to_h160(interpreter.contract().address),
                         slot: key.into(),
                         write: false,
-                        previous_value: 0.into(),
-                        new_value: 0.into(),
+                        previous_value: present_value.into(),
+                        new_value: present_value.into(),
                         reverted: false,
                     };
 
@@ -439,18 +447,17 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 opcode::SSTORE => {
                     let key = try_or_continue!(interpreter.stack().peek(0));
                     let value = try_or_continue!(interpreter.stack().peek(1));
-                    let previous_value = data
-                        .journaled_state
-                        .state
-                        .get(&interpreter.contract().address)
-                        .unwrap_or(&Account::default())
-                        .storage
-                        .get(&key)
-                        .unwrap_or(&StorageSlot::default())
-                        .present_value();
+                    let mut previous_value = Uint::ZERO;
+                    let address = interpreter.contract().address;
+                    if let Ok(_) = data.journaled_state.load_account(address, data.db) {
+                        if let Ok((previous, _)) = data.journaled_state.sload(address, key, data.db)
+                        {
+                            previous_value = previous;
+                        }
+                    }
 
                     let access = RecordedStorageAccess {
-                        account: b160_to_h160(interpreter.contract().address),
+                        account: b160_to_h160(address),
                         slot: key.into(),
                         write: true,
                         previous_value: previous_value.into(),
@@ -799,7 +806,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // determine if account is "initialized," ie, it has a non-zero balance, a non-zero
                 // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
                 let initialized;
-                if let Some(acc) = data.journaled_state.state.get(&call.contract) {
+                if let Ok((acc, _)) = data.journaled_state.load_account(call.contract, data.db) {
                     let info = &acc.info;
                     initialized = !(info.balance == Uint::ZERO &&
                         info.nonce == 0 &&
@@ -815,7 +822,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // if the call from which they were accessed is reverted
                 recorded_account_accesses.pending.push(vec![AccountAccess {
                     account: call.contract.into(),
-                    is_create: true,
+                    is_create: false,
                     initialized,
                     value: call.transfer.value.into(),
                     data: call.input.clone().into(),

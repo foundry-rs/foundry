@@ -297,6 +297,7 @@ fn get_recorded_account_accesses(state: &mut Cheatcodes) -> Bytes {
                         access.initialized.into_token(),
                         access.value.into_token(),
                         Token::Bytes(access.data.to_vec()),
+                        access.reverted.into_token(),
                     ])
                 })
                 .collect::<Vec<Token>>()
@@ -341,6 +342,7 @@ fn get_recorded_storage_accesses(state: &mut Cheatcodes) -> Bytes {
                         access.write.into_token(),
                         access.previous_value.into_token(),
                         access.new_value.into_token(),
+                        access.reverted.into_token(),
                     ])
                 })
                 .collect::<Vec<Token>>()
