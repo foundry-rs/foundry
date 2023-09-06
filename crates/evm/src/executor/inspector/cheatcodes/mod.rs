@@ -270,7 +270,7 @@ impl Cheatcodes {
         }
 
         data.db.allow_cheatcode_access(created_address);
-        return created_address
+        created_address
     }
 
     /// Called when there was a revert.

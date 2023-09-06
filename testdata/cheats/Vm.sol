@@ -262,10 +262,17 @@ interface Vm {
     // Gets all accessed reads and write slot from a recording session, for a given address
     function accesses(address) external returns (bytes32[] memory reads, bytes32[] memory writes);
 
+    // Record all account accesses as part of CREATE or CALL opcodes in order,
+    // along with the context of the calls
     function recordAccountAccesses() external;
+
+    // Returns an ordered array of all account accesses
     function getRecordedAccountAccesses() external returns (AccountAccess[] memory);
 
+    // Record all storage accesses in order, along with the context of the accesses
     function recordStorageAccesses() external;
+
+    // Returns an ordered array of all storage accesses
     function getRecordedStorageAccesses() external returns (StorageAccess[] memory);
 
     // Record all the transaction logs
