@@ -76,6 +76,7 @@ pub mod fix;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
+use revm_primitives::SpecId;
 use tracing::warn;
 
 /// config providers
@@ -683,6 +684,12 @@ impl Config {
         }
 
         Ok(None)
+    }
+
+    /// Returns the [SpecId] derived from the configured [EvmVersion]
+    #[inline]
+    pub fn evm_spec_id(&self) -> SpecId {
+        evm_spec_id(&self.evm_version)
     }
 
     /// Returns whether the compiler version should be auto-detected

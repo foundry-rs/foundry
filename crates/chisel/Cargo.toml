@@ -43,7 +43,7 @@ serde = "1"
 serde_json = { version = "1", features = ["raw_value"] }
 semver = "1"
 bytes = "1"
-revm = "3"
+revm.workspace = true
 eyre = "0.6"
 dirs = "5"
 time = { version = "0.3", features = ["formatting"] }
