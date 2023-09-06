@@ -425,7 +425,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     // it's not set (zero value)
                     let mut present_value = Uint::ZERO;
                     // Try to load the account and the slot's present value
-                    if let Ok(_) = data.journaled_state.load_account(address, data.db) {
+                    if data.journaled_state.load_account(address, data.db).is_ok() {
                         if let Ok((previous, _)) = data.journaled_state.sload(address, key, data.db)
                         {
                             present_value = previous;
@@ -458,7 +458,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     // Try to load the account and the slot's previous value, otherwise, assume it's
                     // not set (zero value)
                     let mut previous_value = Uint::ZERO;
-                    if let Ok(_) = data.journaled_state.load_account(address, data.db) {
+                    if data.journaled_state.load_account(address, data.db).is_ok() {
                         if let Ok((previous, _)) = data.journaled_state.sload(address, key, data.db)
                         {
                             previous_value = previous;
