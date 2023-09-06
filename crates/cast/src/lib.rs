@@ -6,7 +6,7 @@ use ethers_core::{
         token::{LenientTokenizer, Tokenizer},
         Function, HumanReadableParser, ParamType, RawAbi, Token,
     },
-    types::{Chain, *},
+    types::{transaction::eip2718::TypedTransaction, Chain, *},
     utils::{
         format_bytes32_string, format_units, get_contract_address, keccak256, parse_bytes32_string,
         parse_units, rlp, Units,
@@ -1823,6 +1823,26 @@ impl SimpleCast {
             Some((_nonce, selector, signature)) => Ok((selector, signature)),
             None => eyre::bail!("No selector found"),
         }
+    }
+
+    /// Decodes a raw EIP2718 transaction payload
+    /// Returns details about the typed transaction and ECSDA signature components
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     let tx = "0x02f8f582a86a82058d8459682f008508351050808303fd84948e42f2f4101563bf679975178e880fd87d3efd4e80b884659ac74b00000000000000000000000080f0c1c49891dcfdd40b6e0f960f84e6042bcb6f000000000000000000000000b97ef9ef8734c71904d8002f8b6bc66dd9c48a6e00000000000000000000000000000000000000000000000000000000007ff4e20000000000000000000000000000000000000000000000000000000000000064c001a05d429597befe2835396206781b199122f2e8297327ed4a05483339e7a8b2022aa04c23a7f70fb29dda1b4ee342fb10a625e9b8ddc6a603fb4e170d4f6f37700cb8";
+    ///     let (tx, sig) = Cast::decode_raw_transaction(&tx)?;
+    ///
+    ///     Ok(())
+    /// }
+    pub fn decode_raw_transaction(tx: &str) -> Result<(TypedTransaction, Signature)> {
+        let tx_hex = hex::decode(strip_0x(tx))?;
+        let tx_rlp = rlp::Rlp::new(tx_hex.as_slice());
+        Ok(TypedTransaction::decode_signed(&tx_rlp)?)
     }
 }
 
