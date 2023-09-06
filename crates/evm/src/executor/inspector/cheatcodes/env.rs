@@ -261,13 +261,7 @@ fn accesses(state: &mut Cheatcodes, address: Address) -> Bytes {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct RecordedAccountAccesses {
-    pub entries: Vec<AccountAccess>,
-    pub pending: Vec<Vec<AccountAccess>>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct AccountAccess {
+pub struct RecordedAccountAccess {
     pub account: Address,
     pub is_create: bool,
     pub initialized: bool,
@@ -277,8 +271,7 @@ pub struct AccountAccess {
 }
 
 fn start_record_account_accesses(state: &mut Cheatcodes) {
-    state.recorded_account_accesses =
-        Some(RecordedAccountAccesses { entries: vec![], pending: vec![] });
+    state.recorded_account_accesses = Some(Default::default());
 }
 
 fn get_recorded_account_accesses(state: &mut Cheatcodes) -> Bytes {
@@ -287,7 +280,6 @@ fn get_recorded_account_accesses(state: &mut Cheatcodes) -> Bytes {
     {
         abi::encode(
             &recorded_account_accesses
-                .pending
                 .iter()
                 .flatten()
                 .map(|access| {
@@ -310,11 +302,6 @@ fn get_recorded_account_accesses(state: &mut Cheatcodes) -> Bytes {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct RecordedStorageAccesses {
-    pub entries: Vec<RecordedStorageAccess>,
-    pub pending: Vec<Vec<RecordedStorageAccess>>,
-}
-#[derive(Clone, Debug, Default)]
 pub struct RecordedStorageAccess {
     pub account: Address,
     pub slot: U256,
@@ -332,7 +319,6 @@ fn get_recorded_storage_accesses(state: &mut Cheatcodes) -> Bytes {
     if let Some(recorded_accesses) = state.recorded_storage_accesses.replace(Default::default()) {
         abi::encode(
             &recorded_accesses
-                .pending
                 .iter()
                 .flatten()
                 .map(|access| {
