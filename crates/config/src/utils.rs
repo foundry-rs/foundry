@@ -2,8 +2,9 @@
 
 use crate::Config;
 use ethers_core::types::{serde_helpers::Numeric, U256};
-use ethers_solc::remappings::{Remapping, RemappingError};
+use ethers_solc::{remappings::{Remapping, RemappingError}, EvmVersion};
 use figment::value::Value;
+use revm_primitives::SpecId;
 use serde::{de::Error, Deserialize, Deserializer};
 use std::{
     path::{Path, PathBuf},
@@ -253,6 +254,24 @@ where
         }
     };
     Ok(num)
+}
+
+/// Returns the [SpecId] derived from [EvmVersion]
+#[inline]
+pub fn evm_spec_id(evm_version: &EvmVersion) -> SpecId {
+    match evm_version {
+        EvmVersion::Homestead => SpecId::HOMESTEAD,
+        EvmVersion::TangerineWhistle => SpecId::TANGERINE,
+        EvmVersion::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
+        EvmVersion::Byzantium => SpecId::BYZANTIUM,
+        EvmVersion::Constantinople => SpecId::CONSTANTINOPLE,
+        EvmVersion::Petersburg => SpecId::PETERSBURG,
+        EvmVersion::Istanbul => SpecId::ISTANBUL,
+        EvmVersion::Berlin => SpecId::BERLIN,
+        EvmVersion::London => SpecId::LONDON,
+        EvmVersion::Paris => SpecId::MERGE,
+        EvmVersion::Shanghai => SpecId::SHANGHAI,
+    }
 }
 
 #[cfg(test)]

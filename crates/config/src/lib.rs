@@ -687,20 +687,9 @@ impl Config {
     }
 
     /// Returns the [SpecId] derived from the configured [EvmVersion]
+    #[inline]
     pub fn evm_spec_id(&self) -> SpecId {
-        match self.evm_version {
-            EvmVersion::Homestead => SpecId::HOMESTEAD,
-            EvmVersion::TangerineWhistle => SpecId::TANGERINE,
-            EvmVersion::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
-            EvmVersion::Byzantium => SpecId::BYZANTIUM,
-            EvmVersion::Constantinople => SpecId::CONSTANTINOPLE,
-            EvmVersion::Petersburg => SpecId::PETERSBURG,
-            EvmVersion::Istanbul => SpecId::ISTANBUL,
-            EvmVersion::Berlin => SpecId::BERLIN,
-            EvmVersion::London => SpecId::LONDON,
-            EvmVersion::Paris => SpecId::MERGE,
-            EvmVersion::Shanghai => SpecId::SHANGHAI,
-        }
+        evm_spec_id(&self.evm_version)
     }
 
     /// Returns whether the compiler version should be auto-detected
