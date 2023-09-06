@@ -41,6 +41,14 @@ contract SelfDestructor {
     }
 }
 
+contract Create2or {
+    function create2(bytes32 salt, bytes memory initcode) external payable returns (address result) {
+        assembly {
+            result := create2(callvalue(), add(initcode, 0x20), mload(initcode), salt)
+        }
+    }
+}
+
 /**
  * @notice Helper contract that calls a Doer from the run method and then
  *         reverts
@@ -104,9 +112,11 @@ contract NestedRunner {
 contract RecordAccountAccessesTest is DSTest {
     Vm constant cheats = Vm(HEVM_ADDRESS);
     NestedRunner runner;
+    Create2or create2or;
 
     function setUp() public {
         runner = new NestedRunner();
+        create2or = new Create2or();
     }
 
     /**
@@ -364,23 +374,24 @@ contract RecordAccountAccessesTest is DSTest {
      */
     function testCreateRevert() public {
         cheats.recordAccountAccesses();
-        try new SelfCaller('') {} catch {}
-        address hypotheticalAddress = 0x185a4dc360CE69bDCceE33b3784B0282f7961aea;
+        bytes memory creationCode = abi.encodePacked(type(SelfCaller).creationCode, abi.encode(""));
+        try create2or.create2(bytes32(0), creationCode) {} catch {}
+        address hypotheticalAddress = deriveCreate2Address(address(create2or), bytes32(0), keccak256(creationCode));
         Vm.AccountAccess[] memory called = cheats.getRecordedAccountAccesses();
-        assertEq(called.length, 2, "incorrect length");
+        assertEq(called.length, 3, "incorrect length");
         assertEq(
-            called[0],
+            called[1],
             Vm.AccountAccess({
                 account: hypotheticalAddress,
                 kind: Vm.AccountAccessKind.Create,
                 initialized: true,
                 value: 0,
-                data: abi.encodePacked(type(SelfCaller).creationCode, abi.encode("")),
+                data: creationCode,
                 reverted: true
             })
         );
         assertEq(
-            called[1],
+            called[2],
             Vm.AccountAccess({
                 account: hypotheticalAddress,
                 kind: Vm.AccountAccessKind.Call,
@@ -480,5 +491,9 @@ contract RecordAccountAccessesTest is DSTest {
 
     function toUint(bool a) internal pure returns (uint256) {
         return a ? 1 : 0;
+    }
+
+    function deriveCreate2Address(address deployer, bytes32 salt, bytes32 codeHash) internal pure returns (address) {
+        return address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), deployer, salt, codeHash)))));
     }
 }

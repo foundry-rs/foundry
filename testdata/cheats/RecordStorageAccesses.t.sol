@@ -120,12 +120,25 @@ contract StorageAccessor {
     }
 }
 
+contract Create2or {
+    function create2(bytes32 salt, bytes memory initcode) external payable returns (address result) {
+        assembly {
+            result := create2(callvalue(), add(initcode, 0x20), mload(initcode), salt)
+        }
+    }
+}
+
 contract RecordStorageAccessesTest is DSTest {
+    Create2or immutable create2or;
     Vm constant cheats = Vm(HEVM_ADDRESS);
     StorageAccessor test1;
     StorageAccessor test2;
     NestedRunner runner;
     uint256 counter;
+
+    constructor() {
+        create2or = new Create2or();
+    }
 
     function setUp() public {
         test1 = new StorageAccessor();
@@ -241,8 +254,11 @@ contract RecordStorageAccessesTest is DSTest {
     function testConstructorStorage() public {
         cheats.recordStorageAccesses();
         address storer = address(new ConstructorStorer(false));
-        try new ConstructorStorer(true) {} catch {}
-        address hypotheticalStorer = 0x42997aC9251E5BB0A61F4Ff790E5B991ea07Fd9B;
+        try create2or.create2(bytes32(0), abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(true))) {}
+            catch {}
+        bytes memory creationCode = abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(true));
+
+        address hypotheticalStorer = deriveCreate2Address(address(create2or), bytes32(0), keccak256(creationCode));
         Vm.StorageAccess[] memory accessed = cheats.getRecordedStorageAccesses();
         assertEq(accessed.length, 2, "incorrect length");
         assertEq(
@@ -464,5 +480,9 @@ contract RecordStorageAccessesTest is DSTest {
 
     function toUint(bool a) internal pure returns (uint256) {
         return a ? 1 : 0;
+    }
+
+    function deriveCreate2Address(address deployer, bytes32 salt, bytes32 codeHash) internal pure returns (address) {
+        return address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), deployer, salt, codeHash)))));
     }
 }
