@@ -493,11 +493,14 @@ async fn main() -> Result<()> {
             let tx = stdin::unwrap_line(tx)?;
             let (tx, sig) = SimpleCast::decode_raw_transaction(&tx)?;
 
-            // Serialise tx and sig as json strings and reformat to print as a single json object
-            let mut tx = serde_json::to_string_pretty(&tx)?;
-            tx.truncate(tx.len() - 2);
-            let sig = serde_json::to_string_pretty(&sig)?[2..].to_string();
-            println!("{},\n{}", tx, sig);
+            // Serialize tx, sig and constructed a merged json string
+            let mut tx = serde_json::to_value(&tx)?;
+            let tx_map = tx.as_object_mut().unwrap();
+            serde_json::to_value(sig)?.as_object().unwrap().iter().for_each(|(k, v)| {
+                tx_map.entry(k).or_insert(v.clone());
+            });
+
+            println!("{}", serde_json::to_string_pretty(&tx)?);
         }
     };
     Ok(())
