@@ -17,7 +17,7 @@ foundry-macros.workspace = true
 # eth
 ethers-core.workspace = true
 ethers-solc.workspace = true
-ethers-providers.workspace = true
+ethers-providers= { workspace = true, features = ["ipc", "ws"] }
 ethers-middleware.workspace = true
 ethers-etherscan = { workspace = true, features = ["ethers-solc"] }
 
