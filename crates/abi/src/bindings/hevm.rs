@@ -2306,7 +2306,7 @@ pub mod hevm {
                                             ::ethers_core::abi::ethabi::ParamType::Tuple(
                                                 ::std::vec![
                                                     ::ethers_core::abi::ethabi::ParamType::Address,
-                                                    ::ethers_core::abi::ethabi::ParamType::Bool,
+                                                    ::ethers_core::abi::ethabi::ParamType::Uint(8usize),
                                                     ::ethers_core::abi::ethabi::ParamType::Bool,
                                                     ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
                                                     ::ethers_core::abi::ethabi::ParamType::Bytes,
@@ -6351,7 +6351,7 @@ pub mod hevm {
             ::std::vec::Vec<
                 (
                     ::ethers_core::types::Address,
-                    bool,
+                    u8,
                     bool,
                     ::ethers_core::types::U256,
                     ::ethers_core::types::Bytes,
@@ -14304,7 +14304,7 @@ pub mod hevm {
         pub ::std::vec::Vec<
             (
                 ::ethers_core::types::Address,
-                bool,
+                u8,
                 bool,
                 ::ethers_core::types::U256,
                 ::ethers_core::types::Bytes,
@@ -15098,7 +15098,7 @@ pub mod hevm {
     pub struct TryFfiReturn(
         pub (i32, ::ethers_core::types::Bytes, ::ethers_core::types::Bytes),
     );
-    ///`AccountAccess(address,bool,bool,uint256,bytes,bool)`
+    ///`AccountAccess(address,uint8,bool,uint256,bytes,bool)`
     #[derive(
         Clone,
         ::ethers_contract::EthAbiType,
@@ -15111,7 +15111,7 @@ pub mod hevm {
     )]
     pub struct AccountAccess {
         pub account: ::ethers_core::types::Address,
-        pub is_create: bool,
+        pub kind: u8,
         pub initialized: bool,
         pub value: ::ethers_core::types::U256,
         pub data: ::ethers_core::types::Bytes,

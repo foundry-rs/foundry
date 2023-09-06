@@ -260,10 +260,23 @@ fn accesses(state: &mut Cheatcodes, address: Address) -> Bytes {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Copy)]
+pub enum AccountAccessKind {
+    Call,
+    Create,
+    SelfDestruct,
+}
+
+impl From<AccountAccessKind> for U256 {
+    fn from(value: AccountAccessKind) -> Self {
+        (value as i8).into()
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct RecordedAccountAccess {
     pub account: Address,
-    pub is_create: bool,
+    pub kind: AccountAccessKind,
     pub initialized: bool,
     pub value: U256,
     pub data: Bytes,
@@ -288,7 +301,7 @@ fn get_recorded_account_accesses(state: &mut Cheatcodes) -> Bytes {
                 .map(|access| {
                     Token::Tuple(vec![
                         access.account.into_token(),
-                        access.is_create.into_token(),
+                        U256::from(access.kind).into_token(),
                         access.initialized.into_token(),
                         access.value.into_token(),
                         Token::Bytes(access.data.to_vec()),

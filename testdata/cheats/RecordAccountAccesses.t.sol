@@ -32,6 +32,16 @@ contract Doer {
 }
 
 /**
+ * @notice Helper contract that selfdestructs to a target address within its
+ *         constructor
+ */
+contract SelfDestructor {
+    constructor(address target) payable {
+        selfdestruct(payable(target));
+    }
+}
+
+/**
  * @notice Helper contract that calls a Doer from the run method and then
  *         reverts
  */
@@ -118,7 +128,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[0],
             Vm.AccountAccess({
                 account: address(1234),
-                isCreate: false,
+                kind: Vm.AccountAccessKind.Call,
                 initialized: false,
                 value: 0,
                 data: "",
@@ -130,7 +140,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[1],
             Vm.AccountAccess({
                 account: address(5678),
-                isCreate: false,
+                kind: Vm.AccountAccessKind.Call,
                 initialized: false,
                 value: 1 ether,
                 data: "",
@@ -141,7 +151,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[2],
             Vm.AccountAccess({
                 account: address(123469),
-                isCreate: false,
+                kind: Vm.AccountAccessKind.Call,
                 initialized: false,
                 value: 0,
                 data: "hello world",
@@ -152,7 +162,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[3],
             Vm.AccountAccess({
                 account: address(5678),
-                isCreate: false,
+                kind: Vm.AccountAccessKind.Call,
                 initialized: true,
                 value: 0,
                 data: "",
@@ -163,8 +173,8 @@ contract RecordAccountAccessesTest is DSTest {
             called[4],
             Vm.AccountAccess({
                 account: address(caller),
-                isCreate: true,
-                initialized: false,
+                kind: Vm.AccountAccessKind.Create,
+                initialized: true,
                 value: 2 ether,
                 data: abi.encodePacked(type(SelfCaller).creationCode, abi.encode("hello2 world2")),
                 reverted: false
@@ -174,7 +184,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[5],
             Vm.AccountAccess({
                 account: address(caller),
-                isCreate: false,
+                kind: Vm.AccountAccessKind.Call,
                 initialized: true,
                 value: 0.2 ether,
                 data: "",
@@ -196,7 +206,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[0],
             Vm.AccountAccess({
                 account: address(this),
-                isCreate: false,
+                kind: Vm.AccountAccessKind.Call,
                 initialized: true,
                 value: 1 ether,
                 data: abi.encodeCall(this.revertingCall, (address(1234), "")),
@@ -207,7 +217,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[1],
             Vm.AccountAccess({
                 account: address(1234),
-                isCreate: false,
+                kind: Vm.AccountAccessKind.Call,
                 initialized: false,
                 value: 0.1 ether,
                 data: "",
@@ -246,7 +256,7 @@ contract RecordAccountAccessesTest is DSTest {
                 called[0],
                 Vm.AccountAccess({
                     account: address(1234),
-                    isCreate: false,
+                    kind: Vm.AccountAccessKind.Call,
                     initialized: false,
                     value: 0,
                     data: "",
@@ -260,7 +270,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[startingIndex],
             Vm.AccountAccess({
                 account: address(runner),
-                isCreate: false,
+                kind: Vm.AccountAccessKind.Call,
                 initialized: true,
                 value: 1 ether,
                 data: abi.encodeCall(NestedRunner.run, (shouldRevert)),
@@ -271,7 +281,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[startingIndex + 1],
             Vm.AccountAccess({
                 account: address(runner.reverter()),
-                isCreate: false,
+                kind: Vm.AccountAccessKind.Call,
                 initialized: true,
                 value: 0.1 ether,
                 data: abi.encodeCall(Reverter.run, ()),
@@ -282,7 +292,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[startingIndex + 2],
             Vm.AccountAccess({
                 account: address(runner.doer()),
-                isCreate: false,
+                kind: Vm.AccountAccessKind.Call,
                 initialized: true,
                 value: 0.01 ether,
                 data: abi.encodeCall(Doer.run, ()),
@@ -293,7 +303,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[startingIndex + 3],
             Vm.AccountAccess({
                 account: address(runner.doer()),
-                isCreate: false,
+                kind: Vm.AccountAccessKind.Call,
                 initialized: true,
                 value: 0.001 ether,
                 data: abi.encodeCall(Doer.doStuff, ()),
@@ -305,7 +315,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[startingIndex + 4],
             Vm.AccountAccess({
                 account: address(runner.succeeder()),
-                isCreate: false,
+                kind: Vm.AccountAccessKind.Call,
                 initialized: true,
                 value: 0.1 ether,
                 data: abi.encodeCall(Succeeder.run, ()),
@@ -316,7 +326,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[startingIndex + 5],
             Vm.AccountAccess({
                 account: address(runner.doer()),
-                isCreate: false,
+                kind: Vm.AccountAccessKind.Call,
                 initialized: true,
                 value: 0.01 ether,
                 data: abi.encodeCall(Doer.run, ()),
@@ -327,7 +337,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[startingIndex + 6],
             Vm.AccountAccess({
                 account: address(runner.doer()),
-                isCreate: false,
+                kind: Vm.AccountAccessKind.Call,
                 initialized: true,
                 value: 0.001 ether,
                 data: abi.encodeCall(Doer.doStuff, ()),
@@ -362,8 +372,8 @@ contract RecordAccountAccessesTest is DSTest {
             called[0],
             Vm.AccountAccess({
                 account: hypotheticalAddress,
-                isCreate: true,
-                initialized: false,
+                kind: Vm.AccountAccessKind.Create,
+                initialized: true,
                 value: 0,
                 data: abi.encodePacked(type(SelfCaller).creationCode, abi.encode("")),
                 reverted: true
@@ -373,11 +383,69 @@ contract RecordAccountAccessesTest is DSTest {
             called[1],
             Vm.AccountAccess({
                 account: hypotheticalAddress,
-                isCreate: false,
+                kind: Vm.AccountAccessKind.Call,
                 initialized: true,
                 value: 0,
                 data: "",
                 reverted: true
+            })
+        );
+    }
+
+    /**
+     * @notice It is important to test SELFDESTRUCT behavior as long as there
+     *         are public networks that support the opcode, regardless of whether
+     *         or not Ethereum mainnet does.
+     */
+    function testSelfDestruct() public {
+        this.startRecordingFromLowerDepth();
+        address a = address(new SelfDestructor{value:1 ether}(address(this)));
+        address b = address(new SelfDestructor{value:1 ether}(address(bytes20("doesn't exist yet"))));
+        Vm.AccountAccess[] memory called = cheats.getRecordedAccountAccesses();
+        assertEq(called.length, 5, "incorrect length");
+
+        assertEq(
+            called[1],
+            Vm.AccountAccess({
+                account: a,
+                kind: Vm.AccountAccessKind.Create,
+                initialized: true,
+                value: 1 ether,
+                data: abi.encodePacked(type(SelfDestructor).creationCode, abi.encode(address(this))),
+                reverted: false
+            })
+        );
+        assertEq(
+            called[2],
+            Vm.AccountAccess({
+                account: address(this),
+                kind: Vm.AccountAccessKind.SelfDestruct,
+                initialized: true,
+                value: 1 ether,
+                data: "",
+                reverted: false
+            })
+        );
+        assertEq(
+            called[3],
+            Vm.AccountAccess({
+                account: b,
+                kind: Vm.AccountAccessKind.Create,
+                initialized: true,
+                value: 1 ether,
+                data: abi.encodePacked(type(SelfDestructor).creationCode, abi.encode(address(bytes20("doesn't exist yet")))),
+                reverted: false
+            })
+        );
+        assertEq(
+            called[4],
+            Vm.AccountAccess({
+                account: address(bytes20("doesn't exist yet")),
+                kind: Vm.AccountAccessKind.SelfDestruct,
+                initialized: false,
+                value: 1 ether,
+                data: "",
+                reverted: false
             })
         );
     }
@@ -398,10 +466,16 @@ contract RecordAccountAccessesTest is DSTest {
 
     function assertEq(Vm.AccountAccess memory actualAccess, Vm.AccountAccess memory expectedAccess) internal {
         assertEq(actualAccess.account, expectedAccess.account, "incorrect account");
-        assertEq(toUint(actualAccess.isCreate), toUint(expectedAccess.isCreate), "incorrect isCreate");
+        assertEq(toUint(actualAccess.kind), toUint(expectedAccess.kind), "incorrect isCreate");
         assertEq(toUint(actualAccess.initialized), toUint(expectedAccess.initialized), "incorrect initialized");
         assertEq(actualAccess.value, expectedAccess.value, "incorrect value");
         assertEq(actualAccess.data, expectedAccess.data, "incorrect data");
+    }
+
+    function toUint(Vm.AccountAccessKind kind) internal pure returns (uint256 value) {
+        assembly {
+            value := and(kind, 0xff)
+        }
     }
 
     function toUint(bool a) internal pure returns (uint256) {

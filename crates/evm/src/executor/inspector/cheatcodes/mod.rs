@@ -10,7 +10,7 @@ use crate::{
         backend::DatabaseExt, inspector::cheatcodes::env::RecordedLogs, CHEATCODE_ADDRESS,
         HARDHAT_CONSOLE_ADDRESS,
     },
-    utils::{b160_to_h160, b256_to_h256, h160_to_b160, ru256_to_u256},
+    utils::{b160_to_h160, b256_to_h256, h160_to_b160, ru256_to_h160, ru256_to_u256},
 };
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
@@ -25,7 +25,7 @@ use foundry_utils::error::SolError;
 use itertools::Itertools;
 use revm::{
     interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
-    primitives::{ruint::Uint, BlockEnv, Bytecode, TransactTo, B160, B256, KECCAK_EMPTY},
+    primitives::{ruint::Uint, BlockEnv, TransactTo, B160, B256},
     EVMData, Inspector,
 };
 use serde_json::Value;
@@ -40,7 +40,9 @@ use std::{
 
 /// Cheatcodes related to the execution environment.
 mod env;
-pub use env::{Log, Prank, RecordAccess, RecordedAccountAccess, RecordedStorageAccess};
+pub use env::{
+    AccountAccessKind, Log, Prank, RecordAccess, RecordedAccountAccess, RecordedStorageAccess,
+};
 /// Assertion helpers (such as `expectEmit`)
 mod expect;
 pub use expect::{
@@ -411,6 +413,45 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         .push(key.into());
                 }
                 _ => (),
+            }
+        }
+
+        // Record account access via SELFDESTRUCT if `recordAccountAccesses` has been called
+        if let Some(account_accesses) = &mut self.recorded_account_accesses {
+            if interpreter.current_opcode() == opcode::SELFDESTRUCT {
+                let target = ru256_to_h160(try_or_continue!(interpreter.stack().peek(0)));
+                // load balance of this account
+                let balance: Uint<256, 4>;
+                if let Ok((account, _)) =
+                    data.journaled_state.load_account(interpreter.contract().address, data.db)
+                {
+                    balance = account.info.balance;
+                } else {
+                    balance = Uint::ZERO;
+                }
+                // get initialized status of target account
+                let initialized: bool;
+                if let Ok((account, _)) = data.journaled_state.load_account(target.into(), data.db)
+                {
+                    initialized = account.info.exists();
+                } else {
+                    initialized = false;
+                }
+                // register access for the target account
+                let access = RecordedAccountAccess {
+                    account: target,
+                    kind: AccountAccessKind::SelfDestruct,
+                    initialized,
+                    value: balance.into(),
+                    data: Bytes::new(),
+                    reverted: false,
+                };
+                // append access
+                if let Some(last) = &mut account_accesses.last_mut() {
+                    last.push(access);
+                } else {
+                    account_accesses.push(vec![access]);
+                }
             }
         }
 
@@ -818,11 +859,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
                 let initialized;
                 if let Ok((acc, _)) = data.journaled_state.load_account(call.contract, data.db) {
-                    let info = &acc.info;
-                    initialized = !(info.balance == Uint::ZERO &&
-                        info.nonce == 0 &&
-                        info.code_hash == KECCAK_EMPTY &&
-                        info.code.as_ref().unwrap_or(&Bytecode::default()).is_empty());
+                    initialized = acc.info.exists();
                 } else {
                     initialized = false;
                 }
@@ -833,7 +870,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // as "warm" if the call from which they were accessed is reverted
                 recorded_account_accesses.push(vec![RecordedAccountAccess {
                     account: call.contract.into(),
-                    is_create: false,
+                    kind: AccountAccessKind::Call,
                     initialized,
                     value: call.transfer.value.into(),
                     data: call.input.clone().into(),
@@ -1204,8 +1241,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             // subsequent account accesses
             recorded_account_accesses.push(vec![RecordedAccountAccess {
                 account: address,
-                is_create: true,
-                initialized: false,
+                kind: AccountAccessKind::Create,
+                initialized: true,
                 value: call.value.into(),
                 data: call.init_code.clone().into(),
                 reverted: false,

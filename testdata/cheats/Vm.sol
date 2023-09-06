@@ -11,6 +11,12 @@ interface Vm {
         RecurrentPrank
     }
 
+    enum AccountAccessKind {
+        Call,
+        Create,
+        SelfDestruct
+    }
+
     // This allows us to getRecordedLogs()
     struct Log {
         bytes32[] topics;
@@ -73,7 +79,7 @@ interface Vm {
 
     struct AccountAccess {
         address account;
-        bool isCreate;
+        AccountAccessKind kind;
         bool initialized;
         uint256 value;
         bytes data;
