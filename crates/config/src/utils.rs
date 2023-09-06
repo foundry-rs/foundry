@@ -2,7 +2,10 @@
 
 use crate::Config;
 use ethers_core::types::{serde_helpers::Numeric, U256};
-use ethers_solc::{remappings::{Remapping, RemappingError}, EvmVersion};
+use ethers_solc::{
+    remappings::{Remapping, RemappingError},
+    EvmVersion,
+};
 use figment::value::Value;
 use revm_primitives::SpecId;
 use serde::{de::Error, Deserialize, Deserializer};
