@@ -878,14 +878,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             )
         }
 
-        if data.journaled_state.depth() == 0 && self.skip {
-            return (
-                InstructionResult::Revert,
-                remaining_gas,
-                Error::custom_bytes(MAGIC_SKIP_BYTES).encode_error().0,
-            )
-        }
-
         // Clean up pranks
         if let Some(prank) = &self.prank {
             if data.journaled_state.depth() == prank.depth {
