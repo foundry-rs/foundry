@@ -5134,7 +5134,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "3.3.0"
-source = "git+https://github.com/danipopes/revm/?branch=db-default-2#cc7fd5e9f825798f651561f05a91ff0038b531d4"
+source = "git+https://github.com/danipopes/revm/?branch=db-default-2#06ae1c8ca62abc8dddba5036a816bb624f1c549e"
 dependencies = [
  "auto_impl",
  "rayon",
@@ -5147,7 +5147,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "1.1.2"
-source = "git+https://github.com/danipopes/revm/?branch=db-default-2#cc7fd5e9f825798f651561f05a91ff0038b531d4"
+source = "git+https://github.com/danipopes/revm/?branch=db-default-2#06ae1c8ca62abc8dddba5036a816bb624f1c549e"
 dependencies = [
  "derive_more",
  "enumn",
@@ -5159,7 +5159,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "2.0.3"
-source = "git+https://github.com/danipopes/revm/?branch=db-default-2#cc7fd5e9f825798f651561f05a91ff0038b531d4"
+source = "git+https://github.com/danipopes/revm/?branch=db-default-2#06ae1c8ca62abc8dddba5036a816bb624f1c549e"
 dependencies = [
  "k256",
  "num",
@@ -5174,7 +5174,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "1.1.2"
-source = "git+https://github.com/danipopes/revm/?branch=db-default-2#cc7fd5e9f825798f651561f05a91ff0038b531d4"
+source = "git+https://github.com/danipopes/revm/?branch=db-default-2#06ae1c8ca62abc8dddba5036a816bb624f1c549e"
 dependencies = [
  "auto_impl",
  "bitflags 2.4.0",

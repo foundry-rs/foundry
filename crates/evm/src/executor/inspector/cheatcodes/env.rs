@@ -547,7 +547,7 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::ChainId(inner) => {
             ensure!(inner.0 <= U256::from(u64::MAX), "Chain ID must be less than 2^64 - 1");
-            data.env.cfg.chain_id = inner.0.into();
+            data.env.cfg.chain_id = inner.0.as_u64();
             Bytes::new()
         }
         HEVMCalls::TxGasPrice(inner) => {
