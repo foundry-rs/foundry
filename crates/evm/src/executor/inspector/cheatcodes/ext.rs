@@ -95,9 +95,9 @@ fn ffi(state: &Cheatcodes, args: &[String]) -> Result {
 #[serde(untagged)]
 #[allow(clippy::large_enum_variant)]
 enum ArtifactBytecode {
-    Forge(CompactContractBytecode),
     Hardhat(HardhatArtifact),
     Solc(JsonAbi),
+    Forge(CompactContractBytecode),
     Huff(HuffArtifact),
 }
 
@@ -113,50 +113,61 @@ impl ArtifactBytecode {
         }
     }
 
-    fn into_deployed_bytecode(self, immutables: &[[u8; 32]]) -> Option<Bytes> {
+    fn into_deployed_bytecode(self) -> Option<Bytes> {
         match self {
-            ArtifactBytecode::Forge(inner) => {
-                inner.deployed_bytecode.and_then(|bytecode| {
-                    bytecode.bytecode.and_then(|bytecode| bytecode.object.into_bytes()).and_then(
-                        |bytes| {
-                            // Fill the immutable references if any.
-                            if !bytecode.immutable_references.is_empty() {
-                                // Not enough / too much immutable values have been given.
-                                // TODO: Should return an Error instead.
-                                if bytecode.immutable_references.keys().len() != immutables.len() {
-                                    return None
-                                }
-
-                                // Convert the `Bytes` to raw bytes to patch them on the fly.
-                                let mut bytes = bytes.into_iter().collect::<Vec<_>>();
-
-                                // Loop on the immutable references, and patch the bytecode at their
-                                // associated offsets.
-                                // NOTE: It is assume iterating over `bytecode.immutable_references`
-                                // yield the items ordered by their key (AST id) in ascending order.
-                                // NOTE: `immutables` must be sorted in order of increasing AST id.
-                                for ((_, offsets), immutable_value) in
-                                    bytecode.immutable_references.iter().zip(immutables)
-                                {
-                                    for offset in offsets {
-                                        for i in 0..32_usize {
-                                            bytes[offset.start as usize + i] = immutable_value[i];
-                                        }
-                                    }
-                                }
-
-                                Some(Bytes::from_iter(bytes))
-                            } else {
-                                Some(bytes)
-                            }
-                        },
-                    )
-                })
-            }
             ArtifactBytecode::Hardhat(inner) => Some(inner.deployed_bytecode),
+            ArtifactBytecode::Forge(inner) => inner.deployed_bytecode.and_then(|bytecode| {
+                bytecode.bytecode.and_then(|bytecode| bytecode.object.into_bytes())
+            }),
             ArtifactBytecode::Solc(inner) => inner.deployed_bytecode(),
             ArtifactBytecode::Huff(inner) => Some(inner.runtime),
         }
+    }
+
+    fn into_deployed_bytecode_with_immutables(self, immutables: &[[u8; 32]]) -> Option<Bytes> {
+        // On the fly patching of the immutable variables in the deployed bytecode is only implemented for
+        // the `Forge` variant because that's the only one to expose an `immutable_references` field that is
+        // needed to know at which offsets the immutable values must be set in the deployed bytecode.
+        if let ArtifactBytecode::Forge(inner) = self {
+            return inner.deployed_bytecode.and_then(|bytecode| {
+                bytecode.bytecode.and_then(|bytecode| bytecode.object.into_bytes()).and_then(
+                    |bytes| {
+                        // Fill the immutable references if any.
+                        if !bytecode.immutable_references.is_empty() {
+                            // Not enough / too much immutable values have been given.
+                            // TODO: Should return an Error instead.
+                            if bytecode.immutable_references.keys().len() != immutables.len() {
+                                return None;
+                            }
+
+                            // Convert the `Bytes` to raw bytes to patch them on the fly.
+                            let mut bytes = bytes.into_iter().collect::<Vec<_>>();
+
+                            // Loop on the immutable references, and patch the bytecode at their
+                            // associated offsets.
+                            // NOTE: It is assume iterating over `bytecode.immutable_references`
+                            // yield the items ordered by their key (AST id) in ascending order.
+                            // NOTE: `immutables` must be sorted in order of increasing AST id.
+                            for ((_, offsets), immutable_value) in
+                                bytecode.immutable_references.iter().zip(immutables)
+                            {
+                                for offset in offsets {
+                                    for i in 0..32_usize {
+                                        bytes[offset.start as usize + i] = immutable_value[i];
+                                    }
+                                }
+                            }
+
+                            Some(Bytes::from_iter(bytes))
+                        } else {
+                            Some(bytes)
+                        }
+                    },
+                )
+            });
+        }
+
+        None
     }
 }
 
@@ -184,11 +195,18 @@ fn get_code(state: &Cheatcodes, path: &str) -> Result {
     }
 }
 
-/// Returns the _deployed_ bytecode (`bytecode`) of the matching artifact
+/// Returns the _deployed_ bytecode (`bytecode`) of the matching artifact, potentially patching it with the
+/// given immutable values if any.
 fn get_deployed_code(state: &Cheatcodes, path: &str, immutables: &[[u8; 32]]) -> Result {
     let bytecode = read_bytecode(state, path)?;
 
-    if let Some(bin) = bytecode.into_deployed_bytecode(immutables) {
+    let bytes = if immutables.len() > 0 {
+        bytecode.into_deployed_bytecode_with_immutables(immutables)
+    } else {
+        bytecode.into_deployed_bytecode()
+    };
+
+    if let Some(bin) = bytes {
         Ok(bin.encode().into())
     } else {
         Err(fmt_err!("No deployed bytecode for contract. Is it abstract or unlinked?"))
@@ -273,16 +291,16 @@ pub fn value_to_token(value: &Value) -> Result<Token> {
                     let fallback_s = format!("{f}");
 
                     if let Ok(n) = U256::from_dec_str(&s) {
-                        return Ok(Token::Uint(n))
+                        return Ok(Token::Uint(n));
                     }
                     if let Ok(n) = I256::from_dec_str(&s) {
-                        return Ok(Token::Int(n.into_raw()))
+                        return Ok(Token::Int(n.into_raw()));
                     }
                     if let Ok(n) = U256::from_dec_str(&fallback_s) {
-                        return Ok(Token::Uint(n))
+                        return Ok(Token::Uint(n));
                     }
                     if let Ok(n) = I256::from_dec_str(&fallback_s) {
-                        return Ok(Token::Int(n.into_raw()))
+                        return Ok(Token::Int(n.into_raw()));
                     }
                 }
             }
@@ -382,7 +400,7 @@ fn parse_json(json_str: &str, key: &str, coerce: Option<ParamType>) -> Result {
                     util::parse_array(array.iter().map(to_string), &coercion_type)
                 } else {
                     util::parse(&to_string(values[0]), &coercion_type)
-                }
+                };
             }
 
             let res = parse_json_values(values, key)?;
@@ -765,7 +783,7 @@ mod tests {
         assert!(artifact.into_bytecode().is_some());
 
         let artifact: ArtifactBytecode = serde_json::from_str(s).unwrap();
-        assert!(artifact.into_deployed_bytecode(&[]).is_some());
+        assert!(artifact.into_deployed_bytecode().is_some());
     }
 
     #[test]
@@ -774,21 +792,23 @@ mod tests {
         let artifact: ArtifactBytecode = serde_json::from_str(s).unwrap();
         assert!(artifact.into_bytecode().is_some());
 
-        // No immutables provided.
-        let artifact: ArtifactBytecode = serde_json::from_str(s).unwrap();
-        assert!(artifact.into_deployed_bytecode(&[]).is_none());
+        // FIXME: This test fails because `serde_json::from_str(s)` is deserializing the payload into
+        // a `ArtifactBytecode::Solc` instead of `ArtifactBytecode::Forge` and the `into_deployed_bytecode_with_immutables`
+        // method only handle the `ArtifactBytecode::Forge` variant.
 
         // Not all the immutables are provided.
         let artifact: ArtifactBytecode = serde_json::from_str(s).unwrap();
         let immutable1 = vec![1; 32];
-        assert!(artifact.into_deployed_bytecode(&[immutable1.try_into().unwrap()]).is_none());
+        assert!(artifact
+            .into_deployed_bytecode_with_immutables(&[immutable1.try_into().unwrap()])
+            .is_none());
 
         // All the immutables are provided.
         let artifact: ArtifactBytecode = serde_json::from_str(s).unwrap();
         let immutable1 = vec![1; 32];
         let immutable2 = vec![2; 32];
         assert!(artifact
-            .into_deployed_bytecode(&[
+            .into_deployed_bytecode_with_immutables(&[
                 immutable1.try_into().unwrap(),
                 immutable2.try_into().unwrap()
             ])
