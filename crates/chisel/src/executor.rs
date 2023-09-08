@@ -297,7 +297,7 @@ impl SessionSource {
                 )
             })
             .gas_limit(self.config.evm_opts.gas_limit())
-            .spec(foundry_evm::utils::evm_spec(self.config.foundry_config.evm_version))
+            .spec(self.config.foundry_config.evm_spec_id())
             .build(env, backend);
 
         // Create a [ChiselRunner] with a default balance of [U256::MAX] and

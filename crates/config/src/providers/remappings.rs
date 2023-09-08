@@ -163,7 +163,7 @@ impl<'a> RemappingsProvider<'a> {
             {
                 // this is an additional safety check for weird auto-detected remappings
                 if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
-                    println!("- skipping the remapping");
+                    trace!(target: "forge", "- skipping the remapping");
                     continue
                 }
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
