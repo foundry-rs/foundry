@@ -5134,7 +5134,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "3.3.0"
-source = "git+https://github.com/danipopes/revm/?branch=db-default-2#06ae1c8ca62abc8dddba5036a816bb624f1c549e"
+source = "git+https://github.com/bluealloy/revm/?rev=7eacc3a728b8a9cf3c15db609753e5d9f69e08ce#7eacc3a728b8a9cf3c15db609753e5d9f69e08ce"
 dependencies = [
  "auto_impl",
  "rayon",
@@ -5147,7 +5147,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "1.1.2"
-source = "git+https://github.com/danipopes/revm/?branch=db-default-2#06ae1c8ca62abc8dddba5036a816bb624f1c549e"
+source = "git+https://github.com/bluealloy/revm/?rev=7eacc3a728b8a9cf3c15db609753e5d9f69e08ce#7eacc3a728b8a9cf3c15db609753e5d9f69e08ce"
 dependencies = [
  "derive_more",
  "enumn",
@@ -5159,7 +5159,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "2.0.3"
-source = "git+https://github.com/danipopes/revm/?branch=db-default-2#06ae1c8ca62abc8dddba5036a816bb624f1c549e"
+source = "git+https://github.com/bluealloy/revm/?rev=7eacc3a728b8a9cf3c15db609753e5d9f69e08ce#7eacc3a728b8a9cf3c15db609753e5d9f69e08ce"
 dependencies = [
  "k256",
  "num",
@@ -5174,7 +5174,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "1.1.2"
-source = "git+https://github.com/danipopes/revm/?branch=db-default-2#06ae1c8ca62abc8dddba5036a816bb624f1c549e"
+source = "git+https://github.com/bluealloy/revm/?rev=7eacc3a728b8a9cf3c15db609753e5d9f69e08ce#7eacc3a728b8a9cf3c15db609753e5d9f69e08ce"
 dependencies = [
  "auto_impl",
  "bitflags 2.4.0",
