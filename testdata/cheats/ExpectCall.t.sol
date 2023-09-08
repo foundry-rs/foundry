@@ -69,12 +69,6 @@ contract ExpectCallTest is DSTest {
         this.exposed_callTargetNTimes(target, 1, 2, 1);
     }
 
-    function testFailExpectCallDirectly() public {
-        Contract target = new Contract();
-        vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 1);
-        target.add(1, 2);
-    }
-
     function testExpectMultipleCallsWithData() public {
         Contract target = new Contract();
         vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));

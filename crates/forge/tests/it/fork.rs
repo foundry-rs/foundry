@@ -76,6 +76,15 @@ async fn test_launch_fork() {
     TestConfig::with_filter(runner, filter).run().await;
 }
 
+/// Smoke test that forking workings with websockets
+#[tokio::test(flavor = "multi_thread")]
+async fn test_launch_fork_ws() {
+    let rpc_url = foundry_utils::rpc::next_ws_archive_rpc_endpoint();
+    let runner = forked_runner(&rpc_url).await;
+    let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}Launch"));
+    TestConfig::with_filter(runner, filter).run().await;
+}
+
 /// Tests that we can transact transactions in forking mode
 #[tokio::test(flavor = "multi_thread")]
 async fn test_transact_fork() {

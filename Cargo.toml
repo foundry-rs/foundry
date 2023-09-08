@@ -125,6 +125,10 @@ foundry-test-utils = { path = "crates/test-utils" }
 foundry-utils = { path = "crates/utils" }
 ui = { path = "crates/ui" }
 
+## revm
+revm = { version = "3", default-features = false }
+revm-primitives = { version = "1", default-features = false }
+
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
@@ -156,3 +160,4 @@ tikv-jemallocator = "0.5.4"
 
 [patch.crates-io]
 revm = { git = "https://github.com/bluealloy/revm/", rev = "6b55b9c0ab264c000e087c2f54f2d8dc24b869aa" }
+revm-primitives = { git = "https://github.com/bluealloy/revm/", rev = "6b55b9c0ab264c000e087c2f54f2d8dc24b869aa" }

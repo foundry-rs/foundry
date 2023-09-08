@@ -225,8 +225,8 @@ impl SignEthClient {
         // filter for signatures that can be decoded
         Ok(sigs
             .iter()
-            .cloned()
             .filter(|sig| abi_decode(sig, calldata, true, true).is_ok())
+            .cloned()
             .collect::<Vec<String>>())
     }
 

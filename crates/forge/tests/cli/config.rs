@@ -114,6 +114,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         fmt: Default::default(),
         doc: Default::default(),
         fs_permissions: Default::default(),
+        cancun: true,
         __non_exhaustive: (),
         __warnings: vec![],
     };

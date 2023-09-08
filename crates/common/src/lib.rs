@@ -16,6 +16,7 @@ pub mod fmt;
 pub mod fs;
 pub mod glob;
 pub mod provider;
+pub mod runtime_client;
 pub mod selectors;
 pub mod term;
 pub mod traits;
