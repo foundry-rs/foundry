@@ -336,7 +336,7 @@ pub enum Subcommands {
     /// ABI-encode a function with arguments.
     #[clap(name = "calldata", visible_alias = "cd")]
     CalldataEncode {
-        /// The function signature in the form <name>(<types...>)
+        /// The function signature in the format `<name>(<in-types>)(<out-types>)`
         sig: String,
 
         /// The arguments to encode.
@@ -859,6 +859,10 @@ pub enum Subcommands {
         #[clap(value_name = "BYTES")]
         bytes: Option<String>,
     },
+
+    /// Decodes a raw signed EIP 2718 typed transaction
+    #[clap(visible_alias = "dt")]
+    DecodeTransaction { tx: Option<String> },
 }
 
 /// CLI arguments for `cast --to-base`.

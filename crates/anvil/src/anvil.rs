@@ -2,10 +2,6 @@
 use anvil::cmd::NodeArgs;
 use clap::{CommandFactory, Parser, Subcommand};
 
-#[cfg(not(target_env = "msvc"))]
-#[global_allocator]
-static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-
 /// A fast local Ethereum development node.
 #[derive(Debug, Parser)]
 #[clap(name = "anvil", version = anvil::VERSION_MESSAGE, next_display_order = None)]
