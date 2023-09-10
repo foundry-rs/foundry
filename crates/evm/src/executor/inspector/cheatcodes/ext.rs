@@ -341,7 +341,7 @@ fn parse_json(json_str: &str, key: &str, coerce: Option<ParamType>) -> Result {
                     s.retain(|c: char| c != '"');
                     s
                 };
-                trace!(target : "forge::evm", ?values, "parsign values");
+                trace!(target : "forge::evm", ?values, "parsing values");
                 return if let Some(array) = values[0].as_array() {
                     parse::parse_array(array.iter().map(to_string), &coercion_type)
                 } else {
