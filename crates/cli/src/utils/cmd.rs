@@ -12,6 +12,7 @@ use ethers::{
 use eyre::{Result, WrapErr};
 use foundry_common::{cli_warn, fs, TestFunctionExt};
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain as ConfigChain, Config};
+use foundry_debugger::DebuggerArgs;
 use foundry_evm::{
     debug::DebugArena,
     executor::{opts::EvmOpts, DeployResult, EvmError, ExecutionErr, RawCallResult},
@@ -22,7 +23,6 @@ use foundry_evm::{
 };
 use std::{fmt::Write, path::PathBuf, str::FromStr};
 use tracing::trace;
-use ui::DebuggerArgs;
 use yansi::Paint;
 
 /// Given a `Project`'s output, removes the matching ABI, Bytecode and

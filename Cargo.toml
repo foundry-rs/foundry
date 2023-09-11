@@ -132,7 +132,7 @@ foundry-evm = { path = "crates/evm" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 foundry-utils = { path = "crates/utils" }
-ui = { path = "crates/ui" }
+foundry-debugger = { path = "crates/debugger" }
 
 ## revm
 revm = { version = "3", default-features = false }
