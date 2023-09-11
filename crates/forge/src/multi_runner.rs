@@ -1,6 +1,6 @@
 use crate::{result::SuiteResult, ContractRunner, TestFilter, TestOptions};
 use ethers::{
-    abi::Abi,
+    abi::{Abi, Function},
     prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
     solc::{contracts::ArtifactContracts, Artifact, ProjectCompileOutput},
     types::{Address, Bytes, U256},
@@ -19,6 +19,7 @@ use rayon::prelude::*;
 use revm::primitives::SpecId;
 use std::{
     collections::{BTreeMap, HashSet},
+    iter::Iterator,
     path::Path,
     sync::{mpsc::Sender, Arc},
 };
@@ -51,6 +52,8 @@ pub struct MultiContractRunner {
     pub cheats_config: Arc<CheatsConfig>,
     /// Whether to collect coverage info
     pub coverage: bool,
+    /// Whether to collect debug info
+    pub debug: bool,
     /// Settings related to fuzz and/or invariant tests
     pub test_options: TestOptions,
 }
@@ -70,17 +73,31 @@ impl MultiContractRunner {
             .count()
     }
 
-    // Get all tests of matching path and contract
-    pub fn get_tests(&self, filter: &impl TestFilter) -> Vec<String> {
+    /// Get an iterator over all test functions that matches the filter path and contract name
+    fn filtered_tests<'a>(
+        &'a self,
+        filter: &'a impl TestFilter,
+    ) -> impl Iterator<Item = &Function> {
         self.contracts
             .iter()
             .filter(|(id, _)| {
                 filter.matches_path(id.source.to_string_lossy()) &&
                     filter.matches_contract(&id.name)
             })
-            .flat_map(|(_, (abi, _, _))| abi.functions().map(|func| func.name.clone()))
-            .filter(|sig| sig.is_test())
+            .flat_map(|(_, (abi, _, _))| abi.functions())
+    }
+
+    /// Get all test names matching the filter
+    pub fn get_tests(&self, filter: &impl TestFilter) -> Vec<String> {
+        self.filtered_tests(filter)
+            .map(|func| func.name.clone())
+            .filter(|name| name.is_test())
             .collect()
+    }
+
+    /// Returns all test functions matching the filter
+    pub fn get_typed_tests<'a>(&'a self, filter: &'a impl TestFilter) -> Vec<&Function> {
+        self.filtered_tests(filter).filter(|func| func.name.is_test()).collect()
     }
 
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
@@ -143,7 +160,8 @@ impl MultiContractRunner {
                     .inspectors(|stack| {
                         stack
                             .cheatcodes(self.cheats_config.clone())
-                            .trace(self.evm_opts.verbosity >= 3)
+                            .trace(self.evm_opts.verbosity >= 3 || self.debug)
+                            .debug(self.debug)
                             .coverage(self.coverage)
                     })
                     .spec(self.evm_spec)
@@ -193,13 +211,14 @@ impl MultiContractRunner {
             self.sender,
             self.errors.as_ref(),
             libs,
+            self.debug,
         );
         runner.run_tests(filter, test_options, Some(&self.known_contracts))
     }
 }
 
 /// Builder used for instantiating the multi-contract runner
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct MultiContractRunnerBuilder {
     /// The address which will be used to deploy the initial contracts and send all
     /// transactions
@@ -214,6 +233,8 @@ pub struct MultiContractRunnerBuilder {
     pub cheats_config: Option<CheatsConfig>,
     /// Whether or not to collect coverage info
     pub coverage: bool,
+    /// Whether or not to collect debug info
+    pub debug: bool,
     /// Settings related to fuzz and/or invariant tests
     pub test_options: Option<TestOptions>,
 }
@@ -326,6 +347,7 @@ impl MultiContractRunnerBuilder {
             fork: self.fork,
             cheats_config: self.cheats_config.unwrap_or_default().into(),
             coverage: self.coverage,
+            debug: self.debug,
             test_options: self.test_options.unwrap_or_default(),
         })
     }
@@ -369,6 +391,12 @@ impl MultiContractRunnerBuilder {
     #[must_use]
     pub fn set_coverage(mut self, enable: bool) -> Self {
         self.coverage = enable;
+        self
+    }
+
+    #[must_use]
+    pub fn set_debug(mut self, enable: bool) -> Self {
+        self.debug = enable;
         self
     }
 }

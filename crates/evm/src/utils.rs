@@ -118,24 +118,6 @@ pub fn halt_to_instruction_result(halt: Halt) -> InstructionResult {
     }
 }
 
-/// Converts an `EvmVersion` into a `SpecId`.
-#[inline]
-pub fn evm_spec(evm: EvmVersion) -> SpecId {
-    match evm {
-        EvmVersion::Homestead => SpecId::HOMESTEAD,
-        EvmVersion::TangerineWhistle => SpecId::TANGERINE,
-        EvmVersion::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
-        EvmVersion::Byzantium => SpecId::BYZANTIUM,
-        EvmVersion::Constantinople => SpecId::CONSTANTINOPLE,
-        EvmVersion::Petersburg => SpecId::PETERSBURG,
-        EvmVersion::Istanbul => SpecId::ISTANBUL,
-        EvmVersion::Berlin => SpecId::BERLIN,
-        EvmVersion::London => SpecId::LONDON,
-        EvmVersion::Paris => SpecId::MERGE,
-        EvmVersion::Shanghai => SpecId::SHANGHAI,
-    }
-}
-
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///
 /// This checks for:
@@ -144,7 +126,7 @@ pub fn apply_chain_and_block_specific_env_changes<T>(
     env: &mut revm::primitives::Env,
     block: &Block<T>,
 ) {
-    if let Ok(chain) = Chain::try_from(ru256_to_u256(env.cfg.chain_id)) {
+    if let Ok(chain) = Chain::try_from(env.cfg.chain_id) {
         let block_number = block.number.unwrap_or_default();
 
         match chain {

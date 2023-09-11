@@ -16,7 +16,7 @@ use revm::{
     interpreter::{
         return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, Stack,
     },
-    primitives::{Address as rAddress, BlockEnv, Bytes, Env, B256},
+    primitives::{Address as rAddress, U256 as rU256, BlockEnv, Bytes, Env, B256},
     EVMData, Inspector,
 };
 use std::{collections::BTreeMap, sync::Arc};

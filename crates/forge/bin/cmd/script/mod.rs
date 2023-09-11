@@ -1,7 +1,4 @@
-use self::{
-    build::{filter_sources_and_artifacts, BuildOutput},
-    runner::ScriptRunner,
-};
+use self::{build::BuildOutput, runner::ScriptRunner};
 use super::{build::BuildArgs, retry::RetryArgs};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
@@ -57,12 +54,7 @@ use foundry_evm::{
 };
 use futures::future;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
-    path::PathBuf,
-};
-use tracing::log::trace;
-use ui::{TUIExitReason, Tui, Ui};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use yansi::Paint;
 
 mod artifacts;
@@ -450,49 +442,6 @@ impl ScriptArgs {
             .collect()
     }
 
-    fn run_debugger(
-        &self,
-        decoder: &CallTraceDecoder,
-        sources: BTreeMap<u32, String>,
-        result: ScriptResult,
-        project: Project,
-        highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
-        breakpoints: Breakpoints,
-    ) -> Result<()> {
-        trace!(target: "script", "debugging script");
-
-        let (sources, artifacts) = filter_sources_and_artifacts(
-            &self.path,
-            sources,
-            highlevel_known_contracts.clone(),
-            project,
-        )?;
-        let flattened = result
-            .debug
-            .and_then(|arena| arena.last().map(|arena| arena.flatten(0)))
-            .expect("We should have collected debug information");
-        let identified_contracts = decoder
-            .contracts
-            .iter()
-            .map(|(addr, identifier)| (*addr, get_contract_name(identifier).to_string()))
-            .collect();
-
-        let tui = Tui::new(
-            flattened,
-            0,
-            identified_contracts,
-            artifacts,
-            highlevel_known_contracts
-                .into_iter()
-                .map(|(id, _)| (id.name, sources.clone()))
-                .collect(),
-            breakpoints,
-        )?;
-        match tui.start().expect("Failed to start tui") {
-            TUIExitReason::CharExit => Ok(()),
-        }
-    }
-
     /// Returns the Function and calldata based on the signature
     ///
     /// If the `sig` is a valid human-readable function we find the corresponding function in the
@@ -657,6 +606,7 @@ impl Provider for ScriptArgs {
     }
 }
 
+#[derive(Default)]
 pub struct ScriptResult {
     pub success: bool,
     pub logs: Vec<Log>,
@@ -668,6 +618,7 @@ pub struct ScriptResult {
     pub returned: bytes::Bytes,
     pub address: Option<Address>,
     pub script_wallets: Vec<LocalWallet>,
+    pub breakpoints: Breakpoints,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -698,6 +649,8 @@ pub struct ScriptConfig {
     pub total_rpcs: HashSet<RpcUrl>,
     /// If true, one of the transactions did not have a rpc
     pub missing_rpc: bool,
+    /// Should return some debug information
+    pub debug: bool,
 }
 
 impl ScriptConfig {

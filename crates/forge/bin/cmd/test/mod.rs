@@ -1,4 +1,4 @@
-use super::{debug::DebugArgs, install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
+use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use clap::Parser;
 use ethers::types::U256;
 use eyre::Result;
@@ -6,7 +6,7 @@ use forge::{
     decode::decode_console_logs,
     executor::inspector::CheatsConfig,
     gas_report::GasReport,
-    result::{SuiteResult, TestKind, TestResult, TestStatus},
+    result::{SuiteResult, TestResult, TestStatus},
     trace::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
         CallTraceDecoderBuilder, TraceKind,
@@ -18,7 +18,8 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
-    compile::{self, ProjectCompiler},
+    compact_to_contract,
+    compile::{self, ContractSources, ProjectCompiler},
     evm::EvmArgs,
     get_contract_name, get_file_name, shell,
 };
@@ -30,10 +31,11 @@ use foundry_config::{
     },
     get_available_profiles, Config,
 };
-use foundry_evm::{fuzz::CounterExample, utils::evm_spec};
+use foundry_evm::fuzz::CounterExample;
 use regex::Regex;
-use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, time::Duration};
+use std::{collections::BTreeMap, fs, sync::mpsc::channel, time::Duration};
 use tracing::trace;
+use ui::DebuggerArgs;
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 
@@ -177,66 +179,167 @@ impl TestArgs {
         let env = evm_opts.evm_env().await?;
 
         // Prepare the test builder
-        let evm_spec = evm_spec(config.evm_version);
+        let should_debug = self.debug.is_some();
 
-        let mut runner = MultiContractRunnerBuilder::default()
+        let mut runner_builder = MultiContractRunnerBuilder::default()
+            .set_debug(should_debug)
             .initial_balance(evm_opts.initial_balance)
-            .evm_spec(evm_spec)
+            .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
-            .with_test_options(test_options.clone())
-            .build(project_root, output, env, evm_opts)?;
+            .with_test_options(test_options.clone());
 
-        if self.debug.is_some() {
-            filter.args_mut().test_pattern = self.debug;
+        let mut runner = runner_builder.clone().build(
+            project_root,
+            output.clone(),
+            env.clone(),
+            evm_opts.clone(),
+        )?;
 
-            match runner.count_filtered_tests(&filter) {
-                1 => {
-                    // Run the test
-                    let results = runner.test(&filter, None, test_options).await;
-
-                    // Get the result of the single test
-                    let (id, sig, test_kind, counterexample, breakpoints) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
-                        let (sig, result) = test_results.iter().next().unwrap();
-
-                        (id.clone(), sig.clone(), result.kind.clone(), result.counterexample.clone(), result.breakpoints.clone())
-                    }).next().unwrap();
-
-                    // Build debugger args if this is a fuzz test
-                    let sig = match test_kind {
-                        TestKind::Fuzz { first_case, .. } => {
-                            if let Some(CounterExample::Single(counterexample)) = counterexample {
-                                counterexample.calldata.to_string()
-                            } else {
-                                first_case.calldata.to_string()
-                            }
-                        },
-                        _ => sig,
-                    };
-
-                    // Run the debugger
-                    let mut opts = self.opts.clone();
-                    opts.silent = true;
-                    let debugger = DebugArgs {
-                        path: PathBuf::from(runner.source_paths.get(&id).unwrap()),
-                        target_contract: Some(get_contract_name(&id).to_string()),
-                        sig,
-                        args: Vec::new(),
-                        debug: true,
-                        opts,
-                        evm_opts: self.evm_opts,
-                    };
-                    debugger.debug(breakpoints).await?;
-
-                    Ok(TestOutcome::new(results, self.allow_failure))
-                }
-                n =>
-                    Err(
+        if should_debug {
+            filter.args_mut().test_pattern = self.debug.clone();
+            let n = runner.count_filtered_tests(&filter);
+            if n != 1 {
+                return Err(
                         eyre::eyre!("{n} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
                         \n
-                        Use --match-contract and --match-path to further limit the search."))
+                        Use --match-contract and --match-path to further limit the search."));
             }
+            let test_funcs = runner.get_typed_tests(&filter);
+            // if we debug a fuzz test, we should not collect data on the first run
+            if !test_funcs.get(0).unwrap().inputs.is_empty() {
+                runner_builder = runner_builder.set_debug(false);
+                runner = runner_builder.clone().build(
+                    project_root,
+                    output.clone(),
+                    env.clone(),
+                    evm_opts.clone(),
+                )?;
+            }
+        }
+
+        let known_contracts = runner.known_contracts.clone();
+        let mut local_identifier = LocalTraceIdentifier::new(&known_contracts);
+        let remote_chain_id = runner.evm_opts.get_remote_chain_id();
+
+        let outcome = self
+            .run_tests(runner, config.clone(), verbosity, filter.clone(), test_options.clone())
+            .await?;
+        let tests = outcome.clone().into_tests();
+
+        let mut decoded_traces = Vec::new();
+        let mut decoders = Vec::new();
+        for test in tests {
+            let mut result = test.result;
+            // Identify addresses in each trace
+            let mut builder = CallTraceDecoderBuilder::new()
+                .with_labels(result.labeled_addresses.clone())
+                .with_events(local_identifier.events().cloned())
+                .with_verbosity(verbosity);
+
+            // Signatures are of no value for gas reports
+            if !self.gas_report {
+                let sig_identifier =
+                    SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
+                builder = builder.with_signature_identifier(sig_identifier.clone());
+            }
+
+            let mut decoder = builder.build();
+
+            if !result.traces.is_empty() {
+                // Set up identifiers
+                // Do not re-query etherscan for contracts that you've already queried today.
+                let mut etherscan_identifier = EtherscanIdentifier::new(&config, remote_chain_id)?;
+
+                // Decode the traces
+                for (kind, trace) in &mut result.traces {
+                    decoder.identify(trace, &mut local_identifier);
+                    decoder.identify(trace, &mut etherscan_identifier);
+
+                    let should_include = match kind {
+                        // At verbosity level 3, we only display traces for failed tests
+                        // At verbosity level 4, we also display the setup trace for failed
+                        // tests At verbosity level 5, we display
+                        // all traces for all tests
+                        TraceKind::Setup => {
+                            (verbosity >= 5) ||
+                                (verbosity == 4 && result.status == TestStatus::Failure)
+                        }
+                        TraceKind::Execution => {
+                            verbosity > 3 ||
+                                (verbosity == 3 && result.status == TestStatus::Failure)
+                        }
+                        _ => false,
+                    };
+
+                    // We decode the trace if we either need to build a gas report or we need
+                    // to print it
+                    if should_include || self.gas_report {
+                        decoder.decode(trace).await;
+                    }
+
+                    if should_include {
+                        decoded_traces.push(trace.to_string());
+                    }
+                }
+            }
+
+            decoders.push(decoder);
+        }
+
+        if should_debug {
+            let mut sources: ContractSources = Default::default();
+            for (id, artifact) in output.into_artifacts() {
+                // Sources are only required for the debugger, but it *might* mean that there's
+                // something wrong with the build and/or artifacts.
+                if let Some(source) = artifact.source_file() {
+                    let abs_path = source
+                        .ast
+                        .ok_or(eyre::eyre!("Source from artifact has no AST."))?
+                        .absolute_path;
+                    let source_code = fs::read_to_string(abs_path)?;
+                    let contract = artifact.clone().into_contract_bytecode();
+                    let source_contract = compact_to_contract(contract)?;
+                    sources
+                        .0
+                        .entry(id.clone().name)
+                        .or_default()
+                        .insert(source.id, (source_code, source_contract));
+                }
+            }
+
+            let test = outcome.clone().into_tests().next().unwrap();
+            let result = test.result;
+
+            // Run the debugger
+            let debugger = DebuggerArgs {
+                debug: result.debug.map_or(vec![], |debug| vec![debug]),
+                decoder: decoders.first().unwrap(),
+                sources,
+                breakpoints: result.breakpoints,
+            };
+            debugger.run()?;
+        }
+
+        Ok(outcome)
+    }
+
+    /// Run all tests that matches the filter predicate from a test runner
+    pub async fn run_tests(
+        &self,
+        mut runner: MultiContractRunner,
+        config: Config,
+        verbosity: u8,
+        mut filter: ProjectPathsAwareFilter,
+        test_options: TestOptions,
+    ) -> eyre::Result<TestOutcome> {
+        if self.debug.is_some() {
+            filter.args_mut().test_pattern = self.debug.clone();
+            // Run the test
+            let results = runner.test(&filter, None, test_options).await;
+
+            Ok(TestOutcome::new(results, self.allow_failure))
         } else if self.list {
             list(runner, filter, self.json)
         } else {
@@ -329,6 +432,7 @@ impl Test {
 }
 
 /// Represents the bundled results of all tests
+#[derive(Clone)]
 pub struct TestOutcome {
     /// Whether failures are allowed
     pub allow_failure: bool,

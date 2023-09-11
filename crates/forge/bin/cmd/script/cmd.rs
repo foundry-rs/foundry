@@ -8,13 +8,14 @@ use foundry_cli::utils::LoadConfig;
 use foundry_common::{contracts::flatten_contracts, try_get_http_provider};
 use std::sync::Arc;
 use tracing::trace;
+use ui::DebuggerArgs;
 
 /// Helper alias type for the collection of data changed due to the new sender.
 type NewSenderChanges = (CallTraceDecoder, Libraries, ArtifactContracts<ContractBytecodeSome>);
 
 impl ScriptArgs {
     /// Executes the script
-    pub async fn run_script(mut self, breakpoints: Breakpoints) -> Result<()> {
+    pub async fn run_script(mut self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
         let (config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
@@ -23,6 +24,7 @@ impl ScriptArgs {
             sender_nonce: U256::one(),
             config,
             evm_opts,
+            debug: self.debug,
             ..Default::default()
         };
 
@@ -83,14 +85,13 @@ impl ScriptArgs {
         let mut decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
 
         if self.debug {
-            return self.run_debugger(
-                &decoder,
+            let debugger = DebuggerArgs {
+                debug: result.debug.clone().unwrap_or_default(),
+                decoder: &decoder,
                 sources,
-                result,
-                project,
-                highlevel_known_contracts,
-                breakpoints,
-            )
+                breakpoints: result.breakpoints.clone(),
+            };
+            debugger.run()?;
         }
 
         if let Some((new_traces, updated_libraries, updated_contracts)) = self
