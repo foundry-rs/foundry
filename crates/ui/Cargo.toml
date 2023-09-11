@@ -17,5 +17,6 @@ ethers.workspace = true
 
 crossterm = "0.26"
 eyre = "0.6"
+tracing = "0.1"
 revm = { workspace = true, features = ["std", "serde"] }
 ratatui = { version = "0.22.0", default-features = false, features = ["crossterm"]}

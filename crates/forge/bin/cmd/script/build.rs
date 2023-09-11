@@ -1,8 +1,7 @@
 use super::*;
 use ethers::{
     prelude::{
-        artifacts::Libraries, cache::SolFilesCache, ArtifactId, Graph, Project,
-        ProjectCompileOutput,
+        artifacts::Libraries, cache::SolFilesCache, ArtifactId, Project, ProjectCompileOutput,
     },
     solc::{
         artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
@@ -13,7 +12,10 @@ use ethers::{
 };
 use eyre::{Context, ContextCompat, Result};
 use foundry_cli::utils::get_cached_entry_by_name;
-use foundry_common::compile;
+use foundry_common::{
+    compact_to_contract,
+    compile::{self, ContractSources},
+};
 use foundry_utils::{PostLinkInput, ResolvedDependency};
 use std::{collections::BTreeMap, fs, str::FromStr};
 use tracing::{trace, warn};
@@ -31,7 +33,7 @@ impl ScriptArgs {
         let (project, output) = self.get_project_and_output(script_config)?;
         let output = output.with_stripped_file_prefixes(project.root());
 
-        let mut sources: BTreeMap<u32, String> = BTreeMap::new();
+        let mut sources: ContractSources = Default::default();
 
         let contracts = output
             .into_artifacts()
@@ -39,13 +41,18 @@ impl ScriptArgs {
                 // Sources are only required for the debugger, but it *might* mean that there's
                 // something wrong with the build and/or artifacts.
                 if let Some(source) = artifact.source_file() {
-                    sources.insert(
-                        source.id,
-                        source
-                            .ast
-                            .ok_or(eyre::eyre!("Source from artifact has no AST."))?
-                            .absolute_path,
-                    );
+                    let abs_path = source
+                        .ast
+                        .ok_or(eyre::eyre!("Source from artifact has no AST."))?
+                        .absolute_path;
+                    let source_code = fs::read_to_string(abs_path)?;
+                    let contract = artifact.clone().into_contract_bytecode();
+                    let source_contract = compact_to_contract(contract)?;
+                    sources
+                        .0
+                        .entry(id.clone().name)
+                        .or_default()
+                        .insert(source.id, (source_code, source_contract));
                 } else {
                     warn!("source not found for artifact={:?}", id);
                 }
@@ -195,7 +202,7 @@ impl ScriptArgs {
             known_contracts: contracts,
             highlevel_known_contracts: ArtifactContracts(highlevel_known_contracts),
             predeploy_libraries,
-            sources: BTreeMap::new(),
+            sources: Default::default(),
             project,
             libraries: new_libraries,
         })
@@ -261,74 +268,6 @@ impl ScriptArgs {
     }
 }
 
-/// Resolve the import tree of our target path, and get only the artifacts and
-/// sources we need. If it's a standalone script, don't filter anything out.
-pub fn filter_sources_and_artifacts(
-    target: &str,
-    sources: BTreeMap<u32, String>,
-    highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
-    project: Project,
-) -> Result<(BTreeMap<u32, String>, HashMap<String, ContractBytecodeSome>)> {
-    // Find all imports
-    let graph = Graph::resolve(&project.paths)?;
-    let target_path = project.root().join(target);
-    let mut target_tree = BTreeMap::new();
-    let mut is_standalone = false;
-
-    if let Some(target_index) = graph.files().get(&target_path) {
-        target_tree.extend(
-            graph
-                .all_imported_nodes(*target_index)
-                .map(|index| graph.node(index).unpack())
-                .collect::<BTreeMap<_, _>>(),
-        );
-
-        // Add our target into the tree as well.
-        let (target_path, target_source) = graph.node(*target_index).unpack();
-        target_tree.insert(target_path, target_source);
-    } else {
-        is_standalone = true;
-    }
-
-    let sources = sources
-        .into_iter()
-        .filter_map(|(id, path)| {
-            let mut resolved = project
-                .paths
-                .resolve_library_import(project.root(), &PathBuf::from(&path))
-                .unwrap_or_else(|| PathBuf::from(&path));
-
-            if !resolved.is_absolute() {
-                resolved = project.root().join(&resolved);
-            }
-
-            if !is_standalone {
-                target_tree.get(&resolved).map(|source| (id, source.content.as_str().to_string()))
-            } else {
-                Some((
-                    id,
-                    fs::read_to_string(&resolved).unwrap_or_else(|_| {
-                        panic!("Something went wrong reading the source file: {path:?}")
-                    }),
-                ))
-            }
-        })
-        .collect();
-
-    let artifacts = highlevel_known_contracts
-        .into_iter()
-        .filter_map(|(id, artifact)| {
-            if !is_standalone {
-                target_tree.get(&id.source).map(|_| (id.name, artifact))
-            } else {
-                Some((id.name, artifact))
-            }
-        })
-        .collect();
-
-    Ok((sources, artifacts))
-}
-
 struct ExtraLinkingInfo<'a> {
     no_target_name: bool,
     target_fname: String,
@@ -346,5 +285,5 @@ pub struct BuildOutput {
     pub highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     pub libraries: Libraries,
     pub predeploy_libraries: Vec<ethers::types::Bytes>,
-    pub sources: BTreeMap<u32, String>,
+    pub sources: ContractSources,
 }

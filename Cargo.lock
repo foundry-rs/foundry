@@ -6844,6 +6844,7 @@ dependencies = [
  "foundry-evm",
  "ratatui",
  "revm",
+ "tracing",
 ]
 
 [[package]]
