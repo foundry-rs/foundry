@@ -53,9 +53,10 @@ codegen-units = 1
 # Like release, but with full debug symbols and with stack unwinds. Useful for e.g. `perf`.
 [profile.debug-fast]
 inherits = "release"
-debug = true
+debug = "full"
 strip = "none"
 panic = "unwind"
+incremental = false
 
 [profile.release.package]
 # Optimize all non-workspace packages for speed
