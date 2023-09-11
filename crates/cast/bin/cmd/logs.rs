@@ -101,15 +101,10 @@ impl LogsArgs {
         }
 
         let mut stdout = io::stdout();
-        cast.subscribe(filter, &mut stdout, json, ctrl_c_future()).await?;
+        cast.subscribe(filter, &mut stdout, json).await?;
 
         Ok(())
     }
-}
-
-async fn ctrl_c_future() -> Result<()> {
-    tokio::signal::ctrl_c().await?;
-    Ok(())
 }
 
 /// Builds a Filter by first trying to parse the `sig_or_topic` as an event signature. If

@@ -18,7 +18,7 @@ use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, Result};
 use foundry_common::{abi::encode_args, fmt::*, TransactionReceiptWithRevertReason};
 pub use foundry_evm::*;
-use futures::{future::Either, pin_mut, Future, FutureExt, StreamExt};
+use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
 pub use rusoto_core::{
     credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
@@ -31,6 +31,7 @@ use std::{
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
 };
+use tokio::signal::ctrl_c;
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
@@ -886,16 +887,14 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn subscribe<F>(
+    pub async fn subscribe(
         &self,
         filter: Filter,
         output: &mut dyn io::Write,
         to_json: bool,
-        cancel: F,
     ) -> Result<()>
     where
         <M as Middleware>::Provider: PubsubClient,
-        F: Future<Output = Result<()>> + Send + 'static,
     {
         // Initialize the subscription stream for logs
         let mut subscription = self.provider.subscribe_logs(&filter).await?;
@@ -915,7 +914,6 @@ where
         }
 
         let mut first = true;
-        pin_mut!(cancel);
 
         loop {
             tokio::select! {
@@ -948,7 +946,7 @@ where
                     }
                 },
                 // Break on cancel signal, to allow for closing JSON bracket
-                _ = &mut cancel => {
+                _ = ctrl_c() => {
                     break;
                 },
                 else => break,
