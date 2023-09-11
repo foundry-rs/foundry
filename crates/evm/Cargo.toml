@@ -66,5 +66,6 @@ walkdir = "2"
 semver = "1"
 
 [dev-dependencies]
+ethers = { workspace = true, features = ["ethers-solc", "rustls"] }
 foundry-utils.workspace = true
 tempfile = "3"

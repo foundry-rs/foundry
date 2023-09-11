@@ -16,7 +16,7 @@ use revm::{
     interpreter::{
         return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, Stack,
     },
-    primitives::{BlockEnv, Env, B160, B256},
+    primitives::{BlockEnv, Env, B160, B256, U256 as rU256},
     EVMData, Inspector,
 };
 use std::{collections::BTreeMap, sync::Arc};
@@ -568,7 +568,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
         (status, address, remaining_gas, retdata)
     }
 
-    fn selfdestruct(&mut self, contract: B160, target: B160) {
+    fn selfdestruct(&mut self, contract: B160, target: B160, value: rU256) {
         call_inspectors!(
             [
                 &mut self.debugger,
@@ -579,7 +579,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.chisel_state
             ],
             |inspector| {
-                Inspector::<DB>::selfdestruct(inspector, contract, target);
+                Inspector::<DB>::selfdestruct(inspector, contract, target, value);
             }
         );
     }
