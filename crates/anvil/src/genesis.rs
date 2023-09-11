@@ -86,7 +86,7 @@ impl Genesis {
     /// Applies all settings to the given `env`
     pub fn apply(&self, env: &mut Env) {
         if let Some(chain_id) = self.chain_id() {
-            env.cfg.chain_id = chain_id;
+            env.cfg.chain_id = rU256::from(chain_id);
         }
         if let Some(timestamp) = self.timestamp {
             env.block.timestamp = rU256::from(timestamp);

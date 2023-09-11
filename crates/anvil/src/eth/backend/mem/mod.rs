@@ -365,7 +365,7 @@ impl Backend {
             // update all settings related to the forked block
             {
                 let mut env = self.env.write();
-                env.cfg.chain_id = fork.chain_id();
+                env.cfg.chain_id = rU256::from(fork.chain_id());
 
                 env.block = BlockEnv {
                     number: rU256::from(fork_block_number),

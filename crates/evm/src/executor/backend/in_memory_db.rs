@@ -94,7 +94,7 @@ pub struct EmptyDBWrapper(EmptyDB);
 impl DatabaseRef for EmptyDBWrapper {
     type Error = DatabaseError;
 
-    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic(&self, _address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         // Note: this will always return `Some(AccountInfo)`, for the reason explained above
         Ok(Some(AccountInfo::default()))
     }
@@ -103,6 +103,10 @@ impl DatabaseRef for EmptyDBWrapper {
         Ok(self.0.code_by_hash(code_hash)?)
     }
     fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        Ok(self.0.storage(address, index)?)
+    }
+
+    fn block_hash(&self, number: U256) -> Result<B256, Self::Error> {
         Ok(self.0.block_hash(number)?)
     }
 }

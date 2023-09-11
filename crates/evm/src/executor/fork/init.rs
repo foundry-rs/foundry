@@ -1,5 +1,5 @@
 use crate::utils::{
-    apply_chain_and_block_specific_env_changes, h160_to_b160, h256_to_b256, u256_to_ru256,
+    apply_chain_and_block_specific_env_changes, h160_to_b160, h256_to_b256, u256_to_ru256, ru256_to_u256,
 };
 use ethers::{
     providers::Middleware,
@@ -59,7 +59,7 @@ where
     };
 
     let mut cfg = CfgEnv::default();
-    cfg.chain_id = override_chain_id.unwrap_or(rpc_chain_id.as_u64());
+    cfg.chain_id = u256_to_ru256(override_chain_id.unwrap_or(rpc_chain_id.as_u64()).into());
     cfg.memory_limit = memory_limit;
     cfg.limit_contract_code_size = Some(usize::MAX);
     // EIP-3607 rejects transactions from senders with deployed code.

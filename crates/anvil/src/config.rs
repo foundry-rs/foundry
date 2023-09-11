@@ -786,7 +786,7 @@ impl NodeConfig {
 
         let mut cfg = CfgEnv::default();
         cfg.spec_id = self.get_hardfork().into();
-        cfg.chain_id = self.get_chain_id();
+        cfg.chain_id = rU256::from(self.get_chain_id());
         cfg.limit_contract_code_size = self.code_size_limit;
         // EIP-3607 rejects transactions from senders with deployed code.
         // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the
@@ -938,7 +938,7 @@ latest block number: {latest_block}"
 
                     // need to update the dev signers and env with the chain id
                     self.set_chain_id(Some(chain_id));
-                    env.cfg.chain_id = chain_id;
+                    env.cfg.chain_id = rU256::from(chain_id);
                     env.tx.chain_id = chain_id.into();
                     chain_id
                 };
