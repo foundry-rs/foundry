@@ -42,12 +42,21 @@ scrypt.opt-level = 3
 # forking
 axum.opt-level = 3
 
+# Optimized release profile
 [profile.release]
 opt-level = "s"
 lto = "fat"
 strip = true
 panic = "abort"
 codegen-units = 1
+
+# Like release, but with full debug symbols and with stack unwinds. Useful for e.g. `perf`.
+[profile.debug-fast]
+inherits = "release"
+debug = "full"
+strip = "none"
+panic = "unwind"
+incremental = false
 
 [profile.release.package]
 # Optimize all non-workspace packages for speed
