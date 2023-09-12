@@ -859,6 +859,10 @@ pub enum Subcommands {
         #[clap(value_name = "BYTES")]
         bytes: Option<String>,
     },
+
+    /// Decodes a raw signed EIP 2718 typed transaction
+    #[clap(visible_alias = "dt")]
+    DecodeTransaction { tx: Option<String> },
 }
 
 /// CLI arguments for `cast --to-base`.

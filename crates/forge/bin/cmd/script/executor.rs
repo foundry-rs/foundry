@@ -20,7 +20,6 @@ use forge::{
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{shell, RpcUrl};
-use foundry_evm::utils::evm_spec;
 use futures::future::join_all;
 use parking_lot::RwLock;
 use std::{collections::VecDeque, sync::Arc};
@@ -73,6 +72,7 @@ impl ScriptArgs {
             result.labeled_addresses.extend(script_result.labeled_addresses);
             result.returned = script_result.returned;
             result.script_wallets.extend(script_result.script_wallets);
+            result.breakpoints = script_result.breakpoints;
 
             match (&mut result.transactions, script_result.transactions) {
                 (Some(txs), Some(new_txs)) => {
@@ -305,7 +305,7 @@ impl ScriptArgs {
         // We need to enable tracing to decode contract names: local or external.
         let mut builder = ExecutorBuilder::new()
             .inspectors(|stack| stack.trace(true))
-            .spec(evm_spec(script_config.config.evm_version))
+            .spec(script_config.config.evm_spec_id())
             .gas_limit(script_config.evm_opts.gas_limit());
 
         if let SimulationStage::Local = stage {

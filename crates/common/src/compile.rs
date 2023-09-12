@@ -1,5 +1,5 @@
 //! Support for compiling [ethers::solc::Project]
-use crate::{glob::GlobMatcher, term, TestFunctionExt};
+use crate::{compact_to_contract, glob::GlobMatcher, term, TestFunctionExt};
 use comfy_table::{presets::ASCII_MARKDOWN, *};
 use ethers_etherscan::contract::Metadata;
 use ethers_solc::{
@@ -11,7 +11,7 @@ use ethers_solc::{
 };
 use eyre::Result;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     convert::Infallible,
     fmt::Display,
     path::{Path, PathBuf},
@@ -170,6 +170,10 @@ impl ProjectCompiler {
         }
     }
 }
+
+/// Map over artifacts contract sources name -> file_id -> (source, contract)
+#[derive(Default, Debug, Clone)]
+pub struct ContractSources(pub HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>);
 
 // https://eips.ethereum.org/EIPS/eip-170
 const CONTRACT_SIZE_LIMIT: usize = 24576;
@@ -398,10 +402,11 @@ pub fn compile_target_with_filter(
     }
 }
 
-/// Creates and compiles a project from an Etherscan source.
+/// Compiles an Etherscan source from metadata by creating a project.
+/// Returns the artifact_id, the file_id, and the bytecode
 pub async fn compile_from_source(
     metadata: &Metadata,
-) -> Result<(ArtifactId, ContractBytecodeSome)> {
+) -> Result<(ArtifactId, u32, ContractBytecodeSome)> {
     let root = tempfile::tempdir()?;
     let root_path = root.path();
     let project = etherscan_project(metadata, root_path)?;
@@ -412,19 +417,18 @@ pub async fn compile_from_source(
         eyre::bail!(project_output.to_string())
     }
 
-    let (artifact_id, contract) = project_output
-        .into_contract_bytecodes()
+    let (artifact_id, file_id, contract) = project_output
+        .into_artifacts()
         .find(|(artifact_id, _)| artifact_id.name == metadata.contract_name)
+        .map(|(aid, art)| {
+            (aid, art.source_file().expect("no source file").id, art.into_contract_bytecode())
+        })
         .expect("there should be a contract with bytecode");
-    let bytecode = ContractBytecodeSome {
-        abi: contract.abi.unwrap(),
-        bytecode: contract.bytecode.unwrap().into(),
-        deployed_bytecode: contract.deployed_bytecode.unwrap().into(),
-    };
+    let bytecode = compact_to_contract(contract)?;
 
     root.close()?;
 
-    Ok((artifact_id, bytecode))
+    Ok((artifact_id, file_id, bytecode))
 }
 
 /// Creates a [Project] from an Etherscan source.

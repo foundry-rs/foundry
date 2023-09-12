@@ -94,7 +94,7 @@ impl EvmOpts {
     /// Returns the `revm::Env` configured with only local settings
     pub fn local_evm_env(&self) -> revm::primitives::Env {
         let mut cfg = CfgEnv::default();
-        cfg.chain_id = rU256::from(self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID));
+        cfg.chain_id = self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID);
         cfg.spec_id = SpecId::MERGE;
         cfg.limit_contract_code_size = self.env.code_size_limit.or(Some(usize::MAX));
         cfg.memory_limit = self.memory_limit;
@@ -138,7 +138,7 @@ impl EvmOpts {
     /// be at `~/.foundry/cache/mainnet/14435000/storage.json`
     pub fn get_fork(&self, config: &Config, env: revm::primitives::Env) -> Option<CreateFork> {
         let url = self.fork_url.clone()?;
-        let enable_caching = config.enable_caching(&url, env.cfg.chain_id.to::<u64>());
+        let enable_caching = config.enable_caching(&url, env.cfg.chain_id);
         Some(CreateFork { url, enable_caching, env, evm_opts: self.clone() })
     }
 

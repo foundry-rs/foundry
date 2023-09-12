@@ -476,7 +476,7 @@ mod tests {
         let s = r#"{
     "meta": {
         "cfg_env": {
-            "chain_id": "0x539",
+            "chain_id": 1337,
             "spec_id": "LATEST",
             "perf_all_precompiles_have_balance": false,
             "disable_coinbase_tip": false,

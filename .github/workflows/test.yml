@@ -152,3 +152,15 @@ jobs:
             - uses: Swatinem/rust-cache@v2
             - name: forge fmt
               run: cargo run --bin forge -- fmt --check testdata/
+
+    feature-checks:
+        name: feature checks
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        steps:
+            - uses: actions/checkout@v3
+            - uses: dtolnay/rust-toolchain@stable
+            - uses: taiki-e/install-action@cargo-hack
+            - uses: Swatinem/rust-cache@v2
+            - name: cargo hack
+              run: cargo hack check
