@@ -164,12 +164,6 @@ impl TestArgs {
         let toml = config.get_config_path();
         let profiles = get_available_profiles(toml)?;
 
-        let test_options: TestOptions = TestOptionsBuilder::default()
-            .fuzz(config.fuzz)
-            .invariant(config.invariant)
-            .profiles(profiles)
-            .build(&output, project_root)?;
-
         // Determine print verbosity and executor verbosity
         let verbosity = evm_opts.verbosity;
         if self.gas_report && evm_opts.verbosity < 3 {
@@ -181,21 +175,21 @@ impl TestArgs {
         // Prepare the test builder
         let should_debug = self.debug.is_some();
 
-        let mut runner_builder = MultiContractRunnerBuilder::default()
+        let test_options: TestOptions = TestOptionsBuilder::default()
+            .fuzz(config.fuzz)
+            .invariant(config.invariant)
+            .profiles(profiles)
+            .build(&output, project_root)?;
+
+        let runner = MultiContractRunnerBuilder::default()
             .set_debug(should_debug)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
-            .with_test_options(test_options.clone());
-
-        let mut runner = runner_builder.clone().build(
-            project_root,
-            output.clone(),
-            env.clone(),
-            evm_opts.clone(),
-        )?;
+            .with_test_options(test_options.clone())
+            .build(project_root, output.clone(), env.clone(), evm_opts.clone())?;
 
         if should_debug {
             filter.args_mut().test_pattern = self.debug.clone();
@@ -205,17 +199,6 @@ impl TestArgs {
                         eyre::eyre!("{n} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
                         \n
                         Use --match-contract and --match-path to further limit the search."));
-            }
-            let test_funcs = runner.get_typed_tests(&filter);
-            // if we debug a fuzz test, we should not collect data on the first run
-            if !test_funcs.get(0).unwrap().inputs.is_empty() {
-                runner_builder = runner_builder.set_debug(false);
-                runner = runner_builder.clone().build(
-                    project_root,
-                    output.clone(),
-                    env.clone(),
-                    evm_opts.clone(),
-                )?;
             }
         }
 

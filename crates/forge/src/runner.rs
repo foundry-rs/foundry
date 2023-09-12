@@ -573,18 +573,11 @@ impl<'a> ContractRunner<'a> {
                 traces,
                 labeled_addresses,
                 kind: TestKind::Standard(0),
-                debug,
-                breakpoints,
                 ..Default::default()
             }
         }
 
-        // if should debug
         if self.debug {
-            let mut debug_executor = self.executor.clone();
-            // turn the debug traces on
-            debug_executor.inspector.enable_debugger(true);
-            debug_executor.inspector.tracing(true);
             let calldata = if let Some(counterexample) = result.counterexample.as_ref() {
                 match counterexample {
                     CounterExample::Single(ce) => ce.calldata.clone(),
@@ -594,13 +587,7 @@ impl<'a> ContractRunner<'a> {
                 result.first_case.calldata.clone()
             };
             // rerun the last relevant test with traces
-            let debug_result = FuzzedExecutor::new(
-                &debug_executor,
-                runner,
-                self.sender,
-                fuzz_config,
-            )
-            .single_fuzz(&state, address, should_fail, calldata);
+            let debug_result = fuzzed_executor.single_fuzz(&state, address, should_fail, calldata);
 
             (debug, breakpoints) = match debug_result {
                 Ok(fuzz_outcome) => match fuzz_outcome {
