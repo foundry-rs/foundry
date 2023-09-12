@@ -59,20 +59,24 @@ pub struct MultiContractRunner {
 }
 
 impl MultiContractRunner {
-    /// Get an iterator over all test functions that matches the filter path and contract name
-    fn filtered_tests<'a>(
-        &'a self,
-        filter: &'a impl TestFilter,
-    ) -> impl Iterator<Item = &Function> {
+    /// Get an iterator over all test contracts that matches the filter path and contract name
+    fn matching_abi<'a>(&'a self, filter: &'a impl TestFilter) -> impl Iterator<Item = &Abi> {
         self.contracts
             .iter()
             .filter(|(id, _)| {
                 filter.matches_path(id.source.to_string_lossy()) &&
                     filter.matches_contract(&id.name)
             })
-            .flat_map(|(_, (abi, _, _))| {
-                abi.functions().filter(|func| filter.matches_test(func.signature()))
-            })
+            .map(|(_, (abi, _, _))| abi)
+    }
+
+    /// Get an iterator over all test functions that matches the filter
+    fn filtered_tests<'a>(
+        &'a self,
+        filter: &'a impl TestFilter,
+    ) -> impl Iterator<Item = &Function> {
+        self.matching_abi(filter)
+            .flat_map(|abi| abi.functions().filter(|func| filter.matches_test(func.signature())))
     }
 
     /// Returns the number of matching tests
@@ -82,9 +86,9 @@ impl MultiContractRunner {
 
     /// Get all test names matching the filter
     pub fn get_tests(&self, filter: &impl TestFilter) -> Vec<String> {
-        self.filtered_tests(filter)
-            .map(|func| func.name.clone())
-            .filter(|name| name.is_test())
+        self.matching_abi(filter)
+            .flat_map(|abi| abi.functions().map(|func| func.name.clone()))
+            .filter(|sig| sig.is_test())
             .collect()
     }
 
