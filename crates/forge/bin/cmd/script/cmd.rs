@@ -6,9 +6,9 @@ use ethers::{
 use eyre::Result;
 use foundry_cli::utils::LoadConfig;
 use foundry_common::{contracts::flatten_contracts, try_get_http_provider};
+use foundry_debugger::DebuggerArgs;
 use std::sync::Arc;
 use tracing::trace;
-use ui::DebuggerArgs;
 
 /// Helper alias type for the collection of data changed due to the new sender.
 type NewSenderChanges = (CallTraceDecoder, Libraries, ArtifactContracts<ContractBytecodeSome>);

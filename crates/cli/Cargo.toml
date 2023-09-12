@@ -14,7 +14,7 @@ repository.workspace = true
 foundry-config.workspace = true
 foundry-common.workspace = true
 foundry-evm.workspace = true
-ui.workspace = true
+foundry-debugger.workspace = true
 
 # aws
 rusoto_core = { version = "0.48", default-features = false }
