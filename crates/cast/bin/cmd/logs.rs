@@ -1,16 +1,17 @@
+use std::{io, str::FromStr};
+
 use cast::Cast;
 use clap::Parser;
-use ethers::{
+use ethers::{providers::Middleware, types::NameOrAddress};
+use ethers_core::{
     abi::{Address, Event, RawTopicFilter, Topic, TopicFilter},
-    providers::Middleware,
-    types::{BlockId, BlockNumber, Filter, FilterBlockOption, NameOrAddress, ValueOrArray, H256},
+    types::{BlockId, BlockNumber, Filter, FilterBlockOption, ValueOrArray, H256},
 };
 use eyre::Result;
 use foundry_cli::{opts::EthereumOpts, utils};
 use foundry_common::abi::{get_event, parse_tokens};
 use foundry_config::Config;
 use itertools::Itertools;
-use std::str::FromStr;
 
 /// CLI arguments for `cast logs`.
 #[derive(Debug, Parser)]
@@ -44,7 +45,12 @@ pub struct LogsArgs {
     #[clap(value_name = "TOPICS_OR_ARGS")]
     topics_or_args: Vec<String>,
 
-    /// Print the logs as JSON.
+    /// If the RPC type and endpoints supports `eth_subscribe` stream logs instead of printing and
+    /// exiting. Will continue until interrupted or TO_BLOCK is reached.
+    #[clap(long)]
+    subscribe: bool,
+
+    /// Print the logs as JSON.s
     #[clap(long, short, help_heading = "Display options")]
     json: bool,
 
@@ -55,11 +61,20 @@ pub struct LogsArgs {
 impl LogsArgs {
     pub async fn run(self) -> Result<()> {
         let LogsArgs {
-            from_block, to_block, address, topics_or_args, sig_or_topic, json, eth, ..
+            from_block,
+            to_block,
+            address,
+            sig_or_topic,
+            topics_or_args,
+            subscribe,
+            json,
+            eth,
         } = self;
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
+
+        let cast = Cast::new(&provider);
 
         let address = match address {
             Some(address) => {
@@ -72,48 +87,29 @@ impl LogsArgs {
             None => None,
         };
 
-        let from_block = convert_block_number(&provider, from_block).await?;
-        let to_block = convert_block_number(&provider, to_block).await?;
-
-        let cast = Cast::new(&provider);
+        let from_block = cast.convert_block_number(from_block).await?;
+        let to_block = cast.convert_block_number(to_block).await?;
 
         let filter = build_filter(from_block, to_block, address, sig_or_topic, topics_or_args)?;
 
-        let logs = cast.filter_logs(filter, json).await?;
+        if !subscribe {
+            let logs = cast.filter_logs(filter, json).await?;
 
-        println!("{}", logs);
+            println!("{}", logs);
+
+            return Ok(())
+        }
+
+        let mut stdout = io::stdout();
+        cast.subscribe(filter, &mut stdout, json).await?;
 
         Ok(())
     }
 }
 
-/// Converts a block identifier into a block number.
-///
-/// If the block identifier is a block number, then this function returns the block number. If the
-/// block identifier is a block hash, then this function returns the block number of that block
-/// hash. If the block identifier is `None`, then this function returns `None`.
-async fn convert_block_number<M: Middleware>(
-    provider: M,
-    block: Option<BlockId>,
-) -> Result<Option<BlockNumber>, eyre::Error>
-where
-    M::Error: 'static,
-{
-    match block {
-        Some(block) => match block {
-            BlockId::Number(block_number) => Ok(Some(block_number)),
-            BlockId::Hash(hash) => {
-                let block = provider.get_block(hash).await?;
-                Ok(block.map(|block| block.number.unwrap()).map(BlockNumber::from))
-            }
-        },
-        None => Ok(None),
-    }
-}
-
-// First tries to parse the `sig_or_topic` as an event signature. If successful, `topics_or_args` is
-// parsed as indexed inputs and converted to topics. Otherwise, `sig_or_topic` is prepended to
-// `topics_or_args` and used as raw topics.
+/// Builds a Filter by first trying to parse the `sig_or_topic` as an event signature. If
+/// successful, `topics_or_args` is parsed as indexed inputs and converted to topics. Otherwise,
+/// `sig_or_topic` is prepended to `topics_or_args` and used as raw topics.
 fn build_filter(
     from_block: Option<BlockNumber>,
     to_block: Option<BlockNumber>,
@@ -154,7 +150,7 @@ fn build_filter(
     Ok(filter)
 }
 
-// Creates a TopicFilter for the given event signature and arguments.
+/// Creates a TopicFilter from the given event signature and arguments.
 fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<TopicFilter, eyre::Error> {
     let args = args.iter().map(|arg| arg.as_str()).collect::<Vec<_>>();
 
@@ -195,7 +191,7 @@ fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<TopicFilter
     Ok(event.filter(raw)?)
 }
 
-// Creates a TopicFilter from raw topic hashes.
+/// Creates a TopicFilter from raw topic hashes.
 fn build_filter_topics(topics: Vec<String>) -> Result<TopicFilter, eyre::Error> {
     let mut topics = topics
         .into_iter()
@@ -214,8 +210,11 @@ fn build_filter_topics(topics: Vec<String>) -> Result<TopicFilter, eyre::Error> 
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
     use ethers::types::H160;
+    use ethers_core::types::H256;
 
     const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
     const TRANSFER_SIG: &str = "Transfer(address indexed,address indexed,uint256)";
