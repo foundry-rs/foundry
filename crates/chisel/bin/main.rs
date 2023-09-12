@@ -3,6 +3,8 @@
 //! This module contains the core readline loop for the Chisel CLI as well as the
 //! executable's `main` function.
 
+use std::path::PathBuf;
+
 use chisel::{
     history::chisel_history_file,
     prelude::{ChiselCommand, ChiselDispatcher, DispatchResult, SolidityHelper},
@@ -12,7 +14,7 @@ use foundry_cli::{
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
-use foundry_common::evm::EvmArgs;
+use foundry_common::{evm::EvmArgs, fs};
 use foundry_config::{
     figment::{
         value::{Dict, Map},
@@ -45,6 +47,13 @@ const VERSION_MESSAGE: &str = concat!(
 pub struct ChiselParser {
     #[command(subcommand)]
     pub sub: Option<ChiselParserSub>,
+
+    /// Path to a directory containing Solidity files to import
+    ///
+    /// These files will be evaluated before the top-level of the
+    /// REPL, therefore functioning as a prelude
+    #[clap(long, help_heading = "REPL options")]
+    pub prelude: Option<PathBuf>,
 
     #[clap(flatten)]
     pub opts: CoreBuildArgs,
@@ -102,6 +111,9 @@ async fn main() -> eyre::Result<()> {
         backend: None,
         calldata: None,
     })?;
+
+    // Execute prelude Solidity source files
+    evaluate_prelude(&mut dispatcher, args.prelude).await?;
 
     // Check for chisel subcommands
     match &args.sub {
@@ -181,19 +193,7 @@ async fn main() -> eyre::Result<()> {
                 interrupt = false;
 
                 // Dispatch and match results
-                match dispatcher.dispatch(&line).await {
-                    DispatchResult::Success(msg) | DispatchResult::CommandSuccess(msg) => if let Some(msg) = msg {
-                        println!("{}", Paint::green(msg));
-                    },
-                    DispatchResult::UnrecognizedCommand(e) => eprintln!("{e}"),
-                    DispatchResult::SolangParserFailed(e) => {
-                        eprintln!("{}", Paint::red("Compilation error"));
-                        eprintln!("{}", Paint::red(format!("{e:?}")));
-                    }
-                    DispatchResult::FileIoError(e) => eprintln!("{}", Paint::red(format!("⚒️ Chisel File IO Error - {e}"))),
-                    DispatchResult::CommandFailed(msg) | DispatchResult::Failure(Some(msg)) => eprintln!("{}", Paint::red(msg)),
-                    DispatchResult::Failure(None) => eprintln!("{}\nPlease Report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose", Paint::red("⚒️ Unknown Chisel Error ⚒️")),
-                }
+                dispatch_repl_line(&mut dispatcher, &line).await;
             }
             Err(ReadlineError::Interrupted) => {
                 if interrupt {
@@ -227,4 +227,49 @@ impl Provider for ChiselParser {
     fn data(&self) -> Result<Map<Profile, Dict>, foundry_config::figment::Error> {
         Ok(Map::from([(Config::selected_profile(), Dict::default())]))
     }
+}
+
+/// Evaluate a single Solidity line.
+async fn dispatch_repl_line(dispatcher: &mut ChiselDispatcher, line: &str) {
+    match dispatcher.dispatch(line).await {
+        DispatchResult::Success(msg) | DispatchResult::CommandSuccess(msg) => if let Some(msg) = msg {
+            println!("{}", Paint::green(msg));
+        },
+        DispatchResult::UnrecognizedCommand(e) => eprintln!("{e}"),
+        DispatchResult::SolangParserFailed(e) => {
+            eprintln!("{}", Paint::red("Compilation error"));
+            eprintln!("{}", Paint::red(format!("{e:?}")));
+        }
+        DispatchResult::FileIoError(e) => eprintln!("{}", Paint::red(format!("⚒️ Chisel File IO Error - {e}"))),
+        DispatchResult::CommandFailed(msg) | DispatchResult::Failure(Some(msg)) => eprintln!("{}", Paint::red(msg)),
+        DispatchResult::Failure(None) => eprintln!("{}\nPlease Report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose", Paint::red("⚒️ Unknown Chisel Error ⚒️")),
+    }
+}
+
+/// Evaluate multiple Solidity source files contained within a
+/// Chisel prelude directory.
+async fn evaluate_prelude(
+    dispatcher: &mut ChiselDispatcher,
+    maybe_prelude: Option<PathBuf>,
+) -> eyre::Result<()> {
+    if let Some(prelude_dir) = maybe_prelude {
+        let prelude_sources = fs::files_with_ext(prelude_dir, "sol");
+        let print_success_msg = !prelude_sources.is_empty();
+
+        for source_file in prelude_sources {
+            println!(
+                "{} {}",
+                Paint::yellow("⏳ Loading prelude source file:"),
+                source_file.display(),
+            );
+
+            let prelude = fs::read_to_string(source_file)?;
+            dispatch_repl_line(dispatcher, &prelude).await;
+        }
+
+        if print_success_msg {
+            println!("{}\n", Paint::green("✅ All prelude source files loaded successfully"));
+        }
+    }
+    Ok(())
 }
