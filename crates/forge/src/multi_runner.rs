@@ -59,20 +59,6 @@ pub struct MultiContractRunner {
 }
 
 impl MultiContractRunner {
-    /// Returns the number of matching tests
-    pub fn count_filtered_tests(&self, filter: &impl TestFilter) -> usize {
-        self.contracts
-            .iter()
-            .filter(|(id, _)| {
-                filter.matches_path(id.source.to_string_lossy()) &&
-                    filter.matches_contract(&id.name)
-            })
-            .flat_map(|(_, (abi, _, _))| {
-                abi.functions().filter(|func| filter.matches_test(func.signature()))
-            })
-            .count()
-    }
-
     /// Get an iterator over all test functions that matches the filter path and contract name
     fn filtered_tests<'a>(
         &'a self,
@@ -81,10 +67,17 @@ impl MultiContractRunner {
         self.contracts
             .iter()
             .filter(|(id, _)| {
-                filter.matches_path(id.source.to_string_lossy()) &&
-                    filter.matches_contract(&id.name)
+                filter.matches_path(id.source.to_string_lossy())
+                    && filter.matches_contract(&id.name)
             })
-            .flat_map(|(_, (abi, _, _))| abi.functions())
+            .flat_map(|(_, (abi, _, _))| {
+                abi.functions().filter(|func| filter.matches_test(func.signature()))
+            })
+    }
+
+    /// Returns the number of matching tests
+    pub fn count_filtered_tests(&self, filter: &impl TestFilter) -> usize {
+        self.filtered_tests(filter).count()
     }
 
     /// Get all test names matching the filter
@@ -108,8 +101,8 @@ impl MultiContractRunner {
         self.contracts
             .iter()
             .filter(|(id, _)| {
-                filter.matches_path(id.source.to_string_lossy()) &&
-                    filter.matches_contract(&id.name)
+                filter.matches_path(id.source.to_string_lossy())
+                    && filter.matches_contract(&id.name)
             })
             .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
             .map(|(id, (abi, _, _))| {
@@ -151,8 +144,8 @@ impl MultiContractRunner {
         self.contracts
             .par_iter()
             .filter(|(id, _)| {
-                filter.matches_path(id.source.to_string_lossy()) &&
-                    filter.matches_contract(&id.name)
+                filter.matches_path(id.source.to_string_lossy())
+                    && filter.matches_contract(&id.name)
             })
             .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
             .map_with(stream_result, |stream_result, (id, (abi, deploy_code, libs))| {
@@ -273,7 +266,7 @@ impl MultiContractRunnerBuilder {
             let mut seen = HashSet::new();
             for dep in deps {
                 if !seen.insert(dep.id.clone()) {
-                    continue
+                    continue;
                 }
                 filtered.push(dep);
             }
@@ -306,12 +299,13 @@ impl MultiContractRunnerBuilder {
                 // debugger and linker.
                 let Some(bytecode) = contract.bytecode.and_then(|b| b.object.into_bytes()) else {
                     known_contracts.insert(id.clone(), (abi.clone(), vec![]));
-                    return Ok(())
+                    return Ok(());
                 };
 
                 // if it's a test, add it to deployable contracts
-                if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
-                    abi.functions()
+                if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
+                    && abi
+                        .functions()
                         .any(|func| func.name.is_test() || func.name.is_invariant_test())
                 {
                     deployable_contracts.insert(
