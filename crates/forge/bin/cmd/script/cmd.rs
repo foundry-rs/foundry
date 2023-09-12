@@ -45,8 +45,8 @@ impl ScriptArgs {
             &build_output.project,
             &script_config.config,
             flatten_contracts(&build_output.highlevel_known_contracts, false),
-            self.retry,
-            self.verifier.clone(),
+            self.inner_args.retry,
+            self.inner_args.verifier.clone(),
         );
 
         let BuildOutput {
@@ -68,7 +68,7 @@ impl ScriptArgs {
         let mut result =
             self.execute(&mut script_config, contract, sender, &predeploy_libraries).await?;
 
-        if self.resume || (self.verify && !self.broadcast) {
+        if self.inner_args.resume || (self.inner_args.verify && !self.inner_args.broadcast) {
             return self
                 .resume_deployment(
                     script_config,
@@ -109,7 +109,7 @@ impl ScriptArgs {
             libraries = updated_libraries;
         }
 
-        if self.json {
+        if self.inner_args.json {
             self.show_json(&script_config, &result)?;
         } else {
             self.show_traces(&script_config, &decoder, &mut result).await?;
@@ -189,12 +189,12 @@ impl ScriptArgs {
         result: ScriptResult,
         verify: VerifyBundle,
     ) -> Result<()> {
-        if self.multi {
+        if self.inner_args.multi {
             return self
                 .multi_chain_deployment(
                     MultiChainSequence::load(
                         &script_config.config.broadcast,
-                        &self.sig,
+                        &self.inner_args.sig,
                         script_config.target_contract(),
                     )?,
                     libraries,
@@ -238,10 +238,10 @@ impl ScriptArgs {
         let chain = provider.get_chainid().await?.as_u64();
         verify.set_chain(&script_config.config, chain.into());
 
-        let broadcasted = self.broadcast || self.resume;
+        let broadcasted = self.inner_args.broadcast || self.inner_args.resume;
         let mut deployment_sequence = match ScriptSequence::load(
             &script_config.config,
-            &self.sig,
+            &self.inner_args.sig,
             script_config.target_contract(),
             chain,
             broadcasted,
@@ -251,7 +251,7 @@ impl ScriptArgs {
             // try to read the script sequence from the `dry-run/` folder
             Err(_) if broadcasted => ScriptSequence::load(
                 &script_config.config,
-                &self.sig,
+                &self.inner_args.sig,
                 script_config.target_contract(),
                 chain,
                 false,
@@ -261,12 +261,12 @@ impl ScriptArgs {
 
         receipts::wait_for_pending(provider, &mut deployment_sequence).await?;
 
-        if self.resume {
+        if self.inner_args.resume {
             self.send_transactions(&mut deployment_sequence, fork_url, &result.script_wallets)
                 .await?;
         }
 
-        if self.verify {
+        if self.inner_args.verify {
             // We might have predeployed libraries from the broadcasting, so we need to
             // relink the contracts with them, since their mapping is
             // not included in the solc cache files.
@@ -345,10 +345,10 @@ impl ScriptArgs {
     /// In case the user has loaded *only* one private-key, we can assume that he's using it as the
     /// `--sender`
     fn maybe_load_private_key(&mut self, script_config: &mut ScriptConfig) -> Result<()> {
-        if let Some(ref private_key) = self.wallets.private_key {
-            self.wallets.private_keys = Some(vec![private_key.clone()]);
+        if let Some(ref private_key) = self.inner_args.wallets.private_key {
+            self.inner_args.wallets.private_keys = Some(vec![private_key.clone()]);
         }
-        if let Some(wallets) = self.wallets.private_keys()? {
+        if let Some(wallets) = self.inner_args.wallets.private_keys()? {
             if wallets.len() == 1 {
                 script_config.evm_opts.sender = wallets.get(0).unwrap().address()
             }

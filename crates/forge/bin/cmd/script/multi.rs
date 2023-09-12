@@ -123,7 +123,7 @@ impl ScriptArgs {
             eyre::bail!("Libraries are currently not supported on multi deployment setups.");
         }
 
-        if self.resume {
+        if self.inner_args.resume {
             trace!(target: "script", "resuming multi chain deployment");
 
             let futs = deployments
@@ -160,7 +160,7 @@ impl ScriptArgs {
                     .await
                 {
                     Ok(_) => {
-                        if self.verify {
+                        if self.inner_args.verify {
                             return sequence.verify_contracts(config, verify.clone()).await
                         }
                         Ok(())
