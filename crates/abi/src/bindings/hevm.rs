@@ -4408,6 +4408,35 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("serializeJson"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("serializeJson"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("serializeString"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -7090,6 +7119,16 @@ pub mod hevm {
         ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
             self.0
                 .method_hash([118, 118, 225, 39], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `serializeJson` (0x9b3358b0) function
+        pub fn serialize_json(
+            &self,
+            p0: ::std::string::String,
+            p1: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::std::string::String> {
+            self.0
+                .method_hash([155, 51, 88, 176], (p0, p1))
                 .expect("method not found (this should never happen)")
         }
         ///Calls the contract's `serializeString` (0x88da6d35) function
@@ -9950,6 +9989,19 @@ pub mod hevm {
         pub ::std::string::String,
         pub ::std::vec::Vec<::ethers_core::types::I256>,
     );
+    ///Container type for all input parameters for the `serializeJson` function with signature `serializeJson(string,string)` and selector `0x9b3358b0`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "serializeJson", abi = "serializeJson(string,string)")]
+    pub struct SerializeJsonCall(pub ::std::string::String, pub ::std::string::String);
     ///Container type for all input parameters for the `serializeString` function with signature `serializeString(string,string,string)` and selector `0x88da6d35`
     #[derive(
         Clone,
@@ -10645,6 +10697,7 @@ pub mod hevm {
         SerializeBytes321(SerializeBytes321Call),
         SerializeInt0(SerializeInt0Call),
         SerializeInt1(SerializeInt1Call),
+        SerializeJson(SerializeJsonCall),
         SerializeString0(SerializeString0Call),
         SerializeString1(SerializeString1Call),
         SerializeUint0(SerializeUint0Call),
@@ -10689,890 +10742,1059 @@ pub mod hevm {
             data: impl AsRef<[u8]>,
         ) -> ::core::result::Result<Self, ::ethers_core::abi::AbiError> {
             let data = data.as_ref();
-            if let Ok(decoded)
-                = <AccessesCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <AccessesCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Accesses(decoded));
             }
-            if let Ok(decoded)
-                = <ActiveForkCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ActiveForkCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ActiveFork(decoded));
             }
-            if let Ok(decoded)
-                = <AddrCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <AddrCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Addr(decoded));
             }
-            if let Ok(decoded)
-                = <AllowCheatcodesCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <AllowCheatcodesCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::AllowCheatcodes(decoded));
             }
-            if let Ok(decoded)
-                = <AssumeCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <AssumeCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Assume(decoded));
             }
-            if let Ok(decoded)
-                = <Breakpoint0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <Breakpoint0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Breakpoint0(decoded));
             }
-            if let Ok(decoded)
-                = <Breakpoint1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <Breakpoint1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Breakpoint1(decoded));
             }
-            if let Ok(decoded)
-                = <Broadcast0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <Broadcast0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Broadcast0(decoded));
             }
-            if let Ok(decoded)
-                = <Broadcast1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <Broadcast1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Broadcast1(decoded));
             }
-            if let Ok(decoded)
-                = <Broadcast2Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <Broadcast2Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Broadcast2(decoded));
             }
-            if let Ok(decoded)
-                = <ChainIdCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ChainIdCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ChainId(decoded));
             }
-            if let Ok(decoded)
-                = <ClearMockedCallsCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ClearMockedCallsCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ClearMockedCalls(decoded));
             }
-            if let Ok(decoded)
-                = <CloseFileCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <CloseFileCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::CloseFile(decoded));
             }
-            if let Ok(decoded)
-                = <CoinbaseCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <CoinbaseCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Coinbase(decoded));
             }
-            if let Ok(decoded)
-                = <CopyFileCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <CopyFileCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::CopyFile(decoded));
             }
-            if let Ok(decoded)
-                = <CreateDirCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <CreateDirCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::CreateDir(decoded));
             }
-            if let Ok(decoded)
-                = <CreateFork1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <CreateFork1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::CreateFork1(decoded));
             }
-            if let Ok(decoded)
-                = <CreateFork2Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <CreateFork2Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::CreateFork2(decoded));
             }
-            if let Ok(decoded)
-                = <CreateFork0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <CreateFork0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::CreateFork0(decoded));
             }
-            if let Ok(decoded)
-                = <CreateSelectFork1Call as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <CreateSelectFork1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::CreateSelectFork1(decoded));
             }
-            if let Ok(decoded)
-                = <CreateSelectFork2Call as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <CreateSelectFork2Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::CreateSelectFork2(decoded));
             }
-            if let Ok(decoded)
-                = <CreateSelectFork0Call as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <CreateSelectFork0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::CreateSelectFork0(decoded));
             }
-            if let Ok(decoded)
-                = <CreateWallet0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <CreateWallet0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::CreateWallet0(decoded));
             }
-            if let Ok(decoded)
-                = <CreateWallet1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <CreateWallet1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::CreateWallet1(decoded));
             }
-            if let Ok(decoded)
-                = <CreateWallet2Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <CreateWallet2Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::CreateWallet2(decoded));
             }
-            if let Ok(decoded)
-                = <DealCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <DealCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Deal(decoded));
             }
-            if let Ok(decoded)
-                = <DeriveKey0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <DeriveKey0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::DeriveKey0(decoded));
             }
-            if let Ok(decoded)
-                = <DeriveKey1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <DeriveKey1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::DeriveKey1(decoded));
             }
-            if let Ok(decoded)
-                = <DeriveKey2Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <DeriveKey2Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::DeriveKey2(decoded));
             }
-            if let Ok(decoded)
-                = <DeriveKey3Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <DeriveKey3Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::DeriveKey3(decoded));
             }
-            if let Ok(decoded)
-                = <DifficultyCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <DifficultyCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Difficulty(decoded));
             }
-            if let Ok(decoded)
-                = <EnvAddress0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvAddress0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvAddress0(decoded));
             }
-            if let Ok(decoded)
-                = <EnvAddress1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvAddress1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvAddress1(decoded));
             }
-            if let Ok(decoded)
-                = <EnvBool0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvBool0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvBool0(decoded));
             }
-            if let Ok(decoded)
-                = <EnvBool1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvBool1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvBool1(decoded));
             }
-            if let Ok(decoded)
-                = <EnvBytes0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvBytes0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvBytes0(decoded));
             }
-            if let Ok(decoded)
-                = <EnvBytes1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvBytes1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvBytes1(decoded));
             }
-            if let Ok(decoded)
-                = <EnvBytes320Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvBytes320Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvBytes320(decoded));
             }
-            if let Ok(decoded)
-                = <EnvBytes321Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvBytes321Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvBytes321(decoded));
             }
-            if let Ok(decoded)
-                = <EnvInt0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvInt0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvInt0(decoded));
             }
-            if let Ok(decoded)
-                = <EnvInt1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvInt1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvInt1(decoded));
             }
-            if let Ok(decoded)
-                = <EnvOr0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvOr0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvOr0(decoded));
             }
-            if let Ok(decoded)
-                = <EnvOr1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvOr1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvOr1(decoded));
             }
-            if let Ok(decoded)
-                = <EnvOr2Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvOr2Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvOr2(decoded));
             }
-            if let Ok(decoded)
-                = <EnvOr3Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvOr3Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvOr3(decoded));
             }
-            if let Ok(decoded)
-                = <EnvOr4Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvOr4Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvOr4(decoded));
             }
-            if let Ok(decoded)
-                = <EnvOr5Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvOr5Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvOr5(decoded));
             }
-            if let Ok(decoded)
-                = <EnvOr6Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvOr6Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvOr6(decoded));
             }
-            if let Ok(decoded)
-                = <EnvOr7Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvOr7Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvOr7(decoded));
             }
-            if let Ok(decoded)
-                = <EnvOr8Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvOr8Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvOr8(decoded));
             }
-            if let Ok(decoded)
-                = <EnvOr9Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvOr9Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvOr9(decoded));
             }
-            if let Ok(decoded)
-                = <EnvOr10Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvOr10Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvOr10(decoded));
             }
-            if let Ok(decoded)
-                = <EnvOr11Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvOr11Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvOr11(decoded));
             }
-            if let Ok(decoded)
-                = <EnvOr12Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvOr12Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvOr12(decoded));
             }
-            if let Ok(decoded)
-                = <EnvOr13Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvOr13Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvOr13(decoded));
             }
-            if let Ok(decoded)
-                = <EnvString0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvString0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvString0(decoded));
             }
-            if let Ok(decoded)
-                = <EnvString1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvString1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvString1(decoded));
             }
-            if let Ok(decoded)
-                = <EnvUint0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvUint0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvUint0(decoded));
             }
-            if let Ok(decoded)
-                = <EnvUint1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EnvUint1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EnvUint1(decoded));
             }
-            if let Ok(decoded)
-                = <EtchCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EtchCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Etch(decoded));
             }
-            if let Ok(decoded)
-                = <EthGetLogsCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <EthGetLogsCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::EthGetLogs(decoded));
             }
-            if let Ok(decoded)
-                = <ExistsCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ExistsCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Exists(decoded));
             }
-            if let Ok(decoded)
-                = <ExpectCall0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ExpectCall0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ExpectCall0(decoded));
             }
-            if let Ok(decoded)
-                = <ExpectCall1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ExpectCall1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ExpectCall1(decoded));
             }
-            if let Ok(decoded)
-                = <ExpectCall2Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ExpectCall2Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ExpectCall2(decoded));
             }
-            if let Ok(decoded)
-                = <ExpectCall3Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ExpectCall3Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ExpectCall3(decoded));
             }
-            if let Ok(decoded)
-                = <ExpectCall4Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ExpectCall4Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ExpectCall4(decoded));
             }
-            if let Ok(decoded)
-                = <ExpectCall5Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ExpectCall5Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ExpectCall5(decoded));
             }
-            if let Ok(decoded)
-                = <ExpectCallMinGas0Call as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <ExpectCallMinGas0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ExpectCallMinGas0(decoded));
             }
-            if let Ok(decoded)
-                = <ExpectCallMinGas1Call as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <ExpectCallMinGas1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ExpectCallMinGas1(decoded));
             }
-            if let Ok(decoded)
-                = <ExpectEmit0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ExpectEmit0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ExpectEmit0(decoded));
             }
-            if let Ok(decoded)
-                = <ExpectEmit1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ExpectEmit1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ExpectEmit1(decoded));
             }
-            if let Ok(decoded)
-                = <ExpectEmit2Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ExpectEmit2Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ExpectEmit2(decoded));
             }
-            if let Ok(decoded)
-                = <ExpectEmit3Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ExpectEmit3Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ExpectEmit3(decoded));
             }
-            if let Ok(decoded)
-                = <ExpectRevert0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ExpectRevert0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ExpectRevert0(decoded));
             }
-            if let Ok(decoded)
-                = <ExpectRevert1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ExpectRevert1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ExpectRevert1(decoded));
             }
-            if let Ok(decoded)
-                = <ExpectRevert2Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ExpectRevert2Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ExpectRevert2(decoded));
             }
-            if let Ok(decoded)
-                = <ExpectSafeMemoryCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ExpectSafeMemoryCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ExpectSafeMemory(decoded));
             }
-            if let Ok(decoded)
-                = <ExpectSafeMemoryCallCall as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <ExpectSafeMemoryCallCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ExpectSafeMemoryCall(decoded));
             }
-            if let Ok(decoded)
-                = <FeeCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <FeeCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Fee(decoded));
             }
-            if let Ok(decoded)
-                = <FfiCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <FfiCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Ffi(decoded));
             }
-            if let Ok(decoded)
-                = <FsMetadataCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <FsMetadataCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::FsMetadata(decoded));
             }
-            if let Ok(decoded)
-                = <GetCodeCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <GetCodeCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::GetCode(decoded));
             }
-            if let Ok(decoded)
-                = <GetDeployedCodeCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <GetDeployedCodeCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::GetDeployedCode(decoded));
             }
-            if let Ok(decoded)
-                = <GetLabelCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <GetLabelCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::GetLabel(decoded));
             }
-            if let Ok(decoded)
-                = <GetMappingKeyAndParentOfCall as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <GetMappingKeyAndParentOfCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::GetMappingKeyAndParentOf(decoded));
             }
-            if let Ok(decoded)
-                = <GetMappingLengthCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <GetMappingLengthCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::GetMappingLength(decoded));
             }
-            if let Ok(decoded)
-                = <GetMappingSlotAtCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <GetMappingSlotAtCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::GetMappingSlotAt(decoded));
             }
-            if let Ok(decoded)
-                = <GetNonce0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <GetNonce0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::GetNonce0(decoded));
             }
-            if let Ok(decoded)
-                = <GetNonce1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <GetNonce1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::GetNonce1(decoded));
             }
-            if let Ok(decoded)
-                = <GetRecordedLogsCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <GetRecordedLogsCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::GetRecordedLogs(decoded));
             }
-            if let Ok(decoded)
-                = <IsDirCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <IsDirCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::IsDir(decoded));
             }
-            if let Ok(decoded)
-                = <IsFileCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <IsFileCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::IsFile(decoded));
             }
-            if let Ok(decoded)
-                = <IsPersistentCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <IsPersistentCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::IsPersistent(decoded));
             }
-            if let Ok(decoded)
-                = <KeyExistsCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <KeyExistsCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::KeyExists(decoded));
             }
-            if let Ok(decoded)
-                = <LabelCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <LabelCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Label(decoded));
             }
-            if let Ok(decoded)
-                = <LoadCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <LoadCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Load(decoded));
             }
-            if let Ok(decoded)
-                = <MakePersistent0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <MakePersistent0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::MakePersistent0(decoded));
             }
-            if let Ok(decoded)
-                = <MakePersistent2Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <MakePersistent2Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::MakePersistent2(decoded));
             }
-            if let Ok(decoded)
-                = <MakePersistent3Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <MakePersistent3Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::MakePersistent3(decoded));
             }
-            if let Ok(decoded)
-                = <MakePersistent1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <MakePersistent1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::MakePersistent1(decoded));
             }
-            if let Ok(decoded)
-                = <MockCall0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <MockCall0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::MockCall0(decoded));
             }
-            if let Ok(decoded)
-                = <MockCall1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <MockCall1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::MockCall1(decoded));
             }
-            if let Ok(decoded)
-                = <MockCallRevert0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <MockCallRevert0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::MockCallRevert0(decoded));
             }
-            if let Ok(decoded)
-                = <MockCallRevert1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <MockCallRevert1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::MockCallRevert1(decoded));
             }
-            if let Ok(decoded)
-                = <OpenFileCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <OpenFileCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::OpenFile(decoded));
             }
-            if let Ok(decoded)
-                = <ParseAddressCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ParseAddressCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseAddress(decoded));
             }
-            if let Ok(decoded)
-                = <ParseBoolCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ParseBoolCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseBool(decoded));
             }
-            if let Ok(decoded)
-                = <ParseBytesCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ParseBytesCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseBytes(decoded));
             }
-            if let Ok(decoded)
-                = <ParseBytes32Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ParseBytes32Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseBytes32(decoded));
             }
-            if let Ok(decoded)
-                = <ParseIntCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ParseIntCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseInt(decoded));
             }
-            if let Ok(decoded)
-                = <ParseJson0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ParseJson0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseJson0(decoded));
             }
-            if let Ok(decoded)
-                = <ParseJson1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ParseJson1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseJson1(decoded));
             }
-            if let Ok(decoded)
-                = <ParseJsonAddressCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ParseJsonAddressCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseJsonAddress(decoded));
             }
-            if let Ok(decoded)
-                = <ParseJsonAddressArrayCall as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <ParseJsonAddressArrayCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseJsonAddressArray(decoded));
             }
-            if let Ok(decoded)
-                = <ParseJsonBoolCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ParseJsonBoolCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseJsonBool(decoded));
             }
-            if let Ok(decoded)
-                = <ParseJsonBoolArrayCall as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <ParseJsonBoolArrayCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseJsonBoolArray(decoded));
             }
-            if let Ok(decoded)
-                = <ParseJsonBytesCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ParseJsonBytesCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseJsonBytes(decoded));
             }
-            if let Ok(decoded)
-                = <ParseJsonBytes32Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ParseJsonBytes32Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseJsonBytes32(decoded));
             }
-            if let Ok(decoded)
-                = <ParseJsonBytes32ArrayCall as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <ParseJsonBytes32ArrayCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseJsonBytes32Array(decoded));
             }
-            if let Ok(decoded)
-                = <ParseJsonBytesArrayCall as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <ParseJsonBytesArrayCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseJsonBytesArray(decoded));
             }
-            if let Ok(decoded)
-                = <ParseJsonIntCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ParseJsonIntCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseJsonInt(decoded));
             }
-            if let Ok(decoded)
-                = <ParseJsonIntArrayCall as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <ParseJsonIntArrayCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseJsonIntArray(decoded));
             }
-            if let Ok(decoded)
-                = <ParseJsonKeysCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ParseJsonKeysCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseJsonKeys(decoded));
             }
-            if let Ok(decoded)
-                = <ParseJsonStringCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ParseJsonStringCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseJsonString(decoded));
             }
-            if let Ok(decoded)
-                = <ParseJsonStringArrayCall as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <ParseJsonStringArrayCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseJsonStringArray(decoded));
             }
-            if let Ok(decoded)
-                = <ParseJsonUintCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ParseJsonUintCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseJsonUint(decoded));
             }
-            if let Ok(decoded)
-                = <ParseJsonUintArrayCall as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <ParseJsonUintArrayCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseJsonUintArray(decoded));
             }
-            if let Ok(decoded)
-                = <ParseUintCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ParseUintCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ParseUint(decoded));
             }
-            if let Ok(decoded)
-                = <PauseGasMeteringCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <PauseGasMeteringCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::PauseGasMetering(decoded));
             }
-            if let Ok(decoded)
-                = <Prank0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <Prank0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Prank0(decoded));
             }
-            if let Ok(decoded)
-                = <Prank1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <Prank1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Prank1(decoded));
             }
-            if let Ok(decoded)
-                = <PrevrandaoCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <PrevrandaoCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Prevrandao(decoded));
             }
-            if let Ok(decoded)
-                = <ProjectRootCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ProjectRootCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ProjectRoot(decoded));
             }
-            if let Ok(decoded)
-                = <ReadCallersCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ReadCallersCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ReadCallers(decoded));
             }
-            if let Ok(decoded)
-                = <ReadDir0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ReadDir0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ReadDir0(decoded));
             }
-            if let Ok(decoded)
-                = <ReadDir1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ReadDir1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ReadDir1(decoded));
             }
-            if let Ok(decoded)
-                = <ReadDir2Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ReadDir2Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ReadDir2(decoded));
             }
-            if let Ok(decoded)
-                = <ReadFileCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ReadFileCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ReadFile(decoded));
             }
-            if let Ok(decoded)
-                = <ReadFileBinaryCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ReadFileBinaryCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ReadFileBinary(decoded));
             }
-            if let Ok(decoded)
-                = <ReadLineCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ReadLineCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ReadLine(decoded));
             }
-            if let Ok(decoded)
-                = <ReadLinkCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ReadLinkCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ReadLink(decoded));
             }
-            if let Ok(decoded)
-                = <RecordCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <RecordCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Record(decoded));
             }
-            if let Ok(decoded)
-                = <RecordLogsCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <RecordLogsCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::RecordLogs(decoded));
             }
-            if let Ok(decoded)
-                = <RememberKeyCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <RememberKeyCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::RememberKey(decoded));
             }
-            if let Ok(decoded)
-                = <RemoveDirCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <RemoveDirCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::RemoveDir(decoded));
             }
-            if let Ok(decoded)
-                = <RemoveFileCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <RemoveFileCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::RemoveFile(decoded));
             }
-            if let Ok(decoded)
-                = <ResetNonceCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ResetNonceCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ResetNonce(decoded));
             }
-            if let Ok(decoded)
-                = <ResumeGasMeteringCall as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <ResumeGasMeteringCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ResumeGasMetering(decoded));
             }
-            if let Ok(decoded)
-                = <RevertToCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <RevertToCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::RevertTo(decoded));
             }
-            if let Ok(decoded)
-                = <RevokePersistent0Call as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <RevokePersistent0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::RevokePersistent0(decoded));
             }
-            if let Ok(decoded)
-                = <RevokePersistent1Call as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <RevokePersistent1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::RevokePersistent1(decoded));
             }
-            if let Ok(decoded)
-                = <RollCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <RollCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Roll(decoded));
             }
-            if let Ok(decoded)
-                = <RollFork0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <RollFork0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::RollFork0(decoded));
             }
-            if let Ok(decoded)
-                = <RollFork1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <RollFork1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::RollFork1(decoded));
             }
-            if let Ok(decoded)
-                = <RollFork2Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <RollFork2Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::RollFork2(decoded));
             }
-            if let Ok(decoded)
-                = <RollFork3Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <RollFork3Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::RollFork3(decoded));
             }
-            if let Ok(decoded)
-                = <RpcCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <RpcCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Rpc(decoded));
             }
-            if let Ok(decoded)
-                = <RpcUrlCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <RpcUrlCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::RpcUrl(decoded));
             }
-            if let Ok(decoded)
-                = <RpcUrlStructsCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <RpcUrlStructsCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::RpcUrlStructs(decoded));
             }
-            if let Ok(decoded)
-                = <RpcUrlsCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <RpcUrlsCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::RpcUrls(decoded));
             }
-            if let Ok(decoded)
-                = <SelectForkCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <SelectForkCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::SelectFork(decoded));
             }
-            if let Ok(decoded)
-                = <SerializeAddress0Call as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <SerializeAddress0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::SerializeAddress0(decoded));
             }
-            if let Ok(decoded)
-                = <SerializeAddress1Call as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <SerializeAddress1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::SerializeAddress1(decoded));
             }
-            if let Ok(decoded)
-                = <SerializeBool0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <SerializeBool0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::SerializeBool0(decoded));
             }
-            if let Ok(decoded)
-                = <SerializeBool1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <SerializeBool1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::SerializeBool1(decoded));
             }
-            if let Ok(decoded)
-                = <SerializeBytes0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <SerializeBytes0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::SerializeBytes0(decoded));
             }
-            if let Ok(decoded)
-                = <SerializeBytes1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <SerializeBytes1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::SerializeBytes1(decoded));
             }
-            if let Ok(decoded)
-                = <SerializeBytes320Call as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <SerializeBytes320Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::SerializeBytes320(decoded));
             }
-            if let Ok(decoded)
-                = <SerializeBytes321Call as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <SerializeBytes321Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::SerializeBytes321(decoded));
             }
-            if let Ok(decoded)
-                = <SerializeInt0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <SerializeInt0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::SerializeInt0(decoded));
             }
-            if let Ok(decoded)
-                = <SerializeInt1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <SerializeInt1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::SerializeInt1(decoded));
             }
-            if let Ok(decoded)
-                = <SerializeString0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <SerializeJsonCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
+                return Ok(Self::SerializeJson(decoded));
+            }
+            if let Ok(decoded) = <SerializeString0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::SerializeString0(decoded));
             }
-            if let Ok(decoded)
-                = <SerializeString1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <SerializeString1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::SerializeString1(decoded));
             }
-            if let Ok(decoded)
-                = <SerializeUint0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <SerializeUint0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::SerializeUint0(decoded));
             }
-            if let Ok(decoded)
-                = <SerializeUint1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <SerializeUint1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::SerializeUint1(decoded));
             }
-            if let Ok(decoded)
-                = <SetEnvCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <SetEnvCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::SetEnv(decoded));
             }
-            if let Ok(decoded)
-                = <SetNonceCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <SetNonceCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::SetNonce(decoded));
             }
-            if let Ok(decoded)
-                = <SetNonceUnsafeCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <SetNonceUnsafeCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::SetNonceUnsafe(decoded));
             }
-            if let Ok(decoded)
-                = <Sign0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <Sign0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Sign0(decoded));
             }
-            if let Ok(decoded)
-                = <Sign1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <Sign1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Sign1(decoded));
             }
-            if let Ok(decoded)
-                = <SkipCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <SkipCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Skip(decoded));
             }
-            if let Ok(decoded)
-                = <SleepCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <SleepCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Sleep(decoded));
             }
-            if let Ok(decoded)
-                = <SnapshotCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <SnapshotCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Snapshot(decoded));
             }
-            if let Ok(decoded)
-                = <StartBroadcast0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <StartBroadcast0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::StartBroadcast0(decoded));
             }
-            if let Ok(decoded)
-                = <StartBroadcast1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <StartBroadcast1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::StartBroadcast1(decoded));
             }
-            if let Ok(decoded)
-                = <StartBroadcast2Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <StartBroadcast2Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::StartBroadcast2(decoded));
             }
-            if let Ok(decoded)
-                = <StartMappingRecordingCall as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <StartMappingRecordingCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::StartMappingRecording(decoded));
             }
-            if let Ok(decoded)
-                = <StartPrank0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <StartPrank0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::StartPrank0(decoded));
             }
-            if let Ok(decoded)
-                = <StartPrank1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <StartPrank1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::StartPrank1(decoded));
             }
-            if let Ok(decoded)
-                = <StopBroadcastCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <StopBroadcastCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::StopBroadcast(decoded));
             }
-            if let Ok(decoded)
-                = <StopMappingRecordingCall as ::ethers_core::abi::AbiDecode>::decode(
-                    data,
-                ) {
+            if let Ok(decoded) = <StopMappingRecordingCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::StopMappingRecording(decoded));
             }
-            if let Ok(decoded)
-                = <StopPrankCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <StopPrankCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::StopPrank(decoded));
             }
-            if let Ok(decoded)
-                = <StoreCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <StoreCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Store(decoded));
             }
-            if let Ok(decoded)
-                = <ToString0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ToString0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ToString0(decoded));
             }
-            if let Ok(decoded)
-                = <ToString1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ToString1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ToString1(decoded));
             }
-            if let Ok(decoded)
-                = <ToString2Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ToString2Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ToString2(decoded));
             }
-            if let Ok(decoded)
-                = <ToString3Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ToString3Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ToString3(decoded));
             }
-            if let Ok(decoded)
-                = <ToString4Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ToString4Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ToString4(decoded));
             }
-            if let Ok(decoded)
-                = <ToString5Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <ToString5Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::ToString5(decoded));
             }
-            if let Ok(decoded)
-                = <Transact0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <Transact0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Transact0(decoded));
             }
-            if let Ok(decoded)
-                = <Transact1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <Transact1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Transact1(decoded));
             }
-            if let Ok(decoded)
-                = <TryFfiCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <TryFfiCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::TryFfi(decoded));
             }
-            if let Ok(decoded)
-                = <TxGasPriceCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <TxGasPriceCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::TxGasPrice(decoded));
             }
-            if let Ok(decoded)
-                = <WarpCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <WarpCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::Warp(decoded));
             }
-            if let Ok(decoded)
-                = <WriteFileCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <WriteFileCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::WriteFile(decoded));
             }
-            if let Ok(decoded)
-                = <WriteFileBinaryCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <WriteFileBinaryCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::WriteFileBinary(decoded));
             }
-            if let Ok(decoded)
-                = <WriteJson0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <WriteJson0Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::WriteJson0(decoded));
             }
-            if let Ok(decoded)
-                = <WriteJson1Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <WriteJson1Call as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::WriteJson1(decoded));
             }
-            if let Ok(decoded)
-                = <WriteLineCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+            if let Ok(decoded) = <WriteLineCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
                 return Ok(Self::WriteLine(decoded));
             }
             Err(::ethers_core::abi::Error::InvalidData.into())
@@ -11991,6 +12213,9 @@ pub mod hevm {
                 Self::SerializeInt1(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
+                Self::SerializeJson(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
                 Self::SerializeString0(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
@@ -12279,6 +12504,7 @@ pub mod hevm {
                 Self::SerializeBytes321(element) => ::core::fmt::Display::fmt(element, f),
                 Self::SerializeInt0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::SerializeInt1(element) => ::core::fmt::Display::fmt(element, f),
+                Self::SerializeJson(element) => ::core::fmt::Display::fmt(element, f),
                 Self::SerializeString0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::SerializeString1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::SerializeUint0(element) => ::core::fmt::Display::fmt(element, f),
@@ -13182,6 +13408,11 @@ pub mod hevm {
     impl ::core::convert::From<SerializeInt1Call> for HEVMCalls {
         fn from(value: SerializeInt1Call) -> Self {
             Self::SerializeInt1(value)
+        }
+    }
+    impl ::core::convert::From<SerializeJsonCall> for HEVMCalls {
+        fn from(value: SerializeJsonCall) -> Self {
+            Self::SerializeJson(value)
         }
     }
     impl ::core::convert::From<SerializeString0Call> for HEVMCalls {
@@ -14694,6 +14925,18 @@ pub mod hevm {
         Hash
     )]
     pub struct SerializeInt1Return(pub ::std::string::String);
+    ///Container type for all return fields from the `serializeJson` function with signature `serializeJson(string,string)` and selector `0x9b3358b0`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct SerializeJsonReturn(pub ::std::string::String);
     ///Container type for all return fields from the `serializeString` function with signature `serializeString(string,string,string)` and selector `0x88da6d35`
     #[derive(
         Clone,

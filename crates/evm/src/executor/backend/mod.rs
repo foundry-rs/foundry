@@ -68,6 +68,7 @@ const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] =
     [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
 
 /// Slot corresponding to "failed" in bytes on the cheatcodes (HEVM) address.
+/// Not prefixed with 0x.
 const GLOBAL_FAILURE_SLOT: &str =
     "6661696c65640000000000000000000000000000000000000000000000000000";
 
@@ -591,7 +592,6 @@ impl Backend {
         address: Address,
         current_state: &JournaledState,
     ) -> bool {
-        let address = address;
         if let Some(account) = current_state.state.get(&address) {
             let value = account
                 .storage
@@ -1708,8 +1708,6 @@ fn merge_journaled_state_data(
     active_journaled_state: &JournaledState,
     fork_journaled_state: &mut JournaledState,
 ) {
-    let addr = addr;
-
     if let Some(mut acc) = active_journaled_state.state.get(&addr).cloned() {
         trace!(?addr, "updating journaled_state account data");
         if let Some(fork_account) = fork_journaled_state.state.get_mut(&addr) {
@@ -1729,8 +1727,6 @@ fn merge_db_account_data<ExtDB: DatabaseRef>(
     fork_db: &mut ForkDB,
 ) {
     trace!(?addr, "merging database data");
-
-    let addr = addr;
 
     let mut acc = if let Some(acc) = active.accounts.get(&addr).cloned() {
         acc
@@ -1755,8 +1751,6 @@ fn merge_db_account_data<ExtDB: DatabaseRef>(
 
 /// Returns true of the address is a contract
 fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool {
-    let acc = acc;
-
     journaled_state
         .state
         .get(&acc)

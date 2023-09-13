@@ -81,21 +81,24 @@ impl DatabaseCommit for MemDb {
 ///
 /// This will also _always_ return `Some(AccountInfo)`:
 ///
-/// The [`Database`](revm::Database) implementation for `CacheDB` manages an `AccountState` for the `DbAccount`, this will be set to `AccountState::NotExisting` if the account does not exist yet. This is because there's a distinction between "non-existing" and "empty", See <https://github.com/bluealloy/revm/blob/8f4348dc93022cffb3730d9db5d3ab1aad77676a/crates/revm/src/db/in_memory_db.rs#L81-L83>
+/// The [`Database`](revm::Database) implementation for `CacheDB` manages an `AccountState` for the
+/// `DbAccount`, this will be set to `AccountState::NotExisting` if the account does not exist yet.
+/// This is because there's a distinction between "non-existing" and "empty",
+/// see <https://github.com/bluealloy/revm/blob/8f4348dc93022cffb3730d9db5d3ab1aad77676a/crates/revm/src/db/in_memory_db.rs#L81-L83>.
 /// If an account is `NotExisting`, `Database(Ref)::basic` will always return `None` for the
-/// requested `AccountInfo`. To prevent
-///
-/// This will ensure that a missing account is never marked as `NotExisting`
+/// requested `AccountInfo`. To prevent this, we ensure that a missing account is never marked as
+/// `NotExisting` by always returning `Some` with this type.
 #[derive(Debug, Default, Clone)]
 pub struct EmptyDBWrapper(EmptyDB);
 
 impl DatabaseRef for EmptyDBWrapper {
     type Error = DatabaseError;
 
-    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic(&self, _address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         // Note: this will always return `Some(AccountInfo)`, for the reason explained above
-        Ok(Some(self.0.basic(address)?.unwrap_or_default()))
+        Ok(Some(AccountInfo::default()))
     }
+
     fn code_by_hash(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
         Ok(self.0.code_by_hash(code_hash)?)
     }
@@ -132,7 +135,8 @@ mod tests {
         // insert the modified account info
         db.insert_account_info(address, info);
 
-        // when fetching again, the `AccountInfo` is still `None` because the state of the account is `AccountState::NotExisting`, See <https://github.com/bluealloy/revm/blob/8f4348dc93022cffb3730d9db5d3ab1aad77676a/crates/revm/src/db/in_memory_db.rs#L217-L226>
+        // when fetching again, the `AccountInfo` is still `None` because the state of the account
+        // is `AccountState::NotExisting`, see <https://github.com/bluealloy/revm/blob/8f4348dc93022cffb3730d9db5d3ab1aad77676a/crates/revm/src/db/in_memory_db.rs#L217-L226>
         let info = Database::basic(&mut db, address).unwrap();
         assert!(info.is_none());
     }

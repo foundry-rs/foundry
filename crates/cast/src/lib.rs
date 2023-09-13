@@ -6,18 +6,19 @@ use ethers_core::{
         token::{LenientTokenizer, Tokenizer},
         Function, HumanReadableParser, ParamType, RawAbi, Token,
     },
-    types::{Chain, *},
+    types::{transaction::eip2718::TypedTransaction, Chain, *},
     utils::{
         format_bytes32_string, format_units, get_contract_address, keccak256, parse_bytes32_string,
         parse_units, rlp, Units,
     },
 };
 use ethers_etherscan::{errors::EtherscanError, Client};
-use ethers_providers::{Middleware, PendingTransaction};
+use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
 use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, Result};
 use foundry_common::{abi::encode_args, fmt::*, TransactionReceiptWithRevertReason};
 pub use foundry_evm::*;
+use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
 pub use rusoto_core::{
     credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
@@ -25,10 +26,12 @@ pub use rusoto_core::{
 };
 pub use rusoto_kms::KmsClient;
 use std::{
+    io,
     path::PathBuf,
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
 };
+use tokio::signal::ctrl_c;
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
@@ -815,6 +818,147 @@ where
             s.join("\n")
         };
         Ok(res)
+    }
+
+    /// Converts a block identifier into a block number.
+    ///
+    /// If the block identifier is a block number, then this function returns the block number. If
+    /// the block identifier is a block hash, then this function returns the block number of
+    /// that block hash. If the block identifier is `None`, then this function returns `None`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use ethers_core::types::{BlockId, BlockNumber};
+    /// use std::convert::TryFrom;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    ///
+    /// let block_number = cast.convert_block_number(Some(BlockId::Number(BlockNumber::from(5)))).await?;
+    /// assert_eq!(block_number, Some(BlockNumber::from(5)));
+    ///
+    /// let block_number = cast.convert_block_number(Some(BlockId::Hash("0x1234".parse().unwrap()))).await?;
+    /// assert_eq!(block_number, Some(BlockNumber::from(1234)));
+    ///
+    /// let block_number = cast.convert_block_number(None).await?;
+    /// assert_eq!(block_number, None);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn convert_block_number(
+        &self,
+        block: Option<BlockId>,
+    ) -> Result<Option<BlockNumber>, eyre::Error> {
+        match block {
+            Some(block) => match block {
+                BlockId::Number(block_number) => Ok(Some(block_number)),
+                BlockId::Hash(hash) => {
+                    let block = self.provider.get_block(hash).await?;
+                    Ok(block.map(|block| block.number.unwrap()).map(BlockNumber::from))
+                }
+            },
+            None => Ok(None),
+        }
+    }
+
+    /// Sets up a subscription to the given filter and writes the logs to the given output.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_core::abi::Address;
+    /// use ethers_providers::{Provider, Ws};
+    /// use ethers_core::types::Filter;
+    /// use std::{str::FromStr, convert::TryFrom};
+    /// use std::io;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::new(Ws::connect("wss://localhost:8545").await?);
+    /// let cast = Cast::new(provider);
+    ///
+    /// let filter = Filter::new().address(Address::from_str("0x00000000006c3852cbEf3e08E8dF289169EdE581")?);
+    /// let mut output = io::stdout();
+    /// cast.subscribe(filter, &mut output, false).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn subscribe(
+        &self,
+        filter: Filter,
+        output: &mut dyn io::Write,
+        to_json: bool,
+    ) -> Result<()>
+    where
+        <M as Middleware>::Provider: PubsubClient,
+    {
+        // Initialize the subscription stream for logs
+        let mut subscription = self.provider.subscribe_logs(&filter).await?;
+
+        // Check if a to_block is specified, if so, subscribe to blocks
+        let mut block_subscription = if filter.get_to_block().is_some() {
+            Some(self.provider.subscribe_blocks().await?)
+        } else {
+            None
+        };
+
+        let to_block_number = filter.get_to_block();
+
+        // If output should be JSON, start with an opening bracket
+        if to_json {
+            write!(output, "[")?;
+        }
+
+        let mut first = true;
+
+        loop {
+            tokio::select! {
+                // If block subscription is present, listen to it to avoid blocking indefinitely past the desired to_block
+                block = if let Some(bs) = &mut block_subscription {
+                    Either::Left(bs.next().fuse())
+                } else {
+                    Either::Right(futures::future::pending())
+                } => {
+                    if let (Some(block), Some(to_block)) = (block, to_block_number) {
+                        if block.number.map_or(false, |bn| bn > to_block) {
+                            break;
+                        }
+                    }
+                },
+                // Process incoming log
+                log = subscription.next() => {
+                    if to_json {
+                        if !first {
+                            write!(output, ",")?;
+                        }
+                        first = false;
+                        let log_str = serde_json::to_string(&log).unwrap();
+                        write!(output, "{}", log_str)?;
+                    } else {
+                        let log_str = log.pretty()
+                            .replacen('\n', "- ", 1)  // Remove empty first line
+                            .replace('\n', "\n  ");  // Indent
+                        writeln!(output, "{}", log_str)?;
+                    }
+                },
+                // Break on cancel signal, to allow for closing JSON bracket
+                _ = ctrl_c() => {
+                    break;
+                },
+                else => break,
+            }
+        }
+
+        // If output was JSON, end with a closing bracket
+        if to_json {
+            write!(output, "]")?;
+        }
+
+        Ok(())
     }
 }
 
@@ -1823,6 +1967,26 @@ impl SimpleCast {
             Some((_nonce, selector, signature)) => Ok((selector, signature)),
             None => eyre::bail!("No selector found"),
         }
+    }
+
+    /// Decodes a raw EIP2718 transaction payload
+    /// Returns details about the typed transaction and ECSDA signature components
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     let tx = "0x02f8f582a86a82058d8459682f008508351050808303fd84948e42f2f4101563bf679975178e880fd87d3efd4e80b884659ac74b00000000000000000000000080f0c1c49891dcfdd40b6e0f960f84e6042bcb6f000000000000000000000000b97ef9ef8734c71904d8002f8b6bc66dd9c48a6e00000000000000000000000000000000000000000000000000000000007ff4e20000000000000000000000000000000000000000000000000000000000000064c001a05d429597befe2835396206781b199122f2e8297327ed4a05483339e7a8b2022aa04c23a7f70fb29dda1b4ee342fb10a625e9b8ddc6a603fb4e170d4f6f37700cb8";
+    ///     let (tx, sig) = Cast::decode_raw_transaction(&tx)?;
+    ///
+    ///     Ok(())
+    /// }
+    pub fn decode_raw_transaction(tx: &str) -> Result<(TypedTransaction, Signature)> {
+        let tx_hex = hex::decode(strip_0x(tx))?;
+        let tx_rlp = rlp::Rlp::new(tx_hex.as_slice());
+        Ok(TypedTransaction::decode_signed(&tx_rlp)?)
     }
 }
 

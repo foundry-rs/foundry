@@ -39,7 +39,7 @@ pub enum DatabaseError {
     #[error("Transaction {0:?} not found")]
     TransactionNotFound(B256),
     #[error(
-        "CREATE2 Deployer not present on this chain. [0x4e59b44847b379578588920ca78fbf26c0b4956c]"
+        "CREATE2 Deployer (0x4e59b44847b379578588920ca78fbf26c0b4956c) not present on this chain.\n\nFor a production environment, you can deploy it using the pre-signed transaction from https://github.com/Arachnid/deterministic-deployment-proxy.\n\nFor a test environment, you can use vm.etch to place the required bytecode at that address."
     )]
     MissingCreate2Deployer,
     #[error(transparent)]

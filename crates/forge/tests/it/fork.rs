@@ -28,7 +28,7 @@ async fn test_cheats_fork_revert() {
         for (_, result) in test_results {
             assert_eq!(
                 result.reason.unwrap(),
-                "Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist on active fork with id `1`\n        But exists on non active forks: `[0]`"
+                "Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist on active fork with id `1`\n        But exists on non active forks: `[0x0_U256]`"
             );
         }
     }
@@ -71,6 +71,15 @@ async fn test_rpc_fork() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_launch_fork() {
     let rpc_url = foundry_utils::rpc::next_http_archive_rpc_endpoint();
+    let runner = forked_runner(&rpc_url).await;
+    let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}Launch"));
+    TestConfig::with_filter(runner, filter).run().await;
+}
+
+/// Smoke test that forking workings with websockets
+#[tokio::test(flavor = "multi_thread")]
+async fn test_launch_fork_ws() {
+    let rpc_url = foundry_utils::rpc::next_ws_archive_rpc_endpoint();
     let runner = forked_runner(&rpc_url).await;
     let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}Launch"));
     TestConfig::with_filter(runner, filter).run().await;

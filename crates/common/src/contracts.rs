@@ -5,7 +5,10 @@ use ethers_core::{
     types::{Address, H256},
     utils::hex,
 };
-use ethers_solc::{artifacts::ContractBytecodeSome, ArtifactId, ProjectPathsConfig};
+use ethers_solc::{
+    artifacts::{CompactContractBytecode, ContractBytecodeSome},
+    ArtifactId, ProjectPathsConfig,
+};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::{
@@ -264,4 +267,18 @@ mod tests {
 
         let _decoded = abi::decode(&params, args).unwrap();
     }
+}
+
+/// Helper function to convert CompactContractBytecode ~> ContractBytecodeSome
+pub fn compact_to_contract(
+    contract: CompactContractBytecode,
+) -> eyre::Result<ContractBytecodeSome> {
+    Ok(ContractBytecodeSome {
+        abi: contract.abi.ok_or(eyre::eyre!("No contract abi"))?,
+        bytecode: contract.bytecode.ok_or(eyre::eyre!("No contract bytecode"))?.into(),
+        deployed_bytecode: contract
+            .deployed_bytecode
+            .ok_or(eyre::eyre!("No contract deployed bytecode"))?
+            .into(),
+    })
 }

@@ -1,6 +1,5 @@
 use ethers::{
     abi::{Abi, FixedBytes, Function},
-    solc::EvmVersion,
     types::{Block, Chain, H160, H256, U256},
 };
 use eyre::ContextCompat;
@@ -115,24 +114,6 @@ pub fn halt_to_instruction_result(halt: Halt) -> InstructionResult {
         Halt::CallNotAllowedInsideStatic => InstructionResult::CallNotAllowedInsideStatic,
         Halt::OutOfFund => InstructionResult::OutOfFund,
         Halt::CallTooDeep => InstructionResult::CallTooDeep,
-    }
-}
-
-/// Converts an `EvmVersion` into a `SpecId`.
-#[inline]
-pub fn evm_spec(evm: EvmVersion) -> SpecId {
-    match evm {
-        EvmVersion::Homestead => SpecId::HOMESTEAD,
-        EvmVersion::TangerineWhistle => SpecId::TANGERINE,
-        EvmVersion::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
-        EvmVersion::Byzantium => SpecId::BYZANTIUM,
-        EvmVersion::Constantinople => SpecId::CONSTANTINOPLE,
-        EvmVersion::Petersburg => SpecId::PETERSBURG,
-        EvmVersion::Istanbul => SpecId::ISTANBUL,
-        EvmVersion::Berlin => SpecId::BERLIN,
-        EvmVersion::London => SpecId::LONDON,
-        EvmVersion::Paris => SpecId::MERGE,
-        EvmVersion::Shanghai => SpecId::SHANGHAI,
     }
 }
 

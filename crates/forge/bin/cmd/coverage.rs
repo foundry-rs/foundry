@@ -27,7 +27,7 @@ use foundry_cli::{
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
 use foundry_config::{Config, SolcReq};
-use foundry_evm::utils::{b160_to_h160, evm_spec, ru256_to_u256};
+use foundry_evm::utils::{b160_to_h160, ru256_to_u256};
 use semver::Version;
 use std::{collections::HashMap, sync::mpsc::channel};
 use tracing::trace;
@@ -286,11 +286,10 @@ impl CoverageArgs {
         let root = project.paths.root;
 
         // Build the contract runner
-        let evm_spec = evm_spec(config.evm_version);
         let env = evm_opts.evm_env().await?;
         let mut runner = MultiContractRunnerBuilder::default()
             .initial_balance(ru256_to_u256(evm_opts.initial_balance))
-            .evm_spec(evm_spec)
+            .evm_spec(config.evm_spec_id())
             .sender(b160_to_h160(evm_opts.sender))
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, &evm_opts))

@@ -232,7 +232,7 @@ flag to set your key via:
                 )?;
                 let address = wallet.address();
                 let success_message = format!(
-                    "`{}` keystore was saved successfully. Address: {}",
+                    "`{}` keystore was saved successfully. Address: {:?}",
                     &account_name, address,
                 );
                 println!("{}", Paint::green(success_message));

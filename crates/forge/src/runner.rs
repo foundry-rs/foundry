@@ -21,7 +21,8 @@ use foundry_evm::{
             replay_run, InvariantContract, InvariantExecutor, InvariantFuzzError,
             InvariantFuzzTestResult,
         },
-        FuzzedExecutor,
+        types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome},
+        CounterExample, FuzzedExecutor,
     },
     trace::{load_contracts, TraceKind},
     utils::{b160_to_h160, h160_to_b160, u256_to_ru256},
@@ -48,11 +49,12 @@ pub struct ContractRunner<'a> {
     pub contract: &'a Abi,
     /// All known errors, used to decode reverts
     pub errors: Option<&'a Abi>,
-
     /// The initial balance of the test contract
     pub initial_balance: U256,
     /// The address which will be used as the `from` field in all EVM calls
     pub sender: Address,
+    /// Should generate debug traces
+    pub debug: bool,
 }
 
 impl<'a> ContractRunner<'a> {
@@ -66,6 +68,7 @@ impl<'a> ContractRunner<'a> {
         sender: Option<Address>,
         errors: Option<&'a Abi>,
         predeploy_libs: &'a [Bytes],
+        debug: bool,
     ) -> Self {
         Self {
             name,
@@ -76,6 +79,7 @@ impl<'a> ContractRunner<'a> {
             sender: sender.unwrap_or_default(),
             errors,
             predeploy_libs,
+            debug,
         }
     }
 }
@@ -249,7 +253,7 @@ impl<'a> ContractRunner<'a> {
                         traces: setup.traces,
                         coverage: None,
                         labeled_addresses: setup.labeled_addresses,
-                        breakpoints: Default::default(),
+                        ..Default::default()
                     },
                 )]
                 .into(),
@@ -324,6 +328,7 @@ impl<'a> ContractRunner<'a> {
         // Run unit test
         let mut executor = self.executor.clone();
         let start = Instant::now();
+        let mut debug_arena = None;
         let (reverted, reason, gas, stipend, coverage, state_changeset, breakpoints) =
             match executor.execute_test::<(), _, _>(
                 h160_to_b160(self.sender),
@@ -342,6 +347,7 @@ impl<'a> ContractRunner<'a> {
                     coverage,
                     labels: new_labels,
                     state_changeset,
+                    debug,
                     breakpoints,
                     ..
                 }) => {
@@ -353,6 +359,7 @@ impl<'a> ContractRunner<'a> {
                             .collect::<Vec<_>>(),
                     );
                     logs.extend(execution_logs);
+                    debug_arena = debug;
                     (reverted, None, gas, stipend, coverage, state_changeset, breakpoints)
                 }
                 Err(EvmError::Execution(err)) => {
@@ -425,6 +432,7 @@ impl<'a> ContractRunner<'a> {
             traces,
             coverage,
             labeled_addresses,
+            debug: debug_arena,
             breakpoints,
         }
     }
@@ -557,7 +565,7 @@ impl<'a> ContractRunner<'a> {
             coverage: None, // TODO ?
             traces,
             labeled_addresses: labeled_addresses.clone(),
-            breakpoints: Default::default(),
+            ..Default::default() // TODO collect debug traces on the last run or error
         }
     }
 
@@ -574,8 +582,13 @@ impl<'a> ContractRunner<'a> {
 
         // Run fuzz test
         let start = Instant::now();
-        let mut result = FuzzedExecutor::new(&self.executor, runner, self.sender, fuzz_config)
-            .fuzz(func, address, should_fail, self.errors);
+        let fuzzed_executor =
+            FuzzedExecutor::new(&self.executor, runner.clone(), self.sender, fuzz_config);
+        let state = fuzzed_executor.build_fuzz_state();
+        let mut result = fuzzed_executor.fuzz(func, address, should_fail, self.errors);
+
+        let mut debug = Default::default();
+        let mut breakpoints = Default::default();
 
         // Check the last test result and skip the test
         // if it's marked as so.
@@ -587,8 +600,48 @@ impl<'a> ContractRunner<'a> {
                 traces,
                 labeled_addresses,
                 kind: TestKind::Standard(0),
+                debug,
+                breakpoints,
                 ..Default::default()
             }
+        }
+
+        // if should debug
+        if self.debug {
+            let mut debug_executor = self.executor.clone();
+            // turn the debug traces on
+            debug_executor.inspector.enable_debugger(true);
+            debug_executor.inspector.tracing(true);
+            let calldata = if let Some(counterexample) = result.counterexample.as_ref() {
+                match counterexample {
+                    CounterExample::Single(ce) => ce.calldata.clone(),
+                    _ => unimplemented!(),
+                }
+            } else {
+                result.first_case.calldata.clone()
+            };
+            // rerun the last relevant test with traces
+            let debug_result = FuzzedExecutor::new(
+                &debug_executor,
+                runner,
+                self.sender,
+                fuzz_config,
+            )
+            .single_fuzz(&state, address, should_fail, calldata);
+
+            (debug, breakpoints) = match debug_result {
+                Ok(fuzz_outcome) => match fuzz_outcome {
+                    FuzzOutcome::Case(CaseOutcome { debug, breakpoints, .. }) => {
+                        (debug, breakpoints)
+                    }
+                    FuzzOutcome::CounterExample(CounterExampleOutcome {
+                        debug,
+                        breakpoints,
+                        ..
+                    }) => (debug, breakpoints),
+                },
+                Err(_) => (Default::default(), Default::default()),
+            };
         }
 
         let kind = TestKind::Fuzz {
@@ -622,7 +675,8 @@ impl<'a> ContractRunner<'a> {
             traces,
             coverage: result.coverage,
             labeled_addresses,
-            breakpoints: Default::default(),
+            debug,
+            breakpoints,
         }
     }
 }

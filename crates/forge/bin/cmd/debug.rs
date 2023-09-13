@@ -1,8 +1,7 @@
 use super::{build::BuildArgs, retry::RETRY_VERIFY_ON_CREATE, script::ScriptArgs};
 use clap::{Parser, ValueHint};
-use eyre::Result;
 use foundry_cli::opts::CoreBuildArgs;
-use foundry_common::evm::{Breakpoints, EvmArgs};
+use foundry_common::evm::EvmArgs;
 use std::path::PathBuf;
 
 // Loads project's figment and merges the build cli arguments into it
@@ -41,7 +40,7 @@ pub struct DebugArgs {
 }
 
 impl DebugArgs {
-    pub async fn debug(self, breakpoints: Breakpoints) -> Result<()> {
+    pub async fn run(self) -> eyre::Result<()> {
         let script = ScriptArgs {
             path: self.path.to_str().expect("Invalid path string.").to_string(),
             args: self.args,
@@ -54,6 +53,6 @@ impl DebugArgs {
             retry: RETRY_VERIFY_ON_CREATE,
             ..Default::default()
         };
-        script.run_script(breakpoints).await
+        script.run_script().await
     }
 }

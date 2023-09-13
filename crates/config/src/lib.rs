@@ -76,6 +76,7 @@ pub mod fix;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
+use revm_primitives::SpecId;
 use tracing::warn;
 
 /// config providers
@@ -355,6 +356,13 @@ pub struct Config {
     ///
     /// This includes what operations can be executed (read, write)
     pub fs_permissions: FsPermissions,
+
+    /// Temporary config to enable [SpecId::CANCUN]
+    ///
+    /// <https://github.com/foundry-rs/foundry/issues/5782>
+    /// Should be removed once EvmVersion Cancun is supported by solc
+    pub cancun: bool,
+
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -683,6 +691,15 @@ impl Config {
         }
 
         Ok(None)
+    }
+
+    /// Returns the [SpecId] derived from the configured [EvmVersion]
+    #[inline]
+    pub fn evm_spec_id(&self) -> SpecId {
+        if self.cancun {
+            return SpecId::CANCUN
+        }
+        evm_spec_id(&self.evm_version)
     }
 
     /// Returns whether the compiler version should be auto-detected
@@ -1743,6 +1760,7 @@ impl Default for Config {
         Self {
             profile: Self::DEFAULT_PROFILE,
             fs_permissions: FsPermissions::new([PathPermission::read("out")]),
+            cancun: false,
             __root: Default::default(),
             src: "src".into(),
             test: "test".into(),
