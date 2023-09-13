@@ -68,8 +68,9 @@ const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] =
     [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
 
 /// Slot corresponding to "failed" in bytes on the cheatcodes (HEVM) address.
+/// Not prefixed with 0x.
 const GLOBAL_FAILURE_SLOT: &str =
-    "0x6661696c65640000000000000000000000000000000000000000000000000000";
+    "6661696c65640000000000000000000000000000000000000000000000000000";
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut, Box)]
