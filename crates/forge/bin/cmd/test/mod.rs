@@ -31,11 +31,11 @@ use foundry_config::{
     },
     get_available_profiles, Config,
 };
+use foundry_debugger::DebuggerArgs;
 use foundry_evm::fuzz::CounterExample;
 use regex::Regex;
 use std::{collections::BTreeMap, fs, sync::mpsc::channel, time::Duration};
 use tracing::trace;
-use ui::DebuggerArgs;
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 

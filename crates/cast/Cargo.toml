@@ -60,7 +60,7 @@ regex = { version = "1", default-features = false }
 rpassword = "7"
 semver = "1"
 tempfile = "3"
-tokio = { version = "1", features = ["macros"] }
+tokio = { version = "1", features = ["macros", "signal"] }
 tracing = "0.1"
 yansi = "0.5"
 

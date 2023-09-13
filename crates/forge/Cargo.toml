@@ -37,7 +37,7 @@ yansi = "0.5"
 forge-fmt.workspace = true
 forge-doc.workspace = true
 foundry-cli.workspace = true
-ui.workspace = true
+foundry-debugger.workspace = true
 
 alloy-primitives = { workspace = true, default-features = false, features = ["std", "serde"] }
 

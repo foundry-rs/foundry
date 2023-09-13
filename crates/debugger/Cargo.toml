@@ -1,5 +1,5 @@
 [package]
-name = "ui"
+name = "foundry-debugger"
 
 version.workspace = true
 edition.workspace = true
