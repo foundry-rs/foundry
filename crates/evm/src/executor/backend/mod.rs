@@ -1101,7 +1101,7 @@ impl DatabaseExt for Backend {
 
                 for (addr, acc) in journaled_state.state.iter() {
                     if acc.is_touched() {
-                        if to_copy {
+                        if should_copy {
                             merge_journaled_state_data(
                                 b160_to_h160(*addr),
                                 journaled_state,
