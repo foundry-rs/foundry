@@ -68,6 +68,7 @@ const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] =
     [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
 
 /// Slot corresponding to "failed" in bytes on the cheatcodes (HEVM) address.
+/// Not prefixed with 0x.
 const GLOBAL_FAILURE_SLOT: &str =
     "6661696c65640000000000000000000000000000000000000000000000000000";
 

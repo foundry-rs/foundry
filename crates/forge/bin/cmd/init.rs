@@ -71,7 +71,7 @@ impl InitArgs {
             }
             // Modify the git history.
             let commit_hash = git.commit_hash(true)?;
-            std::fs::remove_dir_all(".git")?;
+            std::fs::remove_dir_all(root.join(".git"))?;
 
             git.init()?;
             git.add(Some("--all"))?;

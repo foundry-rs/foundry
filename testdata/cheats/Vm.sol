@@ -612,6 +612,8 @@ interface Vm {
 
     function parseJsonBytes32Array(string calldata, string calldata) external returns (bytes32[] memory);
 
+    function serializeJson(string calldata, string calldata) external returns (string memory);
+
     function serializeBool(string calldata, string calldata, bool) external returns (string memory);
 
     function serializeUint(string calldata, string calldata, uint256) external returns (string memory);

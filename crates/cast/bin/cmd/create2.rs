@@ -96,9 +96,10 @@ impl Create2Args {
             ));
         }
         if let Some(suffix) = ends_with {
-            regexs.push(
-                (get_regex_hex_string(suffix).wrap_err("invalid suffix hex provided")?).to_string(),
-            );
+            regexs.push(format!(
+                r"{}$",
+                get_regex_hex_string(suffix).wrap_err("invalid prefix hex provided")?
+            ))
         }
 
         debug_assert!(
@@ -203,6 +204,14 @@ mod tests {
         let address = format!("{address:x}");
 
         assert!(address.starts_with("aaa"));
+
+        // odd hex chars with 0x suffix
+        let args = Create2Args::parse_from(["foundry-cli", "--ends-with", "bb"]);
+        let create2_out = args.run().unwrap();
+        let address = create2_out.address;
+        let address = format!("{address:x}");
+
+        assert!(address.ends_with("bb"));
 
         // check fails on wrong chars
         let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "0xerr"]);

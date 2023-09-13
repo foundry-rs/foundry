@@ -4,10 +4,10 @@ use ethers::{
     abi::Address,
     etherscan,
     etherscan::contract::{ContractMetadata, Metadata},
-    prelude::{artifacts::ContractBytecodeSome, errors::EtherscanError, ArtifactId},
+    prelude::errors::EtherscanError,
     types::H160,
 };
-use foundry_common::compile;
+use foundry_common::compile::{self, ContractSources};
 use foundry_config::{Chain, Config};
 use futures::{
     future::{join_all, Future},
@@ -58,13 +58,7 @@ impl EtherscanIdentifier {
 
     /// Goes over the list of contracts we have pulled from the traces, clones their source from
     /// Etherscan and compiles them locally, for usage in the debugger.
-    pub async fn get_compiled_contracts(
-        &self,
-    ) -> eyre::Result<(BTreeMap<ArtifactId, String>, BTreeMap<ArtifactId, ContractBytecodeSome>)>
-    {
-        let mut compiled_contracts = BTreeMap::new();
-        let mut sources = BTreeMap::new();
-
+    pub async fn get_compiled_contracts(&self) -> eyre::Result<ContractSources> {
         // TODO: Add caching so we dont double-fetch contracts.
         let contracts_iter = self
             .contracts
@@ -87,15 +81,20 @@ impl EtherscanIdentifier {
         // poll all the futures concurrently
         let artifacts = join_all(outputs_fut).await;
 
+        let mut sources: ContractSources = Default::default();
+
         // construct the map
         for (results, (_, metadata)) in artifacts.into_iter().zip(contracts_iter) {
             // get the inner type
-            let (artifact_id, bytecode) = results?;
-            compiled_contracts.insert(artifact_id.clone(), bytecode);
-            sources.insert(artifact_id, metadata.source_code());
+            let (artifact_id, file_id, bytecode) = results?;
+            sources
+                .0
+                .entry(artifact_id.clone().name)
+                .or_default()
+                .insert(file_id, (metadata.source_code(), bytecode));
         }
 
-        Ok((sources, compiled_contracts))
+        Ok(sources)
     }
 }
 
