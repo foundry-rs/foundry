@@ -28,7 +28,7 @@ async fn test_cheats_fork_revert() {
         for (_, result) in test_results {
             assert_eq!(
                 result.reason.unwrap(),
-                "Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist on active fork with id `1`\n        But exists on non active forks: `[0]`"
+                "Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist on active fork with id `1`\n        But exists on non active forks: `[0x0_U256]`"
             );
         }
     }
