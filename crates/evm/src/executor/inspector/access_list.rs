@@ -36,7 +36,6 @@ impl AccessListTracer {
                 .collect(),
         }
     }
-
     pub fn access_list(&self) -> AccessList {
         AccessList::from(
             self.access_list
@@ -49,7 +48,6 @@ impl AccessListTracer {
         )
     }
 }
-
 impl<DB: Database> Inspector<DB> for AccessListTracer {
     #[inline]
     fn step(
@@ -70,7 +68,7 @@ impl<DB: Database> Inspector<DB> for AccessListTracer {
             opcode::BALANCE |
             opcode::SELFDESTRUCT => {
                 if let Ok(slot) = interpreter.stack().peek(0) {
-                    let addr: Address = Address::from_slice(&slot.to_be_bytes::<32>());
+                    let addr: Address = Address::from_slice(&slot.to_be_bytes::<32>()[12..]);
                     if !self.excluded.contains(&addr) {
                         self.access_list.entry(addr).or_default();
                     }
@@ -78,7 +76,7 @@ impl<DB: Database> Inspector<DB> for AccessListTracer {
             }
             opcode::DELEGATECALL | opcode::CALL | opcode::STATICCALL | opcode::CALLCODE => {
                 if let Ok(slot) = interpreter.stack().peek(1) {
-                    let addr: Address = Address::from_slice(&slot.to_be_bytes::<32>());
+                    let addr: Address = Address::from_slice(&slot.to_be_bytes::<32>()[12..]);
                     if !self.excluded.contains(&addr) {
                         self.access_list.entry(addr).or_default();
                     }
@@ -86,7 +84,6 @@ impl<DB: Database> Inspector<DB> for AccessListTracer {
             }
             _ => (),
         }
-
         InstructionResult::Continue
     }
 }

@@ -6,8 +6,8 @@ use ethers::{
 use eyre::Result;
 use foundry_cli::utils::LoadConfig;
 use foundry_common::{contracts::flatten_contracts, try_get_http_provider};
-use foundry_evm::utils::b160_to_h160;
 use foundry_debugger::DebuggerArgs;
+use foundry_evm::utils::b160_to_h160;
 use std::sync::Arc;
 use tracing::trace;
 

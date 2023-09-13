@@ -27,7 +27,7 @@ use foundry_cli::{
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
 use foundry_config::{Config, SolcReq};
-use foundry_evm::utils::{ru256_to_u256, b160_to_h160};
+use foundry_evm::utils::{b160_to_h160, ru256_to_u256};
 use semver::Version;
 use std::{collections::HashMap, sync::mpsc::channel};
 use tracing::trace;

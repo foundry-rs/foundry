@@ -31,8 +31,11 @@ use foundry_config::{
     },
     get_available_profiles, Config,
 };
-use foundry_evm::{fuzz::CounterExample, utils::{ru256_to_u256, b160_to_h160}};
 use foundry_debugger::DebuggerArgs;
+use foundry_evm::{
+    fuzz::CounterExample,
+    utils::{b160_to_h160, ru256_to_u256},
+};
 use regex::Regex;
 use std::{collections::BTreeMap, fs, sync::mpsc::channel, time::Duration};
 use tracing::trace;

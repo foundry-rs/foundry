@@ -12,11 +12,11 @@ use ethers::{
 };
 use eyre::{Context, ContextCompat, Result};
 use foundry_cli::utils::get_cached_entry_by_name;
-use foundry_evm::utils::b160_to_h160;
 use foundry_common::{
     compact_to_contract,
     compile::{self, ContractSources},
 };
+use foundry_evm::utils::b160_to_h160;
 use foundry_utils::{PostLinkInput, ResolvedDependency};
 use std::{collections::BTreeMap, fs, str::FromStr};
 use tracing::{trace, warn};
