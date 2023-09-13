@@ -93,16 +93,17 @@ impl EvmOpts {
 
     /// Returns the `revm::Env` configured with only local settings
     pub fn local_evm_env(&self) -> revm::primitives::Env {
-        let mut cfg = CfgEnv::default();
-        cfg.chain_id = U256::from(self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID));
-        cfg.spec_id = SpecId::MERGE;
-        cfg.limit_contract_code_size = self.env.code_size_limit.or(Some(usize::MAX));
-        cfg.memory_limit = self.memory_limit;
-        // EIP-3607 rejects transactions from senders with deployed code.
-        // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the
-        // caller is a contract. So we disable the check by default.
-        cfg.disable_eip3607 = true;
-
+        let cfg = CfgEnv {
+            chain_id: U256::from(self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID)),
+            spec_id: SpecId::MERGE,
+            limit_contract_code_size: self.env.code_size_limit.or(Some(usize::MAX)),
+            memory_limit: self.memory_limit,
+            // EIP-3607 rejects transactions from senders with deployed code.
+            // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the
+            // caller is a contract. So we disable the check by default.
+            disable_eip3607: true,
+            ..Default::default()
+        };
         revm::primitives::Env {
             block: BlockEnv {
                 number: U256::from(self.env.block_number),
