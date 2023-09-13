@@ -69,7 +69,6 @@ where
         disable_eip3607: true,
         ..Default::default()
     };
-
     let mut env = Env {
         cfg,
         block: BlockEnv {

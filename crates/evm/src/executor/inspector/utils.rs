@@ -5,8 +5,6 @@ use revm::{
     primitives::{Address, CreateScheme, SpecId},
 };
 
-use crate::utils::ru256_to_u256;
-
 /// Returns [InstructionResult::Continue] on an error, discarding the error.
 ///
 /// Useful for inspectors that read state that might be invalid, but do not want to emit
