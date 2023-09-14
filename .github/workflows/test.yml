@@ -39,7 +39,7 @@ jobs:
     build-tests:
         name: build tests
         runs-on: ${{ matrix.os }}
-        timeout-minutes: 30
+        timeout-minutes: 60
         needs: matrices
         strategy:
             fail-fast: false
