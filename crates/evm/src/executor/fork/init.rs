@@ -59,16 +59,15 @@ where
         eyre::bail!("Failed to get block for block number: {}", block_number)
     };
 
-    let cfg = CfgEnv {
-        chain_id: u256_to_ru256(override_chain_id.unwrap_or(rpc_chain_id.as_u64()).into()),
-        memory_limit,
-        limit_contract_code_size: Some(usize::MAX),
-        // EIP-3607 rejects transactions from senders with deployed code.
-        // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the caller
-        // is a contract. So we disable the check by default.
-        disable_eip3607: true,
-        ..Default::default()
-    };
+    let mut cfg = CfgEnv::default();
+    cfg.chain_id = override_chain_id.unwrap_or(rpc_chain_id.as_u64());
+    cfg.memory_limit = memory_limit;
+    cfg.limit_contract_code_size = Some(usize::MAX);
+    // EIP-3607 rejects transactions from senders with deployed code.
+    // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the caller
+    // is a contract. So we disable the check by default.
+    cfg.disable_eip3607 = true;
+
     let mut env = Env {
         cfg,
         block: BlockEnv {

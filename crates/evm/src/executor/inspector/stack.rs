@@ -572,7 +572,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
         (status, address, remaining_gas, retdata)
     }
 
-    fn selfdestruct(&mut self, contract: rAddress, target: rAddress) {
+    fn selfdestruct(&mut self, contract: rAddress, target: rAddress, value: rU256) {
         call_inspectors!(
             [
                 &mut self.debugger,
@@ -583,7 +583,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.chisel_state
             ],
             |inspector| {
-                Inspector::<DB>::selfdestruct(inspector, contract, target);
+                Inspector::<DB>::selfdestruct(inspector, contract, target, value);
             }
         );
     }
