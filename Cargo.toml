@@ -170,7 +170,7 @@ alloy-primitives = { version = "0.3", default-features = false }
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-revm = { git = "https://github.com/bluealloy/revm/", branch = "reintrouduce_alloy" }
-revm-interpreter = { git = "https://github.com/bluealloy/revm/", branch = "reintrouduce_alloy" }
-revm-precompile = { git = "https://github.com/bluealloy/revm/", branch = "reintrouduce_alloy" }
-revm-primitives = { git = "https://github.com/bluealloy/revm/", branch = "reintrouduce_alloy" }
+revm = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
+revm-interpreter = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
+revm-precompile = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
+revm-primitives = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }

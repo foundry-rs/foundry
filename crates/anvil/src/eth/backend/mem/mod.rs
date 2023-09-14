@@ -365,7 +365,7 @@ impl Backend {
             // update all settings related to the forked block
             {
                 let mut env = self.env.write();
-                env.cfg.chain_id = rU256::from(fork.chain_id());
+                env.cfg.chain_id = fork.chain_id();
 
                 env.block = BlockEnv {
                     number: rU256::from(fork_block_number),
@@ -460,7 +460,7 @@ impl Backend {
 
     /// Returns the client coinbase address.
     pub fn chain_id(&self) -> U256 {
-        ru256_to_u256(self.env.read().cfg.chain_id)
+        self.env.read().cfg.chain_id.into()
     }
 
     /// Returns balance of the given account.

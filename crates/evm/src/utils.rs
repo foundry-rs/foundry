@@ -1,6 +1,5 @@
 use ethers::{
     abi::{Abi, FixedBytes, Function},
-    solc::EvmVersion,
     types::{Block, Chain, H160, H256, U256},
 };
 use eyre::ContextCompat;
@@ -126,7 +125,7 @@ pub fn apply_chain_and_block_specific_env_changes<T>(
     env: &mut revm::primitives::Env,
     block: &Block<T>,
 ) {
-    if let Ok(chain) = Chain::try_from(ru256_to_u256(env.cfg.chain_id)) {
+    if let Ok(chain) = Chain::try_from(env.cfg.chain_id) {
         let block_number = block.number.unwrap_or_default();
 
         match chain {
