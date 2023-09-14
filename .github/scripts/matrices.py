@@ -45,10 +45,7 @@ class Expanded:
 
 default_target = Target("ubuntu-latest", "x86_64-unknown-linux-gnu")
 if os.environ.get("EVENT_NAME") == "pull_request":
-    targets = [
-        default_target,
-        Target("windows-latest", "x86_64-pc-windows-msvc"),
-    ]
+    targets = [default_target]
 else:
     targets = [
         default_target,
