@@ -9,7 +9,7 @@ use ethers_providers::{
 };
 use reqwest::{header::HeaderValue, Url};
 use serde::{de::DeserializeOwned, Serialize};
-use std::{fmt::Debug, sync::Arc, time::Duration};
+use std::{fmt::Debug, path::PathBuf, sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::sync::RwLock;
 
@@ -176,9 +176,7 @@ impl RuntimeClient {
                 Ok(InnerClient::Ws(client))
             }
             "file" => {
-                let path = self
-                    .url
-                    .to_file_path()
+                let path = url_to_file_path(&self.url)
                     .map_err(|_| RuntimeClientError::BadPath(self.url.to_string()))?;
 
                 let client = Ipc::connect(path)
@@ -190,6 +188,26 @@ impl RuntimeClient {
             _ => Err(RuntimeClientError::BadScheme(self.url.to_string())),
         }
     }
+}
+
+#[cfg(windows)]
+fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
+    const PREFIX: &str = "file:///pipe/";
+
+    let url_str = url.as_str();
+
+    if url_str.starts_with(PREFIX) {
+        let pipe_name = &url_str[PREFIX.len()..];
+        let pipe_path = format!(r"\\.\pipe\{}", pipe_name);
+        return Ok(PathBuf::from(pipe_path))
+    }
+
+    url.to_file_path()
+}
+
+#[cfg(not(windows))]
+fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
+    url.to_file_path()
 }
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
