@@ -27,6 +27,7 @@ use crate::{
         db::DatabaseRef,
         primitives::{AccountInfo, U256 as rU256},
     },
+    NodeConfig,
 };
 use anvil_core::{
     eth::{
@@ -168,6 +169,7 @@ pub struct Backend {
     prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
     transaction_block_keeper: Option<usize>,
+    node_config: NodeConfig,
 }
 
 impl Backend {
@@ -183,6 +185,7 @@ impl Backend {
         prune_state_history_config: PruneStateHistoryConfig,
         transaction_block_keeper: Option<usize>,
         automine_block_time: Option<Duration>,
+        node_config: NodeConfig,
     ) -> Self {
         // if this is a fork then adjust the blockchain storage
         let blockchain = if let Some(ref fork) = fork {
@@ -225,6 +228,7 @@ impl Backend {
             enable_steps_tracing,
             prune_state_history_config,
             transaction_block_keeper,
+            node_config,
         };
 
         if let Some(interval_block_time) = automine_block_time {
@@ -352,6 +356,21 @@ impl Backend {
 
     /// Resets the fork to a fresh state
     pub async fn reset_fork(&self, forking: Forking) -> Result<(), BlockchainError> {
+        if !self.is_fork() {
+            if let Some(eth_rpc_url) = forking.clone().json_rpc_url {
+                let mut env = self.env.read().clone();
+                let (db, forking) =
+                    self.node_config.fork_db_setup(eth_rpc_url, &mut env, &self.fees).await;
+
+                *self.env.write() = env;
+                self.db.write().await.init_from_snapshot(db.write().await.clear_into_snapshot());
+
+                self.get_fork().replace(&forking);
+            } else {
+                return Err(RpcError::invalid_params("Forking not enabled and RPC URL not provided to start forking").into());
+            }
+        }
+
         if let Some(fork) = self.get_fork() {
             let block_number =
                 forking.block_number.map(BlockNumber::from).unwrap_or(BlockNumber::Latest);
