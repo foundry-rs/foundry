@@ -151,7 +151,7 @@ pub struct Backend {
     /// env data of the chain
     env: Arc<RwLock<Env>>,
     /// this is set if this is currently forked off another client
-    fork: Option<ClientFork>,
+    fork: Arc<RwLock<Option<ClientFork>>>,
     /// provides time related info, like timestamp
     time: TimeManager,
     /// Contains state of custom overrides
@@ -180,7 +180,7 @@ impl Backend {
         env: Arc<RwLock<Env>>,
         genesis: GenesisConfig,
         fees: FeeManager,
-        fork: Option<ClientFork>,
+        fork: Arc<RwLock<Option<ClientFork>>>,
         enable_steps_tracing: bool,
         prune_state_history_config: PruneStateHistoryConfig,
         transaction_block_keeper: Option<usize>,
@@ -188,7 +188,7 @@ impl Backend {
         node_config: Arc<AsyncRwLock<NodeConfig>>,
     ) -> Self {
         // if this is a fork then adjust the blockchain storage
-        let blockchain = if let Some(ref fork) = fork {
+        let blockchain = if let Some(fork) = fork.read().as_ref() {
             trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
             Blockchain::forked(fork.block_number(), fork.block_hash(), fork.total_difficulty())
         } else {
@@ -200,7 +200,7 @@ impl Backend {
         };
 
         let start_timestamp =
-            if let Some(fork) = fork.as_ref() { fork.timestamp() } else { genesis.timestamp };
+            if let Some(fork) = fork.read().as_ref() { fork.timestamp() } else { genesis.timestamp };
 
         let states = if prune_state_history_config.is_config_enabled() {
             // if prune state history is enabled, configure the state cache only for memory
@@ -258,7 +258,7 @@ impl Backend {
     async fn apply_genesis(&self) -> DatabaseResult<()> {
         trace!(target: "backend", "setting genesis balances");
 
-        if self.fork.is_some() {
+        if self.fork.read().is_some() {
             // fetch all account first
             let mut genesis_accounts_futures = Vec::with_capacity(self.genesis.accounts.len());
             for address in self.genesis.accounts.iter().copied() {
@@ -331,8 +331,8 @@ impl Backend {
     }
 
     /// Returns the configured fork, if any
-    pub fn get_fork(&self) -> Option<&ClientFork> {
-        self.fork.as_ref()
+    pub fn get_fork(&self) -> Option<ClientFork> {
+        self.fork.read().clone()
     }
 
     /// Returns the database
@@ -347,7 +347,7 @@ impl Backend {
 
     /// Whether we're forked off some remote client
     pub fn is_fork(&self) -> bool {
-        self.fork.is_some()
+        self.fork.read().is_some()
     }
 
     pub fn precompiles(&self) -> Vec<Address> {
@@ -368,7 +368,7 @@ impl Backend {
                 self.db.write().await.init_from_snapshot(db.write().await.clear_into_snapshot());
 
                 // This doesn't work, weird that it doesn't error though...
-                self.get_fork().replace(&forking);
+                *self.fork.write() = Some(forking);
             } else {
                 return Err(RpcError::invalid_params(
                     "Forking not enabled and RPC URL not provided to start forking",

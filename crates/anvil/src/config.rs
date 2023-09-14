@@ -832,7 +832,7 @@ impl NodeConfig {
             Arc::new(RwLock::new(env)),
             genesis,
             fees,
-            fork,
+            Arc::new(RwLock::new(fork)),
             self.enable_steps_tracing,
             self.prune_history,
             self.transaction_block_keeper,
