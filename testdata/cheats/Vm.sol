@@ -96,6 +96,9 @@ interface Vm {
     // Stores a value to an address' storage slot, (who, slot, value)
     function store(address, bytes32, bytes32) external;
 
+    // Cools off a warm address and it's storage slots
+    function cool(address) external;
+
     // Signs data, (privateKey, digest) => (v, r, s)
     function sign(uint256, bytes32) external returns (uint8, bytes32, bytes32);
 

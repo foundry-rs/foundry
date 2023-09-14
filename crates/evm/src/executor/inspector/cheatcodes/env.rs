@@ -387,6 +387,17 @@ pub fn apply<DB: DatabaseExt>(
             )?;
             ru256_to_u256(val).encode().into()
         }
+        HEVMCalls::Cool(inner) => {
+            ensure!(!is_potential_precompile(inner.0), "Load cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
+            let address = &h160_to_b160(inner.0);
+            if let Some(account) = data.journaled_state.state.get_mut(address) {
+                if account.is_touched() {
+                    account.unmark_touch();
+                }
+                account.storage.clear();
+            }
+            Bytes::new()
+        }
         HEVMCalls::Breakpoint0(inner) => add_breakpoint(state, caller, &inner.0, true)?,
         HEVMCalls::Breakpoint1(inner) => add_breakpoint(state, caller, &inner.0, inner.1)?,
         HEVMCalls::Etch(inner) => {
