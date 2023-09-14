@@ -808,13 +808,6 @@ impl NodeConfig {
         let (db, fork): (Arc<tokio::sync::RwLock<dyn Db>>, Option<ClientFork>) =
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
                 let (db, fork) = self.fork_db_setup(eth_rpc_url, &mut env, &fees).await;
-                
-                // update config with new values from fork
-                self.hardfork = Some(fork.block_number().into());
-                self.base_fee = Some(env.block.basefee.into());
-                self.gas_price = Some(fees.gas_price());
-                self.set_chain_id(Some(fork.chain_id()));
-
                 (db, Some(fork))
             } else {
                 (Arc::new(tokio::sync::RwLock::new(MemDb::default())), None)
@@ -844,7 +837,7 @@ impl NodeConfig {
             self.prune_history,
             self.transaction_block_keeper,
             self.block_time,
-            self.clone(),
+            Arc::new(tokio::sync::RwLock::new(self.clone())),
         )
         .await;
 
@@ -869,7 +862,7 @@ impl NodeConfig {
         backend
     }
 
-    pub async fn fork_db_setup(&self, eth_rpc_url: String, env: &mut revm::primitives::Env, fees: &FeeManager) -> (Arc<tokio::sync::RwLock<dyn Db>>, ClientFork) {
+    pub async fn fork_db_setup(&mut self, eth_rpc_url: String, env: &mut revm::primitives::Env, fees: &FeeManager) -> (Arc<tokio::sync::RwLock<dyn Db>>, ClientFork) {
         // TODO make provider agnostic
         let provider = Arc::new(
             ProviderBuilder::new(&eth_rpc_url)
@@ -896,7 +889,7 @@ impl NodeConfig {
                 if chain_id == ethers::types::Chain::Mainnet.into() {
                     let hardfork: Hardfork = fork_block_number.into();
                     env.cfg.spec_id = hardfork.into();
-                    // self.hardfork = Some(hardfork);
+                    self.hardfork = Some(hardfork);
                 }
                 Some(chain_id)
             } else {
@@ -965,7 +958,7 @@ latest block number: {latest_block}"
         // if not set explicitly we use the base fee of the latest block
         if self.base_fee.is_none() {
             if let Some(base_fee) = block.base_fee_per_gas {
-                // self.base_fee = Some(base_fee);
+                self.base_fee = Some(base_fee);
                 env.block.basefee = u256_to_ru256(base_fee);
                 // this is the base fee of the current block, but we need the base fee of
                 // the next block
@@ -982,7 +975,7 @@ latest block number: {latest_block}"
         // use remote gas price
         if self.gas_price.is_none() {
             if let Ok(gas_price) = provider.get_gas_price().await {
-                // self.gas_price = Some(gas_price);
+                self.gas_price = Some(gas_price);
                 fees.set_gas_price(gas_price);
             }
         }
@@ -1000,7 +993,7 @@ latest block number: {latest_block}"
             .as_u64();
 
             // need to update the dev signers and env with the chain id
-            // self.set_chain_id(Some(chain_id));
+            self.set_chain_id(Some(chain_id));
             env.cfg.chain_id = chain_id;
             env.tx.chain_id = chain_id.into();
             chain_id

@@ -224,6 +224,25 @@ async fn test_fork_reset() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_setup() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    assert_eq!(block_number, 0.into());
+
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(rpc::next_http_archive_rpc_endpoint()),
+        block_number: Some(BLOCK_NUMBER),
+    }))
+    .await
+    .unwrap();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    assert_eq!(block_number, BLOCK_NUMBER.into());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fork_snapshotting() {
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();

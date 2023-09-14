@@ -169,7 +169,7 @@ pub struct Backend {
     prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
     transaction_block_keeper: Option<usize>,
-    node_config: NodeConfig,
+    node_config: Arc<AsyncRwLock<NodeConfig>>,
 }
 
 impl Backend {
@@ -185,7 +185,7 @@ impl Backend {
         prune_state_history_config: PruneStateHistoryConfig,
         transaction_block_keeper: Option<usize>,
         automine_block_time: Option<Duration>,
-        node_config: NodeConfig,
+        node_config: Arc<AsyncRwLock<NodeConfig>>,
     ) -> Self {
         // if this is a fork then adjust the blockchain storage
         let blockchain = if let Some(ref fork) = fork {
@@ -359,15 +359,21 @@ impl Backend {
         if !self.is_fork() {
             if let Some(eth_rpc_url) = forking.clone().json_rpc_url {
                 let mut env = self.env.read().clone();
+
+                let mut node_config = self.node_config.write().await;
                 let (db, forking) =
-                    self.node_config.fork_db_setup(eth_rpc_url, &mut env, &self.fees).await;
+                    node_config.fork_db_setup(eth_rpc_url, &mut env, &self.fees).await;
 
                 *self.env.write() = env;
                 self.db.write().await.init_from_snapshot(db.write().await.clear_into_snapshot());
 
+                // This doesn't work, weird that it doesn't error though...
                 self.get_fork().replace(&forking);
             } else {
-                return Err(RpcError::invalid_params("Forking not enabled and RPC URL not provided to start forking").into());
+                return Err(RpcError::invalid_params(
+                    "Forking not enabled and RPC URL not provided to start forking",
+                )
+                .into())
             }
         }
 
