@@ -63,9 +63,6 @@ thiserror = "1"
 tokio = { version = "1", features = ["time"] }
 watchexec = "2"
 
-[target.'cfg(not(target_env = "msvc"))'.dependencies]
-tikv-jemallocator = { workspace = true, optional = true }
-
 [dev-dependencies]
 anvil.workspace = true
 foundry-test-utils.workspace = true
@@ -78,8 +75,7 @@ serial_test = "2"
 svm = { package = "svm-rs", version = "0.3", default-features = false, features = ["rustls"] }
 
 [features]
-default = ["rustls", "jemalloc"]
-jemalloc = ["dep:tikv-jemallocator"]
+default = ["rustls"]
 rustls = ["foundry-cli/rustls", "reqwest/rustls-tls", "reqwest/rustls-tls-native-roots"]
 openssl = ["foundry-cli/openssl", "reqwest/default-tls"]
 

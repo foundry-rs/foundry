@@ -64,17 +64,13 @@ tokio = { version = "1", features = ["macros", "signal"] }
 tracing = "0.1"
 yansi = "0.5"
 
-[target.'cfg(not(target_env = "msvc"))'.dependencies]
-tikv-jemallocator = { workspace = true, optional = true }
-
 [dev-dependencies]
 foundry-test-utils.workspace = true
 async-trait = "0.1"
 criterion = "0.5"
 
 [features]
-default = ["rustls", "jemalloc"]
-jemalloc = ["dep:tikv-jemallocator"]
+default = ["rustls"]
 rustls = ["foundry-cli/rustls"]
 openssl = ["foundry-cli/openssl"]
 
