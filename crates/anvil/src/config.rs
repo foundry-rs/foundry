@@ -807,8 +807,7 @@ impl NodeConfig {
 
         let (db, fork): (Arc<tokio::sync::RwLock<dyn Db>>, Option<ClientFork>) =
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
-                let (db, fork) = self.fork_db_setup(eth_rpc_url, &mut env, &fees).await;
-                (db, Some(fork))
+                self.fork_db_setup(eth_rpc_url, &mut env, &fees).await
             } else {
                 (Arc::new(tokio::sync::RwLock::new(MemDb::default())), None)
             };
@@ -862,7 +861,7 @@ impl NodeConfig {
         backend
     }
 
-    pub async fn fork_db_setup(&mut self, eth_rpc_url: String, env: &mut revm::primitives::Env, fees: &FeeManager) -> (Arc<tokio::sync::RwLock<dyn Db>>, ClientFork) {
+    pub async fn fork_db_setup(&mut self, eth_rpc_url: String, env: &mut revm::primitives::Env, fees: &FeeManager) -> (Arc<tokio::sync::RwLock<dyn Db>>, Option<ClientFork>) {
         // TODO make provider agnostic
         let provider = Arc::new(
             ProviderBuilder::new(&eth_rpc_url)
@@ -1038,7 +1037,7 @@ latest block number: {latest_block}"
             Arc::clone(&db),
         );
 
-        (db, fork)
+        (db, Some(fork))
     }
 }
 

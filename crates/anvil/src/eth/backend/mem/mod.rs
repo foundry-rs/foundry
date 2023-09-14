@@ -367,8 +367,7 @@ impl Backend {
                 *self.env.write() = env;
                 self.db.write().await.init_from_snapshot(db.write().await.clear_into_snapshot());
 
-                // This doesn't work, weird that it doesn't error though...
-                *self.fork.write() = Some(forking);
+                *self.fork.write() = forking;
             } else {
                 return Err(RpcError::invalid_params(
                     "Forking not enabled and RPC URL not provided to start forking",
