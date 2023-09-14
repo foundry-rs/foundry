@@ -6,7 +6,12 @@ use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use ethers_providers::{is_local_endpoint, Middleware, Provider, DEFAULT_LOCAL_POLL_INTERVAL};
 use eyre::WrapErr;
 use reqwest::{IntoUrl, Url};
-use std::{borrow::Cow, env, path::Path, time::Duration};
+use std::{
+    borrow::Cow,
+    env,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use url::ParseError;
 
 /// Helper type alias for a retry provider
@@ -68,31 +73,23 @@ impl ProviderBuilder {
         }
 
         let url = Url::parse(url_str)
-            .or_else(|err| {
-                match err {
-                    ParseError::RelativeUrlWithoutBase => {
-                        let path = Path::new(url_str);
-                        let absolute_path = if path.is_absolute() {
-                            path.to_path_buf()
-                        } else {
-                            // Assume the path is relative to the current directory.
-                            // Don't use `std::fs::canonicalize` as it requires the path to exist.
-                            // It should be possible to construct a provider and only
-                            // attempt to establish a connection later
-                            let current_dir =
-                                env::current_dir().expect("Current directory should exist");
-                            current_dir.join(path)
-                        };
+            .or_else(|err| match err {
+                ParseError::RelativeUrlWithoutBase => {
+                    let path = Path::new(url_str);
 
-                        let path_str =
-                            absolute_path.to_str().expect("Path should be a valid string");
-
-                        // invalid url: non-prefixed URL scheme is not allowed, so we assume the URL
-                        // is for a local file
-                        Url::parse(format!("file://{path_str}").as_str())
+                    if let Ok(path) = resolve_path(path) {
+                        Url::parse(
+                            format!(
+                                "file://{path_str}",
+                                path_str = path.to_str().expect("Should be valid string")
+                            )
+                            .as_str(),
+                        )
+                    } else {
+                        Err(err)
                     }
-                    _ => Err(err),
                 }
+                _ => Err(err),
             })
             .wrap_err(format!("Invalid provider url: {url_str}"));
 
@@ -278,6 +275,28 @@ where
         }
     }
     provider.estimate_eip1559_fees(None).await.wrap_err("Failed fetch EIP1559 fees")
+}
+
+#[cfg(not(windows))]
+fn resolve_path(path: &Path) -> Result<PathBuf, ()> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(env::current_dir()
+            .map(|current_dir| current_dir.join(path))
+            .expect("Current directory should exist"))
+    }
+}
+
+#[cfg(windows)]
+fn resolve_path(path: &Path) -> Result<PathBuf, ()> {
+    let path_str = path.to_str().expect("Path should be a valid string");
+
+    if path_str.starts_with(r"\\.\pipe\") {
+        Ok(PathBuf::from(path_str))
+    } else {
+        Err(())
+    }
 }
 
 #[cfg(test)]
