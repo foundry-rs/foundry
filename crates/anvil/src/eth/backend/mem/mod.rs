@@ -199,8 +199,11 @@ impl Backend {
             )
         };
 
-        let start_timestamp =
-            if let Some(fork) = fork.read().as_ref() { fork.timestamp() } else { genesis.timestamp };
+        let start_timestamp = if let Some(fork) = fork.read().as_ref() {
+            fork.timestamp()
+        } else {
+            genesis.timestamp
+        };
 
         let states = if prune_state_history_config.is_config_enabled() {
             // if prune state history is enabled, configure the state cache only for memory

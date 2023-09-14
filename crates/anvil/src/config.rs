@@ -861,7 +861,12 @@ impl NodeConfig {
         backend
     }
 
-    pub async fn fork_db_setup(&mut self, eth_rpc_url: String, env: &mut revm::primitives::Env, fees: &FeeManager) -> (Arc<tokio::sync::RwLock<dyn Db>>, Option<ClientFork>) {
+    pub async fn fork_db_setup(
+        &mut self,
+        eth_rpc_url: String,
+        env: &mut revm::primitives::Env,
+        fees: &FeeManager,
+    ) -> (Arc<tokio::sync::RwLock<dyn Db>>, Option<ClientFork>) {
         // TODO make provider agnostic
         let provider = Arc::new(
             ProviderBuilder::new(&eth_rpc_url)
@@ -899,9 +904,7 @@ impl NodeConfig {
         } else {
             // pick the last block number but also ensure it's not pending anymore
             (
-                find_latest_fork_block(&provider)
-                    .await
-                    .expect("Failed to get fork block number"),
+                find_latest_fork_block(&provider).await.expect("Failed to get fork block number"),
                 None,
             )
         };
@@ -1014,10 +1017,7 @@ latest block number: {latest_block}"
             Some(fork_block_number.into()),
         );
 
-        let db = Arc::new(tokio::sync::RwLock::new(ForkedDatabase::new(
-            backend,
-            block_chain_db,
-        )));
+        let db = Arc::new(tokio::sync::RwLock::new(ForkedDatabase::new(backend, block_chain_db)));
         let fork = ClientFork::new(
             ClientForkConfig {
                 eth_rpc_url,
