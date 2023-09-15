@@ -807,7 +807,7 @@ impl NodeConfig {
 
         let (db, fork): (Arc<tokio::sync::RwLock<dyn Db>>, Option<ClientFork>) =
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
-                self.fork_db_setup(eth_rpc_url, &mut env, &fees).await
+                self.setup_fork_db(eth_rpc_url, &mut env, &fees).await
             } else {
                 (Arc::new(tokio::sync::RwLock::new(MemDb::default())), None)
             };
@@ -861,7 +861,12 @@ impl NodeConfig {
         backend
     }
 
-    pub async fn fork_db_setup(
+    /// Configures everything related to forking based on the passed `eth_rpc_url`:
+    ///  - returning a tuple of a [ForkedDatabase](ForkedDatabase) and [ClientFork](ClientFork)
+    ///    which can be used in a [Backend](mem::Backend) to fork from.
+    ///  - modifying some parameters of the passed `env`
+    ///  - mutating some members of `self`
+    pub async fn setup_fork_db(
         &mut self,
         eth_rpc_url: String,
         env: &mut revm::primitives::Env,

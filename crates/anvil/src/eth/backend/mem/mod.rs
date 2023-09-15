@@ -365,11 +365,13 @@ impl Backend {
 
                 let mut node_config = self.node_config.write().await;
                 let (db, forking) =
-                    node_config.fork_db_setup(eth_rpc_url, &mut env, &self.fees).await;
+                    node_config.setup_fork_db(eth_rpc_url, &mut env, &self.fees).await;
+
+                // TODO: Something like this is needed but...
+                // This won't compile because dyn Db is not Sized (and AFAIK cannot be made Sized)
+                // *self.db.write().await = *db.read().await;
 
                 *self.env.write() = env;
-                self.db.write().await.init_from_snapshot(db.write().await.clear_into_snapshot());
-
                 *self.fork.write() = forking;
             } else {
                 return Err(RpcError::invalid_params(
