@@ -295,8 +295,8 @@ contract FsTest is DSTest {
         assertEq(metadata.isDir, true);
         assertEq(metadata.isSymlink, false);
         assertEq(metadata.readOnly, false);
-        assertGt(metadata.length, 0);
         // These fields aren't available on all platforms, default to zero
+        // assertGt(metadata.length, 0);
         // assertGt(metadata.modified, 0);
         // assertGt(metadata.accessed, 0);
         // assertGt(metadata.created, 0);
@@ -304,10 +304,13 @@ contract FsTest is DSTest {
         path = "fixtures/File/read.txt";
         metadata = vm.fsMetadata(path);
         assertEq(metadata.isDir, false);
+        assertEq(metadata.isSymlink, false);
+        assertEq(metadata.length, 45);
 
         path = "fixtures/File/symlink";
         metadata = vm.fsMetadata(path);
-        assertEq(metadata.isSymlink, false);
+        assertEq(metadata.isDir, false);
+        assertEq(metadata.isSymlink, true);
 
         vm.expectRevert();
         fsProxy.fsMetadata("../not-found");
