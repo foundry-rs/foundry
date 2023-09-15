@@ -66,7 +66,7 @@ impl ScriptRunner {
             .filter_map(|code| {
                 let DeployResult { traces, .. } = self
                     .executor
-                    .deploy(h160_to_b160(self.sender), code.0.clone(), rU256::ZERO, None)
+                    .deploy(h160_to_b160(self.sender), code.0.clone().into(), rU256::ZERO, None)
                     .expect("couldn't deploy library");
 
                 traces
@@ -83,7 +83,7 @@ impl ScriptRunner {
             ..
         } = self
             .executor
-            .deploy(CALLER, code.0, rU256::ZERO, None)
+            .deploy(CALLER, code.0.into(), rU256::ZERO, None)
             .map_err(|err| eyre::eyre!("Failed to deploy script:\n{}", err))?;
 
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));
@@ -217,7 +217,7 @@ impl ScriptRunner {
         } else if to.is_none() {
             let (address, gas_used, logs, traces, debug) = match self.executor.deploy(
                 h160_to_b160(from),
-                calldata.expect("No data for create transaction").0,
+                calldata.expect("No data for create transaction").0.into(),
                 u256_to_ru256(value.unwrap_or(U256::zero())),
                 None,
             ) {
@@ -271,7 +271,7 @@ impl ScriptRunner {
         let mut res = self.executor.call_raw(
             h160_to_b160(from),
             h160_to_b160(to),
-            calldata.0.clone(),
+            calldata.0.clone().into(),
             u256_to_ru256(value),
         )?;
         let mut gas_used = res.gas_used;
@@ -286,7 +286,7 @@ impl ScriptRunner {
             res = self.executor.call_raw_committing(
                 h160_to_b160(from),
                 h160_to_b160(to),
-                calldata.0,
+                calldata.0.into(),
                 u256_to_ru256(value),
             )?;
         }
@@ -305,7 +305,7 @@ impl ScriptRunner {
         let breakpoints = res.cheatcodes.map(|cheats| cheats.breakpoints).unwrap_or_default();
 
         Ok(ScriptResult {
-            returned: result,
+            returned: result.0,
             success: !reverted,
             gas_used,
             logs,
@@ -353,7 +353,7 @@ impl ScriptRunner {
                 let res = self.executor.call_raw(
                     h160_to_b160(from),
                     h160_to_b160(to),
-                    calldata.0.clone(),
+                    calldata.0.clone().into(),
                     u256_to_ru256(value),
                 )?;
                 match res.exit_reason {

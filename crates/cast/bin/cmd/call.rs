@@ -160,7 +160,7 @@ impl CallArgs {
 
                     let trace = match executor.deploy(
                         h160_to_b160(sender),
-                        code.into(),
+                        code.into_bytes().into(),
                         u256_to_ru256(value.unwrap_or(U256::zero())),
                         None,
                     ) {

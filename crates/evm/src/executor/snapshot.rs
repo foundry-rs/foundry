@@ -35,7 +35,7 @@ impl<T> Snapshots<T> {
         let mut to_revert = id.add(U256::from(1));
         while to_revert < self.id {
             self.snapshots.remove(&to_revert);
-            to_revert = to_revert + U256::from(1);
+            to_revert += U256::from(1);
         }
 
         snapshot

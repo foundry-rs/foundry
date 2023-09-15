@@ -124,7 +124,7 @@ pub fn replay_run(
             .call_raw_committing(
                 h160_to_b160(*sender),
                 h160_to_b160(*addr),
-                bytes.0.clone(),
+                bytes.0.clone().into(),
                 U256::ZERO,
             )
             .expect("bad call to evm");

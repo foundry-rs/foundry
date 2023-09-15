@@ -110,7 +110,7 @@ impl<'a> ContractRunner<'a> {
         for code in self.predeploy_libs.iter() {
             match self.executor.deploy(
                 h160_to_b160(self.sender),
-                code.0.clone(),
+                code.0.clone().into(),
                 rU256::ZERO,
                 self.errors,
             ) {
@@ -127,7 +127,7 @@ impl<'a> ContractRunner<'a> {
         // Deploy the test contract
         let address = match self.executor.deploy(
             h160_to_b160(self.sender),
-            self.code.0.clone(),
+            self.code.0.clone().into(),
             rU256::ZERO,
             self.errors,
         ) {

@@ -13,8 +13,8 @@ pub use abi::{
     patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
     HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
 };
+use alloy_primitives::Bytes;
 use backend::FuzzBackendWrapper;
-use bytes::Bytes;
 use ethers::{
     abi::{Abi, Contract, Detokenize, Function, Tokenize},
     prelude::{decode_function_data, encode_function_data},
@@ -106,10 +106,7 @@ impl Executor {
         backend.insert_account_info(
             CHEATCODE_ADDRESS,
             revm::primitives::AccountInfo {
-                code: Some(
-                    Bytecode::new_raw(alloy_primitives::Bytes(Bytes::from_static(&[0])))
-                        .to_checked(),
-                ),
+                code: Some(Bytecode::new_raw(Bytes::from_static(&[0])).to_checked()),
                 ..Default::default()
             },
         );
@@ -404,7 +401,7 @@ impl Executor {
 
         let result = match &out {
             Some(Output::Create(data, _)) => data.to_owned(),
-            _ => alloy_primitives::Bytes(Bytes::default()),
+            _ => Bytes::default(),
         };
 
         let address = match exit_reason {
@@ -570,7 +567,7 @@ impl Executor {
             tx: TxEnv {
                 caller,
                 transact_to,
-                data: alloy_primitives::Bytes(data),
+                data,
                 value,
                 // As above, we set the gas price to 0.
                 gas_price: U256::from(0),
@@ -772,7 +769,7 @@ fn convert_executed_result(
 
     let result = match out {
         Some(Output::Call(ref data)) => data.to_owned(),
-        _ => alloy_primitives::Bytes(Bytes::default()),
+        _ => Bytes::default(),
     };
 
     let InspectorData {
@@ -796,7 +793,7 @@ fn convert_executed_result(
     Ok(RawCallResult {
         exit_reason,
         reverted: !matches!(exit_reason, return_ok!()),
-        result: result.0,
+        result,
         gas_used,
         gas_refunded,
         stipend,

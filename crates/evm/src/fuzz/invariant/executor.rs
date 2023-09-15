@@ -151,7 +151,7 @@ impl<'a> InvariantExecutor<'a> {
                     .call_raw(
                         h160_to_b160(*sender),
                         h160_to_b160(*address),
-                        calldata.0.clone(),
+                        calldata.0.clone().into(),
                         rU256::ZERO,
                     )
                     .expect("could not make raw evm call");

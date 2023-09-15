@@ -100,7 +100,7 @@ impl ChiselRunner {
         // We don't care about deployment traces / logs here
         let DeployResult { address, .. } = self
             .executor
-            .deploy(h160_to_b160(self.sender), bytecode.0, rU256::ZERO, None)
+            .deploy(h160_to_b160(self.sender), bytecode.0.into(), rU256::ZERO, None)
             .map_err(|err| eyre::eyre!("Failed to deploy REPL contract:\n{}", err))?;
 
         // Reset the sender's balance to the initial balance for calls.
@@ -147,7 +147,7 @@ impl ChiselRunner {
         let mut res = self.executor.call_raw(
             h160_to_b160(from),
             h160_to_b160(to),
-            calldata.0.clone(),
+            calldata.0.clone().into(),
             u256_to_ru256(value),
         )?;
         let mut gas_used = res.gas_used;
@@ -168,7 +168,7 @@ impl ChiselRunner {
                 let res = self.executor.call_raw(
                     h160_to_b160(from),
                     h160_to_b160(to),
-                    calldata.0.clone(),
+                    calldata.0.clone().into(),
                     u256_to_ru256(value),
                 )?;
                 match res.exit_reason {
@@ -208,7 +208,7 @@ impl ChiselRunner {
             res = self.executor.call_raw(
                 h160_to_b160(from),
                 h160_to_b160(to),
-                calldata.0.clone(),
+                calldata.0.clone().into(),
                 u256_to_ru256(value),
             )?;
         }
@@ -218,7 +218,7 @@ impl ChiselRunner {
             res = self.executor.call_raw_committing(
                 h160_to_b160(from),
                 h160_to_b160(to),
-                calldata.0.clone(),
+                calldata.0.clone().into(),
                 u256_to_ru256(value),
             )?;
         }
@@ -226,7 +226,7 @@ impl ChiselRunner {
         let RawCallResult { result, reverted, logs, traces, labels, chisel_state, .. } = res;
 
         Ok(ChiselResult {
-            returned: result,
+            returned: result.0,
             success: !reverted,
             gas_used,
             logs,

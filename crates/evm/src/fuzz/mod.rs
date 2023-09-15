@@ -204,7 +204,7 @@ impl<'a> FuzzedExecutor<'a> {
             .call_raw(
                 h160_to_b160(self.sender),
                 h160_to_b160(address),
-                calldata.0.clone(),
+                calldata.0.clone().into(),
                 U256::ZERO,
             )
             .map_err(|_| TestCaseError::fail(FuzzError::FailedContractCall))?;
