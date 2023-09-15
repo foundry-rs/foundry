@@ -16,6 +16,7 @@ use foundry_common::{
     compact_to_contract,
     compile::{self, ContractSources},
 };
+use foundry_evm::utils::b160_to_h160;
 use foundry_utils::{PostLinkInput, ResolvedDependency};
 use std::{collections::BTreeMap, fs, str::FromStr};
 use tracing::{trace, warn};
@@ -64,7 +65,7 @@ impl ScriptArgs {
             project,
             contracts,
             script_config.config.parsed_libraries()?,
-            script_config.evm_opts.sender,
+            b160_to_h160(script_config.evm_opts.sender),
             script_config.sender_nonce,
         )?;
 

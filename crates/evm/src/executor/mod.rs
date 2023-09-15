@@ -6,7 +6,7 @@ use crate::{
     debug::DebugArena,
     decode,
     trace::CallTraceArena,
-    utils::{eval_to_instruction_result, h160_to_b160, halt_to_instruction_result},
+    utils::{eval_to_instruction_result, halt_to_instruction_result},
     CALLER,
 };
 pub use abi::{
@@ -801,7 +801,7 @@ fn convert_executed_result(
         gas_refunded,
         stipend,
         logs: logs.to_vec(),
-        labels: labels.into_iter().map(|label| (h160_to_b160(label.0), label.1)).collect(),
+        labels,
         traces,
         coverage,
         debug,

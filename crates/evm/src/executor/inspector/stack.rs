@@ -6,12 +6,9 @@ use crate::{
     debug::DebugArena,
     executor::{backend::DatabaseExt, inspector::CoverageCollector},
     trace::CallTraceArena,
-    utils::ru256_to_u256,
+    utils::{h160_to_b160, ru256_to_u256},
 };
-use ethers::{
-    signers::LocalWallet,
-    types::{Address, Log, U256},
-};
+use ethers::{signers::LocalWallet, types::Log};
 use revm::{
     interpreter::{
         return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, Stack,
@@ -33,7 +30,7 @@ pub struct InspectorStackBuilder {
     ///
     /// Used in the cheatcode handler to overwrite the gas price separately from the gas price
     /// in the execution environment.
-    pub gas_price: Option<U256>,
+    pub gas_price: Option<rU256>,
     /// The cheatcodes config.
     pub cheatcodes: Option<Arc<CheatsConfig>>,
     /// The fuzzer inspector and its state, if it exists.
@@ -68,7 +65,7 @@ impl InspectorStackBuilder {
 
     /// Set the gas price.
     #[inline]
-    pub fn gas_price(mut self, gas_price: U256) -> Self {
+    pub fn gas_price(mut self, gas_price: rU256) -> Self {
         self.gas_price = Some(gas_price);
         self
     }
@@ -189,7 +186,7 @@ macro_rules! call_inspectors {
 /// The collected results of [`InspectorStack`].
 pub struct InspectorData {
     pub logs: Vec<Log>,
-    pub labels: BTreeMap<Address, String>,
+    pub labels: BTreeMap<rAddress, String>,
     pub traces: Option<CallTraceArena>,
     pub debug: Option<DebugArena>,
     pub coverage: Option<HitMaps>,
@@ -229,7 +226,7 @@ impl InspectorStack {
     #[inline]
     pub fn set_env(&mut self, env: &Env) {
         self.set_block(&env.block);
-        self.set_gas_price(ru256_to_u256(env.tx.gas_price));
+        self.set_gas_price(env.tx.gas_price);
     }
 
     /// Sets the block for the relevant inspectors.
@@ -242,9 +239,9 @@ impl InspectorStack {
 
     /// Sets the gas price for the relevant inspectors.
     #[inline]
-    pub fn set_gas_price(&mut self, gas_price: U256) {
+    pub fn set_gas_price(&mut self, gas_price: rU256) {
         if let Some(cheatcodes) = &mut self.cheatcodes {
-            cheatcodes.gas_price = Some(gas_price);
+            cheatcodes.gas_price = Some(gas_price).map(ru256_to_u256);
         }
     }
 
@@ -304,7 +301,14 @@ impl InspectorStack {
             labels: self
                 .cheatcodes
                 .as_ref()
-                .map(|cheatcodes| cheatcodes.labels.clone())
+                .map(|cheatcodes| {
+                    cheatcodes
+                        .labels
+                        .clone()
+                        .into_iter()
+                        .map(|l| (h160_to_b160(l.0), l.1))
+                        .collect()
+                })
                 .unwrap_or_default(),
             traces: self.tracer.map(|tracer| tracer.traces),
             debug: self.debugger.map(|debugger| debugger.arena),

@@ -803,7 +803,7 @@ impl Backend {
         transaction: B256,
     ) -> eyre::Result<(U64, Block<Transaction>)> {
         let fork = self.inner.get_fork_by_id(id)?;
-        let tx = fork.db.db.get_transaction(b256_to_h256(transaction))?;
+        let tx = fork.db.db.get_transaction(transaction)?;
 
         // get the block number we need to fork
         if let Some(tx_block) = tx.block_number {
@@ -1171,7 +1171,7 @@ impl DatabaseExt for Backend {
         };
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
-        let tx = fork.db.db.get_transaction(b256_to_h256(transaction))?;
+        let tx = fork.db.db.get_transaction(transaction)?;
 
         commit_transaction(tx, env, journaled_state, fork, &fork_id, cheatcodes_inspector)?;
 

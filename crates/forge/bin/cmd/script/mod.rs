@@ -406,7 +406,7 @@ impl ScriptArgs {
                                         shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
                                         return Ok(None)
                                     }
-                                } else if sender != evm_opts.sender {
+                                } else if h160_to_b160(sender) != evm_opts.sender {
                                     new_sender = Some(sender);
                                 }
                             }

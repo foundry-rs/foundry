@@ -1,10 +1,6 @@
 use super::{inspector::InspectorStackBuilder, Executor};
-use crate::{
-    executor::backend::Backend,
-    utils::{ru256_to_u256, u256_to_ru256},
-};
-use ethers::types::U256;
-use revm::primitives::{Env, SpecId};
+use crate::executor::backend::Backend;
+use revm::primitives::{Env, SpecId, U256};
 
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional
 /// [`revm::Inspector`]s, such as [`Cheatcodes`].
@@ -70,8 +66,8 @@ impl ExecutorBuilder {
         let Self { mut stack, gas_limit, spec_id } = self;
         env.cfg.spec_id = spec_id;
         stack.block = Some(env.block.clone());
-        stack.gas_price = Some(ru256_to_u256(env.tx.gas_price));
-        let gas_limit = gas_limit.unwrap_or(ru256_to_u256(env.block.gas_limit));
-        Executor::new(db, env, stack.build(), u256_to_ru256(gas_limit))
+        stack.gas_price = Some(env.tx.gas_price);
+        let gas_limit = gas_limit.unwrap_or(env.block.gas_limit);
+        Executor::new(db, env, stack.build(), gas_limit)
     }
 }
