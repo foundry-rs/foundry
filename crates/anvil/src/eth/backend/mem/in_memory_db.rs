@@ -128,6 +128,7 @@ mod tests {
     };
     use alloy_primitives::U256 as rU256;
     use bytes::Bytes;
+    use ethers::types::U256;
     use foundry_evm::{
         executor::{backend::MemDb, DatabaseRef},
         revm::primitives::{Bytecode, KECCAK_EMPTY},
@@ -158,7 +159,7 @@ mod tests {
             },
         );
 
-        dump_db.set_storage_at(test_addr, "0x1234567".into(), "0x1".into()).unwrap();
+        dump_db.set_storage_at(test_addr, U256::from(1234567), U256::from(1)).unwrap();
 
         let state = dump_db.dump_state().unwrap().unwrap();
 
@@ -172,7 +173,7 @@ mod tests {
         assert_eq!(load_db.code_by_hash(loaded_account.code_hash).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
         assert_eq!(
-            load_db.storage(h160_to_b160(test_addr), rU256::from(123456)).unwrap(),
+            load_db.storage(h160_to_b160(test_addr), rU256::from(1234567)).unwrap(),
             rU256::from(1)
         );
     }
@@ -202,8 +203,8 @@ mod tests {
             },
         );
 
-        db.set_storage_at(test_addr, "0x1234567".into(), "0x1".into()).unwrap();
-        db.set_storage_at(test_addr, "0x1234568".into(), "0x2".into()).unwrap();
+        db.set_storage_at(test_addr, U256::from(1234567), U256::from(1)).unwrap();
+        db.set_storage_at(test_addr, U256::from(1234568), U256::from(2)).unwrap();
 
         let mut new_state = SerializableState::default();
 
@@ -218,7 +219,7 @@ mod tests {
         );
 
         let mut new_storage = BTreeMap::default();
-        new_storage.insert("0x1234568".into(), "0x5".into());
+        new_storage.insert(U256::from(1234568), U256::from(5));
 
         new_state.accounts.insert(
             test_addr,
@@ -241,12 +242,12 @@ mod tests {
         assert_eq!(db.code_by_hash(loaded_account.code_hash).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
         assert_eq!(
-            db.storage(h160_to_b160(test_addr), rU256::from(123456)).unwrap(),
+            db.storage(h160_to_b160(test_addr), rU256::from(1234567)).unwrap(),
             rU256::from(1)
         );
         assert_eq!(
-            db.storage(h160_to_b160(test_addr), rU256::from(123456)).unwrap(),
-            rU256::from(1)
+            db.storage(h160_to_b160(test_addr), rU256::from(1234568)).unwrap(),
+            rU256::from(5)
         );
     }
 }
