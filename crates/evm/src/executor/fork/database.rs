@@ -266,7 +266,6 @@ impl DatabaseRef for ForkDbSnapshot {
 mod tests {
     use super::*;
     use crate::executor::fork::BlockchainDbMeta;
-    use alloy_primitives::b256;
     use foundry_common::get_http_provider;
     use std::collections::BTreeSet;
 
@@ -286,9 +285,7 @@ mod tests {
         let backend = SharedBackend::spawn_backend(Arc::new(provider), db.clone(), None).await;
 
         let mut db = ForkedDatabase::new(backend, db);
-        let address = Address::from_word(b256!(
-            "000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045"
-        ));
+        let address = Address::random();
 
         let info = Database::basic(&mut db, address).unwrap();
         assert!(info.is_some());
