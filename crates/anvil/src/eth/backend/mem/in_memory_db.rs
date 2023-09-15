@@ -126,12 +126,12 @@ mod tests {
         revm::primitives::AccountInfo,
         Address,
     };
+    use alloy_primitives::U256 as rU256;
     use bytes::Bytes;
-    use ethers::types::U256;
     use foundry_evm::{
         executor::{backend::MemDb, DatabaseRef},
-        revm::primitives::{Bytecode, KECCAK_EMPTY, U256 as rU256},
-        utils::{h160_to_b160, u256_to_ru256},
+        revm::primitives::{Bytecode, KECCAK_EMPTY},
+        utils::h160_to_b160,
     };
     use std::{collections::BTreeMap, str::FromStr};
 
@@ -172,10 +172,8 @@ mod tests {
         assert_eq!(load_db.code_by_hash(loaded_account.code_hash).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
         assert_eq!(
-            load_db
-                .storage(h160_to_b160(test_addr), u256_to_ru256(Into::<U256>::into("0x1234567")))
-                .unwrap(),
-            u256_to_ru256(Into::<U256>::into("0x1"))
+            load_db.storage(h160_to_b160(test_addr), rU256::from(123456)).unwrap(),
+            rU256::from(1)
         );
     }
 
@@ -243,14 +241,12 @@ mod tests {
         assert_eq!(db.code_by_hash(loaded_account.code_hash).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
         assert_eq!(
-            db.storage(h160_to_b160(test_addr), u256_to_ru256(Into::<U256>::into("0x1234567")))
-                .unwrap(),
-            u256_to_ru256(Into::<U256>::into("0x1"))
+            db.storage(h160_to_b160(test_addr), rU256::from(123456)).unwrap(),
+            rU256::from(1)
         );
         assert_eq!(
-            db.storage(h160_to_b160(test_addr), u256_to_ru256(Into::<U256>::into("0x1234568")))
-                .unwrap(),
-            u256_to_ru256(Into::<U256>::into("0x5"))
+            db.storage(h160_to_b160(test_addr), rU256::from(123456)).unwrap(),
+            rU256::from(1)
         );
     }
 }

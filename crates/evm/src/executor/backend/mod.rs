@@ -610,12 +610,8 @@ impl Backend {
     /// See <https://github.com/dapphub/ds-test/blob/9310e879db8ba3ea6d5c6489a579118fd264a3f5/src/test.sol#L66-L72>
     pub fn is_global_failure(&self, current_state: &JournaledState) -> bool {
         if let Some(account) = current_state.state.get(&CHEATCODE_ADDRESS) {
-            let value = account
-                .storage
-                .get(&Into::<U256>::into(GLOBAL_FAILURE_SLOT))
-                .cloned()
-                .unwrap_or_default()
-                .present_value();
+            let slot: U256 = GLOBAL_FAILURE_SLOT.into();
+            let value = account.storage.get(&slot).cloned().unwrap_or_default().present_value();
             return value == revm::primitives::U256::from(1)
         }
 
