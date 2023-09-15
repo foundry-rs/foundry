@@ -1,9 +1,10 @@
 use crate::utils::{
     apply_chain_and_block_specific_env_changes, h160_to_b160, h256_to_b256, u256_to_ru256,
 };
+use alloy_primitives::{Address, U256};
 use ethers::{
     providers::Middleware,
-    types::{Address, Block, TxHash, U256},
+    types::{Block, TxHash},
 };
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
@@ -79,8 +80,8 @@ where
             gas_limit: u256_to_ru256(block.gas_limit),
         },
         tx: TxEnv {
-            caller: h160_to_b160(origin),
-            gas_price: u256_to_ru256(gas_price.map(U256::from).unwrap_or(fork_gas_price)),
+            caller: origin,
+            gas_price: gas_price.map(U256::from).unwrap_or(u256_to_ru256(fork_gas_price)),
             chain_id: Some(override_chain_id.unwrap_or(rpc_chain_id.as_u64())),
             gas_limit: block.gas_limit.as_u64(),
             ..Default::default()
