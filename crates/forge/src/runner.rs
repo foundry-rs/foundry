@@ -352,24 +352,16 @@ impl<'a> ContractRunner<'a> {
                     ..
                 }) => {
                     traces.extend(execution_trace.map(|traces| (TraceKind::Execution, traces)));
-                    labeled_addresses.extend(
-                        new_labels
-                            .into_iter()
-                            .map(|l| (b160_to_h160(l.0), l.1))
-                            .collect::<Vec<_>>(),
-                    );
+                    labeled_addresses
+                        .extend(new_labels.into_iter().map(|l| (b160_to_h160(l.0), l.1)));
                     logs.extend(execution_logs);
                     debug_arena = debug;
                     (reverted, None, gas, stipend, coverage, state_changeset, breakpoints)
                 }
                 Err(EvmError::Execution(err)) => {
                     traces.extend(err.traces.map(|traces| (TraceKind::Execution, traces)));
-                    labeled_addresses.extend(
-                        err.labels
-                            .into_iter()
-                            .map(|l| (b160_to_h160(l.0), l.1))
-                            .collect::<Vec<_>>(),
-                    );
+                    labeled_addresses
+                        .extend(err.labels.into_iter().map(|l| (b160_to_h160(l.0), l.1)));
                     logs.extend(err.logs);
                     (
                         err.reverted,
