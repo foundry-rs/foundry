@@ -58,13 +58,13 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::MakePersistent2(acc) => {
             data.db.add_persistent_account(h160_to_b160(acc.0));
-            data.db.add_persistent_account(h160_to_b160(acc.0));
+            data.db.add_persistent_account(h160_to_b160(acc.1));
             Ok(Bytes::new())
         }
         HEVMCalls::MakePersistent3(acc) => {
             data.db.add_persistent_account(h160_to_b160(acc.0));
-            data.db.add_persistent_account(h160_to_b160(acc.0));
-            data.db.add_persistent_account(h160_to_b160(acc.0));
+            data.db.add_persistent_account(h160_to_b160(acc.1));
+            data.db.add_persistent_account(h160_to_b160(acc.2));
             Ok(Bytes::new())
         }
         HEVMCalls::IsPersistent(acc) => {
