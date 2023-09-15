@@ -23,7 +23,7 @@ pub fn get_create_address(call: &CreateInputs, nonce: u64) -> Address {
     match call.scheme {
         CreateScheme::Create => call.caller.create(nonce),
         CreateScheme::Create2 { salt } => {
-            call.caller.create2_from_code(B256::from(salt), call.init_code.clone())
+            call.caller.create2_from_code(B256::from(salt), &call.init_code)
         }
     }
 }
