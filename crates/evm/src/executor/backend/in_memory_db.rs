@@ -123,9 +123,7 @@ mod tests {
     #[test]
     fn cache_db_insert_basic_non_existing() {
         let mut db = CacheDB::new(EmptyDB::default());
-        let address = Address::from_word(b256!(
-            "000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045"
-        ));
+        let address = Address::random();
         // call `basic` on a non-existing account
         let info = Database::basic(&mut db, address).unwrap();
         assert!(info.is_none());
@@ -145,9 +143,7 @@ mod tests {
     #[test]
     fn cache_db_insert_basic_default() {
         let mut db = CacheDB::new(EmptyDB::default());
-        let address = Address::from_word(b256!(
-            "000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045"
-        ));
+        let address = Address::random();
 
         let info = DatabaseRef::basic(&db, address).unwrap();
         assert!(info.is_none());

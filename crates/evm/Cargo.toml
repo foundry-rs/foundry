@@ -49,7 +49,7 @@ revm = { workspace = true, default-features = false, features = [
   "optional_no_base_fee",
 ] }
 
-alloy-primitives = { workspace = true, default-features = false, features = ["std", "serde"] }
+alloy-primitives = { workspace = true, default-features = false, features = ["std", "serde", "getrandom"] }
 
 # Fuzzer
 proptest = "1"

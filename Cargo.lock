@@ -86,6 +86,7 @@ dependencies = [
  "cfg-if",
  "const-hex",
  "derive_more",
+ "getrandom 0.2.10",
  "hex-literal",
  "itoa",
  "proptest",
