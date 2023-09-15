@@ -4,6 +4,7 @@ use crate::{
 };
 use alloy_primitives::Address;
 use foundry_common::fmt::UIfmt;
+use itertools::Itertools;
 
 /// Represents possible diagnostic cases on revert
 #[derive(Debug, Clone)]
@@ -33,8 +34,11 @@ impl RevertDiagnostic {
                 let contract_label = get_label(&b160_to_h160(*contract));
 
                 format!(
-                    r#"Contract {contract_label} does not exist on active fork with id `{active}`
-        But exists on non active forks: `{available_on:?}`"#
+                    r#"Contract {} does not exist on active fork with id `{}`
+        But exists on non active forks: `[{}]`"#,
+                    contract_label,
+                    active,
+                    available_on.iter().format(", ")
                 )
             }
             RevertDiagnostic::ContractDoesNotExist { contract, persistent, .. } => {
