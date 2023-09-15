@@ -23,9 +23,7 @@ pub fn get_create_address(call: &CreateInputs, nonce: u64) -> Address {
     match call.scheme {
         CreateScheme::Create => call.caller.create(nonce),
         CreateScheme::Create2 { salt } => {
-            let init_code = alloy_primitives::Bytes(call.init_code.0.clone());
-            let init_code_hash = alloy_primitives::keccak256(init_code);
-            call.caller.create2(B256::from(salt), init_code_hash)
+            call.caller.create2_from_code(B256::from(salt), call.init_code.clone())
         }
     }
 }
