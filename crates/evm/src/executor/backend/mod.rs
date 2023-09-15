@@ -11,7 +11,7 @@ use crate::{
     utils::{b256_to_h256, h160_to_b160, h256_to_b256, ru256_to_u256, u256_to_ru256, u64_to_ru64},
     CALLER, TEST_CONTRACT_ADDRESS,
 };
-use alloy_primitives::{U256, U64};
+use alloy_primitives::{b256, U256, U64};
 use ethers::{
     prelude::Block,
     types::{BlockNumber, Transaction},
@@ -69,8 +69,8 @@ const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] =
 
 /// Slot corresponding to "failed" in bytes on the cheatcodes (HEVM) address.
 /// Not prefixed with 0x.
-const GLOBAL_FAILURE_SLOT: &str =
-    "6661696c65640000000000000000000000000000000000000000000000000000";
+const GLOBAL_FAILURE_SLOT: B256 =
+    b256!("6661696c65640000000000000000000000000000000000000000000000000000");
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut, Box)]
@@ -609,9 +609,13 @@ impl Backend {
     /// in "failed"
     /// See <https://github.com/dapphub/ds-test/blob/9310e879db8ba3ea6d5c6489a579118fd264a3f5/src/test.sol#L66-L72>
     pub fn is_global_failure(&self, current_state: &JournaledState) -> bool {
-        let index: U256 = U256::from_str_radix(GLOBAL_FAILURE_SLOT, 16).expect("This is a bug.");
         if let Some(account) = current_state.state.get(&CHEATCODE_ADDRESS) {
-            let value = account.storage.get(&index).cloned().unwrap_or_default().present_value();
+            let value = account
+                .storage
+                .get(&Into::<U256>::into(GLOBAL_FAILURE_SLOT))
+                .cloned()
+                .unwrap_or_default()
+                .present_value();
             return value == revm::primitives::U256::from(1)
         }
 
