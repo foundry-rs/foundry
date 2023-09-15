@@ -131,7 +131,11 @@ impl BindArgs {
                     Some(path)
                 }
             })
-            .map(Abigen::from_file)
+            .map(|x| {
+                Abigen::from_file(x)?
+                    .add_derive("serde::Serialize")?
+                    .add_derive("serde::Deserialize")
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let multi = MultiAbigen::from_abigens(abigens).with_filter(self.get_filter());
 
