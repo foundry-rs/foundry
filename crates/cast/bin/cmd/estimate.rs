@@ -95,8 +95,8 @@ impl EstimateArgs {
                 let mut data = hex::decode(code)?;
 
                 if let Some(s) = sig {
-                    let (mut sigdata, _func) = builder.create_args(&s, args).await?;
-                    data.append(&mut sigdata);
+                    let mut constructor_parameter_data = builder.encode_create_args(&s, args).await?;
+                    data.append(&mut constructor_parameter_data);
                 }
 
                 builder.set_data(data);

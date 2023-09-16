@@ -163,7 +163,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         self
     }
 
-    pub async fn create_args(
+    pub async fn encode_args(
         &mut self,
         sig: &str,
         args: Vec<String>,
@@ -204,6 +204,16 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         }
     }
 
+    pub async fn encode_create_args(
+        &mut self,
+        sig: &str,
+        args: Vec<String>,
+    ) -> Result<Vec<u8>> {
+        let (mut calldata, _) = self.encode_args(sig, args).await?;
+        calldata.drain(..4); // remove function selector
+        Ok(calldata)
+    }
+
     /// Set function arguments
     /// `sig` can be:
     ///  * a fragment (`do(uint32,string)`)
@@ -216,7 +226,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         sig: &str,
         args: Vec<String>,
     ) -> Result<&mut TxBuilder<'a, M>> {
-        let (data, func) = self.create_args(sig, args).await?;
+        let (data, func) = self.encode_args(sig, args).await?;
         self.tx.set_data(data.into());
         self.func = Some(func);
         Ok(self)

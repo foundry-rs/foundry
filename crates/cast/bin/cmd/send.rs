@@ -228,8 +228,8 @@ where
         let mut data = hex::decode(code)?;
 
         if let Some((sig, args)) = params {
-            let (mut sigdata, _) = builder.create_args(sig, args).await?;
-            data.append(&mut sigdata);
+            let mut constructor_parameter_data = builder.encode_create_args(sig, args).await?;
+            data.append(&mut constructor_parameter_data);
         }
 
         builder.set_data(data);
