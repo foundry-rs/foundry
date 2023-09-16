@@ -1630,7 +1630,7 @@ mod tests {
                     }
                     Err(e) => {
                         // try reinstalling
-                        eprintln!("error: {e}\n trying to re-install Solc v{version}");
+                        eprintln!("error while trying to re-install Solc v{version}: {e}");
                         let solc = Solc::blocking_install(&version.parse().unwrap());
                         if solc.map_err(SolcError::from).and_then(|solc| solc.version()).is_ok() {
                             *is_preinstalled = true;
