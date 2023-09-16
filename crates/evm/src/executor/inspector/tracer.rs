@@ -8,13 +8,13 @@ use crate::{
     utils::{b160_to_h160, b256_to_h256, ru256_to_u256},
     CallKind,
 };
+use alloy_primitives::{Address, Bytes, B256, U256};
 use ethers::abi::RawLog;
 use revm::{
     interpreter::{
         opcode, return_ok, CallInputs, CallScheme, CreateInputs, Gas, InstructionResult,
         Interpreter,
     },
-    primitives::{Address, Bytes, B256, U256},
     Database, EVMData, Inspector, JournalEntry,
 };
 

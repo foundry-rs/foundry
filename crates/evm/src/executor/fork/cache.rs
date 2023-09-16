@@ -1,10 +1,9 @@
 //! Cache related abstraction
 use crate::executor::backend::snapshot::StateSnapshot;
+use alloy_primitives::{Address, B256, U256};
 use parking_lot::RwLock;
 use revm::{
-    primitives::{
-        Account, AccountInfo, AccountStatus, Address, HashMap as Map, B256, KECCAK_EMPTY, U256,
-    },
+    primitives::{Account, AccountInfo, AccountStatus, HashMap as Map, KECCAK_EMPTY},
     DatabaseCommit,
 };
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};

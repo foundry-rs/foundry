@@ -7,13 +7,13 @@ use crate::{
     },
     CallKind,
 };
+use alloy_primitives::{Address, Bytes};
 use foundry_utils::error::SolError;
 use revm::{
     interpreter::{
         opcode::{self, spec_opcode_gas},
         CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory,
     },
-    primitives::{Address, Bytes},
     EVMData, Inspector,
 };
 

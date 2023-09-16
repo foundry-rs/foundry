@@ -1,8 +1,8 @@
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 
 use revm::{
     interpreter::CreateInputs,
-    primitives::{Address, CreateScheme, SpecId},
+    primitives::{CreateScheme, SpecId},
 };
 
 /// Returns [InstructionResult::Continue] on an error, discarding the error.

@@ -1,4 +1,5 @@
 use crate::{executor::fork::CreateFork, utils::RuntimeOrHandle};
+use alloy_primitives::{Address, B256, U256};
 use ethers::{
     providers::{Middleware, Provider},
     types::{Block, Chain, TxHash},
@@ -6,7 +7,7 @@ use ethers::{
 use eyre::WrapErr;
 use foundry_common::{self, ProviderBuilder, RpcUrl, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::Config;
-use revm::primitives::{Address, BlockEnv, CfgEnv, SpecId, TxEnv, B256, U256};
+use revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::fork::environment;

@@ -1,8 +1,9 @@
 //! The in memory DB
 use crate::executor::backend::error::DatabaseError;
+use alloy_primitives::{Address, B256, U256};
 use revm::{
     db::{CacheDB, DatabaseRef, EmptyDB},
-    primitives::{Account, AccountInfo, Address, Bytecode, HashMap as Map, B256, U256},
+    primitives::{Account, AccountInfo, Bytecode, HashMap as Map},
     Database, DatabaseCommit,
 };
 

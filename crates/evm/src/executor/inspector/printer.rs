@@ -1,7 +1,6 @@
-use alloy_primitives::Bytes;
+use alloy_primitives::{Address, Bytes};
 use revm::{
     interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
-    primitives::Address,
     Database, EVMData, Inspector,
 };
 

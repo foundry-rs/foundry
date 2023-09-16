@@ -2,6 +2,7 @@ use crate::{
     executor::{patch_hardhat_console_selector, HardhatConsoleCalls, HARDHAT_CONSOLE_ADDRESS},
     utils::{b160_to_h160, b256_to_h256},
 };
+use alloy_primitives::{Address, Bytes, B256};
 use ethers::{
     abi::{AbiDecode, Token},
     types::{Bytes as ethersBytes, Log, H256},
@@ -9,7 +10,6 @@ use ethers::{
 use foundry_macros::ConsoleFmt;
 use revm::{
     interpreter::{CallInputs, Gas, InstructionResult},
-    primitives::{Address, Bytes, B256},
     Database, EVMData, Inspector,
 };
 

@@ -1,6 +1,7 @@
 use super::{inspector::InspectorStackBuilder, Executor};
 use crate::executor::backend::Backend;
-use revm::primitives::{Env, SpecId, U256};
+use alloy_primitives::U256;
+use revm::primitives::{Env, SpecId};
 
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional
 /// [`revm::Inspector`]s, such as [`Cheatcodes`].

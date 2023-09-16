@@ -8,11 +8,12 @@ use crate::{
     },
     revm::db::CacheDB,
 };
+use alloy_primitives::{Address, B256, U256};
 use ethers::types::BlockId;
 use parking_lot::Mutex;
 use revm::{
     db::DatabaseRef,
-    primitives::{Account, AccountInfo, Address, Bytecode, HashMap as Map, B256, U256},
+    primitives::{Account, AccountInfo, Bytecode, HashMap as Map},
     Database, DatabaseCommit,
 };
 use std::sync::Arc;

@@ -11,6 +11,7 @@ use crate::{
     },
     utils::{b160_to_h160, h160_to_b160, ru256_to_u256, u256_to_ru256},
 };
+use alloy_primitives::B256;
 use ethers::{
     abi::{self, AbiEncode, RawLog, Token, Tokenizable, Tokenize},
     signers::{LocalWallet, Signer},
@@ -18,7 +19,7 @@ use ethers::{
 };
 use foundry_config::Config;
 use revm::{
-    primitives::{Bytecode, SpecId, B256, KECCAK_EMPTY},
+    primitives::{Bytecode, SpecId, KECCAK_EMPTY},
     Database, EVMData,
 };
 use std::collections::BTreeMap;

@@ -7,9 +7,10 @@ use crate::executor::{
     fork::{CreateFork, ForkId},
     inspector::cheatcodes::Cheatcodes,
 };
+use alloy_primitives::{Address, B256, U256};
 use revm::{
     db::DatabaseRef,
-    primitives::{AccountInfo, Address, Bytecode, Env, ResultAndState, B256, U256},
+    primitives::{AccountInfo, Bytecode, Env, ResultAndState},
     Database, Inspector, JournaledState,
 };
 use std::borrow::Cow;

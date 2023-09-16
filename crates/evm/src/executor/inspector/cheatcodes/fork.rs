@@ -6,6 +6,7 @@ use crate::{
     },
     utils::{h160_to_b160, ru256_to_u256, u256_to_ru256, RuntimeOrHandle},
 };
+use alloy_primitives::{B256, U256};
 use ethers::{
     abi::{self, AbiEncode, Token, Tokenizable, Tokenize},
     providers::Middleware,
@@ -13,10 +14,7 @@ use ethers::{
 };
 use foundry_abi::hevm::{EthGetLogsCall, RpcCall};
 use foundry_common::ProviderBuilder;
-use revm::{
-    primitives::{B256, U256},
-    EVMData,
-};
+use revm::EVMData;
 use serde_json::Value;
 
 fn empty<T>(_: T) -> Bytes {

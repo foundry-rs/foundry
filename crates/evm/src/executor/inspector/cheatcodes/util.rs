@@ -6,6 +6,7 @@ use crate::{
     },
     utils::{b160_to_h160, h160_to_b160, h256_to_u256_be, ru256_to_u256, u256_to_ru256},
 };
+use alloy_primitives::Address as rAddress;
 use bytes::{BufMut, Bytes, BytesMut};
 use ethers::{
     abi::Address,
@@ -19,7 +20,7 @@ use ethers::{
 use foundry_common::RpcUrl;
 use revm::{
     interpreter::CreateInputs,
-    primitives::{Account, Address as aB160, TransactTo},
+    primitives::{Account, TransactTo},
     Database, EVMData, JournaledState,
 };
 use std::collections::VecDeque;
@@ -27,7 +28,7 @@ use std::collections::VecDeque;
 pub const MAGIC_SKIP_BYTES: &[u8] = b"FOUNDRY::SKIP";
 
 /// Address of the default CREATE2 deployer 0x4e59b44847b379578588920ca78fbf26c0b4956c
-pub const DEFAULT_CREATE2_DEPLOYER: aB160 = aB160::new([
+pub const DEFAULT_CREATE2_DEPLOYER: rAddress = rAddress::new([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
 ]);
 

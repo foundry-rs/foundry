@@ -2,9 +2,9 @@ use crate::{
     fuzz::{invariant::RandomCallGenerator, strategies::EvmFuzzState},
     utils::{self, b160_to_h160, h160_to_b160},
 };
+use alloy_primitives::Bytes;
 use revm::{
     interpreter::{CallInputs, CallScheme, Gas, InstructionResult, Interpreter},
-    primitives::Bytes,
     Database, EVMData, Inspector,
 };
 

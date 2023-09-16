@@ -11,7 +11,7 @@ use crate::{
     utils::{b256_to_h256, h160_to_b160, h256_to_b256, ru256_to_u256, u256_to_ru256, u64_to_ru64},
     CALLER, TEST_CONTRACT_ADDRESS,
 };
-use alloy_primitives::{b256, U256, U64};
+use alloy_primitives::{b256, Address, B256, U256, U64};
 use ethers::{
     prelude::Block,
     types::{BlockNumber, Transaction},
@@ -22,8 +22,8 @@ use revm::{
     db::{CacheDB, DatabaseRef},
     precompile::{Precompiles, SpecId},
     primitives::{
-        Account, AccountInfo, Address, Bytecode, CreateScheme, Env, HashMap as Map, Log,
-        ResultAndState, TransactTo, B256, KECCAK_EMPTY,
+        Account, AccountInfo, Bytecode, CreateScheme, Env, HashMap as Map, Log, ResultAndState,
+        TransactTo, KECCAK_EMPTY,
     },
     Database, DatabaseCommit, Inspector, JournaledState, EVM,
 };

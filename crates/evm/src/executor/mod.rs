@@ -13,7 +13,8 @@ pub use abi::{
     patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
     HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
 };
-use alloy_primitives::Bytes;
+/// Reexport commonly used revm types
+pub use alloy_primitives::{Address, Bytes, U256};
 use backend::FuzzBackendWrapper;
 use ethers::{
     abi::{Abi, Contract, Detokenize, Function, Tokenize},
@@ -23,14 +24,12 @@ use ethers::{
 };
 use foundry_common::{abi::IntoFunction, evm::Breakpoints};
 use revm::primitives::hex_literal::hex;
-/// Reexport commonly used revm types
-pub use revm::primitives::{Env, SpecId};
 pub use revm::{
     db::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, CreateScheme, InstructionResult, Memory, Stack},
     primitives::{
-        Account, Address, BlockEnv, Bytecode, ExecutionResult, HashMap, Output, ResultAndState,
-        TransactTo, TxEnv, U256,
+        Account, BlockEnv, Bytecode, Env, ExecutionResult, HashMap, Output, ResultAndState, SpecId,
+        TransactTo, TxEnv,
     },
 };
 use std::collections::BTreeMap;

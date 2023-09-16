@@ -1,8 +1,8 @@
+use alloy_primitives::{Address, B256};
 use ethers::types::transaction::eip2930::{AccessList, AccessListItem};
 use hashbrown::{HashMap, HashSet};
 use revm::{
     interpreter::{opcode, InstructionResult, Interpreter},
-    primitives::{Address, B256},
     Database, EVMData, Inspector,
 };
 

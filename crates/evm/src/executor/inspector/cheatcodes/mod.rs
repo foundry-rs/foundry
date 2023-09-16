@@ -12,6 +12,7 @@ use crate::{
     },
     utils::{b160_to_h160, b256_to_h256, h160_to_b160, ru256_to_u256, u256_to_ru256},
 };
+use alloy_primitives::{Address as rAddress, B256};
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
     signers::LocalWallet,
@@ -25,7 +26,7 @@ use foundry_utils::error::SolError;
 use itertools::Itertools;
 use revm::{
     interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
-    primitives::{Address as rAddress, BlockEnv, TransactTo, B256},
+    primitives::{BlockEnv, TransactTo},
     EVMData, Inspector,
 };
 use serde_json::Value;

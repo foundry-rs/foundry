@@ -6,6 +6,7 @@ use crate::{
     },
     utils::{b160_to_h160, b256_to_h256, h256_to_b256, u256_to_ru256},
 };
+use alloy_primitives::{Address, Bytes, B256, U256};
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
     providers::Middleware,
@@ -21,7 +22,7 @@ use futures::{
 };
 use revm::{
     db::DatabaseRef,
-    primitives::{AccountInfo, Address, Bytecode, Bytes, B256, KECCAK_EMPTY, U256},
+    primitives::{AccountInfo, Bytecode, KECCAK_EMPTY},
 };
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
