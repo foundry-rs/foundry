@@ -508,7 +508,7 @@ fn sleep(milliseconds: &U256) -> Result {
 }
 
 /// Skip the current test, by returning a magic value that will be checked by the test runner.
-pub fn skip(state: &mut Cheatcodes, depth: u64, skip: bool) -> Result {
+pub fn skip_test(state: &mut Cheatcodes, depth: u64, skip: bool) -> Result {
     if !skip {
         return Ok(b"".into())
     }
@@ -714,7 +714,7 @@ pub fn apply<DB: Database>(
         HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
         HEVMCalls::WriteJson1(inner) => write_json(state, &inner.0, &inner.1, Some(&inner.2)),
         HEVMCalls::KeyExists(inner) => key_exists(&inner.0, &inner.1),
-        HEVMCalls::Skip(inner) => skip(state, data.journaled_state.depth(), inner.0),
+        HEVMCalls::SkipTest(inner) => skip_test(state, data.journaled_state.depth(), inner.0),
         _ => return None,
     })
 }
