@@ -205,6 +205,7 @@ name = "anvil"
 version = "0.2.0"
 dependencies = [
  "alloy-primitives",
+ "alloy-rlp",
  "anvil-core",
  "anvil-rpc",
  "anvil-server",

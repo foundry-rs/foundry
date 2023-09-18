@@ -1,14 +1,9 @@
 //! Bindings for geth's `genesis.json` format
 use crate::revm::primitives::AccountInfo;
-use ethers::{
-    signers::LocalWallet,
-    types::{serde_helpers::*, Address, Bytes, H256, U256},
-};
+use alloy_primitives::{Address, Bytes, B256, U256};
+use ethers::signers::LocalWallet;
 use foundry_common::errors::FsPathError;
-use foundry_evm::{
-    revm::primitives::{Bytecode, Env, KECCAK_EMPTY, U256 as rU256},
-    utils::{h160_to_b160, u256_to_ru256},
-};
+use foundry_evm::revm::primitives::{Bytecode, Env, KECCAK_EMPTY};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -24,45 +19,38 @@ pub struct Genesis {
     pub config: Option<Config>,
     #[serde(
         default,
-        deserialize_with = "deserialize_stringified_u64_opt",
         skip_serializing_if = "Option::is_none"
     )]
     pub nonce: Option<u64>,
     #[serde(
         default,
-        deserialize_with = "deserialize_stringified_u64_opt",
         skip_serializing_if = "Option::is_none"
     )]
     pub timestamp: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_data: Option<Bytes>,
-    #[serde(deserialize_with = "deserialize_stringified_u64")]
     pub gas_limit: u64,
-    #[serde(deserialize_with = "deserialize_stringified_u64")]
     pub difficulty: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mix_hash: Option<H256>,
+    pub mix_hash: Option<B256>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coinbase: Option<Address>,
     #[serde(default)]
     pub alloc: Alloc,
     #[serde(
         default,
-        deserialize_with = "deserialize_stringified_u64_opt",
         skip_serializing_if = "Option::is_none"
     )]
     pub number: Option<u64>,
     #[serde(
         default,
-        deserialize_with = "deserialize_stringified_u64_opt",
         skip_serializing_if = "Option::is_none"
     )]
     pub gas_used: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent_hash: Option<H256>,
+    pub parent_hash: Option<B256>,
     #[serde(
         default,
-        deserialize_with = "deserialize_stringified_numeric_opt",
         skip_serializing_if = "Option::is_none"
     )]
     pub base_fee_per_gas: Option<U256>,
@@ -89,19 +77,19 @@ impl Genesis {
             env.cfg.chain_id = chain_id;
         }
         if let Some(timestamp) = self.timestamp {
-            env.block.timestamp = rU256::from(timestamp);
+            env.block.timestamp = U256::from(timestamp);
         }
         if let Some(base_fee) = self.base_fee_per_gas {
-            env.block.basefee = u256_to_ru256(base_fee);
+            env.block.basefee = base_fee;
         }
         if let Some(number) = self.number {
-            env.block.number = rU256::from(number);
+            env.block.number = U256::from(number);
         }
         if let Some(coinbase) = self.coinbase {
-            env.block.coinbase = h160_to_b160(coinbase);
+            env.block.coinbase = coinbase;
         }
-        env.block.difficulty = rU256::from(self.difficulty);
-        env.block.gas_limit = rU256::from(self.gas_limit);
+        env.block.difficulty = U256::from(self.difficulty);
+        env.block.gas_limit = U256::from(self.gas_limit);
     }
 
     /// Returns all private keys from the genesis accounts, if they exist
@@ -121,12 +109,10 @@ pub struct GenesisAccount {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<Bytes>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub storage: HashMap<H256, H256>,
-    #[serde(deserialize_with = "deserialize_stringified_numeric")]
+    pub storage: HashMap<B256, B256>,
     pub balance: U256,
     #[serde(
         default,
-        deserialize_with = "deserialize_stringified_u64_opt",
         skip_serializing_if = "Option::is_none"
     )]
     pub nonce: Option<u64>,
@@ -144,7 +130,7 @@ impl From<GenesisAccount> for AccountInfo {
         let GenesisAccount { code, balance, nonce, .. } = acc;
         let code = code.map(|code| Bytecode::new_raw(code.to_vec().into()));
         AccountInfo {
-            balance: u256_to_ru256(balance),
+            balance,
             nonce: nonce.unwrap_or_default(),
             code_hash: code.as_ref().map(|code| code.hash_slow()).unwrap_or(KECCAK_EMPTY),
             code,
@@ -172,7 +158,7 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eip150_block: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub eip150_hash: Option<H256>,
+    pub eip150_hash: Option<B256>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eip155_block: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

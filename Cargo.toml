@@ -155,6 +155,7 @@ itertools = "0.11"
 solang-parser = "=0.3.2"
 
 alloy-primitives = { version = "0.3", default-features = false }
+alloy-rlp = {version = "0.3", default-features = false}
 
 #[patch."https://github.com/gakonst/ethers-rs"]
 #ethers = { path = "../ethers-rs/ethers" }

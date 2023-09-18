@@ -16,16 +16,17 @@ use crate::{
     FeeManager, Hardfork,
 };
 use anvil_server::ServerConfig;
+use alloy_primitives::{U256, hex};
 use ethers::{
     core::k256::ecdsa::SigningKey,
-    prelude::{rand::thread_rng, Wallet, U256},
+    prelude::{rand::thread_rng, Wallet},
     providers::Middleware,
     signers::{
         coins_bip39::{English, Mnemonic},
         MnemonicBuilder, Signer,
     },
     types::BlockNumber,
-    utils::{format_ether, hex, to_checksum, WEI_IN_ETHER},
+    utils::{format_ether, to_checksum, WEI_IN_ETHER},
 };
 use foundry_common::{
     ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
@@ -37,11 +38,12 @@ use foundry_evm::{
         inspector::DEFAULT_CREATE2_DEPLOYER,
     },
     revm,
-    revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv, U256 as rU256},
+    revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv},
     utils::{
         apply_chain_and_block_specific_env_changes, b160_to_h160, h256_to_b256, u256_to_ru256,
     },
 };
+use foundry_utils::types::{ToEthers, ToAlloy};
 use parking_lot::RwLock;
 use serde_json::{json, to_writer, Value};
 use std::{
@@ -191,7 +193,7 @@ Available Accounts
 ==================
 "#
         );
-        let balance = format_ether(self.genesis_balance);
+        let balance = format_ether(self.genesis_balance.to_ethers());
         for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
             let _ = write!(
                 config_string,
@@ -374,7 +376,7 @@ impl Default for NodeConfig {
             genesis_timestamp: None,
             genesis_accounts,
             // 100ETH default balance
-            genesis_balance: WEI_IN_ETHER.saturating_mul(100u64.into()),
+            genesis_balance: WEI_IN_ETHER.to_alloy().saturating_mul(U256::from(100u64)),
             block_time: None,
             no_mining: false,
             port: NODE_PORT,
@@ -415,12 +417,12 @@ impl NodeConfig {
     pub fn get_base_fee(&self) -> U256 {
         self.base_fee
             .or_else(|| self.genesis.as_ref().and_then(|g| g.base_fee_per_gas))
-            .unwrap_or_else(|| INITIAL_BASE_FEE.into())
+            .unwrap_or_else(|| INITIAL_BASE_FEE.to_alloy())
     }
 
     /// Returns the base fee to use
     pub fn get_gas_price(&self) -> U256 {
-        self.gas_price.unwrap_or_else(|| INITIAL_GAS_PRICE.into())
+        self.gas_price.unwrap_or_else(|| INITIAL_GAS_PRICE.to_alloy())
     }
 
     /// Returns the base fee to use
@@ -797,13 +799,13 @@ impl NodeConfig {
         let mut env = revm::primitives::Env {
             cfg,
             block: BlockEnv {
-                gas_limit: u256_to_ru256(self.gas_limit),
-                basefee: u256_to_ru256(self.get_base_fee()),
+                gas_limit: self.gas_limit,
+                basefee: self.get_base_fee(),
                 ..Default::default()
             },
             tx: TxEnv { chain_id: self.get_chain_id().into(), ..Default::default() },
         };
-        let fees = FeeManager::new(env.cfg.spec_id, self.get_base_fee(), self.get_gas_price());
+        let fees = FeeManager::new(env.cfg.spec_id, self.get_base_fee().to_ethers(), self.get_gas_price().to_ethers());
 
         let (db, fork): (Arc<tokio::sync::RwLock<dyn Db>>, Option<ClientFork>) =
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
@@ -829,8 +831,8 @@ impl NodeConfig {
                         // auto adjust hardfork if not specified
                         // but only if we're forking mainnet
                         let chain_id =
-                            provider.get_chainid().await.expect("Failed to fetch network chain id");
-                        if chain_id == ethers::types::Chain::Mainnet.into() {
+                            provider.get_chainid().await.expect("Failed to fetch network chain id").to_alloy();
+                        if chain_id.to_ethers() == ethers::types::Chain::Mainnet.into() {
                             let hardfork: Hardfork = fork_block_number.into();
                             env.cfg.spec_id = hardfork.into();
                             self.hardfork = Some(hardfork);
@@ -885,7 +887,7 @@ latest block number: {latest_block}"
                 };
 
                 env.block = BlockEnv {
-                    number: rU256::from(fork_block_number),
+                    number: U256::from(fork_block_number),
                     timestamp: u256_to_ru256(block.timestamp),
                     difficulty: u256_to_ru256(block.difficulty),
                     // ensures prevrandao is set
@@ -902,7 +904,7 @@ latest block number: {latest_block}"
                 // if not set explicitly we use the base fee of the latest block
                 if self.base_fee.is_none() {
                     if let Some(base_fee) = block.base_fee_per_gas {
-                        self.base_fee = Some(base_fee);
+                        self.base_fee = Some(base_fee.to_alloy());
                         env.block.basefee = u256_to_ru256(base_fee);
                         // this is the base fee of the current block, but we need the base fee of
                         // the next block
@@ -919,7 +921,7 @@ latest block number: {latest_block}"
                 // use remote gas price
                 if self.gas_price.is_none() {
                     if let Ok(gas_price) = provider.get_gas_price().await {
-                        self.gas_price = Some(gas_price);
+                        self.gas_price = Some(gas_price.to_alloy());
                         fees.set_gas_price(gas_price);
                     }
                 }
@@ -932,15 +934,14 @@ latest block number: {latest_block}"
                     let chain_id = if let Some(fork_chain_id) = fork_chain_id {
                         fork_chain_id
                     } else {
-                        provider.get_chainid().await.unwrap()
-                    }
-                    .as_u64();
+                        provider.get_chainid().await.unwrap().to_alloy()
+                    };
 
                     // need to update the dev signers and env with the chain id
-                    self.set_chain_id(Some(chain_id));
-                    env.cfg.chain_id = chain_id;
-                    env.tx.chain_id = chain_id.into();
-                    chain_id
+                    self.set_chain_id(Some(chain_id.to::<u64>()));
+                    env.cfg.chain_id = chain_id.to();
+                    env.tx.chain_id = Some(chain_id.to());
+                    chain_id.to()
                 };
                 let override_chain_id = self.chain_id;
 
@@ -994,7 +995,7 @@ latest block number: {latest_block}"
 
         let genesis = GenesisConfig {
             timestamp: self.get_genesis_timestamp(),
-            balance: u256_to_ru256(self.genesis_balance),
+            balance: self.genesis_balance,
             accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
             fork_genesis_account_infos: Arc::new(Default::default()),
             genesis_init: self.genesis.clone(),
