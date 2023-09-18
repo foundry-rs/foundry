@@ -20,20 +20,18 @@ impl ToAlloy for H160 {
 }
 
 impl ToAlloy for H256 {
-    type To = alloy_primitives::B256;
+    type To = B256;
 
     fn to_alloy(self) -> Self::To {
-        B256::from_slice(self.as_bytes())
+        B256::new(self.0)
     }
 }
 
 impl ToAlloy for U256 {
-    type To = alloy_primitives::U256;
+    type To = AlloyU256;
 
     fn to_alloy(self) -> Self::To {
-        let mut buffer = [0u8; 32];
-        self.to_little_endian(buffer.as_mut_slice());
-        AlloyU256::from_le_bytes(buffer)
+        AlloyU256::from_limbs(self.0)
     }
 }
 
