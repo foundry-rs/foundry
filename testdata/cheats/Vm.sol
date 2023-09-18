@@ -228,8 +228,11 @@ interface Vm {
     // Sets an address' code, (who, newCode)
     function etch(address, bytes calldata) external;
 
-    // Skips a test.
+    // Skips a test (deprecated).
     function skip(bool) external;
+
+    // Skips a test.
+    function skipTest(bool) external;
 
     // Sleeps for a given number of milliseconds.
     function sleep(uint256) external;
