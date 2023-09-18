@@ -8,27 +8,27 @@ contract SkipTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testSkip() public {
-        vm.skip(true);
+        vm.skipTest(true);
         revert("Should not reach this revert");
     }
 
     function testFailNotSkip() public {
-        vm.skip(false);
+        vm.skipTest(false);
         revert("This test should fail");
     }
 
     function testFuzzSkip(uint256 x) public {
-        vm.skip(true);
+        vm.skipTest(true);
         revert("Should not reach revert");
     }
 
     function testFailFuzzSkip(uint256 x) public {
-        vm.skip(false);
+        vm.skipTest(false);
         revert("This test should fail");
     }
 
     function statefulFuzzSkip() public {
-        vm.skip(true);
+        vm.skipTest(true);
         require(true == false, "Test should not reach invariant");
     }
 }
