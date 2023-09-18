@@ -8,7 +8,8 @@ use ethers::{
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{abi::format_token_raw, RpcUrl, SELECTOR_LEN};
 use foundry_evm::{
-    executor::inspector::DEFAULT_CREATE2_DEPLOYER, trace::CallTraceDecoder, CallKind,
+    executor::inspector::DEFAULT_CREATE2_DEPLOYER, trace::CallTraceDecoder, utils::h160_to_b160,
+    CallKind,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -76,7 +77,7 @@ impl TransactionWithMetadata {
 
         // Specify if any contract was directly created with this transaction
         if let Some(NameOrAddress::Address(to)) = metadata.transaction.to().cloned() {
-            if to == DEFAULT_CREATE2_DEPLOYER {
+            if h160_to_b160(to) == DEFAULT_CREATE2_DEPLOYER {
                 metadata.set_create(
                     true,
                     Address::from_slice(&result.returned),

@@ -11,7 +11,7 @@ use anvil_core::eth::proof::{AccountProof, BasicAccount};
 use crate::proof::eip1186::verify_proof;
 use anvil_core::eth::trie::ExtensionLayout;
 use ethers::utils::{keccak256, rlp};
-use foundry_evm::revm::primitives::KECCAK_EMPTY;
+use foundry_evm::{revm::primitives::KECCAK_EMPTY, utils::b256_to_h256};
 
 mod eip1186;
 
@@ -32,7 +32,7 @@ async fn can_get_proof() {
         nonce: 0.into(),
         balance: 0.into(),
         storage_root: proof.storage_hash,
-        code_hash: KECCAK_EMPTY.into(),
+        code_hash: b256_to_h256(KECCAK_EMPTY),
     };
 
     let rlp_account = rlp::encode(&account);

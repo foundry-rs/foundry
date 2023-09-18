@@ -12,7 +12,7 @@ use foundry_evm::{
     executor::{inspector::cheatcodes::util::configure_tx_env, opts::EvmOpts, EvmError},
     revm::primitives::U256 as rU256,
     trace::TracingExecutor,
-    utils::h256_to_b256,
+    utils::{h160_to_b160, h256_to_b256, u256_to_ru256},
 };
 use tracing::trace;
 
@@ -117,12 +117,12 @@ impl RunArgs {
 
         let block = provider.get_block_with_txs(tx_block_number).await?;
         if let Some(ref block) = block {
-            env.block.timestamp = block.timestamp.into();
-            env.block.coinbase = block.author.unwrap_or_default().into();
-            env.block.difficulty = block.difficulty.into();
+            env.block.timestamp = u256_to_ru256(block.timestamp);
+            env.block.coinbase = h160_to_b160(block.author.unwrap_or_default());
+            env.block.difficulty = u256_to_ru256(block.difficulty);
             env.block.prevrandao = block.mix_hash.map(h256_to_b256);
-            env.block.basefee = block.base_fee_per_gas.unwrap_or_default().into();
-            env.block.gas_limit = block.gas_limit.into();
+            env.block.basefee = u256_to_ru256(block.base_fee_per_gas.unwrap_or_default());
+            env.block.gas_limit = u256_to_ru256(block.gas_limit);
         }
 
         // Set the state to the moment right before the transaction

@@ -1,7 +1,6 @@
 //! Anvil specific [`revm::Inspector`] implementation
 
 use crate::{eth::macros::node_info, revm::Database};
-use bytes::Bytes;
 use ethers::types::Log;
 use foundry_evm::{
     call_inspectors,
@@ -10,7 +9,7 @@ use foundry_evm::{
     revm,
     revm::{
         interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
-        primitives::{B160, B256},
+        primitives::{Address as rAddress, Bytes, B256},
         EVMData,
     },
 };
@@ -72,7 +71,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     fn log(
         &mut self,
         evm_data: &mut EVMData<'_, DB>,
-        address: &B160,
+        address: &rAddress,
         topics: &[B256],
         data: &Bytes,
     ) {
@@ -127,7 +126,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
-    ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<rAddress>, Gas, Bytes) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.create(data, call);
         });
@@ -141,10 +140,10 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         data: &mut EVMData<'_, DB>,
         inputs: &CreateInputs,
         status: InstructionResult,
-        address: Option<B160>,
+        address: Option<rAddress>,
         gas: Gas,
         retdata: Bytes,
-    ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<rAddress>, Gas, Bytes) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.create_end(data, inputs, status, address, gas, retdata.clone());
         });

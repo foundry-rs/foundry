@@ -1,5 +1,9 @@
 use crate::{
-    abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier, CallKind,
+    abi::CHEATCODE_ADDRESS,
+    debug::Instruction,
+    trace::identifier::LocalTraceIdentifier,
+    utils::{b160_to_h160, ru256_to_u256},
+    CallKind,
 };
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{
@@ -429,7 +433,7 @@ impl From<&CallTraceStep> for StructLog {
             } else {
                 None
             },
-            stack: Some(step.stack.data().iter().copied().map(|data| data.into()).collect()),
+            stack: Some(step.stack.data().iter().copied().map(ru256_to_u256).collect()),
             // Filled in `CallTraceArena::geth_trace` as a result of compounding all slot changes
             storage: None,
         }
@@ -596,7 +600,7 @@ impl TraceKind {
 
 /// Chooses the color of the trace depending on the destination address and status of the call.
 fn trace_color(trace: &CallTrace) -> Color {
-    if trace.address == CHEATCODE_ADDRESS {
+    if trace.address == b160_to_h160(CHEATCODE_ADDRESS) {
         Color::Blue
     } else if trace.success {
         Color::Green

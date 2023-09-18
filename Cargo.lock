@@ -62,9 +62,9 @@ dependencies = [
 
 [[package]]
 name = "aho-corasick"
-version = "1.0.5"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c378d78423fdad8089616f827526ee33c19f2fddbd5de1629152c9593ba4783"
+checksum = "0f2135563fb5c609d2b2b87c1e8ce7bc41b0b45430fa9661f457981503dd5bf0"
 dependencies = [
  "memchr",
 ]
@@ -74,6 +74,49 @@ name = "allocator-api2"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0942ffc6dcaadf03badf6e6a2d0228460359d5e34b57ccdc720b7382dfbd5ec5"
+
+[[package]]
+name = "alloy-primitives"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e416903084d3392ebd32d94735c395d6709415b76c7728e594d3f996f2b03e65"
+dependencies = [
+ "alloy-rlp",
+ "bytes",
+ "cfg-if",
+ "const-hex",
+ "derive_more",
+ "getrandom 0.2.10",
+ "hex-literal",
+ "itoa",
+ "proptest",
+ "ruint",
+ "serde",
+ "tiny-keccak",
+]
+
+[[package]]
+name = "alloy-rlp"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f938f00332d63a5b0ac687bd6f46d03884638948921d9f8b50c59563d421ae25"
+dependencies = [
+ "alloy-rlp-derive",
+ "arrayvec",
+ "bytes",
+ "smol_str",
+]
+
+[[package]]
+name = "alloy-rlp-derive"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9aa5bb468bc7c46e0c5074d418f575262ff79451242e5ac1380121ed4e23c4fd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.37",
+]
 
 [[package]]
 name = "ammonia"
@@ -161,6 +204,7 @@ dependencies = [
 name = "anvil"
 version = "0.2.0"
 dependencies = [
+ "alloy-primitives",
  "anvil-core",
  "anvil-rpc",
  "anvil-server",
@@ -208,6 +252,7 @@ dependencies = [
 name = "anvil-core"
 version = "0.2.0"
 dependencies = [
+ "alloy-primitives",
  "bytes",
  "ethers-core",
  "foundry-evm",
@@ -310,7 +355,7 @@ checksum = "5fd55a5ba1179988837d24ab4c7cc8ed6efdeff578ede0416b4225a5fca35bd0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -321,7 +366,7 @@ checksum = "bc00ceb34980c03614e35a3a4e218276a0a824e911d07651cd0d858a51e8c0f0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -846,7 +891,7 @@ dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -1574,7 +1619,7 @@ checksum = "c2ad8cef1d801a4686bfd8919f0b30eac4c8e48968c437a6405ded4fb5272d2b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -1772,7 +1817,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "syn 2.0.36",
+ "syn 2.0.37",
  "toml 0.8.0",
  "walkdir",
 ]
@@ -1789,7 +1834,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "serde_json",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -1814,7 +1859,7 @@ dependencies = [
  "serde",
  "serde_json",
  "strum 0.25.0",
- "syn 2.0.36",
+ "syn 2.0.37",
  "tempfile",
  "thiserror",
  "tiny-keccak",
@@ -2017,7 +2062,7 @@ dependencies = [
  "bytes",
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -2131,6 +2176,7 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 name = "forge"
 version = "0.2.0"
 dependencies = [
+ "alloy-primitives",
  "anvil",
  "async-trait",
  "bytes",
@@ -2243,7 +2289,7 @@ dependencies = [
  "ethers-providers",
  "eyre",
  "foundry-macros",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -2379,6 +2425,7 @@ dependencies = [
 name = "foundry-evm"
 version = "0.2.0"
 dependencies = [
+ "alloy-primitives",
  "auto_impl",
  "bytes",
  "const-hex",
@@ -2426,7 +2473,7 @@ version = "0.2.0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -2577,7 +2624,7 @@ checksum = "89ca545a94061b6365f2c7355b4b32bd20df3ff95f02da9329b34ccc3bd6ee72"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -3884,7 +3931,7 @@ checksum = "49e7bc1560b95a3c4a25d03de42fe76ca718ab92d1a22a55b9b4cf67b3ae635c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -4151,7 +4198,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -4255,7 +4302,7 @@ checksum = "a948666b637a0f465e8564c73e89d4dde00d72d4d473cc972f390fc3dcee7d9c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -4456,7 +4503,7 @@ dependencies = [
  "proc-macro2",
  "proc-macro2-diagnostics",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -4505,7 +4552,7 @@ dependencies = [
  "pest_meta",
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -4608,7 +4655,7 @@ dependencies = [
  "phf_shared 0.11.2",
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -4646,7 +4693,7 @@ checksum = "4359fd9c9171ec6e8c62926d6faaf553a8dc3f64e1507e76da7911b4f6a04405"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -4740,7 +4787,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae005bd773ab59b4725093fd7df83fd7892f7d8eafb48dbd7de6e024e4215f9d"
 dependencies = [
  "proc-macro2",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -4808,7 +4855,7 @@ checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
  "version_check",
  "yansi 1.0.0-rc.1",
 ]
@@ -5156,10 +5203,9 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "3.3.0"
-source = "git+https://github.com/bluealloy/revm/?rev=429da731cd8efdc0939ed912240b2667b9155834#429da731cd8efdc0939ed912240b2667b9155834"
+source = "git+https://github.com/Evalir/revm/?branch=reintroduce-alloy-rebased#5845079baf8df56f624a1ecae579a05f8423a2df"
 dependencies = [
  "auto_impl",
- "rayon",
  "revm-interpreter",
  "revm-precompile",
  "serde",
@@ -5169,19 +5215,18 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "1.1.2"
-source = "git+https://github.com/bluealloy/revm/?rev=429da731cd8efdc0939ed912240b2667b9155834#429da731cd8efdc0939ed912240b2667b9155834"
+source = "git+https://github.com/Evalir/revm/?branch=reintroduce-alloy-rebased#5845079baf8df56f624a1ecae579a05f8423a2df"
 dependencies = [
  "derive_more",
  "enumn",
  "revm-primitives",
  "serde",
- "sha3",
 ]
 
 [[package]]
 name = "revm-precompile"
 version = "2.0.3"
-source = "git+https://github.com/bluealloy/revm/?rev=429da731cd8efdc0939ed912240b2667b9155834#429da731cd8efdc0939ed912240b2667b9155834"
+source = "git+https://github.com/Evalir/revm/?branch=reintroduce-alloy-rebased#5845079baf8df56f624a1ecae579a05f8423a2df"
 dependencies = [
  "k256",
  "num",
@@ -5189,30 +5234,27 @@ dependencies = [
  "revm-primitives",
  "ripemd",
  "sha2 0.10.7",
- "sha3",
  "substrate-bn",
 ]
 
 [[package]]
 name = "revm-primitives"
 version = "1.1.2"
-source = "git+https://github.com/bluealloy/revm/?rev=429da731cd8efdc0939ed912240b2667b9155834#429da731cd8efdc0939ed912240b2667b9155834"
+source = "git+https://github.com/Evalir/revm/?branch=reintroduce-alloy-rebased#5845079baf8df56f624a1ecae579a05f8423a2df"
 dependencies = [
+ "alloy-primitives",
+ "alloy-rlp",
  "auto_impl",
  "bitflags 2.4.0",
  "bitvec",
  "bytes",
  "derive_more",
  "enumn",
- "fixed-hash",
  "hashbrown 0.14.0",
  "hex",
  "hex-literal",
  "primitive-types",
- "rlp",
- "ruint",
  "serde",
- "sha3",
 ]
 
 [[package]]
@@ -5298,10 +5340,9 @@ version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95294d6e3a6192f3aabf91c38f56505a625aa495533442744185a36d75a790c4"
 dependencies = [
- "primitive-types",
+ "alloy-rlp",
  "proptest",
  "rand 0.8.5",
- "rlp",
  "ruint-macro",
  "serde",
  "valuable",
@@ -5738,7 +5779,7 @@ checksum = "4eca7ac642d82aa35b60049a6eccb4be6be75e599bd2e9adb5f875a737654af2"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -5806,7 +5847,7 @@ checksum = "91d129178576168c589c9ec973feedf7d3126c01ac2bf08795109aa35b69fb8f"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -5981,6 +6022,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62bb4feee49fdd9f707ef802e22365a35de4b7b299de4763d44bfea899442ff9"
 
 [[package]]
+name = "smol_str"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74212e6bbe9a4352329b2f68ba3130c15a3f26fe88ff22dbdc6cdd58fa85e99c"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "socket2"
 version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6112,7 +6162,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustversion",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -6180,9 +6230,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "2.0.36"
+version = "2.0.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91e02e55d62894af2a08aca894c6577281f76769ba47c94d5756bec8ac6e7373"
+checksum = "7303ef2c05cd654186cb250d29049a24840ca25d2747c25c0381c8d9e2f582e8"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6297,7 +6347,7 @@ checksum = "49922ecae66cc8a249b77e68d1d0623c1b2c514f0060c27cdc68bd62a1219d35"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -6401,7 +6451,7 @@ checksum = "630bdcf245f78637c13ec01ffae6187cca34625e8c63150d424b59e55af2675e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -6663,7 +6713,7 @@ checksum = "5f4f31f56159e98206da9efd823404b79b6ef3143b4a7ab76e67b1751b25a4ab"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -7090,7 +7140,7 @@ dependencies = [
  "once_cell",
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
  "wasm-bindgen-shared",
 ]
 
@@ -7124,7 +7174,7 @@ checksum = "54681b18a46765f095758388f2d0cf16eb8d4169b639ab575a8f5693af210c7b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.36",
+ "syn 2.0.37",
  "wasm-bindgen-backend",
  "wasm-bindgen-shared",
 ]

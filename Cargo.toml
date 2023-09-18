@@ -154,6 +154,8 @@ hex = { package = "const-hex", version = "1.6", features = ["hex"] }
 itertools = "0.11"
 solang-parser = "=0.3.2"
 
+alloy-primitives = { version = "0.3", default-features = false }
+
 #[patch."https://github.com/gakonst/ethers-rs"]
 #ethers = { path = "../ethers-rs/ethers" }
 #ethers-addressbook = { path = "../ethers-rs/ethers-addressbook" }
@@ -167,7 +169,7 @@ solang-parser = "=0.3.2"
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-revm = { git = "https://github.com/bluealloy/revm/", rev = "429da731cd8efdc0939ed912240b2667b9155834" }
-revm-interpreter = { git = "https://github.com/bluealloy/revm/", rev = "429da731cd8efdc0939ed912240b2667b9155834" }
-revm-precompile = { git = "https://github.com/bluealloy/revm/", rev = "429da731cd8efdc0939ed912240b2667b9155834" }
-revm-primitives = { git = "https://github.com/bluealloy/revm/", rev = "429da731cd8efdc0939ed912240b2667b9155834" }
+revm = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
+revm-interpreter = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
+revm-precompile = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
+revm-primitives = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }

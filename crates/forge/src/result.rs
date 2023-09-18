@@ -9,6 +9,7 @@ use foundry_evm::{
     executor::EvmError,
     fuzz::{types::FuzzCase, CounterExample},
     trace::{TraceKind, Traces},
+    utils::b160_to_h160,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, time::Duration};
@@ -244,7 +245,7 @@ impl TestSetup {
                 // force the tracekind to be setup so a trace is shown.
                 traces.extend(err.traces.map(|traces| (TraceKind::Setup, traces)));
                 logs.extend(err.logs);
-                labeled_addresses.extend(err.labels);
+                labeled_addresses.extend(err.labels.into_iter().map(|l| (b160_to_h160(l.0), l.1)));
                 Self::failed_with(logs, traces, labeled_addresses, err.reason)
             }
             e => Self::failed_with(

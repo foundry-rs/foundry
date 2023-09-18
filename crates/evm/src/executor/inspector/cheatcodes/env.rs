@@ -11,6 +11,7 @@ use crate::{
     },
     utils::{b160_to_h160, h160_to_b160, ru256_to_u256, u256_to_ru256},
 };
+use alloy_primitives::B256;
 use ethers::{
     abi::{self, AbiEncode, RawLog, Token, Tokenizable, Tokenize},
     signers::{LocalWallet, Signer},
@@ -18,7 +19,7 @@ use ethers::{
 };
 use foundry_config::Config;
 use revm::{
-    primitives::{Bytecode, SpecId, B256, KECCAK_EMPTY},
+    primitives::{Bytecode, SpecId, KECCAK_EMPTY},
     Database, EVMData,
 };
 use std::collections::BTreeMap;
@@ -339,7 +340,7 @@ pub fn apply<DB: DatabaseExt>(
 ) -> Result<Option<Bytes>> {
     let result = match call {
         HEVMCalls::Warp(inner) => {
-            data.env.block.timestamp = inner.0.into();
+            data.env.block.timestamp = u256_to_ru256(inner.0);
             Bytes::new()
         }
         HEVMCalls::Difficulty(inner) => {
@@ -349,7 +350,7 @@ pub fn apply<DB: DatabaseExt>(
                  use `prevrandao` instead. \
                  For more information, please see https://eips.ethereum.org/EIPS/eip-4399"
             );
-            data.env.block.difficulty = inner.0.into();
+            data.env.block.difficulty = u256_to_ru256(inner.0);
             Bytes::new()
         }
         HEVMCalls::Prevrandao(inner) => {
@@ -363,11 +364,11 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::Roll(inner) => {
-            data.env.block.number = inner.0.into();
+            data.env.block.number = u256_to_ru256(inner.0);
             Bytes::new()
         }
         HEVMCalls::Fee(inner) => {
-            data.env.block.basefee = inner.0.into();
+            data.env.block.basefee = u256_to_ru256(inner.0);
             Bytes::new()
         }
         HEVMCalls::Coinbase(inner) => {
@@ -408,8 +409,10 @@ pub fn apply<DB: DatabaseExt>(
             trace!(address=?inner.0, code=?hex::encode(&code), "etch cheatcode");
             // TODO: Does this increase gas usage?
             data.journaled_state.load_account(h160_to_b160(inner.0), data.db)?;
-            data.journaled_state
-                .set_code(h160_to_b160(inner.0), Bytecode::new_raw(code.0).to_checked());
+            data.journaled_state.set_code(
+                h160_to_b160(inner.0),
+                Bytecode::new_raw(alloy_primitives::Bytes(code.0)).to_checked(),
+            );
             Bytes::new()
         }
         HEVMCalls::Deal(inner) => {
@@ -420,12 +423,12 @@ pub fn apply<DB: DatabaseExt>(
                 // record the deal
                 let record = DealRecord {
                     address: who,
-                    old_balance: account.info.balance.into(),
+                    old_balance: ru256_to_u256(account.info.balance),
                     new_balance: value,
                 };
                 state.eth_deals.push(record);
 
-                account.info.balance = value.into();
+                account.info.balance = u256_to_ru256(value);
             })?;
             Bytes::new()
         }
@@ -564,7 +567,7 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::TxGasPrice(inner) => {
-            data.env.tx.gas_price = inner.0.into();
+            data.env.tx.gas_price = u256_to_ru256(inner.0);
             Bytes::new()
         }
         HEVMCalls::Broadcast0(_) => {

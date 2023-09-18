@@ -1,10 +1,9 @@
 //! Cache related abstraction
 use crate::executor::backend::snapshot::StateSnapshot;
+use alloy_primitives::{Address, B256, U256};
 use parking_lot::RwLock;
 use revm::{
-    primitives::{
-        Account, AccountInfo, AccountStatus, HashMap as Map, B160, B256, KECCAK_EMPTY, U256,
-    },
+    primitives::{Account, AccountInfo, AccountStatus, HashMap as Map, KECCAK_EMPTY},
     DatabaseCommit,
 };
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
@@ -87,12 +86,12 @@ impl BlockchainDb {
     }
 
     /// Returns the map that holds the account related info
-    pub fn accounts(&self) -> &RwLock<Map<B160, AccountInfo>> {
+    pub fn accounts(&self) -> &RwLock<Map<Address, AccountInfo>> {
         &self.db.accounts
     }
 
     /// Returns the map that holds the storage related info
-    pub fn storage(&self) -> &RwLock<Map<B160, StorageInfo>> {
+    pub fn storage(&self) -> &RwLock<Map<Address, StorageInfo>> {
         &self.db.storage
     }
 
@@ -232,9 +231,9 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
 #[derive(Debug, Default)]
 pub struct MemDb {
     /// Account related data
-    pub accounts: RwLock<Map<B160, AccountInfo>>,
+    pub accounts: RwLock<Map<Address, AccountInfo>>,
     /// Storage related data
-    pub storage: RwLock<Map<B160, StorageInfo>>,
+    pub storage: RwLock<Map<Address, StorageInfo>>,
     /// All retrieved block hashes
     pub block_hashes: RwLock<Map<U256, B256>>,
 }
@@ -248,12 +247,12 @@ impl MemDb {
     }
 
     // Inserts the account, replacing it if it exists already
-    pub fn do_insert_account(&self, address: B160, account: AccountInfo) {
+    pub fn do_insert_account(&self, address: Address, account: AccountInfo) {
         self.accounts.write().insert(address, account);
     }
 
     /// The implementation of [DatabaseCommit::commit()]
-    pub fn do_commit(&self, changes: Map<B160, Account>) {
+    pub fn do_commit(&self, changes: Map<Address, Account>) {
         let mut storage = self.storage.write();
         let mut accounts = self.accounts.write();
         for (add, mut acc) in changes {
@@ -305,7 +304,7 @@ impl Clone for MemDb {
 }
 
 impl DatabaseCommit for MemDb {
-    fn commit(&mut self, changes: Map<B160, Account>) {
+    fn commit(&mut self, changes: Map<Address, Account>) {
         self.do_commit(changes)
     }
 }

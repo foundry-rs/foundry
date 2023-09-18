@@ -1,33 +1,35 @@
+//! Main Foundry executor abstractions, which can execute calls.
+//! Used for running tests, scripts, and interacting with the inner backend which holds the state.
+
 use self::inspector::{cheatcodes::util::BroadcastableTransactions, Cheatcodes, InspectorData};
 use crate::{
     debug::DebugArena,
     decode,
     trace::CallTraceArena,
-    utils::{b160_to_h160, eval_to_instruction_result, h160_to_b160, halt_to_instruction_result},
+    utils::{eval_to_instruction_result, halt_to_instruction_result},
     CALLER,
 };
 pub use abi::{
     patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
     HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
 };
+/// Reexport commonly used revm types
+pub use alloy_primitives::{Address, Bytes, U256};
 use backend::FuzzBackendWrapper;
-use bytes::Bytes;
 use ethers::{
     abi::{Abi, Contract, Detokenize, Function, Tokenize},
-    prelude::{decode_function_data, encode_function_data, Address, U256},
+    prelude::{decode_function_data, encode_function_data},
     signers::LocalWallet,
     types::Log,
 };
 use foundry_common::{abi::IntoFunction, evm::Breakpoints};
 use revm::primitives::hex_literal::hex;
-/// Reexport commonly used revm types
-pub use revm::primitives::{Env, SpecId};
 pub use revm::{
     db::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, CreateScheme, InstructionResult, Memory, Stack},
     primitives::{
-        Account, BlockEnv, Bytecode, ExecutionResult, HashMap, Output, ResultAndState, TransactTo,
-        TxEnv, B160, U256 as rU256,
+        Account, BlockEnv, Bytecode, Env, ExecutionResult, HashMap, Output, ResultAndState, SpecId,
+        TransactTo, TxEnv,
     },
 };
 use std::collections::BTreeMap;
@@ -60,7 +62,7 @@ use crate::{
 pub use builder::ExecutorBuilder;
 
 /// A mapping of addresses to their changed state.
-pub type StateChangeset = HashMap<B160, Account>;
+pub type StateChangeset = HashMap<Address, Account>;
 
 /// The initcode of the default create2 deployer.
 pub const DEFAULT_CREATE2_DEPLOYER_CODE: &[u8] = &hex!("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3");
@@ -116,7 +118,7 @@ impl Executor {
         trace!("deploying local create2 deployer");
         let create2_deployer_account = self
             .backend
-            .basic(h160_to_b160(DEFAULT_CREATE2_DEPLOYER))?
+            .basic(DEFAULT_CREATE2_DEPLOYER)?
             .ok_or(DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
         // if the deployer is not currently deployed, deploy the default one
@@ -128,7 +130,7 @@ impl Executor {
 
             self.set_balance(creator, U256::MAX)?;
             let res =
-                self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::zero(), None)?;
+                self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::ZERO, None)?;
             trace!(create2=?res.address, "deployed local create2 deployer");
 
             self.set_balance(creator, initial_balance)?;
@@ -139,8 +141,8 @@ impl Executor {
     /// Set the balance of an account.
     pub fn set_balance(&mut self, address: Address, amount: U256) -> DatabaseResult<&mut Self> {
         trace!(?address, ?amount, "setting account balance");
-        let mut account = self.backend.basic(h160_to_b160(address))?.unwrap_or_default();
-        account.balance = amount.into();
+        let mut account = self.backend.basic(address)?.unwrap_or_default();
+        account.balance = amount;
 
         self.backend.insert_account_info(address, account);
         Ok(self)
@@ -148,16 +150,12 @@ impl Executor {
 
     /// Gets the balance of an account
     pub fn get_balance(&self, address: Address) -> DatabaseResult<U256> {
-        Ok(self
-            .backend
-            .basic(h160_to_b160(address))?
-            .map(|acc| acc.balance.into())
-            .unwrap_or_default())
+        Ok(self.backend.basic(address)?.map(|acc| acc.balance).unwrap_or_default())
     }
 
     /// Set the nonce of an account.
     pub fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<&mut Self> {
-        let mut account = self.backend.basic(h160_to_b160(address))?.unwrap_or_default();
+        let mut account = self.backend.basic(address)?.unwrap_or_default();
         account.nonce = nonce;
 
         self.backend.insert_account_info(address, account);
@@ -203,7 +201,7 @@ impl Executor {
 
         let from = from.unwrap_or(CALLER);
         self.backend.set_test_contract(to).set_caller(from);
-        let res = self.call_committing::<(), _, _>(from, to, "setUp()", (), 0.into(), None)?;
+        let res = self.call_committing::<(), _, _>(from, to, "setUp()", (), U256::ZERO, None)?;
 
         // record any changes made to the block's environment during setup
         self.env.block = res.env.block.clone();
@@ -266,7 +264,7 @@ impl Executor {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult> {
-        let env = self.build_test_env(from, TransactTo::Call(h160_to_b160(to)), calldata, value);
+        let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
         let mut result = self.call_raw_with_env(env)?;
         self.commit(&mut result);
         Ok(result)
@@ -286,12 +284,7 @@ impl Executor {
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
 
         // execute the call
-        let env = self.build_test_env(
-            from,
-            TransactTo::Call(h160_to_b160(test_contract)),
-            calldata,
-            value,
-        );
+        let env = self.build_test_env(from, TransactTo::Call(test_contract), calldata, value);
         let call_result = self.call_raw_with_env(env)?;
         convert_call_result(abi, &func, call_result)
     }
@@ -326,8 +319,7 @@ impl Executor {
     ) -> eyre::Result<RawCallResult> {
         let mut inspector = self.inspector.clone();
         // Build VM
-        let mut env =
-            self.build_test_env(from, TransactTo::Call(h160_to_b160(to)), calldata, value);
+        let mut env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
         let mut db = FuzzBackendWrapper::new(&self.backend);
         let result = db.inspect_ref(&mut env, &mut inspector)?;
 
@@ -454,19 +446,11 @@ impl Executor {
 
         // also mark this library as persistent, this will ensure that the state of the library is
         // persistent across fork swaps in forking mode
-        self.backend.add_persistent_account(b160_to_h160(address));
+        self.backend.add_persistent_account(address);
 
         trace!(address=?address, "deployed contract");
 
-        Ok(DeployResult {
-            address: b160_to_h160(address),
-            gas_used,
-            gas_refunded,
-            logs,
-            traces,
-            debug,
-            env,
-        })
+        Ok(DeployResult { address, gas_used, gas_refunded, logs, traces, debug, env })
     }
 
     /// Deploys a contract and commits the new state to the underlying database.
@@ -527,7 +511,7 @@ impl Executor {
         // we only clone the test contract and cheatcode accounts, that's all we need to evaluate
         // success
         for addr in [address, CHEATCODE_ADDRESS] {
-            let acc = self.backend.basic(h160_to_b160(addr))?.unwrap_or_default();
+            let acc = self.backend.basic(addr)?.unwrap_or_default();
             backend.insert_account_info(addr, acc);
         }
 
@@ -541,8 +525,14 @@ impl Executor {
         let mut success = !reverted;
         if success {
             // Check if a DSTest assertion failed
-            let call =
-                executor.call::<bool, _, _>(CALLER, address, "failed()(bool)", (), 0.into(), None);
+            let call = executor.call::<bool, _, _>(
+                CALLER,
+                address,
+                "failed()(bool)",
+                (),
+                U256::ZERO,
+                None,
+            );
 
             if let Ok(CallResult { result: failed, .. }) = call {
                 success = !failed;
@@ -569,19 +559,19 @@ impl Executor {
             // network conditions - the actual gas price is kept in `self.block` and is applied by
             // the cheatcode handler if it is enabled
             block: BlockEnv {
-                basefee: rU256::from(0),
-                gas_limit: self.gas_limit.into(),
+                basefee: U256::from(0),
+                gas_limit: self.gas_limit,
                 ..self.env.block.clone()
             },
             tx: TxEnv {
-                caller: h160_to_b160(caller),
+                caller,
                 transact_to,
                 data,
-                value: value.into(),
+                value,
                 // As above, we set the gas price to 0.
-                gas_price: rU256::from(0),
+                gas_price: U256::from(0),
                 gas_priority_fee: None,
-                gas_limit: self.gas_limit.as_u64(),
+                gas_limit: self.gas_limit.to(),
                 ..self.env.tx.clone()
             },
         }

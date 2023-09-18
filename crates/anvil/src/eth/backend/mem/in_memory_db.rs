@@ -9,7 +9,7 @@ use crate::{
     Address, U256,
 };
 use ethers::prelude::H256;
-use foundry_evm::utils::h160_to_b160;
+use foundry_evm::utils::{b160_to_h160, h160_to_b160, h256_to_b256, ru256_to_u256, u256_to_ru256};
 use tracing::{trace, warn};
 
 // reexport for convenience
@@ -19,15 +19,19 @@ pub use foundry_evm::executor::{backend::MemDb, DatabaseRef};
 
 impl Db for MemDb {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
-        self.inner.insert_account_info(address.into(), account)
+        self.inner.insert_account_info(h160_to_b160(address), account)
     }
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()> {
-        self.inner.insert_account_storage(address.into(), slot.into(), val.into())
+        self.inner.insert_account_storage(
+            h160_to_b160(address),
+            u256_to_ru256(slot),
+            u256_to_ru256(val),
+        )
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: H256) {
-        self.inner.block_hashes.insert(number.into(), hash.into());
+        self.inner.block_hashes.insert(u256_to_ru256(number), h256_to_b256(hash));
     }
 
     fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
@@ -44,12 +48,16 @@ impl Db for MemDb {
                 }
                 .to_checked();
                 Ok((
-                    k.into(),
+                    b160_to_h160(k),
                     SerializableAccountRecord {
                         nonce: v.info.nonce,
-                        balance: v.info.balance.into(),
+                        balance: ru256_to_u256(v.info.balance),
                         code: code.bytes()[..code.len()].to_vec().into(),
-                        storage: v.storage.into_iter().map(|k| (k.0.into(), k.1.into())).collect(),
+                        storage: v
+                            .storage
+                            .into_iter()
+                            .map(|k| (ru256_to_u256(k.0), ru256_to_u256(k.1)))
+                            .collect(),
                     },
                 ))
             })
@@ -62,11 +70,11 @@ impl Db for MemDb {
     fn snapshot(&mut self) -> U256 {
         let id = self.snapshots.insert(self.inner.clone());
         trace!(target: "backend::memdb", "Created new snapshot {}", id);
-        id
+        ru256_to_u256(id)
     }
 
     fn revert(&mut self, id: U256) -> bool {
-        if let Some(snapshot) = self.snapshots.remove(id) {
+        if let Some(snapshot) = self.snapshots.remove(u256_to_ru256(id)) {
             self.inner = snapshot;
             trace!(target: "backend::memdb", "Reverted snapshot {}", id);
             true
@@ -118,11 +126,13 @@ mod tests {
         revm::primitives::AccountInfo,
         Address,
     };
+    use alloy_primitives::U256 as rU256;
     use bytes::Bytes;
     use ethers::types::U256;
     use foundry_evm::{
         executor::{backend::MemDb, DatabaseRef},
-        revm::primitives::{Bytecode, KECCAK_EMPTY, U256 as rU256},
+        revm::primitives::{Bytecode, KECCAK_EMPTY},
+        utils::h160_to_b160,
     };
     use std::{collections::BTreeMap, str::FromStr};
 
@@ -136,7 +146,8 @@ mod tests {
         let mut dump_db = MemDb::default();
 
         let contract_code: Bytecode =
-            Bytecode::new_raw(Bytes::from("fake contract code")).to_checked();
+            Bytecode::new_raw(alloy_primitives::Bytes(Bytes::from("fake contract code")))
+                .to_checked();
 
         dump_db.insert_account(
             test_addr,
@@ -148,7 +159,7 @@ mod tests {
             },
         );
 
-        dump_db.set_storage_at(test_addr, "0x1234567".into(), "0x1".into()).unwrap();
+        dump_db.set_storage_at(test_addr, U256::from(1234567), U256::from(1)).unwrap();
 
         let state = dump_db.dump_state().unwrap().unwrap();
 
@@ -156,14 +167,14 @@ mod tests {
 
         load_db.load_state(state).unwrap();
 
-        let loaded_account = load_db.basic(test_addr.into()).unwrap().unwrap();
+        let loaded_account = load_db.basic(h160_to_b160(test_addr)).unwrap().unwrap();
 
         assert_eq!(loaded_account.balance, rU256::from(123456));
         assert_eq!(load_db.code_by_hash(loaded_account.code_hash).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
         assert_eq!(
-            load_db.storage(test_addr.into(), Into::<U256>::into("0x1234567").into()).unwrap(),
-            Into::<U256>::into("0x1").into()
+            load_db.storage(h160_to_b160(test_addr), rU256::from(1234567)).unwrap(),
+            rU256::from(1)
         );
     }
 
@@ -177,7 +188,8 @@ mod tests {
             Address::from_str("0x70997970c51812dc3a010c7d01b50e0d17dc79c8").unwrap();
 
         let contract_code: Bytecode =
-            Bytecode::new_raw(Bytes::from("fake contract code")).to_checked();
+            Bytecode::new_raw(alloy_primitives::Bytes(Bytes::from("fake contract code")))
+                .to_checked();
 
         let mut db = MemDb::default();
 
@@ -191,8 +203,8 @@ mod tests {
             },
         );
 
-        db.set_storage_at(test_addr, "0x1234567".into(), "0x1".into()).unwrap();
-        db.set_storage_at(test_addr, "0x1234568".into(), "0x2".into()).unwrap();
+        db.set_storage_at(test_addr, U256::from(1234567), U256::from(1)).unwrap();
+        db.set_storage_at(test_addr, U256::from(1234568), U256::from(2)).unwrap();
 
         let mut new_state = SerializableState::default();
 
@@ -207,7 +219,7 @@ mod tests {
         );
 
         let mut new_storage = BTreeMap::default();
-        new_storage.insert("0x1234568".into(), "0x5".into());
+        new_storage.insert(U256::from(1234568), U256::from(5));
 
         new_state.accounts.insert(
             test_addr,
@@ -221,8 +233,8 @@ mod tests {
 
         db.load_state(new_state).unwrap();
 
-        let loaded_account = db.basic(test_addr.into()).unwrap().unwrap();
-        let loaded_account2 = db.basic(test_addr2.into()).unwrap().unwrap();
+        let loaded_account = db.basic(h160_to_b160(test_addr)).unwrap().unwrap();
+        let loaded_account2 = db.basic(h160_to_b160(test_addr2)).unwrap().unwrap();
 
         assert_eq!(loaded_account2.nonce, 1);
 
@@ -230,12 +242,12 @@ mod tests {
         assert_eq!(db.code_by_hash(loaded_account.code_hash).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
         assert_eq!(
-            db.storage(test_addr.into(), Into::<U256>::into("0x1234567").into()).unwrap(),
-            Into::<U256>::into("0x1").into()
+            db.storage(h160_to_b160(test_addr), rU256::from(1234567)).unwrap(),
+            rU256::from(1)
         );
         assert_eq!(
-            db.storage(test_addr.into(), Into::<U256>::into("0x1234568").into()).unwrap(),
-            Into::<U256>::into("0x5").into()
+            db.storage(h160_to_b160(test_addr), rU256::from(1234568)).unwrap(),
+            rU256::from(5)
         );
     }
 }

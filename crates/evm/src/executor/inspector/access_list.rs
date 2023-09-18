@@ -1,23 +1,18 @@
-use ethers::{
-    abi::{ethereum_types::BigEndianHash, Address},
-    types::{
-        transaction::eip2930::{AccessList, AccessListItem},
-        H256,
-    },
-};
+use alloy_primitives::{Address, B256};
+use ethers::types::transaction::eip2930::{AccessList, AccessListItem};
 use hashbrown::{HashMap, HashSet};
 use revm::{
     interpreter::{opcode, InstructionResult, Interpreter},
     Database, EVMData, Inspector,
 };
 
-use crate::utils::{b160_to_h160, ru256_to_u256};
+use crate::utils::{b160_to_h160, b256_to_h256, h160_to_b160, h256_to_b256};
 
 /// An inspector that collects touched accounts and storage slots.
 #[derive(Default, Debug)]
 pub struct AccessListTracer {
     excluded: HashSet<Address>,
-    access_list: HashMap<Address, HashSet<H256>>,
+    access_list: HashMap<Address, HashSet<B256>>,
 }
 
 impl AccessListTracer {
@@ -32,24 +27,27 @@ impl AccessListTracer {
             access_list: access_list
                 .0
                 .iter()
-                .map(|v| (v.address, v.storage_keys.iter().copied().collect()))
+                .map(|v| {
+                    (
+                        h160_to_b160(v.address),
+                        v.storage_keys.iter().copied().map(h256_to_b256).collect(),
+                    )
+                })
                 .collect(),
         }
     }
-
     pub fn access_list(&self) -> AccessList {
         AccessList::from(
             self.access_list
                 .iter()
                 .map(|(address, slots)| AccessListItem {
-                    address: *address,
-                    storage_keys: slots.iter().copied().collect(),
+                    address: b160_to_h160(*address),
+                    storage_keys: slots.iter().copied().map(b256_to_h256).collect(),
                 })
                 .collect::<Vec<AccessListItem>>(),
         )
     }
 }
-
 impl<DB: Database> Inspector<DB> for AccessListTracer {
     #[inline]
     fn step(
@@ -61,10 +59,7 @@ impl<DB: Database> Inspector<DB> for AccessListTracer {
             opcode::SLOAD | opcode::SSTORE => {
                 if let Ok(slot) = interpreter.stack().peek(0) {
                     let cur_contract = interpreter.contract.address;
-                    self.access_list
-                        .entry(b160_to_h160(cur_contract))
-                        .or_default()
-                        .insert(H256::from_uint(&ru256_to_u256(slot)));
+                    self.access_list.entry(cur_contract).or_default().insert(slot.into());
                 }
             }
             opcode::EXTCODECOPY |
@@ -73,7 +68,7 @@ impl<DB: Database> Inspector<DB> for AccessListTracer {
             opcode::BALANCE |
             opcode::SELFDESTRUCT => {
                 if let Ok(slot) = interpreter.stack().peek(0) {
-                    let addr: Address = H256::from_uint(&ru256_to_u256(slot)).into();
+                    let addr: Address = Address::from_word(slot.into());
                     if !self.excluded.contains(&addr) {
                         self.access_list.entry(addr).or_default();
                     }
@@ -81,7 +76,7 @@ impl<DB: Database> Inspector<DB> for AccessListTracer {
             }
             opcode::DELEGATECALL | opcode::CALL | opcode::STATICCALL | opcode::CALLCODE => {
                 if let Ok(slot) = interpreter.stack().peek(1) {
-                    let addr: Address = H256::from_uint(&ru256_to_u256(slot)).into();
+                    let addr: Address = Address::from_word(slot.into());
                     if !self.excluded.contains(&addr) {
                         self.access_list.entry(addr).or_default();
                     }
@@ -89,7 +84,6 @@ impl<DB: Database> Inspector<DB> for AccessListTracer {
             }
             _ => (),
         }
-
         InstructionResult::Continue
     }
 }

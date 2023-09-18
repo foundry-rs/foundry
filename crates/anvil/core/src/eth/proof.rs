@@ -5,6 +5,7 @@ use ethers_core::{
     types::{H256, U256},
     utils::rlp,
 };
+use foundry_evm::utils::b256_to_h256;
 use revm::primitives::KECCAK_EMPTY;
 // reexport for convenience
 pub use ethers_core::types::{EIP1186ProofResponse as AccountProof, StorageProof};
@@ -28,7 +29,7 @@ impl Default for BasicAccount {
         BasicAccount {
             balance: 0.into(),
             nonce: 0.into(),
-            code_hash: KECCAK_EMPTY.into(),
+            code_hash: b256_to_h256(KECCAK_EMPTY),
             storage_root: KECCAK_NULL_RLP,
         }
     }
