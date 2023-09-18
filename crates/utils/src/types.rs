@@ -35,6 +35,14 @@ impl ToAlloy for U256 {
     }
 }
 
+impl ToAlloy for u64 {
+    type To = AlloyU256;
+
+    fn to_alloy(self) -> Self::To {
+        AlloyU256::from(self)
+    }
+}
+
 /// Conversion trait to easily convert from alloy primitive types to ethers-rs types.
 pub trait ToEthers {
     type To;

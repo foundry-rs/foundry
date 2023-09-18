@@ -1,9 +1,7 @@
 use super::{Cheatcodes, Result};
 use crate::abi::hevm::{DirEntry, FsMetadata, HEVMCalls};
-use ethers::{
-    abi::{self, AbiEncode, Token, Tokenize},
-    types::Bytes,
-};
+use alloy_primitives::Bytes;
+use ethers::abi::{self, AbiEncode, Token, Tokenize};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
 use std::{

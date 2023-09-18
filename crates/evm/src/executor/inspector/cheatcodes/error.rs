@@ -1,7 +1,6 @@
 use crate::executor::backend::{error::NoCheatcodeAccessError, DatabaseError};
-use ethers::{
-    abi::AbiEncode, prelude::k256::ecdsa::signature::Error as SignatureError, types::Bytes,
-};
+use alloy_primitives::Bytes;
+use ethers::{abi::AbiEncode, prelude::k256::ecdsa::signature::Error as SignatureError};
 use foundry_common::errors::FsPathError;
 use foundry_config::UnresolvedEnvVarError;
 use foundry_utils::error::{encode_error, SolError};
