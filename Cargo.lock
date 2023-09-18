@@ -2498,6 +2498,7 @@ dependencies = [
 name = "foundry-utils"
 version = "0.2.0"
 dependencies = [
+ "alloy-primitives",
  "const-hex",
  "dunce",
  "ethers-addressbook",
