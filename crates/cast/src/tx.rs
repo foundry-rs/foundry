@@ -204,11 +204,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         }
     }
 
-    pub async fn encode_create_args(
-        &mut self,
-        sig: &str,
-        args: Vec<String>,
-    ) -> Result<Vec<u8>> {
+    pub async fn encode_create_args(&mut self, sig: &str, args: Vec<String>) -> Result<Vec<u8>> {
         let (mut calldata, _) = self.encode_args(sig, args).await?;
         calldata.drain(..4); // remove function selector
         Ok(calldata)

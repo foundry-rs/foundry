@@ -226,7 +226,7 @@ async fn fill_create(
 ) -> Result<()> {
     builder.value(value);
 
-    let mut data = hex::decocastde(code)?;
+    let mut data = hex::decode(code)?;
 
     if let Some(s) = sig {
         let mut constructor_parameter_data = builder.encode_create_args(&s, args).await?;
