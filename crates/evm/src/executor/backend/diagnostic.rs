@@ -4,6 +4,7 @@ use crate::{
 };
 use alloy_primitives::Address;
 use foundry_common::fmt::UIfmt;
+use foundry_utils::types::ToEthers;
 use itertools::Itertools;
 
 /// Represents possible diagnostic cases on revert
@@ -31,7 +32,7 @@ impl RevertDiagnostic {
 
         match self {
             RevertDiagnostic::ContractExistsOnOtherForks { contract, active, available_on } => {
-                let contract_label = get_label(&b160_to_h160(*contract));
+                let contract_label = get_label(&(*contract).to_ethers());
 
                 format!(
                     r#"Contract {} does not exist on active fork with id `{}`

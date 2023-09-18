@@ -26,6 +26,7 @@ pub mod error;
 pub mod glob;
 pub mod path;
 pub mod rpc;
+pub mod types;
 
 /// Data passed to the post link handler of the linker for each linked artifact.
 #[derive(Debug)]
