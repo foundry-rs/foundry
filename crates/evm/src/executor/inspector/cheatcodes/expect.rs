@@ -497,7 +497,9 @@ pub fn apply<DB: DatabaseExt>(
                 .as_ref()
                 .map_or(true, Bytecode::is_empty);
             if empty_bytecode {
-                let code = Bytecode::new_raw(bytes::Bytes::from_static(&[0u8])).to_checked();
+                let code =
+                    Bytecode::new_raw(alloy_primitives::Bytes(bytes::Bytes::from_static(&[0u8])))
+                        .to_checked();
                 data.journaled_state.set_code(h160_to_b160(inner.0), code);
             }
             state.mocked_calls.entry(inner.0).or_default().insert(

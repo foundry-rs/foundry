@@ -4,15 +4,14 @@ use crate::{
     executor::{Executor, RawCallResult},
     fuzz::{invariant::set_up_inner_replay, *},
     trace::{load_contracts, TraceKind, Traces},
+    utils::h160_to_b160,
     CALLER,
 };
-use ethers::{
-    abi::Function,
-    types::{Address, U256},
-};
+use ethers::abi::Function;
 use eyre::{Result, WrapErr};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use proptest::test_runner::TestError;
+use revm::primitives::U256;
 
 #[derive(Debug, Clone)]
 pub struct InvariantFuzzError {
@@ -108,7 +107,12 @@ impl InvariantFuzzError {
         // Replay each call from the sequence until we break the invariant.
         for (sender, (addr, bytes)) in calls.iter() {
             let call_result = executor
-                .call_raw_committing(*sender, *addr, bytes.0.clone(), U256::zero())
+                .call_raw_committing(
+                    h160_to_b160(*sender),
+                    h160_to_b160(*addr),
+                    bytes.0.clone().into(),
+                    U256::ZERO,
+                )
                 .expect("bad call to evm");
 
             logs.extend(call_result.logs);
@@ -134,7 +138,7 @@ impl InvariantFuzzError {
             // Checks the invariant.
             if let Some(func) = &self.func {
                 let error_call_result = executor
-                    .call_raw(CALLER, self.addr, func.0.clone(), U256::zero())
+                    .call_raw(CALLER, h160_to_b160(self.addr), func.0.clone().into(), U256::ZERO)
                     .expect("bad call to evm");
 
                 traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
@@ -169,13 +173,18 @@ impl InvariantFuzzError {
             let (sender, (addr, bytes)) = details;
 
             executor
-                .call_raw_committing(*sender, *addr, bytes.0.clone(), 0.into())
+                .call_raw_committing(
+                    h160_to_b160(*sender),
+                    h160_to_b160(*addr),
+                    bytes.0.clone().into(),
+                    U256::ZERO,
+                )
                 .expect("bad call to evm");
 
             // Checks the invariant. If we exit before the last call, all the better.
             if let Some(func) = &self.func {
                 let error_call_result = executor
-                    .call_raw(CALLER, self.addr, func.0.clone(), 0.into())
+                    .call_raw(CALLER, h160_to_b160(self.addr), func.0.clone().into(), U256::ZERO)
                     .expect("bad call to evm");
 
                 if error_call_result.reverted {

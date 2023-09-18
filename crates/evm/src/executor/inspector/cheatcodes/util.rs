@@ -4,8 +4,9 @@ use crate::{
         error::{DatabaseError, DatabaseResult},
         DatabaseExt,
     },
-    utils::{h160_to_b160, h256_to_u256_be, ru256_to_u256, u256_to_ru256},
+    utils::{b160_to_h160, h160_to_b160, h256_to_u256_be, ru256_to_u256, u256_to_ru256},
 };
+use alloy_primitives::Address as rAddress;
 use bytes::{BufMut, Bytes, BytesMut};
 use ethers::{
     abi::Address,
@@ -27,7 +28,7 @@ use std::collections::VecDeque;
 pub const MAGIC_SKIP_BYTES: &[u8] = b"FOUNDRY::SKIP";
 
 /// Address of the default CREATE2 deployer 0x4e59b44847b379578588920ca78fbf26c0b4956c
-pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
+pub const DEFAULT_CREATE2_DEPLOYER: rAddress = rAddress::new([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
 ]);
 
@@ -44,8 +45,8 @@ pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
     env.tx.caller = h160_to_b160(tx.from);
     env.tx.gas_limit = tx.gas.as_u64();
-    env.tx.gas_price = tx.gas_price.unwrap_or_default().into();
-    env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(Into::into);
+    env.tx.gas_price = u256_to_ru256(tx.gas_price.unwrap_or_default());
+    env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(u256_to_ru256);
     env.tx.nonce = Some(tx.nonce.as_u64());
     env.tx.access_list = tx
         .access_list
@@ -60,8 +61,8 @@ pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
             )
         })
         .collect();
-    env.tx.value = tx.value.into();
-    env.tx.data = tx.input.0.clone();
+    env.tx.value = u256_to_ru256(tx.value);
+    env.tx.data = alloy_primitives::Bytes(tx.input.0.clone());
     env.tx.transact_to =
         tx.to.map(h160_to_b160).map(TransactTo::Call).unwrap_or_else(TransactTo::create)
 }
@@ -103,9 +104,9 @@ where
         }
         revm::primitives::CreateScheme::Create2 { salt } => {
             // Sanity checks for our CREATE2 deployer
-            data.journaled_state.load_account(h160_to_b160(DEFAULT_CREATE2_DEPLOYER), data.db)?;
+            data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, data.db)?;
 
-            let info = &data.journaled_state.account(h160_to_b160(DEFAULT_CREATE2_DEPLOYER)).info;
+            let info = &data.journaled_state.account(DEFAULT_CREATE2_DEPLOYER).info;
             match &info.code {
                 Some(code) => {
                     if code.is_empty() {
@@ -122,7 +123,7 @@ where
                 }
             }
 
-            call.caller = h160_to_b160(DEFAULT_CREATE2_DEPLOYER);
+            call.caller = DEFAULT_CREATE2_DEPLOYER;
 
             // We have to increment the nonce of the user address, since this create2 will be done
             // by the create2_deployer
@@ -138,7 +139,11 @@ where
             calldata.put_slice(&salt_bytes);
             calldata.put(bytecode);
 
-            Ok((calldata.freeze(), Some(NameOrAddress::Address(DEFAULT_CREATE2_DEPLOYER)), nonce))
+            Ok((
+                calldata.freeze(),
+                Some(NameOrAddress::Address(b160_to_h160(DEFAULT_CREATE2_DEPLOYER))),
+                nonce,
+            ))
         }
     }
 }
@@ -165,8 +170,8 @@ pub fn check_if_fixed_gas_limit<DB: DatabaseExt>(
     // time of the call, which should be rather close to configured gas limit.
     // TODO: Find a way to reliably make this determination. (for example by
     // generating it in the compilation or evm simulation process)
-    U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit.into() &&
-        U256::from(call_gas_limit) <= data.env.block.gas_limit.into()
+    U256::from(data.env.tx.gas_limit) > ru256_to_u256(data.env.block.gas_limit) &&
+        U256::from(call_gas_limit) <= ru256_to_u256(data.env.block.gas_limit)
         // Transfers in forge scripts seem to be estimated at 2300 by revm leading to "Intrinsic
         // gas too low" failure when simulated on chain
         && call_gas_limit > 2300

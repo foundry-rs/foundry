@@ -14,7 +14,10 @@ use ethers_core::{
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
-use foundry_evm::trace::CallTraceArena;
+use foundry_evm::{
+    trace::CallTraceArena,
+    utils::{h160_to_b160, u256_to_ru256},
+};
 use revm::{
     interpreter::InstructionResult,
     primitives::{CreateScheme, TransactTo, TxEnv},
@@ -1185,7 +1188,7 @@ impl PendingTransaction {
     pub fn to_revm_tx_env(&self) -> TxEnv {
         fn transact_to(kind: &TransactionKind) -> TransactTo {
             match kind {
-                TransactionKind::Call(c) => TransactTo::Call((*c).into()),
+                TransactionKind::Call(c) => TransactTo::Call(h160_to_b160(*c)),
                 TransactionKind::Create => TransactTo::Create(CreateScheme::Create),
             }
         }
@@ -1196,13 +1199,13 @@ impl PendingTransaction {
                 let chain_id = tx.chain_id();
                 let LegacyTransaction { nonce, gas_price, gas_limit, value, kind, input, .. } = tx;
                 TxEnv {
-                    caller: caller.into(),
+                    caller: h160_to_b160(caller),
                     transact_to: transact_to(kind),
-                    data: input.0.clone(),
+                    data: alloy_primitives::Bytes(input.0.clone()),
                     chain_id,
                     nonce: Some(nonce.as_u64()),
-                    value: (*value).into(),
-                    gas_price: (*gas_price).into(),
+                    value: u256_to_ru256(*value),
+                    gas_price: u256_to_ru256(*gas_price),
                     gas_priority_fee: None,
                     gas_limit: gas_limit.as_u64(),
                     access_list: vec![],
@@ -1221,13 +1224,13 @@ impl PendingTransaction {
                     ..
                 } = tx;
                 TxEnv {
-                    caller: caller.into(),
+                    caller: h160_to_b160(caller),
                     transact_to: transact_to(kind),
-                    data: input.0.clone(),
+                    data: alloy_primitives::Bytes(input.0.clone()),
                     chain_id: Some(*chain_id),
                     nonce: Some(nonce.as_u64()),
-                    value: (*value).into(),
-                    gas_price: (*gas_price).into(),
+                    value: u256_to_ru256(*value),
+                    gas_price: u256_to_ru256(*gas_price),
                     gas_priority_fee: None,
                     gas_limit: gas_limit.as_u64(),
                     access_list: to_revm_access_list(access_list.0.clone()),
@@ -1247,14 +1250,14 @@ impl PendingTransaction {
                     ..
                 } = tx;
                 TxEnv {
-                    caller: caller.into(),
+                    caller: h160_to_b160(caller),
                     transact_to: transact_to(kind),
-                    data: input.0.clone(),
+                    data: alloy_primitives::Bytes(input.0.clone()),
                     chain_id: Some(*chain_id),
                     nonce: Some(nonce.as_u64()),
-                    value: (*value).into(),
-                    gas_price: (*max_fee_per_gas).into(),
-                    gas_priority_fee: Some((*max_priority_fee_per_gas).into()),
+                    value: u256_to_ru256(*value),
+                    gas_price: u256_to_ru256(*max_fee_per_gas),
+                    gas_priority_fee: Some(u256_to_ru256(*max_priority_fee_per_gas)),
                     gas_limit: gas_limit.as_u64(),
                     access_list: to_revm_access_list(access_list.0.clone()),
                 }

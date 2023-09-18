@@ -3,10 +3,14 @@ use ethers::types::{Address, Bytes, NameOrAddress, U256};
 use eyre::Result;
 use forge::{
     executor::{CallResult, DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
-    revm::interpreter::{return_ok, InstructionResult},
+    revm::{
+        interpreter::{return_ok, InstructionResult},
+        primitives::U256 as rU256,
+    },
     trace::{TraceKind, Traces},
     CALLER,
 };
+use foundry_evm::utils::{b160_to_h160, u256_to_ru256};
 use tracing::log::trace;
 
 /// Represents which simulation stage is the script execution at.
@@ -43,7 +47,7 @@ impl ScriptRunner {
         if !is_broadcast {
             if self.sender == Config::DEFAULT_SENDER {
                 // We max out their balance so that they can deploy and make calls.
-                self.executor.set_balance(self.sender, U256::MAX)?;
+                self.executor.set_balance(h160_to_b160(self.sender), rU256::MAX)?;
             }
 
             if need_create2_deployer {
@@ -51,10 +55,10 @@ impl ScriptRunner {
             }
         }
 
-        self.executor.set_nonce(self.sender, sender_nonce.as_u64())?;
+        self.executor.set_nonce(h160_to_b160(self.sender), sender_nonce.as_u64())?;
 
         // We max out their balance so that they can deploy and make calls.
-        self.executor.set_balance(CALLER, U256::MAX)?;
+        self.executor.set_balance(CALLER, rU256::MAX)?;
 
         // Deploy libraries
         let mut traces: Traces = libraries
@@ -62,7 +66,7 @@ impl ScriptRunner {
             .filter_map(|code| {
                 let DeployResult { traces, .. } = self
                     .executor
-                    .deploy(self.sender, code.0.clone(), 0u32.into(), None)
+                    .deploy(h160_to_b160(self.sender), code.0.clone().into(), rU256::ZERO, None)
                     .expect("couldn't deploy library");
 
                 traces
@@ -79,11 +83,11 @@ impl ScriptRunner {
             ..
         } = self
             .executor
-            .deploy(CALLER, code.0, 0u32.into(), None)
+            .deploy(CALLER, code.0.into(), rU256::ZERO, None)
             .map_err(|err| eyre::eyre!("Failed to deploy script:\n{}", err))?;
 
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));
-        self.executor.set_balance(address, self.initial_balance)?;
+        self.executor.set_balance(address, u256_to_ru256(self.initial_balance))?;
 
         // Optionally call the `setUp` function
         let (success, gas_used, labeled_addresses, transactions, debug, script_wallets) = if !setup
@@ -98,7 +102,7 @@ impl ScriptRunner {
                 vec![],
             )
         } else {
-            match self.executor.setup(Some(self.sender), address) {
+            match self.executor.setup(Some(h160_to_b160(self.sender)), address) {
                 Ok(CallResult {
                     reverted,
                     traces: setup_traces,
@@ -155,12 +159,15 @@ impl ScriptRunner {
         };
 
         Ok((
-            address,
+            b160_to_h160(address),
             ScriptResult {
                 returned: bytes::Bytes::new(),
                 success,
                 gas_used,
-                labeled_addresses,
+                labeled_addresses: labeled_addresses
+                    .into_iter()
+                    .map(|l| (b160_to_h160(l.0), l.1))
+                    .collect::<BTreeMap<_, _>>(),
                 transactions,
                 logs,
                 traces,
@@ -182,8 +189,10 @@ impl ScriptRunner {
     ) -> Result<()> {
         if let Some(cheatcodes) = &self.executor.inspector.cheatcodes {
             if !cheatcodes.corrected_nonce {
-                self.executor
-                    .set_nonce(self.sender, sender_initial_nonce.as_u64() + libraries_len as u64)?;
+                self.executor.set_nonce(
+                    h160_to_b160(self.sender),
+                    sender_initial_nonce.as_u64() + libraries_len as u64,
+                )?;
             }
             self.executor.inspector.cheatcodes.as_mut().unwrap().corrected_nonce = false;
         }
@@ -207,13 +216,13 @@ impl ScriptRunner {
             self.call(from, to, calldata.unwrap_or_default(), value.unwrap_or(U256::zero()), true)
         } else if to.is_none() {
             let (address, gas_used, logs, traces, debug) = match self.executor.deploy(
-                from,
-                calldata.expect("No data for create transaction").0,
-                value.unwrap_or(U256::zero()),
+                h160_to_b160(from),
+                calldata.expect("No data for create transaction").0.into(),
+                u256_to_ru256(value.unwrap_or(U256::zero())),
                 None,
             ) {
                 Ok(DeployResult { address, gas_used, logs, traces, debug, .. }) => {
-                    (address, gas_used, logs, traces, debug)
+                    (b160_to_h160(address), gas_used, logs, traces, debug)
                 }
                 Err(EvmError::Execution(err)) => {
                     let ExecutionErr { reason, traces, gas_used, logs, debug, .. } = *err;
@@ -259,7 +268,12 @@ impl ScriptRunner {
         value: U256,
         commit: bool,
     ) -> Result<ScriptResult> {
-        let mut res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
+        let mut res = self.executor.call_raw(
+            h160_to_b160(from),
+            h160_to_b160(to),
+            calldata.0.clone().into(),
+            u256_to_ru256(value),
+        )?;
         let mut gas_used = res.gas_used;
 
         // We should only need to calculate realistic gas costs when preparing to broadcast
@@ -269,7 +283,12 @@ impl ScriptRunner {
         // Otherwise don't re-execute, or some usecases might be broken: https://github.com/foundry-rs/foundry/issues/3921
         if commit {
             gas_used = self.search_optimal_gas_usage(&res, from, to, &calldata, value)?;
-            res = self.executor.call_raw_committing(from, to, calldata.0, value)?;
+            res = self.executor.call_raw_committing(
+                h160_to_b160(from),
+                h160_to_b160(to),
+                calldata.0.into(),
+                u256_to_ru256(value),
+            )?;
         }
 
         let RawCallResult {
@@ -286,7 +305,7 @@ impl ScriptRunner {
         let breakpoints = res.cheatcodes.map(|cheats| cheats.breakpoints).unwrap_or_default();
 
         Ok(ScriptResult {
-            returned: result,
+            returned: result.0,
             success: !reverted,
             gas_used,
             logs,
@@ -298,7 +317,7 @@ impl ScriptRunner {
                 })
                 .unwrap_or_default(),
             debug: vec![debug].into_iter().collect(),
-            labeled_addresses: labels,
+            labeled_addresses: labels.into_iter().map(|l| (b160_to_h160(l.0), l.1)).collect(),
             transactions,
             address: None,
             script_wallets,
@@ -331,7 +350,12 @@ impl ScriptRunner {
             while (highest_gas_limit - lowest_gas_limit) > 1 {
                 let mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
                 self.executor.env.tx.gas_limit = mid_gas_limit;
-                let res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
+                let res = self.executor.call_raw(
+                    h160_to_b160(from),
+                    h160_to_b160(to),
+                    calldata.0.clone().into(),
+                    u256_to_ru256(value),
+                )?;
                 match res.exit_reason {
                     InstructionResult::Revert |
                     InstructionResult::OutOfGas |
