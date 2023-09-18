@@ -1,6 +1,7 @@
 //! Helper types for working with [revm](foundry_evm::revm)
 
 use crate::{mem::state::trie_hash_db, revm::primitives::AccountInfo, U256};
+use alloy_primitives::{Address as B160, B256, U256 as rU256};
 use anvil_core::eth::trie::KeccakHasher;
 use ethers::{
     prelude::{Address, Bytes},
@@ -15,7 +16,7 @@ use foundry_evm::{
     },
     revm::{
         db::{CacheDB, DbAccount},
-        primitives::{Address as B160, Bytecode, B256, KECCAK_EMPTY, U256 as rU256},
+        primitives::{Bytecode, KECCAK_EMPTY},
         Database, DatabaseCommit,
     },
     utils::{h160_to_b160, h256_to_b256, u256_to_ru256},

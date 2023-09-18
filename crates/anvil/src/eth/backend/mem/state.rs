@@ -1,6 +1,7 @@
 //! Support for generating the state root for memdb storage
 
 use crate::eth::{backend::db::AsHashDB, error::BlockchainError};
+use alloy_primitives::{Address as rAddress, U256 as rU256};
 use anvil_core::eth::{state::StateOverride, trie::RefSecTrieDBMut};
 use bytes::Bytes;
 use ethers::{
@@ -12,7 +13,7 @@ use foundry_evm::{
     executor::{backend::DatabaseError, DatabaseRef},
     revm::{
         db::{CacheDB, DbAccount},
-        primitives::{AccountInfo, Address as rAddress, Bytecode, Log, U256 as rU256},
+        primitives::{AccountInfo, Bytecode, Log},
     },
     utils::{b160_to_h160, b256_to_h256, h160_to_b160, ru256_to_u256, u256_to_ru256},
     HashMap as Map,

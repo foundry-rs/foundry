@@ -4,6 +4,7 @@ use crate::{
     eth::backend::db::{Db, MaybeHashDatabase},
     genesis::Genesis,
 };
+use alloy_primitives::{Address as B160, B256, U256};
 use ethers::{
     abi::ethereum_types::BigEndianHash,
     types::{Address, H256},
@@ -13,7 +14,7 @@ use foundry_evm::{
         backend::{snapshot::StateSnapshot, DatabaseError, DatabaseResult},
         DatabaseRef,
     },
-    revm::primitives::{AccountInfo, Address as B160, Bytecode, B256, KECCAK_EMPTY, U256},
+    revm::primitives::{AccountInfo, Bytecode, KECCAK_EMPTY},
     utils::{b160_to_h160, ru256_to_u256, u256_to_ru256},
 };
 use parking_lot::Mutex;
