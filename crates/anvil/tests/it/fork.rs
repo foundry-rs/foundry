@@ -240,6 +240,12 @@ async fn test_fork_reset_setup() {
 
     let block_number = provider.get_block_number().await.unwrap();
     assert_eq!(block_number, BLOCK_NUMBER.into());
+
+    // TODO: This won't work because we don't replace the DB with a ForkedDatabase yet
+    let addr: Address = "000000000000000000000000000000000000dEaD".parse().unwrap();
+
+    let remote_balance = provider.get_balance(addr, None).await.unwrap();
+    assert_eq!(remote_balance, 12556069338441120059867u128.into());
 }
 
 #[tokio::test(flavor = "multi_thread")]
