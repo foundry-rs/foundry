@@ -2411,11 +2411,12 @@ dependencies = [
 name = "foundry-debugger"
 version = "0.2.0"
 dependencies = [
+ "alloy-primitives",
  "crossterm",
- "ethers",
  "eyre",
  "foundry-common",
  "foundry-evm",
+ "foundry-utils",
  "ratatui",
  "revm",
  "tracing",
