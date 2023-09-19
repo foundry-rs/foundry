@@ -12,13 +12,12 @@ use crate::{
     },
     utils::{b160_to_h160, b256_to_h256, h160_to_b160, ru256_to_u256, u256_to_ru256},
 };
-use alloy_primitives::{Address as rAddress, B256};
+use alloy_primitives::{Address as rAddress, Bytes, B256};
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
     signers::LocalWallet,
     types::{
-        transaction::eip2718::TypedTransaction, Address, Bytes, NameOrAddress, TransactionRequest,
-        U256,
+        transaction::eip2718::TypedTransaction, Address, NameOrAddress, TransactionRequest, U256,
     },
 };
 use foundry_common::evm::Breakpoints;
@@ -611,7 +610,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             // Handle mocked calls
             if let Some(mocks) = self.mocked_calls.get(&b160_to_h160(call.contract)) {
                 let ctx = MockCallDataContext {
-                    calldata: ethers::types::Bytes::from(call.input.clone().0),
+                    calldata: call.input.clone().0.into(),
                     value: Some(call.transfer.value).map(ru256_to_u256),
                 };
                 if let Some(mock_retdata) = mocks.get(&ctx) {
@@ -792,7 +791,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     false,
                     expected_revert.reason.as_ref(),
                     status,
-                    ethers::types::Bytes(retdata.0),
+                    retdata,
                 ) {
                     Err(error) => {
                         trace!(expected=?expected_revert, ?error, ?status, "Expected revert mismatch");
@@ -1093,7 +1092,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     true,
                     expected_revert.reason.as_ref(),
                     status,
-                    ethers::types::Bytes(retdata.0),
+                    retdata,
                 ) {
                     Ok((address, retdata)) => (
                         InstructionResult::Return,

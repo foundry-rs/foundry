@@ -1,5 +1,6 @@
 use super::{bail, ensure, fmt_err, util::MAGIC_SKIP_BYTES, Cheatcodes, Error, Result};
 use crate::{abi::HEVMCalls, executor::inspector::cheatcodes::parse};
+use alloy_primitives::Bytes;
 use ethers::{
     abi::{self, AbiEncode, JsonAbi, ParamType, Token},
     prelude::artifacts::CompactContractBytecode,
@@ -106,9 +107,9 @@ impl ArtifactBytecode {
         match self {
             ArtifactBytecode::Hardhat(inner) => Some(inner.bytecode),
             ArtifactBytecode::Forge(inner) => {
-                inner.bytecode.and_then(|bytecode| bytecode.object.into_bytes())
+                inner.bytecode.and_then(|bytecode| bytecode.object.into_bytes()).map(|b| b.0.into())
             }
-            ArtifactBytecode::Solc(inner) => inner.bytecode(),
+            ArtifactBytecode::Solc(inner) => inner.bytecode().map(|b| b.0.into()),
             ArtifactBytecode::Huff(inner) => Some(inner.bytecode),
         }
     }
@@ -117,9 +118,12 @@ impl ArtifactBytecode {
         match self {
             ArtifactBytecode::Hardhat(inner) => Some(inner.deployed_bytecode),
             ArtifactBytecode::Forge(inner) => inner.deployed_bytecode.and_then(|bytecode| {
-                bytecode.bytecode.and_then(|bytecode| bytecode.object.into_bytes())
+                bytecode
+                    .bytecode
+                    .and_then(|bytecode| bytecode.object.into_bytes())
+                    .map(|b| b.0.into())
             }),
-            ArtifactBytecode::Solc(inner) => inner.deployed_bytecode(),
+            ArtifactBytecode::Solc(inner) => inner.deployed_bytecode().map(|b| b.0.into()),
             ArtifactBytecode::Huff(inner) => Some(inner.runtime),
         }
     }
@@ -143,7 +147,7 @@ struct HuffArtifact {
 fn get_code(state: &Cheatcodes, path: &str) -> Result {
     let bytecode = read_bytecode(state, path)?;
     if let Some(bin) = bytecode.into_bytecode() {
-        Ok(bin.encode().into())
+        Ok(bin.0.clone().encode().into())
     } else {
         Err(fmt_err!("No bytecode for contract. Is it abstract or unlinked?"))
     }
@@ -153,7 +157,7 @@ fn get_code(state: &Cheatcodes, path: &str) -> Result {
 fn get_deployed_code(state: &Cheatcodes, path: &str) -> Result {
     let bytecode = read_bytecode(state, path)?;
     if let Some(bin) = bytecode.into_deployed_bytecode() {
-        Ok(bin.encode().into())
+        Ok(bin.0.clone().encode().into())
     } else {
         Err(fmt_err!("No deployed bytecode for contract. Is it abstract or unlinked?"))
     }

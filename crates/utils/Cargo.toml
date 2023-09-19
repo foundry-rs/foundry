@@ -19,6 +19,7 @@ ethers-providers.workspace = true
 ethers-solc.workspace = true
 
 alloy-primitives = { workspace = true, features = ["std"]}
+alloy-dyn-abi = { workspace = true, features = ["std"]}
 
 eyre = { version = "0.6", default-features = false }
 futures = "0.3"

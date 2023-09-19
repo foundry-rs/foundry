@@ -1,8 +1,9 @@
 use super::Cheatcodes;
 use crate::utils::{b160_to_h160, ru256_to_u256};
+use alloy_primitives::Bytes;
 use ethers::{
     abi::{self, Token},
-    types::{Address, Bytes, U256},
+    types::{Address, U256},
     utils::keccak256,
 };
 use revm::{
