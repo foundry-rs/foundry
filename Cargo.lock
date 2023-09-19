@@ -2258,8 +2258,8 @@ dependencies = [
 name = "forge-fmt"
 version = "0.2.0"
 dependencies = [
+ "alloy-primitives",
  "ariadne",
- "ethers-core",
  "foundry-config",
  "itertools 0.11.0",
  "pretty_assertions",

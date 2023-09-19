@@ -1,4 +1,4 @@
-//! Helpfers for dealing with quoted strings
+//! Helpers for dealing with quoted strings
 
 /// The state of a character in a string with quotable components
 /// This is a simplified version of the

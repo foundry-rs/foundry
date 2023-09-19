@@ -13,8 +13,8 @@ repository.workspace = true
 # foundry dep
 foundry-config.workspace = true
 
-# ethers
-ethers-core.workspace = true
+# alloy
+alloy-primitives.workspace = true
 
 # parser
 solang-parser.workspace = true
