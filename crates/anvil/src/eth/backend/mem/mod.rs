@@ -364,7 +364,7 @@ impl Backend {
                 let mut env = self.env.read().clone();
 
                 let mut node_config = self.node_config.write().await;
-                let (db, forking) =
+                let (_db, forking) =
                     node_config.setup_fork_db(eth_rpc_url, &mut env, &self.fees).await;
 
                 // TODO: Something like this is needed but...
