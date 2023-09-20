@@ -894,6 +894,7 @@ latest block number: {latest_block}"
                     // Keep previous `coinbase` and `basefee` value
                     coinbase: env.block.coinbase,
                     basefee: env.block.basefee,
+                    ..Default::default()
                 };
 
                 // apply changes such as difficulty -> prevrandao

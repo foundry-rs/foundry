@@ -1209,6 +1209,7 @@ impl PendingTransaction {
                     gas_priority_fee: None,
                     gas_limit: gas_limit.as_u64(),
                     access_list: vec![],
+                    ..Default::default()
                 }
             }
             TypedTransaction::EIP2930(tx) => {
@@ -1234,6 +1235,7 @@ impl PendingTransaction {
                     gas_priority_fee: None,
                     gas_limit: gas_limit.as_u64(),
                     access_list: to_revm_access_list(access_list.0.clone()),
+                    ..Default::default()
                 }
             }
             TypedTransaction::EIP1559(tx) => {
@@ -1260,6 +1262,7 @@ impl PendingTransaction {
                     gas_priority_fee: Some(u256_to_ru256(*max_priority_fee_per_gas)),
                     gas_limit: gas_limit.as_u64(),
                     access_list: to_revm_access_list(access_list.0.clone()),
+                    ..Default::default()
                 }
             }
         }
