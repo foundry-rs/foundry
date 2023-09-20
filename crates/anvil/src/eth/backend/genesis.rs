@@ -15,8 +15,8 @@ use foundry_evm::{
         DatabaseRef,
     },
     revm::primitives::{AccountInfo, Bytecode, KECCAK_EMPTY},
-    utils::{b160_to_h160, ru256_to_u256, u256_to_ru256},
 };
+use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::Mutex;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLockWriteGuard;
@@ -104,7 +104,7 @@ pub(crate) struct AtGenesisStateDb<'a> {
 impl<'a> DatabaseRef for AtGenesisStateDb<'a> {
     type Error = DatabaseError;
     fn basic(&self, address: B160) -> DatabaseResult<Option<AccountInfo>> {
-        if let Some(acc) = self.accounts.get(&b160_to_h160(address)).cloned() {
+        if let Some(acc) = self.accounts.get(&(address.to_ethers())).cloned() {
             return Ok(Some(acc))
         }
         self.db.basic(address)
@@ -121,14 +121,14 @@ impl<'a> DatabaseRef for AtGenesisStateDb<'a> {
         if let Some(acc) = self
             .genesis
             .as_ref()
-            .and_then(|genesis| genesis.alloc.accounts.get(&b160_to_h160(address)))
+            .and_then(|genesis| genesis.alloc.accounts.get(&(address.to_ethers())))
         {
             let value = acc
                 .storage
-                .get(&H256::from_uint(&ru256_to_u256(index)))
+                .get(&H256::from_uint(&(index.to_ethers())))
                 .copied()
                 .unwrap_or_default();
-            return Ok(u256_to_ru256(value.into_uint()))
+            return Ok(value.into_uint().to_alloy())
         }
         self.db.storage(address, index)
     }

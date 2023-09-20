@@ -25,11 +25,9 @@ use foundry_evm::{
         primitives::{BlockEnv, CfgEnv, EVMError, Env, ExecutionResult, Output, SpecId},
     },
     trace::{node::CallTraceNode, CallTraceArena},
-    utils::{
-        b160_to_h160, eval_to_instruction_result, h160_to_b160, halt_to_instruction_result,
-        ru256_to_u256,
-    },
+    utils::{eval_to_instruction_result, halt_to_instruction_result},
 };
+use foundry_utils::types::{ToAlloy, ToEthers};
 use std::sync::Arc;
 use tracing::{trace, warn};
 
@@ -121,7 +119,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         let block_number = self.block_env.number;
         let difficulty = self.block_env.difficulty;
         let beneficiary = self.block_env.coinbase;
-        let timestamp = ru256_to_u256(self.block_env.timestamp).as_u64();
+        let timestamp = self.block_env.timestamp.to_ethers().as_u64();
         let base_fee = if (self.cfg_env.spec_id as u8) >= (SpecId::LONDON as u8) {
             Some(self.block_env.basefee)
         } else {
@@ -164,7 +162,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                 transaction_index,
                 from: *transaction.pending_transaction.sender(),
                 to: transaction.pending_transaction.transaction.to().copied(),
-                contract_address: contract_address.map(b160_to_h160),
+                contract_address: contract_address.map(|c| c.to_ethers()),
                 logs,
                 logs_bloom: *receipt.logs_bloom(),
                 traces: CallTraceArena { arena: traces },
@@ -186,19 +184,19 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
 
         let partial_header = PartialHeader {
             parent_hash,
-            beneficiary: b160_to_h160(beneficiary),
+            beneficiary: beneficiary.to_ethers(),
             state_root: self.db.maybe_state_root().unwrap_or_default(),
             receipts_root,
             logs_bloom: bloom,
-            difficulty: ru256_to_u256(difficulty),
-            number: ru256_to_u256(block_number),
-            gas_limit: ru256_to_u256(gas_limit),
+            difficulty: difficulty.to_ethers(),
+            number: block_number.to_ethers(),
+            gas_limit: gas_limit.to_ethers(),
             gas_used: cumulative_gas_used,
             timestamp,
             extra_data: Default::default(),
             mix_hash: Default::default(),
             nonce: Default::default(),
-            base_fee: base_fee.map(ru256_to_u256),
+            base_fee: base_fee.map(|b| b.to_ethers()),
         };
 
         let block = Block::new(partial_header, transactions.clone(), ommers);
@@ -231,14 +229,14 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
     fn next(&mut self) -> Option<Self::Item> {
         let transaction = self.pending.next()?;
         let sender = *transaction.pending_transaction.sender();
-        let account = match self.db.basic(h160_to_b160(sender)).map(|acc| acc.unwrap_or_default()) {
+        let account = match self.db.basic(sender.to_alloy()).map(|acc| acc.unwrap_or_default()) {
             Ok(account) => account,
             Err(err) => return Some(TransactionExecutionOutcome::DatabaseError(transaction, err)),
         };
         let env = self.env_for(&transaction.pending_transaction);
         // check that we comply with the block's gas limit
         let max_gas = self.gas_used.saturating_add(U256::from(env.tx.gas_limit));
-        if max_gas > ru256_to_u256(env.block.gas_limit) {
+        if max_gas > env.block.gas_limit.to_ethers() {
             return Some(TransactionExecutionOutcome::Exhausted(transaction))
         }
 

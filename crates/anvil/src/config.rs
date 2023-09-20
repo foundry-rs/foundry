@@ -38,10 +38,9 @@ use foundry_evm::{
     },
     revm,
     revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv, U256 as rU256},
-    utils::{
-        apply_chain_and_block_specific_env_changes, b160_to_h160, h256_to_b256, u256_to_ru256,
-    },
+    utils::apply_chain_and_block_specific_env_changes,
 };
+use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::RwLock;
 use serde_json::{json, to_writer, Value};
 use std::{
@@ -797,8 +796,8 @@ impl NodeConfig {
         let mut env = revm::primitives::Env {
             cfg,
             block: BlockEnv {
-                gas_limit: u256_to_ru256(self.gas_limit),
-                basefee: u256_to_ru256(self.get_base_fee()),
+                gas_limit: self.gas_limit.to_alloy(),
+                basefee: self.get_base_fee().to_alloy(),
                 ..Default::default()
             },
             tx: TxEnv { chain_id: self.get_chain_id().into(), ..Default::default() },
@@ -879,17 +878,17 @@ latest block number: {latest_block}"
                 // limit is enabled, since there are networks where this is not used and is always
                 // `0x0` which would inevitably result in `OutOfGas` errors as soon as the evm is about to record gas, See also <https://github.com/foundry-rs/foundry/issues/3247>
                 let gas_limit = if self.disable_block_gas_limit || block.gas_limit.is_zero() {
-                    u256_to_ru256(u64::MAX.into())
+                    rU256::from(u64::MAX)
                 } else {
-                    u256_to_ru256(block.gas_limit)
+                    block.gas_limit.to_alloy()
                 };
 
                 env.block = BlockEnv {
                     number: rU256::from(fork_block_number),
-                    timestamp: u256_to_ru256(block.timestamp),
-                    difficulty: u256_to_ru256(block.difficulty),
+                    timestamp: block.timestamp.to_alloy(),
+                    difficulty: block.difficulty.to_alloy(),
                     // ensures prevrandao is set
-                    prevrandao: Some(block.mix_hash.unwrap_or_default()).map(h256_to_b256),
+                    prevrandao: Some(block.mix_hash.unwrap_or_default()).map(|h| h.to_alloy()),
                     gas_limit,
                     // Keep previous `coinbase` and `basefee` value
                     coinbase: env.block.coinbase,
@@ -903,7 +902,7 @@ latest block number: {latest_block}"
                 if self.base_fee.is_none() {
                     if let Some(base_fee) = block.base_fee_per_gas {
                         self.base_fee = Some(base_fee);
-                        env.block.basefee = u256_to_ru256(base_fee);
+                        env.block.basefee = base_fee.to_alloy();
                         // this is the base fee of the current block, but we need the base fee of
                         // the next block
                         let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
@@ -994,7 +993,7 @@ latest block number: {latest_block}"
 
         let genesis = GenesisConfig {
             timestamp: self.get_genesis_timestamp(),
-            balance: u256_to_ru256(self.genesis_balance),
+            balance: self.genesis_balance.to_alloy(),
             accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
             fork_genesis_account_infos: Arc::new(Default::default()),
             genesis_init: self.genesis.clone(),
@@ -1018,7 +1017,7 @@ latest block number: {latest_block}"
         // if the option is not disabled and we are not forking.
         if !self.disable_default_create2_deployer && self.eth_rpc_url.is_none() {
             backend
-                .set_create2_deployer(b160_to_h160(DEFAULT_CREATE2_DEPLOYER))
+                .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER.to_ethers())
                 .await
                 .expect("Failed to create default create2 deployer");
         }

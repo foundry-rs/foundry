@@ -2,7 +2,7 @@ use super::fuzz_param_from_state;
 use crate::{
     executor::StateChangeset,
     fuzz::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts},
-    utils::{self, b160_to_h160, ru256_to_u256},
+    utils,
 };
 use bytes::Bytes;
 use ethers::{
@@ -11,6 +11,7 @@ use ethers::{
 };
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::FuzzDictionaryConfig;
+use foundry_utils::types::ToEthers;
 use hashbrown::HashSet;
 use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
@@ -100,7 +101,7 @@ pub fn build_initial_state<DB: DatabaseRef>(
     let mut state = FuzzDictionary::default();
 
     for (address, account) in db.accounts.iter() {
-        let address: Address = b160_to_h160(*address);
+        let address: Address = address.to_ethers();
         // Insert basic account information
         state.values_mut().insert(H256::from(address).into());
 
@@ -118,8 +119,8 @@ pub fn build_initial_state<DB: DatabaseRef>(
         if config.include_storage {
             // Insert storage
             for (slot, value) in &account.storage {
-                let slot = ru256_to_u256(*slot);
-                let value = ru256_to_u256(*value);
+                let slot = slot.to_ethers();
+                let value = value.to_ethers();
                 state.values_mut().insert(utils::u256_to_h256_be(slot).into());
                 state.values_mut().insert(utils::u256_to_h256_be(value).into());
                 // also add the value below and above the storage value to the dictionary.
@@ -157,13 +158,13 @@ pub fn collect_state_from_call(
 
     for (address, account) in state_changeset {
         // Insert basic account information
-        state.values_mut().insert(H256::from(b160_to_h160(*address)).into());
+        state.values_mut().insert(H256::from(address.to_ethers()).into());
 
         if config.include_push_bytes && state.addresses.len() < config.max_fuzz_dictionary_addresses
         {
             // Insert push bytes
             if let Some(code) = &account.info.code {
-                if state.addresses_mut().insert(b160_to_h160(*address)) {
+                if state.addresses_mut().insert(address.to_ethers()) {
                     for push_byte in collect_push_bytes(code.bytes().clone().0) {
                         state.values_mut().insert(push_byte);
                     }
@@ -174,8 +175,8 @@ pub fn collect_state_from_call(
         if config.include_storage && state.state_values.len() < config.max_fuzz_dictionary_values {
             // Insert storage
             for (slot, value) in &account.storage {
-                let slot = ru256_to_u256(*slot);
-                let value = ru256_to_u256(value.present_value());
+                let slot = slot.to_ethers();
+                let value = value.present_value().to_ethers();
                 state.values_mut().insert(utils::u256_to_h256_be(slot).into());
                 state.values_mut().insert(utils::u256_to_h256_be(value).into());
                 // also add the value below and above the storage value to the dictionary.
@@ -267,7 +268,7 @@ pub fn collect_created_contracts(
     let mut writable_targeted = targeted_contracts.lock();
 
     for (address, account) in state_changeset {
-        if !setup_contracts.contains_key(&b160_to_h160(*address)) {
+        if !setup_contracts.contains_key(&address.to_ethers()) {
             if let (true, Some(code)) = (&account.is_touched(), &account.info.code) {
                 if !code.is_empty() {
                     if let Some((artifact, (abi, _))) = project_contracts.find_by_code(code.bytes())
@@ -275,9 +276,9 @@ pub fn collect_created_contracts(
                         if let Some(functions) =
                             artifact_filters.get_targeted_functions(artifact, abi)?
                         {
-                            created_contracts.push(b160_to_h160(*address));
+                            created_contracts.push(address.to_ethers());
                             writable_targeted.insert(
-                                b160_to_h160(*address),
+                                address.to_ethers(),
                                 (artifact.name.clone(), abi.clone(), functions),
                             );
                         }

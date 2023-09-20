@@ -3,6 +3,7 @@ use ethers::{
     types::{Block, Chain, H160, H256, U256},
 };
 use eyre::ContextCompat;
+use foundry_utils::types::ToAlloy;
 use revm::{
     interpreter::{opcode, opcode::spec_opcode_gas, InstructionResult},
     primitives::{Eval, Halt, SpecId},
@@ -145,7 +146,7 @@ pub fn apply_chain_and_block_specific_env_changes<T>(
                 // `l1BlockNumber` field
                 if let Some(l1_block_number) = block.other.get("l1BlockNumber").cloned() {
                     if let Ok(l1_block_number) = serde_json::from_value::<U256>(l1_block_number) {
-                        env.block.number = u256_to_ru256(l1_block_number);
+                        env.block.number = l1_block_number.to_alloy();
                     }
                 }
             }

@@ -1,8 +1,6 @@
-use crate::{
-    coverage::{HitMap, HitMaps},
-    utils::b256_to_h256,
-};
+use crate::coverage::{HitMap, HitMaps};
 use bytes::Bytes;
+use foundry_utils::types::ToEthers;
 use revm::{
     interpreter::{InstructionResult, Interpreter},
     Database, EVMData, Inspector,
@@ -21,7 +19,7 @@ impl<DB: Database> Inspector<DB> for CoverageCollector {
         interpreter: &mut Interpreter,
         _: &mut EVMData<'_, DB>,
     ) -> InstructionResult {
-        let hash = b256_to_h256(interpreter.contract.hash);
+        let hash = interpreter.contract.hash.to_ethers();
         self.maps.entry(hash).or_insert_with(|| {
             HitMap::new(Bytes::copy_from_slice(
                 interpreter.contract.bytecode.original_bytecode_slice(),
@@ -37,7 +35,7 @@ impl<DB: Database> Inspector<DB> for CoverageCollector {
         interpreter: &mut Interpreter,
         _: &mut EVMData<'_, DB>,
     ) -> InstructionResult {
-        let hash = b256_to_h256(interpreter.contract.hash);
+        let hash = interpreter.contract.hash.to_ethers();
         self.maps.entry(hash).and_modify(|map| map.hit(interpreter.program_counter()));
 
         InstructionResult::Continue

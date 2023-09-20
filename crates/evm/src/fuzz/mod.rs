@@ -4,7 +4,6 @@ use crate::{
     decode::{self, decode_console_logs},
     executor::{Executor, RawCallResult},
     trace::CallTraceArena,
-    utils::{b160_to_h160, h160_to_b160},
 };
 use alloy_primitives::U256;
 use error::{FuzzError, ASSUME_MAGIC_RETURN_CODE};
@@ -15,6 +14,7 @@ use ethers::{
 use eyre::Result;
 use foundry_common::{calc, contracts::ContractsByAddress};
 use foundry_config::FuzzConfig;
+use foundry_utils::types::{ToAlloy, ToEthers};
 pub use proptest::test_runner::Reason;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 use serde::{Deserialize, Serialize};
@@ -152,7 +152,7 @@ impl<'a> FuzzedExecutor<'a> {
             counterexample: None,
             decoded_logs: decode_console_logs(&call.logs),
             logs: call.logs,
-            labeled_addresses: call.labels.into_iter().map(|l| (b160_to_h160(l.0), l.1)).collect(),
+            labeled_addresses: call.labels.into_iter().map(|l| (l.0.to_ethers(), l.1)).collect(),
             traces: if run_result.is_ok() { traces.into_inner() } else { call.traces.clone() },
             coverage: coverage.into_inner(),
         };
@@ -202,8 +202,8 @@ impl<'a> FuzzedExecutor<'a> {
         let call = self
             .executor
             .call_raw(
-                h160_to_b160(self.sender),
-                h160_to_b160(address),
+                self.sender.to_alloy(),
+                address.to_alloy(),
                 calldata.0.clone().into(),
                 U256::ZERO,
             )
@@ -232,7 +232,7 @@ impl<'a> FuzzedExecutor<'a> {
             .map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
 
         let success = self.executor.is_success(
-            h160_to_b160(address),
+            address.to_alloy(),
             call.reverted,
             state_changeset.clone(),
             should_fail,

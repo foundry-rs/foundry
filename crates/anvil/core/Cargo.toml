@@ -12,6 +12,7 @@ repository.workspace = true
 [dependencies]
 # foundry internal
 foundry-evm = { path = "../../evm" }
+foundry-utils = { path = "../../utils"}
 revm = { workspace = true, default-features = false, features = ["std", "serde", "memory_limit"] }
 
 

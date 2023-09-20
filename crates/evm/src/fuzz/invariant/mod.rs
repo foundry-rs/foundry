@@ -4,7 +4,6 @@ use crate::{
     executor::Executor,
     fuzz::*,
     trace::{load_contracts, TraceKind, Traces},
-    utils::h160_to_b160,
     CALLER,
 };
 use ethers::{
@@ -69,7 +68,7 @@ pub fn assert_invariants(
     let mut call_result = executor
         .call_raw(
             CALLER,
-            h160_to_b160(invariant_contract.address),
+            invariant_contract.address.to_alloy(),
             func.encode_input(&[]).expect("invariant should have no inputs").into(),
             U256::ZERO,
         )
@@ -78,7 +77,7 @@ pub fn assert_invariants(
     // This will panic and get caught by the executor
     let is_err = call_result.reverted ||
         !executor.is_success(
-            h160_to_b160(invariant_contract.address),
+            invariant_contract.address.to_alloy(),
             call_result.reverted,
             call_result.state_changeset.take().expect("we should have a state changeset"),
             false,
@@ -122,8 +121,8 @@ pub fn replay_run(
     for (sender, (addr, bytes)) in inputs.iter() {
         let call_result = executor
             .call_raw_committing(
-                h160_to_b160(*sender),
-                h160_to_b160(*addr),
+                sender.to_alloy(),
+                addr.to_alloy(),
                 bytes.0.clone().into(),
                 U256::ZERO,
             )
@@ -142,7 +141,7 @@ pub fn replay_run(
         let error_call_result = executor
             .call_raw(
                 CALLER,
-                h160_to_b160(invariant_contract.address),
+                invariant_contract.address.to_alloy(),
                 func.encode_input(&[]).expect("invariant should have no inputs").into(),
                 U256::ZERO,
             )

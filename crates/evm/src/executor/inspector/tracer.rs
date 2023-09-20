@@ -5,11 +5,11 @@ use crate::{
         CallTrace, CallTraceArena, CallTraceStep, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
         RawOrDecodedReturnData,
     },
-    utils::{b160_to_h160, b256_to_h256, ru256_to_u256},
     CallKind,
 };
 use alloy_primitives::{Address, Bytes, B256, U256};
 use ethers::abi::RawLog;
+use foundry_utils::types::ToEthers;
 use revm::{
     interpreter::{
         opcode, return_ok, CallInputs, CallScheme, CreateInputs, Gas, InstructionResult,
@@ -46,12 +46,12 @@ impl Tracer {
             0,
             CallTrace {
                 depth,
-                address: b160_to_h160(address),
+                address: address.to_ethers(),
                 kind,
                 data: RawOrDecodedCall::Raw(data.into()),
-                value: ru256_to_u256(value),
+                value: value.to_ethers(),
                 status: InstructionResult::Continue,
-                caller: b160_to_h160(caller),
+                caller: caller.to_ethers(),
                 ..Default::default()
             },
         ));
@@ -74,7 +74,7 @@ impl Tracer {
         trace.output = RawOrDecodedReturnData::Raw(output.into());
 
         if let Some(address) = address {
-            trace.address = b160_to_h160(address);
+            trace.address = address.to_ethers();
         }
     }
 
@@ -89,7 +89,7 @@ impl Tracer {
             depth: data.journaled_state.depth(),
             pc: interp.program_counter(),
             op: OpCode(interp.current_opcode()),
-            contract: b160_to_h160(interp.contract.address),
+            contract: interp.contract.address.to_ethers(),
             stack: interp.stack.clone(),
             memory: interp.memory.clone(),
             gas: interp.gas.remaining(),
@@ -124,7 +124,7 @@ impl Tracer {
                 Some(JournalEntry::StorageChange { address, key, .. }),
             ) => {
                 let value = data.journaled_state.state[address].storage[key].present_value();
-                Some((ru256_to_u256(*key), ru256_to_u256(value)))
+                Some((key.to_ethers(), value.to_ethers()))
             }
             _ => None,
         };
@@ -163,7 +163,7 @@ impl<DB: Database> Inspector<DB> for Tracer {
     #[inline]
     fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[B256], data: &Bytes) {
         let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
-        let topics: Vec<_> = topics.iter().copied().map(b256_to_h256).collect();
+        let topics: Vec<_> = topics.iter().copied().map(|t| t.to_ethers()).collect();
         node.ordering.push(LogCallOrder::Log(node.logs.len()));
         node.logs.push(RawOrDecodedLog::Raw(RawLog { topics, data: data.to_vec() }));
     }

@@ -3,9 +3,8 @@
 //! The design is similar to the single `SharedBackend`, `BackendHandler` but supports multiple
 //! concurrently active pairs at once.
 
-use crate::{
-    executor::fork::{BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend},
-    utils::ru256_to_u256,
+use crate::executor::fork::{
+    BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend,
 };
 use ethers::{
     abi::{AbiDecode, AbiEncode, AbiError},
@@ -14,6 +13,7 @@ use ethers::{
 };
 use foundry_common::{runtime_client::RuntimeClient, ProviderBuilder};
 use foundry_config::Config;
+use foundry_utils::types::ToEthers;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     stream::{Fuse, Stream},
@@ -497,7 +497,7 @@ async fn create_fork(
     let number = block
         .number
         .map(|num| num.as_u64())
-        .unwrap_or_else(|| ru256_to_u256(meta.block_env.number).as_u64());
+        .unwrap_or_else(|| meta.block_env.number.to_ethers().as_u64());
 
     // determine the cache path if caching is enabled
     let cache_path = if fork.enable_caching {

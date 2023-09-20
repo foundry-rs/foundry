@@ -10,7 +10,7 @@ use forge::{
     trace::{TraceKind, Traces},
     CALLER,
 };
-use foundry_evm::utils::{b160_to_h160, u256_to_ru256};
+use foundry_utils::types::{ToAlloy, ToEthers};
 use tracing::log::trace;
 
 /// Represents which simulation stage is the script execution at.
@@ -47,7 +47,7 @@ impl ScriptRunner {
         if !is_broadcast {
             if self.sender == Config::DEFAULT_SENDER {
                 // We max out their balance so that they can deploy and make calls.
-                self.executor.set_balance(h160_to_b160(self.sender), rU256::MAX)?;
+                self.executor.set_balance(self.sender.to_alloy(), rU256::MAX)?;
             }
 
             if need_create2_deployer {
@@ -55,7 +55,7 @@ impl ScriptRunner {
             }
         }
 
-        self.executor.set_nonce(h160_to_b160(self.sender), sender_nonce.as_u64())?;
+        self.executor.set_nonce(self.sender.to_alloy(), sender_nonce.as_u64())?;
 
         // We max out their balance so that they can deploy and make calls.
         self.executor.set_balance(CALLER, rU256::MAX)?;
@@ -66,7 +66,7 @@ impl ScriptRunner {
             .filter_map(|code| {
                 let DeployResult { traces, .. } = self
                     .executor
-                    .deploy(h160_to_b160(self.sender), code.0.clone().into(), rU256::ZERO, None)
+                    .deploy(self.sender.to_alloy(), code.0.clone().into(), rU256::ZERO, None)
                     .expect("couldn't deploy library");
 
                 traces
@@ -87,7 +87,7 @@ impl ScriptRunner {
             .map_err(|err| eyre::eyre!("Failed to deploy script:\n{}", err))?;
 
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));
-        self.executor.set_balance(address, u256_to_ru256(self.initial_balance))?;
+        self.executor.set_balance(address, self.initial_balance.to_alloy())?;
 
         // Optionally call the `setUp` function
         let (success, gas_used, labeled_addresses, transactions, debug, script_wallets) = if !setup
@@ -102,7 +102,7 @@ impl ScriptRunner {
                 vec![],
             )
         } else {
-            match self.executor.setup(Some(h160_to_b160(self.sender)), address) {
+            match self.executor.setup(Some(self.sender.to_alloy()), address) {
                 Ok(CallResult {
                     reverted,
                     traces: setup_traces,
@@ -159,14 +159,14 @@ impl ScriptRunner {
         };
 
         Ok((
-            b160_to_h160(address),
+            address.to_ethers(),
             ScriptResult {
                 returned: bytes::Bytes::new(),
                 success,
                 gas_used,
                 labeled_addresses: labeled_addresses
                     .into_iter()
-                    .map(|l| (b160_to_h160(l.0), l.1))
+                    .map(|l| (l.0.to_ethers(), l.1))
                     .collect::<BTreeMap<_, _>>(),
                 transactions,
                 logs,
@@ -190,7 +190,7 @@ impl ScriptRunner {
         if let Some(cheatcodes) = &self.executor.inspector.cheatcodes {
             if !cheatcodes.corrected_nonce {
                 self.executor.set_nonce(
-                    h160_to_b160(self.sender),
+                    self.sender.to_alloy(),
                     sender_initial_nonce.as_u64() + libraries_len as u64,
                 )?;
             }
@@ -216,13 +216,13 @@ impl ScriptRunner {
             self.call(from, to, calldata.unwrap_or_default(), value.unwrap_or(U256::zero()), true)
         } else if to.is_none() {
             let (address, gas_used, logs, traces, debug) = match self.executor.deploy(
-                h160_to_b160(from),
+                from.to_alloy(),
                 calldata.expect("No data for create transaction").0.into(),
-                u256_to_ru256(value.unwrap_or(U256::zero())),
+                value.unwrap_or(U256::zero()).to_alloy(),
                 None,
             ) {
                 Ok(DeployResult { address, gas_used, logs, traces, debug, .. }) => {
-                    (b160_to_h160(address), gas_used, logs, traces, debug)
+                    (address.to_ethers(), gas_used, logs, traces, debug)
                 }
                 Err(EvmError::Execution(err)) => {
                     let ExecutionErr { reason, traces, gas_used, logs, debug, .. } = *err;
@@ -269,10 +269,10 @@ impl ScriptRunner {
         commit: bool,
     ) -> Result<ScriptResult> {
         let mut res = self.executor.call_raw(
-            h160_to_b160(from),
-            h160_to_b160(to),
+            from.to_alloy(),
+            to.to_alloy(),
             calldata.0.clone().into(),
-            u256_to_ru256(value),
+            value.to_alloy(),
         )?;
         let mut gas_used = res.gas_used;
 
@@ -284,10 +284,10 @@ impl ScriptRunner {
         if commit {
             gas_used = self.search_optimal_gas_usage(&res, from, to, &calldata, value)?;
             res = self.executor.call_raw_committing(
-                h160_to_b160(from),
-                h160_to_b160(to),
+                from.to_alloy(),
+                to.to_alloy(),
                 calldata.0.into(),
-                u256_to_ru256(value),
+                value.to_alloy(),
             )?;
         }
 
@@ -317,7 +317,7 @@ impl ScriptRunner {
                 })
                 .unwrap_or_default(),
             debug: vec![debug].into_iter().collect(),
-            labeled_addresses: labels.into_iter().map(|l| (b160_to_h160(l.0), l.1)).collect(),
+            labeled_addresses: labels.into_iter().map(|l| (l.0.to_ethers(), l.1)).collect(),
             transactions,
             address: None,
             script_wallets,
@@ -351,10 +351,10 @@ impl ScriptRunner {
                 let mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
                 self.executor.env.tx.gas_limit = mid_gas_limit;
                 let res = self.executor.call_raw(
-                    h160_to_b160(from),
-                    h160_to_b160(to),
+                    from.to_alloy(),
+                    to.to_alloy(),
                     calldata.0.clone().into(),
-                    u256_to_ru256(value),
+                    value.to_alloy(),
                 )?;
                 match res.exit_reason {
                     InstructionResult::Revert |

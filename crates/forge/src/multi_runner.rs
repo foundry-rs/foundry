@@ -13,9 +13,8 @@ use foundry_evm::{
         ExecutorBuilder,
     },
     revm,
-    utils::{b160_to_h160, ru256_to_u256},
 };
-use foundry_utils::{PostLinkInput, ResolvedDependency};
+use foundry_utils::{types::ToEthers, PostLinkInput, ResolvedDependency};
 use rayon::prelude::*;
 use revm::primitives::SpecId;
 use std::{
@@ -208,7 +207,7 @@ impl MultiContractRunner {
             executor,
             contract,
             deploy_code,
-            ru256_to_u256(self.evm_opts.initial_balance),
+            self.evm_opts.initial_balance.to_ethers(),
             self.sender,
             self.errors.as_ref(),
             libs,
@@ -286,7 +285,7 @@ impl MultiContractRunnerBuilder {
             ArtifactContracts::from_iter(contracts),
             &mut known_contracts,
             Default::default(),
-            b160_to_h160(evm_opts.sender),
+            evm_opts.sender.to_ethers(),
             U256::one(),
             &mut deployable_contracts,
             |post_link_input| {

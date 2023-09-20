@@ -1,6 +1,5 @@
-use crate::{
-    executor::{patch_hardhat_console_selector, HardhatConsoleCalls, HARDHAT_CONSOLE_ADDRESS},
-    utils::{b160_to_h160, b256_to_h256},
+use crate::executor::{
+    patch_hardhat_console_selector, HardhatConsoleCalls, HARDHAT_CONSOLE_ADDRESS,
 };
 use alloy_primitives::{Address, Bytes, B256};
 use ethers::{
@@ -8,6 +7,7 @@ use ethers::{
     types::{Bytes as ethersBytes, Log, H256},
 };
 use foundry_macros::ConsoleFmt;
+use foundry_utils::types::ToEthers;
 use revm::{
     interpreter::{CallInputs, Gas, InstructionResult},
     Database, EVMData, Inspector,
@@ -45,8 +45,8 @@ impl LogCollector {
 impl<DB: Database> Inspector<DB> for LogCollector {
     fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[B256], data: &Bytes) {
         self.logs.push(Log {
-            address: b160_to_h160(*address),
-            topics: topics.iter().copied().map(b256_to_h256).collect(),
+            address: address.to_ethers(),
+            topics: topics.iter().copied().map(|t| t.to_ethers()).collect(),
             data: ethersBytes::from(data.clone().0),
             ..Default::default()
         });

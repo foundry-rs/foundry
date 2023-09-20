@@ -4,7 +4,6 @@ use crate::{
     executor::{Executor, RawCallResult},
     fuzz::{invariant::set_up_inner_replay, *},
     trace::{load_contracts, TraceKind, Traces},
-    utils::h160_to_b160,
     CALLER,
 };
 use ethers::abi::Function;
@@ -108,8 +107,8 @@ impl InvariantFuzzError {
         for (sender, (addr, bytes)) in calls.iter() {
             let call_result = executor
                 .call_raw_committing(
-                    h160_to_b160(*sender),
-                    h160_to_b160(*addr),
+                    sender.to_alloy(),
+                    addr.to_alloy(),
                     bytes.0.clone().into(),
                     U256::ZERO,
                 )
@@ -138,7 +137,7 @@ impl InvariantFuzzError {
             // Checks the invariant.
             if let Some(func) = &self.func {
                 let error_call_result = executor
-                    .call_raw(CALLER, h160_to_b160(self.addr), func.0.clone().into(), U256::ZERO)
+                    .call_raw(CALLER, self.addr.to_alloy(), func.0.clone().into(), U256::ZERO)
                     .expect("bad call to evm");
 
                 traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
@@ -174,8 +173,8 @@ impl InvariantFuzzError {
 
             executor
                 .call_raw_committing(
-                    h160_to_b160(*sender),
-                    h160_to_b160(*addr),
+                    sender.to_alloy(),
+                    addr.to_alloy(),
                     bytes.0.clone().into(),
                     U256::ZERO,
                 )
@@ -184,7 +183,7 @@ impl InvariantFuzzError {
             // Checks the invariant. If we exit before the last call, all the better.
             if let Some(func) = &self.func {
                 let error_call_result = executor
-                    .call_raw(CALLER, h160_to_b160(self.addr), func.0.clone().into(), U256::ZERO)
+                    .call_raw(CALLER, self.addr.to_alloy(), func.0.clone().into(), U256::ZERO)
                     .expect("bad call to evm");
 
                 if error_call_result.reverted {
