@@ -492,6 +492,22 @@ impl Backend {
         ret
     }
 
+    /// Completely replace an account's storage without overriding account info.
+    ///
+    /// When forking, this causes the backend to assume a `0` value for all
+    /// unset storage slots instead of trying to fetch it.
+    pub fn replace_account_storage(
+        &mut self,
+        address: Address,
+        storage: Map<U256, U256>,
+    ) -> Result<(), DatabaseError> {
+        if let Some(db) = self.active_fork_db_mut() {
+            db.replace_account_storage(address, storage)
+        } else {
+            self.mem_db.replace_account_storage(address, storage)
+        }
+    }
+
     /// Returns all snapshots created in this backend
     pub fn snapshots(&self) -> &Snapshots<BackendSnapshot<BackendDatabaseSnapshot>> {
         &self.inner.snapshots

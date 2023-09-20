@@ -374,6 +374,7 @@ impl Backend {
                     // Keep previous `coinbase` and `basefee` value
                     coinbase: env.block.coinbase,
                     basefee: env.block.basefee,
+                    ..Default::default()
                 };
 
                 self.time.reset((env.block.timestamp.to_ethers()).as_u64());
@@ -1033,6 +1034,7 @@ impl Backend {
             chain_id: None,
             nonce: nonce.map(|n| n.as_u64()),
             access_list: to_revm_access_list(access_list.unwrap_or_default()),
+            ..Default::default()
         };
 
         if env.block.basefee == revm::primitives::U256::ZERO {
@@ -1066,6 +1068,7 @@ impl Backend {
                 }
                 EVMError::PrevrandaoNotSet => return Err(BlockchainError::PrevrandaoNotSet),
                 EVMError::Database(e) => return Err(BlockchainError::DatabaseError(e)),
+                EVMError::ExcessBlobGasNotSet => return Err(BlockchainError::ExcessBlobGasNotSet),
             },
         };
         let state = result_and_state.state;
@@ -1590,6 +1593,7 @@ impl Backend {
                             prevrandao: Some(block.header.mix_hash).map(|h| h.to_alloy()),
                             basefee: block.header.base_fee_per_gas.unwrap_or_default().to_alloy(),
                             gas_limit: block.header.gas_limit.to_alloy(),
+                            ..Default::default()
                         };
                         f(state, block)
                     })
@@ -1617,6 +1621,7 @@ impl Backend {
                         prevrandao: Some(block.header.mix_hash).map(|h| h.to_alloy()),
                         basefee: block.header.base_fee_per_gas.unwrap_or_default().to_alloy(),
                         gas_limit: block.header.gas_limit.to_alloy(),
+                        ..Default::default()
                     };
                     return Ok(f(Box::new(state), block))
                 }

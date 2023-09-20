@@ -81,6 +81,8 @@ pub enum BlockchainError {
     EIP1559TransactionUnsupportedAtHardfork,
     #[error("Access list received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork berlin' or later.")]
     EIP2930TransactionUnsupportedAtHardfork,
+    #[error("Excess blob gas not set.")]
+    ExcessBlobGasNotSet,
 }
 
 impl From<RpcError> for BlockchainError {
@@ -98,6 +100,7 @@ where
             EVMError::Transaction(err) => InvalidTransactionError::from(err).into(),
             EVMError::PrevrandaoNotSet => BlockchainError::PrevrandaoNotSet,
             EVMError::Database(err) => err.into(),
+            EVMError::ExcessBlobGasNotSet => BlockchainError::ExcessBlobGasNotSet,
         }
     }
 }
@@ -184,6 +187,17 @@ pub enum InvalidTransactionError {
     /// Thrown when an access list is used before the berlin hard fork.
     #[error("Access lists are not supported before the Berlin hardfork")]
     AccessListNotSupported,
+    /// Thrown when the block's `blob_gas_price` is greater than tx-specified
+    /// `max_fee_per_blob_gas` after Cancun.
+    #[error("Block `blob_gas_price` is greater than tx-specified `max_fee_per_blob_gas`")]
+    BlobGasPriceGreaterThanMax,
+    /// Thrown when we receive a tx with `blob_versioned_hashes` and we're not on the Cancun hard
+    /// fork.
+    #[error("Block `blob_versioned_hashes` is not supported before the Cancun hardfork")]
+    BlobVersionedHashesNotSupported,
+    /// Thrown when `max_fee_per_blob_gas` is not supported for blocks before the Cancun hardfork.
+    #[error("`max_fee_per_blob_gas` is not supported for blocks before the Cancun hardfork.")]
+    MaxFeePerBlobGasNotSupported,
 }
 
 impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
@@ -222,6 +236,15 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::NonceTooLow { .. } => InvalidTransactionError::NonceTooLow,
             InvalidTransaction::AccessListNotSupported => {
                 InvalidTransactionError::AccessListNotSupported
+            }
+            InvalidTransaction::BlobGasPriceGreaterThanMax => {
+                InvalidTransactionError::BlobGasPriceGreaterThanMax
+            }
+            InvalidTransaction::BlobVersionedHashesNotSupported => {
+                InvalidTransactionError::BlobVersionedHashesNotSupported
+            }
+            InvalidTransaction::MaxFeePerBlobGasNotSupported => {
+                InvalidTransactionError::MaxFeePerBlobGasNotSupported
             }
         }
     }
@@ -372,6 +395,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::EIP2930TransactionUnsupportedAtHardfork => {
+                    RpcError::invalid_params(err.to_string())
+                }
+                err @ BlockchainError::ExcessBlobGasNotSet => {
                     RpcError::invalid_params(err.to_string())
                 }
             }

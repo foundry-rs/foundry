@@ -77,6 +77,7 @@ where
             prevrandao: Some(block.mix_hash.map(|h| h.to_alloy()).unwrap_or_default()),
             basefee: block.base_fee_per_gas.unwrap_or_default().to_alloy(),
             gas_limit: block.gas_limit.to_alloy(),
+            ..Default::default()
         },
         tx: TxEnv {
             caller: origin,
