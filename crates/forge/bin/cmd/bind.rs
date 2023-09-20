@@ -9,6 +9,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use ethers::contract::{Deserialize, Serialize};
+
 impl_figment_convert!(BindArgs, build_args);
 
 const DEFAULT_CRATE_NAME: &str = "foundry-contracts";
@@ -172,6 +174,7 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
         let bindings = self.get_multi(&artifacts)?.build()?;
         println!("Generating bindings for {} contracts", bindings.len());
         if !self.module {
+            bindings.dependencies(r#"serde = "1.0.188""#)?;
             bindings.write_to_crate(
                 &self.crate_name,
                 &self.crate_version,
