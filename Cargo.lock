@@ -2536,7 +2536,7 @@ dependencies = [
  "solang-parser",
  "thiserror",
  "tokio",
- "toml 0.7.8",
+ "toml 0.8.0",
  "tracing",
  "warp",
 ]
@@ -2552,7 +2552,7 @@ dependencies = [
  "pretty_assertions",
  "solang-parser",
  "thiserror",
- "toml 0.7.8",
+ "toml 0.8.0",
  "tracing",
  "tracing-subscriber",
 ]
