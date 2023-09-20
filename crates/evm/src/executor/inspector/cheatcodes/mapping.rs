@@ -1,7 +1,8 @@
 use super::Cheatcodes;
+use alloy_primitives::Bytes;
 use ethers::{
     abi::{self, Token},
-    types::{Address, Bytes, U256},
+    types::{Address, U256},
     utils::keccak256,
 };
 use foundry_utils::types::ToEthers;

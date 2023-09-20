@@ -6,11 +6,11 @@ use crate::{
     },
     utils::RuntimeOrHandle,
 };
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Bytes, B256, U256};
 use ethers::{
     abi::{self, AbiEncode, Token, Tokenizable, Tokenize},
     providers::Middleware,
-    types::{Bytes, Filter, U256 as eU256},
+    types::{Filter, U256 as eU256},
 };
 use foundry_abi::hevm::{EthGetLogsCall, RpcCall};
 use foundry_common::ProviderBuilder;

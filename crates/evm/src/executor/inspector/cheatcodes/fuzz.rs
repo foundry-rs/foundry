@@ -1,6 +1,6 @@
 use super::{Error, Result};
 use crate::{abi::HEVMCalls, fuzz::error::ASSUME_MAGIC_RETURN_CODE};
-use ethers::types::Bytes;
+use alloy_primitives::Bytes;
 
 #[instrument(level = "error", name = "fuzz", target = "evm::cheatcodes", skip_all)]
 pub fn apply(call: &HEVMCalls) -> Option<Result> {

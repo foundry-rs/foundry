@@ -10,11 +10,12 @@ use crate::{
         },
     },
 };
-use alloy_primitives::{B256, U256 as rU256};
+use alloy_dyn_abi::DynSolValue;
+use alloy_primitives::{Bytes, B256, U256 as rU256};
 use ethers::{
-    abi::{self, AbiEncode, RawLog, Token, Tokenizable, Tokenize},
+    abi::{self, RawLog, Token, Tokenizable, Tokenize},
     signers::{LocalWallet, Signer},
-    types::{Address, Bytes, U256},
+    types::{Address, U256},
 };
 use foundry_config::Config;
 use foundry_utils::types::{ToAlloy, ToEthers};
@@ -398,7 +399,7 @@ pub fn apply<DB: DatabaseExt>(
                 rU256::from_be_bytes(inner.1),
                 data.db,
             )?;
-            val.to_ethers().encode().into()
+            DynSolValue::from(val).encode_single().into()
         }
         HEVMCalls::Cool(inner) => cool_account(data, inner.0)?,
         HEVMCalls::Breakpoint0(inner) => add_breakpoint(state, caller, &inner.0, true)?,
@@ -542,7 +543,7 @@ pub fn apply<DB: DatabaseExt>(
 
             // we can safely unwrap because `load_account` insert inner.0 to DB.
             let account = data.journaled_state.state().get(&inner.0.to_alloy()).unwrap();
-            abi::encode(&[Token::Uint(account.info.nonce.into())]).into()
+            DynSolValue::from(account.info.nonce).encode_single().into()
         }
         // [function getNonce(Wallet)] returns the current nonce of the Wallet's ETH address
         HEVMCalls::GetNonce0(inner) => {
@@ -559,7 +560,7 @@ pub fn apply<DB: DatabaseExt>(
 
             // we can safely unwrap because `load_account` insert inner.0 to DB.
             let account = data.journaled_state.state().get(&inner.0.addr.to_alloy()).unwrap();
-            abi::encode(&[Token::Uint(account.info.nonce.into())]).into()
+            DynSolValue::from(account.info.nonce.to_alloy()).encode_single().into()
         }
         HEVMCalls::ChainId(inner) => {
             ensure!(inner.0 <= U256::from(u64::MAX), "Chain ID must be less than 2^64 - 1");
