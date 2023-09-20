@@ -78,6 +78,7 @@ where
             prevrandao: Some(block.mix_hash.map(h256_to_b256).unwrap_or_default()),
             basefee: u256_to_ru256(block.base_fee_per_gas.unwrap_or_default()),
             gas_limit: u256_to_ru256(block.gas_limit),
+            ..Default::default()
         },
         tx: TxEnv {
             caller: origin,
