@@ -6,10 +6,10 @@ use crate::{
     debug::DebugArena,
     executor::{backend::DatabaseExt, inspector::CoverageCollector},
     trace::CallTraceArena,
-    utils::{h160_to_b160, ru256_to_u256},
 };
 use alloy_primitives::{Address, Bytes, B256, U256};
 use ethers::{signers::LocalWallet, types::Log};
+use foundry_utils::types::{ToAlloy, ToEthers};
 use revm::{
     interpreter::{
         return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, Stack,
@@ -242,7 +242,7 @@ impl InspectorStack {
     #[inline]
     pub fn set_gas_price(&mut self, gas_price: U256) {
         if let Some(cheatcodes) = &mut self.cheatcodes {
-            cheatcodes.gas_price = Some(gas_price).map(ru256_to_u256);
+            cheatcodes.gas_price = Some(gas_price).map(|g| g.to_ethers());
         }
     }
 
@@ -303,12 +303,7 @@ impl InspectorStack {
                 .cheatcodes
                 .as_ref()
                 .map(|cheatcodes| {
-                    cheatcodes
-                        .labels
-                        .clone()
-                        .into_iter()
-                        .map(|l| (h160_to_b160(l.0), l.1))
-                        .collect()
+                    cheatcodes.labels.clone().into_iter().map(|l| (l.0.to_alloy(), l.1)).collect()
                 })
                 .unwrap_or_default(),
             traces: self.tracer.map(|tracer| tracer.traces),

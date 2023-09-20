@@ -1,7 +1,4 @@
-use crate::{
-    executor::{backend::LocalForkId, inspector::Cheatcodes},
-    utils::b160_to_h160,
-};
+use crate::executor::{backend::LocalForkId, inspector::Cheatcodes};
 use alloy_primitives::Address;
 use foundry_common::fmt::UIfmt;
 use foundry_utils::types::ToEthers;
@@ -43,7 +40,7 @@ impl RevertDiagnostic {
                 )
             }
             RevertDiagnostic::ContractDoesNotExist { contract, persistent, .. } => {
-                let contract_label = get_label(&b160_to_h160(*contract));
+                let contract_label = get_label(&contract.to_ethers());
                 if *persistent {
                     format!("Contract {contract_label} does not exist")
                 } else {

@@ -50,8 +50,8 @@ use foundry_evm::{
         cheatcodes::{util::BroadcastableTransactions, BroadcastableTransaction},
         DEFAULT_CREATE2_DEPLOYER,
     },
-    utils::h160_to_b160,
 };
+use foundry_utils::types::ToAlloy;
 use futures::future;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -406,7 +406,7 @@ impl ScriptArgs {
                                         shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
                                         return Ok(None)
                                     }
-                                } else if h160_to_b160(sender) != evm_opts.sender {
+                                } else if sender.to_alloy() != evm_opts.sender {
                                     new_sender = Some(sender);
                                 }
                             }
@@ -551,7 +551,7 @@ impl ScriptArgs {
 
             // Find if it's a CREATE or CREATE2. Otherwise, skip transaction.
             if let Some(NameOrAddress::Address(to)) = to {
-                if h160_to_b160(*to) == DEFAULT_CREATE2_DEPLOYER {
+                if to.to_alloy() == DEFAULT_CREATE2_DEPLOYER {
                     // Size of the salt prefix.
                     offset = 32;
                 }

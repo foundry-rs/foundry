@@ -13,8 +13,8 @@ use foundry_config::{
 };
 use foundry_evm::{
     decode::decode_console_logs, executor::inspector::CheatsConfig, revm::primitives::SpecId,
-    utils::b160_to_h160,
 };
+use foundry_utils::types::ToEthers;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -144,7 +144,7 @@ pub fn manifest_root() -> PathBuf {
 
 /// Builds a base runner
 pub fn base_runner() -> MultiContractRunnerBuilder {
-    MultiContractRunnerBuilder::default().sender(b160_to_h160(EVM_OPTS.sender))
+    MultiContractRunnerBuilder::default().sender(EVM_OPTS.sender.to_ethers())
 }
 
 /// Builds a non-tracing runner

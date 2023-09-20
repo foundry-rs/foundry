@@ -1,9 +1,5 @@
 use crate::{
-    abi::CHEATCODE_ADDRESS,
-    debug::Instruction,
-    trace::identifier::LocalTraceIdentifier,
-    utils::{b160_to_h160, ru256_to_u256},
-    CallKind,
+    abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier, CallKind,
 };
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{
@@ -13,6 +9,7 @@ use ethers::{
 };
 pub use executor::TracingExecutor;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use foundry_utils::types::ToEthers;
 use hashbrown::HashMap;
 use node::CallTraceNode;
 use revm::interpreter::{opcode, CallContext, InstructionResult, Memory, Stack};
@@ -433,7 +430,7 @@ impl From<&CallTraceStep> for StructLog {
             } else {
                 None
             },
-            stack: Some(step.stack.data().iter().copied().map(ru256_to_u256).collect()),
+            stack: Some(step.stack.data().iter().copied().map(|s| s.to_ethers()).collect()),
             // Filled in `CallTraceArena::geth_trace` as a result of compounding all slot changes
             storage: None,
         }
@@ -600,7 +597,7 @@ impl TraceKind {
 
 /// Chooses the color of the trace depending on the destination address and status of the call.
 fn trace_color(trace: &CallTrace) -> Color {
-    if trace.address == b160_to_h160(CHEATCODE_ADDRESS) {
+    if trace.address == CHEATCODE_ADDRESS.to_ethers() {
         Color::Blue
     } else if trace.success {
         Color::Green

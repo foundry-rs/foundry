@@ -7,7 +7,6 @@ use crate::{
     decode,
     executor::inspector::DEFAULT_CREATE2_DEPLOYER,
     trace::{node::CallTraceNode, utils},
-    utils::b160_to_h160,
     CALLER, TEST_CONTRACT_ADDRESS,
 };
 use ethers::{
@@ -15,6 +14,7 @@ use ethers::{
     types::{H160, H256},
 };
 use foundry_common::{abi::get_indexed_event, SELECTOR_LEN};
+use foundry_utils::types::ToEthers;
 use hashbrown::HashSet;
 use once_cell::sync::OnceCell;
 use std::collections::{BTreeMap, HashMap};
@@ -157,11 +157,11 @@ impl CallTraceDecoder {
             contracts: Default::default(),
 
             labels: [
-                (b160_to_h160(CHEATCODE_ADDRESS), "VM".to_string()),
-                (b160_to_h160(HARDHAT_CONSOLE_ADDRESS), "console".to_string()),
-                (b160_to_h160(DEFAULT_CREATE2_DEPLOYER), "Create2Deployer".to_string()),
-                (b160_to_h160(CALLER), "DefaultSender".to_string()),
-                (b160_to_h160(TEST_CONTRACT_ADDRESS), "DefaultTestContract".to_string()),
+                (CHEATCODE_ADDRESS.to_ethers(), "VM".to_string()),
+                (HARDHAT_CONSOLE_ADDRESS.to_ethers(), "console".to_string()),
+                (DEFAULT_CREATE2_DEPLOYER.to_ethers(), "Create2Deployer".to_string()),
+                (CALLER.to_ethers(), "DefaultSender".to_string()),
+                (TEST_CONTRACT_ADDRESS.to_ethers(), "DefaultTestContract".to_string()),
             ]
             .into(),
 
@@ -257,7 +257,7 @@ impl CallTraceDecoder {
                 if bytes.len() >= 4 {
                     if let Some(funcs) = self.functions.get(&bytes[..SELECTOR_LEN]) {
                         node.decode_function(funcs, &self.labels, &self.errors, self.verbosity);
-                    } else if node.trace.address == b160_to_h160(DEFAULT_CREATE2_DEPLOYER) {
+                    } else if node.trace.address == DEFAULT_CREATE2_DEPLOYER.to_ethers() {
                         node.trace.data =
                             RawOrDecodedCall::Decoded("create2".to_string(), String::new(), vec![]);
                     } else if let Some(identifier) = &self.signature_identifier {

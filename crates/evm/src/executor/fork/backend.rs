@@ -1,10 +1,7 @@
 //! Smart caching and deduplication of requests when using a forking provider
-use crate::{
-    executor::{
-        backend::error::{DatabaseError, DatabaseResult},
-        fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
-    },
-    utils::{b160_to_h160, b256_to_h256, h256_to_b256, u256_to_ru256},
+use crate::executor::{
+    backend::error::{DatabaseError, DatabaseResult},
+    fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
 };
 use alloy_primitives::{Address, Bytes, B256, U256};
 use ethers::{
@@ -14,6 +11,7 @@ use ethers::{
     utils::keccak256,
 };
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
+use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     stream::Stream,
@@ -194,12 +192,12 @@ where
                     let idx_req = B256::from(idx);
                     let storage = provider
                         .get_storage_at(
-                            NameOrAddress::Address(b160_to_h160(address)),
-                            b256_to_h256(idx_req),
+                            NameOrAddress::Address(address.to_ethers()),
+                            idx_req.to_ethers(),
                             block_id,
                         )
                         .await;
-                    let storage = storage.map(|storage| storage.into_uint()).map(u256_to_ru256);
+                    let storage = storage.map(|storage| storage.into_uint()).map(|s| s.to_alloy());
                     (storage, address, idx)
                 });
                 self.pending_requests.push(ProviderRequest::Storage(fut));
@@ -214,12 +212,12 @@ where
         let block_id = self.block_id;
         let fut = Box::pin(async move {
             let balance =
-                provider.get_balance(NameOrAddress::Address(b160_to_h160(address)), block_id);
+                provider.get_balance(NameOrAddress::Address(address.to_ethers()), block_id);
             let nonce = provider
-                .get_transaction_count(NameOrAddress::Address(b160_to_h160(address)), block_id);
-            let code = provider.get_code(NameOrAddress::Address(b160_to_h160(address)), block_id);
+                .get_transaction_count(NameOrAddress::Address(address.to_ethers()), block_id);
+            let code = provider.get_code(NameOrAddress::Address(address.to_ethers()), block_id);
             let resp = tokio::try_join!(balance, nonce, code).map(|(balance, nonce, code)| {
-                (u256_to_ru256(balance), u256_to_ru256(nonce), Bytes::from(code.0))
+                (balance.to_alloy(), nonce.to_alloy(), Bytes::from(code.0))
             });
             (resp, address)
         });
@@ -254,7 +252,7 @@ where
     fn request_transaction(&mut self, tx: B256, sender: TransactionSender) {
         let provider = self.provider.clone();
         let fut = Box::pin(async move {
-            let block = provider.get_transaction(b256_to_h256(tx)).await;
+            let block = provider.get_transaction(tx.to_ethers()).await;
             (sender, block, tx)
         });
 
@@ -282,14 +280,14 @@ where
                             warn!(target: "backendhandler", ?number, "block not found");
                             // if no block was returned then the block does not exist, in which case
                             // we return empty hash
-                            Ok(b256_to_h256(KECCAK_EMPTY))
+                            Ok(KECCAK_EMPTY.to_ethers())
                         }
                         Err(err) => {
                             error!(target: "backendhandler", ?err, ?number, "failed to get block");
                             Err(err)
                         }
                     };
-                    (block_hash.map(h256_to_b256), number)
+                    (block_hash.map(|h| h.to_alloy()), number)
                 });
                 self.pending_requests.push(ProviderRequest::BlockHash(fut));
             }

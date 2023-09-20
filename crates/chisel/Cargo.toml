@@ -23,6 +23,7 @@ foundry-evm.workspace = true
 foundry-config.workspace = true
 foundry-cli.workspace = true
 foundry-common.workspace = true
+foundry-utils.workspace = true
 forge-fmt.workspace = true
 
 # ethers

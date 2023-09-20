@@ -7,7 +7,7 @@ use eyre::Result;
 use foundry_cli::utils::LoadConfig;
 use foundry_common::{contracts::flatten_contracts, try_get_http_provider};
 use foundry_debugger::DebuggerArgs;
-use foundry_evm::utils::b160_to_h160;
+use foundry_utils::types::{ToAlloy, ToEthers};
 use std::sync::Arc;
 use tracing::trace;
 
@@ -33,12 +33,9 @@ impl ScriptArgs {
 
         if let Some(ref fork_url) = script_config.evm_opts.fork_url {
             // when forking, override the sender's nonce to the onchain value
-            script_config.sender_nonce = foundry_utils::next_nonce(
-                b160_to_h160(script_config.evm_opts.sender),
-                fork_url,
-                None,
-            )
-            .await?
+            script_config.sender_nonce =
+                foundry_utils::next_nonce(script_config.evm_opts.sender.to_ethers(), fork_url, None)
+                    .await?
         } else {
             // if not forking, then ignore any pre-deployed library addresses
             script_config.config.libraries = Default::default();
@@ -71,7 +68,7 @@ impl ScriptArgs {
         // We need to execute the script even if just resuming, in case we need to collect private
         // keys from the execution.
         let mut result = self
-            .execute(&mut script_config, contract, b160_to_h160(sender), &predeploy_libraries)
+            .execute(&mut script_config, contract, sender.to_ethers(), &predeploy_libraries)
             .await?;
 
         if self.resume || (self.verify && !self.broadcast) {
@@ -166,7 +163,7 @@ impl ScriptArgs {
 
         // Add predeploy libraries to the list of broadcastable transactions.
         let mut lib_deploy = self.create_deploy_transactions(
-            b160_to_h160(script_config.evm_opts.sender),
+            script_config.evm_opts.sender.to_ethers(),
             script_config.sender_nonce,
             &predeploy_libraries,
             &script_config.evm_opts.fork_url,
@@ -356,7 +353,7 @@ impl ScriptArgs {
         }
         if let Some(wallets) = self.wallets.private_keys()? {
             if wallets.len() == 1 {
-                script_config.evm_opts.sender = h160_to_b160(wallets.get(0).unwrap().address())
+                script_config.evm_opts.sender = wallets.get(0).unwrap().address().to_alloy()
             }
         }
         Ok(())

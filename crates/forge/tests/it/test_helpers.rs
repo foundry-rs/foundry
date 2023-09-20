@@ -14,9 +14,9 @@ use foundry_evm::{
         DatabaseRef, Executor, ExecutorBuilder,
     },
     fuzz::FuzzedExecutor,
-    utils::{b160_to_h160, h160_to_b160, u256_to_ru256},
     CALLER,
 };
+use foundry_utils::types::{ToAlloy, ToEthers};
 use std::{path::PathBuf, str::FromStr};
 
 pub static PROJECT: Lazy<Project> = Lazy::new(|| {
@@ -65,13 +65,13 @@ pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
     env: Env {
         gas_limit: 18446744073709551615,
         chain_id: None,
-        tx_origin: h160_to_b160(Config::DEFAULT_SENDER),
+        tx_origin: Config::DEFAULT_SENDER.to_alloy(),
         block_number: 1,
         block_timestamp: 1,
         ..Default::default()
     },
-    sender: h160_to_b160(Config::DEFAULT_SENDER),
-    initial_balance: u256_to_ru256(U256::MAX),
+    sender: Config::DEFAULT_SENDER.to_alloy(),
+    initial_balance: U256::MAX.to_alloy(),
     ffi: true,
     memory_limit: 2u64.pow(24),
     ..Default::default()
@@ -83,7 +83,7 @@ pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor) -> FuzzedExecutor {
     FuzzedExecutor::new(
         executor,
         proptest::test_runner::TestRunner::new(cfg),
-        b160_to_h160(CALLER),
+        CALLER.to_ethers(),
         config::test_opts().fuzz,
     )
 }

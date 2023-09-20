@@ -1,12 +1,15 @@
 use super::{bail, ensure, fmt_err, Cheatcodes, Result};
-use crate::{abi::HEVMCalls, executor::backend::DatabaseExt, utils::h160_to_b160};
+use crate::{abi::HEVMCalls, executor::backend::DatabaseExt};
 use alloy_primitives::Bytes;
 use ethers::{
     abi::{AbiDecode, RawLog},
     contract::Lazy,
     types::{Address, H160, U256},
 };
-use foundry_utils::error::{ERROR_PREFIX, REVERT_PREFIX};
+use foundry_utils::{
+    error::{ERROR_PREFIX, REVERT_PREFIX},
+    types::ToAlloy,
+};
 use revm::{
     interpreter::{return_ok, InstructionResult},
     primitives::Bytecode,
@@ -484,7 +487,7 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::MockCall0(inner) => {
             // TODO: Does this increase gas usage?
-            if let Err(err) = data.journaled_state.load_account(h160_to_b160(inner.0), data.db) {
+            if let Err(err) = data.journaled_state.load_account(inner.0.to_alloy(), data.db) {
                 return Some(Err(err.into()))
             }
 
@@ -492,7 +495,7 @@ pub fn apply<DB: DatabaseExt>(
             // check Solidity might perform.
             let empty_bytecode = data
                 .journaled_state
-                .account(h160_to_b160(inner.0))
+                .account(inner.0.to_alloy())
                 .info
                 .code
                 .as_ref()
@@ -501,7 +504,7 @@ pub fn apply<DB: DatabaseExt>(
                 let code =
                     Bytecode::new_raw(alloy_primitives::Bytes(bytes::Bytes::from_static(&[0u8])))
                         .to_checked();
-                data.journaled_state.set_code(h160_to_b160(inner.0), code);
+                data.journaled_state.set_code(inner.0.to_alloy(), code);
             }
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.1.clone().0.into(), value: None },
@@ -513,7 +516,7 @@ pub fn apply<DB: DatabaseExt>(
             Ok(Bytes::new())
         }
         HEVMCalls::MockCall1(inner) => {
-            if let Err(err) = data.journaled_state.load_account(h160_to_b160(inner.0), data.db) {
+            if let Err(err) = data.journaled_state.load_account(inner.0.to_alloy(), data.db) {
                 return Some(Err(err.into()))
             }
 

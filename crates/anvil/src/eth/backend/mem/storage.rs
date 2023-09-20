@@ -15,10 +15,8 @@ use ethers::{
     prelude::{BlockId, BlockNumber, DefaultFrame, Trace, H256, H256 as TxHash, U64},
     types::{ActionType, Bytes, GethDebugTracingOptions, TransactionReceipt, U256},
 };
-use foundry_evm::{
-    revm::{interpreter::InstructionResult, primitives::Env},
-    utils::{b160_to_h160, ru256_to_u256},
-};
+use foundry_evm::revm::{interpreter::InstructionResult, primitives::Env};
+use foundry_utils::types::ToEthers;
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, VecDeque},
@@ -229,9 +227,9 @@ impl BlockchainStorage {
         let partial_header = PartialHeader {
             timestamp,
             base_fee,
-            gas_limit: ru256_to_u256(env.block.gas_limit),
-            beneficiary: b160_to_h160(env.block.coinbase),
-            difficulty: ru256_to_u256(env.block.difficulty),
+            gas_limit: env.block.gas_limit.to_ethers(),
+            beneficiary: env.block.coinbase.to_ethers(),
+            difficulty: env.block.difficulty.to_ethers(),
             ..Default::default()
         };
         let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![], vec![]);
@@ -432,8 +430,8 @@ mod tests {
             db::DatabaseRef,
             primitives::{AccountInfo, U256 as rU256},
         },
-        utils::h160_to_b160,
     };
+    use foundry_utils::types::ToAlloy;
 
     #[test]
     fn test_interval_update() {
@@ -463,7 +461,7 @@ mod tests {
 
         let loaded = storage.get(&one).unwrap();
 
-        let acc = loaded.basic(h160_to_b160(addr)).unwrap().unwrap();
+        let acc = loaded.basic(addr.to_alloy()).unwrap().unwrap();
         assert_eq!(acc.balance, rU256::from(1337u64));
     }
 
@@ -493,7 +491,7 @@ mod tests {
             let hash = H256::from_uint(&U256::from(idx));
             let addr = Address::from(hash);
             let loaded = storage.get(&hash).unwrap();
-            let acc = loaded.basic(h160_to_b160(addr)).unwrap().unwrap();
+            let acc = loaded.basic(addr.to_alloy()).unwrap().unwrap();
             let balance = (idx * 2) as u64;
             assert_eq!(acc.balance, rU256::from(balance));
         }

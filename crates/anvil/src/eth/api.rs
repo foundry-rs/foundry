@@ -64,8 +64,8 @@ use foundry_evm::{
         interpreter::{return_ok, return_revert, InstructionResult},
         primitives::BlockEnv,
     },
-    utils::ru256_to_u256,
 };
+use foundry_utils::types::ToEthers;
 use futures::channel::mpsc::Receiver;
 use parking_lot::RwLock;
 use std::{collections::HashSet, sync::Arc, time::Duration};
@@ -2063,7 +2063,7 @@ impl EthApi {
 
         // get the highest possible gas limit, either the request's set value or the currently
         // configured gas limit
-        let mut highest_gas_limit = request.gas.unwrap_or(ru256_to_u256(block_env.gas_limit));
+        let mut highest_gas_limit = request.gas.unwrap_or(block_env.gas_limit.to_ethers());
 
         // check with the funds of the sender
         if let Some(from) = request.from {
