@@ -788,3 +788,48 @@ async fn test(
     trace!(target: "forge::test", "received {} results", results.len());
     Ok(TestOutcome::new(results, allow_failure))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Sanity test that unknown args are rejected
+    #[test]
+    fn test_verbosity() {
+        #[derive(Debug, Parser)]
+        pub struct VerbosityArgs {
+            #[clap(long, short, action = clap::ArgAction::Count)]
+            verbosity: u8,
+        }
+        let res = VerbosityArgs::try_parse_from(["foundry-cli", "-vw"]);
+        assert!(res.is_err());
+
+        let res = VerbosityArgs::try_parse_from(["foundry-cli", "-vv"]);
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_verbosity_multi_short() {
+        #[derive(Debug, Parser)]
+        pub struct VerbosityArgs {
+            #[clap(long, short)]
+            verbosity: bool,
+            #[clap(
+                long,
+                short,
+                num_args(0..),
+                value_name = "PATH",
+            )]
+            watch: Option<Vec<String>>,
+        }
+        // this is supported by clap
+        let res = VerbosityArgs::try_parse_from(["foundry-cli", "-vw"]);
+        assert!(res.is_ok())
+    }
+
+    #[test]
+    fn test_watch_parse() {
+        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "-vw"]);
+        assert!(args.watch.watch.is_some());
+    }
+}
