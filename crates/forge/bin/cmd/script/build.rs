@@ -86,7 +86,7 @@ impl ScriptArgs {
         let mut contract = CompactContractBytecode::default();
         let mut highlevel_known_contracts = BTreeMap::new();
 
-        let mut target_fname = dunce::canonicalize(&self.inner_args.path)
+        let mut target_fname = dunce::canonicalize(&self.path)
             .wrap_err("Couldn't convert contract path to absolute path.")?
             .strip_prefix(project.root())
             .wrap_err("Couldn't strip project root from contract path.")?
@@ -94,7 +94,7 @@ impl ScriptArgs {
             .wrap_err("Bad path to string.")?
             .to_string();
 
-        let no_target_name = if let Some(target_name) = &self.inner_args.target_contract {
+        let no_target_name = if let Some(target_name) = &self.target_contract {
             target_fname = target_fname + ":" + target_name;
             false
         } else {
@@ -214,16 +214,16 @@ impl ScriptArgs {
     ) -> Result<(Project, ProjectCompileOutput)> {
         let project = script_config.config.project()?;
 
-        let filters = self.inner_args.opts.skip.clone().unwrap_or_default();
+        let filters = self.opts.skip.clone().unwrap_or_default();
         // We received a valid file path.
         // If this file does not exist, `dunce::canonicalize` will
         // result in an error and it will be handled below.
-        if let Ok(target_contract) = dunce::canonicalize(&self.inner_args.path) {
+        if let Ok(target_contract) = dunce::canonicalize(&self.path) {
             let output = compile::compile_target_with_filter(
                 &target_contract,
                 &project,
-                self.inner_args.opts.args.silent,
-                self.inner_args.verify,
+                self.opts.args.silent,
+                self.verify,
                 filters,
             )?;
             return Ok((project, output))
@@ -233,8 +233,8 @@ impl ScriptArgs {
             eyre::bail!("The project doesn't have any input files. Make sure the `script` directory is configured properly in foundry.toml. Otherwise, provide the path to the file.")
         }
 
-        let contract = ContractInfo::from_str(&self.inner_args.path)?;
-        self.inner_args.target_contract = Some(contract.name.clone());
+        let contract = ContractInfo::from_str(&self.path)?;
+        self.target_contract = Some(contract.name.clone());
 
         // We received `contract_path:contract_name`
         if let Some(path) = contract.path {
@@ -243,16 +243,16 @@ impl ScriptArgs {
             let output = compile::compile_target_with_filter(
                 &path,
                 &project,
-                self.inner_args.opts.args.silent,
-                self.inner_args.verify,
+                self.opts.args.silent,
+                self.verify,
                 filters,
             )?;
-            self.inner_args.path = path.to_string_lossy().to_string();
+            self.path = path.to_string_lossy().to_string();
             return Ok((project, output))
         }
 
         // We received `contract_name`, and need to find its file path.
-        let output = if self.inner_args.opts.args.silent {
+        let output = if self.opts.args.silent {
             compile::suppress_compile(&project)
         } else {
             compile::compile(&project, false, false)
@@ -262,7 +262,7 @@ impl ScriptArgs {
 
         let (path, _) = get_cached_entry_by_name(&cache, &contract.name)
             .wrap_err("Could not find target contract in cache")?;
-        self.inner_args.path = path.to_string_lossy().to_string();
+        self.path = path.to_string_lossy().to_string();
 
         Ok((project, output))
     }

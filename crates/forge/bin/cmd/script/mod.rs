@@ -1,6 +1,6 @@
 use self::{build::BuildOutput, runner::ScriptRunner};
-use super::debug::DebugArgs;
-use clap::Parser;
+use super::{build::BuildArgs, retry::RetryArgs};
+use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers::{
     abi::{Abi, Function, HumanReadableParser},
@@ -28,11 +28,12 @@ use forge::{
     },
     CallKind,
 };
+use foundry_cli::{opts::MultiWallet, utils::parse_ether_value};
 use foundry_common::{
     abi::{encode_args, format_token},
     contracts::get_contract_name,
     errors::UnlinkedByteCode,
-    evm::Breakpoints,
+    evm::{Breakpoints, EvmArgs},
     shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_config::{
@@ -81,18 +82,134 @@ static SHANGHAI_ENABLED_CHAINS: &[Chain] = &[
 ];
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::impl_figment_convert!(ScriptArgs, inner_args.opts, inner_args.evm_opts);
+foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_opts);
 
 /// CLI arguments for `forge script`.
 #[derive(Debug, Clone, Parser, Default)]
 pub struct ScriptArgs {
-    #[clap(flatten)]
-    pub inner_args: DebugArgs,
+    /// The contract you want to run. Either the file path or contract name.
+    ///
+    /// If multiple contracts exist in the same file you must specify the target contract with
+    /// --target-contract.
+    #[clap(value_hint = ValueHint::FilePath)]
+    pub path: String,
+
+    /// Arguments to pass to the script function.
+    pub args: Vec<String>,
+
+    /// The name of the contract you want to run.
+    #[clap(long, visible_alias = "tc", value_name = "CONTRACT_NAME")]
+    pub target_contract: Option<String>,
+
+    /// The signature of the function you want to call in the contract, or raw calldata.
+    #[clap(
+        long,
+        short,
+        default_value = "run()",
+        value_parser = foundry_common::clap_helpers::strip_0x_prefix
+    )]
+    pub sig: String,
+
+    /// Max priority fee per gas for EIP1559 transactions.
+    #[clap(
+        long,
+        env = "ETH_PRIORITY_GAS_PRICE",
+        value_parser = parse_ether_value,
+        value_name = "PRICE"
+    )]
+    pub priority_gas_price: Option<U256>,
+
+    /// Use legacy transactions instead of EIP1559 ones.
+    ///
+    /// This is auto-enabled for common networks without EIP1559.
+    #[clap(long)]
+    pub legacy: bool,
+
+    /// Broadcasts the transactions.
+    #[clap(long)]
+    pub broadcast: bool,
+
+    /// Skips on-chain simulation.
+    #[clap(long)]
+    pub skip_simulation: bool,
+
+    /// Relative percentage to multiply gas estimates by.
+    #[clap(long, short, default_value = "130")]
+    pub gas_estimate_multiplier: u64,
+
+    /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
+    #[clap(
+        long,
+        requires = "sender",
+        conflicts_with_all = &["private_key", "private_keys", "froms", "ledger", "trezor", "aws"],
+    )]
+    pub unlocked: bool,
+
+    /// Resumes submitting transactions that failed or timed-out previously.
+    ///
+    /// It DOES NOT simulate the script again and it expects nonces to have remained the same.
+    ///
+    /// Example: If transaction N has a nonce of 22, then the account should have a nonce of 22,
+    /// otherwise it fails.
+    #[clap(long)]
+    pub resume: bool,
+
+    /// If present, --resume or --verify will be assumed to be a multi chain deployment.
+    #[clap(long)]
+    pub multi: bool,
+
     /// Open the script in the debugger.
     ///
     /// Takes precedence over broadcast.
     #[clap(long)]
     pub debug: bool,
+
+    /// Makes sure a transaction is sent,
+    /// only after its previous one has been confirmed and succeeded.
+    #[clap(long)]
+    pub slow: bool,
+
+    /// Disables interactive prompts that might appear when deploying big contracts.
+    ///
+    /// For more info on the contract size limit, see EIP-170: <https://eips.ethereum.org/EIPS/eip-170>
+    #[clap(long)]
+    pub non_interactive: bool,
+
+    /// The Etherscan (or equivalent) API key
+    #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
+    pub etherscan_api_key: Option<String>,
+
+    /// Verifies all the contracts found in the receipts of a script, if any.
+    #[clap(long)]
+    pub verify: bool,
+
+    /// Output results in JSON format.
+    #[clap(long)]
+    pub json: bool,
+
+    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
+    #[clap(
+        long,
+        env = "ETH_GAS_PRICE",
+        value_parser = parse_ether_value,
+        value_name = "PRICE",
+    )]
+    pub with_gas_price: Option<U256>,
+
+    #[clap(flatten)]
+    pub opts: BuildArgs,
+
+    #[clap(flatten)]
+    pub wallets: MultiWallet,
+
+    #[clap(flatten)]
+    pub evm_opts: EvmArgs,
+
+    #[clap(flatten)]
+    pub verifier: super::verify::VerifierArgs,
+
+    #[clap(flatten)]
+    pub retry: RetryArgs,
 }
 
 // === impl ScriptArgs ===
@@ -277,7 +394,7 @@ impl ScriptArgs {
 
         if let Some(txs) = transactions {
             // If the user passed a `--sender` don't check anything.
-            if !predeploy_libraries.is_empty() && self.inner_args.evm_opts.sender.is_none() {
+            if !predeploy_libraries.is_empty() && self.evm_opts.sender.is_none() {
                 for tx in txs.iter() {
                     match &tx.transaction {
                         TypedTransaction::Legacy(tx) => {
@@ -332,32 +449,31 @@ impl ScriptArgs {
     ///
     /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
     pub fn get_method_and_calldata(&self, abi: &Abi) -> Result<(Function, Bytes)> {
-        let (func, data) =
-            if let Ok(func) = HumanReadableParser::parse_function(&self.inner_args.sig) {
-                (
-                    abi.functions()
-                        .find(|&abi_func| abi_func.short_signature() == func.short_signature())
-                        .wrap_err(format!(
-                            "Function `{}` is not implemented in your script.",
-                            self.inner_args.sig
-                        ))?,
-                    encode_args(&func, &self.inner_args.args)?.into(),
-                )
-            } else {
-                let decoded = hex::decode(&self.inner_args.sig).wrap_err("Invalid hex calldata")?;
-                let selector = &decoded[..SELECTOR_LEN];
-                (
-                    abi.functions()
-                        .find(|&func| selector == &func.short_signature()[..])
-                        .ok_or_else(|| {
-                            eyre::eyre!(
-                                "Function selector `{}` not found in the ABI",
-                                hex::encode(selector)
-                            )
-                        })?,
-                    decoded.into(),
-                )
-            };
+        let (func, data) = if let Ok(func) = HumanReadableParser::parse_function(&self.sig) {
+            (
+                abi.functions()
+                    .find(|&abi_func| abi_func.short_signature() == func.short_signature())
+                    .wrap_err(format!(
+                        "Function `{}` is not implemented in your script.",
+                        self.sig
+                    ))?,
+                encode_args(&func, &self.args)?.into(),
+            )
+        } else {
+            let decoded = hex::decode(&self.sig).wrap_err("Invalid hex calldata")?;
+            let selector = &decoded[..SELECTOR_LEN];
+            (
+                abi.functions().find(|&func| selector == &func.short_signature()[..]).ok_or_else(
+                    || {
+                        eyre::eyre!(
+                            "Function selector `{}` not found in the ABI",
+                            hex::encode(selector)
+                        )
+                    },
+                )?,
+                decoded.into(),
+            )
+        };
 
         Ok((func.clone(), data))
     }
@@ -417,7 +533,7 @@ impl ScriptArgs {
         }
 
         let mut prompt_user = false;
-        let max_size = match self.inner_args.evm_opts.env.code_size_limit {
+        let max_size = match self.evm_opts.env.code_size_limit {
             Some(size) => size,
             None => CONTRACT_MAX_SIZE,
         };
@@ -449,7 +565,7 @@ impl ScriptArgs {
                 let deployment_size = deployed_code.len();
 
                 if deployment_size > max_size {
-                    prompt_user = self.inner_args.broadcast;
+                    prompt_user = self.broadcast;
                     shell::println(format!(
                         "{}",
                         Paint::red(format!(
@@ -462,7 +578,7 @@ impl ScriptArgs {
 
         // Only prompt if we're broadcasting and we've not disabled interactivity.
         if prompt_user &&
-            !self.inner_args.non_interactive &&
+            !self.non_interactive &&
             !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()?
         {
             eyre::bail!("User canceled the script.");
@@ -479,7 +595,7 @@ impl Provider for ScriptArgs {
 
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut dict = Dict::default();
-        if let Some(ref etherscan_api_key) = self.inner_args.etherscan_api_key {
+        if let Some(ref etherscan_api_key) = self.etherscan_api_key {
             dict.insert(
                 "etherscan_api_key".to_string(),
                 figment::value::Value::from(etherscan_api_key.to_string()),
@@ -634,7 +750,7 @@ mod tests {
             "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266",
         ]);
         assert_eq!(
-            args.inner_args.sig,
+            args.sig,
             "522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266"
         );
     }
@@ -648,7 +764,7 @@ mod tests {
             "0x4e59b44847b379578588920ca78fbf26c0b4956c",
             "--unlocked",
         ]);
-        assert!(args.inner_args.unlocked);
+        assert!(args.unlocked);
 
         let key = U256::zero();
         let args = ScriptArgs::try_parse_from([
@@ -692,7 +808,7 @@ mod tests {
             "-vvvv",
         ]);
         assert_eq!(
-            args.inner_args.verifier.verifier_url,
+            args.verifier.verifier_url,
             Some("http://localhost:3000/api/verify".to_string())
         );
     }
@@ -709,7 +825,7 @@ mod tests {
             "--code-size-limit",
             "50000",
         ]);
-        assert_eq!(args.inner_args.evm_opts.env.code_size_limit, Some(50000));
+        assert_eq!(args.evm_opts.env.code_size_limit, Some(50000));
     }
 
     #[test]

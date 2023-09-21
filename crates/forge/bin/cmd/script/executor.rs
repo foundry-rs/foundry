@@ -53,7 +53,7 @@ impl ScriptArgs {
             bytecode,
             needs_setup(&abi),
             script_config.sender_nonce,
-            self.inner_args.broadcast,
+            self.broadcast,
             script_config.evm_opts.fork_url.is_none(),
         )?;
 
@@ -177,7 +177,7 @@ impl ScriptArgs {
                         .collect();
 
                     // Simulate mining the transaction if the user passes `--slow`.
-                    if self.inner_args.slow {
+                    if self.slow {
                         runner.executor.env.block.number += rU256::from(1);
                     }
 
@@ -185,9 +185,8 @@ impl ScriptArgs {
                     // If tx.gas is already set that means it was specified in script
                     if !is_fixed_gas_limit {
                         // We inflate the gas used by the user specified percentage
-                        tx.gas = Some(U256::from(
-                            result.gas_used * self.inner_args.gas_estimate_multiplier / 100,
-                        ));
+                        tx.gas =
+                            Some(U256::from(result.gas_used * self.gas_estimate_multiplier / 100));
                     } else {
                         println!("Gas limit was set in script to {:}", tx.gas.unwrap());
                     }

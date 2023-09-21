@@ -93,24 +93,6 @@ macro_rules! impl_figment_convert {
             }
         }
     };
-    ($name:ty, $($start:ident).+ $(, $($more:ident).+)*) => {
-        impl<'a> From<&'a $name> for $crate::figment::Figment {
-            fn from(args: &'a $name) -> Self {
-                let mut figment: $crate::figment::Figment = From::from(&args.$($start).+);
-                $ (
-                  figment =  figment.merge(&args.$($more).+);
-                )*
-                figment
-            }
-        }
-
-        impl<'a> From<&'a $name> for $crate::Config {
-            fn from(args: &'a $name) -> Self {
-                let figment: $crate::figment::Figment = args.into();
-                $crate::Config::from_provider(figment).sanitized()
-            }
-        }
-    };
     ($name:ty, self, $start:ident $(, $more:ident)*) => {
         impl<'a> From<&'a $name> for $crate::figment::Figment {
             fn from(args: &'a $name) -> Self {

@@ -32,8 +32,8 @@ fn main() -> Result<()> {
         Subcommands::Script(cmd) => {
             // install the shell before executing the command
             foundry_common::shell::set_shell(foundry_common::shell::Shell::from_args(
-                cmd.inner_args.opts.args.silent,
-                cmd.inner_args.json,
+                cmd.opts.args.silent,
+                cmd.json,
             ))?;
             utils::block_on(cmd.run_script())
         }

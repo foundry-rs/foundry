@@ -38,10 +38,9 @@ impl ScriptArgs {
                 .map(|(_, tx)| *tx.from().expect("No sender for onchain transaction!"))
                 .collect();
 
-            let (send_kind, chain) = if self.inner_args.unlocked {
+            let (send_kind, chain) = if self.unlocked {
                 let chain = provider.get_chainid().await?;
                 let mut senders = HashSet::from([self
-                    .inner_args
                     .evm_opts
                     .sender
                     .wrap_err("--sender must be set with --unlocked")?]);
@@ -55,7 +54,6 @@ impl ScriptArgs {
                 (SendTransactionsKind::Unlocked(senders), chain.as_u64())
             } else {
                 let local_wallets = self
-                    .inner_args
                     .wallets
                     .find_all(provider.clone(), required_addresses, script_wallets)
                     .await?;
@@ -67,7 +65,7 @@ impl ScriptArgs {
             // is more than one signer. There would be no way of assuring their order
             // otherwise. Or if the chain does not support batched transactions (eg. Arbitrum).
             let sequential_broadcast =
-                send_kind.signers_count() != 1 || self.inner_args.slow || !has_batch_support(chain);
+                send_kind.signers_count() != 1 || self.slow || !has_batch_support(chain);
 
             // Make a one-time gas price estimation
             let (gas_price, eip1559_fees) = {
@@ -102,7 +100,7 @@ impl ScriptArgs {
 
                     tx.set_chain_id(chain);
 
-                    if let Some(gas_price) = self.inner_args.with_gas_price {
+                    if let Some(gas_price) = self.with_gas_price {
                         tx.set_gas_price(gas_price);
                     } else {
                         // fill gas price
@@ -113,8 +111,7 @@ impl ScriptArgs {
                             TypedTransaction::Eip1559(ref mut inner) => {
                                 let eip1559_fees =
                                     eip1559_fees.expect("Could not get eip1559 fee estimation.");
-                                if let Some(priority_gas_price) = self.inner_args.priority_gas_price
-                                {
+                                if let Some(priority_gas_price) = self.priority_gas_price {
                                     inner.max_priority_fee_per_gas = Some(priority_gas_price);
                                 } else {
                                     inner.max_priority_fee_per_gas = Some(eip1559_fees.1);
@@ -248,7 +245,7 @@ impl ScriptArgs {
                 // gas to be re-estimated right before broadcasting.
                 if !is_fixed_gas_limit &&
                     (has_different_gas_calc(provider.get_chainid().await?.as_u64()) ||
-                        self.inner_args.skip_simulation)
+                        self.skip_simulation)
                 {
                     self.estimate_gas(&mut tx, &provider).await?;
                 }
@@ -295,13 +292,13 @@ impl ScriptArgs {
 
                     let multi = MultiChainSequence::new(
                         deployments.clone(),
-                        &self.inner_args.sig,
+                        &self.sig,
                         script_config.target_contract(),
                         &script_config.config.broadcast,
-                        self.inner_args.broadcast,
+                        self.broadcast,
                     )?;
 
-                    if self.inner_args.broadcast {
+                    if self.broadcast {
                         self.multi_chain_deployment(
                             multi,
                             libraries,
@@ -311,7 +308,7 @@ impl ScriptArgs {
                         )
                         .await?;
                     }
-                } else if self.inner_args.broadcast {
+                } else if self.broadcast {
                     self.single_deployment(
                         deployments.first_mut().expect("to be set."),
                         script_config,
@@ -322,7 +319,7 @@ impl ScriptArgs {
                     .await?;
                 }
 
-                if !self.inner_args.broadcast {
+                if !self.broadcast {
                     shell::println("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
                 }
             } else {
@@ -349,7 +346,7 @@ impl ScriptArgs {
 
         self.send_transactions(deployment_sequence, &rpc, &result.script_wallets).await?;
 
-        if self.inner_args.verify {
+        if self.verify {
             return deployment_sequence.verify_contracts(&script_config.config, verify).await
         }
         Ok(())
@@ -383,7 +380,7 @@ impl ScriptArgs {
                     returns,
                 )
                 .await
-        } else if self.inner_args.broadcast {
+        } else if self.broadcast {
             eyre::bail!("No onchain transactions generated in script");
         }
 
@@ -400,7 +397,7 @@ impl ScriptArgs {
         decoder: &CallTraceDecoder,
         known_contracts: &ContractsByArtifact,
     ) -> Result<VecDeque<TransactionWithMetadata>> {
-        let gas_filled_txs = if self.inner_args.skip_simulation {
+        let gas_filled_txs = if self.skip_simulation {
             shell::println("\nSKIPPING ON CHAIN SIMULATION.")?;
             txs.into_iter()
                 .map(|btx| {
@@ -457,21 +454,20 @@ impl ScriptArgs {
             let tx_rpc = match tx.rpc.clone() {
                 Some(rpc) => rpc,
                 None => {
-                    let rpc = self.inner_args.evm_opts.ensure_fork_url()?.clone();
+                    let rpc = self.evm_opts.ensure_fork_url()?.clone();
                     // Fills the RPC inside the transaction, if missing one.
                     tx.rpc = Some(rpc.clone());
                     rpc
                 }
             };
 
-            let provider_info =
-                manager.get_or_init_provider(&tx_rpc, self.inner_args.legacy).await?;
+            let provider_info = manager.get_or_init_provider(&tx_rpc, self.legacy).await?;
 
             // Handles chain specific requirements.
             tx.change_type(provider_info.is_legacy);
             tx.transaction.set_chain_id(provider_info.chain);
 
-            if !self.inner_args.skip_simulation {
+            if !self.skip_simulation {
                 let typed_tx = tx.typed_tx_mut();
 
                 if has_different_gas_calc(provider_info.chain) {
@@ -514,10 +510,10 @@ impl ScriptArgs {
             let sequence = ScriptSequence::new(
                 new_sequence,
                 returns.clone(),
-                &self.inner_args.sig,
+                &self.sig,
                 target,
                 config,
-                self.inner_args.broadcast,
+                self.broadcast,
                 is_multi_deployment,
             )?;
 
@@ -529,14 +525,14 @@ impl ScriptArgs {
         // Restore previous config chain.
         config.chain_id = original_config_chain;
 
-        if !self.inner_args.skip_simulation {
+        if !self.skip_simulation {
             // Present gas information on a per RPC basis.
             for (rpc, total_gas) in total_gas_per_rpc {
                 let provider_info = manager.get(&rpc).expect("provider is set.");
 
                 // We don't store it in the transactions, since we want the most updated value.
                 // Right before broadcasting.
-                let per_gas = if let Some(gas_price) = self.inner_args.with_gas_price {
+                let per_gas = if let Some(gas_price) = self.with_gas_price {
                     gas_price
                 } else {
                     provider_info.gas_price()?
@@ -577,7 +573,7 @@ impl ScriptArgs {
 
         // Chains which use `eth_estimateGas` are being sent sequentially and require their gas
         // to be re-estimated right before broadcasting.
-        if has_different_gas_calc(signer.chain_id()) || self.inner_args.skip_simulation {
+        if has_different_gas_calc(signer.chain_id()) || self.skip_simulation {
             // if already set, some RPC endpoints might simply return the gas value that is
             // already set in the request and omit the estimate altogether, so
             // we remove it here
@@ -612,7 +608,7 @@ impl ScriptArgs {
                 .estimate_gas(tx, None)
                 .await
                 .wrap_err_with(|| format!("Failed to estimate gas for tx: {:?}", tx.sighash()))? *
-                self.inner_args.gas_estimate_multiplier /
+                self.gas_estimate_multiplier /
                 100,
         );
         Ok(())
