@@ -1,10 +1,10 @@
 use super::{install, test::FilterArgs};
+use alloy_primitives::{Address, Bytes, U256};
 use clap::{Parser, ValueEnum};
 use ethers::{
-    abi::Address,
     prelude::{
         artifacts::{Ast, CompactBytecode, CompactDeployedBytecode},
-        Artifact, Bytes, Project, ProjectCompileOutput, U256,
+        Artifact, Project, ProjectCompileOutput,
     },
     solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap},
 };
@@ -78,7 +78,7 @@ impl CoverageArgs {
         }
 
         // Set fuzz seed so coverage reports are deterministic
-        config.fuzz.seed = Some(U256::from_big_endian(&STATIC_FUZZ_SEED));
+        config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED).to_ethers());
 
         let (project, output) = self.build(&config)?;
         p_println!(!self.opts.silent => "Analysing contracts...");
@@ -288,9 +288,9 @@ impl CoverageArgs {
         // Build the contract runner
         let env = evm_opts.evm_env().await?;
         let mut runner = MultiContractRunnerBuilder::default()
-            .initial_balance(evm_opts.initial_balance.to_ethers())
+            .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
-            .sender(evm_opts.sender.to_ethers())
+            .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
             .with_test_options(TestOptions { fuzz: config.fuzz, ..Default::default() })
@@ -373,12 +373,12 @@ fn dummy_link_bytecode(mut obj: CompactBytecode) -> Option<Bytes> {
     let link_references = obj.link_references.clone();
     for (file, libraries) in link_references {
         for library in libraries.keys() {
-            obj.link(&file, library, Address::zero());
+            obj.link(&file, library, Address::ZERO.to_ethers());
         }
     }
 
     obj.object.resolve();
-    obj.object.into_bytes()
+    obj.object.into_bytes().map(|o| o.0.into())
 }
 
 /// Helper function that will link references in unlinked bytecode to the 0 address.

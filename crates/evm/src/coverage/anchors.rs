@@ -1,9 +1,7 @@
 use super::{CoverageItem, CoverageItemKind, ItemAnchor, SourceLocation};
 use crate::utils::ICPCMap;
-use ethers::prelude::{
-    sourcemap::{SourceElement, SourceMap},
-    Bytes,
-};
+use alloy_primitives::Bytes;
+use ethers::prelude::sourcemap::{SourceElement, SourceMap};
 use revm::{
     interpreter::opcode::{self, spec_opcode_gas},
     primitives::SpecId,

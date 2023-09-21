@@ -1,6 +1,6 @@
 use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
 use async_trait::async_trait;
-use ethers::{solc::ConfigurableContractArtifact, utils::to_checksum};
+use ethers::solc::ConfigurableContractArtifact;
 use eyre::Result;
 use foundry_cli::utils::{get_cached_entry_by_name, LoadConfig};
 use foundry_common::fs;
@@ -38,7 +38,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
                     println!(
                         "\nSubmitting verification for [{}] {:?}.",
                         args.contract.name,
-                        to_checksum(&args.address, None)
+                        args.address.to_checksum(None)
                     );
                     let response = client
                         .post(args.verifier.verifier_url.as_deref().unwrap_or(SOURCIFY_URL))

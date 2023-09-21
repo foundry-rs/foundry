@@ -1,6 +1,7 @@
 use super::retry::RetryArgs;
+use alloy_primitives::Address;
 use clap::{Parser, ValueHint};
-use ethers::{abi::Address, solc::info::ContractInfo};
+use ethers::solc::info::ContractInfo;
 use eyre::Result;
 use foundry_cli::{opts::EtherscanOpts, utils::LoadConfig};
 use foundry_config::{figment, impl_figment_convert, impl_figment_convert_cast, Config};

@@ -1,6 +1,6 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
+use alloy_primitives::U256;
 use clap::Parser;
-use ethers::types::U256;
 use eyre::Result;
 use forge::{
     decode::decode_console_logs,
@@ -33,7 +33,6 @@ use foundry_config::{
 };
 use foundry_debugger::DebuggerArgs;
 use foundry_evm::fuzz::CounterExample;
-use foundry_utils::types::ToEthers;
 use regex::Regex;
 use std::{collections::BTreeMap, fs, sync::mpsc::channel, time::Duration};
 use tracing::trace;
@@ -184,9 +183,9 @@ impl TestArgs {
 
         let mut runner_builder = MultiContractRunnerBuilder::default()
             .set_debug(should_debug)
-            .initial_balance(evm_opts.initial_balance.to_ethers())
+            .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
-            .sender(evm_opts.sender.to_ethers())
+            .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
             .with_test_options(test_options.clone());

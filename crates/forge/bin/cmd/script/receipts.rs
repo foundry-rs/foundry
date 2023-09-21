@@ -1,12 +1,10 @@
 use super::sequence::ScriptSequence;
-use ethers::{
-    prelude::{PendingTransaction, TxHash},
-    providers::Middleware,
-    types::TransactionReceipt,
-};
+use alloy_primitives::TxHash;
+use ethers::{prelude::PendingTransaction, providers::Middleware, types::TransactionReceipt};
 use eyre::Result;
 use foundry_cli::{init_progress, update_progress, utils::print_receipt};
 use foundry_common::RetryProvider;
+use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::StreamExt;
 use std::sync::Arc;
 use tracing::{trace, warn};
@@ -87,7 +85,7 @@ pub async fn clear_pendings(
             }
             Ok(TxStatus::Success(receipt)) => {
                 trace!(tx_hash = ?tx_hash, "received tx receipt");
-                deployment_sequence.remove_pending(receipt.transaction_hash);
+                deployment_sequence.remove_pending(receipt.transaction_hash.to_alloy());
                 receipts.push(receipt);
             }
             Ok(TxStatus::Revert(receipt)) => {
@@ -95,7 +93,7 @@ pub async fn clear_pendings(
                 // if this is not removed from pending, then the script becomes
                 // un-resumable. Is this desirable on reverts?
                 warn!(tx_hash = ?tx_hash, "Transaction Failure");
-                deployment_sequence.remove_pending(receipt.transaction_hash);
+                deployment_sequence.remove_pending(receipt.transaction_hash.to_alloy());
                 errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash));
             }
         }
@@ -136,14 +134,14 @@ async fn check_tx_status(
     // still neatly return the tuple
     let result = async move {
         // First check if there's a receipt
-        let receipt_opt = provider.get_transaction_receipt(hash).await?;
+        let receipt_opt = provider.get_transaction_receipt(hash.to_ethers()).await?;
         if let Some(receipt) = receipt_opt {
             return Ok(receipt.into())
         }
 
         // If the tx is present in the mempool, run the pending tx future, and
         // assume the next drop is really really real
-        let pending_res = PendingTransaction::new(hash, provider).await?;
+        let pending_res = PendingTransaction::new(hash.to_ethers(), provider).await?;
         match pending_res {
             Some(receipt) => Ok(receipt.into()),
             None => Ok(TxStatus::Dropped),
