@@ -20,7 +20,7 @@ use forge::{
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{shell, RpcUrl};
-use foundry_evm::utils::{b160_to_h160, ru256_to_u256};
+use foundry_utils::types::ToEthers;
 use futures::future::join_all;
 use parking_lot::RwLock;
 use std::{collections::VecDeque, sync::Arc};
@@ -264,7 +264,7 @@ impl ScriptArgs {
                     rpc.clone(),
                     self.prepare_runner(
                         &mut script_config,
-                        b160_to_h160(sender),
+                        sender.to_ethers(),
                         SimulationStage::OnChain,
                     )
                     .await,
@@ -324,7 +324,7 @@ impl ScriptArgs {
 
         ScriptRunner::new(
             builder.build(env, db),
-            ru256_to_u256(script_config.evm_opts.initial_balance),
+            script_config.evm_opts.initial_balance.to_ethers(),
             sender,
         )
     }

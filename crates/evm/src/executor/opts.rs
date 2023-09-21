@@ -110,6 +110,7 @@ impl EvmOpts {
                 prevrandao: Some(self.env.block_prevrandao),
                 basefee: U256::from(self.env.block_base_fee_per_gas),
                 gas_limit: self.gas_limit(),
+                ..Default::default()
             },
             cfg,
             tx: TxEnv {

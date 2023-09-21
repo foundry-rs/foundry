@@ -1,12 +1,11 @@
 use alloy_primitives::{Address, B256};
 use ethers::types::transaction::eip2930::{AccessList, AccessListItem};
+use foundry_utils::types::{ToAlloy, ToEthers};
 use hashbrown::{HashMap, HashSet};
 use revm::{
     interpreter::{opcode, InstructionResult, Interpreter},
     Database, EVMData, Inspector,
 };
-
-use crate::utils::{b160_to_h160, b256_to_h256, h160_to_b160, h256_to_b256};
 
 /// An inspector that collects touched accounts and storage slots.
 #[derive(Default, Debug)]
@@ -29,8 +28,8 @@ impl AccessListTracer {
                 .iter()
                 .map(|v| {
                     (
-                        h160_to_b160(v.address),
-                        v.storage_keys.iter().copied().map(h256_to_b256).collect(),
+                        v.address.to_alloy(),
+                        v.storage_keys.iter().copied().map(|v| v.to_alloy()).collect(),
                     )
                 })
                 .collect(),
@@ -41,8 +40,8 @@ impl AccessListTracer {
             self.access_list
                 .iter()
                 .map(|(address, slots)| AccessListItem {
-                    address: b160_to_h160(*address),
-                    storage_keys: slots.iter().copied().map(b256_to_h256).collect(),
+                    address: address.to_ethers(),
+                    storage_keys: slots.iter().copied().map(|k| k.to_ethers()).collect(),
                 })
                 .collect::<Vec<AccessListItem>>(),
         )

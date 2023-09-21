@@ -1,8 +1,9 @@
 use ethers::{
     abi::{Abi, FixedBytes, Function},
-    types::{Block, Chain, H160, H256, U256},
+    types::{Block, Chain, H256, U256},
 };
 use eyre::ContextCompat;
+use foundry_utils::types::ToAlloy;
 use revm::{
     interpreter::{opcode, opcode::spec_opcode_gas, InstructionResult},
     primitives::{Eval, Halt, SpecId},
@@ -35,50 +36,6 @@ pub fn h256_to_u256_be(storage: H256) -> U256 {
 #[inline]
 pub fn h256_to_u256_le(storage: H256) -> U256 {
     U256::from_little_endian(storage.as_bytes())
-}
-
-/// Small helper function to convert revm's [B160] into ethers's [H160].
-#[inline]
-pub fn b160_to_h160(b: alloy_primitives::Address) -> ethers::types::H160 {
-    H160::from_slice(b.as_slice())
-}
-
-/// Small helper function to convert ethers's [H160] into revm's [B160].
-#[inline]
-pub fn h160_to_b160(h: ethers::types::H160) -> alloy_primitives::Address {
-    alloy_primitives::Address::from_slice(h.as_bytes())
-}
-
-/// Small helper function to convert revm's [B256] into ethers's [H256].
-#[inline]
-pub fn b256_to_h256(b: revm::primitives::B256) -> ethers::types::H256 {
-    ethers::types::H256(b.0)
-}
-
-/// Small helper function to convert ether's [H256] into revm's [B256].
-#[inline]
-pub fn h256_to_b256(h: ethers::types::H256) -> alloy_primitives::B256 {
-    alloy_primitives::B256::from_slice(h.as_bytes())
-}
-
-/// Small helper function to convert ether's [U256] into revm's [U256].
-#[inline]
-pub fn u256_to_ru256(u: ethers::types::U256) -> revm::primitives::U256 {
-    let mut buffer = [0u8; 32];
-    u.to_little_endian(buffer.as_mut_slice());
-    revm::primitives::U256::from_le_bytes(buffer)
-}
-
-// Small helper function to convert ethers's [U64] into alloy's [U64].
-#[inline]
-pub fn u64_to_ru64(u: ethers::types::U64) -> alloy_primitives::U64 {
-    alloy_primitives::U64::from(u.as_u64())
-}
-
-/// Small helper function to convert revm's [U256] into ethers's [U256].
-#[inline]
-pub fn ru256_to_u256(u: alloy_primitives::U256) -> ethers::types::U256 {
-    ethers::types::U256::from_little_endian(&u.as_le_bytes())
 }
 
 /// Small helper function to convert an Eval into an InstructionResult
@@ -145,7 +102,7 @@ pub fn apply_chain_and_block_specific_env_changes<T>(
                 // `l1BlockNumber` field
                 if let Some(l1_block_number) = block.other.get("l1BlockNumber").cloned() {
                     if let Ok(l1_block_number) = serde_json::from_value::<U256>(l1_block_number) {
-                        env.block.number = u256_to_ru256(l1_block_number);
+                        env.block.number = l1_block_number.to_alloy();
                     }
                 }
             }

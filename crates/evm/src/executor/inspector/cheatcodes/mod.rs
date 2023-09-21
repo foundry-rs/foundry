@@ -10,19 +10,20 @@ use crate::{
         backend::DatabaseExt, inspector::cheatcodes::env::RecordedLogs, CHEATCODE_ADDRESS,
         HARDHAT_CONSOLE_ADDRESS,
     },
-    utils::{b160_to_h160, b256_to_h256, h160_to_b160, ru256_to_u256, u256_to_ru256},
 };
-use alloy_primitives::{Address as rAddress, B256};
+use alloy_primitives::{Address as rAddress, Bytes, B256};
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
     signers::LocalWallet,
     types::{
-        transaction::eip2718::TypedTransaction, Address, Bytes, NameOrAddress, TransactionRequest,
-        U256,
+        transaction::eip2718::TypedTransaction, Address, NameOrAddress, TransactionRequest, U256,
     },
 };
 use foundry_common::evm::Breakpoints;
-use foundry_utils::error::SolError;
+use foundry_utils::{
+    error::SolError,
+    types::{ToAlloy, ToEthers},
+};
 use itertools::Itertools;
 use revm::{
     interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
@@ -221,7 +222,7 @@ impl Cheatcodes {
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
-        data.db.ensure_cheatcode_access_forking_mode(h160_to_b160(caller))?;
+        data.db.ensure_cheatcode_access_forking_mode(caller.to_alloy())?;
 
         let opt = env::apply(self, data, caller, &decoded)
             .transpose()
@@ -286,8 +287,8 @@ impl Cheatcodes {
         // This will prevent overflow issues in revm's [`JournaledState::journal_revert`] routine
         // which rolls back any transfers.
         while let Some(record) = self.eth_deals.pop() {
-            if let Some(acc) = data.journaled_state.state.get_mut(&h160_to_b160(record.address)) {
-                acc.info.balance = u256_to_ru256(record.old_balance);
+            if let Some(acc) = data.journaled_state.state.get_mut(&record.address.to_alloy()) {
+                acc.info.balance = record.old_balance.to_alloy();
             }
         }
     }
@@ -306,7 +307,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             data.env.block = block;
         }
         if let Some(gas_price) = self.gas_price.take() {
-            data.env.tx.gas_price = u256_to_ru256(gas_price);
+            data.env.tx.gas_price = gas_price.to_alloy();
         }
 
         InstructionResult::Continue
@@ -383,9 +384,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     let key = try_or_continue!(interpreter.stack().peek(0));
                     storage_accesses
                         .reads
-                        .entry(b160_to_h160(interpreter.contract().address))
+                        .entry(interpreter.contract().address.to_ethers())
                         .or_insert_with(Vec::new)
-                        .push(ru256_to_u256(key));
+                        .push(key.to_ethers());
                 }
                 opcode::SSTORE => {
                     let key = try_or_continue!(interpreter.stack().peek(0));
@@ -393,14 +394,14 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     // An SSTORE does an SLOAD internally
                     storage_accesses
                         .reads
-                        .entry(b160_to_h160(interpreter.contract().address))
+                        .entry(interpreter.contract().address.to_ethers())
                         .or_insert_with(Vec::new)
-                        .push(ru256_to_u256(key));
+                        .push(key.to_ethers());
                     storage_accesses
                         .writes
-                        .entry(b160_to_h160(interpreter.contract().address))
+                        .entry(interpreter.contract().address.to_ethers())
                         .or_insert_with(Vec::new)
-                        .push(ru256_to_u256(key));
+                        .push(key.to_ethers());
                 }
                 _ => (),
             }
@@ -428,7 +429,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
                         opcode::MSTORE => {
                             // The offset of the mstore operation is at the top of the stack.
-                            let offset = ru256_to_u256(try_or_continue!(interpreter.stack().peek(0))).as_u64();
+                            let offset = try_or_continue!(interpreter.stack().peek(0)).to_ethers().as_u64();
 
                             // If none of the allowed ranges contain [offset, offset + 32), memory has been
                             // unexpectedly mutated.
@@ -441,7 +442,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         }
                         opcode::MSTORE8 => {
                             // The offset of the mstore8 operation is at the top of the stack.
-                            let offset = ru256_to_u256(try_or_continue!(interpreter.stack().peek(0))).as_u64();
+                            let offset = try_or_continue!(interpreter.stack().peek(0)).to_ethers().as_u64();
 
                             // If none of the allowed ranges contain the offset, memory has been
                             // unexpectedly mutated.
@@ -457,7 +458,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
                         opcode::MLOAD => {
                             // The offset of the mload operation is at the top of the stack
-                            let offset = ru256_to_u256(try_or_continue!(interpreter.stack().peek(0))).as_u64();
+                            let offset = try_or_continue!(interpreter.stack().peek(0)).to_ethers().as_u64();
 
                             // If the offset being loaded is >= than the memory size, the
                             // memory is being expanded. If none of the allowed ranges contain
@@ -476,10 +477,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
                         $(opcode::$opcode => {
                             // The destination offset of the operation is at the top of the stack.
-                            let dest_offset = ru256_to_u256(try_or_continue!(interpreter.stack().peek($offset_depth))).as_u64();
+                            let dest_offset = try_or_continue!(interpreter.stack().peek($offset_depth)).to_ethers().as_u64();
 
                             // The size of the data that will be copied is the third item on the stack.
-                            let size = ru256_to_u256(try_or_continue!(interpreter.stack().peek($size_depth))).as_u64();
+                            let size = try_or_continue!(interpreter.stack().peek($size_depth)).to_ethers().as_u64();
 
                             // If none of the allowed ranges contain [dest_offset, dest_offset + size),
                             // memory outside of the expected ranges has been touched. If the opcode
@@ -548,19 +549,19 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             handle_expect_emit(
                 self,
                 RawLog {
-                    topics: topics.iter().copied().map(b256_to_h256).collect_vec(),
+                    topics: topics.iter().copied().map(|t| t.to_ethers()).collect_vec(),
                     data: data.to_vec(),
                 },
-                &b160_to_h160(*address),
+                &address.to_ethers(),
             );
         }
 
         // Stores this log if `recordLogs` has been called
         if let Some(storage_recorded_logs) = &mut self.recorded_logs {
             storage_recorded_logs.entries.push(Log {
-                emitter: b160_to_h160(*address),
+                emitter: address.to_ethers(),
                 inner: RawLog {
-                    topics: topics.iter().copied().map(b256_to_h256).collect_vec(),
+                    topics: topics.iter().copied().map(|t| t.to_ethers()).collect_vec(),
                     data: data.to_vec(),
                 },
             });
@@ -574,7 +575,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     ) -> (InstructionResult, Gas, alloy_primitives::Bytes) {
         if call.contract == CHEATCODE_ADDRESS {
             let gas = Gas::new(call.gas_limit);
-            match self.apply_cheatcode(data, b160_to_h160(call.context.caller), call) {
+            match self.apply_cheatcode(data, call.context.caller.to_ethers(), call) {
                 Ok(retdata) => (InstructionResult::Return, gas, alloy_primitives::Bytes(retdata.0)),
                 Err(err) => {
                     (InstructionResult::Revert, gas, alloy_primitives::Bytes(err.encode_error().0))
@@ -585,7 +586,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
             // Grab the different calldatas expected.
             if let Some(expected_calls_for_target) =
-                self.expected_calls.get_mut(&(b160_to_h160(call.contract)))
+                self.expected_calls.get_mut(&(call.contract.to_ethers()))
             {
                 // Match every partial/full calldata
                 for (calldata, (expected, actual_count)) in expected_calls_for_target.iter_mut() {
@@ -597,7 +598,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         // The value matches, if provided
                         expected
                             .value
-                            .map_or(true, |value| value == ru256_to_u256(call.transfer.value)) &&
+                            .map_or(true, |value| value == call.transfer.value.to_ethers()) &&
                         // The gas matches, if provided
                         expected.gas.map_or(true, |gas| gas == call.gas_limit) &&
                         // The minimum gas matches, if provided
@@ -609,10 +610,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
 
             // Handle mocked calls
-            if let Some(mocks) = self.mocked_calls.get(&b160_to_h160(call.contract)) {
+            if let Some(mocks) = self.mocked_calls.get(&call.contract.to_ethers()) {
                 let ctx = MockCallDataContext {
-                    calldata: ethers::types::Bytes::from(call.input.clone().0),
-                    value: Some(call.transfer.value).map(ru256_to_u256),
+                    calldata: call.input.clone().0.into(),
+                    value: Some(call.transfer.value).map(|v| v.to_ethers()),
                 };
                 if let Some(mock_retdata) = mocks.get(&ctx) {
                     return (
@@ -623,8 +624,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 } else if let Some((_, mock_retdata)) = mocks.iter().find(|(mock, _)| {
                     mock.calldata.len() <= call.input.len() &&
                         *mock.calldata == call.input[..mock.calldata.len()] &&
-                        mock.value
-                            .map_or(true, |value| value == ru256_to_u256(call.transfer.value))
+                        mock.value.map_or(true, |value| value == call.transfer.value.to_ethers())
                 }) {
                     return (
                         mock_retdata.ret_type,
@@ -637,19 +637,19 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             // Apply our prank
             if let Some(prank) = &self.prank {
                 if data.journaled_state.depth() >= prank.depth &&
-                    call.context.caller == h160_to_b160(prank.prank_caller)
+                    call.context.caller == prank.prank_caller.to_alloy()
                 {
                     let mut prank_applied = false;
                     // At the target depth we set `msg.sender`
                     if data.journaled_state.depth() == prank.depth {
-                        call.context.caller = h160_to_b160(prank.new_caller);
-                        call.transfer.source = h160_to_b160(prank.new_caller);
+                        call.context.caller = prank.new_caller.to_alloy();
+                        call.transfer.source = prank.new_caller.to_alloy();
                         prank_applied = true;
                     }
 
                     // At the target depth, or deeper, we set `tx.origin`
                     if let Some(new_origin) = prank.new_origin {
-                        data.env.tx.caller = h160_to_b160(new_origin);
+                        data.env.tx.caller = new_origin.to_alloy();
                         prank_applied = true;
                     }
 
@@ -669,15 +669,15 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // We do this because any subsequent contract calls *must* exist on chain and
                 // we only want to grab *this* call, not internal ones
                 if data.journaled_state.depth() == broadcast.depth &&
-                    call.context.caller == h160_to_b160(broadcast.original_caller)
+                    call.context.caller == broadcast.original_caller.to_alloy()
                 {
                     // At the target depth we set `msg.sender` & tx.origin.
                     // We are simulating the caller as being an EOA, so *both* must be set to the
                     // broadcast.origin.
-                    data.env.tx.caller = h160_to_b160(broadcast.new_origin);
+                    data.env.tx.caller = broadcast.new_origin.to_alloy();
 
-                    call.context.caller = h160_to_b160(broadcast.new_origin);
-                    call.transfer.source = h160_to_b160(broadcast.new_origin);
+                    call.context.caller = broadcast.new_origin.to_alloy();
+                    call.transfer.source = broadcast.new_origin.to_alloy();
                     // Add a `legacy` transaction to the VecDeque. We use a legacy transaction here
                     // because we only need the from, to, value, and data. We can later change this
                     // into 1559, in the cli package, relatively easily once we
@@ -685,7 +685,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     if !call.is_static {
                         if let Err(err) = data
                             .journaled_state
-                            .load_account(h160_to_b160(broadcast.new_origin), data.db)
+                            .load_account(broadcast.new_origin.to_alloy(), data.db)
                         {
                             return (
                                 InstructionResult::Revert,
@@ -699,15 +699,15 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         let account = data
                             .journaled_state
                             .state()
-                            .get_mut(&h160_to_b160(broadcast.new_origin))
+                            .get_mut(&broadcast.new_origin.to_alloy())
                             .unwrap();
 
                         self.broadcastable_transactions.push_back(BroadcastableTransaction {
                             rpc: data.db.active_fork_url(),
                             transaction: TypedTransaction::Legacy(TransactionRequest {
                                 from: Some(broadcast.new_origin),
-                                to: Some(NameOrAddress::Address(b160_to_h160(call.contract))),
-                                value: Some(call.transfer.value).map(ru256_to_u256),
+                                to: Some(NameOrAddress::Address(call.contract.to_ethers())),
+                                value: Some(call.transfer.value).map(|v| v.to_ethers()),
                                 data: Some(call.input.clone().0).map(ethers::types::Bytes),
                                 nonce: Some(account.info.nonce.into()),
                                 gas: if is_fixed_gas_limit {
@@ -763,7 +763,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Clean up pranks
         if let Some(prank) = &self.prank {
             if data.journaled_state.depth() == prank.depth {
-                data.env.tx.caller = h160_to_b160(prank.prank_origin);
+                data.env.tx.caller = prank.prank_origin.to_alloy();
 
                 // Clean single-call prank once we have returned to the original depth
                 if prank.single_call {
@@ -775,7 +775,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Clean up broadcast
         if let Some(broadcast) = &self.broadcast {
             if data.journaled_state.depth() == broadcast.depth {
-                data.env.tx.caller = h160_to_b160(broadcast.original_origin);
+                data.env.tx.caller = broadcast.original_origin.to_alloy();
 
                 // Clean single-call broadcast once we have returned to the original depth
                 if broadcast.single_call {
@@ -792,7 +792,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     false,
                     expected_revert.reason.as_ref(),
                     status,
-                    ethers::types::Bytes(retdata.0),
+                    retdata,
                 ) {
                     Err(error) => {
                         trace!(expected=?expected_revert, ?error, ?status, "Expected revert mismatch");
@@ -972,16 +972,16 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Apply our prank
         if let Some(prank) = &self.prank {
             if data.journaled_state.depth() >= prank.depth &&
-                call.caller == h160_to_b160(prank.prank_caller)
+                call.caller == prank.prank_caller.to_alloy()
             {
                 // At the target depth we set `msg.sender`
                 if data.journaled_state.depth() == prank.depth {
-                    call.caller = h160_to_b160(prank.new_caller);
+                    call.caller = prank.new_caller.to_alloy();
                 }
 
                 // At the target depth, or deeper, we set `tx.origin`
                 if let Some(new_origin) = prank.new_origin {
-                    data.env.tx.caller = h160_to_b160(new_origin);
+                    data.env.tx.caller = new_origin.to_alloy();
                 }
             }
         }
@@ -989,10 +989,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
             if data.journaled_state.depth() >= broadcast.depth &&
-                call.caller == h160_to_b160(broadcast.original_caller)
+                call.caller == broadcast.original_caller.to_alloy()
             {
                 if let Err(err) =
-                    data.journaled_state.load_account(h160_to_b160(broadcast.new_origin), data.db)
+                    data.journaled_state.load_account(broadcast.new_origin.to_alloy(), data.db)
                 {
                     return (
                         InstructionResult::Revert,
@@ -1002,7 +1002,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     )
                 }
 
-                data.env.tx.caller = h160_to_b160(broadcast.new_origin);
+                data.env.tx.caller = broadcast.new_origin.to_alloy();
 
                 if data.journaled_state.depth() == broadcast.depth {
                     let (bytecode, to, nonce) = match process_create(
@@ -1029,7 +1029,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         transaction: TypedTransaction::Legacy(TransactionRequest {
                             from: Some(broadcast.new_origin),
                             to,
-                            value: Some(call.value).map(ru256_to_u256),
+                            value: Some(call.value).map(|v| v.to_ethers()),
                             data: Some(bytecode.into()),
                             nonce: Some(nonce.into()),
                             gas: if is_fixed_gas_limit {
@@ -1064,7 +1064,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Clean up pranks
         if let Some(prank) = &self.prank {
             if data.journaled_state.depth() == prank.depth {
-                data.env.tx.caller = h160_to_b160(prank.prank_origin);
+                data.env.tx.caller = prank.prank_origin.to_alloy();
 
                 // Clean single-call prank once we have returned to the original depth
                 if prank.single_call {
@@ -1076,7 +1076,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Clean up broadcasts
         if let Some(broadcast) = &self.broadcast {
             if data.journaled_state.depth() == broadcast.depth {
-                data.env.tx.caller = h160_to_b160(broadcast.original_origin);
+                data.env.tx.caller = broadcast.original_origin.to_alloy();
 
                 // Clean single-call broadcast once we have returned to the original depth
                 if broadcast.single_call {
@@ -1093,11 +1093,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     true,
                     expected_revert.reason.as_ref(),
                     status,
-                    ethers::types::Bytes(retdata.0),
+                    retdata,
                 ) {
                     Ok((address, retdata)) => (
                         InstructionResult::Return,
-                        address.map(h160_to_b160),
+                        address.map(|a| a.to_alloy()),
                         remaining_gas,
                         alloy_primitives::Bytes(retdata.0),
                     ),

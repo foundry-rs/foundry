@@ -16,13 +16,14 @@ use crate::{
         },
         FuzzCase, FuzzedCases,
     },
-    utils::{b160_to_h160, get_function, h160_to_b160},
+    utils::get_function,
     CALLER,
 };
 use ethers::abi::{Abi, Address, Detokenize, FixedBytes, Tokenizable, TokenizableItem};
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::{FuzzDictionaryConfig, InvariantConfig};
+use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::{Mutex, RwLock};
 use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},
@@ -149,8 +150,8 @@ impl<'a> InvariantExecutor<'a> {
                 // Executes the call from the randomly generated sequence.
                 let call_result = executor
                     .call_raw(
-                        h160_to_b160(*sender),
-                        h160_to_b160(*address),
+                        sender.to_alloy(),
+                        address.to_alloy(),
                         calldata.0.clone().into(),
                         rU256::ZERO,
                     )
@@ -424,8 +425,8 @@ impl<'a> InvariantExecutor<'a> {
             .into_iter()
             .filter(|(addr, (identifier, _))| {
                 *addr != invariant_address &&
-                    *addr != b160_to_h160(CHEATCODE_ADDRESS) &&
-                    *addr != b160_to_h160(HARDHAT_CONSOLE_ADDRESS) &&
+                    *addr != CHEATCODE_ADDRESS.to_ethers() &&
+                    *addr != HARDHAT_CONSOLE_ADDRESS.to_ethers() &&
                     (selected.is_empty() || selected.contains(addr)) &&
                     (self.artifact_filters.targeted.is_empty() ||
                         self.artifact_filters.targeted.contains_key(identifier)) &&
@@ -567,7 +568,7 @@ impl<'a> InvariantExecutor<'a> {
         if let Some(func) = abi.functions().find(|func| func.name == method_name) {
             if let Ok(call_result) = self.executor.call::<Vec<T>, _, _>(
                 CALLER,
-                h160_to_b160(address),
+                address.to_alloy(),
                 func.clone(),
                 (),
                 rU256::ZERO,
@@ -599,7 +600,7 @@ fn collect_data(
     // Verify it has no code.
     let mut has_code = false;
     if let Some(Some(code)) =
-        state_changeset.get(&h160_to_b160(*sender)).map(|account| account.info.code.as_ref())
+        state_changeset.get(&sender.to_alloy()).map(|account| account.info.code.as_ref())
     {
         has_code = !code.is_empty();
     }
@@ -607,14 +608,14 @@ fn collect_data(
     // We keep the nonce changes to apply later.
     let mut sender_changeset = None;
     if !has_code {
-        sender_changeset = state_changeset.remove(&h160_to_b160(*sender));
+        sender_changeset = state_changeset.remove(&sender.to_alloy());
     }
 
     collect_state_from_call(&call_result.logs, &*state_changeset, fuzz_state, config);
 
     // Re-add changes
     if let Some(changed) = sender_changeset {
-        state_changeset.insert(h160_to_b160(*sender), changed);
+        state_changeset.insert(sender.to_alloy(), changed);
     }
 }
 
@@ -637,7 +638,7 @@ fn can_continue(
 
     // Detect handler assertion failures first.
     let handlers_failed = targeted_contracts.lock().iter().any(|contract| {
-        !executor.is_success(h160_to_b160(*contract.0), false, state_changeset.clone(), false)
+        !executor.is_success(contract.0.to_alloy(), false, state_changeset.clone(), false)
     });
 
     // Assert invariants IFF the call did not revert and the handlers did not fail.

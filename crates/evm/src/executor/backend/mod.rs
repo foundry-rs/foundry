@@ -8,7 +8,6 @@ use crate::{
         inspector::{cheatcodes::Cheatcodes, DEFAULT_CREATE2_DEPLOYER},
         snapshot::Snapshots,
     },
-    utils::{b256_to_h256, h160_to_b160, h256_to_b256, ru256_to_u256, u256_to_ru256, u64_to_ru64},
     CALLER, TEST_CONTRACT_ADDRESS,
 };
 use alloy_primitives::{b256, Address, B256, U256, U64};
@@ -17,6 +16,7 @@ use ethers::{
     types::{BlockNumber, Transaction},
     utils::keccak256,
 };
+use foundry_utils::types::{ToAlloy, ToEthers};
 pub use in_memory_db::MemDb;
 use revm::{
     db::{CacheDB, DatabaseRef},
@@ -492,6 +492,22 @@ impl Backend {
         ret
     }
 
+    /// Completely replace an account's storage without overriding account info.
+    ///
+    /// When forking, this causes the backend to assume a `0` value for all
+    /// unset storage slots instead of trying to fetch it.
+    pub fn replace_account_storage(
+        &mut self,
+        address: Address,
+        storage: Map<U256, U256>,
+    ) -> Result<(), DatabaseError> {
+        if let Some(db) = self.active_fork_db_mut() {
+            db.replace_account_storage(address, storage)
+        } else {
+            self.mem_db.replace_account_storage(address, storage)
+        }
+    }
+
     /// Returns all snapshots created in this backend
     pub fn snapshots(&self) -> &Snapshots<BackendSnapshot<BackendDatabaseSnapshot>> {
         &self.inner.snapshots
@@ -842,10 +858,10 @@ impl Backend {
         let full_block = fork
             .db
             .db
-            .get_full_block(BlockNumber::Number(ru256_to_u256(env.block.number).as_u64().into()))?;
+            .get_full_block(BlockNumber::Number(env.block.number.to_ethers().as_u64().into()))?;
 
         for tx in full_block.transactions.into_iter() {
-            if tx.hash().eq(&b256_to_h256(tx_hash)) {
+            if tx.hash().eq(&tx_hash.to_ethers()) {
                 // found the target transaction
                 return Ok(Some(tx))
             }
@@ -1134,13 +1150,13 @@ impl DatabaseExt for Backend {
         self.roll_fork(Some(id), fork_block.to(), env, journaled_state)?;
 
         // update the block's env accordingly
-        env.block.timestamp = u256_to_ru256(block.timestamp);
-        env.block.coinbase = h160_to_b160(block.author.unwrap_or_default());
-        env.block.difficulty = u256_to_ru256(block.difficulty);
-        env.block.prevrandao = block.mix_hash.map(h256_to_b256);
-        env.block.basefee = u256_to_ru256(block.base_fee_per_gas.unwrap_or_default());
-        env.block.gas_limit = u256_to_ru256(block.gas_limit);
-        env.block.number = block.number.map(u64_to_ru64).unwrap_or(fork_block).to();
+        env.block.timestamp = block.timestamp.to_alloy();
+        env.block.coinbase = block.author.unwrap_or_default().to_alloy();
+        env.block.difficulty = block.difficulty.to_alloy();
+        env.block.prevrandao = block.mix_hash.map(|h| h.to_alloy());
+        env.block.basefee = block.base_fee_per_gas.unwrap_or_default().to_alloy();
+        env.block.gas_limit = block.gas_limit.to_alloy();
+        env.block.number = block.number.map(|n| n.to_alloy()).unwrap_or(fork_block).to();
 
         // replay all transactions that came before
         let env = env.clone();

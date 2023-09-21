@@ -13,8 +13,8 @@ use foundry_evm::{
         fork::database::ForkDbSnapshot,
     },
     revm::Database,
-    utils::{b160_to_h160, h160_to_b160, h256_to_b256, ru256_to_u256, u256_to_ru256},
 };
+use foundry_utils::types::{ToAlloy, ToEthers};
 
 /// Implement the helper for the fork database
 impl Db for ForkedDatabase {
@@ -24,12 +24,12 @@ impl Db for ForkedDatabase {
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()> {
         // this ensures the account is loaded first
-        let _ = Database::basic(self, h160_to_b160(address))?;
+        let _ = Database::basic(self, address.to_alloy())?;
         self.database_mut().set_storage_at(address, slot, val)
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: H256) {
-        self.inner().block_hashes().write().insert(u256_to_ru256(number), h256_to_b256(hash));
+        self.inner().block_hashes().write().insert(number.to_alloy(), hash.to_alloy());
     }
 
     fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
@@ -47,15 +47,15 @@ impl Db for ForkedDatabase {
                 }
                 .to_checked();
                 Ok((
-                    b160_to_h160(k),
+                    k.to_ethers(),
                     SerializableAccountRecord {
                         nonce: v.info.nonce,
-                        balance: ru256_to_u256(v.info.balance),
+                        balance: v.info.balance.to_ethers(),
                         code: code.bytes()[..code.len()].to_vec().into(),
                         storage: v
                             .storage
                             .into_iter()
-                            .map(|kv| (ru256_to_u256(kv.0), ru256_to_u256(kv.1)))
+                            .map(|kv| (kv.0.to_ethers(), kv.1.to_ethers()))
                             .collect(),
                     },
                 ))
@@ -65,11 +65,11 @@ impl Db for ForkedDatabase {
     }
 
     fn snapshot(&mut self) -> U256 {
-        ru256_to_u256(self.insert_snapshot())
+        self.insert_snapshot().to_ethers()
     }
 
     fn revert(&mut self, id: U256) -> bool {
-        self.revert_snapshot(u256_to_ru256(id))
+        self.revert_snapshot(id.to_alloy())
     }
 
     fn current_state(&self) -> StateDb {
