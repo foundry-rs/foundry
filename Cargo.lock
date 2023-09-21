@@ -2771,11 +2771,13 @@ dependencies = [
 name = "foundry-test-utils"
 version = "0.2.0"
 dependencies = [
+ "alloy-primitives",
  "ethers",
  "ethers-solc",
  "eyre",
  "foundry-common",
  "foundry-config",
+ "foundry-utils",
  "once_cell",
  "parking_lot",
  "pretty_assertions",
