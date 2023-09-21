@@ -138,16 +138,18 @@ foundry-debugger = { path = "crates/debugger" }
 revm = { version = "3", default-features = false }
 revm-primitives = { version = "1", default-features = false }
 
-ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-signers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+## ethers
+
+ethers = { version = "2.0", default-features = false }
+ethers-addressbook = { version = "2.0", default-features = false }
+ethers-core = { version = "2.0", default-features = false }
+ethers-contract = { version = "2.0", default-features = false }
+ethers-contract-abigen = { version = "2.0", default-features = false }
+ethers-providers = { version = "2.0", default-features = false }
+ethers-signers = { version = "2.0", default-features = false }
+ethers-middleware = { version = "2.0", default-features = false }
+ethers-etherscan = { version = "2.0", default-features = false }
+ethers-solc = { version = "2.0", default-features = false }
 
 alloy-primitives = { version = "0.3", default-features = false }
 alloy-dyn-abi = { version = "0.3", default-features = false}
@@ -173,6 +175,18 @@ hex = { package = "const-hex", version = "1.6", features = ["hex"] }
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
+
+ethers = { git = "https://github.com/gakonst/ethers-rs" }
+ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs" }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs" }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs" }
+ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs" }
+ethers-providers = { git = "https://github.com/gakonst/ethers-rs" }
+ethers-signers = { git = "https://github.com/gakonst/ethers-rs" }
+ethers-middleware = { git = "https://github.com/gakonst/ethers-rs" }
+ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs" }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs" }
+
 revm = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
 revm-interpreter = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
 revm-precompile = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
