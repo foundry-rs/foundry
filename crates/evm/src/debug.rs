@@ -170,7 +170,7 @@ impl Display for Instruction {
             Instruction::OpCode(op) => write!(
                 f,
                 "{}",
-                OpCode::try_from_u8(*op).map_or_else(
+                OpCode::new(*op).map_or_else(
                     || format!("UNDEFINED(0x{op:02x})"),
                     |opcode| opcode.as_str().to_string(),
                 )

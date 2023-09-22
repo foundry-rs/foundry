@@ -67,8 +67,8 @@ use foundry_evm::{
         db::CacheDB,
         interpreter::{return_ok, InstructionResult},
         primitives::{
-            Account, BlockEnv, CreateScheme, EVMError, Env, ExecutionResult, Output, SpecId,
-            TransactTo, TxEnv, KECCAK_EMPTY,
+            Account, BlockEnv, CreateScheme, EVMError, Env, ExecutionResult, InvalidHeader, Output,
+            SpecId, TransactTo, TxEnv, KECCAK_EMPTY,
         },
     },
     utils::{eval_to_instruction_result, halt_to_instruction_result, u256_to_h256_be},
@@ -1066,9 +1066,15 @@ impl Backend {
                 EVMError::Transaction(invalid_tx) => {
                     return Err(BlockchainError::InvalidTransaction(invalid_tx.into()))
                 }
-                EVMError::PrevrandaoNotSet => return Err(BlockchainError::PrevrandaoNotSet),
                 EVMError::Database(e) => return Err(BlockchainError::DatabaseError(e)),
-                EVMError::ExcessBlobGasNotSet => return Err(BlockchainError::ExcessBlobGasNotSet),
+                EVMError::Header(e) => match e {
+                    InvalidHeader::ExcessBlobGasNotSet => {
+                        return Err(BlockchainError::ExcessBlobGasNotSet)
+                    }
+                    InvalidHeader::PrevrandaoNotSet => {
+                        return Err(BlockchainError::PrevrandaoNotSet)
+                    }
+                },
             },
         };
         let state = result_and_state.state;

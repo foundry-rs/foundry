@@ -869,7 +869,7 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
     ) {
         let memory = &debug_steps[current_step].memory;
         let stack_space = Block::default()
-            .title(format!("Memory (max expansion: {} bytes)", memory.effective_len()))
+            .title(format!("Memory (max expansion: {} bytes)", memory.len()))
             .borders(Borders::ALL);
         let memory = memory.data();
         let max_i = memory.len() / 32;
