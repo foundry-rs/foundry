@@ -2,8 +2,8 @@ use super::{
     test,
     test::{Test, TestOutcome},
 };
+use alloy_primitives::U256;
 use clap::{builder::RangedU64ValueParser, Parser, ValueHint};
-use ethers::types::U256;
 use eyre::{Context, Result};
 use forge::result::TestKindReport;
 use foundry_cli::utils::STATIC_FUZZ_SEED;
@@ -98,7 +98,7 @@ impl SnapshotArgs {
 
     pub async fn run(mut self) -> Result<()> {
         // Set fuzz seed so gas snapshots are deterministic
-        self.test.fuzz_seed = Some(U256::from_big_endian(&STATIC_FUZZ_SEED));
+        self.test.fuzz_seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
         let outcome = self.test.execute_tests().await?;
         outcome.ensure_ok()?;
