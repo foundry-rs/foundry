@@ -1,7 +1,7 @@
 use super::{fmt_err, Cheatcodes, Result};
 use crate::abi::HEVMCalls;
 use ethers::{
-    abi::{ParamType, Token},
+    abi::{ethereum_types::FromDecStrErr, ParamType, Token},
     prelude::*,
 };
 use foundry_macros::UIfmt;
@@ -52,6 +52,9 @@ fn parse_int(s: &str) -> Result<U256, String> {
     // `I256::from_hex_str`
     if s.starts_with("0x") || s.starts_with("+0x") || s.starts_with("-0x") {
         s.replacen("0x", "", 1).parse::<I256>().map_err(|err| err.to_string())
+    } else if s.chars().any(|c| !c.is_numeric()) {
+        // Throw if numeric string contains non-numeric characters
+        Err(ParseI256Error::InvalidDigit.to_string())
     } else {
         match I256::from_dec_str(s) {
             Ok(val) => Ok(val),
@@ -66,6 +69,9 @@ fn parse_int(s: &str) -> Result<U256, String> {
 fn parse_uint(s: &str) -> Result<U256, String> {
     if s.starts_with("0x") {
         s.parse::<U256>().map_err(|err| err.to_string())
+    } else if s.chars().any(|c| !c.is_numeric()) {
+        // Throw if numeric string contains non-numeric characters
+        Err(FromDecStrErr::InvalidCharacter.to_string())
     } else {
         match U256::from_dec_str(s) {
             Ok(val) => Ok(val),
