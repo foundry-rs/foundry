@@ -1661,7 +1661,24 @@ impl BackendInner {
 
     /// Returns a new, empty, `JournaledState` with set precompiles
     pub fn new_journaled_state(&self) -> JournaledState {
-        JournaledState::new(self.precompiles().len())
+        /// Helper function to convert from a `revm::precompile::SpecId` into a
+        /// `revm::primitives::SpecId` This only matters if the spec is Cancun or later, or
+        /// pre-Spurious Dragon.
+        fn precompiles_spec_id_to_primitives_spec_id(spec: SpecId) -> revm::primitives::SpecId {
+            match spec {
+                SpecId::HOMESTEAD => revm::primitives::SpecId::HOMESTEAD,
+                SpecId::BYZANTIUM => revm::primitives::SpecId::BYZANTIUM,
+                SpecId::ISTANBUL => revm::primitives::ISTANBUL,
+                SpecId::BERLIN => revm::primitives::BERLIN,
+                SpecId::CANCUN => revm::primitives::CANCUN,
+                // Point latest to berlin for now, as we don't wanna accidentally point to Cancun.
+                SpecId::LATEST => revm::primitives::BERLIN,
+            }
+        }
+        JournaledState::new(
+            self.precompiles().len(),
+            precompiles_spec_id_to_primitives_spec_id(self.precompile_id),
+        )
     }
 }
 

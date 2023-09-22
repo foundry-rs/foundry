@@ -5532,7 +5532,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "3.3.0"
-source = "git+https://github.com/Evalir/revm/?branch=reintroduce-alloy-rebased#04395590d58de5351057f51cb84b6172f83f0e7f"
+source = "git+https://github.com/Evalir/revm/?branch=reintroduce-alloy-rebased#ded453ea768a80dbcf27de56b0d35b68c92f140c"
 dependencies = [
  "auto_impl",
  "revm-interpreter",
@@ -5544,7 +5544,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "1.1.2"
-source = "git+https://github.com/Evalir/revm/?branch=reintroduce-alloy-rebased#04395590d58de5351057f51cb84b6172f83f0e7f"
+source = "git+https://github.com/Evalir/revm/?branch=reintroduce-alloy-rebased#ded453ea768a80dbcf27de56b0d35b68c92f140c"
 dependencies = [
  "derive_more",
  "enumn",
@@ -5555,10 +5555,9 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "2.0.3"
-source = "git+https://github.com/Evalir/revm/?branch=reintroduce-alloy-rebased#04395590d58de5351057f51cb84b6172f83f0e7f"
+source = "git+https://github.com/Evalir/revm/?branch=reintroduce-alloy-rebased#ded453ea768a80dbcf27de56b0d35b68c92f140c"
 dependencies = [
  "c-kzg",
- "hex",
  "k256",
  "num",
  "once_cell",
@@ -5572,7 +5571,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "1.1.2"
-source = "git+https://github.com/Evalir/revm/?branch=reintroduce-alloy-rebased#04395590d58de5351057f51cb84b6172f83f0e7f"
+source = "git+https://github.com/Evalir/revm/?branch=reintroduce-alloy-rebased#ded453ea768a80dbcf27de56b0d35b68c92f140c"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -5585,7 +5584,6 @@ dependencies = [
  "enumn",
  "hashbrown 0.14.0",
  "hex",
- "hex-literal",
  "once_cell",
  "primitive-types",
  "serde",

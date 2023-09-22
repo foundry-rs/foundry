@@ -1177,6 +1177,7 @@ mod revert_helper {
         let starting_offset = interpreter.memory.len();
         interpreter.memory.resize(starting_offset + bytes.len());
         interpreter.memory.set_data(starting_offset, 0, bytes.len(), &bytes);
-        interpreter.return_range = starting_offset..interpreter.memory.len();
+        interpreter.return_offset = starting_offset;
+        interpreter.return_len = interpreter.memory.len() - starting_offset
     }
 }
