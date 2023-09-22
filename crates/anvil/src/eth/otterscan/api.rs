@@ -86,7 +86,7 @@ impl EthApi {
     pub async fn ots_get_block_details(&self, number: BlockNumber) -> Result<OtsBlockDetails> {
         node_info!("ots_getBlockDetails");
 
-        if let Some(block) = self.backend.block_by_number_full(number).await? {
+        if let Some(block) = self.backend.block_by_number(number).await? {
             let ots_block = OtsBlockDetails::build(block, &self.backend).await?;
 
             Ok(ots_block)
@@ -101,7 +101,7 @@ impl EthApi {
     pub async fn ots_get_block_details_by_hash(&self, hash: H256) -> Result<OtsBlockDetails> {
         node_info!("ots_getBlockDetailsByHash");
 
-        if let Some(block) = self.backend.block_by_hash_full(hash).await? {
+        if let Some(block) = self.backend.block_by_hash(hash).await? {
             let ots_block = OtsBlockDetails::build(block, &self.backend).await?;
 
             Ok(ots_block)
