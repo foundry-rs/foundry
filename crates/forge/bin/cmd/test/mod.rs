@@ -230,7 +230,6 @@ impl TestArgs {
         if should_debug {
             let tests = outcome.clone().into_tests();
 
-            let mut decoded_traces = Vec::new();
             let mut decoders = Vec::new();
             for test in tests {
                 let mut result = test.result;
@@ -280,10 +279,6 @@ impl TestArgs {
                         // to print it
                         if should_include || self.gas_report {
                             decoder.decode(trace).await;
-                        }
-
-                        if should_include {
-                            decoded_traces.push(trace.to_string());
                         }
                     }
                 }
