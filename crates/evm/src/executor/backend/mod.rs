@@ -1666,12 +1666,13 @@ impl BackendInner {
         /// pre-Spurious Dragon.
         fn precompiles_spec_id_to_primitives_spec_id(spec: SpecId) -> revm::primitives::SpecId {
             match spec {
-                SpecId::HOMESTEAD => revm::primitives::SpecId::SPURIOUS_DRAGON,
-                SpecId::BYZANTIUM => revm::primitives::SpecId::PETERSBURG,
-                SpecId::ISTANBUL => revm::primitives::MUIR_GLACIER,
-                SpecId::BERLIN => revm::primitives::SHANGHAI,
+                SpecId::HOMESTEAD => revm::primitives::SpecId::HOMESTEAD,
+                SpecId::BYZANTIUM => revm::primitives::SpecId::BYZANTIUM,
+                SpecId::ISTANBUL => revm::primitives::ISTANBUL,
+                SpecId::BERLIN => revm::primitives::BERLIN,
                 SpecId::CANCUN => revm::primitives::CANCUN,
-                SpecId::LATEST => revm::primitives::LATEST,
+                // Point latest to berlin for now, as we don't wanna accidentally point to Cancun.
+                SpecId::LATEST => revm::primitives::BERLIN,
             }
         }
         JournaledState::new(
