@@ -14,7 +14,11 @@ use ethers::{
 use foundry_common::SELECTOR_LEN;
 use foundry_evm::{
     executor::backend::DatabaseError,
-    revm::{self, interpreter::InstructionResult, primitives::EVMError},
+    revm::{
+        self,
+        interpreter::InstructionResult,
+        primitives::{EVMError, InvalidHeader},
+    },
 };
 use serde::Serialize;
 use tracing::error;
@@ -98,9 +102,11 @@ where
     fn from(err: EVMError<T>) -> Self {
         match err {
             EVMError::Transaction(err) => InvalidTransactionError::from(err).into(),
-            EVMError::PrevrandaoNotSet => BlockchainError::PrevrandaoNotSet,
+            EVMError::Header(err) => match err {
+                InvalidHeader::ExcessBlobGasNotSet => BlockchainError::ExcessBlobGasNotSet,
+                InvalidHeader::PrevrandaoNotSet => BlockchainError::PrevrandaoNotSet,
+            },
             EVMError::Database(err) => err.into(),
-            EVMError::ExcessBlobGasNotSet => BlockchainError::ExcessBlobGasNotSet,
         }
     }
 }
@@ -205,7 +211,7 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
         use revm::primitives::InvalidTransaction;
         match err {
             InvalidTransaction::InvalidChainId => InvalidTransactionError::InvalidChainId,
-            InvalidTransaction::GasMaxFeeGreaterThanPriorityFee => {
+            InvalidTransaction::PriorityFeeGreaterThanMaxFee => {
                 InvalidTransactionError::TipAboveFeeCap
             }
             InvalidTransaction::GasPriceLessThanBasefee => InvalidTransactionError::FeeCapTooLow,
@@ -246,6 +252,9 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::MaxFeePerBlobGasNotSupported => {
                 InvalidTransactionError::MaxFeePerBlobGasNotSupported
             }
+            // TODO: Blob-related errors should be handled once the Reth migration is done and code
+            // is moved over.
+            _ => todo!(),
         }
     }
 }

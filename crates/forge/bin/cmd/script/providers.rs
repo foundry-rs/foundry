@@ -1,7 +1,9 @@
-use ethers::prelude::{Middleware, Provider, U256};
+use alloy_primitives::U256;
+use ethers::prelude::{Middleware, Provider};
 use eyre::{Result, WrapErr};
 use foundry_common::{get_http_provider, runtime_client::RuntimeClient, RpcUrl};
 use foundry_config::Chain;
+use foundry_utils::types::ToAlloy;
 use std::{
     collections::{hash_map::Entry, HashMap},
     ops::Deref,
@@ -66,11 +68,19 @@ impl ProviderInfo {
 
         let gas_price = if is_legacy {
             GasPrice::Legacy(
-                provider.get_gas_price().await.wrap_err("Failed to get legacy gas price"),
+                provider
+                    .get_gas_price()
+                    .await
+                    .wrap_err("Failed to get legacy gas price")
+                    .map(|p| p.to_alloy()),
             )
         } else {
             GasPrice::EIP1559(
-                provider.estimate_eip1559_fees(None).await.wrap_err("Failed to get EIP-1559 fees"),
+                provider
+                    .estimate_eip1559_fees(None)
+                    .await
+                    .wrap_err("Failed to get EIP-1559 fees")
+                    .map(|p| (p.0.to_alloy(), p.1.to_alloy())),
             )
         };
 

@@ -1,8 +1,8 @@
 pub mod analysis;
 pub mod anchors;
 
+use alloy_primitives::B256;
 use bytes::Bytes;
-use ethers::types::H256;
 use semver::Version;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -115,7 +115,7 @@ impl CoverageReport {
 
 /// A collection of [HitMap]s
 #[derive(Default, Clone, Debug)]
-pub struct HitMaps(pub HashMap<H256, HitMap>);
+pub struct HitMaps(pub HashMap<B256, HitMap>);
 
 impl HitMaps {
     pub fn merge(mut self, other: HitMaps) -> Self {
@@ -132,7 +132,7 @@ impl HitMaps {
 }
 
 impl Deref for HitMaps {
-    type Target = HashMap<H256, HitMap>;
+    type Target = HashMap<B256, HitMap>;
 
     fn deref(&self) -> &Self::Target {
         &self.0

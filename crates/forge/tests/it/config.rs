@@ -14,7 +14,7 @@ use foundry_config::{
 use foundry_evm::{
     decode::decode_console_logs, executor::inspector::CheatsConfig, revm::primitives::SpecId,
 };
-use foundry_utils::types::ToEthers;
+use foundry_utils::types::ToAlloy;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -144,7 +144,7 @@ pub fn manifest_root() -> PathBuf {
 
 /// Builds a base runner
 pub fn base_runner() -> MultiContractRunnerBuilder {
-    MultiContractRunnerBuilder::default().sender(EVM_OPTS.sender.to_ethers())
+    MultiContractRunnerBuilder::default().sender(EVM_OPTS.sender)
 }
 
 /// Builds a non-tracing runner
@@ -161,7 +161,7 @@ pub async fn runner_with_config(mut config: Config) -> MultiContractRunner {
 
     base_runner()
         .with_cheats_config(CheatsConfig::new(&config, &EVM_OPTS))
-        .sender(config.sender)
+        .sender(config.sender.to_alloy())
         .build(
             &PROJECT.paths.root,
             (*COMPILED).clone(),

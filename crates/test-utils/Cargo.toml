@@ -14,9 +14,11 @@ repository.workspace = true
 [dependencies]
 foundry-config.workspace = true
 foundry-common.workspace = true
+foundry-utils.workspace = true
 
 ethers.workspace = true
 ethers-solc = { workspace = true, features = ["project-util"] }
+alloy-primitives = { workspace = true, features = ["std"]}
 
 eyre = "0.6"
 once_cell = "1"

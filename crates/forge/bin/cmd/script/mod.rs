@@ -1,19 +1,19 @@
 use self::{build::BuildOutput, runner::ScriptRunner};
 use super::{build::BuildArgs, retry::RetryArgs};
+use alloy_primitives::{Address, Bytes, U256};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers::{
     abi::{Abi, Function, HumanReadableParser},
     prelude::{
         artifacts::{ContractBytecodeSome, Libraries},
-        ArtifactId, Bytes, Project,
+        ArtifactId, Project,
     },
     providers::{Http, Middleware},
     signers::LocalWallet,
     solc::contracts::ArtifactContracts,
     types::{
-        transaction::eip2718::TypedTransaction, Address, Chain, Log, NameOrAddress,
-        TransactionRequest, U256,
+        transaction::eip2718::TypedTransaction, Chain, Log, NameOrAddress, TransactionRequest,
     },
 };
 use eyre::{ContextCompat, Result, WrapErr};
@@ -51,7 +51,7 @@ use foundry_evm::{
         DEFAULT_CREATE2_DEPLOYER,
     },
 };
-use foundry_utils::types::ToAlloy;
+use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::future;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -230,7 +230,9 @@ impl ScriptArgs {
 
         let mut local_identifier = LocalTraceIdentifier::new(known_contracts);
         let mut decoder = CallTraceDecoderBuilder::new()
-            .with_labels(result.labeled_addresses.iter().map(|(a, s)| (*a, s.clone())))
+            .with_labels(
+                result.labeled_addresses.iter().map(|(a, s)| ((*a).to_ethers(), s.clone())),
+            )
             .with_verbosity(verbosity)
             .with_signature_identifier(SignaturesIdentifier::new(
                 Config::foundry_cache_dir(),
@@ -400,13 +402,13 @@ impl ScriptArgs {
                     match &tx.transaction {
                         TypedTransaction::Legacy(tx) => {
                             if tx.to.is_none() {
-                                let sender = tx.from.expect("no sender");
+                                let sender = tx.from.expect("no sender").to_alloy();
                                 if let Some(ns) = new_sender {
                                     if sender != ns {
                                         shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
                                         return Ok(None)
                                     }
-                                } else if sender.to_alloy() != evm_opts.sender {
+                                } else if sender != evm_opts.sender {
                                     new_sender = Some(sender);
                                 }
                             }
@@ -433,9 +435,9 @@ impl ScriptArgs {
             .map(|(i, bytes)| BroadcastableTransaction {
                 rpc: fork_url.clone(),
                 transaction: TypedTransaction::Legacy(TransactionRequest {
-                    from: Some(from),
-                    data: Some(bytes.clone()),
-                    nonce: Some(nonce + i),
+                    from: Some(from.to_ethers()),
+                    data: Some(bytes.clone().0.into()),
+                    nonce: Some(nonce + U256::from(i)).map(|n| n.to_ethers()),
                     ..Default::default()
                 }),
             })
@@ -767,7 +769,7 @@ mod tests {
         ]);
         assert!(args.unlocked);
 
-        let key = U256::zero();
+        let key = U256::ZERO;
         let args = ScriptArgs::try_parse_from([
             "foundry-cli",
             "Contract.sol",

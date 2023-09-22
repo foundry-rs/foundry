@@ -5,7 +5,6 @@ use ethers::{
     prelude::{artifacts::BytecodeObject, ContractFactory, Middleware, MiddlewareBuilder},
     solc::{info::ContractInfo, utils::canonicalized},
     types::{transaction::eip2718::TypedTransaction, Chain},
-    utils::to_checksum,
 };
 use eyre::{Context, Result};
 use foundry_cli::{
@@ -13,6 +12,7 @@ use foundry_cli::{
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
 use foundry_common::{abi::parse_tokens, compile, estimate_eip1559_fees};
+use foundry_utils::types::ToAlloy;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 
@@ -268,17 +268,17 @@ impl CreateArgs {
         // Deploy the actual contract
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
 
-        let address = deployed_contract.address();
+        let address = deployed_contract.address().to_alloy();
         if self.json {
             let output = json!({
-                "deployer": to_checksum(&deployer_address, None),
-                "deployedTo": to_checksum(&address, None),
+                "deployer": deployer_address.to_alloy().to_checksum(None),
+                "deployedTo": address.to_checksum(None),
                 "transactionHash": receipt.transaction_hash
             });
             println!("{output}");
         } else {
-            println!("Deployer: {}", to_checksum(&deployer_address, None));
-            println!("Deployed to: {}", to_checksum(&address, None));
+            println!("Deployer: {}", deployer_address.to_alloy().to_checksum(None));
+            println!("Deployed to: {}", address.to_checksum(None));
             println!("Transaction hash: {:?}", receipt.transaction_hash);
         };
 
