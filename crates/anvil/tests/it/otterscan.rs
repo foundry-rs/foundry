@@ -260,7 +260,7 @@ async fn can_call_ots_get_block_details() {
     let result = api.ots_get_block_details(1.into()).await.unwrap();
 
     assert_eq!(result.block.transaction_count, 1);
-    assert_eq!(result.block.block.transactions[0].hash, receipt.transaction_hash);
+    assert_eq!(result.block.block.transactions[0], receipt.transaction_hash);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -278,7 +278,7 @@ async fn can_call_ots_get_block_details_by_hash() {
     let result = api.ots_get_block_details_by_hash(block_hash).await.unwrap();
 
     assert_eq!(result.block.transaction_count, 1);
-    assert_eq!(result.block.block.transactions[0].hash, receipt.transaction_hash);
+    assert_eq!(result.block.block.transactions[0], receipt.transaction_hash);
 }
 
 #[tokio::test(flavor = "multi_thread")]

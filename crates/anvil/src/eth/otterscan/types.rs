@@ -23,7 +23,7 @@ pub struct OtsBlock<TX> {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct OtsBlockDetails {
-    pub block: OtsBlock<Transaction>,
+    pub block: OtsBlock<H256>,
     pub total_fees: U256,
     pub issuance: Issuance,
 }
@@ -121,11 +121,9 @@ impl OtsBlockDetails {
     ///   - It breaks the abstraction built in `OtsBlock<TX>` which computes `transaction_count`
     ///   based on the existing list.
     /// Therefore we keep it simple by keeping the data in the response
-    pub async fn build(block: Block<Transaction>, backend: &Backend) -> Result<Self> {
-        let receipts_futs = block
-            .transactions
-            .iter()
-            .map(|tx| async { backend.transaction_receipt(tx.hash).await });
+    pub async fn build(block: Block<H256>, backend: &Backend) -> Result<Self> {
+        let receipts_futs =
+            block.transactions.iter().map(|tx| async { backend.transaction_receipt(*tx).await });
 
         // fetch all receipts
         let receipts: Vec<TransactionReceipt> = join_all(receipts_futs)
