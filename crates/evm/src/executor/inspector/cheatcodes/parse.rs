@@ -48,38 +48,53 @@ fn parse_token(s: &str, ty: &ParamType) -> Result<Token, String> {
 }
 
 fn parse_int(s: &str) -> Result<U256, String> {
-    // hex string may start with "0x", "+0x", or "-0x" which needs to be stripped for
+    // Only parse hex strings prefixed by 0x or decimal integer strings
+
+    // Hex string may start with "0x", "+0x", or "-0x" which needs to be stripped for
     // `I256::from_hex_str`
     if s.starts_with("0x") || s.starts_with("+0x") || s.starts_with("-0x") {
-        s.replacen("0x", "", 1).parse::<I256>().map_err(|err| err.to_string())
-    } else if s.chars().any(|c| !c.is_numeric()) {
-        // Throw if numeric string contains non-numeric characters
-        Err(ParseI256Error::InvalidDigit.to_string())
-    } else {
-        match I256::from_dec_str(s) {
+        return s
+            .replacen("0x", "", 1)
+            .parse::<I256>()
+            .map_err(|err| err.to_string())
+            .map(|v| v.into_raw())
+    }
+
+    // Decimal string may start with '+' or '-' followed by numeric characters
+    if s.chars().all(|c| c.is_numeric() || c == '+' || c == '-') {
+        return match I256::from_dec_str(s) {
             Ok(val) => Ok(val),
             Err(dec_err) => s.parse::<I256>().map_err(|hex_err| {
                 format!("could not parse value as decimal or hex: {dec_err}, {hex_err}")
             }),
         }
-    }
-    .map(|v| v.into_raw())
+        .map(|v| v.into_raw())
+    };
+
+    // Throw if string doesn't conform to either of the two patterns
+    Err(ParseI256Error::InvalidDigit.to_string())
 }
 
 fn parse_uint(s: &str) -> Result<U256, String> {
+    // Only parse hex strings prefixed by 0x or decimal numeric strings
+
+    // Hex strings prefixed by 0x
     if s.starts_with("0x") {
-        s.parse::<U256>().map_err(|err| err.to_string())
-    } else if s.chars().any(|c| !c.is_numeric()) {
-        // Throw if numeric string contains non-numeric characters
-        Err(FromDecStrErr::InvalidCharacter.to_string())
-    } else {
-        match U256::from_dec_str(s) {
+        return s.parse::<U256>().map_err(|err| err.to_string())
+    };
+
+    // Decimal strings containing only numeric characters
+    if s.chars().all(|c| c.is_numeric()) {
+        return match U256::from_dec_str(s) {
             Ok(val) => Ok(val),
             Err(dec_err) => s.parse::<U256>().map_err(|hex_err| {
                 format!("could not parse value as decimal or hex: {dec_err}, {hex_err}")
             }),
         }
-    }
+    };
+
+    // Throw if string doesn't conform to either of the two patterns
+    Err(FromDecStrErr::InvalidCharacter.to_string())
 }
 
 fn parse_bytes(s: &str) -> Result<Vec<u8>, String> {
@@ -134,7 +149,7 @@ mod tests {
         let decoded = U256::decode(&parsed).unwrap();
         assert_eq!(val, decoded);
 
-        let parsed = parse(pk.strip_prefix("0x").unwrap(), &ParamType::Uint(256)).unwrap();
+        let parsed = parse(pk, &ParamType::Uint(256)).unwrap();
         let decoded = U256::decode(&parsed).unwrap();
         assert_eq!(val, decoded);
 
