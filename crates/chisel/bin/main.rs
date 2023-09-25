@@ -254,7 +254,7 @@ async fn evaluate_prelude(
             true => {
                 println!(
                     "{} {}",
-                    Paint::yellow("⏳ Loading prelude source file:"),
+                    Paint::yellow("Loading prelude source file:"),
                     prelude_dir.display(),
                 );
                 load_prelude_file(dispatcher, prelude_dir).await?;
@@ -266,7 +266,7 @@ async fn evaluate_prelude(
                 for source_file in prelude_sources {
                     println!(
                         "{} {}",
-                        Paint::yellow("⏳ Loading prelude source file:"),
+                        Paint::yellow("Loading prelude source file:"),
                         source_file.display(),
                     );
                     load_prelude_file(dispatcher, source_file).await?;
