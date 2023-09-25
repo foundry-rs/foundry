@@ -53,7 +53,7 @@ codegen-units = 1
 # Like release, but with full debug symbols and with stack unwinds. Useful for e.g. `perf`.
 [profile.debug-fast]
 inherits = "release"
-debug = "full"
+debug = true
 strip = "none"
 panic = "unwind"
 incremental = false
@@ -152,7 +152,7 @@ ethers-etherscan = { version = "2.0", default-features = false }
 ethers-solc = { version = "2.0", default-features = false }
 
 alloy-primitives = { version = "0.3", default-features = false }
-alloy-dyn-abi = { version = "0.3", default-features = false}
+alloy-dyn-abi = { version = "0.3", default-features = false }
 
 solang-parser = "=0.3.2"
 
@@ -175,7 +175,6 @@ hex = { package = "const-hex", version = "1.6", features = ["hex"] }
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-
 ethers = { git = "https://github.com/gakonst/ethers-rs" }
 ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs" }
 ethers-core = { git = "https://github.com/gakonst/ethers-rs" }
