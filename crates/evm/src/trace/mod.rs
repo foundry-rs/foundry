@@ -9,6 +9,7 @@ use ethers::{
 };
 pub use executor::TracingExecutor;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use foundry_utils::types::ToEthers;
 use hashbrown::HashMap;
 use node::CallTraceNode;
 use revm::interpreter::{opcode, CallContext, InstructionResult, Memory, Stack};
@@ -429,7 +430,7 @@ impl From<&CallTraceStep> for StructLog {
             } else {
                 None
             },
-            stack: Some(step.stack.data().iter().copied().map(|data| data.into()).collect()),
+            stack: Some(step.stack.data().iter().copied().map(|s| s.to_ethers()).collect()),
             // Filled in `CallTraceArena::geth_trace` as a result of compounding all slot changes
             storage: None,
         }
@@ -596,7 +597,7 @@ impl TraceKind {
 
 /// Chooses the color of the trace depending on the destination address and status of the call.
 fn trace_color(trace: &CallTrace) -> Color {
-    if trace.address == CHEATCODE_ADDRESS {
+    if trace.address == CHEATCODE_ADDRESS.to_ethers() {
         Color::Blue
     } else if trace.success {
         Color::Green

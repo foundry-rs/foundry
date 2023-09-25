@@ -7,15 +7,16 @@ use crate::cmd::{
     },
     verify::provider::VerificationProviderType,
 };
+use alloy_primitives::{Address, TxHash};
 use ethers::{
-    abi::Address,
-    prelude::{artifacts::Libraries, ArtifactId, TransactionReceipt, TxHash},
+    prelude::{artifacts::Libraries, ArtifactId, TransactionReceipt},
     types::transaction::eip2718::TypedTransaction,
 };
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_cli::utils::now;
 use foundry_common::{fs, shell, SELECTOR_LEN};
 use foundry_config::Config;
+use foundry_utils::types::{ToAlloy, ToEthers};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
@@ -275,13 +276,13 @@ impl ScriptSequence {
                 let mut offset = 0;
 
                 if tx.is_create2() {
-                    receipt.contract_address = tx.contract_address;
+                    receipt.contract_address = tx.contract_address.map(|a| a.to_ethers());
                     offset = 32;
                 }
 
                 // Verify contract created directly from the transaction
                 if let (Some(address), Some(data)) =
-                    (receipt.contract_address, tx.typed_tx().data())
+                    (receipt.contract_address.map(|h| h.to_alloy()), tx.typed_tx().data())
                 {
                     match verify.get_verify_args(address, offset, &data.0, &self.libraries) {
                         Some(verify) => future_verifications.push(verify.run()),

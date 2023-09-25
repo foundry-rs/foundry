@@ -1,8 +1,9 @@
 #![doc = include_str!("../README.md")]
 #![warn(unused_crate_dependencies)]
 
+use alloy_primitives::{Address, Bytes, U256};
 use ethers_addressbook::contract;
-use ethers_core::types::*;
+use ethers_core::types::{BlockId, Chain, NameOrAddress};
 use ethers_providers::{Middleware, Provider};
 use ethers_solc::{
     artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode, Libraries},
@@ -21,11 +22,14 @@ use std::{
 };
 use tracing::trace;
 
+use crate::types::{ToAlloy, ToEthers};
+
 pub mod abi;
 pub mod error;
 pub mod glob;
 pub mod path;
 pub mod rpc;
+pub mod types;
 
 /// Data passed to the post link handler of the linker for each linked artifact.
 #[derive(Debug)]
@@ -135,6 +139,7 @@ impl std::fmt::Display for ResolvedDependency {
 ///
 /// For an example of this, see [here](https://github.com/foundry-rs/foundry/blob/2308972dbc3a89c03488a05aceb3c428bb3e08c0/cli/src/cmd/forge/script/build.rs#L130-L151C9).
 #[allow(clippy::too_many_arguments)]
+
 pub fn link_with_nonce_or_address<T, U>(
     contracts: ArtifactContracts,
     known_contracts: &mut BTreeMap<ArtifactId, T>,
@@ -377,7 +382,7 @@ fn recurse_link<'a>(
                     id: library,
                     address: *deployed_address,
                     nonce: *cached_nonce,
-                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!( "Bytecode should be linked for {next_target}")),
+                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!( "Bytecode should be linked for {next_target}")).0.into(),
                 });
                 *deployed_address
             } else {
@@ -385,27 +390,27 @@ fn recurse_link<'a>(
 
                 // we need to deploy the library
                 let used_nonce = *nonce;
-                let computed_address = ethers_core::utils::get_contract_address(sender, used_nonce);
-                *nonce += 1.into();
+                let computed_address = ethers_core::utils::get_contract_address(sender.to_ethers(), used_nonce.to_ethers());
+                *nonce += U256::from(1);
                 let library = format!("{file}:{key}:0x{}", hex::encode(computed_address));
 
                 // push the dependency into the library deployment vector
                 deployment.push(ResolvedDependency {
                     id: library,
-                    address: computed_address,
+                    address: computed_address.to_alloy(),
                     nonce: used_nonce,
-                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!( "Bytecode should be linked for {next_target}")),
+                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!( "Bytecode should be linked for {next_target}")).0.into(),
                 });
 
                 // remember this library for later
-                internally_deployed_libraries.insert(format!("{file}:{key}"), (used_nonce, computed_address));
+                internally_deployed_libraries.insert(format!("{file}:{key}"), (used_nonce, computed_address.to_alloy()));
 
-                computed_address
+                computed_address.to_alloy()
             };
 
             // link the dependency to the target
-            target_bytecode.0.link(file.clone(), key.clone(), address);
-            target_bytecode.1.link(file.clone(), key.clone(), address);
+            target_bytecode.0.link(file.clone(), key.clone(), address.to_ethers());
+            target_bytecode.1.link(file.clone(), key.clone(), address.to_ethers());
             trace!(target : "forge::link", ?target, dependency = next_target, file, key, "linking dependency done");
         });
     }
@@ -524,7 +529,7 @@ pub async fn next_nonce(
 ) -> Result<U256> {
     let provider = Provider::try_from(provider_url)
         .wrap_err_with(|| format!("Bad fork_url provider: {provider_url}"))?;
-    Ok(provider.get_transaction_count(caller, block).await?)
+    Ok(provider.get_transaction_count(caller.to_ethers(), block).await?).map(|n| n.to_alloy())
 }
 
 #[cfg(test)]
@@ -579,7 +584,7 @@ mod tests {
                 self.contracts,
                 &mut ContractsByArtifact::default(),
                 Default::default(),
-                sender,
+                sender.to_alloy(),
                 initial_nonce,
                 &mut called_once,
                 |post_link_input| {
@@ -609,7 +614,7 @@ mod tests {
                         let expected_lib_id = format!("{}:{:?}", expected.0, expected.2);
                         assert_eq!(expected_lib_id, actual.id, "unexpected dependency, expected: {}, got: {}", expected_lib_id, actual.id);
                         assert_eq!(actual.nonce, expected.1, "nonce wrong for dependency, expected: {}, got: {}", expected.1, actual.nonce);
-                        assert_eq!(actual.address, expected.2, "address wrong for dependency, expected: {}, got: {}", expected.2, actual.address);
+                        assert_eq!(actual.address.to_ethers(), expected.2, "address wrong for dependency, expected: {}, got: {}", expected.2, actual.address);
                     }
 
                     Ok(())
@@ -630,7 +635,7 @@ mod tests {
                 "simple/Simple.t.sol:LibraryConsumer".to_string(),
                 vec![(
                     "simple/Simple.t.sol:Lib".to_string(),
-                    U256::one(),
+                    U256::from(1),
                     Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                 )],
             )
@@ -638,11 +643,11 @@ mod tests {
                 "simple/Simple.t.sol:SimpleLibraryLinkingTest".to_string(),
                 vec![(
                     "simple/Simple.t.sol:Lib".to_string(),
-                    U256::one(),
+                    U256::from(1),
                     Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                 )],
             )
-            .test_with_sender_and_nonce(Address::default(), U256::one());
+            .test_with_sender_and_nonce(Address::default(), U256::from(1));
     }
 
     #[test]
@@ -653,7 +658,7 @@ mod tests {
                 "nested/Nested.t.sol:NestedLib".to_string(),
                 vec![(
                     "nested/Nested.t.sol:Lib".to_string(),
-                    U256::one(),
+                    U256::from(1),
                     Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                 )],
             )
@@ -664,12 +669,12 @@ mod tests {
                     // have the same address and nonce.
                     (
                         "nested/Nested.t.sol:Lib".to_string(),
-                        U256::one(),
+                        U256::from(1),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "nested/Nested.t.sol:Lib".to_string(),
-                        U256::one(),
+                        U256::from(1),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
@@ -684,12 +689,12 @@ mod tests {
                 vec![
                     (
                         "nested/Nested.t.sol:Lib".to_string(),
-                        U256::one(),
+                        U256::from(1),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "nested/Nested.t.sol:Lib".to_string(),
-                        U256::one(),
+                        U256::from(1),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
@@ -699,7 +704,7 @@ mod tests {
                     ),
                 ],
             )
-            .test_with_sender_and_nonce(Address::default(), U256::one());
+            .test_with_sender_and_nonce(Address::default(), U256::from(1));
     }
 
     /// This test ensures that complicated setups with many libraries, some of which are referenced
@@ -722,7 +727,7 @@ mod tests {
                 "duplicate/Duplicate.t.sol:C".to_string(),
                 vec![(
                     "duplicate/Duplicate.t.sol:A".to_string(),
-                    U256::one(),
+                    U256::from(1),
                     Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                 )],
             )
@@ -730,7 +735,7 @@ mod tests {
                 "duplicate/Duplicate.t.sol:D".to_string(),
                 vec![(
                     "duplicate/Duplicate.t.sol:B".to_string(),
-                    U256::one(),
+                    U256::from(1),
                     Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                 )],
             )
@@ -739,7 +744,7 @@ mod tests {
                 vec![
                     (
                         "duplicate/Duplicate.t.sol:A".to_string(),
-                        U256::one(),
+                        U256::from(1),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
@@ -754,7 +759,7 @@ mod tests {
                 vec![
                     (
                         "duplicate/Duplicate.t.sol:A".to_string(),
-                        U256::one(),
+                        U256::from(1),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
@@ -764,7 +769,7 @@ mod tests {
                     ),
                     (
                         "duplicate/Duplicate.t.sol:A".to_string(),
-                        U256::one(),
+                        U256::from(1),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
@@ -784,7 +789,7 @@ mod tests {
                     ),
                     (
                         "duplicate/Duplicate.t.sol:A".to_string(),
-                        U256::one(),
+                        U256::from(1),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
@@ -804,7 +809,7 @@ mod tests {
                 vec![
                     (
                         "duplicate/Duplicate.t.sol:A".to_string(),
-                        U256::one(),
+                        U256::from(1),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
@@ -814,7 +819,7 @@ mod tests {
                     ),
                     (
                         "duplicate/Duplicate.t.sol:A".to_string(),
-                        U256::one(),
+                        U256::from(1),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
@@ -834,7 +839,7 @@ mod tests {
                     ),
                     (
                         "duplicate/Duplicate.t.sol:A".to_string(),
-                        U256::one(),
+                        U256::from(1),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
@@ -849,7 +854,7 @@ mod tests {
                     ),
                 ],
             )
-            .test_with_sender_and_nonce(Address::default(), U256::one());
+            .test_with_sender_and_nonce(Address::default(), U256::from(1));
     }
 
     #[test]

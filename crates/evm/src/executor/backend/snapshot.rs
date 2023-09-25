@@ -1,5 +1,6 @@
+use alloy_primitives::{Address, B256, U256};
 use revm::{
-    primitives::{AccountInfo, Env, HashMap as Map, B160, B256, U256},
+    primitives::{AccountInfo, Env, HashMap as Map},
     JournaledState,
 };
 use serde::{Deserialize, Serialize};
@@ -7,8 +8,8 @@ use serde::{Deserialize, Serialize};
 /// A minimal abstraction of a state at a certain point in time
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct StateSnapshot {
-    pub accounts: Map<B160, AccountInfo>,
-    pub storage: Map<B160, Map<U256, U256>>,
+    pub accounts: Map<Address, AccountInfo>,
+    pub storage: Map<Address, Map<U256, U256>>,
     pub block_hashes: Map<U256, B256>,
 }
 

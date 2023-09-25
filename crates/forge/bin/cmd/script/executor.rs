@@ -4,9 +4,9 @@ use super::{
     transaction::{AdditionalContract, TransactionWithMetadata},
     *,
 };
+use alloy_primitives::{Address, Bytes, U256};
 use ethers::{
-    solc::artifacts::CompactContractBytecode,
-    types::{transaction::eip2718::TypedTransaction, Address, U256},
+    solc::artifacts::CompactContractBytecode, types::transaction::eip2718::TypedTransaction,
 };
 use eyre::Result;
 use forge::{
@@ -20,6 +20,7 @@ use forge::{
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{shell, RpcUrl};
+use foundry_utils::types::ToEthers;
 use futures::future::join_all;
 use parking_lot::RwLock;
 use std::{collections::VecDeque, sync::Arc};
@@ -36,7 +37,7 @@ impl ScriptArgs {
         script_config: &mut ScriptConfig,
         contract: CompactContractBytecode,
         sender: Address,
-        predeploy_libraries: &[ethers::types::Bytes],
+        predeploy_libraries: &[Bytes],
     ) -> Result<ScriptResult> {
         trace!(target: "script", "start executing script");
 
@@ -47,10 +48,12 @@ impl ScriptArgs {
 
         ensure_clean_constructor(&abi)?;
 
+        let predeploy_libraries =
+            predeploy_libraries.iter().map(|b| b.0.clone().into()).collect::<Vec<_>>();
         let mut runner = self.prepare_runner(script_config, sender, SimulationStage::Local).await;
         let (address, mut result) = runner.setup(
-            predeploy_libraries,
-            bytecode,
+            &predeploy_libraries,
+            bytecode.0.into(),
             needs_setup(&abi),
             script_config.sender_nonce,
             self.broadcast,
@@ -62,7 +65,7 @@ impl ScriptArgs {
 
         // Only call the method if `setUp()` succeeded.
         if result.success {
-            let script_result = runner.script(address, calldata)?;
+            let script_result = runner.script(address, calldata.0.into())?;
 
             result.success &= script_result.success;
             result.gas_used = script_result.gas_used;
@@ -126,7 +129,7 @@ impl ScriptArgs {
                         abi,
                         code,
                     };
-                    return Some((*addr, info))
+                    return Some(((*addr).to_alloy(), info))
                 }
                 None
             })
@@ -135,78 +138,81 @@ impl ScriptArgs {
         let mut final_txs = VecDeque::new();
 
         // Executes all transactions from the different forks concurrently.
-        let futs = transactions
-            .into_iter()
-            .map(|transaction| async {
-                let mut runner = runners
-                    .get(transaction.rpc.as_ref().expect("to have been filled already."))
-                    .expect("to have been built.")
-                    .write();
+        let futs =
+            transactions
+                .into_iter()
+                .map(|transaction| async {
+                    let mut runner = runners
+                        .get(transaction.rpc.as_ref().expect("to have been filled already."))
+                        .expect("to have been built.")
+                        .write();
 
-                if let TypedTransaction::Legacy(mut tx) = transaction.transaction {
-                    let result = runner
+                    if let TypedTransaction::Legacy(mut tx) = transaction.transaction {
+                        let result = runner
                         .simulate(
                             tx.from.expect(
                                 "Transaction doesn't have a `from` address at execution time",
-                            ),
+                            ).to_alloy(),
                             tx.to.clone(),
-                            tx.data.clone(),
-                            tx.value,
+                            tx.data.clone().map(|b| b.0.into()),
+                            tx.value.map(|v| v.to_alloy()),
                         )
                         .expect("Internal EVM error");
 
-                    if !result.success || result.traces.is_empty() {
-                        return Ok((None, result.traces))
-                    }
+                        if !result.success || result.traces.is_empty() {
+                            return Ok((None, result.traces))
+                        }
 
-                    let created_contracts = result
-                        .traces
-                        .iter()
-                        .flat_map(|(_, traces)| {
-                            traces.arena.iter().filter_map(|node| {
-                                if matches!(node.kind(), CallKind::Create | CallKind::Create2) {
-                                    return Some(AdditionalContract {
-                                        opcode: node.kind(),
-                                        address: node.trace.address,
-                                        init_code: node.trace.data.to_raw(),
-                                    })
-                                }
-                                None
+                        let created_contracts = result
+                            .traces
+                            .iter()
+                            .flat_map(|(_, traces)| {
+                                traces.arena.iter().filter_map(|node| {
+                                    if matches!(node.kind(), CallKind::Create | CallKind::Create2) {
+                                        return Some(AdditionalContract {
+                                            opcode: node.kind(),
+                                            address: node.trace.address.to_alloy(),
+                                            init_code: node.trace.data.to_raw(),
+                                        })
+                                    }
+                                    None
+                                })
                             })
-                        })
-                        .collect();
+                            .collect();
 
-                    // Simulate mining the transaction if the user passes `--slow`.
-                    if self.slow {
-                        runner.executor.env.block.number += rU256::from(1);
-                    }
+                        // Simulate mining the transaction if the user passes `--slow`.
+                        if self.slow {
+                            runner.executor.env.block.number += rU256::from(1);
+                        }
 
-                    let is_fixed_gas_limit = tx.gas.is_some();
-                    // If tx.gas is already set that means it was specified in script
-                    if !is_fixed_gas_limit {
-                        // We inflate the gas used by the user specified percentage
-                        tx.gas =
-                            Some(U256::from(result.gas_used * self.gas_estimate_multiplier / 100));
+                        let is_fixed_gas_limit = tx.gas.is_some();
+                        // If tx.gas is already set that means it was specified in script
+                        if !is_fixed_gas_limit {
+                            // We inflate the gas used by the user specified percentage
+                            tx.gas = Some(
+                                U256::from(result.gas_used * self.gas_estimate_multiplier / 100)
+                                    .to_ethers(),
+                            );
+                        } else {
+                            println!("Gas limit was set in script to {:}", tx.gas.unwrap());
+                        }
+
+                        let tx = TransactionWithMetadata::new(
+                            tx.into(),
+                            transaction.rpc,
+                            &result,
+                            &address_to_abi,
+                            decoder,
+                            created_contracts,
+                            is_fixed_gas_limit,
+                        )?;
+
+                        Ok((Some(tx), result.traces))
                     } else {
-                        println!("Gas limit was set in script to {:}", tx.gas.unwrap());
+                        unreachable!()
                     }
-
-                    let tx = TransactionWithMetadata::new(
-                        tx.into(),
-                        transaction.rpc,
-                        &result,
-                        &address_to_abi,
-                        decoder,
-                        created_contracts,
-                        is_fixed_gas_limit,
-                    )?;
-
-                    Ok((Some(tx), result.traces))
-                } else {
-                    unreachable!()
-                }
-            })
-            .collect::<Vec<_>>();
+                })
+                .collect::<Vec<_>>();
 
         let mut abort = false;
         for res in join_all(futs).await {

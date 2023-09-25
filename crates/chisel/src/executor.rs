@@ -16,8 +16,8 @@ use eyre::{Result, WrapErr};
 use foundry_evm::{
     decode::decode_console_logs,
     executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
-    utils::ru256_to_u256,
 };
+use foundry_utils::types::ToEthers;
 use solang_parser::pt::{self, CodeLocation};
 use yansi::Paint;
 
@@ -223,7 +223,7 @@ impl SessionSource {
 
         // the file compiled correctly, thus the last stack item must be the memory offset of
         // the `bytes memory inspectoor` value
-        let mut offset = ru256_to_u256(*stack.data().last().unwrap()).as_usize();
+        let mut offset = stack.data().last().unwrap().to_ethers().as_usize();
         let mem = memory.data();
         let len = U256::from(&mem[offset..offset + 32]).as_usize();
         offset += 32;
@@ -1630,7 +1630,7 @@ mod tests {
                     }
                     Err(e) => {
                         // try reinstalling
-                        eprintln!("error: {e}\n trying to re-install Solc v{version}");
+                        eprintln!("error while trying to re-install Solc v{version}: {e}");
                         let solc = Solc::blocking_install(&version.parse().unwrap());
                         if solc.map_err(SolcError::from).and_then(|solc| solc.version()).is_ok() {
                             *is_preinstalled = true;

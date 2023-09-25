@@ -1,11 +1,15 @@
 use super::{bail, ensure, fmt_err, Cheatcodes, Result};
-use crate::{abi::HEVMCalls, executor::backend::DatabaseExt, utils::h160_to_b160};
+use crate::{abi::HEVMCalls, executor::backend::DatabaseExt};
+use alloy_primitives::Bytes;
 use ethers::{
     abi::{AbiDecode, RawLog},
     contract::Lazy,
-    types::{Address, Bytes, H160, U256},
+    types::{Address, H160, U256},
 };
-use foundry_utils::error::{ERROR_PREFIX, REVERT_PREFIX};
+use foundry_utils::{
+    error::{ERROR_PREFIX, REVERT_PREFIX},
+    types::ToAlloy,
+};
 use revm::{
     interpreter::{return_ok, InstructionResult},
     primitives::Bytecode,
@@ -65,8 +69,8 @@ pub fn handle_expect_revert(
     }
 
     // If None, accept any revert
-    let expected_revert = match expected_revert {
-        Some(x) => x,
+    let mut expected_revert = match expected_revert {
+        Some(x) => x.clone(),
         None => return success_return!(),
     };
 
@@ -78,24 +82,24 @@ pub fn handle_expect_revert(
     if actual_revert.len() >= 4 &&
         matches!(actual_revert[..4].try_into(), Ok(ERROR_PREFIX | REVERT_PREFIX))
     {
-        if let Ok(bytes) = Bytes::decode(&actual_revert[4..]) {
-            actual_revert = bytes;
+        if let Ok(bytes) = ethers::types::Bytes::decode(&actual_revert[4..]) {
+            actual_revert = bytes.0.into();
         }
     }
 
     if actual_revert == *expected_revert {
         success_return!()
     } else {
-        let stringify = |data: &[u8]| {
-            String::decode(data)
+        let stringify = |data: &mut Bytes| {
+            String::decode(data.0.as_ref())
                 .ok()
-                .or_else(|| std::str::from_utf8(data).ok().map(ToOwned::to_owned))
+                .or_else(|| std::str::from_utf8(data.as_ref()).ok().map(ToOwned::to_owned))
                 .unwrap_or_else(|| format!("0x{}", hex::encode(data)))
         };
         Err(fmt_err!(
             "Error != expected error: {} != {}",
-            stringify(&actual_revert),
-            stringify(expected_revert),
+            stringify(&mut actual_revert),
+            stringify(&mut expected_revert),
         ))
     }
 }
@@ -334,7 +338,7 @@ pub fn apply<DB: DatabaseExt>(
     let result = match call {
         HEVMCalls::ExpectRevert0(_) => expect_revert(state, None, data.journaled_state.depth()),
         HEVMCalls::ExpectRevert1(inner) => {
-            expect_revert(state, Some(inner.0.clone()), data.journaled_state.depth())
+            expect_revert(state, Some(inner.0.clone().0.into()), data.journaled_state.depth())
         }
         HEVMCalls::ExpectRevert2(inner) => {
             expect_revert(state, Some(inner.0.into()), data.journaled_state.depth())
@@ -483,7 +487,7 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::MockCall0(inner) => {
             // TODO: Does this increase gas usage?
-            if let Err(err) = data.journaled_state.load_account(h160_to_b160(inner.0), data.db) {
+            if let Err(err) = data.journaled_state.load_account(inner.0.to_alloy(), data.db) {
                 return Some(Err(err.into()))
             }
 
@@ -491,23 +495,28 @@ pub fn apply<DB: DatabaseExt>(
             // check Solidity might perform.
             let empty_bytecode = data
                 .journaled_state
-                .account(h160_to_b160(inner.0))
+                .account(inner.0.to_alloy())
                 .info
                 .code
                 .as_ref()
                 .map_or(true, Bytecode::is_empty);
             if empty_bytecode {
-                let code = Bytecode::new_raw(bytes::Bytes::from_static(&[0u8])).to_checked();
-                data.journaled_state.set_code(h160_to_b160(inner.0), code);
+                let code =
+                    Bytecode::new_raw(alloy_primitives::Bytes(bytes::Bytes::from_static(&[0u8])))
+                        .to_checked();
+                data.journaled_state.set_code(inner.0.to_alloy(), code);
             }
             state.mocked_calls.entry(inner.0).or_default().insert(
-                MockCallDataContext { calldata: inner.1.clone(), value: None },
-                MockCallReturnData { data: inner.2.clone(), ret_type: InstructionResult::Return },
+                MockCallDataContext { calldata: inner.1.clone().0.into(), value: None },
+                MockCallReturnData {
+                    data: inner.2.clone().0.into(),
+                    ret_type: InstructionResult::Return,
+                },
             );
             Ok(Bytes::new())
         }
         HEVMCalls::MockCall1(inner) => {
-            if let Err(err) = data.journaled_state.load_account(h160_to_b160(inner.0), data.db) {
+            if let Err(err) = data.journaled_state.load_account(inner.0.to_alloy(), data.db) {
                 return Some(Err(err.into()))
             }
 

@@ -1,6 +1,7 @@
 use crate::Ui;
 use foundry_common::{compile::ContractSources, evm::Breakpoints, get_contract_name};
 use foundry_evm::{debug::DebugArena, trace::CallTraceDecoder};
+use foundry_utils::types::ToAlloy;
 use tracing::trace;
 
 use crate::{TUIExitReason, Tui};
@@ -31,11 +32,13 @@ impl DebuggerArgs<'_> {
             .decoder
             .contracts
             .iter()
-            .map(|(addr, identifier)| (*addr, get_contract_name(identifier).to_string()))
+            .map(|(addr, identifier)| {
+                ((*addr).to_alloy(), get_contract_name(identifier).to_string())
+            })
             .collect();
 
         let tui = Tui::new(
-            flattened,
+            flattened.into_iter().map(|i| (i.0, i.1, i.2)).collect(),
             0,
             identified_contracts,
             self.sources.clone(),

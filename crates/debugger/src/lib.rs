@@ -1,5 +1,6 @@
 #![warn(unused_crate_dependencies)]
 
+use alloy_primitives::Address;
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
@@ -8,7 +9,6 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ethers::types::Address;
 use eyre::Result;
 use foundry_common::{compile::ContractSources, evm::Breakpoints};
 use foundry_evm::{
@@ -16,6 +16,7 @@ use foundry_evm::{
     utils::{build_pc_ic_map, PCICMap},
     CallKind,
 };
+use foundry_utils::types::ToAlloy;
 use ratatui::{
     backend::{Backend, CrosstermBackend},
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -868,14 +869,14 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
     ) {
         let memory = &debug_steps[current_step].memory;
         let stack_space = Block::default()
-            .title(format!("Memory (max expansion: {} bytes)", memory.effective_len()))
+            .title(format!("Memory (max expansion: {} bytes)", memory.len()))
             .borders(Borders::ALL);
         let memory = memory.data();
         let max_i = memory.len() / 32;
         let min_len = format!("{:x}", max_i * 32).len();
 
         // color memory words based on write/read
-        let mut word = None;
+        let mut word: Option<usize> = None;
         let mut color = None;
         if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
             let stack_len = debug_steps[current_step].stack.len();
@@ -883,11 +884,11 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                 let w = debug_steps[current_step].stack[stack_len - 1];
                 match op {
                     opcode::MLOAD => {
-                        word = Some(w.as_usize());
+                        word = Some(w.to());
                         color = Some(Color::Cyan);
                     }
                     opcode::MSTORE => {
-                        word = Some(w.as_usize());
+                        word = Some(w.to());
                         color = Some(Color::Red);
                     }
                     _ => {}
@@ -902,7 +903,7 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
             if let Instruction::OpCode(op) = debug_steps[prev_step].instruction {
                 if op == opcode::MSTORE {
                     let prev_top = debug_steps[prev_step].stack[stack_len - 1];
-                    word = Some(prev_top.as_usize());
+                    word = Some(prev_top.to());
                     color = Some(Color::Green);
                 }
             }
@@ -1048,7 +1049,7 @@ impl Ui for Tui {
                     // address with this pc)
                     if let Some((caller, pc)) = self.breakpoints.get(&c) {
                         for (i, (_caller, debug_steps, _)) in debug_call.iter().enumerate() {
-                            if _caller == caller {
+                            if _caller == &caller.to_alloy() {
                                 if let Some(step) =
                                     debug_steps.iter().position(|step| step.pc == *pc)
                                 {

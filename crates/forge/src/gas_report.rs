@@ -5,6 +5,7 @@ use crate::{
 use comfy_table::{presets::ASCII_MARKDOWN, *};
 use ethers::types::U256;
 use foundry_common::{calc, TestFunctionExt};
+use foundry_utils::types::ToEthers;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt::Display};
 
@@ -46,7 +47,9 @@ impl GasReport {
         let node = &arena.arena[node_index];
         let trace = &node.trace;
 
-        if trace.address == CHEATCODE_ADDRESS || trace.address == HARDHAT_CONSOLE_ADDRESS {
+        if trace.address == CHEATCODE_ADDRESS.to_ethers() ||
+            trace.address == HARDHAT_CONSOLE_ADDRESS.to_ethers()
+        {
             return
         }
 

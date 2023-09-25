@@ -1,9 +1,9 @@
 use crate::{result::SuiteResult, ContractRunner, TestFilter, TestOptions};
+use alloy_primitives::{Address, Bytes, U256};
 use ethers::{
     abi::{Abi, Function},
     prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
     solc::{contracts::ArtifactContracts, Artifact, ProjectCompileOutput},
-    types::{Address, Bytes, U256},
 };
 use eyre::Result;
 use foundry_common::{ContractsByArtifact, TestFunctionExt};
@@ -14,7 +14,7 @@ use foundry_evm::{
     },
     revm,
 };
-use foundry_utils::{PostLinkInput, ResolvedDependency};
+use foundry_utils::{types::ToEthers, PostLinkInput, ResolvedDependency};
 use rayon::prelude::*;
 use revm::primitives::SpecId;
 use std::{
@@ -202,15 +202,16 @@ impl MultiContractRunner {
         filter: impl TestFilter,
         test_options: TestOptions,
     ) -> SuiteResult {
+        let libs = libs.iter().map(|l| l.0.clone().into()).collect::<Vec<_>>();
         let runner = ContractRunner::new(
             name,
             executor,
             contract,
-            deploy_code,
-            self.evm_opts.initial_balance,
-            self.sender,
+            deploy_code.0.into(),
+            self.evm_opts.initial_balance.to_ethers(),
+            self.sender.map(|a| a.to_ethers()),
             self.errors.as_ref(),
-            libs,
+            &libs,
             self.debug,
         );
         runner.run_tests(filter, test_options, Some(&self.known_contracts))
@@ -286,7 +287,7 @@ impl MultiContractRunnerBuilder {
             &mut known_contracts,
             Default::default(),
             evm_opts.sender,
-            U256::one(),
+            U256::from(1),
             &mut deployable_contracts,
             |post_link_input| {
                 let PostLinkInput {
@@ -318,8 +319,11 @@ impl MultiContractRunnerBuilder {
                         id.clone(),
                         (
                             abi.clone(),
-                            bytecode,
-                            dependencies.into_iter().map(|dep| dep.bytecode).collect::<Vec<_>>(),
+                            bytecode.0.into(),
+                            dependencies
+                                .into_iter()
+                                .map(|dep| dep.bytecode.0.into())
+                                .collect::<Vec<_>>(),
                         ),
                     );
                 }

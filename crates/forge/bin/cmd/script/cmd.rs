@@ -1,12 +1,14 @@
 use super::{multi::MultiChainSequence, sequence::ScriptSequence, verify::VerifyBundle, *};
+use alloy_primitives::{Bytes, U256};
 use ethers::{
     prelude::{Middleware, Signer},
-    types::{transaction::eip2718::TypedTransaction, U256},
+    types::transaction::eip2718::TypedTransaction,
 };
 use eyre::Result;
 use foundry_cli::utils::LoadConfig;
 use foundry_common::{contracts::flatten_contracts, try_get_http_provider};
 use foundry_debugger::DebuggerArgs;
+use foundry_utils::types::ToAlloy;
 use std::sync::Arc;
 use tracing::trace;
 
@@ -21,7 +23,7 @@ impl ScriptArgs {
         let (config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
         let mut script_config = ScriptConfig {
             // dapptools compatibility
-            sender_nonce: U256::one(),
+            sender_nonce: U256::from(1),
             config,
             evm_opts,
             debug: self.debug,
@@ -274,8 +276,8 @@ impl ScriptArgs {
                 project,
                 default_known_contracts,
                 Libraries::parse(&deployment_sequence.libraries)?,
-                script_config.config.sender, // irrelevant, since we're not creating any
-                U256::zero(),                // irrelevant, since we're not creating any
+                script_config.config.sender.to_alloy(), // irrelevant, since we're not creating any
+                U256::ZERO,                             // irrelevant, since we're not creating any
             )?;
 
             verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);
@@ -350,7 +352,7 @@ impl ScriptArgs {
         }
         if let Some(wallets) = self.wallets.private_keys()? {
             if wallets.len() == 1 {
-                script_config.evm_opts.sender = wallets.get(0).unwrap().address()
+                script_config.evm_opts.sender = wallets.get(0).unwrap().address().to_alloy()
             }
         }
         Ok(())

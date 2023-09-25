@@ -4,16 +4,17 @@ use crate::{
     executor::{
         backend::DatabaseExt, fork::CreateFork, inspector::cheatcodes::ext::value_to_token,
     },
-    utils::{b160_to_h160, RuntimeOrHandle},
+    utils::RuntimeOrHandle,
 };
+use alloy_primitives::{Bytes, B256, U256};
 use ethers::{
     abi::{self, AbiEncode, Token, Tokenizable, Tokenize},
-    prelude::U256,
     providers::Middleware,
-    types::{Bytes, Filter, H256},
+    types::{Filter, U256 as eU256},
 };
 use foundry_abi::hevm::{EthGetLogsCall, RpcCall};
 use foundry_common::ProviderBuilder;
+use foundry_utils::types::{ToAlloy, ToEthers};
 use revm::EVMData;
 use serde_json::Value;
 
@@ -43,43 +44,49 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::CreateSelectFork2(fork) => {
             create_select_fork_at_transaction(state, data, fork.0.clone(), fork.1.into())
         }
-        HEVMCalls::SelectFork(fork_id) => select_fork(state, data, fork_id.0),
+        HEVMCalls::SelectFork(fork_id) => select_fork(state, data, fork_id.0.to_alloy()),
         HEVMCalls::MakePersistent0(acc) => {
-            data.db.add_persistent_account(acc.0);
+            data.db.add_persistent_account(acc.0.to_alloy());
             Ok(Bytes::new())
         }
         HEVMCalls::MakePersistent1(acc) => {
-            data.db.extend_persistent_accounts(acc.0.clone());
+            data.db.extend_persistent_accounts(
+                (acc.0.clone().into_iter().map(|acc| acc.to_alloy())).collect::<Vec<_>>(),
+            );
             Ok(Bytes::new())
         }
         HEVMCalls::MakePersistent2(acc) => {
-            data.db.add_persistent_account(acc.0);
-            data.db.add_persistent_account(acc.1);
+            data.db.add_persistent_account(acc.0.to_alloy());
+            data.db.add_persistent_account(acc.1.to_alloy());
             Ok(Bytes::new())
         }
         HEVMCalls::MakePersistent3(acc) => {
-            data.db.add_persistent_account(acc.0);
-            data.db.add_persistent_account(acc.1);
-            data.db.add_persistent_account(acc.2);
+            data.db.add_persistent_account(acc.0.to_alloy());
+            data.db.add_persistent_account(acc.1.to_alloy());
+            data.db.add_persistent_account(acc.2.to_alloy());
             Ok(Bytes::new())
         }
-        HEVMCalls::IsPersistent(acc) => Ok(data.db.is_persistent(&acc.0).encode().into()),
+        HEVMCalls::IsPersistent(acc) => {
+            Ok(data.db.is_persistent(&acc.0.to_alloy()).encode().into())
+        }
         HEVMCalls::RevokePersistent0(acc) => {
-            data.db.remove_persistent_account(&acc.0);
+            data.db.remove_persistent_account(&acc.0.to_alloy());
             Ok(Bytes::new())
         }
         HEVMCalls::RevokePersistent1(acc) => {
-            data.db.remove_persistent_accounts(acc.0.clone());
+            data.db.remove_persistent_accounts(
+                acc.0.clone().into_iter().map(|acc| acc.to_alloy()).collect::<Vec<_>>(),
+            );
             Ok(Bytes::new())
         }
         HEVMCalls::ActiveFork(_) => data
             .db
             .active_fork_id()
-            .map(|id| id.encode().into())
+            .map(|id| id.to_ethers().encode().into())
             .ok_or_else(|| fmt_err!("No active fork")),
         HEVMCalls::RollFork0(fork) => data
             .db
-            .roll_fork(None, fork.0, data.env, &mut data.journaled_state)
+            .roll_fork(None, fork.0.to_alloy(), data.env, &mut data.journaled_state)
             .map(empty)
             .map_err(Into::into),
         HEVMCalls::RollFork1(fork) => data
@@ -89,13 +96,18 @@ pub fn apply<DB: DatabaseExt>(
             .map_err(Into::into),
         HEVMCalls::RollFork2(fork) => data
             .db
-            .roll_fork(Some(fork.0), fork.1, data.env, &mut data.journaled_state)
+            .roll_fork(
+                Some(fork.0).map(|id| id.to_alloy()),
+                fork.1.to_alloy(),
+                data.env,
+                &mut data.journaled_state,
+            )
             .map(empty)
             .map_err(Into::into),
         HEVMCalls::RollFork3(fork) => data
             .db
             .roll_fork_to_transaction(
-                Some(fork.0),
+                Some(fork.0).map(|f| f.to_alloy()),
                 fork.1.into(),
                 data.env,
                 &mut data.journaled_state,
@@ -128,7 +140,7 @@ pub fn apply<DB: DatabaseExt>(
             Ok(urls.encode().into())
         }
         HEVMCalls::AllowCheatcodes(addr) => {
-            data.db.allow_cheatcode_access(addr.0);
+            data.db.allow_cheatcode_access(addr.0.to_alloy());
             Ok(Bytes::new())
         }
         HEVMCalls::Transact0(inner) => data
@@ -139,7 +151,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::Transact1(inner) => data
             .db
             .transact(
-                Some(inner.0),
+                Some(inner.0.to_alloy()),
                 inner.1.into(),
                 data.env,
                 &mut data.journaled_state,
@@ -187,7 +199,7 @@ fn create_select_fork<DB: DatabaseExt>(
 
     let fork = create_fork_request(state, url_or_alias, block, data)?;
     let id = data.db.create_select_fork(fork, data.env, &mut data.journaled_state)?;
-    Ok(id.encode().into())
+    Ok(id.to_ethers().encode().into())
 }
 
 /// Creates a new fork
@@ -199,14 +211,14 @@ fn create_fork<DB: DatabaseExt>(
 ) -> Result {
     let fork = create_fork_request(state, url_or_alias, block, data)?;
     let id = data.db.create_fork(fork)?;
-    Ok(id.encode().into())
+    Ok(id.to_ethers().encode().into())
 }
 /// Creates and then also selects the new fork at the given transaction
 fn create_select_fork_at_transaction<DB: DatabaseExt>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
     url_or_alias: String,
-    transaction: H256,
+    transaction: B256,
 ) -> Result {
     if state.broadcast.is_some() {
         return Err(Error::SelectForkDuringBroadcast)
@@ -222,7 +234,7 @@ fn create_select_fork_at_transaction<DB: DatabaseExt>(
         &mut data.journaled_state,
         transaction,
     )?;
-    Ok(id.encode().into())
+    Ok(id.to_ethers().encode().into())
 }
 
 /// Creates a new fork at the given transaction
@@ -230,11 +242,11 @@ fn create_fork_at_transaction<DB: DatabaseExt>(
     state: &Cheatcodes,
     data: &mut EVMData<'_, DB>,
     url_or_alias: String,
-    transaction: H256,
+    transaction: B256,
 ) -> Result {
     let fork = create_fork_request(state, url_or_alias, None, data)?;
     let id = data.db.create_fork_at_transaction(fork, transaction)?;
-    Ok(id.encode().into())
+    Ok(id.to_ethers().encode().into())
 }
 
 /// Creates the request object for a new fork request
@@ -260,7 +272,7 @@ fn create_fork_request<DB: DatabaseExt>(
 /// Equivalent to eth_getLogs but on a cheatcode.
 fn eth_getlogs<DB: DatabaseExt>(data: &EVMData<DB>, inner: &EthGetLogsCall) -> Result {
     let url = data.db.active_fork_url().ok_or(fmt_err!("No active fork url found"))?;
-    if inner.0 > U256::from(u64::MAX) || inner.1 > U256::from(u64::MAX) {
+    if inner.0.to_alloy() > U256::from(u64::MAX) || inner.1.to_alloy() > U256::from(u64::MAX) {
         return Err(fmt_err!("Blocks in block range must be less than 2^64 - 1"))
     }
     // Cannot possibly have more than 4 topics in the topics array.
@@ -269,16 +281,14 @@ fn eth_getlogs<DB: DatabaseExt>(data: &EVMData<DB>, inner: &EthGetLogsCall) -> R
     }
 
     let provider = ProviderBuilder::new(url).build()?;
-    let mut filter = Filter::new()
-        .address(b160_to_h160(inner.2.into()))
-        .from_block(inner.0.as_u64())
-        .to_block(inner.1.as_u64());
+    let mut filter =
+        Filter::new().address(inner.2).from_block(inner.0.as_u64()).to_block(inner.1.as_u64());
     for (i, item) in inner.3.iter().enumerate() {
         match i {
-            0 => filter = filter.topic0(U256::from(item)),
-            1 => filter = filter.topic1(U256::from(item)),
-            2 => filter = filter.topic2(U256::from(item)),
-            3 => filter = filter.topic3(U256::from(item)),
+            0 => filter = filter.topic0(eU256::from(item)),
+            1 => filter = filter.topic1(eU256::from(item)),
+            2 => filter = filter.topic2(eU256::from(item)),
+            3 => filter = filter.topic3(eU256::from(item)),
             _ => return Err(fmt_err!("Topics array should be less than 4 elements")),
         };
     }

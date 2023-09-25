@@ -1,10 +1,11 @@
 use super::Cheatcodes;
-use crate::utils::{b160_to_h160, ru256_to_u256};
+use alloy_primitives::Bytes;
 use ethers::{
     abi::{self, Token},
-    types::{Address, Bytes, U256},
+    types::{Address, U256},
     utils::keccak256,
 };
+use foundry_utils::types::ToEthers;
 use revm::{
     interpreter::{opcode, Interpreter},
     Database, EVMData,
@@ -95,12 +96,12 @@ pub fn on_evm_step<DB: Database>(
             if interpreter.stack.peek(1) == Ok(revm::primitives::U256::from(0x40)) {
                 let address = interpreter.contract.address;
                 let offset = interpreter.stack.peek(0).expect("stack size > 1").to::<usize>();
-                let low = U256::from(interpreter.memory.get_slice(offset, 0x20));
-                let high = U256::from(interpreter.memory.get_slice(offset + 0x20, 0x20));
-                let result = U256::from(keccak256(interpreter.memory.get_slice(offset, 0x40)));
+                let low = U256::from(interpreter.memory.slice(offset, 0x20));
+                let high = U256::from(interpreter.memory.slice(offset + 0x20, 0x20));
+                let result = U256::from(keccak256(interpreter.memory.slice(offset, 0x40)));
 
                 mapping_slots
-                    .entry(b160_to_h160(address))
+                    .entry(address.to_ethers())
                     .or_default()
                     .seen_sha3
                     .insert(result, (low, high));
@@ -108,10 +109,10 @@ pub fn on_evm_step<DB: Database>(
         }
         opcode::SSTORE => {
             if let Some(mapping_slots) =
-                mapping_slots.get_mut(&b160_to_h160(interpreter.contract.address))
+                mapping_slots.get_mut(&interpreter.contract.address.to_ethers())
             {
                 if let Ok(slot) = interpreter.stack.peek(0) {
-                    mapping_slots.insert(ru256_to_u256(slot));
+                    mapping_slots.insert(slot.to_ethers());
                 }
             }
         }

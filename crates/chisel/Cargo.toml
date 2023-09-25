@@ -23,6 +23,7 @@ foundry-evm.workspace = true
 foundry-config.workspace = true
 foundry-cli.workspace = true
 foundry-common.workspace = true
+foundry-utils.workspace = true
 forge-fmt.workspace = true
 
 # ethers
@@ -49,17 +50,13 @@ dirs = "5"
 time = { version = "0.3", features = ["formatting"] }
 regex = "1"
 
-[target.'cfg(not(target_env = "msvc"))'.dependencies]
-tikv-jemallocator = { workspace = true, optional = true }
-
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio"] }
 serial_test = "2"
 once_cell = "1"
 
 [features]
-default = ["rustls", "jemalloc"]
-jemalloc = ["dep:tikv-jemallocator"]
+default = ["rustls"]
 rustls = ["ethers/rustls", "reqwest/rustls-tls", "reqwest/rustls-tls-native-roots"]
 openssl = ["ethers/openssl", "reqwest/default-tls"]
 

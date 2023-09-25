@@ -1,16 +1,15 @@
-use crate::{
-    executor::{patch_hardhat_console_selector, HardhatConsoleCalls, HARDHAT_CONSOLE_ADDRESS},
-    utils::{b160_to_h160, b256_to_h256, h160_to_b160},
+use crate::executor::{
+    patch_hardhat_console_selector, HardhatConsoleCalls, HARDHAT_CONSOLE_ADDRESS,
 };
-use bytes::Bytes;
+use alloy_primitives::{Address, Bytes, B256};
 use ethers::{
     abi::{AbiDecode, Token},
-    types::{Log, H256},
+    types::{Bytes as ethersBytes, Log, H256},
 };
 use foundry_macros::ConsoleFmt;
+use foundry_utils::types::ToEthers;
 use revm::{
     interpreter::{CallInputs, Gas, InstructionResult},
-    primitives::{B160, B256},
     Database, EVMData, Inspector,
 };
 
@@ -44,11 +43,11 @@ impl LogCollector {
 }
 
 impl<DB: Database> Inspector<DB> for LogCollector {
-    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &B160, topics: &[B256], data: &Bytes) {
+    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[B256], data: &Bytes) {
         self.logs.push(Log {
-            address: b160_to_h160(*address),
-            topics: topics.iter().copied().map(b256_to_h256).collect(),
-            data: data.clone().into(),
+            address: address.to_ethers(),
+            topics: topics.iter().copied().map(|t| t.to_ethers()).collect(),
+            data: ethersBytes::from(data.clone().0),
             ..Default::default()
         });
     }
@@ -58,7 +57,7 @@ impl<DB: Database> Inspector<DB> for LogCollector {
         _: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
-        if call.contract == h160_to_b160(HARDHAT_CONSOLE_ADDRESS) {
+        if call.contract == HARDHAT_CONSOLE_ADDRESS {
             let (status, reason) = self.hardhat_log(call.input.to_vec());
             (status, Gas::new(call.gas_limit), reason)
         } else {

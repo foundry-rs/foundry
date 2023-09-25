@@ -1,15 +1,12 @@
 use super::{artifacts::ArtifactInfo, ScriptResult};
-use ethers::{
-    abi,
-    abi::Address,
-    prelude::{NameOrAddress, H256 as TxHash},
-    types::transaction::eip2718::TypedTransaction,
-};
+use alloy_primitives::{Address, B256};
+use ethers::{abi, prelude::NameOrAddress, types::transaction::eip2718::TypedTransaction};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{abi::format_token_raw, RpcUrl, SELECTOR_LEN};
 use foundry_evm::{
     executor::inspector::DEFAULT_CREATE2_DEPLOYER, trace::CallTraceDecoder, CallKind,
 };
+use foundry_utils::types::{ToAlloy, ToEthers};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tracing::error;
@@ -28,7 +25,7 @@ pub struct AdditionalContract {
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionWithMetadata {
-    pub hash: Option<TxHash>,
+    pub hash: Option<B256>,
     #[serde(rename = "transactionType")]
     pub opcode: CallKind,
     #[serde(default = "default_string")]
@@ -51,7 +48,7 @@ fn default_string() -> Option<String> {
 }
 
 fn default_address() -> Option<Address> {
-    Some(Address::zero())
+    Some(Address::ZERO)
 }
 
 fn default_vec_of_strings() -> Option<Vec<String>> {
@@ -76,7 +73,7 @@ impl TransactionWithMetadata {
 
         // Specify if any contract was directly created with this transaction
         if let Some(NameOrAddress::Address(to)) = metadata.transaction.to().cloned() {
-            if to == DEFAULT_CREATE2_DEPLOYER {
+            if to.to_alloy() == DEFAULT_CREATE2_DEPLOYER {
                 metadata.set_create(
                     true,
                     Address::from_slice(&result.returned),
@@ -85,7 +82,7 @@ impl TransactionWithMetadata {
                 )?;
             } else {
                 metadata
-                    .set_call(to, local_contracts, decoder)
+                    .set_call(to.to_alloy(), local_contracts, decoder)
                     .wrap_err("Could not decode transaction type.")?;
             }
         } else if metadata.transaction.to().is_none() {
@@ -233,7 +230,7 @@ impl TransactionWithMetadata {
                         .get(&data.0[..SELECTOR_LEN])
                         .map(|functions| functions.first())
                     {
-                        self.contract_name = decoder.contracts.get(&target).cloned();
+                        self.contract_name = decoder.contracts.get(&target.to_ethers()).cloned();
 
                         self.function = Some(function.signature());
                         self.arguments = Some(
@@ -287,7 +284,7 @@ pub mod wrapper {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&to_checksum(addr, None))
+        serializer.serialize_str(&to_checksum(&addr.to_ethers(), None))
     }
 
     pub fn serialize_opt_addr<S>(opt: &Option<Address>, serializer: S) -> Result<S::Ok, S::Error>
@@ -372,7 +369,7 @@ pub mod wrapper {
     impl From<Log> for WrappedLog {
         fn from(log: Log) -> Self {
             Self {
-                address: log.address,
+                address: log.address.to_alloy(),
                 topics: log.topics,
                 data: log.data,
                 block_hash: log.block_hash,
@@ -454,11 +451,11 @@ pub mod wrapper {
                 transaction_index: receipt.transaction_index,
                 block_hash: receipt.block_hash,
                 block_number: receipt.block_number,
-                from: receipt.from,
-                to: receipt.to,
+                from: receipt.from.to_alloy(),
+                to: receipt.to.map(|addr| addr.to_alloy()),
                 cumulative_gas_used: receipt.cumulative_gas_used,
                 gas_used: receipt.gas_used,
-                contract_address: receipt.contract_address,
+                contract_address: receipt.contract_address.map(|addr| addr.to_alloy()),
                 logs: receipt.logs,
                 status: receipt.status,
                 root: receipt.root,

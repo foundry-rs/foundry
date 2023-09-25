@@ -12,6 +12,7 @@ use foundry_cli::{
 use foundry_common::runtime_client::RuntimeClient;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{executor::opts::EvmOpts, trace::TracingExecutor};
+use foundry_utils::types::ToAlloy;
 use std::str::FromStr;
 
 type Provider = ethers::providers::Provider<RuntimeClient>;
@@ -155,9 +156,9 @@ impl CallArgs {
                             .await;
 
                     let trace = match executor.deploy(
-                        sender,
-                        code.into(),
-                        value.unwrap_or(U256::zero()),
+                        sender.to_alloy(),
+                        code.into_bytes().into(),
+                        value.unwrap_or(U256::zero()).to_alloy(),
                         None,
                     ) {
                         Ok(deploy_result) => TraceResult::from(deploy_result),
@@ -192,10 +193,10 @@ impl CallArgs {
                     let (tx, _) = builder.build();
 
                     let trace = TraceResult::from(executor.call_raw_committing(
-                        sender,
-                        tx.to_addr().copied().expect("an address to be here"),
+                        sender.to_alloy(),
+                        tx.to_addr().copied().expect("an address to be here").to_alloy(),
                         tx.data().cloned().unwrap_or_default().to_vec().into(),
-                        tx.value().copied().unwrap_or_default(),
+                        tx.value().copied().unwrap_or_default().to_alloy(),
                     )?);
 
                     handle_traces(trace, &config, chain, labels, verbose, debug).await?;

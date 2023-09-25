@@ -1,9 +1,11 @@
+//! Executor wrapper which can be used for fuzzing, using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/)
 use crate::{
     coverage::HitMaps,
     decode::{self, decode_console_logs},
     executor::{Executor, RawCallResult},
     trace::CallTraceArena,
 };
+use alloy_primitives::U256;
 use error::{FuzzError, ASSUME_MAGIC_RETURN_CODE};
 use ethers::{
     abi::{Abi, Function, Token},
@@ -12,6 +14,7 @@ use ethers::{
 use eyre::Result;
 use foundry_common::{calc, contracts::ContractsByAddress};
 use foundry_config::FuzzConfig;
+use foundry_utils::types::{ToAlloy, ToEthers};
 pub use proptest::test_runner::Reason;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 use serde::{Deserialize, Serialize};
@@ -149,7 +152,7 @@ impl<'a> FuzzedExecutor<'a> {
             counterexample: None,
             decoded_logs: decode_console_logs(&call.logs),
             logs: call.logs,
-            labeled_addresses: call.labels,
+            labeled_addresses: call.labels.into_iter().map(|l| (l.0.to_ethers(), l.1)).collect(),
             traces: if run_result.is_ok() { traces.into_inner() } else { call.traces.clone() },
             coverage: coverage.into_inner(),
         };
@@ -198,7 +201,12 @@ impl<'a> FuzzedExecutor<'a> {
     ) -> Result<FuzzOutcome, TestCaseError> {
         let call = self
             .executor
-            .call_raw(self.sender, address, calldata.0.clone(), 0.into())
+            .call_raw(
+                self.sender.to_alloy(),
+                address.to_alloy(),
+                calldata.0.clone().into(),
+                U256::ZERO,
+            )
             .map_err(|_| TestCaseError::fail(FuzzError::FailedContractCall))?;
         let state_changeset = call
             .state_changeset
@@ -223,8 +231,12 @@ impl<'a> FuzzedExecutor<'a> {
             .as_ref()
             .map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
 
-        let success =
-            self.executor.is_success(address, call.reverted, state_changeset.clone(), should_fail);
+        let success = self.executor.is_success(
+            address.to_alloy(),
+            call.reverted,
+            state_changeset.clone(),
+            should_fail,
+        );
 
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {

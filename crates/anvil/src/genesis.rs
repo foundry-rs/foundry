@@ -5,10 +5,8 @@ use ethers::{
     types::{serde_helpers::*, Address, Bytes, H256, U256},
 };
 use foundry_common::errors::FsPathError;
-use foundry_evm::{
-    revm::primitives::{Bytecode, Env, KECCAK_EMPTY, U256 as rU256},
-    utils::h160_to_b160,
-};
+use foundry_evm::revm::primitives::{Bytecode, Env, KECCAK_EMPTY, U256 as rU256};
+use foundry_utils::types::ToAlloy;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -92,13 +90,13 @@ impl Genesis {
             env.block.timestamp = rU256::from(timestamp);
         }
         if let Some(base_fee) = self.base_fee_per_gas {
-            env.block.basefee = base_fee.into();
+            env.block.basefee = base_fee.to_alloy();
         }
         if let Some(number) = self.number {
             env.block.number = rU256::from(number);
         }
         if let Some(coinbase) = self.coinbase {
-            env.block.coinbase = h160_to_b160(coinbase);
+            env.block.coinbase = coinbase.to_alloy();
         }
         env.block.difficulty = rU256::from(self.difficulty);
         env.block.gas_limit = rU256::from(self.gas_limit);
@@ -144,7 +142,7 @@ impl From<GenesisAccount> for AccountInfo {
         let GenesisAccount { code, balance, nonce, .. } = acc;
         let code = code.map(|code| Bytecode::new_raw(code.to_vec().into()));
         AccountInfo {
-            balance: balance.into(),
+            balance: balance.to_alloy(),
             nonce: nonce.unwrap_or_default(),
             code_hash: code.as_ref().map(|code| code.hash_slow()).unwrap_or(KECCAK_EMPTY),
             code,

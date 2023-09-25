@@ -1,6 +1,6 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
+use alloy_primitives::U256;
 use clap::Parser;
-use ethers::types::U256;
 use eyre::Result;
 use forge::{
     decode::decode_console_logs,
@@ -226,69 +226,71 @@ impl TestArgs {
         let outcome = self
             .run_tests(runner, config.clone(), verbosity, filter.clone(), test_options.clone())
             .await?;
-        let tests = outcome.clone().into_tests();
-
-        let mut decoded_traces = Vec::new();
-        let mut decoders = Vec::new();
-        for test in tests {
-            let mut result = test.result;
-            // Identify addresses in each trace
-            let mut builder = CallTraceDecoderBuilder::new()
-                .with_labels(result.labeled_addresses.clone())
-                .with_events(local_identifier.events().cloned())
-                .with_verbosity(verbosity);
-
-            // Signatures are of no value for gas reports
-            if !self.gas_report {
-                let sig_identifier =
-                    SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
-                builder = builder.with_signature_identifier(sig_identifier.clone());
-            }
-
-            let mut decoder = builder.build();
-
-            if !result.traces.is_empty() {
-                // Set up identifiers
-                // Do not re-query etherscan for contracts that you've already queried today.
-                let mut etherscan_identifier = EtherscanIdentifier::new(&config, remote_chain_id)?;
-
-                // Decode the traces
-                for (kind, trace) in &mut result.traces {
-                    decoder.identify(trace, &mut local_identifier);
-                    decoder.identify(trace, &mut etherscan_identifier);
-
-                    let should_include = match kind {
-                        // At verbosity level 3, we only display traces for failed tests
-                        // At verbosity level 4, we also display the setup trace for failed
-                        // tests At verbosity level 5, we display
-                        // all traces for all tests
-                        TraceKind::Setup => {
-                            (verbosity >= 5) ||
-                                (verbosity == 4 && result.status == TestStatus::Failure)
-                        }
-                        TraceKind::Execution => {
-                            verbosity > 3 ||
-                                (verbosity == 3 && result.status == TestStatus::Failure)
-                        }
-                        _ => false,
-                    };
-
-                    // We decode the trace if we either need to build a gas report or we need
-                    // to print it
-                    if should_include || self.gas_report {
-                        decoder.decode(trace).await;
-                    }
-
-                    if should_include {
-                        decoded_traces.push(trace.to_string());
-                    }
-                }
-            }
-
-            decoders.push(decoder);
-        }
 
         if should_debug {
+            let tests = outcome.clone().into_tests();
+
+            let mut decoded_traces = Vec::new();
+            let mut decoders = Vec::new();
+            for test in tests {
+                let mut result = test.result;
+                // Identify addresses in each trace
+                let mut builder = CallTraceDecoderBuilder::new()
+                    .with_labels(result.labeled_addresses.clone())
+                    .with_events(local_identifier.events().cloned())
+                    .with_verbosity(verbosity);
+
+                // Signatures are of no value for gas reports
+                if !self.gas_report {
+                    let sig_identifier =
+                        SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
+                    builder = builder.with_signature_identifier(sig_identifier.clone());
+                }
+
+                let mut decoder = builder.build();
+
+                if !result.traces.is_empty() {
+                    // Set up identifiers
+                    // Do not re-query etherscan for contracts that you've already queried today.
+                    let mut etherscan_identifier =
+                        EtherscanIdentifier::new(&config, remote_chain_id)?;
+
+                    // Decode the traces
+                    for (kind, trace) in &mut result.traces {
+                        decoder.identify(trace, &mut local_identifier);
+                        decoder.identify(trace, &mut etherscan_identifier);
+
+                        let should_include = match kind {
+                            // At verbosity level 3, we only display traces for failed tests
+                            // At verbosity level 4, we also display the setup trace for failed
+                            // tests At verbosity level 5, we display
+                            // all traces for all tests
+                            TraceKind::Setup => {
+                                (verbosity >= 5) ||
+                                    (verbosity == 4 && result.status == TestStatus::Failure)
+                            }
+                            TraceKind::Execution => {
+                                verbosity > 3 ||
+                                    (verbosity == 3 && result.status == TestStatus::Failure)
+                            }
+                            _ => false,
+                        };
+
+                        // We decode the trace if we either need to build a gas report or we need
+                        // to print it
+                        if should_include || self.gas_report {
+                            decoder.decode(trace).await;
+                        }
+
+                        if should_include {
+                            decoded_traces.push(trace.to_string());
+                        }
+                    }
+                }
+
+                decoders.push(decoder);
+            }
+
             let mut sources: ContractSources = Default::default();
             for (id, artifact) in output.into_artifacts() {
                 // Sources are only required for the debugger, but it *might* mean that there's
@@ -786,4 +788,49 @@ async fn test(
 
     trace!(target: "forge::test", "received {} results", results.len());
     Ok(TestOutcome::new(results, allow_failure))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Sanity test that unknown args are rejected
+    #[test]
+    fn test_verbosity() {
+        #[derive(Debug, Parser)]
+        pub struct VerbosityArgs {
+            #[clap(long, short, action = clap::ArgAction::Count)]
+            verbosity: u8,
+        }
+        let res = VerbosityArgs::try_parse_from(["foundry-cli", "-vw"]);
+        assert!(res.is_err());
+
+        let res = VerbosityArgs::try_parse_from(["foundry-cli", "-vv"]);
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_verbosity_multi_short() {
+        #[derive(Debug, Parser)]
+        pub struct VerbosityArgs {
+            #[clap(long, short)]
+            verbosity: bool,
+            #[clap(
+                long,
+                short,
+                num_args(0..),
+                value_name = "PATH",
+            )]
+            watch: Option<Vec<String>>,
+        }
+        // this is supported by clap
+        let res = VerbosityArgs::try_parse_from(["foundry-cli", "-vw"]);
+        assert!(res.is_ok())
+    }
+
+    #[test]
+    fn test_watch_parse() {
+        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "-vw"]);
+        assert!(args.watch.watch.is_some());
+    }
 }

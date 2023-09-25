@@ -1,4 +1,5 @@
 use super::*;
+use alloy_primitives::{Address, Bytes, U256};
 use ethers::{
     prelude::{
         artifacts::Libraries, cache::SolFilesCache, ArtifactId, Project, ProjectCompileOutput,
@@ -8,7 +9,6 @@ use ethers::{
         contracts::ArtifactContracts,
         info::ContractInfo,
     },
-    types::{Address, U256},
 };
 use eyre::{Context, ContextCompat, Result};
 use foundry_cli::utils::get_cached_entry_by_name;
@@ -272,7 +272,7 @@ struct ExtraLinkingInfo<'a> {
     no_target_name: bool,
     target_fname: String,
     contract: &'a mut CompactContractBytecode,
-    dependencies: &'a mut Vec<(String, ethers::types::Bytes)>,
+    dependencies: &'a mut Vec<(String, Bytes)>,
     matched: bool,
     target_id: Option<ArtifactId>,
 }
@@ -284,6 +284,6 @@ pub struct BuildOutput {
     pub known_contracts: ArtifactContracts,
     pub highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     pub libraries: Libraries,
-    pub predeploy_libraries: Vec<ethers::types::Bytes>,
+    pub predeploy_libraries: Vec<Bytes>,
     pub sources: ContractSources,
 }

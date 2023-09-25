@@ -22,6 +22,7 @@ fee(uint256)
 coinbase(address)
 store(address,bytes32,bytes32)
 load(address,bytes32)(bytes32)
+cool(address)
 
 setEnv(string,string)
 envBool(string)(bool)

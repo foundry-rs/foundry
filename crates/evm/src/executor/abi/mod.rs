@@ -1,4 +1,6 @@
-use ethers::types::{Address, Selector, H160};
+//! Several ABI-related utilities for executors.
+
+use alloy_primitives::{Address, Selector};
 pub use foundry_abi::{
     console::{self, ConsoleEvents, CONSOLE_ABI},
     hardhat_console::{self, HardhatConsoleCalls, HARDHATCONSOLE_ABI as HARDHAT_CONSOLE_ABI},
@@ -11,7 +13,7 @@ use std::collections::HashMap;
 ///
 /// This is the same address as the one used in DappTools's HEVM.
 /// `address(bytes20(uint160(uint256(keccak256('hevm cheat code')))))`
-pub const CHEATCODE_ADDRESS: Address = H160([
+pub const CHEATCODE_ADDRESS: Address = Address::new([
     0x71, 0x09, 0x70, 0x9E, 0xcf, 0xa9, 0x1a, 0x80, 0x62, 0x6f, 0xf3, 0x98, 0x9d, 0x68, 0xf6, 0x7f,
     0x5b, 0x1d, 0xd1, 0x2d,
 ]);
@@ -19,7 +21,7 @@ pub const CHEATCODE_ADDRESS: Address = H160([
 /// The Hardhat console address (0x000000000000000000636F6e736F6c652e6c6f67).
 ///
 /// See: https://github.com/nomiclabs/hardhat/blob/master/packages/hardhat-core/console.sol
-pub const HARDHAT_CONSOLE_ADDRESS: Address = H160([
+pub const HARDHAT_CONSOLE_ADDRESS: Address = Address::new([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x6f, 0x6e, 0x73, 0x6f, 0x6c, 0x65,
     0x2e, 0x6c, 0x6f, 0x67,
 ]);

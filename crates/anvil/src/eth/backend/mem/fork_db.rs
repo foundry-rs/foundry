@@ -14,6 +14,7 @@ use foundry_evm::{
     },
     revm::Database,
 };
+use foundry_utils::types::{ToAlloy, ToEthers};
 
 /// Implement the helper for the fork database
 impl Db for ForkedDatabase {
@@ -23,12 +24,12 @@ impl Db for ForkedDatabase {
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()> {
         // this ensures the account is loaded first
-        let _ = Database::basic(self, address.into())?;
+        let _ = Database::basic(self, address.to_alloy())?;
         self.database_mut().set_storage_at(address, slot, val)
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: H256) {
-        self.inner().block_hashes().write().insert(number.into(), hash.into());
+        self.inner().block_hashes().write().insert(number.to_alloy(), hash.to_alloy());
     }
 
     fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
@@ -46,15 +47,15 @@ impl Db for ForkedDatabase {
                 }
                 .to_checked();
                 Ok((
-                    k.into(),
+                    k.to_ethers(),
                     SerializableAccountRecord {
                         nonce: v.info.nonce,
-                        balance: v.info.balance.into(),
+                        balance: v.info.balance.to_ethers(),
                         code: code.bytes()[..code.len()].to_vec().into(),
                         storage: v
                             .storage
                             .into_iter()
-                            .map(|kv| (kv.0.into(), kv.1.into()))
+                            .map(|kv| (kv.0.to_ethers(), kv.1.to_ethers()))
                             .collect(),
                     },
                 ))
@@ -64,11 +65,11 @@ impl Db for ForkedDatabase {
     }
 
     fn snapshot(&mut self) -> U256 {
-        self.insert_snapshot()
+        self.insert_snapshot().to_ethers()
     }
 
     fn revert(&mut self, id: U256) -> bool {
-        self.revert_snapshot(id)
+        self.revert_snapshot(id.to_alloy())
     }
 
     fn current_state(&self) -> StateDb {
