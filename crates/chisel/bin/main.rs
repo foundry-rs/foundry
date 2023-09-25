@@ -10,6 +10,7 @@ use chisel::{
     prelude::{ChiselCommand, ChiselDispatcher, DispatchResult, SolidityHelper},
 };
 use clap::Parser;
+use eyre::Context;
 use foundry_cli::{
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
@@ -249,23 +250,41 @@ async fn evaluate_prelude(
     maybe_prelude: Option<PathBuf>,
 ) -> eyre::Result<()> {
     if let Some(prelude_dir) = maybe_prelude {
-        let prelude_sources = fs::files_with_ext(prelude_dir, "sol");
-        let print_success_msg = !prelude_sources.is_empty();
+        match prelude_dir.is_file() {
+            true => {
+                println!(
+                    "{} {}",
+                    Paint::yellow("⏳ Loading prelude source file:"),
+                    prelude_dir.display(),
+                );
+                load_prelude_file(dispatcher, prelude_dir).await?;
+                println!("{}\n", Paint::green("Prelude source file loaded successfully!"));
+            }
+            false => {
+                let prelude_sources = fs::files_with_ext(prelude_dir, "sol");
+                let print_success_msg = !prelude_sources.is_empty();
+                for source_file in prelude_sources {
+                    println!(
+                        "{} {}",
+                        Paint::yellow("⏳ Loading prelude source file:"),
+                        source_file.display(),
+                    );
+                    load_prelude_file(dispatcher, source_file).await?;
+                }
 
-        for source_file in prelude_sources {
-            println!(
-                "{} {}",
-                Paint::yellow("⏳ Loading prelude source file:"),
-                source_file.display(),
-            );
-
-            let prelude = fs::read_to_string(source_file)?;
-            dispatch_repl_line(dispatcher, &prelude).await;
-        }
-
-        if print_success_msg {
-            println!("{}\n", Paint::green("✅ All prelude source files loaded successfully"));
+                if print_success_msg {
+                    println!("{}\n", Paint::green("All prelude source files loaded successfully!"));
+                }
+            }
         }
     }
+    Ok(())
+}
+
+/// Loads a single Solidity file into the prelude.
+async fn load_prelude_file(dispatcher: &mut ChiselDispatcher, file: PathBuf) -> eyre::Result<()> {
+    let prelude = fs::read_to_string(file)
+        .wrap_err("Could not load source file. Are you sure this path is correct?")?;
+    dispatch_repl_line(dispatcher, &prelude).await;
     Ok(())
 }
