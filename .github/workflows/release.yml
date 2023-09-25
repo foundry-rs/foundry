@@ -110,6 +110,8 @@ jobs:
               with:
                   targets: ${{ matrix.job.target }}
             - uses: Swatinem/rust-cache@v2
+              with:
+                  cache-on-failure: true
 
             - name: Apple M1 setup
               if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
