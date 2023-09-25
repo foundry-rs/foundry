@@ -30,11 +30,18 @@ impl Remappings {
         Self { remappings }
     }
 
+    fn filter_key(r: &Remapping) -> String {
+        match &r.context {
+            Some(str) => str.clone() + &r.name.clone(),
+            None => r.name.clone(),
+        }
+    }
+
     /// Consumes the wrapper and returns the inner remappings vector.
     pub fn into_inner(self) -> Vec<Remapping> {
         let mut tmp = HashSet::new();
         let remappings =
-            self.remappings.iter().filter(|r| tmp.insert(r.name.clone())).cloned().collect();
+            self.remappings.iter().filter(|r| tmp.insert(Self::filter_key(&r))).cloned().collect();
         remappings
     }
 
