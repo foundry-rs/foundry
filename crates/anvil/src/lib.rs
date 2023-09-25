@@ -100,7 +100,7 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
         backend.auto_impersonate_account(true).await;
     }
 
-    let fork = backend.get_fork().cloned();
+    let fork = backend.get_fork();
 
     let NodeConfig {
         signer_accounts,
