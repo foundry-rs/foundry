@@ -249,33 +249,21 @@ async fn evaluate_prelude(
     dispatcher: &mut ChiselDispatcher,
     maybe_prelude: Option<PathBuf>,
 ) -> eyre::Result<()> {
-    if let Some(prelude_dir) = maybe_prelude {
-        match prelude_dir.is_file() {
-            true => {
-                println!(
-                    "{} {}",
-                    Paint::yellow("Loading prelude source file:"),
-                    prelude_dir.display(),
-                );
-                load_prelude_file(dispatcher, prelude_dir).await?;
-                println!("{}\n", Paint::green("Prelude source file loaded successfully!"));
-            }
-            false => {
-                let prelude_sources = fs::files_with_ext(prelude_dir, "sol");
-                let print_success_msg = !prelude_sources.is_empty();
-                for source_file in prelude_sources {
-                    println!(
-                        "{} {}",
-                        Paint::yellow("Loading prelude source file:"),
-                        source_file.display(),
-                    );
-                    load_prelude_file(dispatcher, source_file).await?;
-                }
+    let Some(prelude_dir) = maybe_prelude else { return Ok(()) };
+    if prelude_dir.is_file() {
+        println!("{} {}", Paint::yellow("Loading prelude source file:"), prelude_dir.display(),);
+        load_prelude_file(dispatcher, prelude_dir).await?;
+        println!("{}\n", Paint::green("Prelude source file loaded successfully!"));
+    } else {
+        let prelude_sources = fs::files_with_ext(prelude_dir, "sol");
+        let print_success_msg = !prelude_sources.is_empty();
+        for source_file in prelude_sources {
+            println!("{} {}", Paint::yellow("Loading prelude source file:"), source_file.display(),);
+            load_prelude_file(dispatcher, source_file).await?;
+        }
 
-                if print_success_msg {
-                    println!("{}\n", Paint::green("All prelude source files loaded successfully!"));
-                }
-            }
+        if print_success_msg {
+            println!("{}\n", Paint::green("All prelude source files loaded successfully!"));
         }
     }
     Ok(())
