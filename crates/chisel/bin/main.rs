@@ -45,7 +45,7 @@ pub struct ChiselParser {
     #[command(subcommand)]
     pub sub: Option<ChiselParserSub>,
 
-    /// Path to a directory containing Solidity files to import
+    /// Path to a directory containing Solidity files to import, or path to a single Solidity file.
     ///
     /// These files will be evaluated before the top-level of the
     /// REPL, therefore functioning as a prelude
