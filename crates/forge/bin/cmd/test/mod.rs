@@ -828,4 +828,18 @@ mod tests {
         let args: TestArgs = TestArgs::parse_from(["foundry-cli", "-vw"]);
         assert!(args.watch.watch.is_some());
     }
+
+    #[test]
+    fn test_fuzz_seed() {
+        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--fuzz-seed", "0x10"]);
+        assert!(args.fuzz_seed.is_some());
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/5913>
+    #[test]
+    fn test_5913() {
+        let args: TestArgs =
+            TestArgs::parse_from(["foundry-cli", "-vvv", "--gas-report", "--fuzz-seed", "0x10"]);
+        assert!(args.fuzz_seed.is_some());
+    }
 }
