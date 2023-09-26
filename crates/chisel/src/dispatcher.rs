@@ -9,7 +9,6 @@ use crate::prelude::{
 };
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{hex, Address};
-use ethers::contract::Lazy;
 use forge_fmt::FormatterConfig;
 use foundry_config::{Config, RpcEndpoint};
 use foundry_evm::{
@@ -20,6 +19,7 @@ use foundry_evm::{
     },
 };
 use foundry_utils::types::ToEthers;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
