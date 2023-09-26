@@ -12,7 +12,7 @@ use foundry_cli::{
 use foundry_common::runtime_client::RuntimeClient;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{executor::opts::EvmOpts, trace::TracingExecutor};
-use foundry_utils::types::ToAlloy;
+use foundry_utils::types::{ToAlloy, ToEthers};
 use std::str::FromStr;
 
 type Provider = ethers::providers::Provider<RuntimeClient>;
@@ -131,14 +131,14 @@ impl CallArgs {
         let sender = eth.wallet.sender().await;
 
         let mut builder: TxBuilder<'_, Provider> =
-            TxBuilder::new(&provider, sender, to, chain, tx.legacy).await?;
+            TxBuilder::new(&provider, sender.to_ethers(), to, chain, tx.legacy).await?;
 
         builder
-            .gas(tx.gas_limit)
+            .gas(tx.gas_limit.map(|g| g.to_ethers()))
             .etherscan_api_key(config.get_etherscan_api_key(Some(chain)))
-            .gas_price(tx.gas_price)
-            .priority_gas_price(tx.priority_gas_price)
-            .nonce(tx.nonce);
+            .gas_price(tx.gas_price.map(|g| g.to_ethers()))
+            .priority_gas_price(tx.priority_gas_price.map(|g| g.to_ethers()))
+            .nonce(tx.nonce.map(|n| n.to_ethers()));
 
         match command {
             Some(CallSubcommands::Create { code, sig, args, value }) => {
@@ -156,7 +156,7 @@ impl CallArgs {
                             .await;
 
                     let trace = match executor.deploy(
-                        sender.to_alloy(),
+                        sender,
                         code.into_bytes().into(),
                         value.unwrap_or(U256::zero()).to_alloy(),
                         None,
@@ -175,7 +175,7 @@ impl CallArgs {
             }
             _ => {
                 // fill first here because we need to use the builder in the conditional
-                fill_tx(&mut builder, tx.value, sig, args, data).await?;
+                fill_tx(&mut builder, tx.value.map(|t| t.to_ethers()), sig, args, data).await?;
 
                 if trace {
                     let figment = Config::figment_with_root(find_project_root_path(None).unwrap())
@@ -193,7 +193,7 @@ impl CallArgs {
                     let (tx, _) = builder.build();
 
                     let trace = TraceResult::from(executor.call_raw_committing(
-                        sender.to_alloy(),
+                        sender,
                         tx.to_addr().copied().expect("an address to be here").to_alloy(),
                         tx.data().cloned().unwrap_or_default().to_vec().into(),
                         tx.value().copied().unwrap_or_default().to_alloy(),

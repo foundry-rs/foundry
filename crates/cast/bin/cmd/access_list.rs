@@ -10,6 +10,7 @@ use foundry_cli::{
     utils,
 };
 use foundry_config::{Chain, Config};
+use foundry_utils::types::ToEthers;
 use std::str::FromStr;
 
 /// CLI arguments for `cast access-list`.
@@ -65,7 +66,8 @@ impl AccessListArgs {
         let chain = utils::get_chain(config.chain_id, &provider).await?;
         let sender = eth.wallet.sender().await;
 
-        access_list(&provider, sender, to, sig, args, data, tx, chain, block, to_json).await?;
+        access_list(&provider, sender.to_ethers(), to, sig, args, data, tx, chain, block, to_json)
+            .await?;
         Ok(())
     }
 }
@@ -88,12 +90,12 @@ where
 {
     let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
     builder
-        .gas(tx.gas_limit)
-        .gas_price(tx.gas_price)
-        .priority_gas_price(tx.priority_gas_price)
-        .nonce(tx.nonce);
+        .gas(tx.gas_limit.map(|g| g.to_ethers()))
+        .gas_price(tx.gas_price.map(|g| g.to_ethers()))
+        .priority_gas_price(tx.priority_gas_price.map(|g| g.to_ethers()))
+        .nonce(tx.nonce.map(|n| n.to_ethers()));
 
-    builder.value(tx.value);
+    builder.value(tx.value.map(|v| v.to_ethers()));
 
     if let Some(sig) = sig {
         builder.set_args(sig.as_str(), args).await?;

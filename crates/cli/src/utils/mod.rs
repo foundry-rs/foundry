@@ -1,8 +1,7 @@
+use alloy_primitives::U256;
 use ethers::{
-    abi::token::{LenientTokenizer, Tokenizer},
     prelude::TransactionReceipt,
     providers::Middleware,
-    types::U256,
     utils::{format_units, to_checksum},
 };
 use eyre::Result;
@@ -80,7 +79,11 @@ pub fn subscriber() {
 
 /// parse a hex str or decimal str as U256
 pub fn parse_u256(s: &str) -> Result<U256> {
-    Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })
+    Ok(if s.starts_with("0x") {
+        U256::from_str_radix(s.strip_prefix("0x").unwrap(), 16)?
+    } else {
+        U256::from_str(s)?
+    })
 }
 
 /// Returns a [RetryProvider](foundry_common::RetryProvider) instantiated using [Config]'s RPC URL
@@ -127,9 +130,9 @@ where
 /// it is interpreted as wei.
 pub fn parse_ether_value(value: &str) -> Result<U256> {
     Ok(if value.starts_with("0x") {
-        U256::from_str(value)?
+        U256::from_str_radix(value.strip_prefix("0x").unwrap(), 16)?
     } else {
-        U256::from(LenientTokenizer::tokenize_uint(value)?)
+        U256::from_str(value)?
     })
 }
 

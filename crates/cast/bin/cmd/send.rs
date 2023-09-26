@@ -10,6 +10,7 @@ use foundry_cli::{
 };
 use foundry_common::cli_warn;
 use foundry_config::{Chain, Config};
+use foundry_utils::types::{ToAlloy, ToEthers};
 use std::str::FromStr;
 
 /// CLI arguments for `cast send`.
@@ -132,7 +133,8 @@ impl SendTxArgs {
             }
 
             if resend {
-                tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
+                tx.nonce =
+                    Some(provider.get_transaction_count(config.sender, None).await?.to_alloy());
             }
 
             cast_send(
@@ -161,7 +163,7 @@ impl SendTxArgs {
             // prevent misconfigured hwlib from sending a transaction that defies
             // user-specified --from
             if let Some(specified_from) = eth.wallet.from {
-                if specified_from != from {
+                if specified_from != from.to_alloy() {
                     eyre::bail!(
                         "\
 The specified sender via CLI/env vars does not match the sender configured via
@@ -173,7 +175,7 @@ corresponds to the sender, or let foundry automatically detect it by not specify
             }
 
             if resend {
-                tx.nonce = Some(provider.get_transaction_count(from, None).await?);
+                tx.nonce = Some(provider.get_transaction_count(from, None).await?.to_alloy());
             }
 
             let provider = provider.with_signer(signer);
@@ -218,11 +220,11 @@ where
     let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
     builder
         .etherscan_api_key(etherscan_api_key)
-        .gas(tx.gas_limit)
-        .gas_price(tx.gas_price)
-        .priority_gas_price(tx.priority_gas_price)
-        .value(tx.value)
-        .nonce(tx.nonce);
+        .gas(tx.gas_limit.map(|g| g.to_ethers()))
+        .gas_price(tx.gas_price.map(|g| g.to_ethers()))
+        .priority_gas_price(tx.priority_gas_price.map(|g| g.to_ethers()))
+        .value(tx.value.map(|v| v.to_ethers()))
+        .nonce(tx.nonce.map(|n| n.to_ethers()));
 
     if let Some(code) = code {
         let mut data = hex::decode(code)?;

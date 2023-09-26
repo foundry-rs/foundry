@@ -56,19 +56,10 @@ impl ScriptArgs {
             } else {
                 let local_wallets = self
                     .wallets
-                    .find_all(
-                        provider.clone(),
-                        required_addresses.into_iter().map(|addr| addr.to_ethers()).collect(),
-                        script_wallets,
-                    )
+                    .find_all(provider.clone(), required_addresses, script_wallets)
                     .await?;
                 let chain = local_wallets.values().last().wrap_err("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")?.chain_id();
-                (
-                    SendTransactionsKind::Raw(
-                        local_wallets.into_iter().map(|m| (m.0.to_alloy(), m.1)).collect(),
-                    ),
-                    chain,
-                )
+                (SendTransactionsKind::Raw(local_wallets), chain)
             };
 
             // We only wait for a transaction receipt before sending the next transaction, if there

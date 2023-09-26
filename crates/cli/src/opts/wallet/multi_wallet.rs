@@ -1,13 +1,14 @@
 use super::{WalletSigner, WalletTrait};
+use alloy_primitives::Address;
 use clap::Parser;
 use ethers::{
     prelude::{Middleware, Signer},
     signers::{AwsSigner, HDPath as LedgerHDPath, Ledger, LocalWallet, Trezor, TrezorHDPath},
-    types::Address,
 };
 use eyre::{Context, ContextCompat, Result};
 use foundry_common::RetryProvider;
 use foundry_config::Config;
+use foundry_utils::types::ToAlloy;
 use itertools::izip;
 use rusoto_core::{
     credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
@@ -239,18 +240,18 @@ impl MultiWallet {
             ],
             for wallet in wallets.into_iter() {
                 let address = wallet.address();
-                if addresses.contains(&address) {
-                    addresses.remove(&address);
+                if addresses.contains(&(address).to_alloy()) {
+                    addresses.remove(&(address).to_alloy());
 
                     let signer = WalletSigner::from(wallet.with_chain_id(chain));
-                    local_wallets.insert(address, signer);
+                    local_wallets.insert(address.to_alloy(), signer);
 
                     if addresses.is_empty() {
                         return Ok(local_wallets)
                     }
                 } else {
                     // Just to show on error.
-                    unused_wallets.push(address);
+                    unused_wallets.push(address.to_alloy());
                 }
             }
         );
@@ -258,7 +259,7 @@ impl MultiWallet {
         let mut error_msg = String::new();
 
         // This is an actual used address
-        if addresses.contains(&Config::DEFAULT_SENDER) {
+        if addresses.contains(&(Config::DEFAULT_SENDER).to_alloy()) {
             error_msg += "\nYou seem to be using Foundry's default sender. Be sure to set your own --sender.\n";
         }
 
