@@ -67,6 +67,7 @@ pub struct EthTransactionRequest {
     /// value of th tx in wei
     pub value: Option<U256>,
     /// Any additional data sent
+    #[cfg_attr(feature = "serde", serde(alias = "input"))]
     pub data: Option<Bytes>,
     /// Transaction nonce
     pub nonce: Option<U256>,
