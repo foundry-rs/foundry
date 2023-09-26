@@ -3,12 +3,14 @@ use clap::Parser;
 use ethers::{
     core::rand::thread_rng,
     signers::{LocalWallet, Signer},
-    types::{transaction::eip712::TypedData, Address, Signature},
+    types::{transaction::eip712::TypedData, Signature},
 };
+use alloy_primitives::Address;
 use eyre::{Context, Result};
 use foundry_cli::opts::{RawWallet, Wallet};
 use foundry_common::fs;
 use foundry_config::Config;
+use foundry_utils::types::ToEthers;
 use std::path::Path;
 use yansi::Paint;
 
@@ -180,7 +182,7 @@ impl WalletSubcommands {
                 println!("0x{sig}");
             }
             WalletSubcommands::Verify { message, signature, address } => {
-                match signature.verify(Self::hex_str_to_bytes(&message)?, address) {
+                match signature.verify(Self::hex_str_to_bytes(&message)?, address.to_ethers()) {
                     Ok(_) => {
                         println!("Validation succeeded. Address {address} signed this message.")
                     }

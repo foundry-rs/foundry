@@ -27,6 +27,11 @@ foundry-common.workspace = true
 ethers-etherscan.workspace = true
 ethers-core.workspace = true
 ethers-providers.workspace = true
+
+# alloy
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+
 chrono.workspace = true
 evm-disassembler = "0.2"
 eyre = "0.6"

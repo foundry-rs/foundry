@@ -2,8 +2,9 @@ use cast::{Cast, TxBuilder};
 use clap::Parser;
 use ethers::{
     providers::Middleware,
-    types::{BlockId, NameOrAddress},
+    types::BlockId,
 };
+use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
@@ -11,7 +12,6 @@ use foundry_cli::{
 };
 use foundry_config::{Chain, Config};
 use foundry_utils::types::ToEthers;
-use std::str::FromStr;
 
 /// CLI arguments for `cast access-list`.
 #[derive(Debug, Parser)]
@@ -19,9 +19,8 @@ pub struct AccessListArgs {
     /// The destination of the transaction.
     #[clap(
         value_name = "TO",
-        value_parser = NameOrAddress::from_str
     )]
-    to: Option<NameOrAddress>,
+    to: Option<Address>,
 
     /// The signature of the function to call.
     #[clap(value_name = "SIG")]
@@ -66,17 +65,17 @@ impl AccessListArgs {
         let chain = utils::get_chain(config.chain_id, &provider).await?;
         let sender = eth.wallet.sender().await;
 
-        access_list(&provider, sender.to_ethers(), to, sig, args, data, tx, chain, block, to_json)
+        access_list(&provider, sender, to, sig, args, data, tx, chain, block, to_json)
             .await?;
         Ok(())
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn access_list<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+async fn access_list<M: Middleware>(
     provider: M,
-    from: F,
-    to: Option<T>,
+    from: Address,
+    to: Option<Address>,
     sig: Option<String>,
     args: Vec<String>,
     data: Option<String>,
@@ -88,7 +87,7 @@ async fn access_list<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddres
 where
     M::Error: 'static,
 {
-    let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
+    let mut builder = TxBuilder::new(&provider, from.to_ethers(), to.map(|t| t.to_ethers()), chain, tx.legacy).await?;
     builder
         .gas(tx.gas_limit.map(|g| g.to_ethers()))
         .gas_price(tx.gas_price.map(|g| g.to_ethers()))
