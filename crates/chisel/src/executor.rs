@@ -8,7 +8,7 @@ use crate::prelude::{
 use core::fmt::Debug;
 use std::str::FromStr;
 use alloy_dyn_abi::{DynSolValue, DynSolType};
-use alloy_json_abi::{EventParam, Param};
+use alloy_json_abi::EventParam;
 use alloy_primitives::{Address, U256, hex};
 use ethers_solc::Artifact;
 use eyre::{Result, WrapErr};
@@ -20,7 +20,7 @@ use foundry_utils::types::ToEthers;
 use solang_parser::pt::{self, CodeLocation};
 use yansi::Paint;
 
-const USIZE_MAX_AS_U256: U256 = U256::from(usize::MAX);
+const USIZE_MAX_AS_U256: U256 = U256::from_limbs([usize::MAX as u64, 0, 0, 0]);
 
 /// Executor implementation for [SessionSource]
 impl SessionSource {
@@ -386,8 +386,8 @@ fn format_token(token: DynSolValue) -> String {
         }
         DynSolValue::Tuple(tokens) => {
             let displayed_types = tokens
-                .into_iter()
-                .map(|t| t.sol_type_name())
+                .iter()
+                .map(|t| t.sol_type_name().to_owned())
                 .map(|t| t.unwrap_or_default().into_owned())
                 .collect::<Vec<_>>().join(", ");
             let mut out = format!(

@@ -7,7 +7,9 @@ use crate::prelude::{
     ChiselCommand, ChiselResult, ChiselSession, CmdCategory, CmdDescriptor, SessionSourceConfig,
     SolidityHelper,
 };
-use ethers::{abi::ParamType, contract::Lazy, types::Address, utils::hex};
+use alloy_json_abi::JsonAbi;
+use ethers::contract::Lazy;
+use alloy_primitives::{Address, hex};
 use forge_fmt::FormatterConfig;
 use foundry_config::{Config, RpcEndpoint};
 use foundry_evm::{
@@ -17,6 +19,7 @@ use foundry_evm::{
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
+use foundry_utils::types::ToEthers;
 use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -89,9 +92,8 @@ macro_rules! format_param {
         let param = $param;
         format!(
             "{}{}",
-            param.kind,
-            if param.kind.is_dynamic() ||
-                matches!(param.kind, ParamType::FixedArray(_, _) | ParamType::Tuple(_))
+            param.ty,
+            if param.is_complex_type()
             {
                 " memory"
             } else {
@@ -537,7 +539,8 @@ impl ChiselDispatcher {
                         let json = response.json::<EtherscanABIResponse>().await.unwrap();
                         if json.status == "1" && json.result.is_some() {
                             let abi = json.result.unwrap();
-                            if let Ok(abi) = ethers::abi::Abi::load(abi.as_bytes()) {
+                            let abi: serde_json::Result<JsonAbi> = serde_json::from_slice(abi.as_bytes());
+                            if let Ok(abi) = abi {
                                 let mut interface = format!(
                                     "// Interface of {}\ninterface {} {{\n",
                                     args[0], args[1]
@@ -564,7 +567,7 @@ impl ChiselDispatcher {
                                             .inputs
                                             .iter()
                                             .map(|input| {
-                                                let mut formatted = format!("{}", input.kind);
+                                                let mut formatted = format!("{}", input.ty);
                                                 if input.indexed {
                                                     formatted.push_str(" indexed");
                                                 }
@@ -585,9 +588,9 @@ impl ChiselDispatcher {
                                             .collect::<Vec<_>>()
                                             .join(","),
                                         match func.state_mutability {
-                                            ethers::abi::StateMutability::Pure => " pure",
-                                            ethers::abi::StateMutability::View => " view",
-                                            ethers::abi::StateMutability::Payable => " payable",
+                                            alloy_json_abi::StateMutability::Pure => " pure",
+                                            alloy_json_abi::StateMutability::View => " view",
+                                            alloy_json_abi::StateMutability::Payable => " payable",
                                             _ => "",
                                         },
                                         if func.outputs.is_empty() {
@@ -844,7 +847,7 @@ impl ChiselDispatcher {
             // We can always safely unwrap here due to the regex matching.
             let addr: Address = match_str.parse().expect("Valid address regex");
             // Replace all occurrences of the address with a checksummed version
-            heap_input = heap_input.replace(match_str, &ethers::utils::to_checksum(&addr, None));
+            heap_input = heap_input.replace(match_str, &addr.to_checksum(None));
         });
         // Replace the old input with the formatted input.
         input = &heap_input;
@@ -959,7 +962,7 @@ impl ChiselDispatcher {
         )?;
 
         let mut decoder = CallTraceDecoderBuilder::new()
-            .with_labels(result.labeled_addresses.iter().map(|(a, s)| (*a, s.clone())))
+            .with_labels(result.labeled_addresses.iter().map(|(a, s)| ((*a).to_ethers(), s.clone())))
             .with_signature_identifier(SignaturesIdentifier::new(
                 Config::foundry_cache_dir(),
                 session_config.foundry_config.offline,
