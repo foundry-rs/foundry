@@ -3,17 +3,13 @@
 //! This module contains the `ChiselRunner` struct, which assists with deploying
 //! and calling the REPL contract on a in-memory REVM instance.
 
-use ethers::{
-    prelude::{types::U256, Address},
-    types::{Bytes, Log},
-};
+use alloy_primitives::{Address, Bytes, U256};
+use ethers::types::Log;
 use eyre::Result;
 use foundry_evm::{
     executor::{DeployResult, Executor, RawCallResult},
-    revm::primitives::U256 as rU256,
     trace::{CallTraceArena, TraceKind},
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use revm::interpreter::{return_ok, InstructionResult};
 use std::collections::BTreeMap;
 
@@ -94,17 +90,17 @@ impl ChiselRunner {
     /// contract.
     pub fn run(&mut self, bytecode: Bytes) -> Result<(Address, ChiselResult)> {
         // Set the sender's balance to [U256::MAX] for deployment of the REPL contract.
-        self.executor.set_balance(self.sender.to_alloy(), rU256::MAX)?;
+        self.executor.set_balance(self.sender, U256::MAX)?;
 
         // Deploy an instance of the REPL contract
         // We don't care about deployment traces / logs here
         let DeployResult { address, .. } = self
             .executor
-            .deploy(self.sender.to_alloy(), bytecode.0.into(), rU256::ZERO, None)
+            .deploy(self.sender, bytecode.0.into(), U256::ZERO, None)
             .map_err(|err| eyre::eyre!("Failed to deploy REPL contract:\n{}", err))?;
 
         // Reset the sender's balance to the initial balance for calls.
-        self.executor.set_balance(self.sender.to_alloy(), self.initial_balance.to_alloy())?;
+        self.executor.set_balance(self.sender, self.initial_balance)?;
 
         // Append the input to the `RUN_SELECTOR` to form the calldata
         let mut calldata = RUN_SELECTOR.to_vec();
@@ -113,10 +109,9 @@ impl ChiselRunner {
         }
 
         // Call the "run()" function of the REPL contract
-        let call_res =
-            self.call(self.sender, address.to_ethers(), Bytes::from(calldata), 0.into(), true);
+        let call_res = self.call(self.sender, address, Bytes::from(calldata), U256::from(0), true);
 
-        call_res.map(|res| (address.to_ethers(), res))
+        call_res.map(|res| (address, res))
     }
 
     /// Executes the call
@@ -143,12 +138,7 @@ impl ChiselRunner {
             false
         };
 
-        let mut res = self.executor.call_raw(
-            from.to_alloy(),
-            to.to_alloy(),
-            calldata.0.clone().into(),
-            value.to_alloy(),
-        )?;
+        let mut res = self.executor.call_raw(from, to, calldata.0.clone().into(), value)?;
         let mut gas_used = res.gas_used;
         if matches!(res.exit_reason, return_ok!()) {
             // store the current gas limit and reset it later
@@ -164,12 +154,7 @@ impl ChiselRunner {
             while (highest_gas_limit - lowest_gas_limit) > 1 {
                 let mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
                 self.executor.env.tx.gas_limit = mid_gas_limit;
-                let res = self.executor.call_raw(
-                    from.to_alloy(),
-                    to.to_alloy(),
-                    calldata.0.clone().into(),
-                    value.to_alloy(),
-                )?;
+                let res = self.executor.call_raw(from, to, calldata.0.clone().into(), value)?;
                 match res.exit_reason {
                     InstructionResult::Revert |
                     InstructionResult::OutOfGas |
@@ -204,22 +189,12 @@ impl ChiselRunner {
                 cheatcodes.fs_commit = !cheatcodes.fs_commit;
             }
 
-            res = self.executor.call_raw(
-                from.to_alloy(),
-                to.to_alloy(),
-                calldata.0.clone().into(),
-                value.to_alloy(),
-            )?;
+            res = self.executor.call_raw(from, to, calldata.0.clone().into(), value)?;
         }
 
         if commit {
             // if explicitly requested we can now commit the call
-            res = self.executor.call_raw_committing(
-                from.to_alloy(),
-                to.to_alloy(),
-                calldata.0.clone().into(),
-                value.to_alloy(),
-            )?;
+            res = self.executor.call_raw_committing(from, to, calldata.0.clone().into(), value)?;
         }
 
         let RawCallResult { result, reverted, logs, traces, labels, chisel_state, .. } = res;
@@ -237,7 +212,7 @@ impl ChiselRunner {
                     vec![(TraceKind::Execution, traces)]
                 })
                 .unwrap_or_default(),
-            labeled_addresses: labels.into_iter().map(|l| (l.0.to_ethers(), l.1)).collect(),
+            labeled_addresses: labels,
             address: None,
             state: chisel_state,
         })
