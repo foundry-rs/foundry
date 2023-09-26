@@ -8,8 +8,8 @@ use crate::prelude::{
     SolidityHelper,
 };
 use alloy_json_abi::JsonAbi;
+use alloy_primitives::{hex, Address};
 use ethers::contract::Lazy;
-use alloy_primitives::{Address, hex};
 use forge_fmt::FormatterConfig;
 use foundry_config::{Config, RpcEndpoint};
 use foundry_evm::{
@@ -90,16 +90,7 @@ pub struct EtherscanABIResponse {
 macro_rules! format_param {
     ($param:expr) => {{
         let param = $param;
-        format!(
-            "{}{}",
-            param.ty,
-            if param.is_complex_type()
-            {
-                " memory"
-            } else {
-                ""
-            }
-        )
+        format!("{}{}", param.ty, if param.is_complex_type() { " memory" } else { "" })
     }};
 }
 
@@ -539,7 +530,8 @@ impl ChiselDispatcher {
                         let json = response.json::<EtherscanABIResponse>().await.unwrap();
                         if json.status == "1" && json.result.is_some() {
                             let abi = json.result.unwrap();
-                            let abi: serde_json::Result<JsonAbi> = serde_json::from_slice(abi.as_bytes());
+                            let abi: serde_json::Result<JsonAbi> =
+                                serde_json::from_slice(abi.as_bytes());
                             if let Ok(abi) = abi {
                                 let mut interface = format!(
                                     "// Interface of {}\ninterface {} {{\n",
@@ -567,7 +559,7 @@ impl ChiselDispatcher {
                                             .inputs
                                             .iter()
                                             .map(|input| {
-                                                let mut formatted = format!("{}", input.ty);
+                                                let mut formatted = input.ty.to_string();
                                                 if input.indexed {
                                                     formatted.push_str(" indexed");
                                                 }
@@ -962,7 +954,9 @@ impl ChiselDispatcher {
         )?;
 
         let mut decoder = CallTraceDecoderBuilder::new()
-            .with_labels(result.labeled_addresses.iter().map(|(a, s)| ((*a).to_ethers(), s.clone())))
+            .with_labels(
+                result.labeled_addresses.iter().map(|(a, s)| ((*a).to_ethers(), s.clone())),
+            )
             .with_signature_identifier(SignaturesIdentifier::new(
                 Config::foundry_cache_dir(),
                 session_config.foundry_config.offline,

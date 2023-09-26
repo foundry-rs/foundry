@@ -5,11 +5,10 @@
 use crate::prelude::{
     ChiselDispatcher, ChiselResult, ChiselRunner, IntermediateOutput, SessionSource, SolidityHelper,
 };
-use core::fmt::Debug;
-use std::str::FromStr;
-use alloy_dyn_abi::{DynSolValue, DynSolType};
+use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_json_abi::EventParam;
-use alloy_primitives::{Address, U256, hex};
+use alloy_primitives::{hex, Address, U256};
+use core::fmt::Debug;
 use ethers_solc::Artifact;
 use eyre::{Result, WrapErr};
 use foundry_evm::{
@@ -18,6 +17,7 @@ use foundry_evm::{
 };
 use foundry_utils::types::ToEthers;
 use solang_parser::pt::{self, CodeLocation};
+use std::str::FromStr;
 use yansi::Paint;
 
 const USIZE_MAX_AS_U256: U256 = U256::from_limbs([usize::MAX as u64, 0, 0, 0]);
@@ -224,12 +224,13 @@ impl SessionSource {
         // the `bytes memory inspectoor` value
         let mut offset = stack.data().last().unwrap().to_ethers().as_usize();
         let mem = memory.data();
-        let mem_offset =&mem[offset..offset + 32] ;
+        let mem_offset = &mem[offset..offset + 32];
         let len = U256::try_from_be_slice(mem_offset).unwrap().to::<usize>();
         offset += 32;
         let data = &mem[offset..offset + len];
         // `tokens` is guaranteed to have the same length as the provided types
-        let token = DynSolType::decode_single(&ty, data).wrap_err("Could not decode inspected values")?;
+        let token =
+            DynSolType::decode_single(&ty, data).wrap_err("Could not decode inspected values")?;
         Ok((should_continue(contract_expr), Some(format_token(token))))
     }
 
@@ -389,7 +390,8 @@ fn format_token(token: DynSolValue) -> String {
                 .iter()
                 .map(|t| t.sol_type_name().to_owned())
                 .map(|t| t.unwrap_or_default().into_owned())
-                .collect::<Vec<_>>().join(", ");
+                .collect::<Vec<_>>()
+                .join(", ");
             let mut out = format!(
                 "{}({}) = {}",
                 Paint::red("tuple"),
@@ -435,10 +437,17 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
             let kind = Type::from_expression(&param.ty)
                 .and_then(Type::into_builtin)
                 .ok_or_else(|| eyre::eyre!("Invalid type in event {event_name}"))?;
-            Ok(EventParam { name, ty: kind.to_string(), components: vec![], indexed: param.indexed, internal_type: None })
+            Ok(EventParam {
+                name,
+                ty: kind.to_string(),
+                components: vec![],
+                indexed: param.indexed,
+                internal_type: None,
+            })
         })
         .collect::<Result<Vec<_>>>()?;
-    let event = alloy_json_abi::Event { name: event_name, inputs, anonymous: event_definition.anonymous };
+    let event =
+        alloy_json_abi::Event { name: event_name, inputs, anonymous: event_definition.anonymous };
 
     Ok(format!(
         "Type: {}\n├ Name: {}\n└ Signature: {:?}",
@@ -1055,9 +1064,9 @@ impl Type {
             Self::Tuple(types) => Some(DynSolType::Tuple(types_to_parameters(types, intermediate))),
             Self::Array(inner) => match *inner {
                 ty @ Self::Custom(_) => ty.try_as_ethabi(intermediate),
-                _ => {
-                    inner.try_as_ethabi(intermediate).map(|inner| DynSolType::Array(Box::new(inner)))
-                }
+                _ => inner
+                    .try_as_ethabi(intermediate)
+                    .map(|inner| DynSolType::Array(Box::new(inner))),
             },
             Self::FixedArray(inner, size) => match *inner {
                 ty @ Self::Custom(_) => ty.try_as_ethabi(intermediate),
@@ -1164,8 +1173,8 @@ impl Type {
     fn is_dynamic(&self) -> bool {
         match self {
             Self::Builtin(ty) => match ty {
-                // TODO: Note, this is not entirely correct. Fixed arrays of non-dynamic types are not dynamic,
-                // nor are tuples of non-dynamic types.
+                // TODO: Note, this is not entirely correct. Fixed arrays of non-dynamic types are
+                // not dynamic, nor are tuples of non-dynamic types.
                 DynSolType::Bytes | DynSolType::String | DynSolType::Array(_) => true,
                 _ => false,
             },
