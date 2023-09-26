@@ -1,7 +1,8 @@
 use super::{ensure, Cheatcodes, Result};
 use crate::abi::HEVMCalls;
+use alloy_dyn_abi::DynSolValue;
+use alloy_primitives::{keccak256, B256, U256};
 use ethers::{
-    abi::{AbiEncode, Token},
     core::k256::elliptic_curve::Curve,
     prelude::{
         k256::{
@@ -18,9 +19,9 @@ use ethers::{
         },
         MnemonicBuilder,
     },
-    types::{H256, U256},
-    utils::{self, keccak256},
+    utils,
 };
+use foundry_utils::types::{ToAlloy, ToEthers};
 use revm::{Database, EVMData};
 use std::str::FromStr;
 
@@ -28,39 +29,44 @@ use std::str::FromStr;
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
 pub fn parse_private_key(private_key: U256) -> Result<SigningKey> {
-    ensure!(!private_key.is_zero(), "Private key cannot be 0.");
+    ensure!(private_key != U256::ZERO, "Private key cannot be 0.");
     ensure!(
-        private_key < U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()),
+        private_key < U256::from_be_bytes(Secp256k1::ORDER.to_be_bytes()),
         "Private key must be less than the secp256k1 curve order \
         (115792089237316195423570985008687907852837564279074904382605163141518161494337).",
     );
-    let mut bytes: [u8; 32] = [0; 32];
-    private_key.to_big_endian(&mut bytes);
+    let bytes = private_key.to_be_bytes();
     SigningKey::from_bytes((&bytes).into()).map_err(Into::into)
 }
 
 fn addr(private_key: U256) -> Result {
     let key = parse_private_key(private_key)?;
     let addr = utils::secret_key_to_address(&key);
-    Ok(addr.encode().into())
+    Ok(DynSolValue::Address(addr.to_alloy()).encode().into())
 }
 
-fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result {
+fn sign(private_key: U256, digest: B256, chain_id: U256) -> Result {
     let key = parse_private_key(private_key)?;
-    let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
+    let wallet = LocalWallet::from(key).with_chain_id(chain_id.to::<u64>());
 
     // The `ecrecover` precompile does not use EIP-155
-    let sig = wallet.sign_hash(digest)?;
-    let recovered = sig.recover(digest)?;
+    let sig = wallet.sign_hash(digest.to_ethers())?;
+    let recovered = sig.recover(digest.to_ethers())?.to_alloy();
 
-    assert_eq!(recovered, wallet.address());
+    assert_eq!(recovered, wallet.address().to_alloy());
 
     let mut r_bytes = [0u8; 32];
     let mut s_bytes = [0u8; 32];
     sig.r.to_big_endian(&mut r_bytes);
     sig.s.to_big_endian(&mut s_bytes);
 
-    Ok((sig.v, r_bytes, s_bytes).encode().into())
+    Ok(DynSolValue::Tuple(vec![
+        DynSolValue::Uint(U256::from(sig.v), 8),
+        DynSolValue::FixedBytes(r_bytes.into(), 32),
+        DynSolValue::FixedBytes(s_bytes.into(), 32),
+    ])
+    .encode()
+    .into())
 }
 
 /// Using a given private key, return its public ETH address, its public key affine x and y
@@ -75,14 +81,27 @@ fn create_wallet(private_key: U256, label: Option<String>, state: &mut Cheatcode
     let pub_key_x = pub_key.x().ok_or("No x coordinate was found")?;
     let pub_key_y = pub_key.y().ok_or("No y coordinate was found")?;
 
-    let pub_key_x = U256::from(pub_key_x.as_slice());
-    let pub_key_y = U256::from(pub_key_y.as_slice());
+    let pub_key_x = match U256::try_from_be_slice(pub_key_x.as_slice()) {
+        Some(x) => x,
+        None => return Err(format!("Failed to parse public key x coordinate.").into()),
+    };
+    let pub_key_y = match U256::try_from_be_slice(pub_key_y.as_slice()) {
+        Some(y) => y,
+        None => return Err(format!("Failed to parse public key y coordinate.").into()),
+    };
 
     if let Some(label) = label {
         state.labels.insert(addr, label);
     }
 
-    Ok((addr, pub_key_x, pub_key_y, private_key).encode().into())
+    Ok(DynSolValue::Tuple(vec![
+        DynSolValue::Address(addr.to_alloy()),
+        DynSolValue::Uint(pub_key_x, 32),
+        DynSolValue::Uint(pub_key_y, 32),
+        DynSolValue::Uint(private_key, 32),
+    ])
+    .encode()
+    .into())
 }
 
 enum WordlistLang {
@@ -127,9 +146,12 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
         .derivation_path(&derivation_path)?
         .build()?;
 
-    let private_key = U256::from_big_endian(wallet.signer().to_bytes().as_slice());
+    let private_key = match U256::try_from_be_slice(wallet.signer().to_bytes().as_slice()) {
+        Some(key) => key,
+        None => return Err(format!("Failed to parse private key.").into()),
+    };
 
-    Ok(private_key.encode().into())
+    Ok(DynSolValue::Uint(private_key, 32).encode().into())
 }
 
 fn derive_key_with_wordlist(mnemonic: &str, path: &str, index: u32, lang: &str) -> Result {
@@ -150,12 +172,12 @@ fn derive_key_with_wordlist(mnemonic: &str, path: &str, index: u32, lang: &str) 
 
 fn remember_key(state: &mut Cheatcodes, private_key: U256, chain_id: U256) -> Result {
     let key = parse_private_key(private_key)?;
-    let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
+    let wallet = LocalWallet::from(key).with_chain_id(chain_id.to::<u64>());
     let address = wallet.address();
 
     state.script_wallets.push(wallet);
 
-    Ok(address.encode().into())
+    Ok(DynSolValue::Address(address.to_alloy()).encode().into())
 }
 
 #[instrument(level = "error", name = "util", target = "evm::cheatcodes", skip_all)]
@@ -165,23 +187,27 @@ pub fn apply<DB: Database>(
     call: &HEVMCalls,
 ) -> Option<Result> {
     Some(match call {
-        HEVMCalls::Addr(inner) => addr(inner.0),
+        HEVMCalls::Addr(inner) => addr(inner.0.to_alloy()),
         // [function sign(uint256,bytes32)] Used to sign bytes32 digests using the given private key
-        HEVMCalls::Sign0(inner) => sign(inner.0, inner.1.into(), data.env.cfg.chain_id.into()),
+        HEVMCalls::Sign0(inner) => {
+            sign(inner.0.to_alloy(), inner.1.into(), U256::from(data.env.cfg.chain_id))
+        }
         // [function createWallet(string)] Used to derive private key and label the wallet with the
         // same string
         HEVMCalls::CreateWallet0(inner) => {
-            create_wallet(U256::from(keccak256(&inner.0)), Some(inner.0.clone()), state)
+            create_wallet(U256::from_be_bytes(keccak256(&inner.0).0), Some(inner.0.clone()), state)
         }
         // [function createWallet(uint256)] creates a new wallet with the given private key
-        HEVMCalls::CreateWallet1(inner) => create_wallet(inner.0, None, state),
+        HEVMCalls::CreateWallet1(inner) => create_wallet(inner.0.to_alloy(), None, state),
         // [function createWallet(uint256,string)] creates a new wallet with the given private key
         // and labels it with the given string
-        HEVMCalls::CreateWallet2(inner) => create_wallet(inner.0, Some(inner.1.clone()), state),
+        HEVMCalls::CreateWallet2(inner) => {
+            create_wallet(inner.0.to_alloy(), Some(inner.1.clone()), state)
+        }
         // [function sign(uint256,bytes32)] Used to sign bytes32 digests using the given Wallet's
         // private key
         HEVMCalls::Sign1(inner) => {
-            sign(inner.0.private_key, inner.1.into(), data.env.cfg.chain_id.into())
+            sign(inner.0.private_key.to_alloy(), inner.1.into(), U256::from(data.env.cfg.chain_id))
         }
         HEVMCalls::DeriveKey0(inner) => {
             derive_key::<English>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
@@ -193,7 +219,9 @@ pub fn apply<DB: Database>(
         HEVMCalls::DeriveKey3(inner) => {
             derive_key_with_wordlist(&inner.0, &inner.1, inner.2, &inner.3)
         }
-        HEVMCalls::RememberKey(inner) => remember_key(state, inner.0, data.env.cfg.chain_id.into()),
+        HEVMCalls::RememberKey(inner) => {
+            remember_key(state, inner.0.to_alloy(), U256::from(data.env.cfg.chain_id))
+        }
         HEVMCalls::Label(inner) => {
             state.labels.insert(inner.0, inner.1.clone());
             Ok(Default::default())
@@ -204,7 +232,7 @@ pub fn apply<DB: Database>(
                 .get(&inner.0)
                 .cloned()
                 .unwrap_or_else(|| format!("unlabeled:{:?}", inner.0));
-            Ok(ethers::abi::encode(&[Token::String(label)]).into())
+            Ok(DynSolValue::String(label).encode().into())
         }
         _ => return None,
     })

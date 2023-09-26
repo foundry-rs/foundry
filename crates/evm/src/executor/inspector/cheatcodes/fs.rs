@@ -1,7 +1,7 @@
 use super::{Cheatcodes, Result};
 use crate::abi::hevm::{DirEntry, FsMetadata, HEVMCalls};
 use alloy_dyn_abi::DynSolValue;
-use alloy_primitives::{Bytes, U256, U64};
+use alloy_primitives::{Bytes, U256};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
 use foundry_utils::types::ToAlloy;
@@ -14,19 +14,19 @@ use walkdir::WalkDir;
 
 fn project_root(state: &Cheatcodes) -> Result {
     let root = state.config.root.display().to_string();
-    Ok(DynSolValue::String(root).encode_single().into())
+    Ok(DynSolValue::String(root).encode().into())
 }
 
 fn read_file(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
     let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
     let data = fs::read_to_string(path)?;
-    Ok(DynSolValue::String(data).encode_single().into())
+    Ok(DynSolValue::String(data).encode().into())
 }
 
 fn read_file_binary(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
     let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
     let data = fs::read(path)?;
-    Ok(DynSolValue::Bytes(data).encode_single().into())
+    Ok(DynSolValue::Bytes(data).encode().into())
 }
 
 fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result {
@@ -50,7 +50,7 @@ fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result {
         }
     }
 
-    Ok(DynSolValue::String(line).encode_single().into())
+    Ok(DynSolValue::String(line).encode().into())
 }
 
 /// Writes `content` to `path`.
@@ -98,7 +98,7 @@ fn copy_file(state: &Cheatcodes, from: impl AsRef<Path>, to: impl AsRef<Path>) -
     state.config.ensure_not_foundry_toml(&to)?;
 
     let n = fs::copy(from, to)?;
-    Ok(DynSolValue::Uint(U256::from(n), 32).encode_single().into())
+    Ok(DynSolValue::Uint(U256::from(n), 32).encode().into())
 }
 
 fn close_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result {
@@ -209,7 +209,7 @@ fn read_dir(
             ])
         })
         .collect();
-    Ok(DynSolValue::Array(paths).encode_single().into())
+    Ok(DynSolValue::Array(paths).encode().into())
 }
 
 /// Reads a symbolic link, returning the path that the link points to.
@@ -226,7 +226,7 @@ fn read_link(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
 
     let target = fs::read_link(path)?;
 
-    Ok(DynSolValue::String(target.display().to_string()).encode_single().into())
+    Ok(DynSolValue::String(target.display().to_string()).encode().into())
 }
 
 /// Gets the metadata of a file/directory
@@ -261,7 +261,7 @@ fn fs_metadata(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
         DynSolValue::Uint(U256::from(metadata.accessed.to_alloy()), 32),
         DynSolValue::Uint(U256::from(metadata.created.to_alloy()), 32),
     ])
-    .encode_single()
+    .encode()
     .into())
 }
 
@@ -275,7 +275,7 @@ fn fs_metadata(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
 fn exists(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
     let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
-    Ok(DynSolValue::Bool(path.exists()).encode_single().into())
+    Ok(DynSolValue::Bool(path.exists()).encode().into())
 }
 
 /// Verifies if a given path exists on disk and points at a regular file
@@ -288,7 +288,7 @@ fn exists(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
 fn is_file(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
     let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
-    Ok(DynSolValue::Bool(path.is_file()).encode_single().into())
+    Ok(DynSolValue::Bool(path.is_file()).encode().into())
 }
 
 /// Verifies if a given path exists on disk and points at a directory
@@ -301,7 +301,7 @@ fn is_file(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
 fn is_dir(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
     let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
-    Ok(DynSolValue::Bool(path.is_dir()).encode_single().into())
+    Ok(DynSolValue::Bool(path.is_dir()).encode().into())
 }
 
 #[instrument(level = "error", name = "fs", target = "evm::cheatcodes", skip_all)]

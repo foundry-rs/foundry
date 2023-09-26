@@ -1,6 +1,6 @@
 use super::Cheatcodes;
 use alloy_dyn_abi::DynSolValue;
-use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
+use alloy_primitives::{keccak256, Address, Bytes, U256};
 use ethers::types::H160;
 use foundry_utils::types::ToEthers;
 use revm::{
@@ -53,7 +53,7 @@ pub fn get_mapping_length(state: &Cheatcodes, address: Address, slot: U256) -> B
         }
         None => 0,
     };
-    DynSolValue::Uint(U256::from(result), 32).encode_single().into()
+    DynSolValue::Uint(U256::from(result), 32).encode().into()
 }
 
 pub fn get_mapping_slot_at(state: &Cheatcodes, address: Address, slot: U256, index: U256) -> Bytes {
@@ -67,7 +67,7 @@ pub fn get_mapping_slot_at(state: &Cheatcodes, address: Address, slot: U256, ind
             .unwrap_or_default(),
         None => U256::from(0),
     };
-    DynSolValue::FixedBytes(U256::from(result).into(), 32).encode_single().into()
+    DynSolValue::FixedBytes(U256::from(result).into(), 32).encode().into()
 }
 
 pub fn get_mapping_key_and_parent(state: &Cheatcodes, address: Address, slot: U256) -> Bytes {
@@ -87,7 +87,7 @@ pub fn get_mapping_key_and_parent(state: &Cheatcodes, address: Address, slot: U2
         DynSolValue::FixedBytes(key.into(), 32),
         DynSolValue::FixedBytes(parent.into(), 32),
     ])
-    .encode_single()
+    .encode()
     .into()
 }
 

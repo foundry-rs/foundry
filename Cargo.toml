@@ -194,3 +194,8 @@ revm = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-re
 revm-interpreter = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
 revm-precompile = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
 revm-primitives = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
+
+alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/", branch = "dani/logs"}
+alloy-primitives = { git = "https://github.com/alloy-rs/core/", branch = "dani/logs"}
+alloy-json-abi = { git = "https://github.com/alloy-rs/core/", branch = "dani/logs"}
+alloy-sol-types = { git = "https://github.com/alloy-rs/core/", branch = "dani/logs"}

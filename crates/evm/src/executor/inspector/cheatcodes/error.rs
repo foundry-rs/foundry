@@ -179,7 +179,7 @@ impl SolError for Error {
     fn encode_string(&self) -> Bytes {
         match self {
             Self::CustomBytes(cow) => cow_to_bytes(cow),
-            e => DynSolValue::String(e.to_string()).encode_single().into(),
+            e => DynSolValue::String(e.to_string()).encode().into(),
         }
     }
 }

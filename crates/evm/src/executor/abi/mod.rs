@@ -36,7 +36,7 @@ pub fn patch_hardhat_console_selector(input: &mut [u8]) {
     // SAFETY: length checked above; see [<[T]>::split_array_mut].
     let selector = unsafe { &mut *(input.get_unchecked_mut(..4) as *mut [u8] as *mut [u8; 4]) };
     if let Some(abigen_selector) = HARDHAT_CONSOLE_SELECTOR_PATCHES.get(selector) {
-        *selector = *abigen_selector;
+        *selector = abigen_selector.0;
     }
 }
 
@@ -558,6 +558,9 @@ pub static HARDHAT_CONSOLE_SELECTOR_PATCHES: Lazy<HashMap<Selector, Selector>> =
         // logBytes32(bytes32)
         ([39, 183, 207, 133], [45, 33, 214, 247]),
     ])
+    .into_iter()
+    .map(|s| (Selector::from(s.0), Selector::from(s.1)))
+    .collect()
 });
 
 #[cfg(test)]
@@ -568,7 +571,7 @@ mod tests {
     fn hardhat_console_path_works() {
         for (hh, abigen) in HARDHAT_CONSOLE_SELECTOR_PATCHES.iter() {
             let mut hh = *hh;
-            patch_hardhat_console_selector(&mut hh);
+            patch_hardhat_console_selector(hh.as_mut_slice());
             assert_eq!(*abigen, hh);
         }
     }

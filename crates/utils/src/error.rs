@@ -28,13 +28,13 @@ pub trait SolError: std::error::Error {
     /// See also [`AbiEncode`](ethers::abi::AbiEncode)
     fn encode_string(&self) -> Bytes {
         let err = DynSolValue::from(self.to_string());
-        err.encode_single().into()
+        err.encode().into()
     }
 }
 
 /// Encodes the given messages as solidity custom error
 pub fn encode_error(reason: impl Display) -> Bytes {
-    [ERROR_PREFIX.as_slice(), DynSolValue::String(reason.to_string()).encode_single().as_slice()]
+    [ERROR_PREFIX.as_slice(), DynSolValue::String(reason.to_string()).encode().as_slice()]
         .concat()
         .into()
 }

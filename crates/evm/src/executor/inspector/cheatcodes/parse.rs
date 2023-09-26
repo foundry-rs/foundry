@@ -9,7 +9,7 @@ use revm::{Database, EVMData};
 
 pub fn parse(s: &str, ty: &DynSolType) -> Result {
     parse_token(s, ty)
-        .map(|token| token.encode_single().into())
+        .map(|token| token.encode().into())
         .map_err(|e| fmt_err!("Failed to parse `{s}` as type `{ty}`: {e}"))
 }
 
@@ -25,10 +25,10 @@ where
                 .chain(values)
                 .map(|v| parse_token(v.as_ref(), ty))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(DynSolValue::Array(tokens).encode_single().into())
+            Ok(DynSolValue::Array(tokens).encode().into())
         }
         // return the empty encoded Bytes when values is empty or the first element is empty
-        _ => Ok(DynSolValue::String(String::new()).encode_single().into()),
+        _ => Ok(DynSolValue::String(String::new()).encode().into()),
     }
 }
 
@@ -113,24 +113,12 @@ pub fn apply<DB: Database>(
     call: &HEVMCalls,
 ) -> Option<Result> {
     Some(match call {
-        HEVMCalls::ToString0(inner) => {
-            Ok(DynSolValue::String(inner.0.pretty()).encode_single().into())
-        }
-        HEVMCalls::ToString1(inner) => {
-            Ok(DynSolValue::String(inner.0.pretty()).encode_single().into())
-        }
-        HEVMCalls::ToString2(inner) => {
-            Ok(DynSolValue::String(inner.0.pretty()).encode_single().into())
-        }
-        HEVMCalls::ToString3(inner) => {
-            Ok(DynSolValue::String(inner.0.pretty()).encode_single().into())
-        }
-        HEVMCalls::ToString4(inner) => {
-            Ok(DynSolValue::String(inner.0.pretty()).encode_single().into())
-        }
-        HEVMCalls::ToString5(inner) => {
-            Ok(DynSolValue::String(inner.0.pretty()).encode_single().into())
-        }
+        HEVMCalls::ToString0(inner) => Ok(DynSolValue::String(inner.0.pretty()).encode().into()),
+        HEVMCalls::ToString1(inner) => Ok(DynSolValue::String(inner.0.pretty()).encode().into()),
+        HEVMCalls::ToString2(inner) => Ok(DynSolValue::String(inner.0.pretty()).encode().into()),
+        HEVMCalls::ToString3(inner) => Ok(DynSolValue::String(inner.0.pretty()).encode().into()),
+        HEVMCalls::ToString4(inner) => Ok(DynSolValue::String(inner.0.pretty()).encode().into()),
+        HEVMCalls::ToString5(inner) => Ok(DynSolValue::String(inner.0.pretty()).encode().into()),
         HEVMCalls::ParseBytes(inner) => parse(&inner.0, &DynSolType::Bytes),
         HEVMCalls::ParseAddress(inner) => parse(&inner.0, &DynSolType::Address),
         HEVMCalls::ParseUint(inner) => parse(&inner.0, &DynSolType::Uint(256)),
@@ -150,15 +138,15 @@ mod tests {
         let pk = "0x10532cc9d0d992825c3f709c62c969748e317a549634fb2a9fa949326022e81f";
         let val: U256 = pk.parse().unwrap();
         let parsed = parse(pk, &DynSolType::Uint(256)).unwrap();
-        let decoded = DynSolType::Uint(32).decode_single(&parsed).unwrap().as_uint().unwrap().0;
+        let decoded = DynSolType::Uint(32).decode(&parsed).unwrap().as_uint().unwrap().0;
         assert_eq!(val, decoded);
 
         let parsed = parse(pk, &DynSolType::Uint(256)).unwrap();
-        let decoded = DynSolType::Uint(32).decode_single(&parsed).unwrap().as_uint().unwrap().0;
+        let decoded = DynSolType::Uint(32).decode(&parsed).unwrap().as_uint().unwrap().0;
         assert_eq!(val, decoded);
 
         let parsed = parse("1337", &DynSolType::Uint(256)).unwrap();
-        let decoded = DynSolType::Uint(32).decode_single(&parsed).unwrap().as_uint().unwrap().0;
+        let decoded = DynSolType::Uint(32).decode(&parsed).unwrap().as_uint().unwrap().0;
         assert_eq!(U256::from(1337u64), decoded);
     }
 
@@ -166,11 +154,11 @@ mod tests {
     fn test_int_env() {
         let val = U256::from(100u64);
         let parsed = parse(&val.to_string(), &DynSolType::Int(256)).unwrap();
-        let decoded = DynSolType::Int(32).decode_single(&parsed).unwrap().as_int().unwrap().0;
+        let decoded = DynSolType::Int(32).decode(&parsed).unwrap().as_int().unwrap().0;
         assert_eq!(val, decoded.into_raw());
 
         let parsed = parse("100", &DynSolType::Int(256)).unwrap();
-        let decoded = DynSolType::Int(32).decode_single(&parsed).unwrap().as_int().unwrap().0;
+        let decoded = DynSolType::Int(32).decode(&parsed).unwrap().as_int().unwrap().0;
         assert_eq!(U256::from(100u64), decoded.into_raw());
     }
 }

@@ -52,7 +52,7 @@ fn try_ffi(state: &Cheatcodes, args: &[String]) -> Result {
         DynSolValue::Bytes(output.stderr),
     ]);
 
-    Ok(res.encode_single().into())
+    Ok(res.encode().into())
 }
 
 /// Invokes a `Command` with the given args and returns the abi encoded response
@@ -83,9 +83,9 @@ fn ffi(state: &Cheatcodes, args: &[String]) -> Result {
     let output = String::from_utf8(output.stdout)?;
     let trimmed = output.trim();
     if let Ok(hex) = hex::decode(trimmed) {
-        Ok(DynSolValue::Bytes(hex).encode_single().into())
+        Ok(DynSolValue::Bytes(hex).encode().into())
     } else {
-        Ok(DynSolValue::String(trimmed.to_owned()).encode_single().into())
+        Ok(DynSolValue::String(trimmed.to_owned()).encode().into())
     }
 }
 
@@ -146,7 +146,7 @@ struct HuffArtifact {
 fn get_code(state: &Cheatcodes, path: &str) -> Result {
     let bytecode = read_bytecode(state, path)?;
     if let Some(bin) = bytecode.into_bytecode() {
-        Ok(DynSolValue::Bytes(bin.to_vec()).encode_single().into())
+        Ok(DynSolValue::Bytes(bin.to_vec()).encode().into())
     } else {
         Err(fmt_err!("No bytecode for contract. Is it abstract or unlinked?"))
     }
@@ -156,7 +156,7 @@ fn get_code(state: &Cheatcodes, path: &str) -> Result {
 fn get_deployed_code(state: &Cheatcodes, path: &str) -> Result {
     let bytecode = read_bytecode(state, path)?;
     if let Some(bin) = bytecode.into_deployed_bytecode() {
-        Ok(DynSolValue::Bytes(bin.to_vec()).encode_single().into())
+        Ok(DynSolValue::Bytes(bin.to_vec()).encode().into())
     } else {
         Err(fmt_err!("No deployed bytecode for contract. Is it abstract or unlinked?"))
     }
@@ -289,11 +289,11 @@ fn canonicalize_json_key(key: &str) -> String {
 /// Encodes a vector of [`DynSolValue`] into a vector of bytes.
 fn encode_abi_values(values: Vec<DynSolValue>) -> Vec<u8> {
     if values.is_empty() {
-        DynSolValue::Bytes(Vec::new()).encode_single()
+        DynSolValue::Bytes(Vec::new()).encode()
     } else if values.len() == 1 {
-        DynSolValue::Bytes(values[0].encode_single()).encode_single()
+        DynSolValue::Bytes(values[0].encode()).encode()
     } else {
-        DynSolValue::Bytes(DynSolValue::Array(values).encode_single()).encode_single()
+        DynSolValue::Bytes(DynSolValue::Array(values).encode()).encode()
     }
 }
 
@@ -385,7 +385,7 @@ fn parse_json_keys(json_str: &str, key: &str) -> Result {
         .collect::<Vec<DynSolValue>>();
 
     // encode the bytes as the 'bytes' solidity type
-    let abi_encoded = DynSolValue::Array(res).encode_single();
+    let abi_encoded = DynSolValue::Array(res).encode();
     Ok(abi_encoded.into())
 }
 
@@ -426,7 +426,7 @@ fn serialize_json(
 
     let stringified = serde_json::to_string(&json)
         .map_err(|err| fmt_err!("Failed to stringify hashmap: {err}"))?;
-    Ok(DynSolValue::String(stringified).encode_single().into())
+    Ok(DynSolValue::String(stringified).encode().into())
 }
 
 /// Converts an array to it's stringified version, adding the appropriate quotes around it's
