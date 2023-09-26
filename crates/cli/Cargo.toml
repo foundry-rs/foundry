@@ -15,6 +15,7 @@ foundry-config.workspace = true
 foundry-common.workspace = true
 foundry-evm.workspace = true
 foundry-debugger.workspace = true
+foundry-utils.workspace = true
 
 # aws
 rusoto_core = { version = "0.48", default-features = false }
@@ -23,8 +24,6 @@ rusoto_kms = { version = "0.48", default-features = false }
 # eth
 ethers = { workspace = true, features = ["aws", "ledger", "trezor"] }
 alloy-primitives.workspace = true
-alloy-dyn-abi.workspace = true
-alloy-json-abi.workspace = true
 
 async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }

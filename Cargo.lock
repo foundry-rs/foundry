@@ -2590,8 +2590,6 @@ dependencies = [
 name = "foundry-cli"
 version = "0.2.0"
 dependencies = [
- "alloy-dyn-abi",
- "alloy-json-abi",
  "alloy-primitives",
  "async-trait",
  "clap",
@@ -2604,6 +2602,7 @@ dependencies = [
  "foundry-config",
  "foundry-debugger",
  "foundry-evm",
+ "foundry-utils",
  "indicatif",
  "itertools 0.11.0",
  "once_cell",
