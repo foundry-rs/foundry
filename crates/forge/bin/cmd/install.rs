@@ -126,7 +126,7 @@ impl DependencyInstallOpts {
 
         if dependencies.is_empty() && !self.no_git {
             p_println!(!self.quiet => "Updating dependencies in {}", libs.display());
-            git.submodule_update(false, false, Some(&libs))?;
+            git.submodule_update(false, false, false, Some(&libs))?;
         }
         fs::create_dir_all(&libs)?;
 
@@ -304,7 +304,7 @@ impl Installer<'_> {
         self.git.submodule_add(true, url, path)?;
 
         trace!("updating submodule recursively");
-        self.git.submodule_update(false, false, Some(path))
+        self.git.submodule_update(false, false, false, Some(path))
     }
 
     fn git_checkout(self, dep: &Dependency, path: &Path, recurse: bool) -> Result<String> {

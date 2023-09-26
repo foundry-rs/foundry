@@ -30,7 +30,7 @@ impl UpdateArgs {
     pub fn run(self) -> Result<()> {
         let config = self.try_load_config_emit_warnings()?;
         let (root, paths) = dependencies_paths(&self.dependencies, &config)?;
-        Git::new(&root).submodule_update(self.force, true, paths)
+        Git::new(&root).submodule_update(self.force, true, false, paths)
     }
 }
 
