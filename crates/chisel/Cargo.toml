@@ -30,6 +30,11 @@ forge-fmt.workspace = true
 ethers.workspace = true
 ethers-solc = { workspace = true, features = ["project-util", "full"] }
 
+# alloy
+alloy-dyn-abi = { workspace = true, default-features = false, features = ["std", "arbitrary"] }
+alloy-primitives = { workspace = true, default-features = false, features = ["std", "serde", "getrandom", "arbitrary", "rlp"] }
+alloy-json-abi = { workspace = true, default-features = false, features = ["std"]}
+
 # async
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.11", default-features = false }

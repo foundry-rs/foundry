@@ -6,11 +6,10 @@ use crate::prelude::{
     ChiselDispatcher, ChiselResult, ChiselRunner, IntermediateOutput, SessionSource, SolidityHelper,
 };
 use core::fmt::Debug;
-use ethers::{
-    abi::{ethabi, ParamType, Token},
-    types::{Address, I256, U256},
-    utils::hex,
-};
+use std::str::FromStr;
+use alloy_dyn_abi::{DynSolValue, DynSolType};
+use alloy_json_abi::{EventParam, Param};
+use alloy_primitives::{Address, U256, hex};
 use ethers_solc::Artifact;
 use eyre::{Result, WrapErr};
 use foundry_evm::{
@@ -21,7 +20,7 @@ use foundry_utils::types::ToEthers;
 use solang_parser::pt::{self, CodeLocation};
 use yansi::Paint;
 
-const USIZE_MAX_AS_U256: U256 = U256([usize::MAX as u64, 0, 0, 0]);
+const USIZE_MAX_AS_U256: U256 = U256::from(usize::MAX);
 
 /// Executor implementation for [SessionSource]
 impl SessionSource {
@@ -108,10 +107,10 @@ impl SessionSource {
                 let mut runner = self.prepare_runner(final_pc).await;
 
                 // Return [ChiselResult] or bubble up error
-                runner.run(bytecode.into_owned())
+                runner.run(bytecode.into_owned().0.into())
             } else {
                 // Return a default result if no statements are present.
-                Ok((Address::zero(), ChiselResult::default()))
+                Ok((Address::ZERO, ChiselResult::default()))
             }
         } else {
             eyre::bail!("Failed to find REPL contract!")
@@ -225,13 +224,12 @@ impl SessionSource {
         // the `bytes memory inspectoor` value
         let mut offset = stack.data().last().unwrap().to_ethers().as_usize();
         let mem = memory.data();
-        let len = U256::from(&mem[offset..offset + 32]).as_usize();
+        let mem_offset =&mem[offset..offset + 32] ;
+        let len = U256::try_from_be_slice(mem_offset).unwrap().to::<usize>();
         offset += 32;
         let data = &mem[offset..offset + len];
-        let mut tokens =
-            ethabi::decode(&[ty], data).wrap_err("Could not decode inspected values")?;
         // `tokens` is guaranteed to have the same length as the provided types
-        let token = tokens.pop().unwrap();
+        let token = DynSolType::decode_single(&ty, data).wrap_err("Could not decode inspected values")?;
         Ok((should_continue(contract_expr), Some(format_token(token))))
     }
 
@@ -302,7 +300,7 @@ impl SessionSource {
 
         // Create a [ChiselRunner] with a default balance of [U256::MAX] and
         // the sender [Address::zero].
-        ChiselRunner::new(executor, U256::MAX, Address::zero(), self.config.calldata.clone())
+        ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone())
     }
 }
 
@@ -317,27 +315,27 @@ impl SessionSource {
 /// A formatted [Token] for use in inspection output.
 ///
 /// TODO: Verbosity option
-fn format_token(token: Token) -> String {
+fn format_token(token: DynSolValue) -> String {
     match token {
-        Token::Address(a) => {
+        DynSolValue::Address(a) => {
             format!("Type: {}\n└ Data: {}", Paint::red("address"), Paint::cyan(format!("0x{a:x}")))
         }
-        Token::FixedBytes(b) => {
+        DynSolValue::FixedBytes(b, _) => {
             format!(
                 "Type: {}\n└ Data: {}",
                 Paint::red(format!("bytes{}", b.len())),
                 Paint::cyan(format!("0x{}", hex::encode(b)))
             )
         }
-        Token::Int(i) => {
+        DynSolValue::Int(i, _) => {
             format!(
                 "Type: {}\n├ Hex: {}\n└ Decimal: {}",
                 Paint::red("int"),
                 Paint::cyan(format!("0x{i:x}")),
-                Paint::cyan(I256::from_raw(i))
+                Paint::cyan(i)
             )
         }
-        Token::Uint(i) => {
+        DynSolValue::Uint(i, _) => {
             format!(
                 "Type: {}\n├ Hex: {}\n└ Decimal: {}",
                 Paint::red("uint"),
@@ -345,12 +343,12 @@ fn format_token(token: Token) -> String {
                 Paint::cyan(i)
             )
         }
-        Token::Bool(b) => {
+        DynSolValue::Bool(b) => {
             format!("Type: {}\n└ Value: {}", Paint::red("bool"), Paint::cyan(b))
         }
-        Token::String(_) | Token::Bytes(_) => {
-            let hex = hex::encode(ethers::abi::encode(&[token.clone()]));
-            let s = token.into_string();
+        DynSolValue::String(_) | DynSolValue::Bytes(_) => {
+            let hex = hex::encode(token.encode_single());
+            let s = token.as_str().map(|s| s.to_owned());
             format!(
                 "Type: {}\n{}├ Hex (Memory):\n├─ Length ({}): {}\n├─ Contents ({}): {}\n├ Hex (Tuple Encoded):\n├─ Pointer ({}): {}\n├─ Length ({}): {}\n└─ Contents ({}): {}",
                 Paint::red(if s.is_some() { "string" } else { "dynamic bytes" }),
@@ -371,7 +369,7 @@ fn format_token(token: Token) -> String {
                 Paint::cyan(format!("0x{}", &hex[128..])),
             )
         }
-        Token::FixedArray(tokens) | Token::Array(tokens) => {
+        DynSolValue::FixedArray(tokens) | DynSolValue::Array(tokens) => {
             let mut out = format!(
                 "{}({}) = {}",
                 Paint::red("array"),
@@ -386,11 +384,16 @@ fn format_token(token: Token) -> String {
             out.push_str(&Paint::red(']').to_string());
             out
         }
-        Token::Tuple(tokens) => {
+        DynSolValue::Tuple(tokens) => {
+            let displayed_types = tokens
+                .into_iter()
+                .map(|t| t.sol_type_name())
+                .map(|t| t.unwrap_or_default().into_owned())
+                .collect::<Vec<_>>().join(", ");
             let mut out = format!(
                 "{}({}) = {}",
                 Paint::red("tuple"),
-                Paint::yellow(tokens.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")),
+                Paint::yellow(displayed_types),
                 Paint::red('(')
             );
             for token in tokens {
@@ -400,6 +403,9 @@ fn format_token(token: Token) -> String {
             }
             out.push_str(&Paint::red(')').to_string());
             out
+        }
+        _ => {
+            unimplemented!()
         }
     }
 }
@@ -429,10 +435,10 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
             let kind = Type::from_expression(&param.ty)
                 .and_then(Type::into_builtin)
                 .ok_or_else(|| eyre::eyre!("Invalid type in event {event_name}"))?;
-            Ok(ethabi::EventParam { name, kind, indexed: param.indexed })
+            Ok(EventParam { name, ty: kind.to_string(), components: vec![], indexed: param.indexed, internal_type: None })
         })
         .collect::<Result<Vec<_>>>()?;
-    let event = ethabi::Event { name: event_name, inputs, anonymous: event_definition.anonymous };
+    let event = alloy_json_abi::Event { name: event_name, inputs, anonymous: event_definition.anonymous };
 
     Ok(format!(
         "Type: {}\n├ Name: {}\n└ Signature: {:?}",
@@ -445,7 +451,7 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
                 .iter()
                 .map(|param| format!(
                     "{}{}{}",
-                    param.kind,
+                    param.ty,
                     if param.indexed { " indexed" } else { "" },
                     if param.name.is_empty() {
                         String::default()
@@ -468,7 +474,7 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
 #[derive(Debug, Clone, PartialEq)]
 enum Type {
     /// (type)
-    Builtin(ParamType),
+    Builtin(DynSolType),
 
     /// (type)
     Array(Box<Type>),
@@ -519,7 +525,7 @@ impl Type {
                         if n > USIZE_MAX_AS_U256 {
                             None
                         } else {
-                            Some(n.as_usize())
+                            Some(n.to::<usize>())
                         }
                     });
                     match expr.as_ref() {
@@ -586,19 +592,19 @@ impl Type {
             }
 
             // address
-            pt::Expression::AddressLiteral(_, _) => Some(Self::Builtin(ParamType::Address)),
+            pt::Expression::AddressLiteral(_, _) => Some(Self::Builtin(DynSolType::Address)),
             pt::Expression::HexNumberLiteral(_, s, _) => {
                 match s.parse() {
                     Ok(addr) => {
                         let checksummed = ethers::utils::to_checksum(&addr, None);
                         if *s == checksummed {
-                            Some(Self::Builtin(ParamType::Address))
+                            Some(Self::Builtin(DynSolType::Address))
                         } else {
-                            Some(Self::Builtin(ParamType::Uint(256)))
+                            Some(Self::Builtin(DynSolType::Uint(256)))
                         }
                     },
                     _ => {
-                        Some(Self::Builtin(ParamType::Uint(256)))
+                        Some(Self::Builtin(DynSolType::Uint(256)))
                     }
                 }
             }
@@ -615,13 +621,13 @@ impl Type {
             pt::Expression::Multiply(_, lhs, rhs) |
             pt::Expression::Divide(_, lhs, rhs) => {
                 match (Self::ethabi(lhs, None), Self::ethabi(rhs, None)) {
-                    (Some(ParamType::Int(_)), Some(ParamType::Int(_))) |
-                    (Some(ParamType::Int(_)), Some(ParamType::Uint(_))) |
-                    (Some(ParamType::Uint(_)), Some(ParamType::Int(_))) => {
-                        Some(Self::Builtin(ParamType::Int(256)))
+                    (Some(DynSolType::Int(_)), Some(DynSolType::Int(_))) |
+                    (Some(DynSolType::Int(_)), Some(DynSolType::Uint(_))) |
+                    (Some(DynSolType::Uint(_)), Some(DynSolType::Int(_))) => {
+                        Some(Self::Builtin(DynSolType::Int(256)))
                     }
                     _ => {
-                        Some(Self::Builtin(ParamType::Uint(256)))
+                        Some(Self::Builtin(DynSolType::Uint(256)))
                     }
                 }
             }
@@ -634,11 +640,11 @@ impl Type {
             pt::Expression::BitwiseXor(_, _, _) |
             pt::Expression::ShiftRight(_, _, _) |
             pt::Expression::ShiftLeft(_, _, _) |
-            pt::Expression::NumberLiteral(_, _, _, _) => Some(Self::Builtin(ParamType::Uint(256))),
+            pt::Expression::NumberLiteral(_, _, _, _) => Some(Self::Builtin(DynSolType::Uint(256))),
 
             // TODO: Rational numbers
             pt::Expression::RationalNumberLiteral(_, _, _, _, _) => {
-                Some(Self::Builtin(ParamType::Uint(256)))
+                Some(Self::Builtin(DynSolType::Uint(256)))
             }
 
             // bool
@@ -651,13 +657,13 @@ impl Type {
             pt::Expression::LessEqual(_, _, _) |
             pt::Expression::More(_, _, _) |
             pt::Expression::MoreEqual(_, _, _) |
-            pt::Expression::Not(_, _) => Some(Self::Builtin(ParamType::Bool)),
+            pt::Expression::Not(_, _) => Some(Self::Builtin(DynSolType::Bool)),
 
             // string
-            pt::Expression::StringLiteral(_) => Some(Self::Builtin(ParamType::String)),
+            pt::Expression::StringLiteral(_) => Some(Self::Builtin(DynSolType::String)),
 
             // bytes
-            pt::Expression::HexLiteral(_) => Some(Self::Builtin(ParamType::Bytes)),
+            pt::Expression::HexLiteral(_) => Some(Self::Builtin(DynSolType::Bytes)),
 
             // function
             pt::Expression::FunctionCall(_, name, args) => {
@@ -690,14 +696,14 @@ impl Type {
     fn from_type(ty: &pt::Type) -> Option<Self> {
         let ty = match ty {
             pt::Type::Address | pt::Type::AddressPayable | pt::Type::Payable => {
-                Self::Builtin(ParamType::Address)
+                Self::Builtin(DynSolType::Address)
             }
-            pt::Type::Bool => Self::Builtin(ParamType::Bool),
-            pt::Type::String => Self::Builtin(ParamType::String),
-            pt::Type::Int(size) => Self::Builtin(ParamType::Int(*size as usize)),
-            pt::Type::Uint(size) => Self::Builtin(ParamType::Uint(*size as usize)),
-            pt::Type::Bytes(size) => Self::Builtin(ParamType::FixedBytes(*size as usize)),
-            pt::Type::DynamicBytes => Self::Builtin(ParamType::Bytes),
+            pt::Type::Bool => Self::Builtin(DynSolType::Bool),
+            pt::Type::String => Self::Builtin(DynSolType::String),
+            pt::Type::Int(size) => Self::Builtin(DynSolType::Int(*size as usize)),
+            pt::Type::Uint(size) => Self::Builtin(DynSolType::Uint(*size as usize)),
+            pt::Type::Bytes(size) => Self::Builtin(DynSolType::FixedBytes(*size as usize)),
+            pt::Type::DynamicBytes => Self::Builtin(DynSolType::Bytes),
             pt::Type::Mapping { value, .. } => Self::from_expression(value)?,
             pt::Type::Function { params, returns, .. } => {
                 let params = map_parameters(params);
@@ -741,7 +747,7 @@ impl Type {
                     let ty = Self::Builtin(ty);
                     match access.as_str() {
                         "length" if ty.is_dynamic() || ty.is_array() => {
-                            return Self::Builtin(ParamType::Uint(256))
+                            return Self::Builtin(DynSolType::Uint(256))
                         }
                         "pop" if ty.is_dynamic_array() => return ty,
                         _ => {}
@@ -756,31 +762,31 @@ impl Type {
             match len {
                 0 => unreachable!(),
                 1 => match name {
-                    "gasleft" | "addmod" | "mulmod" => Some(ParamType::Uint(256)),
-                    "keccak256" | "sha256" | "blockhash" => Some(ParamType::FixedBytes(32)),
-                    "ripemd160" => Some(ParamType::FixedBytes(20)),
-                    "ecrecover" => Some(ParamType::Address),
+                    "gasleft" | "addmod" | "mulmod" => Some(DynSolType::Uint(256)),
+                    "keccak256" | "sha256" | "blockhash" => Some(DynSolType::FixedBytes(32)),
+                    "ripemd160" => Some(DynSolType::FixedBytes(20)),
+                    "ecrecover" => Some(DynSolType::Address),
                     _ => None,
                 },
                 2 => {
                     let access = types.first().unwrap().as_str();
                     match name {
                         "block" => match access {
-                            "coinbase" => Some(ParamType::Address),
+                            "coinbase" => Some(DynSolType::Address),
                             "basefee" | "chainid" | "difficulty" | "gaslimit" | "number" |
-                            "timestamp" => Some(ParamType::Uint(256)),
+                            "timestamp" => Some(DynSolType::Uint(256)),
                             _ => None,
                         },
                         "msg" => match access {
-                            "data" => Some(ParamType::Bytes),
-                            "sender" => Some(ParamType::Address),
-                            "sig" => Some(ParamType::FixedBytes(4)),
-                            "value" => Some(ParamType::Uint(256)),
+                            "data" => Some(DynSolType::Bytes),
+                            "sender" => Some(DynSolType::Address),
+                            "sig" => Some(DynSolType::FixedBytes(4)),
+                            "value" => Some(DynSolType::Uint(256)),
                             _ => None,
                         },
                         "tx" => match access {
-                            "gasprice" => Some(ParamType::Uint(256)),
-                            "origin" => Some(ParamType::Address),
+                            "gasprice" => Some(DynSolType::Uint(256)),
+                            "origin" => Some(DynSolType::Address),
                             _ => None,
                         },
                         "abi" => match access {
@@ -800,20 +806,20 @@ impl Type {
                                     None => None,
                                 }
                             }
-                            s if s.starts_with("encode") => Some(ParamType::Bytes),
+                            s if s.starts_with("encode") => Some(DynSolType::Bytes),
                             _ => None,
                         },
                         "address" => match access {
-                            "balance" => Some(ParamType::Uint(256)),
-                            "code" => Some(ParamType::Bytes),
-                            "codehash" => Some(ParamType::FixedBytes(32)),
-                            "send" => Some(ParamType::Bool),
+                            "balance" => Some(DynSolType::Uint(256)),
+                            "code" => Some(DynSolType::Bytes),
+                            "codehash" => Some(DynSolType::FixedBytes(32)),
+                            "send" => Some(DynSolType::Bool),
                             _ => None,
                         },
                         "type" => match access {
-                            "name" => Some(ParamType::String),
-                            "creationCode" | "runtimeCode" => Some(ParamType::Bytes),
-                            "interfaceId" => Some(ParamType::FixedBytes(4)),
+                            "name" => Some(DynSolType::String),
+                            "creationCode" | "runtimeCode" => Some(DynSolType::Bytes),
+                            "interfaceId" => Some(DynSolType::FixedBytes(4)),
                             "min" | "max" => {
                                 let arg = args.unwrap().pop().flatten().unwrap();
                                 Some(arg.into_builtin().unwrap())
@@ -821,11 +827,11 @@ impl Type {
                             _ => None,
                         },
                         "string" => match access {
-                            "concat" => Some(ParamType::String),
+                            "concat" => Some(DynSolType::String),
                             _ => None,
                         },
                         "bytes" => match access {
-                            "concat" => Some(ParamType::Bytes),
+                            "concat" => Some(DynSolType::Bytes),
                             _ => None,
                         },
                         _ => None,
@@ -875,14 +881,14 @@ impl Type {
     ///
     /// ### Returns
     ///
-    /// If successful, an `Ok(Some(ParamType))` variant.
+    /// If successful, an `Ok(Some(DynSolType))` variant.
     /// If gracefully failed, an `Ok(None)` variant.
     /// If failed, an `Err(e)` variant.
     fn infer_custom_type(
         intermediate: &IntermediateOutput,
         custom_type: &mut Vec<String>,
         contract_name: Option<String>,
-    ) -> Result<Option<ParamType>> {
+    ) -> Result<Option<DynSolType>> {
         if let Some("this") | Some("super") = custom_type.last().map(String::as_str) {
             custom_type.pop();
         }
@@ -953,7 +959,7 @@ impl Type {
                             .ok_or_else(|| eyre::eyre!("Struct `{cur_type}` has invalid fields"))
                     })
                     .collect::<Result<Vec<_>>>()?;
-                Ok(Some(ParamType::Tuple(inner_types)))
+                Ok(Some(DynSolType::Tuple(inner_types)))
             } else {
                 eyre::bail!("Could not find any definition in contract \"{contract_name}\" for type: {custom_type:?}")
             }
@@ -991,7 +997,7 @@ impl Type {
         expr: &pt::Expression,
         intermediate: Option<&IntermediateOutput>,
         custom_type: &mut Vec<String>,
-    ) -> Result<Option<ParamType>> {
+    ) -> Result<Option<DynSolType>> {
         // Resolve local (in `run` function) or global (in the `REPL` or other contract) variable
         let res = match &expr {
             // Custom variable handling
@@ -1009,7 +1015,7 @@ impl Type {
                             Self::infer_custom_type(intermediate, custom_type, Some(name.clone()))
                         } else {
                             // We have no types left to recurse: return the address of the contract.
-                            Ok(Some(ParamType::Address))
+                            Ok(Some(DynSolType::Address))
                         }
                     } else {
                         Err(eyre::eyre!("Could not infer variable type"))
@@ -1036,28 +1042,28 @@ impl Type {
         }
     }
 
-    /// Attempt to convert this type into a [ParamType]
+    /// Attempt to convert this type into a [DynSolType]
     ///
     /// ### Takes
     /// An immutable reference to an [IntermediateOutput]
     ///
     /// ### Returns
-    /// Optionally, a [ParamType]
-    fn try_as_ethabi(self, intermediate: Option<&IntermediateOutput>) -> Option<ParamType> {
+    /// Optionally, a [DynSolType]
+    fn try_as_ethabi(self, intermediate: Option<&IntermediateOutput>) -> Option<DynSolType> {
         match self {
             Self::Builtin(ty) => Some(ty),
-            Self::Tuple(types) => Some(ParamType::Tuple(types_to_parameters(types, intermediate))),
+            Self::Tuple(types) => Some(DynSolType::Tuple(types_to_parameters(types, intermediate))),
             Self::Array(inner) => match *inner {
                 ty @ Self::Custom(_) => ty.try_as_ethabi(intermediate),
                 _ => {
-                    inner.try_as_ethabi(intermediate).map(|inner| ParamType::Array(Box::new(inner)))
+                    inner.try_as_ethabi(intermediate).map(|inner| DynSolType::Array(Box::new(inner)))
                 }
             },
             Self::FixedArray(inner, size) => match *inner {
                 ty @ Self::Custom(_) => ty.try_as_ethabi(intermediate),
                 _ => inner
                     .try_as_ethabi(intermediate)
-                    .map(|inner| ParamType::FixedArray(Box::new(inner), size)),
+                    .map(|inner| DynSolType::FixedArray(Box::new(inner), size)),
             },
             ty @ Self::ArrayIndex(_, _) => ty.into_array_index(intermediate),
             Self::Function(ty, _, _) => ty.try_as_ethabi(intermediate),
@@ -1076,7 +1082,7 @@ impl Type {
     fn ethabi(
         expr: &pt::Expression,
         intermediate: Option<&IntermediateOutput>,
-    ) -> Option<ParamType> {
+    ) -> Option<DynSolType> {
         Self::from_expression(expr)
             .map(Self::map_special)
             .and_then(|ty| ty.try_as_ethabi(intermediate))
@@ -1086,7 +1092,7 @@ impl Type {
     fn get_function_return_type<'a>(
         contract_expr: Option<&'a pt::Expression>,
         intermediate: &IntermediateOutput,
-    ) -> Option<(&'a pt::Expression, ParamType)> {
+    ) -> Option<(&'a pt::Expression, DynSolType)> {
         let function_call = match contract_expr? {
             pt::Expression::FunctionCall(_, function_call, _) => function_call,
             _ => return None,
@@ -1120,31 +1126,31 @@ impl Type {
     /// Inverts Int to Uint and viceversa.
     fn invert_int(self) -> Self {
         match self {
-            Self::Builtin(ParamType::Uint(n)) => Self::Builtin(ParamType::Int(n)),
-            Self::Builtin(ParamType::Int(n)) => Self::Builtin(ParamType::Uint(n)),
+            Self::Builtin(DynSolType::Uint(n)) => Self::Builtin(DynSolType::Int(n)),
+            Self::Builtin(DynSolType::Int(n)) => Self::Builtin(DynSolType::Uint(n)),
             x => x,
         }
     }
 
-    /// Returns the `ParamType` contained by `Type::Builtin`
+    /// Returns the `DynSolType` contained by `Type::Builtin`
     #[inline]
-    fn into_builtin(self) -> Option<ParamType> {
+    fn into_builtin(self) -> Option<DynSolType> {
         match self {
             Self::Builtin(ty) => Some(ty),
             _ => None,
         }
     }
 
-    /// Returns the resulting `ParamType` of indexing self
-    fn into_array_index(self, intermediate: Option<&IntermediateOutput>) -> Option<ParamType> {
+    /// Returns the resulting `DynSolType` of indexing self
+    fn into_array_index(self, intermediate: Option<&IntermediateOutput>) -> Option<DynSolType> {
         match self {
             Self::Array(inner) | Self::FixedArray(inner, _) | Self::ArrayIndex(inner, _) => {
                 match inner.try_as_ethabi(intermediate) {
-                    Some(ParamType::Array(inner)) | Some(ParamType::FixedArray(inner, _)) => {
+                    Some(DynSolType::Array(inner)) | Some(DynSolType::FixedArray(inner, _)) => {
                         Some(*inner)
                     }
-                    Some(ParamType::Bytes) | Some(ParamType::String) => {
-                        Some(ParamType::FixedBytes(1))
+                    Some(DynSolType::Bytes) | Some(DynSolType::String) => {
+                        Some(DynSolType::FixedBytes(1))
                     }
                     ty => ty,
                 }
@@ -1157,7 +1163,12 @@ impl Type {
     #[inline]
     fn is_dynamic(&self) -> bool {
         match self {
-            Self::Builtin(ty) => ty.is_dynamic(),
+            Self::Builtin(ty) => match ty {
+                // TODO: Note, this is not entirely correct. Fixed arrays of non-dynamic types are not dynamic,
+                // nor are tuples of non-dynamic types.
+                DynSolType::Bytes | DynSolType::String | DynSolType::Array(_) => true,
+                _ => false,
+            },
             Self::Array(_) => true,
             _ => false,
         }
@@ -1170,15 +1181,15 @@ impl Type {
             self,
             Self::Array(_) |
                 Self::FixedArray(_, _) |
-                Self::Builtin(ParamType::Array(_)) |
-                Self::Builtin(ParamType::FixedArray(_, _))
+                Self::Builtin(DynSolType::Array(_)) |
+                Self::Builtin(DynSolType::FixedArray(_, _))
         )
     }
 
     /// Returns whether this type is a dynamic array (can call push, pop)
     #[inline]
     fn is_dynamic_array(&self) -> bool {
-        matches!(self, Self::Array(_) | Self::Builtin(ParamType::Array(_)))
+        matches!(self, Self::Array(_) | Self::Builtin(DynSolType::Array(_)))
     }
 }
 
@@ -1186,7 +1197,7 @@ impl Type {
 ///
 /// Ref: <https://docs.soliditylang.org/en/latest/types.html#function-types>
 #[inline]
-fn func_members(func: &pt::FunctionDefinition, custom_type: &[String]) -> Option<ParamType> {
+fn func_members(func: &pt::FunctionDefinition, custom_type: &[String]) -> Option<DynSolType> {
     if !matches!(func.ty, pt::FunctionTy::Function) {
         return None
     }
@@ -1198,8 +1209,8 @@ fn func_members(func: &pt::FunctionDefinition, custom_type: &[String]) -> Option
     match vis {
         Some(pt::Visibility::External(_)) | Some(pt::Visibility::Public(_)) => {
             match custom_type.first().unwrap().as_str() {
-                "address" => Some(ParamType::Address),
-                "selector" => Some(ParamType::FixedBytes(4)),
+                "address" => Some(DynSolType::Address),
+                "selector" => Some(DynSolType::FixedBytes(4)),
                 _ => None,
             }
         }
@@ -1254,14 +1265,14 @@ fn map_parameters(params: &[(pt::Loc, Option<pt::Parameter>)]) -> Vec<Option<Typ
 fn types_to_parameters(
     types: Vec<Option<Type>>,
     intermediate: Option<&IntermediateOutput>,
-) -> Vec<ParamType> {
+) -> Vec<DynSolType> {
     types.into_iter().filter_map(|ty| ty.and_then(|ty| ty.try_as_ethabi(intermediate))).collect()
 }
 
 fn parse_number_literal(expr: &pt::Expression) -> Option<U256> {
     match expr {
         pt::Expression::NumberLiteral(_, num, exp, unit) => {
-            let num = U256::from_dec_str(num).unwrap_or(U256::zero());
+            let num = U256::from_str(num).unwrap_or(U256::ZERO);
             let exp = exp.parse().unwrap_or(0u32);
             if exp > 77 {
                 None
@@ -1295,9 +1306,9 @@ fn unit_multiplier(unit: &Option<pt::Identifier>) -> Result<U256> {
             "ether" => 10_usize.pow(18),
             other => eyre::bail!("unknown unit: {other}"),
         };
-        Ok(mul.into())
+        Ok(U256::from(mul))
     } else {
-        Ok(U256::one())
+        Ok(U256::from(1))
     }
 }
 
@@ -1347,14 +1358,14 @@ mod tests {
 
     #[test]
     fn test_const() {
-        assert_eq!(USIZE_MAX_AS_U256.low_u64(), usize::MAX as u64);
-        assert_eq!(USIZE_MAX_AS_U256.as_u64(), usize::MAX as u64);
+        assert_eq!(USIZE_MAX_AS_U256.to::<u64>(), usize::MAX as u64);
+        assert_eq!(USIZE_MAX_AS_U256.to::<u64>(), usize::MAX as u64);
     }
 
     #[test]
     fn test_expressions() {
-        static EXPRESSIONS: &[(&str, ParamType)] = {
-            use ParamType::*;
+        static EXPRESSIONS: &[(&str, DynSolType)] = {
+            use DynSolType::*;
             &[
                 // units
                 // uint
@@ -1439,13 +1450,13 @@ mod tests {
 
         let source = &mut source();
 
-        let array_expressions: &[(&str, ParamType)] = &[
-            ("[1, 2, 3]", fixed_array(ParamType::Uint(256), 3)),
-            ("[uint8(1), 2, 3]", fixed_array(ParamType::Uint(8), 3)),
-            ("[int8(1), 2, 3]", fixed_array(ParamType::Int(8), 3)),
-            ("new uint256[](3)", array(ParamType::Uint(256))),
-            ("uint256[] memory a = new uint256[](3);\na[0]", ParamType::Uint(256)),
-            ("uint256[] memory a = new uint256[](3);\na[0:3]", array(ParamType::Uint(256))),
+        let array_expressions: &[(&str, DynSolType)] = &[
+            ("[1, 2, 3]", fixed_array(DynSolType::Uint(256), 3)),
+            ("[uint8(1), 2, 3]", fixed_array(DynSolType::Uint(8), 3)),
+            ("[int8(1), 2, 3]", fixed_array(DynSolType::Int(8), 3)),
+            ("new uint256[](3)", array(DynSolType::Uint(256))),
+            ("uint256[] memory a = new uint256[](3);\na[0]", DynSolType::Uint(256)),
+            ("uint256[] memory a = new uint256[](3);\na[0:3]", array(DynSolType::Uint(256))),
         ];
         generic_type_test(source, array_expressions);
         generic_type_test(source, EXPRESSIONS);
@@ -1453,8 +1464,8 @@ mod tests {
 
     #[test]
     fn test_types() {
-        static TYPES: &[(&str, ParamType)] = {
-            use ParamType::*;
+        static TYPES: &[(&str, DynSolType)] = {
+            use DynSolType::*;
             &[
                 // bool
                 ("bool", Bool),
@@ -1498,17 +1509,17 @@ mod tests {
             ]
         };
 
-        let mut types: Vec<(String, ParamType)> = Vec::with_capacity(96 + 32 + 100);
+        let mut types: Vec<(String, DynSolType)> = Vec::with_capacity(96 + 32 + 100);
         for (n, b) in (8..=256).step_by(8).zip(1..=32) {
-            types.push((format!("uint{n}(0)"), ParamType::Uint(n)));
-            types.push((format!("int{n}(0)"), ParamType::Int(n)));
-            types.push((format!("bytes{b}(0x00)"), ParamType::FixedBytes(b)));
+            types.push((format!("uint{n}(0)"), DynSolType::Uint(n)));
+            types.push((format!("int{n}(0)"), DynSolType::Int(n)));
+            types.push((format!("bytes{b}(0x00)"), DynSolType::FixedBytes(b)));
         }
 
         for n in 0..=32 {
             types.push((
                 format!("uint256[{n}]"),
-                ParamType::FixedArray(Box::new(ParamType::Uint(256)), n),
+                DynSolType::FixedArray(Box::new(DynSolType::Uint(256)), n),
             ));
         }
 
@@ -1520,7 +1531,7 @@ mod tests {
     fn test_global_vars() {
         // https://docs.soliditylang.org/en/latest/cheatsheet.html#global-variables
         let global_variables = {
-            use ParamType::*;
+            use DynSolType::*;
             &[
                 // abi
                 ("abi.decode(bytes, (uint8[13]))", Tuple(vec![FixedArray(Box::new(Uint(8)), 13)])),
@@ -1645,12 +1656,12 @@ mod tests {
         SessionSource::new(solc, Default::default())
     }
 
-    fn array(ty: ParamType) -> ParamType {
-        ParamType::Array(Box::new(ty))
+    fn array(ty: DynSolType) -> DynSolType {
+        DynSolType::Array(Box::new(ty))
     }
 
-    fn fixed_array(ty: ParamType, len: usize) -> ParamType {
-        ParamType::FixedArray(Box::new(ty), len)
+    fn fixed_array(ty: DynSolType, len: usize) -> DynSolType {
+        DynSolType::FixedArray(Box::new(ty), len)
     }
 
     fn parse(s: &mut SessionSource, input: &str, clear: bool) -> IntermediateOutput {
@@ -1693,7 +1704,7 @@ mod tests {
         (Type::from_expression(&expr).map(Type::map_special), intermediate)
     }
 
-    fn get_type_ethabi(s: &mut SessionSource, input: &str, clear: bool) -> Option<ParamType> {
+    fn get_type_ethabi(s: &mut SessionSource, input: &str, clear: bool) -> Option<DynSolType> {
         let (ty, intermediate) = get_type(s, input, clear);
         ty.and_then(|ty| ty.try_as_ethabi(Some(&intermediate)))
     }
@@ -1702,7 +1713,7 @@ mod tests {
     fn generic_type_test<'a, T, I>(s: &mut SessionSource, input: I)
     where
         T: AsRef<str> + std::fmt::Display + 'a,
-        I: IntoIterator<Item = &'a (T, ParamType)> + 'a,
+        I: IntoIterator<Item = &'a (T, DynSolType)> + 'a,
     {
         for (input, expected) in input.into_iter() {
             let input = input.as_ref();

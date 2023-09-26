@@ -151,8 +151,11 @@ ethers-middleware = { version = "2.0", default-features = false }
 ethers-etherscan = { version = "2.0", default-features = false }
 ethers-solc = { version = "2.0", default-features = false }
 
+## alloy
+
 alloy-primitives = { version = "0.3", default-features = false }
 alloy-dyn-abi = { version = "0.3", default-features = false }
+alloy-json-abi = { version = "0.3", default-features = false }
 
 solang-parser = "=0.3.2"
 
