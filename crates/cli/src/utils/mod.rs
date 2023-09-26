@@ -378,7 +378,7 @@ impl<'a> Git<'a> {
             .args(shallow.then_some("--no-tags"))
             .args(shallow.then_some("--depth=1"))
             .arg(remote)
-            .args(branch.map(|b| b))
+            .args(branch)
             .exec()
             .map(drop)
     }
@@ -433,8 +433,8 @@ impl<'a> Git<'a> {
         self.cmd()
             .arg("commit-tree")
             .arg(tree)
-            .args(msg.as_ref().map(|_| "-m"))
-            .args(msg.map(|msg| msg))
+            .args(msg.as_ref().is_some().then_some("-m"))
+            .args(msg)
             .get_stdout_lossy()
     }
 
