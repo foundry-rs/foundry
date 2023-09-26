@@ -119,18 +119,18 @@ jobs:
                   echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> $GITHUB_ENV
                   echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> $GITHUB_ENV
 
+            - name: GCC Multilib setup
+              if: ${{ matrix.job.platform == 'linux' }}
+              run: |
+                  sudo apt-get update -y
+                  sudo apt-get install -y gcc-multilib g++-multilib gcc-aarch64-linux-gnu
+
             - name: Linux ARM setup
               if: ${{ matrix.job.target == 'aarch64-unknown-linux-gnu' }}
               run: |
                   sudo apt-get update -y
                   sudo apt-get install -y gcc-aarch64-linux-gnu
                   echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-
-            - name: GCC Multilib setup
-              if: ${{ matrix.job.platform == 'linux' }}
-              run: |
-                  sudo apt-get update -y
-                  sudo apt-get install gcc-multilib g++-multilib
 
             - name: Build binaries
               env:
