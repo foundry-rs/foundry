@@ -15,7 +15,7 @@ repository.workspace = true
 ethers-core.workspace = true
 ethers-solc = { workspace = true, features = ["async", "svm-solc"] }
 ethers-etherscan.workspace = true
-revm-primitives = { workspace = true, features = ["std", "serde"] }
+revm-primitives = { workspace = true, default-features = false, features = ["std"] }
 
 # formats
 Inflector = "0.11"
