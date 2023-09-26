@@ -83,6 +83,13 @@ pub fn parse_u256(s: &str) -> Result<U256> {
     Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })
 }
 
+/// parse a hex str or decimal str as U256
+// TODO: rm after alloy transition
+pub fn alloy_parse_u256(s: &str) -> Result<alloy_primitives::U256> {
+    use foundry_utils::types::ToAlloy;
+    Ok(parse_u256(s)?.to_alloy())
+}
+
 /// Returns a [RetryProvider](foundry_common::RetryProvider) instantiated using [Config]'s RPC URL
 /// and chain.
 ///
@@ -131,6 +138,12 @@ pub fn parse_ether_value(value: &str) -> Result<U256> {
     } else {
         U256::from(LenientTokenizer::tokenize_uint(value)?)
     })
+}
+
+// TODO: rm after alloy transition
+pub fn alloy_parse_ether_value(value: &str) -> Result<alloy_primitives::U256> {
+    use foundry_utils::types::ToAlloy;
+    Ok(parse_ether_value(value)?.to_alloy())
 }
 
 /// Parses a `Duration` from a &str

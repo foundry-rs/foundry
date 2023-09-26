@@ -92,7 +92,7 @@ pub struct TestArgs {
     list: bool,
 
     /// Set seed used to generate randomness during your fuzz runs.
-    #[clap(long, value_parser = utils::parse_u256)]
+    #[clap(long, value_parser = utils::alloy_parse_u256)]
     pub fuzz_seed: Option<U256>,
 
     #[clap(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
