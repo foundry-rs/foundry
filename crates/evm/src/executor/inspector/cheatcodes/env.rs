@@ -694,12 +694,17 @@ pub fn apply<DB: DatabaseExt>(
             state.mapping_slots = None;
             Bytes::new()
         }
-        HEVMCalls::GetMappingLength(inner) => get_mapping_length(state, inner.0, inner.1.into()),
-        HEVMCalls::GetMappingSlotAt(inner) => {
-            get_mapping_slot_at(state, inner.0, inner.1.into(), inner.2)
+        HEVMCalls::GetMappingLength(inner) => {
+            get_mapping_length(state, inner.0.to_alloy(), rU256::from_be_bytes(inner.1.into()))
         }
+        HEVMCalls::GetMappingSlotAt(inner) => get_mapping_slot_at(
+            state,
+            inner.0.to_alloy(),
+            rU256::from_be_bytes(inner.1),
+            inner.2.to_alloy(),
+        ),
         HEVMCalls::GetMappingKeyAndParentOf(inner) => {
-            get_mapping_key_and_parent(state, inner.0, inner.1.into())
+            get_mapping_key_and_parent(state, inner.0.to_alloy(), rU256::from_be_bytes(inner.1))
         }
         _ => return Ok(None),
     };

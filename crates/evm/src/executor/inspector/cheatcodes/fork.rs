@@ -6,20 +6,23 @@ use crate::{
     },
     utils::RuntimeOrHandle,
 };
+use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Bytes, B256, U256};
-use ethers::{
-    abi::{self, AbiEncode, Token, Tokenizable, Tokenize},
-    providers::Middleware,
-    types::{Filter, U256 as eU256},
-};
+use alloy_sol_types::sol;
+use ethers::{providers::Middleware, types::Filter};
 use foundry_abi::hevm::{EthGetLogsCall, RpcCall};
 use foundry_common::ProviderBuilder;
 use foundry_utils::types::{ToAlloy, ToEthers};
+use itertools::Itertools;
 use revm::EVMData;
 use serde_json::Value;
 
 fn empty<T>(_: T) -> Bytes {
     Bytes::new()
+}
+
+sol! {
+    struct Rpc { string name; string url; }
 }
 
 /// Handles fork related cheatcodes
@@ -67,7 +70,7 @@ pub fn apply<DB: DatabaseExt>(
             Ok(Bytes::new())
         }
         HEVMCalls::IsPersistent(acc) => {
-            Ok(data.db.is_persistent(&acc.0.to_alloy()).encode().into())
+            Ok(DynSolValue::Bool(data.db.is_persistent(&acc.0.to_alloy())).encode_single().into())
         }
         HEVMCalls::RevokePersistent0(acc) => {
             data.db.remove_persistent_account(&acc.0.to_alloy());
@@ -82,7 +85,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::ActiveFork(_) => data
             .db
             .active_fork_id()
-            .map(|id| id.to_ethers().encode().into())
+            .map(|id| DynSolValue::Uint(id, 256).encode_single().into())
             .ok_or_else(|| fmt_err!("No active fork")),
         HEVMCalls::RollFork0(fork) => data
             .db
@@ -114,7 +117,10 @@ pub fn apply<DB: DatabaseExt>(
             )
             .map(empty)
             .map_err(Into::into),
-        HEVMCalls::RpcUrl(rpc) => state.config.get_rpc_url(&rpc.0).map(|url| url.encode().into()),
+        HEVMCalls::RpcUrl(rpc) => state
+            .config
+            .get_rpc_url(&rpc.0)
+            .map(|url| DynSolValue::String(url).encode_single().into()),
         HEVMCalls::RpcUrls(_) => {
             let mut urls = Vec::with_capacity(state.config.rpc_endpoints.len());
             for alias in state.config.rpc_endpoints.keys().cloned() {
@@ -125,7 +131,18 @@ pub fn apply<DB: DatabaseExt>(
                     Err(err) => return Some(Err(err)),
                 }
             }
-            Ok(urls.encode().into())
+            Ok(DynSolValue::Array(
+                urls.into_iter()
+                    .map(|t| {
+                        DynSolValue::FixedArray(vec![
+                            DynSolValue::String(t[0].clone()),
+                            DynSolValue::String(t[1].clone()),
+                        ])
+                    })
+                    .collect_vec(),
+            )
+            .encode_single()
+            .into())
         }
         HEVMCalls::RpcUrlStructs(_) => {
             let mut urls = Vec::with_capacity(state.config.rpc_endpoints.len());
@@ -137,7 +154,17 @@ pub fn apply<DB: DatabaseExt>(
                     Err(err) => return Some(Err(err)),
                 }
             }
-            Ok(urls.encode().into())
+            let urls = DynSolValue::Array(
+                urls.into_iter()
+                    .map(|u| {
+                        DynSolValue::Tuple(vec![
+                            DynSolValue::String(u[0].clone()),
+                            DynSolValue::String(u[1].clone()),
+                        ])
+                    })
+                    .collect_vec(),
+            );
+            Ok(urls.encode_single().into())
         }
         HEVMCalls::AllowCheatcodes(addr) => {
             data.db.allow_cheatcode_access(addr.0.to_alloy());
@@ -199,7 +226,7 @@ fn create_select_fork<DB: DatabaseExt>(
 
     let fork = create_fork_request(state, url_or_alias, block, data)?;
     let id = data.db.create_select_fork(fork, data.env, &mut data.journaled_state)?;
-    Ok(id.to_ethers().encode().into())
+    Ok(DynSolValue::Uint(id, 256).encode_single().into())
 }
 
 /// Creates a new fork
@@ -211,7 +238,7 @@ fn create_fork<DB: DatabaseExt>(
 ) -> Result {
     let fork = create_fork_request(state, url_or_alias, block, data)?;
     let id = data.db.create_fork(fork)?;
-    Ok(id.to_ethers().encode().into())
+    Ok(DynSolValue::Uint(id, 256).encode_single().into())
 }
 /// Creates and then also selects the new fork at the given transaction
 fn create_select_fork_at_transaction<DB: DatabaseExt>(
@@ -234,7 +261,7 @@ fn create_select_fork_at_transaction<DB: DatabaseExt>(
         &mut data.journaled_state,
         transaction,
     )?;
-    Ok(id.to_ethers().encode().into())
+    Ok(DynSolValue::Uint(id, 256).encode_single().into())
 }
 
 /// Creates a new fork at the given transaction
@@ -246,7 +273,7 @@ fn create_fork_at_transaction<DB: DatabaseExt>(
 ) -> Result {
     let fork = create_fork_request(state, url_or_alias, None, data)?;
     let id = data.db.create_fork_at_transaction(fork, transaction)?;
-    Ok(id.to_ethers().encode().into())
+    Ok(DynSolValue::Uint(id, 256).encode_single().into())
 }
 
 /// Creates the request object for a new fork request
@@ -285,10 +312,10 @@ fn eth_getlogs<DB: DatabaseExt>(data: &EVMData<DB>, inner: &EthGetLogsCall) -> R
         Filter::new().address(inner.2).from_block(inner.0.as_u64()).to_block(inner.1.as_u64());
     for (i, item) in inner.3.iter().enumerate() {
         match i {
-            0 => filter = filter.topic0(eU256::from(item)),
-            1 => filter = filter.topic1(eU256::from(item)),
-            2 => filter = filter.topic2(eU256::from(item)),
-            3 => filter = filter.topic3(eU256::from(item)),
+            0 => filter = filter.topic0(U256::from_be_bytes(item.to_owned()).to_ethers()),
+            1 => filter = filter.topic1(U256::from_be_bytes(item.to_owned()).to_ethers()),
+            2 => filter = filter.topic2(U256::from_be_bytes(item.to_owned()).to_ethers()),
+            3 => filter = filter.topic3(U256::from_be_bytes(item.to_owned()).to_ethers()),
             _ => return Err(fmt_err!("Topics array should be less than 4 elements")),
         };
     }
@@ -298,49 +325,75 @@ fn eth_getlogs<DB: DatabaseExt>(data: &EVMData<DB>, inner: &EthGetLogsCall) -> R
         .map_err(|_| fmt_err!("Error in calling eth_getLogs"))?;
 
     if logs.is_empty() {
-        let empty: Bytes = abi::encode(&[Token::Array(vec![])]).into();
+        let empty: Bytes = DynSolValue::Array(vec![]).encode_single().into();
         return Ok(empty)
     }
 
-    let result = abi::encode(
-        &logs
-            .iter()
+    let result = DynSolValue::Array(
+        logs.iter()
             .map(|entry| {
-                Token::Tuple(vec![
-                    entry.address.into_token(),
-                    entry.topics.clone().into_token(),
-                    Token::Bytes(entry.data.to_vec()),
-                    entry
-                        .block_number
-                        .expect("eth_getLogs response should include block_number field")
-                        .as_u64()
-                        .into_token(),
-                    entry
-                        .transaction_hash
-                        .expect("eth_getLogs response should include transaction_hash field")
-                        .into_token(),
-                    entry
-                        .transaction_index
-                        .expect("eth_getLogs response should include transaction_index field")
-                        .as_u64()
-                        .into_token(),
-                    entry
-                        .block_hash
-                        .expect("eth_getLogs response should include block_hash field")
-                        .into_token(),
-                    entry
-                        .log_index
-                        .expect("eth_getLogs response should include log_index field")
-                        .into_token(),
-                    entry
-                        .removed
-                        .expect("eth_getLogs response should include removed field")
-                        .into_token(),
+                DynSolValue::Tuple(vec![
+                    DynSolValue::Address(entry.address.to_alloy()),
+                    DynSolValue::Array(
+                        entry
+                            .topics
+                            .clone()
+                            .into_iter()
+                            .map(|h| DynSolValue::FixedBytes(h.to_alloy(), 32))
+                            .collect_vec(),
+                    ),
+                    DynSolValue::Bytes(entry.data.0.clone().into()),
+                    DynSolValue::Uint(
+                        U256::from(
+                            entry
+                                .block_number
+                                .expect("eth_getLogs response should include block_number field")
+                                .to_alloy(),
+                        ),
+                        32,
+                    ),
+                    DynSolValue::FixedBytes(
+                        entry
+                            .transaction_hash
+                            .expect("eth_getLogs response should include transaction_hash field")
+                            .to_alloy(),
+                        32,
+                    ),
+                    DynSolValue::Uint(
+                        U256::from(
+                            entry
+                                .transaction_index
+                                .expect(
+                                    "eth_getLogs response should include transaction_index field",
+                                )
+                                .to_alloy(),
+                        ),
+                        32,
+                    ),
+                    DynSolValue::FixedBytes(
+                        entry
+                            .block_hash
+                            .expect("eth_getLogs response should include block_hash field")
+                            .to_alloy(),
+                        32,
+                    ),
+                    DynSolValue::Uint(
+                        U256::from(
+                            entry
+                                .log_index
+                                .expect("eth_getLogs response should include log_index field")
+                                .to_alloy(),
+                        ),
+                        32,
+                    ),
+                    DynSolValue::Bool(
+                        entry.removed.expect("eth_getLogs response should include removed field"),
+                    ),
                 ])
             })
-            .collect::<Vec<Token>>()
-            .into_tokens(),
+            .collect::<Vec<DynSolValue>>(),
     )
+    .encode_single()
     .into();
     Ok(result)
 }
@@ -360,12 +413,5 @@ fn rpc<DB: DatabaseExt>(data: &EVMData<DB>, inner: &RpcCall) -> Result {
     let result_as_tokens =
         value_to_token(&result).map_err(|err| fmt_err!("Failed to parse result: {err}"))?;
 
-    let abi_encoded: Vec<u8> = match result_as_tokens {
-        Token::Tuple(vec) | Token::Array(vec) | Token::FixedArray(vec) => abi::encode(&vec),
-        _ => {
-            let vec = vec![result_as_tokens];
-            abi::encode(&vec)
-        }
-    };
-    Ok(abi_encoded.into())
+    Ok(result_as_tokens.encode_single().into())
 }
