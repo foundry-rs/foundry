@@ -96,9 +96,9 @@ fn create_wallet(private_key: U256, label: Option<String>, state: &mut Cheatcode
 
     Ok(DynSolValue::Tuple(vec![
         DynSolValue::Address(addr.to_alloy()),
-        DynSolValue::Uint(pub_key_x, 32),
-        DynSolValue::Uint(pub_key_y, 32),
-        DynSolValue::Uint(private_key, 32),
+        DynSolValue::Uint(pub_key_x, 256),
+        DynSolValue::Uint(pub_key_y, 256),
+        DynSolValue::Uint(private_key, 256),
     ])
     .encode()
     .into())
@@ -151,7 +151,7 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
         None => return Err("Failed to parse private key.".to_string().into()),
     };
 
-    Ok(DynSolValue::Uint(private_key, 32).encode().into())
+    Ok(DynSolValue::Uint(private_key, 256).encode().into())
 }
 
 fn derive_key_with_wordlist(mnemonic: &str, path: &str, index: u32, lang: &str) -> Result {

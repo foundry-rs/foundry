@@ -98,7 +98,7 @@ fn copy_file(state: &Cheatcodes, from: impl AsRef<Path>, to: impl AsRef<Path>) -
     state.config.ensure_not_foundry_toml(&to)?;
 
     let n = fs::copy(from, to)?;
-    Ok(DynSolValue::Uint(U256::from(n), 32).encode().into())
+    Ok(DynSolValue::Uint(U256::from(n), 256).encode().into())
 }
 
 fn close_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result {
@@ -255,11 +255,11 @@ fn fs_metadata(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
     Ok(DynSolValue::Tuple(vec![
         DynSolValue::Bool(metadata.is_dir),
         DynSolValue::Bool(metadata.is_symlink),
-        DynSolValue::Uint(U256::from(metadata.length.to_alloy()), 32),
+        DynSolValue::Uint(U256::from(metadata.length.to_alloy()), 256),
         DynSolValue::Bool(metadata.read_only),
-        DynSolValue::Uint(U256::from(metadata.modified.to_alloy()), 32),
-        DynSolValue::Uint(U256::from(metadata.accessed.to_alloy()), 32),
-        DynSolValue::Uint(U256::from(metadata.created.to_alloy()), 32),
+        DynSolValue::Uint(U256::from(metadata.modified.to_alloy()), 256),
+        DynSolValue::Uint(U256::from(metadata.accessed.to_alloy()), 256),
+        DynSolValue::Uint(U256::from(metadata.created.to_alloy()), 256),
     ])
     .encode()
     .into())

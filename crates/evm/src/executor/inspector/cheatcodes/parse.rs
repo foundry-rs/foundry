@@ -37,8 +37,8 @@ fn parse_token(s: &str, ty: &DynSolType) -> Result<DynSolValue, String> {
         DynSolType::Bool => {
             s.to_ascii_lowercase().parse().map(DynSolValue::Bool).map_err(|e| e.to_string())
         }
-        DynSolType::Uint(256) => parse_uint(s).map(|s| DynSolValue::Uint(s, 32)),
-        DynSolType::Int(256) => parse_int(s).map(|s| DynSolValue::Int(I256::from_raw(s), 32)),
+        DynSolType::Uint(256) => parse_uint(s).map(|s| DynSolValue::Uint(s, 256)),
+        DynSolType::Int(256) => parse_int(s).map(|s| DynSolValue::Int(I256::from_raw(s), 256)),
         DynSolType::Address => s.parse().map(DynSolValue::Address).map_err(|e| e.to_string()),
         DynSolType::FixedBytes(32) => {
             let parsed_bytes =
@@ -46,7 +46,7 @@ fn parse_token(s: &str, ty: &DynSolType) -> Result<DynSolValue, String> {
                     Ok(bytes) => bytes,
                     Err(e) => return Err(e.to_string()),
                 };
-            Ok(DynSolValue::FixedBytes(B256::from_slice(&parsed_bytes), 32))
+            Ok(DynSolValue::FixedBytes(B256::from_slice(&parsed_bytes), 256))
         }
         DynSolType::Bytes => parse_bytes(s).map(DynSolValue::Bytes),
         DynSolType::String => Ok(DynSolValue::String(s.to_string())),
@@ -138,15 +138,15 @@ mod tests {
         let pk = "0x10532cc9d0d992825c3f709c62c969748e317a549634fb2a9fa949326022e81f";
         let val: U256 = pk.parse().unwrap();
         let parsed = parse(pk, &DynSolType::Uint(256)).unwrap();
-        let decoded = DynSolType::Uint(32).decode(&parsed).unwrap().as_uint().unwrap().0;
+        let decoded = DynSolType::Uint(256).decode(&parsed).unwrap().as_uint().unwrap().0;
         assert_eq!(val, decoded);
 
         let parsed = parse(pk, &DynSolType::Uint(256)).unwrap();
-        let decoded = DynSolType::Uint(32).decode(&parsed).unwrap().as_uint().unwrap().0;
+        let decoded = DynSolType::Uint(256).decode(&parsed).unwrap().as_uint().unwrap().0;
         assert_eq!(val, decoded);
 
         let parsed = parse("1337", &DynSolType::Uint(256)).unwrap();
-        let decoded = DynSolType::Uint(32).decode(&parsed).unwrap().as_uint().unwrap().0;
+        let decoded = DynSolType::Uint(256).decode(&parsed).unwrap().as_uint().unwrap().0;
         assert_eq!(U256::from(1337u64), decoded);
     }
 
@@ -154,11 +154,11 @@ mod tests {
     fn test_int_env() {
         let val = U256::from(100u64);
         let parsed = parse(&val.to_string(), &DynSolType::Int(256)).unwrap();
-        let decoded = DynSolType::Int(32).decode(&parsed).unwrap().as_int().unwrap().0;
+        let decoded = DynSolType::Int(256).decode(&parsed).unwrap().as_int().unwrap().0;
         assert_eq!(val, decoded.into_raw());
 
         let parsed = parse("100", &DynSolType::Int(256)).unwrap();
-        let decoded = DynSolType::Int(32).decode(&parsed).unwrap().as_int().unwrap().0;
+        let decoded = DynSolType::Int(256).decode(&parsed).unwrap().as_int().unwrap().0;
         assert_eq!(U256::from(100u64), decoded.into_raw());
     }
 }

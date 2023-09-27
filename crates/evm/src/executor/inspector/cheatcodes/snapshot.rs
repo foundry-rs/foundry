@@ -9,7 +9,7 @@ use revm::EVMData;
 pub fn apply<DB: DatabaseExt>(data: &mut EVMData<'_, DB>, call: &HEVMCalls) -> Option<Result> {
     Some(match call {
         HEVMCalls::Snapshot(_) => {
-            Ok(DynSolValue::Uint(data.db.snapshot(&data.journaled_state, data.env), 32)
+            Ok(DynSolValue::Uint(data.db.snapshot(&data.journaled_state, data.env), 256)
                 .encode()
                 .into())
         }

@@ -79,7 +79,6 @@ pub fn with_journaled_account<F, R, DB: Database>(
 where
     F: FnMut(&mut Account) -> R,
 {
-    let addr = addr;
     journaled_state.load_account(addr, db)?;
     journaled_state.touch(&addr);
     let account = journaled_state.state.get_mut(&addr).expect("account loaded;");
@@ -95,7 +94,6 @@ pub fn process_create<DB>(
 where
     DB: Database<Error = DatabaseError>,
 {
-    let broadcast_sender = broadcast_sender;
     match call.scheme {
         revm::primitives::CreateScheme::Create => {
             call.caller = broadcast_sender;

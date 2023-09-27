@@ -214,7 +214,7 @@ fn read_callers(state: &Cheatcodes, default_sender: Address) -> Bytes {
             if prank.single_call { CallerMode::Prank } else { CallerMode::RecurrentPrank };
 
         vec![
-            DynSolValue::Uint(caller_mode.into(), 32),
+            DynSolValue::Uint(caller_mode.into(), 256),
             DynSolValue::Address(prank.new_caller),
             DynSolValue::Address(prank.new_origin.unwrap_or(default_sender)),
         ]
@@ -226,13 +226,13 @@ fn read_callers(state: &Cheatcodes, default_sender: Address) -> Bytes {
         };
 
         vec![
-            DynSolValue::Uint(caller_mode.into(), 32),
+            DynSolValue::Uint(caller_mode.into(), 256),
             DynSolValue::Address(broadcast.new_origin),
             DynSolValue::Address(broadcast.new_origin),
         ]
     } else {
         vec![
-            DynSolValue::Uint(CallerMode::None.into(), 32),
+            DynSolValue::Uint(CallerMode::None.into(), 256),
             DynSolValue::Address(default_sender),
             DynSolValue::Address(default_sender),
         ]

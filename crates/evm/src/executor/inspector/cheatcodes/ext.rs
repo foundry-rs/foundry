@@ -46,7 +46,7 @@ fn try_ffi(state: &Cheatcodes, args: &[String]) -> Result {
     let exit_code = I256::from_dec_str(&exit_code.to_string())
         .map_err(|err| fmt_err!("Could not convert exit code: {err}"))?;
     let res = DynSolValue::Tuple(vec![
-        DynSolValue::Int(exit_code, 32),
+        DynSolValue::Int(exit_code, 256),
         encoded_stdout,
         // We can grab the stderr output as-is.
         DynSolValue::Bytes(output.stderr),
@@ -240,16 +240,16 @@ pub fn value_to_token(value: &Value) -> Result<DynSolValue> {
                     let fallback_s = format!("{f}");
 
                     if let Ok(n) = U256::from_str(&s) {
-                        return Ok(DynSolValue::Uint(n, 32))
+                        return Ok(DynSolValue::Uint(n, 256))
                     }
                     if let Ok(n) = I256::from_str(&s) {
-                        return Ok(DynSolValue::Int(n, 32))
+                        return Ok(DynSolValue::Int(n, 256))
                     }
                     if let Ok(n) = U256::from_str(&fallback_s) {
-                        return Ok(DynSolValue::Uint(n, 32))
+                        return Ok(DynSolValue::Uint(n, 256))
                     }
                     if let Ok(n) = I256::from_dec_str(&fallback_s) {
-                        return Ok(DynSolValue::Int(n, 32))
+                        return Ok(DynSolValue::Int(n, 256))
                     }
                 }
             }
