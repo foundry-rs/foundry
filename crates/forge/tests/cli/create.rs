@@ -51,14 +51,14 @@ contract LinkTest {
     prj.inner()
         .add_lib(
             "remapping/MyLib",
-            r#"
+            r"
 // SPDX-License-Identifier: MIT
 library MyLib {
     function foobar(uint256 a) public view returns (uint256) {
     	return a * 100;
     }
 }
-"#,
+",
         )
         .unwrap();
 
@@ -94,7 +94,7 @@ contract Contract {
     prj.inner()
         .add_source(
             "libraries/ChainlinkTWAP",
-            r#"
+            r"
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
@@ -103,7 +103,7 @@ library ChainlinkTWAP {
         return 0;
    }
 }
-"#,
+",
         )
         .unwrap();
 
