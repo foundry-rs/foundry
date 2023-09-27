@@ -98,9 +98,9 @@ pub fn on_evm_step<DB: Database>(
                 let address = interpreter.contract.address;
                 let offset = interpreter.stack.peek(0).expect("stack size > 1").to::<usize>();
                 let low = U256::try_from_be_slice(interpreter.memory.slice(offset, 0x20))
-                    .expect("This is a bug.");
+                    .expect("This should be a 32 byte slice and therefore should not fail.");
                 let high = U256::try_from_be_slice(interpreter.memory.slice(offset + 0x20, 0x20))
-                    .expect("This is a bug.");
+                    .expect("This should be a 32 byte slice and therefore should not fail.");
                 let result =
                     U256::from_be_bytes(keccak256(interpreter.memory.slice(offset, 0x40)).0);
 

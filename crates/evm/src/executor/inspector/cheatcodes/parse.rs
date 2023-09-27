@@ -1,7 +1,7 @@
 use super::{fmt_err, Cheatcodes, Result};
 use crate::abi::HEVMCalls;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{I256, U256, FixedBytes};
+use alloy_primitives::{FixedBytes, I256, U256};
 use foundry_macros::UIfmt;
 use revm::{Database, EVMData};
 
@@ -35,10 +35,15 @@ fn parse_token(s: &str, ty: &DynSolType) -> Result<DynSolValue, String> {
         DynSolType::Bool => {
             s.to_ascii_lowercase().parse().map(DynSolValue::Bool).map_err(|e| e.to_string())
         }
-        DynSolType::Uint(256) => s.parse().map(|u| DynSolValue::Uint(u, 256)).map_err(|e| e.to_string()),
+        DynSolType::Uint(256) => {
+            s.parse().map(|u| DynSolValue::Uint(u, 256)).map_err(|e| e.to_string())
+        }
         DynSolType::Int(256) => parse_int(s).map(|s| DynSolValue::Int(I256::from_raw(s), 256)),
         DynSolType::Address => s.parse().map(DynSolValue::Address).map_err(|e| e.to_string()),
-        DynSolType::FixedBytes(32) => s.parse::<FixedBytes<32>>().map(|b| DynSolValue::FixedBytes(b, 32)).map_err(|e| e.to_string()),
+        DynSolType::FixedBytes(32) => s
+            .parse::<FixedBytes<32>>()
+            .map(|b| DynSolValue::FixedBytes(b, 32))
+            .map_err(|e| e.to_string()),
         DynSolType::Bytes => parse_bytes(s).map(DynSolValue::Bytes),
         DynSolType::String => Ok(DynSolValue::String(s.to_string())),
         _ => Err("unsupported type".into()),
@@ -51,9 +56,7 @@ fn parse_int(s: &str) -> Result<U256, String> {
     // Hex string may start with "0x", "+0x", or "-0x" which needs to be stripped for
     // `I256::from_hex_str`
     if s.starts_with("0x") || s.starts_with("+0x") || s.starts_with("-0x") {
-        return I256::from_hex_str(s)
-            .map_err(|err| err.to_string())
-            .map(|v| v.into_raw())
+        return I256::from_hex_str(s).map_err(|err| err.to_string()).map(|v| v.into_raw())
     }
 
     // Decimal string may start with '+' or '-' followed by numeric characters
