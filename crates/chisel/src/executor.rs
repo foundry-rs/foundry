@@ -1636,7 +1636,7 @@ mod tests {
 
         // on some CI targets installing results in weird malformed solc files, we try installing it
         // multiple times
-        let version = "0.8.19";
+        let version = "0.8.20";
         for _ in 0..3 {
             let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock().unwrap();
             if !*is_preinstalled {
