@@ -993,8 +993,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
                 if data.journaled_state.depth() == broadcast.depth {
                     let (bytecode, to, nonce) = match process_create(
-                        broadcast.new_origin.to_ethers(),
-                        call.init_code.clone().0,
+                        broadcast.new_origin,
+                        call.init_code.clone(),
                         data,
                         call,
                     ) {
@@ -1017,7 +1017,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             from: Some(broadcast.new_origin.to_ethers()),
                             to,
                             value: Some(call.value).map(|v| v.to_ethers()),
-                            data: Some(bytecode.into()),
+                            data: Some(bytecode.0.into()),
                             nonce: Some(nonce.into()),
                             gas: if is_fixed_gas_limit {
                                 Some(call.gas_limit.into())

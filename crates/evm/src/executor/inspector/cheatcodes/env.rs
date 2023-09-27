@@ -137,7 +137,7 @@ fn broadcast_key(
     depth: u64,
     single_call: bool,
 ) -> Result {
-    let key = super::util::parse_private_key(private_key.to_ethers())?;
+    let key = super::util::parse_private_key(private_key)?;
     let wallet = LocalWallet::from(key).with_chain_id(chain_id.to::<u64>());
     let new_origin = wallet.address();
 
@@ -253,7 +253,6 @@ fn start_record(state: &mut Cheatcodes) {
 
 fn accesses(state: &mut Cheatcodes, address: Address) -> Bytes {
     if let Some(storage_accesses) = &mut state.accesses {
-        println!("encoding that {storage_accesses:?}");
         let write_accesses: Vec<DynSolValue> = storage_accesses
             .writes
             .entry(address)
@@ -275,7 +274,6 @@ fn accesses(state: &mut Cheatcodes, address: Address) -> Bytes {
         .encode()
         .into()
     } else {
-        println!("encoding this");
         DynSolValue::Tuple(vec![DynSolValue::Array(vec![]), DynSolValue::Array(vec![])])
             .encode()
             .into()
@@ -405,7 +403,7 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::Store(inner) => {
-            ensure!(!is_potential_precompile(inner.0), "Store cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
+            ensure!(!is_potential_precompile(inner.0.to_alloy()), "Store cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
             data.journaled_state.load_account(inner.0.to_alloy(), data.db)?;
             // ensure the account is touched
             data.journaled_state.touch(&inner.0.to_alloy());
@@ -419,7 +417,7 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::Load(inner) => {
-            ensure!(!is_potential_precompile(inner.0), "Load cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
+            ensure!(!is_potential_precompile(inner.0.to_alloy()), "Load cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
             // TODO: Does this increase gas usage?
             data.journaled_state.load_account(inner.0.to_alloy(), data.db)?;
             let (val, _) = data.journaled_state.sload(
@@ -433,7 +431,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::Breakpoint0(inner) => add_breakpoint(state, caller, &inner.0, true)?,
         HEVMCalls::Breakpoint1(inner) => add_breakpoint(state, caller, &inner.0, inner.1)?,
         HEVMCalls::Etch(inner) => {
-            ensure!(!is_potential_precompile(inner.0), "Etch cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
+            ensure!(!is_potential_precompile(inner.0.to_alloy()), "Etch cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
             let code = inner.1.clone();
             trace!(address=?inner.0, code=?hex::encode(&code), "etch cheatcode");
             // TODO: Does this increase gas usage?
@@ -448,17 +446,22 @@ pub fn apply<DB: DatabaseExt>(
             let who = inner.0;
             let value = inner.1;
             trace!(?who, ?value, "deal cheatcode");
-            with_journaled_account(&mut data.journaled_state, data.db, who, |account| {
-                // record the deal
-                let record = DealRecord {
-                    address: who.to_alloy(),
-                    old_balance: account.info.balance,
-                    new_balance: value.to_alloy(),
-                };
-                state.eth_deals.push(record);
+            with_journaled_account(
+                &mut data.journaled_state,
+                data.db,
+                who.to_alloy(),
+                |account| {
+                    // record the deal
+                    let record = DealRecord {
+                        address: who.to_alloy(),
+                        old_balance: account.info.balance,
+                        new_balance: value.to_alloy(),
+                    };
+                    state.eth_deals.push(record);
 
-                account.info.balance = value.to_alloy();
-            })?;
+                    account.info.balance = value.to_alloy();
+                },
+            )?;
             Bytes::new()
         }
         HEVMCalls::Prank0(inner) => prank(
@@ -517,7 +520,7 @@ pub fn apply<DB: DatabaseExt>(
             with_journaled_account(
                 &mut data.journaled_state,
                 data.db,
-                inner.0,
+                inner.0.to_alloy(),
                 |account| -> Result {
                     // nonce must increment only
                     let current = account.info.nonce;
@@ -535,7 +538,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::SetNonceUnsafe(inner) => with_journaled_account(
             &mut data.journaled_state,
             data.db,
-            inner.0,
+            inner.0.to_alloy(),
             |account| -> Result {
                 let new = inner.1;
                 account.info.nonce = new;
@@ -545,7 +548,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::ResetNonce(inner) => with_journaled_account(
             &mut data.journaled_state,
             data.db,
-            inner.0,
+            inner.0.to_alloy(),
             |account| -> Result {
                 // Per EIP-161, EOA nonces start at 0, but contract nonces
                 // start at 1. Comparing by code_hash instead of code
@@ -752,7 +755,7 @@ fn correct_sender_nonce<DB: Database>(
     state: &mut Cheatcodes,
 ) -> Result<(), DB::Error> {
     if !state.corrected_nonce && sender.to_ethers() != Config::DEFAULT_SENDER {
-        with_journaled_account(journaled_state, db, sender.to_ethers(), |account| {
+        with_journaled_account(journaled_state, db, sender, |account| {
             account.info.nonce = account.info.nonce.saturating_sub(1);
             state.corrected_nonce = true;
         })?;
