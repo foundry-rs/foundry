@@ -113,3 +113,14 @@ impl EstimateArgs {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_estimate_value() {
+        let args: EstimateArgs = EstimateArgs::parse_from(["foundry-cli", "--value", "100"]);
+        assert!(args.value.is_some());
+    }
+}

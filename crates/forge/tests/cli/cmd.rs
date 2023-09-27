@@ -378,6 +378,8 @@ forgetest!(can_init_template, |prj: TestProject, mut cmd: TestCommand| {
     assert!(prj.root().join(".git").exists());
     assert!(prj.root().join("foundry.toml").exists());
     assert!(prj.root().join("lib/forge-std").exists());
+    // assert that gitmodules were correctly initialized
+    assert!(prj.root().join(".git/modules").exists());
     assert!(prj.root().join("src").exists());
     assert!(prj.root().join("test").exists());
 });
@@ -391,6 +393,8 @@ forgetest!(can_init_template_with_branch, |prj: TestProject, mut cmd: TestComman
     assert!(prj.root().join(".git").exists());
     assert!(prj.root().join(".dapprc").exists());
     assert!(prj.root().join("lib/ds-test").exists());
+    // assert that gitmodules were correctly initialized
+    assert!(prj.root().join(".git/modules").exists());
     assert!(prj.root().join("src").exists());
     assert!(prj.root().join("scripts").exists());
 });

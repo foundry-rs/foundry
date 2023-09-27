@@ -92,7 +92,7 @@ pub struct TestArgs {
     list: bool,
 
     /// Set seed used to generate randomness during your fuzz runs.
-    #[clap(long, value_parser = utils::parse_u256)]
+    #[clap(long, value_parser = utils::alloy_parse_u256)]
     pub fuzz_seed: Option<U256>,
 
     #[clap(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
@@ -827,5 +827,19 @@ mod tests {
     fn test_watch_parse() {
         let args: TestArgs = TestArgs::parse_from(["foundry-cli", "-vw"]);
         assert!(args.watch.watch.is_some());
+    }
+
+    #[test]
+    fn test_fuzz_seed() {
+        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--fuzz-seed", "0x10"]);
+        assert!(args.fuzz_seed.is_some());
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/5913>
+    #[test]
+    fn test_5913() {
+        let args: TestArgs =
+            TestArgs::parse_from(["foundry-cli", "-vvv", "--gas-report", "--fuzz-seed", "0x10"]);
+        assert!(args.fuzz_seed.is_some());
     }
 }
