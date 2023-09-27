@@ -250,7 +250,7 @@ interface Vm {
     function record() external;
 
     // Gets all accessed reads and write slot from a recording session, for a given address
-    function accesses(address) external returns (RecordedAccesses memory);
+    function accesses(address) external returns (bytes32[] memory, bytes32[] memory);
 
     // Record all the transaction logs
     function recordLogs() external;

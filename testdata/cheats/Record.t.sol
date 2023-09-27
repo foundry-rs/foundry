@@ -36,21 +36,21 @@ contract RecordTest is DSTest {
         NestedRecordAccess inner = target.record();
 
         // Verify Records
-        Vm.RecordedAccesses memory access = vm.accesses(address(target));
-        Vm.RecordedAccesses memory innerAccess = vm.accesses(address(inner));
+        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(target));
+        (bytes32[] memory innerReads, bytes32[] memory innerWrites) = vm.accesses(address(inner));
 
-        assertEq(access.reads.length, 2, "number of reads is incorrect");
-        assertEq(access.reads[0], bytes32(uint256(1)), "key for read 0 is incorrect");
-        assertEq(access.reads[1], bytes32(uint256(1)), "key for read 1 is incorrect");
+        assertEq(reads.length, 2, "number of reads is incorrect");
+        assertEq(reads[0], bytes32(uint256(1)), "key for read 0 is incorrect");
+        assertEq(reads[1], bytes32(uint256(1)), "key for read 1 is incorrect");
 
-        assertEq(access.writes.length, 1, "number of writes is incorrect");
-        assertEq(access.writes[0], bytes32(uint256(1)), "key for write is incorrect");
+        assertEq(writes.length, 1, "number of writes is incorrect");
+        assertEq(writes[0], bytes32(uint256(1)), "key for write is incorrect");
 
-        assertEq(innerAccess.reads.length, 2, "number of nested reads is incorrect");
-        assertEq(innerAccess.reads[0], bytes32(uint256(2)), "key for nested read 0 is incorrect");
-        assertEq(innerAccess.reads[1], bytes32(uint256(2)), "key for nested read 1 is incorrect");
+        assertEq(innerReads.length, 2, "number of nested reads is incorrect");
+        assertEq(innerReads[0], bytes32(uint256(2)), "key for nested read 0 is incorrect");
+        assertEq(innerReads[1], bytes32(uint256(2)), "key for nested read 1 is incorrect");
 
-        assertEq(innerAccess.writes.length, 1, "number of nested writes is incorrect");
-        assertEq(innerAccess.writes[0], bytes32(uint256(2)), "key for nested write is incorrect");
+        assertEq(innerWrites.length, 1, "number of nested writes is incorrect");
+        assertEq(innerWrites[0], bytes32(uint256(2)), "key for nested write is incorrect");
     }
 }
