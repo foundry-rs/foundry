@@ -83,15 +83,15 @@ fn create_wallet(private_key: U256, label: Option<String>, state: &mut Cheatcode
 
     let pub_key_x = match U256::try_from_be_slice(pub_key_x.as_slice()) {
         Some(x) => x,
-        None => return Err(format!("Failed to parse public key x coordinate.").into()),
+        None => return Err("Failed to parse public key x coordinate.".to_string().into()),
     };
     let pub_key_y = match U256::try_from_be_slice(pub_key_y.as_slice()) {
         Some(y) => y,
-        None => return Err(format!("Failed to parse public key y coordinate.").into()),
+        None => return Err("Failed to parse public key y coordinate.".to_string().into()),
     };
 
     if let Some(label) = label {
-        state.labels.insert(addr, label);
+        state.labels.insert(addr.to_alloy(), label);
     }
 
     Ok(DynSolValue::Tuple(vec![
@@ -148,7 +148,7 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
 
     let private_key = match U256::try_from_be_slice(wallet.signer().to_bytes().as_slice()) {
         Some(key) => key,
-        None => return Err(format!("Failed to parse private key.").into()),
+        None => return Err("Failed to parse private key.".to_string().into()),
     };
 
     Ok(DynSolValue::Uint(private_key, 32).encode().into())
@@ -223,13 +223,13 @@ pub fn apply<DB: Database>(
             remember_key(state, inner.0.to_alloy(), U256::from(data.env.cfg.chain_id))
         }
         HEVMCalls::Label(inner) => {
-            state.labels.insert(inner.0, inner.1.clone());
+            state.labels.insert(inner.0.to_alloy(), inner.1.clone());
             Ok(Default::default())
         }
         HEVMCalls::GetLabel(inner) => {
             let label = state
                 .labels
-                .get(&inner.0)
+                .get(&inner.0.to_alloy())
                 .cloned()
                 .unwrap_or_else(|| format!("unlabeled:{:?}", inner.0));
             Ok(DynSolValue::String(label).encode().into())

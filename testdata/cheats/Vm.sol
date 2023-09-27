@@ -71,6 +71,11 @@ interface Vm {
         bytes stderr;
     }
 
+    struct RecordedAccesses {
+        bytes32[] reads;
+        bytes32[] writes;
+    }
+
     // Set block.timestamp (newTimestamp)
     function warp(uint256) external;
 
@@ -245,7 +250,7 @@ interface Vm {
     function record() external;
 
     // Gets all accessed reads and write slot from a recording session, for a given address
-    function accesses(address) external returns (bytes32[] memory reads, bytes32[] memory writes);
+    function accesses(address) external returns (RecordedAccesses memory);
 
     // Record all the transaction logs
     function recordLogs() external;

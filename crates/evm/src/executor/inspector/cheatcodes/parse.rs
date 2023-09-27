@@ -46,7 +46,7 @@ fn parse_token(s: &str, ty: &DynSolType) -> Result<DynSolValue, String> {
                     Ok(bytes) => bytes,
                     Err(e) => return Err(e.to_string()),
                 };
-            return Ok(DynSolValue::FixedBytes(B256::from_slice(&parsed_bytes), 32))
+            Ok(DynSolValue::FixedBytes(B256::from_slice(&parsed_bytes), 32))
         }
         DynSolType::Bytes => parse_bytes(s).map(DynSolValue::Bytes),
         DynSolType::String => Ok(DynSolValue::String(s.to_string())),

@@ -1,8 +1,6 @@
 use super::Cheatcodes;
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{keccak256, Address, Bytes, U256};
-use ethers::types::H160;
-use foundry_utils::types::ToEthers;
 use revm::{
     interpreter::{opcode, Interpreter},
     Database, EVMData,
@@ -46,8 +44,7 @@ impl MappingSlots {
 }
 
 pub fn get_mapping_length(state: &Cheatcodes, address: Address, slot: U256) -> Bytes {
-    let result = match state.mapping_slots.as_ref().and_then(|dict| dict.get(&address.to_ethers()))
-    {
+    let result = match state.mapping_slots.as_ref().and_then(|dict| dict.get(&address)) {
         Some(mapping_slots) => {
             mapping_slots.children.get(&slot).map(|set| set.len()).unwrap_or_default()
         }
@@ -57,8 +54,7 @@ pub fn get_mapping_length(state: &Cheatcodes, address: Address, slot: U256) -> B
 }
 
 pub fn get_mapping_slot_at(state: &Cheatcodes, address: Address, slot: U256, index: U256) -> Bytes {
-    let result = match state.mapping_slots.as_ref().and_then(|dict| dict.get(&address.to_ethers()))
-    {
+    let result = match state.mapping_slots.as_ref().and_then(|dict| dict.get(&address)) {
         Some(mapping_slots) => mapping_slots
             .children
             .get(&slot)
@@ -72,7 +68,7 @@ pub fn get_mapping_slot_at(state: &Cheatcodes, address: Address, slot: U256, ind
 
 pub fn get_mapping_key_and_parent(state: &Cheatcodes, address: Address, slot: U256) -> Bytes {
     let (found, key, parent) =
-        match state.mapping_slots.as_ref().and_then(|dict| dict.get(&address.to_ethers())) {
+        match state.mapping_slots.as_ref().and_then(|dict| dict.get(&address)) {
             Some(mapping_slots) => match mapping_slots.keys.get(&slot) {
                 Some(key) => (true, *key, mapping_slots.parent_slots[&slot]),
                 None => match mapping_slots.seen_sha3.get(&slot).copied() {
@@ -92,7 +88,7 @@ pub fn get_mapping_key_and_parent(state: &Cheatcodes, address: Address, slot: U2
 }
 
 pub fn on_evm_step<DB: Database>(
-    mapping_slots: &mut BTreeMap<H160, MappingSlots>,
+    mapping_slots: &mut BTreeMap<Address, MappingSlots>,
     interpreter: &Interpreter,
     _data: &mut EVMData<'_, DB>,
 ) {
@@ -108,17 +104,11 @@ pub fn on_evm_step<DB: Database>(
                 let result =
                     U256::from_be_bytes(keccak256(interpreter.memory.slice(offset, 0x40)).0);
 
-                mapping_slots
-                    .entry(address.to_ethers())
-                    .or_default()
-                    .seen_sha3
-                    .insert(result, (low, high));
+                mapping_slots.entry(address).or_default().seen_sha3.insert(result, (low, high));
             }
         }
         opcode::SSTORE => {
-            if let Some(mapping_slots) =
-                mapping_slots.get_mut(&interpreter.contract.address.to_ethers())
-            {
+            if let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.contract.address) {
                 if let Ok(slot) = interpreter.stack.peek(0) {
                     mapping_slots.insert(slot);
                 }

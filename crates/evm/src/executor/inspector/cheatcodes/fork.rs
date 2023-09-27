@@ -8,7 +8,6 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Bytes, B256, U256};
-use alloy_sol_types::sol;
 use ethers::{providers::Middleware, types::Filter};
 use foundry_abi::hevm::{EthGetLogsCall, RpcCall};
 use foundry_common::ProviderBuilder;
@@ -19,10 +18,6 @@ use serde_json::Value;
 
 fn empty<T>(_: T) -> Bytes {
     Bytes::new()
-}
-
-sol! {
-    struct Rpc { string name; string url; }
 }
 
 /// Handles fork related cheatcodes

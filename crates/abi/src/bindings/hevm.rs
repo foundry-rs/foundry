@@ -30,19 +30,19 @@ pub mod hevm {
                             outputs: ::std::vec![
                                 ::ethers_core::abi::ethabi::Param {
                                     name: ::std::string::String::new(),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Array(
-                                        ::std::boxed::Box::new(
-                                            ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
-                                        ),
-                                    ),
-                                    internal_type: ::core::option::Option::None,
-                                },
-                                ::ethers_core::abi::ethabi::Param {
-                                    name: ::std::string::String::new(),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Array(
-                                        ::std::boxed::Box::new(
-                                            ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
-                                        ),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Tuple(
+                                        ::std::vec![
+                                            ::ethers_core::abi::ethabi::ParamType::Array(
+                                                ::std::boxed::Box::new(
+                                                    ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
+                                                ),
+                                            ),
+                                            ::ethers_core::abi::ethabi::ParamType::Array(
+                                                ::std::boxed::Box::new(
+                                                    ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
+                                                ),
+                                            ),
+                                        ],
                                     ),
                                     internal_type: ::core::option::Option::None,
                                 },
@@ -13670,8 +13670,7 @@ pub mod hevm {
         Hash
     )]
     pub struct AccessesReturn(
-        pub ::std::vec::Vec<[u8; 32]>,
-        pub ::std::vec::Vec<[u8; 32]>,
+        pub (::std::vec::Vec<[u8; 32]>, ::std::vec::Vec<[u8; 32]>),
     );
     ///Container type for all return fields from the `activeFork` function with signature `activeFork()` and selector `0x2f103f22`
     #[derive(
@@ -15178,6 +15177,21 @@ pub mod hevm {
     pub struct Log {
         pub topics: ::std::vec::Vec<[u8; 32]>,
         pub data: ::ethers_core::types::Bytes,
+    }
+    ///`RecordedAccesses(bytes32[],bytes32[])`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct RecordedAccesses {
+        pub reads: ::std::vec::Vec<[u8; 32]>,
+        pub writes: ::std::vec::Vec<[u8; 32]>,
     }
     ///`Rpc(string,string)`
     #[derive(
