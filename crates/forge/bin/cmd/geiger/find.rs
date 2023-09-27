@@ -136,14 +136,14 @@ mod tests {
 
     #[test]
     fn can_find_calls() {
-        let s = r#"
+        let s = r"
         contract A is Test {
             function do_ffi() public {
                 string[] memory inputs = new string[](1);
                 vm.ffi(inputs);
             }
         }
-        "#;
+        ";
 
         let count = find_cheatcodes_in_string(s).unwrap();
         assert_eq!(count.ffi.len(), 1);
@@ -152,14 +152,14 @@ mod tests {
 
     #[test]
     fn can_find_call_in_assignment() {
-        let s = r#"
+        let s = r"
         contract A is Test {
             function do_ffi() public {
                 string[] memory inputs = new string[](1);
                 bytes stuff = vm.ffi(inputs);
             }
         }
-        "#;
+        ";
 
         let count = find_cheatcodes_in_string(s).unwrap();
         assert_eq!(count.ffi.len(), 1);

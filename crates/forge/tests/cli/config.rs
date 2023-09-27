@@ -325,11 +325,11 @@ forgetest!(can_set_solc_explicitly, |prj: TestProject, mut cmd: TestCommand| {
     prj.inner()
         .add_source(
             "Foo",
-            r#"
+            r"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity >0.8.9;
 contract Greeter {}
-   "#,
+   ",
         )
         .unwrap();
 
@@ -351,11 +351,11 @@ forgetest!(can_use_solc, |prj: TestProject, mut cmd: TestCommand| {
     prj.inner()
         .add_source(
             "Foo",
-            r#"
+            r"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity >=0.7.0;
 contract Foo {}
-   "#,
+   ",
         )
         .unwrap();
 
@@ -385,7 +385,7 @@ forgetest!(can_set_yul_optimizer, |prj: TestProject, mut cmd: TestCommand| {
     prj.inner()
         .add_source(
             "Foo",
-            r#"
+            r"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.10;
 contract Foo {
@@ -395,7 +395,7 @@ contract Foo {
        }
     }
 }
-   "#,
+   ",
         )
         .unwrap();
 
@@ -602,10 +602,10 @@ forgetest!(config_emit_warnings, |prj: TestProject, mut cmd: TestCommand| {
     cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]);
     cmd.assert_non_empty_stdout();
 
-    let faulty_toml = r#"[default]
+    let faulty_toml = r"[default]
     src = 'src'
     out = 'out'
-    libs = ['lib']"#;
+    libs = ['lib']";
 
     fs::write(prj.root().join("foundry.toml"), faulty_toml).unwrap();
     fs::write(prj.root().join("lib").join("forge-std").join("foundry.toml"), faulty_toml).unwrap();

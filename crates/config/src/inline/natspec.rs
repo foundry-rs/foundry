@@ -209,7 +209,7 @@ mod tests {
     }
 
     fn natspec() -> NatSpec {
-        let conf = r#"
+        let conf = r"
         forge-config: default.fuzz.runs = 600 
         forge-config: ci.fuzz.runs = 500 
         ========= SOME NOISY TEXT =============
@@ -219,7 +219,7 @@ mod tests {
         醤㭊r􎜕󷾸𶚏 ܖ̹灱녗V*竅􋹲⒪苏贗񾦼=숽ؓ򗋲бݧ󫥛𛲍ʹ園Ьi
         =======================================
         forge-config: default.invariant.runs = 1
-        "#;
+        ";
 
         NatSpec {
             contract: "dir/TestContract.t.sol:FuzzContract".to_string(),

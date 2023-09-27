@@ -287,7 +287,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r#"
+                r"
                 [foo.baz]
                 libs = ['node_modules', 'lib']
 
@@ -299,7 +299,7 @@ mod tests {
 
                 [profile.local]
                 libs = ['node_modules', 'lib']
-            "#,
+            ",
             )?;
 
             let path = Path::new("./foundry.toml");
