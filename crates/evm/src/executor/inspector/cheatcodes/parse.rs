@@ -1,9 +1,7 @@
-use std::str::FromStr;
-
 use super::{fmt_err, Cheatcodes, Result};
 use crate::abi::HEVMCalls;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{B256, I256, U256};
+use alloy_primitives::{I256, U256, FixedBytes};
 use foundry_macros::UIfmt;
 use revm::{Database, EVMData};
 
@@ -37,17 +35,10 @@ fn parse_token(s: &str, ty: &DynSolType) -> Result<DynSolValue, String> {
         DynSolType::Bool => {
             s.to_ascii_lowercase().parse().map(DynSolValue::Bool).map_err(|e| e.to_string())
         }
-        DynSolType::Uint(256) => parse_uint(s).map(|s| DynSolValue::Uint(s, 256)),
+        DynSolType::Uint(256) => s.parse().map(|u| DynSolValue::Uint(u, 256)).map_err(|e| e.to_string()),
         DynSolType::Int(256) => parse_int(s).map(|s| DynSolValue::Int(I256::from_raw(s), 256)),
         DynSolType::Address => s.parse().map(DynSolValue::Address).map_err(|e| e.to_string()),
-        DynSolType::FixedBytes(32) => {
-            let parsed_bytes =
-                match parse_bytes(s).map_err(|e| fmt_err!("Failed to parse bytes: {e}")) {
-                    Ok(bytes) => bytes,
-                    Err(e) => return Err(e.to_string()),
-                };
-            Ok(DynSolValue::FixedBytes(B256::from_slice(&parsed_bytes), 256))
-        }
+        DynSolType::FixedBytes(32) => s.parse::<FixedBytes<32>>().map(|b| DynSolValue::FixedBytes(b, 32)).map_err(|e| e.to_string()),
         DynSolType::Bytes => parse_bytes(s).map(DynSolValue::Bytes),
         DynSolType::String => Ok(DynSolValue::String(s.to_string())),
         _ => Err("unsupported type".into()),
@@ -60,7 +51,7 @@ fn parse_int(s: &str) -> Result<U256, String> {
     // Hex string may start with "0x", "+0x", or "-0x" which needs to be stripped for
     // `I256::from_hex_str`
     if s.starts_with("0x") || s.starts_with("+0x") || s.starts_with("-0x") {
-        return I256::from_hex_str(&s.replacen("0x", "", 1))
+        return I256::from_hex_str(s)
             .map_err(|err| err.to_string())
             .map(|v| v.into_raw())
     }
@@ -78,28 +69,6 @@ fn parse_int(s: &str) -> Result<U256, String> {
 
     // Throw if string doesn't conform to either of the two patterns
     Err("Invalid conversion. Make sure that either the hex string or the decimal number passed is valid.".to_string())
-}
-
-fn parse_uint(s: &str) -> Result<U256, String> {
-    // Only parse hex strings prefixed by 0x or decimal numeric strings
-
-    // Hex strings prefixed by 0x
-    if s.starts_with("0x") {
-        return s.parse::<U256>().map_err(|err| err.to_string())
-    };
-
-    // Decimal strings containing only numeric characters
-    if s.chars().all(|c| c.is_numeric()) {
-        return match U256::from_str(s) {
-            Ok(val) => Ok(val),
-            Err(dec_err) => s.parse::<U256>().map_err(|hex_err| {
-                format!("could not parse value as decimal or hex: {dec_err}, {hex_err}")
-            }),
-        }
-    };
-
-    // Throw if string doesn't conform to either of the two patterns
-    Err("The character is not in the range of 0-9".to_string())
 }
 
 fn parse_bytes(s: &str) -> Result<Vec<u8>, String> {

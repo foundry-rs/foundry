@@ -81,14 +81,8 @@ fn create_wallet(private_key: U256, label: Option<String>, state: &mut Cheatcode
     let pub_key_x = pub_key.x().ok_or("No x coordinate was found")?;
     let pub_key_y = pub_key.y().ok_or("No y coordinate was found")?;
 
-    let pub_key_x = match U256::try_from_be_slice(pub_key_x.as_slice()) {
-        Some(x) => x,
-        None => return Err("Failed to parse public key x coordinate.".to_string().into()),
-    };
-    let pub_key_y = match U256::try_from_be_slice(pub_key_y.as_slice()) {
-        Some(y) => y,
-        None => return Err("Failed to parse public key y coordinate.".to_string().into()),
-    };
+    let pub_key_x = U256::from_be_bytes((*pub_key_x).into());
+    let pub_key_y = U256::from_be_bytes((*pub_key_y).into());
 
     if let Some(label) = label {
         state.labels.insert(addr.to_alloy(), label);
