@@ -255,7 +255,7 @@ impl DocBuilder {
         };
 
         let readme_path = out_dir_src.join(Self::README);
-        fs::write(&readme_path, homepage_content)?;
+        fs::write(readme_path, homepage_content)?;
 
         // Write summary and section readmes
         let mut summary = BufWriter::default();
