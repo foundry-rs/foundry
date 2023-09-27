@@ -232,23 +232,28 @@ pub fn value_to_token(value: &Value) -> Result<DynSolValue> {
                     // to f64.
                     let s = number.to_string();
 
-                    // Calling Number::to_string with powers of ten formats the number using
-                    // scientific notation and causes from_dec_str to fail. Using format! with f64
-                    // keeps the full number representation.
-                    // Example: 100000000000000000000 becomes 1e20 when Number::to_string is
-                    // used.
-                    let fallback_s = format!("{f}");
+                    // Coerced to scientific notation, so short-ciruit to using fallback.
+                    // This will not have a problem with hex numbers, as for parsing these
+                    // We'd need to prefix this with 0x.
+                    if s.starts_with("1e") {
+                        // Calling Number::to_string with powers of ten formats the number using
+                        // scientific notation and causes from_dec_str to fail. Using format! with
+                        // f64 keeps the full number representation.
+                        // Example: 100000000000000000000 becomes 1e20 when Number::to_string is
+                        // used.
+                        let fallback_s = format!("{f}");
+                        if let Ok(n) = U256::from_str(&fallback_s) {
+                            return Ok(DynSolValue::Uint(n, 256))
+                        }
+                        if let Ok(n) = I256::from_dec_str(&fallback_s) {
+                            return Ok(DynSolValue::Int(n, 256))
+                        }
+                    }
 
                     if let Ok(n) = U256::from_str(&s) {
                         return Ok(DynSolValue::Uint(n, 256))
                     }
                     if let Ok(n) = I256::from_str(&s) {
-                        return Ok(DynSolValue::Int(n, 256))
-                    }
-                    if let Ok(n) = U256::from_str(&fallback_s) {
-                        return Ok(DynSolValue::Uint(n, 256))
-                    }
-                    if let Ok(n) = I256::from_dec_str(&fallback_s) {
                         return Ok(DynSolValue::Int(n, 256))
                     }
                 }

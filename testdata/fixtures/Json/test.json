@@ -21,7 +21,7 @@
   "arrayUint": [1231232, "0x12C980", "1231232"],
   "stringInt": "-12",
   "numberInt": -12,
-  "hexInt": "0x-C",
+  "hexInt": "-0xC",
   "booleanString": "true",
   "booleanArray": [true, "false"],
   "advancedJsonPath": [{ "id": 1 }, { "id": 2 }]
