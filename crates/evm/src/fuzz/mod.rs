@@ -301,25 +301,33 @@ impl BaseCounterExample {
         contracts: &ContractsByAddress,
         traces: Option<CallTraceArena>,
     ) -> Result<Self> {
-        let (name, abi) = &contracts.get(&addr).ok_or(FuzzError::UnknownContract)?;
-
-        let func = abi
-            .functions()
-            .find(|f| f.short_signature() == bytes.0.as_ref()[0..4])
-            .ok_or(FuzzError::UnknownFunction)?;
-
-        // skip the function selector when decoding
-        let args =
-            func.decode_input(&bytes.0.as_ref()[4..]).map_err(|_| FuzzError::FailedDecodeInput)?;
+        if let Some((name, abi)) = &contracts.get(&addr) {
+            if let Some(func) =
+                abi.functions().find(|f| f.short_signature() == bytes.0.as_ref()[0..4])
+            {
+                // skip the function selector when decoding
+                if let Ok(args) = func.decode_input(&bytes.0.as_ref()[4..]) {
+                    return Ok(BaseCounterExample {
+                        sender: Some(sender),
+                        addr: Some(addr),
+                        calldata: bytes.clone(),
+                        signature: Some(func.signature()),
+                        contract_name: Some(name.clone()),
+                        traces,
+                        args,
+                    })
+                }
+            }
+        }
 
         Ok(BaseCounterExample {
             sender: Some(sender),
             addr: Some(addr),
             calldata: bytes.clone(),
-            signature: Some(func.signature()),
-            contract_name: Some(name.clone()),
+            signature: None,
+            contract_name: None,
             traces,
-            args,
+            args: vec![],
         })
     }
 }
