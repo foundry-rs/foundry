@@ -78,7 +78,6 @@ impl TransactionWithMetadata {
                     true,
                     Address::from_slice(&result.returned),
                     local_contracts,
-                    decoder,
                 )?;
             } else {
                 metadata
@@ -90,7 +89,6 @@ impl TransactionWithMetadata {
                 false,
                 result.address.wrap_err("There should be a contract address from CREATE.")?,
                 local_contracts,
-                decoder,
             )?;
         }
 
@@ -121,7 +119,6 @@ impl TransactionWithMetadata {
         is_create2: bool,
         address: Address,
         contracts: &BTreeMap<Address, ArtifactInfo>,
-        decoder: &CallTraceDecoder,
     ) -> Result<()> {
         if is_create2 {
             self.opcode = CallKind::Create2;
@@ -133,60 +130,44 @@ impl TransactionWithMetadata {
         self.contract_address = Some(address);
 
         if let Some(data) = self.transaction.data() {
-            // a CREATE2 transaction is a CALL to the CREATE2 deployer function, so we need to
-            // decode the arguments  from the function call
-            if is_create2 {
-                // this will be the `deploy()` function of the CREATE2 call, we assume the contract
-                // is already deployed and will try to fetch it via its signature
-                if let Some(Some(function)) = decoder
-                    .functions
-                    .get(&data.0[..SELECTOR_LEN])
-                    .map(|functions| functions.first())
-                {
-                    self.function = Some(function.signature());
-                    self.arguments = Some(
-                        function
-                            .decode_input(&data.0[SELECTOR_LEN..])
-                            .map(|tokens| tokens.iter().map(format_token_raw).collect())
-                            .map_err(|_| eyre::eyre!("Failed to decode CREATE2 call arguments"))?,
-                    );
-                }
-            } else {
-                // This is a regular CREATE via the constructor, in which case we expect the
-                // contract has a constructor and if so decode its input params
-                if let Some(info) = contracts.get(&address) {
-                    // set constructor arguments
-                    if data.len() > info.code.len() {
-                        if let Some(constructor) = info.abi.constructor() {
-                            let on_err = || {
-                                let inputs = constructor
-                                    .inputs
-                                    .iter()
-                                    .map(|p| p.kind.to_string())
-                                    .collect::<Vec<_>>()
-                                    .join(",");
-                                let signature = format!("constructor({inputs})");
-                                let bytecode = hex::encode(&data.0);
-                                (signature, bytecode)
-                            };
+            if let Some(info) = contracts.get(&address) {
+                // constructor args are postfixed to creation code
+                // and create2 transactions are prefixed by 32 byte salt
+                let contains_constructor_args = if is_create2 {
+                    data.len() - 32 > info.code.len()
+                } else {
+                    data.len() > info.code.len()
+                };
 
-                            let params = constructor
+                if contains_constructor_args {
+                    if let Some(constructor) = info.abi.constructor() {
+                        let creation_code = if is_create2 { &data[32..] } else { &data };
+
+                        let on_err = || {
+                            let inputs = constructor
                                 .inputs
                                 .iter()
-                                .map(|p| p.kind.clone())
-                                .collect::<Vec<_>>();
+                                .map(|p| p.kind.to_string())
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            let signature = format!("constructor({inputs})");
+                            let bytecode = hex::encode(&creation_code);
+                            (signature, bytecode)
+                        };
 
-                            // the constructor args start after bytecode
-                            let constructor_args = &data.0[info.code.len()..];
+                        let params =
+                            constructor.inputs.iter().map(|p| p.kind.clone()).collect::<Vec<_>>();
 
-                            if let Ok(arguments) = abi::decode(&params, constructor_args) {
-                                self.arguments =
-                                    Some(arguments.iter().map(format_token_raw).collect());
-                            } else {
-                                let (signature, bytecode) = on_err();
-                                error!(constructor=?signature, contract=?self.contract_name, bytecode, "Failed to decode constructor arguments")
-                            };
-                        }
+                        // the constructor args start after bytecode
+                        let constructor_args = &creation_code[info.code.len()..];
+
+                        if let Ok(arguments) = abi::decode(&params, constructor_args) {
+                            self.arguments = Some(arguments.iter().map(format_token_raw).collect());
+                            println!("{:?}", self.arguments);
+                        } else {
+                            let (signature, bytecode) = on_err();
+                            error!(constructor=?signature, contract=?self.contract_name, bytecode, "Failed to decode constructor arguments")
+                        };
                     }
                 }
             }
