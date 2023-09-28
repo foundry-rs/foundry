@@ -141,7 +141,7 @@ impl TransactionWithMetadata {
 
                 if contains_constructor_args {
                     if let Some(constructor) = info.abi.constructor() {
-                        let creation_code = if is_create2 { &data[32..] } else { &data };
+                        let creation_code = if is_create2 { &data[32..] } else { data };
 
                         let on_err = || {
                             let inputs = constructor
@@ -151,7 +151,7 @@ impl TransactionWithMetadata {
                                 .collect::<Vec<_>>()
                                 .join(",");
                             let signature = format!("constructor({inputs})");
-                            let bytecode = hex::encode(&creation_code);
+                            let bytecode = hex::encode(creation_code);
                             (signature, bytecode)
                         };
 
