@@ -300,14 +300,14 @@ impl BaseCounterExample {
         bytes: &Bytes,
         contracts: &ContractsByAddress,
         traces: Option<CallTraceArena>,
-    ) -> Result<Self> {
+    ) -> Self {
         if let Some((name, abi)) = &contracts.get(&addr) {
             if let Some(func) =
                 abi.functions().find(|f| f.short_signature() == bytes.0.as_ref()[0..4])
             {
                 // skip the function selector when decoding
                 if let Ok(args) = func.decode_input(&bytes.0.as_ref()[4..]) {
-                    return Ok(BaseCounterExample {
+                    return BaseCounterExample {
                         sender: Some(sender),
                         addr: Some(addr),
                         calldata: bytes.clone(),
@@ -315,12 +315,12 @@ impl BaseCounterExample {
                         contract_name: Some(name.clone()),
                         traces,
                         args,
-                    })
+                    }
                 }
             }
         }
 
-        Ok(BaseCounterExample {
+        BaseCounterExample {
             sender: Some(sender),
             addr: Some(addr),
             calldata: bytes.clone(),
@@ -328,7 +328,7 @@ impl BaseCounterExample {
             contract_name: None,
             traces,
             args: vec![],
-        })
+        }
     }
 }
 
