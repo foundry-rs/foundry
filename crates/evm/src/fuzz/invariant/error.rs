@@ -7,7 +7,7 @@ use crate::{
     CALLER,
 };
 use ethers::abi::Function;
-use eyre::{Result, WrapErr};
+use eyre::Result;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use proptest::test_runner::TestError;
 use revm::primitives::U256;
@@ -123,16 +123,13 @@ impl InvariantFuzzError {
                 known_contracts,
             ));
 
-            counterexample_sequence.push(
-                BaseCounterExample::create(
-                    *sender,
-                    *addr,
-                    bytes,
-                    &ided_contracts,
-                    call_result.traces,
-                )
-                .wrap_err("Failed to create counter example")?,
-            );
+            counterexample_sequence.push(BaseCounterExample::create(
+                *sender,
+                *addr,
+                bytes,
+                &ided_contracts,
+                call_result.traces,
+            ));
 
             // Checks the invariant.
             if let Some(func) = &self.func {
