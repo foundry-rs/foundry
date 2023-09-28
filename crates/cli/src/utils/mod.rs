@@ -563,6 +563,7 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
         force: bool,
         remote: bool,
         no_fetch: bool,
+        recursive: bool,
         paths: I,
     ) -> Result<()>
     where
@@ -571,12 +572,23 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
     {
         self.cmd()
             .stderr(self.stderr())
-            .args(["submodule", "update", "--progress", "--init", "--recursive"])
+            .args(["submodule", "update", "--progress", "--init"])
             .args(self.shallow.then_some("--depth=1"))
             .args(force.then_some("--force"))
             .args(remote.then_some("--remote"))
             .args(no_fetch.then_some("--no-fetch"))
+            .args(recursive.then_some("--recursive"))
             .args(paths)
+            .exec()
+            .map(drop)
+    }
+
+    pub fn submodule_foreach(self, recursive: bool, cmd: impl AsRef<OsStr>) -> Result<()> {
+        self.cmd()
+            .stderr(self.stderr())
+            .args(["submodule", "foreach"])
+            .args(recursive.then_some("--recursive"))
+            .arg(cmd)
             .exec()
             .map(drop)
     }

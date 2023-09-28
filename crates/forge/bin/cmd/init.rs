@@ -84,7 +84,7 @@ impl InitArgs {
                 git.submodule_init()?;
             } else {
                 // if not shallow, initialize and clone submodules (without fetching latest)
-                git.submodule_update(false, false, true, None::<PathBuf>)?;
+                git.submodule_update(false, false, true, true, None::<PathBuf>)?;
             }
         } else {
             // if target is not empty
