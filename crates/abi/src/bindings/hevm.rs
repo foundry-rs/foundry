@@ -4962,6 +4962,24 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("time"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("time"),
+                            inputs: ::std::vec![],
+                            outputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("toString"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -7362,6 +7380,14 @@ pub mod hevm {
         ) -> ::ethers_contract::builders::ContractCall<M, ()> {
             self.0
                 .method_hash([112, 202, 16, 187], (p0, p1, p2))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `time` (0x16ada547) function
+        pub fn time(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([22, 173, 165, 71], ())
                 .expect("method not found (this should never happen)")
         }
         ///Calls the contract's `toString` (0x71aad10d) function
@@ -10347,6 +10373,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "store", abi = "store(address,bytes32,bytes32)")]
     pub struct StoreCall(pub ::ethers_core::types::Address, pub [u8; 32], pub [u8; 32]);
+    ///Container type for all input parameters for the `time` function with signature `time()` and selector `0x16ada547`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "time", abi = "time()")]
+    pub struct TimeCall;
     ///Container type for all input parameters for the `toString` function with signature `toString(bytes)` and selector `0x71aad10d`
     #[derive(
         Clone,
@@ -10761,6 +10800,7 @@ pub mod hevm {
         StopMappingRecording(StopMappingRecordingCall),
         StopPrank(StopPrankCall),
         Store(StoreCall),
+        Time(TimeCall),
         ToString0(ToString0Call),
         ToString1(ToString1Call),
         ToString2(ToString2Call),
@@ -11763,6 +11803,11 @@ pub mod hevm {
             ) {
                 return Ok(Self::Store(decoded));
             }
+            if let Ok(decoded) = <TimeCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
+                return Ok(Self::Time(decoded));
+            }
             if let Ok(decoded) = <ToString0Call as ::ethers_core::abi::AbiDecode>::decode(
                 data,
             ) {
@@ -12313,6 +12358,7 @@ pub mod hevm {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
                 Self::Store(element) => ::ethers_core::abi::AbiEncode::encode(element),
+                Self::Time(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::ToString0(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
@@ -12579,6 +12625,7 @@ pub mod hevm {
                 }
                 Self::StopPrank(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Store(element) => ::core::fmt::Display::fmt(element, f),
+                Self::Time(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ToString0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ToString1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ToString2(element) => ::core::fmt::Display::fmt(element, f),
@@ -13576,6 +13623,11 @@ pub mod hevm {
     impl ::core::convert::From<StoreCall> for HEVMCalls {
         fn from(value: StoreCall) -> Self {
             Self::Store(value)
+        }
+    }
+    impl ::core::convert::From<TimeCall> for HEVMCalls {
+        fn from(value: TimeCall) -> Self {
+            Self::Time(value)
         }
     }
     impl ::core::convert::From<ToString0Call> for HEVMCalls {
@@ -15074,6 +15126,18 @@ pub mod hevm {
         Hash
     )]
     pub struct SnapshotReturn(pub ::ethers_core::types::U256);
+    ///Container type for all return fields from the `time` function with signature `time()` and selector `0x16ada547`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct TimeReturn(pub ::ethers_core::types::U256);
     ///Container type for all return fields from the `tryFfi` function with signature `tryFfi(string[])` and selector `0xf45c1ce7`
     #[derive(
         Clone,
