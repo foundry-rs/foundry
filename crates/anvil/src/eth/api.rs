@@ -158,7 +158,7 @@ impl EthApi {
             EthRequest::EthChainId(_) => self.eth_chain_id().to_rpc_result(),
             EthRequest::EthNetworkId(_) => self.network_id().to_rpc_result(),
             EthRequest::NetListening(_) => self.net_listening().to_rpc_result(),
-            EthRequest::EthGasPrice(_) => self.gas_price().to_rpc_result(),
+            EthRequest::EthGasPrice(_) => self.eth_gas_price().to_rpc_result(),
             EthRequest::EthMaxPriorityFeePerGas(_) => {
                 self.gas_max_priority_fee_per_gas().to_rpc_result()
             }
@@ -504,6 +504,12 @@ impl EthApi {
     pub fn net_listening(&self) -> Result<bool> {
         node_info!("net_listening");
         Ok(self.net_listening)
+    }
+
+    /// Returns the current gas price
+    fn eth_gas_price(&self) -> Result<U256> {
+        node_info!("eth_gasPrice");
+        self.gas_price()
     }
 
     /// Returns the current gas price
