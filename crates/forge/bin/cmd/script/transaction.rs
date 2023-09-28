@@ -163,7 +163,6 @@ impl TransactionWithMetadata {
 
                         if let Ok(arguments) = abi::decode(&params, constructor_args) {
                             self.arguments = Some(arguments.iter().map(format_token_raw).collect());
-                            println!("{:?}", self.arguments);
                         } else {
                             let (signature, bytecode) = on_err();
                             error!(constructor=?signature, contract=?self.contract_name, bytecode, "Failed to decode constructor arguments")
