@@ -731,7 +731,7 @@ pub fn apply<DB: Database>(
             serialize_json(state, &inner.0, Some(&inner.1), &array_str_to_str(&inner.2))
         }
         HEVMCalls::Sleep(inner) => sleep(&inner.0),
-        HEVMCalls::Time(_) => duration_since_epoch(),
+        HEVMCalls::UnixTime(_) => duration_since_epoch(),
         HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
         HEVMCalls::WriteJson1(inner) => write_json(state, &inner.0, &inner.1, Some(&inner.2)),
         HEVMCalls::KeyExists(inner) => key_exists(&inner.0, &inner.1),

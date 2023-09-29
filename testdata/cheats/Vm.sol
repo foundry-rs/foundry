@@ -235,7 +235,7 @@ interface Vm {
     function sleep(uint256) external;
 
     /// Returns the time since unix epoch in milliseconds
-    function time() external returns (uint256);
+    function unixTime() external returns (uint256);
 
     // Expects an error on next call
     function expectRevert() external;

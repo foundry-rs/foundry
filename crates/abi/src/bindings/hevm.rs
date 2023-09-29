@@ -4962,24 +4962,6 @@ pub mod hevm {
                     ],
                 ),
                 (
-                    ::std::borrow::ToOwned::to_owned("time"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Function {
-                            name: ::std::borrow::ToOwned::to_owned("time"),
-                            inputs: ::std::vec![],
-                            outputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::Param {
-                                    name: ::std::string::String::new(),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
-                                    internal_type: ::core::option::Option::None,
-                                },
-                            ],
-                            constant: ::core::option::Option::None,
-                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
-                        },
-                    ],
-                ),
-                (
                     ::std::borrow::ToOwned::to_owned("toString"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -5151,6 +5133,24 @@ pub mod hevm {
                                 },
                             ],
                             outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
+                    ::std::borrow::ToOwned::to_owned("unixTime"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("unixTime"),
+                            inputs: ::std::vec![],
+                            outputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
                             constant: ::core::option::Option::None,
                             state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
                         },
@@ -7382,14 +7382,6 @@ pub mod hevm {
                 .method_hash([112, 202, 16, 187], (p0, p1, p2))
                 .expect("method not found (this should never happen)")
         }
-        ///Calls the contract's `time` (0x16ada547) function
-        pub fn time(
-            &self,
-        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
-            self.0
-                .method_hash([22, 173, 165, 71], ())
-                .expect("method not found (this should never happen)")
-        }
         ///Calls the contract's `toString` (0x71aad10d) function
         pub fn to_string_0(
             &self,
@@ -7482,6 +7474,14 @@ pub mod hevm {
         ) -> ::ethers_contract::builders::ContractCall<M, ()> {
             self.0
                 .method_hash([72, 245, 12, 15], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `unixTime` (0x625387dc) function
+        pub fn unix_time(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([98, 83, 135, 220], ())
                 .expect("method not found (this should never happen)")
         }
         ///Calls the contract's `warp` (0xe5d6bf02) function
@@ -10373,19 +10373,6 @@ pub mod hevm {
     )]
     #[ethcall(name = "store", abi = "store(address,bytes32,bytes32)")]
     pub struct StoreCall(pub ::ethers_core::types::Address, pub [u8; 32], pub [u8; 32]);
-    ///Container type for all input parameters for the `time` function with signature `time()` and selector `0x16ada547`
-    #[derive(
-        Clone,
-        ::ethers_contract::EthCall,
-        ::ethers_contract::EthDisplay,
-        Default,
-        Debug,
-        PartialEq,
-        Eq,
-        Hash
-    )]
-    #[ethcall(name = "time", abi = "time()")]
-    pub struct TimeCall;
     ///Container type for all input parameters for the `toString` function with signature `toString(bytes)` and selector `0x71aad10d`
     #[derive(
         Clone,
@@ -10516,6 +10503,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "txGasPrice", abi = "txGasPrice(uint256)")]
     pub struct TxGasPriceCall(pub ::ethers_core::types::U256);
+    ///Container type for all input parameters for the `unixTime` function with signature `unixTime()` and selector `0x625387dc`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "unixTime", abi = "unixTime()")]
+    pub struct UnixTimeCall;
     ///Container type for all input parameters for the `warp` function with signature `warp(uint256)` and selector `0xe5d6bf02`
     #[derive(
         Clone,
@@ -10800,7 +10800,6 @@ pub mod hevm {
         StopMappingRecording(StopMappingRecordingCall),
         StopPrank(StopPrankCall),
         Store(StoreCall),
-        Time(TimeCall),
         ToString0(ToString0Call),
         ToString1(ToString1Call),
         ToString2(ToString2Call),
@@ -10811,6 +10810,7 @@ pub mod hevm {
         Transact1(Transact1Call),
         TryFfi(TryFfiCall),
         TxGasPrice(TxGasPriceCall),
+        UnixTime(UnixTimeCall),
         Warp(WarpCall),
         WriteFile(WriteFileCall),
         WriteFileBinary(WriteFileBinaryCall),
@@ -11803,11 +11803,6 @@ pub mod hevm {
             ) {
                 return Ok(Self::Store(decoded));
             }
-            if let Ok(decoded) = <TimeCall as ::ethers_core::abi::AbiDecode>::decode(
-                data,
-            ) {
-                return Ok(Self::Time(decoded));
-            }
             if let Ok(decoded) = <ToString0Call as ::ethers_core::abi::AbiDecode>::decode(
                 data,
             ) {
@@ -11857,6 +11852,11 @@ pub mod hevm {
                 data,
             ) {
                 return Ok(Self::TxGasPrice(decoded));
+            }
+            if let Ok(decoded) = <UnixTimeCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
+                return Ok(Self::UnixTime(decoded));
             }
             if let Ok(decoded) = <WarpCall as ::ethers_core::abi::AbiDecode>::decode(
                 data,
@@ -12358,7 +12358,6 @@ pub mod hevm {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
                 Self::Store(element) => ::ethers_core::abi::AbiEncode::encode(element),
-                Self::Time(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::ToString0(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
@@ -12387,6 +12386,7 @@ pub mod hevm {
                 Self::TxGasPrice(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
+                Self::UnixTime(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::Warp(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::WriteFile(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
@@ -12625,7 +12625,6 @@ pub mod hevm {
                 }
                 Self::StopPrank(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Store(element) => ::core::fmt::Display::fmt(element, f),
-                Self::Time(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ToString0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ToString1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ToString2(element) => ::core::fmt::Display::fmt(element, f),
@@ -12636,6 +12635,7 @@ pub mod hevm {
                 Self::Transact1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::TryFfi(element) => ::core::fmt::Display::fmt(element, f),
                 Self::TxGasPrice(element) => ::core::fmt::Display::fmt(element, f),
+                Self::UnixTime(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Warp(element) => ::core::fmt::Display::fmt(element, f),
                 Self::WriteFile(element) => ::core::fmt::Display::fmt(element, f),
                 Self::WriteFileBinary(element) => ::core::fmt::Display::fmt(element, f),
@@ -13625,11 +13625,6 @@ pub mod hevm {
             Self::Store(value)
         }
     }
-    impl ::core::convert::From<TimeCall> for HEVMCalls {
-        fn from(value: TimeCall) -> Self {
-            Self::Time(value)
-        }
-    }
     impl ::core::convert::From<ToString0Call> for HEVMCalls {
         fn from(value: ToString0Call) -> Self {
             Self::ToString0(value)
@@ -13678,6 +13673,11 @@ pub mod hevm {
     impl ::core::convert::From<TxGasPriceCall> for HEVMCalls {
         fn from(value: TxGasPriceCall) -> Self {
             Self::TxGasPrice(value)
+        }
+    }
+    impl ::core::convert::From<UnixTimeCall> for HEVMCalls {
+        fn from(value: UnixTimeCall) -> Self {
+            Self::UnixTime(value)
         }
     }
     impl ::core::convert::From<WarpCall> for HEVMCalls {
@@ -15126,18 +15126,6 @@ pub mod hevm {
         Hash
     )]
     pub struct SnapshotReturn(pub ::ethers_core::types::U256);
-    ///Container type for all return fields from the `time` function with signature `time()` and selector `0x16ada547`
-    #[derive(
-        Clone,
-        ::ethers_contract::EthAbiType,
-        ::ethers_contract::EthAbiCodec,
-        Default,
-        Debug,
-        PartialEq,
-        Eq,
-        Hash
-    )]
-    pub struct TimeReturn(pub ::ethers_core::types::U256);
     ///Container type for all return fields from the `tryFfi` function with signature `tryFfi(string[])` and selector `0xf45c1ce7`
     #[derive(
         Clone,
@@ -15152,6 +15140,18 @@ pub mod hevm {
     pub struct TryFfiReturn(
         pub (i32, ::ethers_core::types::Bytes, ::ethers_core::types::Bytes),
     );
+    ///Container type for all return fields from the `unixTime` function with signature `unixTime()` and selector `0x625387dc`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct UnixTimeReturn(pub ::ethers_core::types::U256);
     ///`DirEntry(string,string,uint64,bool,bool)`
     #[derive(
         Clone,

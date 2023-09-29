@@ -239,4 +239,4 @@ getMappingSlotAt(address,bytes32,uint256)
 getMappingKeyAndParentOf(address,bytes32)
 
 sleep(uint256)
-time()(uint256)
+unixTime()(uint256)
