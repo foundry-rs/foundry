@@ -1,6 +1,9 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use alloy_primitives::U256;
 use clap::Parser;
+use comfy_table::{
+    modifiers::UTF8_ROUND_CORNERS, Attribute, Cell, CellAlignment, Color, Row, Table,
+};
 use eyre::Result;
 use forge::{
     decode::decode_console_logs,
@@ -109,6 +112,10 @@ pub struct TestArgs {
 
     #[clap(flatten)]
     pub watch: WatchArgs,
+
+    /// Print test summary table
+    #[clap(long)]
+    pub summary: bool,
 }
 
 impl TestArgs {
@@ -350,6 +357,7 @@ impl TestArgs {
                 test_options,
                 self.gas_report,
                 self.fail_fast,
+                self.summary,
             )
             .await
         }
@@ -604,6 +612,47 @@ fn list(
     Ok(TestOutcome::new(BTreeMap::new(), false))
 }
 
+/**
+ * Creates table summary header
+ */
+fn create_test_summary_table_header(summary_table: &mut Table) -> Row {
+    summary_table.apply_modifier(UTF8_ROUND_CORNERS);
+    Row::from(vec![
+        Cell::new("Test Suites")
+            .set_alignment(CellAlignment::Center)
+            .add_attribute(Attribute::Bold),
+        Cell::new("Passed")
+            .set_alignment(CellAlignment::Center)
+            .add_attribute(Attribute::Bold)
+            .fg(Color::Green),
+        Cell::new("Failed")
+            .set_alignment(CellAlignment::Center)
+            .add_attribute(Attribute::Bold)
+            .fg(Color::Red),
+        Cell::new("Skipped")
+            .set_alignment(CellAlignment::Center)
+            .add_attribute(Attribute::Bold)
+            .fg(Color::Yellow),
+    ])
+}
+
+/**
+ * Creates table summary row
+ */
+fn create_test_summary_table_row(
+    contract_name: String,
+    success_count: usize,
+    failure_count: usize,
+    skip_count: usize,
+) -> Row {
+    Row::from(vec![
+        Cell::new(contract_name.split(':').nth(1).unwrap()),
+        Cell::new(success_count).fg(Color::Green).set_alignment(CellAlignment::Center),
+        Cell::new(failure_count).fg(Color::Red).set_alignment(CellAlignment::Center),
+        Cell::new(skip_count).fg(Color::Yellow).set_alignment(CellAlignment::Center),
+    ])
+}
+
 /// Runs all the tests
 #[allow(clippy::too_many_arguments)]
 async fn test(
@@ -616,6 +665,7 @@ async fn test(
     test_options: TestOptions,
     gas_reporting: bool,
     fail_fast: bool,
+    summary: bool,
 ) -> Result<TestOutcome> {
     trace!(target: "forge::test", "running all tests");
     if runner.count_filtered_tests(&filter) == 0 {
@@ -665,6 +715,12 @@ async fn test(
     let mut total_passed = 0;
     let mut total_failed = 0;
     let mut total_skipped = 0;
+    let mut summary_table: Table = Table::new();
+
+    if summary {
+        let table_header = create_test_summary_table_header(&mut summary_table);
+        summary_table.set_header(table_header);
+    }
 
     'outer: for (contract_name, suite_result) in rx {
         results.insert(contract_name.clone(), suite_result.clone());
@@ -756,11 +812,22 @@ async fn test(
                 gas_report.analyze(&result.traces);
             }
         }
-        let block_outcome = TestOutcome::new([(contract_name, suite_result)].into(), allow_failure);
+        let block_outcome =
+            TestOutcome::new([(contract_name.clone(), suite_result)].into(), allow_failure);
 
         total_passed += block_outcome.successes().count();
         total_failed += block_outcome.failures().count();
         total_skipped += block_outcome.skips().count();
+
+        if summary {
+            let row = create_test_summary_table_row(
+                contract_name,
+                block_outcome.successes().count(),
+                block_outcome.failures().count(),
+                block_outcome.skips().count(),
+            );
+            summary_table.add_row(row);
+        }
 
         println!("{}", block_outcome.summary());
     }
@@ -776,12 +843,18 @@ async fn test(
             "{}",
             format_aggregated_summary(num_test_suites, total_passed, total_failed, total_skipped)
         );
+
+        if summary {
+            println!("\n\nTest Summary:");
+            println!("{summary_table}");
+        }
     }
 
     // reattach the thread
     let _results = handle.await?;
 
     trace!(target: "forge::test", "received {} results", results.len());
+
     Ok(TestOutcome::new(results, allow_failure))
 }
 
