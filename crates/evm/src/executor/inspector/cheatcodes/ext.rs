@@ -521,8 +521,9 @@ fn sleep(milliseconds: &U256) -> Result {
 /// Returns the time since unix epoch in milliseconds
 fn duration_since_epoch() -> Result {
     let sys_time = SystemTime::now();
-    let difference =
-        sys_time.duration_since(UNIX_EPOCH).expect("Failed getting timestamp in unixTime cheatcode");
+    let difference = sys_time
+        .duration_since(UNIX_EPOCH)
+        .expect("Failed getting timestamp in unixTime cheatcode");
     let millis = difference.as_millis();
     Ok(rU256::from(millis).to_ethers().encode().into())
 }
