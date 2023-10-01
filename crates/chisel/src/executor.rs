@@ -348,7 +348,7 @@ fn format_token(token: DynSolValue) -> String {
             format!("Type: {}\n└ Value: {}", Paint::red("bool"), Paint::cyan(b))
         }
         DynSolValue::String(_) | DynSolValue::Bytes(_) => {
-            let hex = hex::encode(token.encode_single());
+            let hex = hex::encode(token.abi_encode());
             let s = token.as_str().map(|s| s.to_owned());
             format!(
                 "Type: {}\n{}├ Hex (Memory):\n├─ Length ({}): {}\n├─ Contents ({}): {}\n├ Hex (Tuple Encoded):\n├─ Pointer ({}): {}\n├─ Length ({}): {}\n└─ Contents ({}): {}",
