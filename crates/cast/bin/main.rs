@@ -7,7 +7,7 @@ use ethers::{
     types::Address,
     utils::keccak256,
 };
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
     abi::{format_tokens, get_event},
@@ -174,7 +174,7 @@ async fn main() -> Result<()> {
             println!("{}", pretty_calldata(&calldata, offline).await?);
         }
         Subcommands::Sig { sig, optimize } => {
-            let sig = stdin::unwrap_line(sig)?;
+            let sig = stdin::unwrap_line(sig).wrap_err("Failed to read signature")?;
             if optimize.is_none() {
                 println!("{}", SimpleCast::get_selector(&sig, None)?.0);
             } else {
