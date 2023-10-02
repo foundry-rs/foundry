@@ -1,6 +1,6 @@
 # Temporarily exclude rusoto and ethers-providers from bans since we've yet to transition to the 
 # Rust AWS SDK.
-exclude = ["rusoto_core", "rusoto_kms", "rusoto_credential", "ethers-providers"]
+exclude = ["rusoto_core", "rusoto_kms", "rusoto_credential", "ethers-providers", "tungstenite"]
 
 # This section is considered when running `cargo deny check advisories`
 # More documentation for the advisories section can be found here:

@@ -1,6 +1,6 @@
 use super::{bail, ensure, fmt_err, util::MAGIC_SKIP_BYTES, Cheatcodes, Error, Result};
 use crate::{abi::HEVMCalls, executor::inspector::cheatcodes::parse};
-use alloy_primitives::Bytes;
+use alloy_primitives::{Bytes, U256 as rU256};
 use ethers::{
     abi::{self, AbiEncode, JsonAbi, ParamType, Token},
     prelude::artifacts::CompactContractBytecode,
@@ -8,10 +8,17 @@ use ethers::{
 };
 use foundry_common::{fmt::*, fs, get_artifact_path};
 use foundry_config::fs_permissions::FsAccessKind;
+use foundry_utils::types::ToEthers;
 use revm::{Database, EVMData};
 use serde::Deserialize;
 use serde_json::Value;
-use std::{collections::BTreeMap, env, path::Path, process::Command};
+use std::{
+    collections::BTreeMap,
+    env,
+    path::Path,
+    process::Command,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 /// Invokes a `Command` with the given args and returns the exit code, stdout, and stderr.
 ///
@@ -511,6 +518,16 @@ fn sleep(milliseconds: &U256) -> Result {
     Ok(Default::default())
 }
 
+/// Returns the time since unix epoch in milliseconds
+fn duration_since_epoch() -> Result {
+    let sys_time = SystemTime::now();
+    let difference = sys_time
+        .duration_since(UNIX_EPOCH)
+        .expect("Failed getting timestamp in unixTime cheatcode");
+    let millis = difference.as_millis();
+    Ok(rU256::from(millis).to_ethers().encode().into())
+}
+
 /// Skip the current test, by returning a magic value that will be checked by the test runner.
 pub fn skip(state: &mut Cheatcodes, depth: u64, skip: bool) -> Result {
     if !skip {
@@ -715,6 +732,7 @@ pub fn apply<DB: Database>(
             serialize_json(state, &inner.0, Some(&inner.1), &array_str_to_str(&inner.2))
         }
         HEVMCalls::Sleep(inner) => sleep(&inner.0),
+        HEVMCalls::UnixTime(_) => duration_since_epoch(),
         HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
         HEVMCalls::WriteJson1(inner) => write_json(state, &inner.0, &inner.1, Some(&inner.2)),
         HEVMCalls::KeyExists(inner) => key_exists(&inner.0, &inner.1),
