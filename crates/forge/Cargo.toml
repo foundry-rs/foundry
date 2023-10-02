@@ -39,7 +39,7 @@ forge-doc.workspace = true
 foundry-cli.workspace = true
 foundry-debugger.workspace = true
 
-alloy-primitives = { workspace = true, default-features = false, features = ["std", "serde"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
 
 async-trait = "0.1"
 bytes = "1.4"

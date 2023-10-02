@@ -135,11 +135,10 @@ foundry-utils = { path = "crates/utils" }
 foundry-debugger = { path = "crates/debugger" }
 
 ## revm
-revm = { version = "3", default-features = false }
-revm-primitives = { version = "1", default-features = false }
+revm = "3"
+revm-primitives = "1"
 
 ## ethers
-
 ethers = { version = "2.0", default-features = false }
 ethers-addressbook = { version = "2.0", default-features = false }
 ethers-core = { version = "2.0", default-features = false }
@@ -152,10 +151,9 @@ ethers-etherscan = { version = "2.0", default-features = false }
 ethers-solc = { version = "2.0", default-features = false }
 
 ## alloy
-
-alloy-primitives = { version = "0.4", default-features = false }
-alloy-dyn-abi = { version = "0.4", default-features = false }
-alloy-json-abi = { version = "0.4", default-features = false }
+alloy-primitives = "0.4"
+alloy-dyn-abi = "0.4"
+alloy-json-abi = "0.4"
 
 solang-parser = "=0.3.2"
 

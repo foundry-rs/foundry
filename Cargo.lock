@@ -2796,7 +2796,6 @@ version = "0.2.0"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
- "const-hex",
  "dunce",
  "ethers-addressbook",
  "ethers-contract",
@@ -5552,6 +5551,7 @@ dependencies = [
  "enumn",
  "hashbrown 0.14.0",
  "hex",
+ "once_cell",
  "serde",
 ]
 

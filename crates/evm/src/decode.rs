@@ -3,6 +3,7 @@ use crate::{
     abi::ConsoleEvents::{self, *},
     executor::inspector::cheatcodes::util::MAGIC_SKIP_BYTES,
 };
+use alloy_primitives::B256;
 use ethers::{
     abi::{decode, AbiDecode, Contract as Abi, ParamType, RawLog, Token},
     contract::EthLogDecode,
@@ -33,7 +34,7 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
         LogBytesFilter(inner) => format!("{}", inner.0),
         LogNamedAddressFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
         LogNamedBytes32Filter(inner) => {
-            format!("{}: 0x{}", inner.key, hex::encode(inner.val))
+            format!("{}: {}", inner.key, B256::new(inner.val))
         }
         LogNamedDecimalIntFilter(inner) => {
             let (sign, val) = inner.val.into_sign_and_abs();
@@ -54,7 +55,7 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
         LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
         LogNamedUintFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
         LogNamedBytesFilter(inner) => {
-            format!("{}: 0x{}", inner.key, hex::encode(inner.val))
+            format!("{}: {}", inner.key, inner.val)
         }
         LogNamedStringFilter(inner) => format!("{}: {}", inner.key, inner.val),
         LogNamedArray1Filter(inner) => format!("{}: {:?}", inner.key, inner.val),

@@ -53,7 +53,7 @@ use ethers::{
         DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, OtherFields,
         Trace, Transaction, TransactionReceipt, H160,
     },
-    utils::{get_contract_address, hex, keccak256, rlp},
+    utils::{hex, keccak256, rlp},
 };
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
@@ -1170,18 +1170,18 @@ impl Backend {
     where
         D: DatabaseRef<Error = DatabaseError>,
     {
-        let from = request.from.unwrap_or_default();
+        let from = request.from.unwrap_or_default().to_alloy();
         let to = if let Some(to) = request.to {
-            to
+            to.to_alloy()
         } else {
-            let nonce = state.basic(from.to_alloy())?.unwrap_or_default().nonce;
-            get_contract_address(from, nonce)
+            let nonce = state.basic(from)?.unwrap_or_default().nonce;
+            from.create(nonce)
         };
 
         let mut tracer = AccessListTracer::new(
             AccessList(request.access_list.clone().unwrap_or_default()),
-            from.to_alloy(),
-            to.to_alloy(),
+            from,
+            to,
             self.precompiles().into_iter().map(|p| p.to_alloy()).collect(),
         );
 

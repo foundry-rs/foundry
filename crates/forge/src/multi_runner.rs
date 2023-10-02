@@ -287,7 +287,7 @@ impl MultiContractRunnerBuilder {
             &mut known_contracts,
             Default::default(),
             evm_opts.sender,
-            U256::from(1),
+            1,
             &mut deployable_contracts,
             |post_link_input| {
                 let PostLinkInput {

@@ -35,7 +35,7 @@ impl ScriptRunner {
         libraries: &[Bytes],
         code: Bytes,
         setup: bool,
-        sender_nonce: U256,
+        sender_nonce: u64,
         is_broadcast: bool,
         need_create2_deployer: bool,
     ) -> Result<(Address, ScriptResult)> {
@@ -52,7 +52,7 @@ impl ScriptRunner {
             }
         }
 
-        self.executor.set_nonce(self.sender, sender_nonce.to())?;
+        self.executor.set_nonce(self.sender, sender_nonce)?;
 
         // We max out their balance so that they can deploy and make calls.
         self.executor.set_balance(CALLER, U256::MAX)?;
@@ -181,15 +181,13 @@ impl ScriptRunner {
     /// So we have to.
     fn maybe_correct_nonce(
         &mut self,
-        sender_initial_nonce: U256,
+        sender_initial_nonce: u64,
         libraries_len: usize,
     ) -> Result<()> {
         if let Some(cheatcodes) = &self.executor.inspector.cheatcodes {
             if !cheatcodes.corrected_nonce {
-                self.executor.set_nonce(
-                    self.sender,
-                    sender_initial_nonce.to::<u64>() + libraries_len as u64,
-                )?;
+                self.executor
+                    .set_nonce(self.sender, sender_initial_nonce + libraries_len as u64)?;
             }
             self.executor.inspector.cheatcodes.as_mut().unwrap().corrected_nonce = false;
         }

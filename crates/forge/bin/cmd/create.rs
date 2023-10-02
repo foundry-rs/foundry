@@ -271,14 +271,14 @@ impl CreateArgs {
         let address = deployed_contract.address().to_alloy();
         if self.json {
             let output = json!({
-                "deployer": deployer_address.to_alloy().to_checksum(None),
-                "deployedTo": address.to_checksum(None),
+                "deployer": deployer_address.to_alloy().to_string(),
+                "deployedTo": address.to_string(),
                 "transactionHash": receipt.transaction_hash
             });
             println!("{output}");
         } else {
-            println!("Deployer: {}", deployer_address.to_alloy().to_checksum(None));
-            println!("Deployed to: {}", address.to_checksum(None));
+            println!("Deployer: {}", deployer_address.to_alloy());
+            println!("Deployed to: {address}");
             println!("Transaction hash: {:?}", receipt.transaction_hash);
         };
 

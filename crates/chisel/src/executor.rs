@@ -319,13 +319,13 @@ impl SessionSource {
 fn format_token(token: DynSolValue) -> String {
     match token {
         DynSolValue::Address(a) => {
-            format!("Type: {}\n└ Data: {}", Paint::red("address"), Paint::cyan(format!("0x{a:x}")))
+            format!("Type: {}\n└ Data: {}", Paint::red("address"), Paint::cyan(a.to_string()))
         }
         DynSolValue::FixedBytes(b, _) => {
             format!(
                 "Type: {}\n└ Data: {}",
                 Paint::red(format!("bytes{}", b.len())),
-                Paint::cyan(format!("0x{}", hex::encode(b)))
+                Paint::cyan(hex::encode_prefixed(b))
             )
         }
         DynSolValue::Int(i, _) => {
@@ -349,7 +349,7 @@ fn format_token(token: DynSolValue) -> String {
         }
         DynSolValue::String(_) | DynSolValue::Bytes(_) => {
             let hex = hex::encode(token.abi_encode());
-            let s = token.as_str().map(|s| s.to_owned());
+            let s = token.as_str();
             format!(
                 "Type: {}\n{}├ Hex (Memory):\n├─ Length ({}): {}\n├─ Contents ({}): {}\n├ Hex (Tuple Encoded):\n├─ Pointer ({}): {}\n├─ Length ({}): {}\n└─ Contents ({}): {}",
                 Paint::red(if s.is_some() { "string" } else { "dynamic bytes" }),
