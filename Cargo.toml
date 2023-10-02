@@ -160,7 +160,7 @@ solang-parser = "=0.3.2"
 ## misc
 toml = "0.8"
 itertools = "0.11"
-chrono = { version = "0.4", features = ["clock"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 hex = { package = "const-hex", version = "1.6", features = ["hex"] }
 
 #[patch."https://github.com/gakonst/ethers-rs"]
