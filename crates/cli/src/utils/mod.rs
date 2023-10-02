@@ -89,7 +89,7 @@ pub fn parse_u256(s: &str) -> Result<U256> {
 /// parse a hex str or decimal str as U256
 // TODO: rm after alloy transition
 pub fn alloy_parse_u256(s: &str) -> Result<alloy_primitives::U256> {
-    Ok(parse_u256(s)?)
+    parse_u256(s)
 }
 
 /// Returns a [RetryProvider](foundry_common::RetryProvider) instantiated using [Config]'s RPC URL
@@ -144,7 +144,7 @@ pub fn parse_ether_value(value: &str) -> Result<U256> {
 
 // TODO: rm after alloy transition
 pub fn alloy_parse_ether_value(value: &str) -> Result<alloy_primitives::U256> {
-    Ok(parse_ether_value(value)?)
+    parse_ether_value(value)
 }
 
 /// Parses a `Duration` from a &str
