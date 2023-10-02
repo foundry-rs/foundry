@@ -303,7 +303,10 @@ contract FsTest is DSTest {
         metadata = vm.fsMetadata("fixtures/File/read.txt");
         assertEq(metadata.isDir, false);
         assertEq(metadata.isSymlink, false);
-        assertEq(metadata.length, 45);
+        // This test will fail on windows if we compared to 45, as windows
+        // ends files with both line feed and carriage return, unlike
+        // unix which only uses the first one.
+        assertTrue(metadata.length == 45 || metadata.length == 46);
 
         metadata = vm.fsMetadata("fixtures/File/symlink");
         assertEq(metadata.isDir, false);

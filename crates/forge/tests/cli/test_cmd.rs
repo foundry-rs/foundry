@@ -39,12 +39,12 @@ forgetest!(warn_no_tests, |prj: TestProject, mut cmd: TestCommand| {
     prj.inner()
         .add_source(
             "dummy",
-            r#"
+            r"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity =0.8.13;
 
 contract Dummy {}
-"#,
+",
         )
         .unwrap();
     // set up command
@@ -61,12 +61,12 @@ forgetest!(warn_no_tests_match, |prj: TestProject, mut cmd: TestCommand| {
     prj.inner()
         .add_source(
             "dummy",
-            r#"
+            r"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity =0.8.13;
 
 contract Dummy {}
-"#,
+",
         )
         .unwrap();
 
@@ -87,7 +87,7 @@ forgetest!(suggest_when_no_tests_match, |prj: TestProject, mut cmd: TestCommand|
     prj.inner()
         .add_source(
             "TestE.t.sol",
-            r#"
+            r"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.10;
 
@@ -95,7 +95,7 @@ contract TestC {
     function test1() public {
     }
 }
-   "#,
+   ",
         )
         .unwrap();
 
@@ -313,7 +313,7 @@ forgetest_init!(can_use_libs_in_multi_fork, |prj: TestProject, mut cmd: TestComm
     prj.inner()
         .add_source(
             "Contract.sol",
-            r#"
+            r"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity =0.8.13;
 
@@ -330,7 +330,7 @@ contract Contract {
         c = Library.f(1, 2);
     }
 }
-   "#,
+   ",
         )
         .unwrap();
 

@@ -172,10 +172,10 @@ mod tests {
             contract: Default::default(),
             function: Default::default(),
             line: Default::default(),
-            docs: r#"
+            docs: r"
             forge-config: ciii.invariant.depth = 1 
             forge-config: default.invariant.depth = 1
-            "#
+            "
             .into(),
         };
 
@@ -190,10 +190,10 @@ mod tests {
             contract: Default::default(),
             function: Default::default(),
             line: Default::default(),
-            docs: r#"
+            docs: r"
             forge-config: ci.invariant.depth = 1 
             forge-config: default.invariant.depth = 1
-            "#
+            "
             .into(),
         };
 

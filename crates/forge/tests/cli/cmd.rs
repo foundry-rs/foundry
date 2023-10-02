@@ -378,6 +378,8 @@ forgetest!(can_init_template, |prj: TestProject, mut cmd: TestCommand| {
     assert!(prj.root().join(".git").exists());
     assert!(prj.root().join("foundry.toml").exists());
     assert!(prj.root().join("lib/forge-std").exists());
+    // assert that gitmodules were correctly initialized
+    assert!(prj.root().join(".git/modules").exists());
     assert!(prj.root().join("src").exists());
     assert!(prj.root().join("test").exists());
 });
@@ -391,6 +393,8 @@ forgetest!(can_init_template_with_branch, |prj: TestProject, mut cmd: TestComman
     assert!(prj.root().join(".git").exists());
     assert!(prj.root().join(".dapprc").exists());
     assert!(prj.root().join("lib/ds-test").exists());
+    // assert that gitmodules were correctly initialized
+    assert!(prj.root().join(".git/modules").exists());
     assert!(prj.root().join("src").exists());
     assert!(prj.root().join("scripts").exists());
 });
@@ -494,7 +498,7 @@ forgetest!(can_print_warnings, |prj: TestProject, mut cmd: TestCommand| {
     prj.inner()
         .add_source(
             "Foo",
-            r#"
+            r"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity >0.8.9;
 contract Greeter {
@@ -502,7 +506,7 @@ contract Greeter {
         uint256 x = 1;
     }
 }
-   "#,
+   ",
         )
         .unwrap();
 
@@ -674,12 +678,12 @@ forgetest!(can_compile_without_warnings, |prj: TestProject, mut cmd: TestCommand
     prj.inner()
         .add_source(
             "A",
-            r#"
+            r"
 pragma solidity 0.8.10;
 contract A {
     function testExample() public {}
 }
-   "#,
+   ",
         )
         .unwrap();
 
@@ -710,12 +714,12 @@ forgetest!(can_fail_compile_with_warnings, |prj: TestProject, mut cmd: TestComma
     prj.inner()
         .add_source(
             "A",
-            r#"
+            r"
 pragma solidity 0.8.10;
 contract A {
     function testExample() public {}
 }
-   "#,
+   ",
         )
         .unwrap();
 
@@ -1426,11 +1430,11 @@ forgetest_init!(can_use_absolute_imports, |prj: TestProject, mut cmd: TestComman
     prj.inner()
         .add_lib(
             "myDepdendency/src/interfaces/IConfig.sol",
-            r#"
+            r"
     pragma solidity ^0.8.10;
 
     interface IConfig {}
-   "#,
+   ",
         )
         .unwrap();
 
@@ -1470,11 +1474,11 @@ forgetest_init!(
         prj.inner()
             .add_script(
                 "IMyScript.sol",
-                r#"
+                r"
     pragma solidity ^0.8.10;
 
     interface IMyScript {}
-   "#,
+   ",
             )
             .unwrap();
 
@@ -1493,11 +1497,11 @@ forgetest_init!(
         prj.inner()
             .add_test(
                 "IMyTest.sol",
-                r#"
+                r"
     pragma solidity ^0.8.10;
 
     interface IMyTest {}
-   "#,
+   ",
             )
             .unwrap();
 
@@ -1584,12 +1588,12 @@ forgetest_init!(can_build_skip_glob, |prj: TestProject, mut cmd: TestCommand| {
     prj.inner()
         .add_test(
             "Foo",
-            r#"
+            r"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.17;
 contract TestDemo {
 function test_run() external {}
-}"#,
+}",
         )
         .unwrap();
     // only builds the single template contract `src/*` even if `*.t.sol` or `.s.sol` is absent

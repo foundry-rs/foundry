@@ -28,7 +28,7 @@ use forge::{
     },
     CallKind,
 };
-use foundry_cli::{opts::MultiWallet, utils::parse_ether_value};
+use foundry_cli::opts::MultiWallet;
 use foundry_common::{
     abi::{encode_args, format_token},
     contracts::get_contract_name,
@@ -115,7 +115,7 @@ pub struct ScriptArgs {
     #[clap(
         long,
         env = "ETH_PRIORITY_GAS_PRICE",
-        value_parser = parse_ether_value,
+        value_parser = foundry_cli::utils::alloy_parse_ether_value,
         value_name = "PRICE"
     )]
     pub priority_gas_price: Option<U256>,
@@ -192,7 +192,7 @@ pub struct ScriptArgs {
     #[clap(
         long,
         env = "ETH_GAS_PRICE",
-        value_parser = parse_ether_value,
+        value_parser = foundry_cli::utils::alloy_parse_ether_value,
         value_name = "PRICE",
     )]
     pub with_gas_price: Option<U256>,
@@ -981,5 +981,13 @@ mod tests {
         assert_eq!(etherscan, Some("polygonkey".to_string()));
         let etherscan = config.get_etherscan_api_key(Option::<u64>::None);
         assert_eq!(etherscan, Some("polygonkey".to_string()));
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/5923>
+    #[test]
+    fn test_5923() {
+        let args: ScriptArgs =
+            ScriptArgs::parse_from(["foundry-cli", "DeployV1", "--priority-gas-price", "100"]);
+        assert!(args.priority_gas_price.is_some());
     }
 }

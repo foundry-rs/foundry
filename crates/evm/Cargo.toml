@@ -47,6 +47,7 @@ revm = { workspace = true, default-features = false, features = [
   "optional_eip3607",
   "optional_block_gas_limit",
   "optional_no_base_fee",
+  "arbitrary"
 ] }
 
 alloy-primitives = { workspace = true, default-features = false, features = ["std", "serde", "getrandom", "arbitrary", "rlp"] }

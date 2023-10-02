@@ -9,10 +9,6 @@ pub const ASSUME_MAGIC_RETURN_CODE: &[u8] = b"FOUNDRY::ASSUME";
 pub enum FuzzError {
     #[error("Couldn't call unknown contract")]
     UnknownContract,
-    #[error("Couldn't find function")]
-    UnknownFunction,
-    #[error("Failed to decode fuzzer inputs")]
-    FailedDecodeInput,
     #[error("Failed contract call")]
     FailedContractCall,
     #[error("Empty state changeset")]

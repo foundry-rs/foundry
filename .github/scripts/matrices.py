@@ -51,7 +51,9 @@ else:
         default_target,
         Target("ubuntu-latest", "aarch64-unknown-linux-gnu"),
         Target("macos-latest", "x86_64-apple-darwin"),
-        Target("macos-latest", "aarch64-apple-darwin"),
+        # Disabled since the test binary will be built for M1/M2, but there are no
+        # GitHub runners capable of executing those binaries.
+        # Target("macos-latest", "aarch64-apple-darwin"),
         Target("windows-latest", "x86_64-pc-windows-msvc"),
     ]
 

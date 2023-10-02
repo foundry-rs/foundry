@@ -415,17 +415,17 @@ mod tests {
     fn test_preserves_original_content_with_default_settings() -> std::fmt::Result {
         let contents = [
             "simple line",
-            r#"
+            r"
             some 
                     multiline
-    content"#,
+    content",
             "// comment",
             "/* comment */",
-            r#"mutliline
+            r"mutliline
             content
             // comment1
             with comments
-            /* comment2 */ "#,
+            /* comment2 */ ",
         ];
 
         for content in contents.iter() {
