@@ -612,9 +612,7 @@ fn list(
     Ok(TestOutcome::new(BTreeMap::new(), false))
 }
 
-/**
- * Creates table summary header
- */
+/// Creates table summary header
 fn create_test_summary_table_header(summary_table: &mut Table) -> Row {
     summary_table.apply_modifier(UTF8_ROUND_CORNERS);
     Row::from(vec![
@@ -636,9 +634,7 @@ fn create_test_summary_table_header(summary_table: &mut Table) -> Row {
     ])
 }
 
-/**
- * Creates table summary row
- */
+/// Creates table summary row
 fn create_test_summary_table_row(
     contract_name: String,
     success_count: usize,
