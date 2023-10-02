@@ -271,11 +271,11 @@ fn accesses(state: &mut Cheatcodes, address: Address) -> Bytes {
             DynSolValue::Array(read_accesses),
             DynSolValue::Array(write_accesses),
         ])
-        .encode()
+        .encode_params()
         .into()
     } else {
         DynSolValue::Tuple(vec![DynSolValue::Array(vec![]), DynSolValue::Array(vec![])])
-            .encode()
+            .encode_params()
             .into()
     }
 }
