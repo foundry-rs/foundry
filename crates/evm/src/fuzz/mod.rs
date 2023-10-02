@@ -5,12 +5,11 @@ use crate::{
     executor::{Executor, RawCallResult},
     trace::CallTraceArena,
 };
-use alloy_primitives::U256;
+use alloy_primitives::{Address, Bytes, U256};
+use alloy_json_abi::{JsonAbi as Abi, Function};
+use alloy_dyn_abi::DynSolValue;
 use error::{FuzzError, ASSUME_MAGIC_RETURN_CODE};
-use ethers::{
-    abi::{Abi, Function, Token},
-    types::{Address, Bytes, Log},
-};
+use ethers::types::Log;
 use eyre::Result;
 use foundry_common::{calc, contracts::ContractsByAddress};
 use foundry_config::FuzzConfig;
@@ -135,7 +134,7 @@ impl<'a> FuzzedExecutor<'a> {
                     // to run at least one more case to find a minimal failure
                     // case.
                     let call_res = _counterexample.1.result.clone();
-                    *counterexample.borrow_mut() = _counterexample;
+                    *counterexample.borrow_mut() = _counterexample.0.into();
                     Err(TestCaseError::fail(
                         decode::decode_revert(&call_res, errors, Some(status)).unwrap_or_default(),
                     ))
@@ -288,9 +287,9 @@ pub struct BaseCounterExample {
     pub contract_name: Option<String>,
     /// Traces
     pub traces: Option<CallTraceArena>,
-    // Token does not implement Serde (lol), so we just serialize the calldata
+    // 
     #[serde(skip)]
-    pub args: Vec<Token>,
+    pub args: Vec<DynSolValue>,
 }
 
 impl BaseCounterExample {
