@@ -1441,7 +1441,7 @@ impl SimpleCast {
     /// Encodes string into bytes32 value
     pub fn format_bytes32_string(s: &str) -> Result<String> {
         let formatted = format_bytes32_string(s)?;
-        Ok(format!("0x{}", hex::encode(formatted)))
+        Ok(hex::encode_prefixed(formatted))
     }
 
     /// Decodes string from bytes32 value
@@ -1933,7 +1933,7 @@ impl SimpleCast {
         }
         if optimize == 0 {
             let selector = HumanReadableParser::parse_function(signature)?.short_signature();
-            return Ok((format!("0x{}", hex::encode(selector)), String::from(signature)))
+            return Ok((hex::encode_prefixed(selector), String::from(signature)))
         }
         let Some((name, params)) = signature.split_once('(') else {
             eyre::bail!("Invalid signature");
@@ -1955,7 +1955,7 @@ impl SimpleCast {
 
                     if selector.iter().take_while(|&&byte| byte == 0).count() == optimize {
                         found.store(true, Ordering::Relaxed);
-                        return Some((nonce, format!("0x{}", hex::encode(selector)), input))
+                        return Some((nonce, hex::encode_prefixed(selector), input))
                     }
 
                     nonce += nonce_step;

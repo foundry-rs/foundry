@@ -94,7 +94,7 @@ pub fn handle_expect_revert(
             String::decode(data.0.as_ref())
                 .ok()
                 .or_else(|| std::str::from_utf8(data.as_ref()).ok().map(ToOwned::to_owned))
-                .unwrap_or_else(|| format!("0x{}", hex::encode(data)))
+                .unwrap_or_else(|| hex::encode_prefixed(data))
         };
         Err(fmt_err!(
             "Error != expected error: {} != {}",

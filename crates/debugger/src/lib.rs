@@ -677,10 +677,11 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                     text_output.extend(Text::from("No sourcemap for contract"));
                 }
             } else {
-                text_output.extend(Text::from("No srcmap index for contract {contract_name}"));
+                text_output
+                    .extend(Text::from(format!("No srcmap index for contract {contract_name}")));
             }
         } else {
-            text_output.extend(Text::from(format!("Unknown contract at address {address:?}")));
+            text_output.extend(Text::from(format!("Unknown contract at address {address}")));
         }
 
         let paragraph =
@@ -700,7 +701,7 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
     ) {
         let block_source_code = Block::default()
             .title(format!(
-                "Address: {:?} | PC: {} | Gas used in call: {}",
+                "Address: {} | PC: {} | Gas used in call: {}",
                 address,
                 if let Some(step) = debug_steps.get(current_step) {
                     step.pc.to_string()

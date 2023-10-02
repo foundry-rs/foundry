@@ -105,7 +105,7 @@ pub struct NoCheatcodeAccessError(pub Address);
 
 impl fmt::Display for NoCheatcodeAccessError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "No cheatcode access granted for: {:?}, see `vm.allowCheatcodes()`", self.0)
+        write!(f, "No cheatcode access granted for: {}, see `vm.allowCheatcodes()`", self.0)
     }
 }
 

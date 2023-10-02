@@ -421,9 +421,8 @@ impl ChiselDispatcher {
                                                 i,
                                                 i + 32
                                             )),
-                                            Paint::cyan(format!(
-                                                "0x{}",
-                                                hex::encode(&mem.data()[i..i + 32])
+                                            Paint::cyan(hex::encode_prefixed(
+                                                &mem.data()[i..i + 32]
                                             ))
                                         );
                                     });
@@ -839,7 +838,7 @@ impl ChiselDispatcher {
             // We can always safely unwrap here due to the regex matching.
             let addr: Address = match_str.parse().expect("Valid address regex");
             // Replace all occurrences of the address with a checksummed version
-            heap_input = heap_input.replace(match_str, &addr.to_checksum(None));
+            heap_input = heap_input.replace(match_str, &addr.to_string());
         });
         // Replace the old input with the formatted input.
         input = &heap_input;

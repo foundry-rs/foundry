@@ -102,7 +102,7 @@ impl SignaturesIdentifier {
             SelectorType::Event => &mut self.cached.events,
         };
 
-        let hex_identifier = format!("0x{}", hex::encode(identifier));
+        let hex_identifier = hex::encode_prefixed(identifier);
 
         if !self.offline && !map.contains_key(&hex_identifier) {
             if let Ok(signatures) =

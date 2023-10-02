@@ -78,7 +78,7 @@ async fn main() -> Result<()> {
         }
         Subcommands::FromBin => {
             let hex = stdin::read_bytes(false)?;
-            println!("0x{}", hex::encode(hex));
+            println!("{}", hex::encode_prefixed(hex));
         }
         Subcommands::ToHexdata { input } => {
             let value = stdin::unwrap_line(input)?;

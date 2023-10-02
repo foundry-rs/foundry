@@ -426,7 +426,7 @@ impl ScriptArgs {
     fn create_deploy_transactions(
         &self,
         from: Address,
-        nonce: U256,
+        nonce: u64,
         data: &[Bytes],
         fork_url: &Option<RpcUrl>,
     ) -> BroadcastableTransactions {
@@ -437,7 +437,7 @@ impl ScriptArgs {
                 transaction: TypedTransaction::Legacy(TransactionRequest {
                     from: Some(from.to_ethers()),
                     data: Some(bytes.clone().0.into()),
-                    nonce: Some(nonce + U256::from(i)).map(|n| n.to_ethers()),
+                    nonce: Some(ethers::types::U256::from(nonce + i as u64)),
                     ..Default::default()
                 }),
             })
@@ -640,7 +640,7 @@ pub struct NestedValue {
 pub struct ScriptConfig {
     pub config: Config,
     pub evm_opts: EvmOpts,
-    pub sender_nonce: U256,
+    pub sender_nonce: u64,
     /// Maps a rpc url to a backend
     pub backends: HashMap<RpcUrl, Backend>,
     /// Script target contract

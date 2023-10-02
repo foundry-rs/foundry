@@ -1,7 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![warn(unused_crate_dependencies)]
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes};
 use ethers_addressbook::contract;
 use ethers_core::types::{BlockId, Chain, NameOrAddress};
 use ethers_providers::{Middleware, Provider};
@@ -98,7 +98,7 @@ pub struct ResolvedDependency {
     /// The address the linker resolved
     pub address: Address,
     /// The nonce used to resolve the dependency
-    pub nonce: U256,
+    pub nonce: u64,
     pub id: String,
     pub bytecode: Bytes,
 }
@@ -145,7 +145,7 @@ pub fn link_with_nonce_or_address<T, U>(
     known_contracts: &mut BTreeMap<ArtifactId, T>,
     deployed_library_addresses: Libraries,
     sender: Address,
-    nonce: U256,
+    nonce: u64,
     extra: &mut U,
     post_link: impl Fn(PostLinkInput<T, U>) -> eyre::Result<()>,
     root: impl AsRef<Path>,
@@ -285,11 +285,11 @@ fn recurse_link<'a>(
     deployment: &'a mut Vec<ResolvedDependency>,
     // libraries we have already deployed during the linking process.
     // the key is `file:contract` and the value is the address we computed
-    internally_deployed_libraries: &'a mut HashMap<String, (U256, Address)>,
+    internally_deployed_libraries: &'a mut HashMap<String, (u64, Address)>,
     // deployed library addresses fname => adddress
     deployed_library_addresses: &'a Libraries,
     // nonce to start at
-    nonce: &mut U256,
+    nonce: &mut u64,
     // sender
     sender: Address,
     // project root path
@@ -375,7 +375,7 @@ fn recurse_link<'a>(
                 trace!(target : "forge::link", dependency = next_target, file, key, "dependency was previously deployed");
 
                 // we previously deployed the library
-                let library = format!("{file}:{key}:0x{}", hex::encode(deployed_address));
+                let library = format!("{file}:{key}:0x{deployed_address:x}");
 
                 // push the dependency into the library deployment vector
                 deployment.push(ResolvedDependency {
@@ -390,22 +390,22 @@ fn recurse_link<'a>(
 
                 // we need to deploy the library
                 let used_nonce = *nonce;
-                let computed_address = ethers_core::utils::get_contract_address(sender.to_ethers(), used_nonce.to_ethers());
-                *nonce += U256::from(1);
-                let library = format!("{file}:{key}:0x{}", hex::encode(computed_address));
+                let computed_address = sender.create(used_nonce);
+                *nonce += 1;
+                let library = format!("{file}:{key}:0x{computed_address:x}");
 
                 // push the dependency into the library deployment vector
                 deployment.push(ResolvedDependency {
                     id: library,
-                    address: computed_address.to_alloy(),
+                    address: computed_address,
                     nonce: used_nonce,
                     bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!( "Bytecode should be linked for {next_target}")).0.into(),
                 });
 
                 // remember this library for later
-                internally_deployed_libraries.insert(format!("{file}:{key}"), (used_nonce, computed_address.to_alloy()));
+                internally_deployed_libraries.insert(format!("{file}:{key}"), (used_nonce, computed_address));
 
-                computed_address.to_alloy()
+                computed_address
             };
 
             // link the dependency to the target
@@ -526,10 +526,11 @@ pub async fn next_nonce(
     caller: Address,
     provider_url: &str,
     block: Option<BlockId>,
-) -> Result<U256> {
+) -> Result<u64> {
     let provider = Provider::try_from(provider_url)
         .wrap_err_with(|| format!("Bad fork_url provider: {provider_url}"))?;
-    Ok(provider.get_transaction_count(caller.to_ethers(), block).await?).map(|n| n.to_alloy())
+    let res = provider.get_transaction_count(caller.to_ethers(), block).await?.to_alloy();
+    res.try_into().map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -541,7 +542,7 @@ mod tests {
 
     struct LinkerTest {
         contracts: ArtifactContracts,
-        dependency_assertions: HashMap<String, Vec<(String, U256, Address)>>,
+        dependency_assertions: HashMap<String, Vec<(String, u64, Address)>>,
         project: Project,
     }
 
@@ -572,13 +573,13 @@ mod tests {
         fn assert_dependencies(
             mut self,
             artifact_id: String,
-            deps: Vec<(String, U256, Address)>,
+            deps: Vec<(String, u64, Address)>,
         ) -> Self {
             self.dependency_assertions.insert(artifact_id, deps);
             self
         }
 
-        fn test_with_sender_and_nonce(self, sender: Address, initial_nonce: U256) {
+        fn test_with_sender_and_nonce(self, sender: Address, initial_nonce: u64) {
             let mut called_once = false;
             link_with_nonce_or_address(
                 self.contracts,
@@ -635,7 +636,7 @@ mod tests {
                 "simple/Simple.t.sol:LibraryConsumer".to_string(),
                 vec![(
                     "simple/Simple.t.sol:Lib".to_string(),
-                    U256::from(1),
+                    1,
                     Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                 )],
             )
@@ -643,11 +644,11 @@ mod tests {
                 "simple/Simple.t.sol:SimpleLibraryLinkingTest".to_string(),
                 vec![(
                     "simple/Simple.t.sol:Lib".to_string(),
-                    U256::from(1),
+                    1,
                     Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                 )],
             )
-            .test_with_sender_and_nonce(Address::default(), U256::from(1));
+            .test_with_sender_and_nonce(Address::default(), 1);
     }
 
     #[test]
@@ -658,7 +659,7 @@ mod tests {
                 "nested/Nested.t.sol:NestedLib".to_string(),
                 vec![(
                     "nested/Nested.t.sol:Lib".to_string(),
-                    U256::from(1),
+                    1,
                     Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                 )],
             )
@@ -669,17 +670,17 @@ mod tests {
                     // have the same address and nonce.
                     (
                         "nested/Nested.t.sol:Lib".to_string(),
-                        U256::from(1),
+                        1,
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "nested/Nested.t.sol:Lib".to_string(),
-                        U256::from(1),
+                        1,
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "nested/Nested.t.sol:NestedLib".to_string(),
-                        U256::from(2),
+                        2,
                         Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
                     ),
                 ],
@@ -689,22 +690,22 @@ mod tests {
                 vec![
                     (
                         "nested/Nested.t.sol:Lib".to_string(),
-                        U256::from(1),
+                        1,
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "nested/Nested.t.sol:Lib".to_string(),
-                        U256::from(1),
+                        1,
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "nested/Nested.t.sol:NestedLib".to_string(),
-                        U256::from(2),
+                        2,
                         Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
                     ),
                 ],
             )
-            .test_with_sender_and_nonce(Address::default(), U256::from(1));
+            .test_with_sender_and_nonce(Address::default(), 1);
     }
 
     /// This test ensures that complicated setups with many libraries, some of which are referenced
@@ -727,7 +728,7 @@ mod tests {
                 "duplicate/Duplicate.t.sol:C".to_string(),
                 vec![(
                     "duplicate/Duplicate.t.sol:A".to_string(),
-                    U256::from(1),
+                    1,
                     Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                 )],
             )
@@ -735,7 +736,7 @@ mod tests {
                 "duplicate/Duplicate.t.sol:D".to_string(),
                 vec![(
                     "duplicate/Duplicate.t.sol:B".to_string(),
-                    U256::from(1),
+                    1,
                     Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                 )],
             )
@@ -744,12 +745,12 @@ mod tests {
                 vec![
                     (
                         "duplicate/Duplicate.t.sol:A".to_string(),
-                        U256::from(1),
+                        1,
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:C".to_string(),
-                        U256::from(2),
+                        2,
                         Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
                     ),
                 ],
@@ -759,47 +760,47 @@ mod tests {
                 vec![
                     (
                         "duplicate/Duplicate.t.sol:A".to_string(),
-                        U256::from(1),
+                        1,
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:B".to_string(),
-                        U256::from(2),
+                        2,
                         Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:A".to_string(),
-                        U256::from(1),
+                        1,
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:C".to_string(),
-                        U256::from(3),
+                        3,
                         Address::from_str("0x8be503bcded90ed42eff31f56199399b2b0154ca").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:B".to_string(),
-                        U256::from(2),
+                        2,
                         Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:D".to_string(),
-                        U256::from(4),
+                        4,
                         Address::from_str("0x47c5e40890bce4a473a49d7501808b9633f29782").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:A".to_string(),
-                        U256::from(1),
+                        1,
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:C".to_string(),
-                        U256::from(3),
+                        3,
                         Address::from_str("0x8be503bcded90ed42eff31f56199399b2b0154ca").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:E".to_string(),
-                        U256::from(5),
+                        5,
                         Address::from_str("0x29b2440db4a256b0c1e6d3b4cdcaa68e2440a08f").unwrap(),
                     ),
                 ],
@@ -809,52 +810,52 @@ mod tests {
                 vec![
                     (
                         "duplicate/Duplicate.t.sol:A".to_string(),
-                        U256::from(1),
+                        1,
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:B".to_string(),
-                        U256::from(2),
+                        2,
                         Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:A".to_string(),
-                        U256::from(1),
+                        1,
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:C".to_string(),
-                        U256::from(3),
+                        3,
                         Address::from_str("0x8be503bcded90ed42eff31f56199399b2b0154ca").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:B".to_string(),
-                        U256::from(2),
+                        2,
                         Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:D".to_string(),
-                        U256::from(4),
+                        4,
                         Address::from_str("0x47c5e40890bce4a473a49d7501808b9633f29782").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:A".to_string(),
-                        U256::from(1),
+                        1,
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:C".to_string(),
-                        U256::from(3),
+                        3,
                         Address::from_str("0x8be503bcded90ed42eff31f56199399b2b0154ca").unwrap(),
                     ),
                     (
                         "duplicate/Duplicate.t.sol:E".to_string(),
-                        U256::from(5),
+                        5,
                         Address::from_str("0x29b2440db4a256b0c1e6d3b4cdcaa68e2440a08f").unwrap(),
                     ),
                 ],
             )
-            .test_with_sender_and_nonce(Address::default(), U256::from(1));
+            .test_with_sender_and_nonce(Address::default(), 1);
     }
 
     #[test]

@@ -2796,7 +2796,6 @@ version = "0.2.0"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
- "const-hex",
  "dunce",
  "ethers-addressbook",
  "ethers-contract",
