@@ -230,7 +230,7 @@ impl SessionSource {
         let data = &mem[offset..offset + len];
         // `tokens` is guaranteed to have the same length as the provided types
         let token =
-            DynSolType::decode_single(&ty, data).wrap_err("Could not decode inspected values")?;
+            DynSolType::abi_decode(&ty, data).wrap_err("Could not decode inspected values")?;
         Ok((should_continue(contract_expr), Some(format_token(token))))
     }
 

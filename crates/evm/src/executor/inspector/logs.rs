@@ -1,7 +1,7 @@
 use crate::executor::{
     patch_hardhat_console_selector, HardhatConsoleCalls, HARDHAT_CONSOLE_ADDRESS,
 };
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, Bytes, FixedBytes, B256};
 use ethers::{
     abi::{AbiDecode, Token},
     types::{Bytes as ethersBytes, Log, H256},
@@ -22,9 +22,9 @@ pub struct LogCollector {
 }
 
 impl LogCollector {
-    fn hardhat_log(&mut self, mut input: Vec<u8>) -> (InstructionResult, Bytes) {
+    fn hardhat_log(&mut self, input: Vec<u8>) -> (InstructionResult, Bytes) {
         // Patch the Hardhat-style selectors
-        patch_hardhat_console_selector(&mut input);
+        patch_hardhat_console_selector(&mut FixedBytes::from_slice(input.as_slice()));
         let decoded = match HardhatConsoleCalls::decode(input) {
             Ok(inner) => inner,
             Err(err) => {
