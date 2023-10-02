@@ -530,7 +530,7 @@ pub async fn next_nonce(
     let provider = Provider::try_from(provider_url)
         .wrap_err_with(|| format!("Bad fork_url provider: {provider_url}"))?;
     let res = provider.get_transaction_count(caller.to_ethers(), block).await?.to_alloy();
-    res.try_into().map_err(Into::into)
+    res.try_into().map_err(|e| eyre::eyre!("{e}"))
 }
 
 #[cfg(test)]
