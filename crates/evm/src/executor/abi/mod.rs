@@ -1,6 +1,6 @@
 //! Several ABI-related utilities for executors.
 
-use alloy_primitives::{Address, FixedBytes, Selector};
+use alloy_primitives::{Address, Selector};
 pub use foundry_abi::{
     console::{self, ConsoleEvents, CONSOLE_ABI},
     hardhat_console::{self, HardhatConsoleCalls, HARDHATCONSOLE_ABI as HARDHAT_CONSOLE_ABI},
@@ -28,7 +28,10 @@ pub const HARDHAT_CONSOLE_ADDRESS: Address = Address::new([
 
 /// If the input starts with a known `hardhat/console.log` `uint` selector, then this will replace
 /// it with the selector `abigen!` bindings expect.
-pub fn patch_hardhat_console_selector(input: &mut FixedBytes<4>) {
+pub fn patch_hardhat_console_selector(input: &mut Vec<u8>) {
+    if input.len() < 4 {
+        return
+    }
     let selector = unsafe { &mut *(input.get_unchecked_mut(..4) as *mut [u8] as *mut [u8; 4]) };
     if let Some(abigen_selector) = HARDHAT_CONSOLE_SELECTOR_PATCHES.get(selector) {
         *selector = (*abigen_selector).into();
@@ -565,9 +568,9 @@ mod tests {
     #[test]
     fn hardhat_console_path_works() {
         for (hh, abigen) in HARDHAT_CONSOLE_SELECTOR_PATCHES.iter() {
-            let mut hh = *hh;
+            let mut hh = (*hh).to_vec();
             patch_hardhat_console_selector(&mut hh);
-            assert_eq!(*abigen, hh);
+            assert_eq!((*abigen).to_vec(), hh);
         }
     }
 }
