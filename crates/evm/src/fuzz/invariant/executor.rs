@@ -151,8 +151,8 @@ impl<'a> InvariantExecutor<'a> {
                 // Executes the call from the randomly generated sequence.
                 let call_result = executor
                     .call_raw(
-                        sender.to_alloy(),
-                        address.to_alloy(),
+                        sender,
+                        address,
                         calldata.0.clone().into(),
                         U256::ZERO,
                     )
@@ -485,7 +485,7 @@ impl<'a> InvariantExecutor<'a> {
                             contract_abi.functions.extend(abi.functions.clone());
                         })
                         // Otherwise insert it into the map.
-                        .or_insert_with(|| (identifier.clone(), abi.clone(), vec![]));
+                        .or_insert_with(|| (identifier.to_string(), abi.clone(), vec![]));
                 }
             }
         }
@@ -601,7 +601,7 @@ fn collect_data(
     // Verify it has no code.
     let mut has_code = false;
     if let Some(Some(code)) =
-        state_changeset.get(&sender.to_alloy()).map(|account| account.info.code.as_ref())
+        state_changeset.get(&sender).map(|account| account.info.code.as_ref())
     {
         has_code = !code.is_empty();
     }
@@ -609,14 +609,14 @@ fn collect_data(
     // We keep the nonce changes to apply later.
     let mut sender_changeset = None;
     if !has_code {
-        sender_changeset = state_changeset.remove(&sender.to_alloy());
+        sender_changeset = state_changeset.remove(&sender);
     }
 
     collect_state_from_call(&call_result.logs, &*state_changeset, fuzz_state, config);
 
     // Re-add changes
     if let Some(changed) = sender_changeset {
-        state_changeset.insert(sender.to_alloy(), changed);
+        state_changeset.insert(sender, changed);
     }
 }
 
@@ -639,7 +639,7 @@ fn can_continue(
 
     // Detect handler assertion failures first.
     let handlers_failed = targeted_contracts.lock().iter().any(|contract| {
-        !executor.is_success(contract.0.to_alloy(), false, state_changeset.clone(), false)
+        !executor.is_success(contract.0, false, state_changeset.clone(), false)
     });
 
     // Assert invariants IFF the call did not revert and the handlers did not fail.

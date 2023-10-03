@@ -62,7 +62,7 @@ pub struct SenderFilters {
 
 impl SenderFilters {
     pub fn new(mut targeted: Vec<Address>, mut excluded: Vec<Address>) -> Self {
-        let addr_0 = Address::zero();
+        let addr_0 = Address::ZERO;
         if !excluded.contains(&addr_0) {
             excluded.push(addr_0);
         }

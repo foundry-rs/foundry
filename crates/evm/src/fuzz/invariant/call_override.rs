@@ -1,6 +1,6 @@
 use super::BasicTxDetails;
 use crate::executor::Executor;
-use ethers::types::{Address, Bytes};
+use alloy_primitives::{Address, Bytes};
 use foundry_utils::types::ToAlloy;
 use parking_lot::{Mutex, RwLock};
 use proptest::{
@@ -73,7 +73,7 @@ impl RandomCallGenerator {
             )
         } else {
             // TODO: Do we want it to be 80% chance only too ?
-            let new_caller = original_target.to_alloy();
+            let new_caller = original_target;
 
             // Set which contract we mostly (80% chance) want to generate calldata from.
             *self.target_reference.write() = original_caller;
@@ -84,7 +84,7 @@ impl RandomCallGenerator {
                 .new_tree(&mut self.runner.lock())
                 .unwrap()
                 .current()
-                .map(|(new_target, calldata)| (new_caller, (new_target.to_alloy(), calldata.0.into())));
+                .map(|(new_target, calldata)| (new_caller, (new_target, calldata.0.into())));
 
             self.last_sequence.write().push(choice.clone());
             choice

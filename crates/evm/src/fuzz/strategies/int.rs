@@ -25,12 +25,12 @@ impl IntValueTree {
     /// * `start` - Starting value for the tree
     /// * `fixed` - If `true` the tree would only contain one element and won't be simplified.
     fn new(start: I256, fixed: bool) -> Self {
-        Self { lo: I256::zero(), curr: start, hi: start, fixed }
+        Self { lo: I256::ZERO, curr: start, hi: start, fixed }
     }
 
     fn reposition(&mut self) -> bool {
         let interval = self.hi - self.lo;
-        let new_mid = self.lo + interval / I256::from(2);
+        let new_mid = self.lo + interval / I256::from_raw(U256::from(2));
 
         if new_mid == self.curr {
             false
@@ -69,7 +69,7 @@ impl ValueTree for IntValueTree {
             return false
         }
 
-        self.lo = self.curr + if self.hi.is_negative() { I256::minus_one() } else { I256::one() };
+        self.lo = self.curr + if self.hi.is_negative() { I256::MINUS_ONE } else { I256::ONE };
 
         self.reposition()
     }
@@ -113,7 +113,7 @@ impl IntStrategy {
     fn generate_edge_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         let rng = runner.rng();
 
-        let offset = I256::from(rng.gen_range(0..4));
+        let offset = I256::from_raw(U256::from(rng.gen_range(0..4)));
         let umax: U256 = (U256::from(1u8) << U256::from(self.bits - 1)) - 1;
         // Choose if we want values around min, -0, +0, or max
         let kind = rng.gen_range(0..4);
@@ -143,7 +143,7 @@ impl IntStrategy {
         let bits = rng.gen_range(0..=self.bits);
 
         if bits == 0 {
-            return Ok(IntValueTree::new(I256::zero(), false))
+            return Ok(IntValueTree::new(I256::ZERO, false))
         }
 
         // init 2 128-bit randoms
