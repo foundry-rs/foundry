@@ -105,12 +105,12 @@ impl Fuzzer {
                     call_generator.next(call.context.caller.to_ethers(), call.contract.to_ethers())
                 {
                     *call.input = input.0;
-                    call.context.caller = sender.to_alloy();
-                    call.contract = contract.to_alloy();
+                    call.context.caller = sender;
+                    call.contract = contract;
 
                     // TODO: in what scenarios can the following be problematic
-                    call.context.code_address = contract.to_alloy();
-                    call.context.address = contract.to_alloy();
+                    call.context.code_address = contract;
+                    call.context.address = contract;
 
                     call_generator.used = true;
                 }

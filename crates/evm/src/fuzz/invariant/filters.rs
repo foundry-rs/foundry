@@ -1,17 +1,16 @@
 use crate::utils::get_function;
-use ethers::{
-    abi::{Abi, Address, FixedBytes, Function},
-    solc::ArtifactId,
-};
+use ethers::solc::ArtifactId;
+use alloy_primitives::{Address, FixedBytes};
+use alloy_json_abi::{JsonAbi as Abi, Function};
 use std::collections::BTreeMap;
 
 /// Contains which contracts are to be targeted or excluded on an invariant test through their
 /// artifact identifiers.
 #[derive(Default)]
 pub struct ArtifactFilters {
-    /// List of `contract_path:contract_name` which are to be targeted. If list of functions is not
+    /// List of `contract_path:contract_name` along with selectors, which are to be targeted. If list of functions is not
     /// empty, target only those.
-    pub targeted: BTreeMap<String, Vec<FixedBytes>>,
+    pub targeted: BTreeMap<String, Vec<FixedBytes<4>>>,
     /// List of `contract_path:contract_name` which are to be excluded.
     pub excluded: Vec<String>,
 }

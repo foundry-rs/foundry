@@ -6,13 +6,10 @@ use crate::{
     trace::{load_contracts, TraceKind, Traces},
     CALLER,
 };
-use ethers::{
-    abi::{Abi, Function},
-    types::{Address, Bytes},
-};
 use foundry_common::ContractsByArtifact;
 use parking_lot::Mutex;
-use revm::primitives::U256;
+use alloy_primitives::{Address, Bytes, U256};
+use alloy_json_abi::{JsonAbi as Abi, Function};
 use std::{collections::BTreeMap, sync::Arc};
 
 pub use proptest::test_runner::Config as FuzzConfig;
@@ -68,7 +65,7 @@ pub fn assert_invariants(
     let mut call_result = executor
         .call_raw(
             CALLER,
-            invariant_contract.address.to_alloy(),
+            invariant_contract.address,
             func.encode_input(&[]).expect("invariant should have no inputs").into(),
             U256::ZERO,
         )
@@ -77,7 +74,7 @@ pub fn assert_invariants(
     // This will panic and get caught by the executor
     let is_err = call_result.reverted ||
         !executor.is_success(
-            invariant_contract.address.to_alloy(),
+            invariant_contract.address,
             call_result.reverted,
             call_result.state_changeset.take().expect("we should have a state changeset"),
             false,
@@ -121,8 +118,8 @@ pub fn replay_run(
     for (sender, (addr, bytes)) in inputs.iter() {
         let call_result = executor
             .call_raw_committing(
-                sender.to_alloy(),
-                addr.to_alloy(),
+                *sender,
+                *addr,
                 bytes.0.clone().into(),
                 U256::ZERO,
             )
@@ -141,7 +138,7 @@ pub fn replay_run(
         let error_call_result = executor
             .call_raw(
                 CALLER,
-                invariant_contract.address.to_alloy(),
+                invariant_contract.address,
                 func.encode_input(&[]).expect("invariant should have no inputs").into(),
                 U256::ZERO,
             )

@@ -1,7 +1,7 @@
 //! Temporary utility conversion traits between ethers-rs and alloy types.
 
-use alloy_primitives::{Address, B256, U256 as AlloyU256, U64 as AlloyU64};
-use ethers_core::types::{H160, H256, U256, U64};
+use alloy_primitives::{Address, B256, U256 as AlloyU256, U64 as AlloyU64, I256 as AlloyI256};
+use ethers_core::types::{H160, H256, U256, U64, I256};
 
 /// Conversion trait to easily convert from ethers-rs types to alloy primitive types.
 pub trait ToAlloy {
@@ -40,6 +40,16 @@ impl ToAlloy for U64 {
 
     fn to_alloy(self) -> Self::To {
         AlloyU64::from_limbs(self.0)
+    }
+}
+
+impl ToAlloy for I256 {
+    type To = AlloyI256;
+    
+    fn to_alloy(self) -> Self::To {
+        let mut buffer: [u8; 32] = [0u8; 32];
+        self.to_big_endian(&mut buffer);
+        AlloyI256::from_be_bytes(buffer)
     }
 }
 

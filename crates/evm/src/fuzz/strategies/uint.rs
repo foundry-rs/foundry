@@ -4,7 +4,7 @@ use proptest::{
     test_runner::TestRunner,
 };
 
-use ethers::types::U256;
+use alloy_primitives::U256;
 
 /// Value tree for unsigned ints (up to uint256).
 /// This is very similar to [proptest::BinarySearch]
@@ -154,7 +154,7 @@ impl UintStrategy {
         inner[1] = (lower >> 64) as u64;
         inner[2] = (higher & mask64) as u64;
         inner[3] = (higher >> 64) as u64;
-        let start: U256 = U256(inner);
+        let start: U256 = U256::from(inner);
 
         Ok(UintValueTree::new(start, false))
     }

@@ -6,7 +6,7 @@ use crate::{
     trace::{load_contracts, TraceKind, Traces},
     CALLER,
 };
-use ethers::abi::Function;
+use alloy_json_abi::Function;
 use eyre::{Result, WrapErr};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use proptest::test_runner::TestError;
@@ -42,7 +42,7 @@ impl InvariantFuzzError {
         shrink: bool,
     ) -> Self {
         let (func, origin) = if let Some(f) = error_func {
-            (Some(f.short_signature().into()), f.name.as_str())
+            (Some(f.selector()), f.name.as_str())
         } else {
             (None, "Revert")
         };
@@ -70,7 +70,7 @@ impl InvariantFuzzError {
             return_reason: "".into(),
             revert_reason: revert_reason.unwrap_or_default(),
             addr: invariant_contract.address,
-            func,
+            func: func.map(|f| f.0.clone().into()),
             inner_sequence: inner_sequence.to_vec(),
             shrink,
         }
@@ -107,8 +107,8 @@ impl InvariantFuzzError {
         for (sender, (addr, bytes)) in calls.iter() {
             let call_result = executor
                 .call_raw_committing(
-                    sender.to_alloy(),
-                    addr.to_alloy(),
+                    *sender,
+                    *addr,
                     bytes.0.clone().into(),
                     U256::ZERO,
                 )
@@ -137,7 +137,7 @@ impl InvariantFuzzError {
             // Checks the invariant.
             if let Some(func) = &self.func {
                 let error_call_result = executor
-                    .call_raw(CALLER, self.addr.to_alloy(), func.0.clone().into(), U256::ZERO)
+                    .call_raw(CALLER, self.addr, func.0.clone().into(), U256::ZERO)
                     .expect("bad call to evm");
 
                 traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
@@ -173,8 +173,8 @@ impl InvariantFuzzError {
 
             executor
                 .call_raw_committing(
-                    sender.to_alloy(),
-                    addr.to_alloy(),
+                    *sender,
+                    *addr,
                     bytes.0.clone().into(),
                     U256::ZERO,
                 )
@@ -183,7 +183,7 @@ impl InvariantFuzzError {
             // Checks the invariant. If we exit before the last call, all the better.
             if let Some(func) = &self.func {
                 let error_call_result = executor
-                    .call_raw(CALLER, self.addr.to_alloy(), func.0.clone().into(), U256::ZERO)
+                    .call_raw(CALLER, self.addr, func.0.clone().into(), U256::ZERO)
                     .expect("bad call to evm");
 
                 if error_call_result.reverted {

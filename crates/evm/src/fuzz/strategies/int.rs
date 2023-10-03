@@ -1,10 +1,10 @@
-use ethers::{core::rand::Rng, prelude::Sign};
+use ethers::core::rand::Rng;
 use proptest::{
     strategy::{NewTree, Strategy, ValueTree},
     test_runner::TestRunner,
 };
 
-use ethers::types::{I256, U256};
+use alloy_primitives::{I256, U256, Sign};
 
 /// Value tree for signed ints (up to int256).
 /// This is very similar to [proptest::BinarySearch]
@@ -170,7 +170,7 @@ impl IntStrategy {
         let sign = if rng.gen_bool(0.5) { Sign::Positive } else { Sign::Negative };
         // we have a small bias here, i.e. intN::min will never be generated
         // but it's ok since it's generated in `fn generate_edge_tree(...)`
-        let (start, _) = I256::overflowing_from_sign_and_abs(sign, U256(inner));
+        let (start, _) = I256::overflowing_from_sign_and_abs(sign, U256::from(inner));
 
         Ok(IntValueTree::new(start, false))
     }

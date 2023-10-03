@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_json_abi::{JsonAbi as Abi, Function};
-use alloy_dyn_abi::DynSolValue;
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use error::{FuzzError, ASSUME_MAGIC_RETURN_CODE};
 use ethers::types::Log;
 use eyre::Result;
@@ -100,7 +100,7 @@ impl<'a> FuzzedExecutor<'a> {
         let strat = proptest::strategy::Union::new_weighted(weights);
         debug!(func = ?func.name, should_fail, "fuzzing");
         let run_result = self.runner.clone().run(&strat, |calldata| {
-            let fuzz_res = self.single_fuzz(&state, address, should_fail, calldata)?;
+            let fuzz_res = self.single_fuzz(&state, address, should_fail, calldata.0.into())?;
 
             match fuzz_res {
                 FuzzOutcome::Case(case) => {
@@ -134,7 +134,8 @@ impl<'a> FuzzedExecutor<'a> {
                     // to run at least one more case to find a minimal failure
                     // case.
                     let call_res = _counterexample.1.result.clone();
-                    *counterexample.borrow_mut() = _counterexample.0.into();
+                    let counter: Bytes = _counterexample.0.0.into();
+                    *counterexample.borrow_mut() = (counter, _counterexample.1);
                     Err(TestCaseError::fail(
                         decode::decode_revert(&call_res, errors, Some(status)).unwrap_or_default(),
                     ))
@@ -151,7 +152,7 @@ impl<'a> FuzzedExecutor<'a> {
             counterexample: None,
             decoded_logs: decode_console_logs(&call.logs),
             logs: call.logs,
-            labeled_addresses: call.labels.into_iter().map(|l| (l.0.to_ethers(), l.1)).collect(),
+            labeled_addresses: call.labels,
             traces: if run_result.is_ok() { traces.into_inner() } else { call.traces.clone() },
             coverage: coverage.into_inner(),
         };
@@ -172,7 +173,7 @@ impl<'a> FuzzedExecutor<'a> {
                 let reason = reason.to_string();
                 result.reason = if reason.is_empty() { None } else { Some(reason) };
 
-                let args = func.decode_input(&calldata.as_ref()[4..]).unwrap_or_default();
+                let args = func.decode_input(&calldata.as_ref()[4..], false).unwrap_or_default();
                 result.counterexample = Some(CounterExample::Single(BaseCounterExample {
                     sender: None,
                     addr: None,
@@ -201,8 +202,8 @@ impl<'a> FuzzedExecutor<'a> {
         let call = self
             .executor
             .call_raw(
-                self.sender.to_alloy(),
-                address.to_alloy(),
+                self.sender,
+                address,
                 calldata.0.clone().into(),
                 U256::ZERO,
             )
@@ -231,7 +232,7 @@ impl<'a> FuzzedExecutor<'a> {
             .map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
 
         let success = self.executor.is_success(
-            address.to_alloy(),
+            address,
             call.reverted,
             state_changeset.clone(),
             should_fail,
@@ -239,7 +240,7 @@ impl<'a> FuzzedExecutor<'a> {
 
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
-                case: FuzzCase { calldata, gas: call.gas_used, stipend: call.stipend },
+                case: FuzzCase { calldata: calldata.0.into(), gas: call.gas_used, stipend: call.stipend },
                 traces: call.traces,
                 coverage: call.coverage,
                 debug: call.debug,
@@ -300,7 +301,7 @@ impl BaseCounterExample {
         contracts: &ContractsByAddress,
         traces: Option<CallTraceArena>,
     ) -> Result<Self> {
-        let (name, abi) = &contracts.get(&addr).ok_or(FuzzError::UnknownContract)?;
+        let (name, abi) = &contracts.get(&addr.to_ethers()).ok_or(FuzzError::UnknownContract)?;
 
         let func = abi
             .functions()

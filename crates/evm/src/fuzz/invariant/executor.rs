@@ -19,7 +19,8 @@ use crate::{
     utils::get_function,
     CALLER,
 };
-use ethers::abi::{Abi, Address, Detokenize, FixedBytes, Tokenizable, TokenizableItem};
+use alloy_primitives::{Address, U256, FixedBytes};
+use alloy_json_abi::JsonAbi as Abi;
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::{FuzzDictionaryConfig, InvariantConfig};
@@ -30,7 +31,7 @@ use proptest::{
     test_runner::{TestCaseError, TestRunner},
 };
 use revm::{
-    primitives::{Address as rAddress, HashMap, U256 as rU256},
+    primitives::HashMap,
     DatabaseCommit,
 };
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
@@ -153,7 +154,7 @@ impl<'a> InvariantExecutor<'a> {
                         sender.to_alloy(),
                         address.to_alloy(),
                         calldata.0.clone().into(),
-                        rU256::ZERO,
+                        U256::ZERO,
                     )
                     .expect("could not make raw evm call");
 
@@ -391,7 +392,7 @@ impl<'a> InvariantExecutor<'a> {
     fn validate_selected_contract(
         &mut self,
         contract: String,
-        selectors: &[FixedBytes],
+        selectors: &[FixedBytes<4>],
     ) -> eyre::Result<String> {
         if let Some((artifact, (abi, _))) =
             self.project_contracts.find_by_name_or_identifier(&contract)?
@@ -571,7 +572,7 @@ impl<'a> InvariantExecutor<'a> {
                 address.to_alloy(),
                 func.clone(),
                 (),
-                rU256::ZERO,
+                U256::ZERO,
                 Some(abi),
             ) {
                 return call_result.result
@@ -591,7 +592,7 @@ impl<'a> InvariantExecutor<'a> {
 /// before inserting it into the dictionary. Otherwise, we flood the dictionary with
 /// randomly generated addresses.
 fn collect_data(
-    state_changeset: &mut HashMap<rAddress, revm::primitives::Account>,
+    state_changeset: &mut HashMap<Address, revm::primitives::Account>,
     sender: &Address,
     call_result: &RawCallResult,
     fuzz_state: EvmFuzzState,

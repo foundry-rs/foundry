@@ -4,14 +4,14 @@ use crate::{
     fuzz::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts},
     utils,
 };
+use alloy_dyn_abi::{JsonAbiExt, DynSolValue, DynSolType};
 use bytes::Bytes;
-use ethers::{
-    abi::Function,
-    types::{Address, Log, H256, U256},
-};
+use alloy_json_abi::Function;
+use alloy_primitives::{Address, B256, U256};
+use ethers::types::Log;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::FuzzDictionaryConfig;
-use foundry_utils::types::ToEthers;
+use foundry_utils::types::{ToEthers, ToAlloy};
 use hashbrown::HashSet;
 use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
@@ -20,7 +20,7 @@ use revm::{
     interpreter::opcode::{self, spec_opcode_gas},
     primitives::SpecId,
 };
-use std::{fmt, io::Write, sync::Arc};
+use std::{fmt, io::Write, sync::Arc, str::FromStr};
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
@@ -71,11 +71,11 @@ impl FuzzDictionary {
 pub fn fuzz_calldata_from_state(
     func: Function,
     state: EvmFuzzState,
-) -> BoxedStrategy<ethers::types::Bytes> {
+) -> BoxedStrategy<alloy_primitives::Bytes> {
     let strats = func
         .inputs
         .iter()
-        .map(|input| fuzz_param_from_state(&input.kind, state.clone()))
+        .map(|input| fuzz_param_from_state(&DynSolType::from_str(&input.ty).unwrap(), state.clone()))
         .collect::<Vec<_>>();
 
     strats
@@ -101,9 +101,9 @@ pub fn build_initial_state<DB: DatabaseRef>(
     let mut state = FuzzDictionary::default();
 
     for (address, account) in db.accounts.iter() {
-        let address: Address = address.to_ethers();
+        let address: Address = *address;
         // Insert basic account information
-        state.values_mut().insert(H256::from(address).into());
+        state.values_mut().insert(B256::from_slice(address.as_slice()).into());
 
         // Insert push bytes
         if config.include_push_bytes {
@@ -124,13 +124,13 @@ pub fn build_initial_state<DB: DatabaseRef>(
                 state.values_mut().insert(utils::u256_to_h256_be(slot).into());
                 state.values_mut().insert(utils::u256_to_h256_be(value).into());
                 // also add the value below and above the storage value to the dictionary.
-                if value != U256::zero() {
-                    let below_value = value - U256::one();
-                    state.values_mut().insert(utils::u256_to_h256_be(below_value).into());
+                if value.to_alloy() != U256::ZERO {
+                    let below_value = value.to_alloy() - U256::from(1);
+                    state.values_mut().insert(utils::u256_to_h256_be(below_value.to_ethers()).into());
                 }
-                if value != U256::max_value() {
-                    let above_value = value + U256::one();
-                    state.values_mut().insert(utils::u256_to_h256_be(above_value).into());
+                if value.to_alloy() != U256::MAX {
+                    let above_value = value.to_alloy() + U256::from(1);
+                    state.values_mut().insert(utils::u256_to_h256_be(above_value.to_ethers()).into());
                 }
             }
         }
@@ -140,7 +140,7 @@ pub fn build_initial_state<DB: DatabaseRef>(
     // fuzzing
     if state.values().is_empty() {
         // prefill with a random addresses
-        state.values_mut().insert(H256::from(Address::random()).into());
+        state.values_mut().insert(B256::from_slice(Address::random().as_slice()).into());
     }
 
     Arc::new(RwLock::new(state))
@@ -158,13 +158,13 @@ pub fn collect_state_from_call(
 
     for (address, account) in state_changeset {
         // Insert basic account information
-        state.values_mut().insert(H256::from(address.to_ethers()).into());
+        state.values_mut().insert(B256::from_slice(address.as_slice()).into());
 
         if config.include_push_bytes && state.addresses.len() < config.max_fuzz_dictionary_addresses
         {
             // Insert push bytes
             if let Some(code) = &account.info.code {
-                if state.addresses_mut().insert(address.to_ethers()) {
+                if state.addresses_mut().insert(*address) {
                     for push_byte in collect_push_bytes(code.bytes().clone().0) {
                         state.values_mut().insert(push_byte);
                     }
@@ -180,13 +180,13 @@ pub fn collect_state_from_call(
                 state.values_mut().insert(utils::u256_to_h256_be(slot).into());
                 state.values_mut().insert(utils::u256_to_h256_be(value).into());
                 // also add the value below and above the storage value to the dictionary.
-                if value != U256::zero() {
-                    let below_value = value - U256::one();
-                    state.values_mut().insert(utils::u256_to_h256_be(below_value).into());
+                if value.to_alloy() != U256::ZERO {
+                    let below_value = value.to_alloy() - U256::from(1);
+                    state.values_mut().insert(utils::u256_to_h256_be(below_value.to_ethers()).into());
                 }
-                if value != U256::max_value() {
-                    let above_value = value + U256::one();
-                    state.values_mut().insert(utils::u256_to_h256_be(above_value).into());
+                if value.to_alloy() != U256::MAX {
+                    let above_value = value.to_alloy() + U256::from(1);
+                    state.values_mut().insert(utils::u256_to_h256_be(above_value.to_ethers()).into());
                 }
             }
         } else {
@@ -237,14 +237,14 @@ fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
                 return bytes
             }
 
-            let push_value = U256::from_big_endian(&code[push_start..push_end]);
-            bytes.push(push_value.into());
+            let push_value = U256::try_from_be_slice(&code[push_start..push_end]).unwrap();
+            bytes.push(push_value.to_ethers().into());
             // also add the value below and above the push value to the dictionary.
-            if push_value != U256::zero() {
-                bytes.push((push_value - U256::one()).into());
+            if push_value != U256::ZERO {
+                bytes.push((push_value - U256::from(1)).to_be_bytes());
             }
-            if push_value != U256::max_value() {
-                bytes.push((push_value + U256::one()).into());
+            if push_value != U256::MAX {
+                bytes.push((push_value + U256::from(1)).to_be_bytes());
             }
 
             i += push_size;
@@ -276,7 +276,7 @@ pub fn collect_created_contracts(
                         if let Some(functions) =
                             artifact_filters.get_targeted_functions(artifact, abi)?
                         {
-                            created_contracts.push(address.to_ethers());
+                            created_contracts.push(*address);
                             writable_targeted.insert(
                                 address.to_ethers(),
                                 (artifact.name.clone(), abi.clone(), functions),

@@ -4,10 +4,10 @@ use crate::fuzz::{
     strategies::fuzz_param,
     EvmFuzzState,
 };
-use ethers::{
-    abi::{Abi, Function, ParamType},
-    types::{Address, Bytes},
-};
+use alloy_dyn_abi::DynSolType;
+use alloy_primitives::{Address, Bytes};
+use alloy_json_abi::{JsonAbi as Abi, Function};
+use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::RwLock;
 use proptest::prelude::*;
 pub use proptest::test_runner::Config as FuzzConfig;
@@ -24,7 +24,7 @@ pub fn override_call_strat(
     let contracts_ref = contracts.clone();
 
     let random_contract = any::<prop::sample::Selector>()
-        .prop_map(move |selector| *selector.select(contracts_ref.lock().keys()));
+        .prop_map(move |selector| *selector.select(contracts_ref.lock().keys().map(|k| k)));
     let target = any::<prop::sample::Selector>().prop_map(move |_| *target.read());
 
     proptest::strategy::Union::new_weighted(vec![
@@ -100,24 +100,25 @@ fn select_random_sender(
     let fuzz_strategy = proptest::strategy::Union::new_weighted(vec![
         (
             100 - dictionary_weight,
-            fuzz_param(&ParamType::Address)
-                .prop_map(move |addr| addr.into_address().unwrap())
+            fuzz_param(&alloy_dyn_abi::DynSolType::Address)
+                .prop_map(move |addr| addr.as_address().unwrap())
                 .boxed(),
         ),
         (
             dictionary_weight,
-            fuzz_param_from_state(&ParamType::Address, fuzz_state)
-                .prop_map(move |addr| addr.into_address().unwrap())
+            fuzz_param_from_state(&alloy_dyn_abi::DynSolType::Address, fuzz_state)
+                .prop_map(move |addr| addr.as_address().unwrap())
                 .boxed(),
         ),
     ])
     // Too many exclusions can slow down testing.
-    .prop_filter("senders not allowed", move |addr| !senders_ref.excluded.contains(addr))
+    .prop_filter("senders not allowed", move |addr| !senders_ref.excluded.contains(&addr.to_ethers()))
     .boxed();
 
     if !senders.targeted.is_empty() {
         any::<prop::sample::Selector>()
             .prop_map(move |selector| *selector.select(&*senders.targeted))
+            .prop_map(|s| s.to_alloy())
             .boxed()
     } else {
         fuzz_strategy
@@ -144,12 +145,12 @@ fn select_random_contract(
 /// of the available abi functions.
 fn select_random_function(abi: Abi, targeted_functions: Vec<Function>) -> BoxedStrategy<Function> {
     let selectors = any::<prop::sample::Selector>();
-    let possible_funcs: Vec<ethers::abi::Function> = abi
+    let possible_funcs: Vec<Function> = abi
         .functions()
         .filter(|func| {
             !matches!(
                 func.state_mutability,
-                ethers::abi::StateMutability::Pure | ethers::abi::StateMutability::View
+                alloy_json_abi::StateMutability::Pure | alloy_json_abi::StateMutability::View
             )
         })
         .cloned()
