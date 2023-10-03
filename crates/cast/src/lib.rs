@@ -1272,7 +1272,7 @@ impl SimpleCast {
                 .trim_end_matches(".000000000000000000")
                 .to_string(),
             "milli" | "milliether" => ethers_core::utils::format_units(value, 15)?
-                .trim_end_matchers(".000000000000000")
+                .trim_end_matches(".000000000000000")
                 .to_string(),
             "micro" | "microether" => ethers_core::utils::format_units(value, 12)?
                 .trim_end_matches(".000000000000")
