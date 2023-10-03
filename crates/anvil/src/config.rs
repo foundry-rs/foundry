@@ -800,6 +800,7 @@ impl NodeConfig {
         // caller is a contract. So we disable the check by default.
         cfg.disable_eip3607 = true;
         cfg.disable_block_gas_limit = self.disable_block_gas_limit;
+        cfg.optimism = true;
 
         let mut env = revm::primitives::Env {
             cfg,

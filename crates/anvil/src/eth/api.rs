@@ -898,7 +898,7 @@ impl EthApi {
 
         let on_chain_nonce = self.backend.current_nonce(*pending_transaction.sender()).await?;
         let from = *pending_transaction.sender();
-        let nonce = *pending_transaction.transaction.nonce();
+        let nonce = pending_transaction.transaction.nonce();
         let requires = required_marker(nonce, on_chain_nonce, from);
 
         let priority = self.transaction_priority(&pending_transaction.transaction);
@@ -1843,16 +1843,16 @@ impl EthApi {
                             // insert revert reason if failure
                             if receipt.inner.status.unwrap_or_default().as_u64() == 0 {
                                 if let Some(reason) = decode_revert_reason(&output) {
-                                    tx.other.insert(
-                                        "revertReason".to_string(),
-                                        serde_json::to_value(reason).expect("Infallible"),
-                                    );
+                                    // tx.other.insert(
+                                    //     "revertReason".to_string(),
+                                    //     serde_json::to_value(reason).expect("Infallible"),
+                                    // );
                                 }
                             }
-                            tx.other.insert(
-                                "output".to_string(),
-                                serde_json::to_value(output).expect("Infallible"),
-                            );
+                            // tx.other.insert(
+                            //     "output".to_string(),
+                            //     serde_json::to_value(output).expect("Infallible"),
+                            // );
                         }
                     }
                 }
@@ -2428,6 +2428,10 @@ impl EthApi {
                 }
                 TypedTransactionRequest::EIP1559(m)
             }
+            Some(TypedTransactionRequest::OpDeposit(mut m)) => {
+                m.gas_limit = gas_limit;
+                TypedTransactionRequest::OpDeposit(m)
+            }
             _ => return Err(BlockchainError::FailedToDecodeTransaction),
         };
         Ok(request)
@@ -2504,6 +2508,7 @@ impl EthApi {
         match &tx {
             TypedTransaction::EIP2930(_) => self.backend.ensure_eip2930_active(),
             TypedTransaction::EIP1559(_) => self.backend.ensure_eip1559_active(),
+            TypedTransaction::OpDeposit(_) => self.backend.ensure_op_deposits_active(),
             TypedTransaction::Legacy(_) => Ok(()),
         }
     }
@@ -2589,6 +2594,10 @@ fn determine_base_gas_by_kind(request: EthTransactionRequest) -> U256 {
                 TransactionKind::Create => MIN_CREATE_GAS,
             },
             TypedTransactionRequest::EIP2930(req) => match req.kind {
+                TransactionKind::Call(_) => MIN_TRANSACTION_GAS,
+                TransactionKind::Create => MIN_CREATE_GAS,
+            },
+            TypedTransactionRequest::OpDeposit(req) => match req.kind {
                 TransactionKind::Call(_) => MIN_TRANSACTION_GAS,
                 TransactionKind::Create => MIN_CREATE_GAS,
             },

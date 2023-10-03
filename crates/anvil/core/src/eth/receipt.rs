@@ -94,6 +94,7 @@ impl Decodable for EIP658Receipt {
 // same underlying data structure
 pub type EIP2930Receipt = EIP658Receipt;
 pub type EIP1559Receipt = EIP658Receipt;
+pub type OpDepositReceipt = EIP658Receipt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -104,6 +105,8 @@ pub enum TypedReceipt {
     EIP2930(EIP2930Receipt),
     /// EIP-1559 receipt
     EIP1559(EIP1559Receipt),
+    /// op-stack deposit receipt
+    OpDeposit(OpDepositReceipt),
 }
 
 // == impl TypedReceipt ==
@@ -112,7 +115,7 @@ impl TypedReceipt {
     /// Returns the gas used by the transactions
     pub fn gas_used(&self) -> U256 {
         match self {
-            TypedReceipt::Legacy(r) | TypedReceipt::EIP2930(r) | TypedReceipt::EIP1559(r) => {
+            TypedReceipt::Legacy(r) | TypedReceipt::EIP2930(r) | TypedReceipt::EIP1559(r) | TypedReceipt::OpDeposit(r) => {
                 r.gas_used
             }
         }
@@ -121,7 +124,7 @@ impl TypedReceipt {
     /// Returns the gas used by the transactions
     pub fn logs_bloom(&self) -> &Bloom {
         match self {
-            TypedReceipt::Legacy(r) | TypedReceipt::EIP2930(r) | TypedReceipt::EIP1559(r) => {
+            TypedReceipt::Legacy(r) | TypedReceipt::EIP2930(r) | TypedReceipt::EIP1559(r) | TypedReceipt::OpDeposit(r) => {
                 &r.logs_bloom
             }
         }
@@ -134,6 +137,7 @@ impl Encodable for TypedReceipt {
             TypedReceipt::Legacy(r) => r.rlp_append(s),
             TypedReceipt::EIP2930(r) => enveloped(1, r, s),
             TypedReceipt::EIP1559(r) => enveloped(2, r, s),
+            TypedReceipt::OpDeposit(r) => enveloped(0x7E, r, s),
         }
     }
 }
@@ -171,6 +175,7 @@ impl open_fastrlp::Encodable for TypedReceipt {
                 let payload_len = match receipt {
                     TypedReceipt::EIP2930(r) => r.length() + 1,
                     TypedReceipt::EIP1559(r) => r.length() + 1,
+                    TypedReceipt::OpDeposit(r) => r.length() + 1,
                     _ => unreachable!("receipt already matched"),
                 };
 
@@ -188,6 +193,7 @@ impl open_fastrlp::Encodable for TypedReceipt {
                 let payload_len = match receipt {
                     TypedReceipt::EIP2930(r) => r.length() + 1,
                     TypedReceipt::EIP1559(r) => r.length() + 1,
+                    TypedReceipt::OpDeposit(r) => r.length() + 1,
                     _ => unreachable!("receipt already matched"),
                 };
 
@@ -206,6 +212,14 @@ impl open_fastrlp::Encodable for TypedReceipt {
 
                         receipt_string_header.encode(out);
                         out.put_u8(0x02);
+                        r.encode(out);
+                    }
+                    TypedReceipt::OpDeposit(r) => {
+                        let receipt_string_header =
+                            Header { list: false, payload_length: payload_len };
+
+                        receipt_string_header.encode(out);
+                        out.put_u8(0x7E);
                         r.encode(out);
                     }
                     _ => unreachable!("receipt already matched"),
@@ -244,6 +258,10 @@ impl open_fastrlp::Decodable for TypedReceipt {
                     buf.advance(1);
                     <EIP1559Receipt as open_fastrlp::Decodable>::decode(buf)
                         .map(TypedReceipt::EIP1559)
+                } else if receipt_type == 0x7E {
+                    buf.advance(1);
+                    <OpDepositReceipt as open_fastrlp::Decodable>::decode(buf)
+                        .map(TypedReceipt::OpDeposit)
                 } else {
                     Err(open_fastrlp::DecodeError::Custom("invalid receipt type"))
                 }
@@ -264,6 +282,7 @@ impl From<TypedReceipt> for EIP658Receipt {
             TypedReceipt::Legacy(receipt) => receipt,
             TypedReceipt::EIP2930(receipt) => receipt,
             TypedReceipt::EIP1559(receipt) => receipt,
+            TypedReceipt::OpDeposit(receipt) => receipt,
         }
     }
 }

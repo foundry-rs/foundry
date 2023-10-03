@@ -8,7 +8,7 @@ use crate::{
 };
 use anvil_core::eth::{
     block::{Block, BlockInfo, Header, PartialHeader},
-    receipt::{EIP1559Receipt, EIP2930Receipt, EIP658Receipt, Log, TypedReceipt},
+    receipt::{EIP1559Receipt, EIP2930Receipt, EIP658Receipt, OpDepositReceipt, Log, TypedReceipt},
     transaction::{PendingTransaction, TransactionInfo, TypedTransaction},
     trie,
 };
@@ -66,6 +66,12 @@ impl ExecutedTransaction {
                 logs,
             }),
             TypedTransaction::EIP1559(_) => TypedReceipt::EIP1559(EIP1559Receipt {
+                status_code,
+                gas_used: used_gas,
+                logs_bloom: bloom,
+                logs,
+            }),
+            TypedTransaction::OpDeposit(_) => TypedReceipt::OpDeposit(OpDepositReceipt {
                 status_code,
                 gas_used: used_gas,
                 logs_bloom: bloom,
