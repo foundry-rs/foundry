@@ -187,7 +187,7 @@ ethers-middleware = { git = "https://github.com/gakonst/ethers-rs" }
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs" }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs" }
 
-revm = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
-revm-interpreter = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
-revm-precompile = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
-revm-primitives = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
+revm = { git = "https://github.com/bluealloy/revm/", branch = "main" }
+revm-interpreter = { git = "https://github.com/bluealloy/revm/", branch = "main" }
+revm-precompile = { git = "https://github.com/bluealloy/revm/", branch = "main" }
+revm-primitives = { git = "https://github.com/bluealloy/revm/", branch = "main" }
