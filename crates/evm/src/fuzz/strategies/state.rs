@@ -278,7 +278,7 @@ pub fn collect_created_contracts(
                         {
                             created_contracts.push(*address);
                             writable_targeted.insert(
-                                address.to_ethers(),
+                                *address,
                                 (artifact.name.clone(), abi.clone(), functions),
                             );
                         }

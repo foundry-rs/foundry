@@ -1,3 +1,5 @@
+use std::ops::{Sub, Add};
+
 use ethers::core::rand::Rng;
 use proptest::{
     strategy::{NewTree, Strategy, ValueTree},
@@ -114,12 +116,12 @@ impl IntStrategy {
         let rng = runner.rng();
 
         let offset = I256::from_raw(U256::from(rng.gen_range(0..4)));
-        let umax: U256 = (U256::from(1u8) << U256::from(self.bits - 1)) - 1;
+        let umax: U256 = (U256::from(1u8).rotate_left(self.bits - 1)).sub(U256::from(1u8));
         // Choose if we want values around min, -0, +0, or max
         let kind = rng.gen_range(0..4);
         let start = match kind {
-            0 => I256::overflowing_from_sign_and_abs(Sign::Negative, umax + 1).0 + offset,
-            1 => -offset - I256::one(),
+            0 => I256::overflowing_from_sign_and_abs(Sign::Negative, umax.add(U256::from(1))).0 + offset,
+            1 => -offset - I256::ONE,
             2 => offset,
             3 => I256::overflowing_from_sign_and_abs(Sign::Positive, umax).0 - offset,
             _ => unreachable!(),
@@ -170,7 +172,7 @@ impl IntStrategy {
         let sign = if rng.gen_bool(0.5) { Sign::Positive } else { Sign::Negative };
         // we have a small bias here, i.e. intN::min will never be generated
         // but it's ok since it's generated in `fn generate_edge_tree(...)`
-        let (start, _) = I256::overflowing_from_sign_and_abs(sign, U256::from(inner));
+        let (start, _) = I256::overflowing_from_sign_and_abs(sign, U256::from_limbs(inner));
 
         Ok(IntValueTree::new(start, false))
     }

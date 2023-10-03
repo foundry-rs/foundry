@@ -1,7 +1,6 @@
 use super::state::EvmFuzzState;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{Address, I256, U256, FixedBytes};
-use foundry_utils::types::ToAlloy;
 use proptest::prelude::*;
 
 /// The max length of arrays we fuzz for is 256.
@@ -19,10 +18,10 @@ pub fn fuzz_param(param: &DynSolType) -> BoxedStrategy<DynSolValue> {
         }
         DynSolType::Bytes => any::<Vec<u8>>().prop_map(|x| DynSolValue::Bytes(x)).boxed(),
         DynSolType::Int(n) => {
-            super::IntStrategy::new(*n, vec![]).prop_map(|x| DynSolValue::Int(x.to_alloy(), 256)).boxed()
+            super::IntStrategy::new(*n, vec![]).prop_map(|x| DynSolValue::Int(x, 256)).boxed()
         }
         DynSolType::Uint(n) => {
-            super::UintStrategy::new(*n, vec![]).prop_map(|x| DynSolValue::Uint(x.to_alloy(), 256)).boxed()
+            super::UintStrategy::new(*n, vec![]).prop_map(|x| DynSolValue::Uint(x, 256)).boxed()
         }
         DynSolType::Bool => any::<bool>().prop_map(|x| DynSolValue::Bool(x)).boxed(),
         DynSolType::String => any::<Vec<u8>>()

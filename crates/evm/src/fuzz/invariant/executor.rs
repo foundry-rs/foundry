@@ -151,8 +151,8 @@ impl<'a> InvariantExecutor<'a> {
                 // Executes the call from the randomly generated sequence.
                 let call_result = executor
                     .call_raw(
-                        sender,
-                        address,
+                        *sender,
+                        *address,
                         calldata.0.clone().into(),
                         U256::ZERO,
                     )
@@ -288,7 +288,7 @@ impl<'a> InvariantExecutor<'a> {
         // EVM execution.
         let mut call_generator = None;
         if self.config.call_override {
-            let target_contract_ref = Arc::new(RwLock::new(Address::zero()));
+            let target_contract_ref = Arc::new(RwLock::new(Address::ZERO));
 
             call_generator = Some(RandomCallGenerator::new(
                 invariant_contract.address,
@@ -601,7 +601,7 @@ fn collect_data(
     // Verify it has no code.
     let mut has_code = false;
     if let Some(Some(code)) =
-        state_changeset.get(&sender).map(|account| account.info.code.as_ref())
+        state_changeset.get(sender).map(|account| account.info.code.as_ref())
     {
         has_code = !code.is_empty();
     }
@@ -609,14 +609,14 @@ fn collect_data(
     // We keep the nonce changes to apply later.
     let mut sender_changeset = None;
     if !has_code {
-        sender_changeset = state_changeset.remove(&sender);
+        sender_changeset = state_changeset.remove(sender);
     }
 
     collect_state_from_call(&call_result.logs, &*state_changeset, fuzz_state, config);
 
     // Re-add changes
     if let Some(changed) = sender_changeset {
-        state_changeset.insert(sender, changed);
+        state_changeset.insert(*sender, changed);
     }
 }
 
@@ -639,7 +639,7 @@ fn can_continue(
 
     // Detect handler assertion failures first.
     let handlers_failed = targeted_contracts.lock().iter().any(|contract| {
-        !executor.is_success(contract.0, false, state_changeset.clone(), false)
+        !executor.is_success(*contract.0, false, state_changeset.clone(), false)
     });
 
     // Assert invariants IFF the call did not revert and the handlers did not fail.

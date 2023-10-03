@@ -4,10 +4,8 @@ use crate::fuzz::{
     strategies::fuzz_param,
     EvmFuzzState,
 };
-use alloy_dyn_abi::DynSolType;
 use alloy_primitives::{Address, Bytes};
 use alloy_json_abi::{JsonAbi as Abi, Function};
-use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::RwLock;
 use proptest::prelude::*;
 pub use proptest::test_runner::Config as FuzzConfig;
@@ -112,13 +110,13 @@ fn select_random_sender(
         ),
     ])
     // Too many exclusions can slow down testing.
-    .prop_filter("senders not allowed", move |addr| !senders_ref.excluded.contains(&addr.to_ethers()))
+    .prop_filter("senders not allowed", move |addr| !senders_ref.excluded.contains(addr))
     .boxed();
 
     if !senders.targeted.is_empty() {
         any::<prop::sample::Selector>()
             .prop_map(move |selector| *selector.select(&*senders.targeted))
-            .prop_map(|s| s.to_alloy())
+            .prop_map(|s| s)
             .boxed()
     } else {
         fuzz_strategy
