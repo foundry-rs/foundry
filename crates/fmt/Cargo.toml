@@ -22,7 +22,7 @@ solang-parser.workspace = true
 # misc
 itertools.workspace = true
 thiserror = "1"
-ariadne = "0.2"
+ariadne = "0.3"
 tracing = "0.1"
 
 [dev-dependencies]

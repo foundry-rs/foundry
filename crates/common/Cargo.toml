@@ -26,7 +26,7 @@ reqwest = { version = "0.11", default-features = false }
 
 # cli
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
-comfy-table = "6"
+comfy-table = "7"
 tracing = "0.1"
 yansi = "0.5"
 tempfile = "3"
@@ -48,7 +48,6 @@ tokio = "1"
 url = "2"
 # Using const-hex instead of hex for speed
 hex.workspace = true
-
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
