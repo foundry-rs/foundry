@@ -2046,7 +2046,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#70e5f022b1bd94c26dbc85d57b5342e5e23ba8c2"
+source = "git+https://github.com/gakonst/ethers-rs#edf3353cb419451a5eb2e89685e3e26e10783670"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -2061,7 +2061,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#70e5f022b1bd94c26dbc85d57b5342e5e23ba8c2"
+source = "git+https://github.com/gakonst/ethers-rs#edf3353cb419451a5eb2e89685e3e26e10783670"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -2072,7 +2072,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#70e5f022b1bd94c26dbc85d57b5342e5e23ba8c2"
+source = "git+https://github.com/gakonst/ethers-rs#edf3353cb419451a5eb2e89685e3e26e10783670"
 dependencies = [
  "const-hex",
  "ethers-contract-abigen",
@@ -2090,7 +2090,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#70e5f022b1bd94c26dbc85d57b5342e5e23ba8c2"
+source = "git+https://github.com/gakonst/ethers-rs#edf3353cb419451a5eb2e89685e3e26e10783670"
 dependencies = [
  "Inflector",
  "const-hex",
@@ -2113,7 +2113,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#70e5f022b1bd94c26dbc85d57b5342e5e23ba8c2"
+source = "git+https://github.com/gakonst/ethers-rs#edf3353cb419451a5eb2e89685e3e26e10783670"
 dependencies = [
  "Inflector",
  "const-hex",
@@ -2128,7 +2128,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#70e5f022b1bd94c26dbc85d57b5342e5e23ba8c2"
+source = "git+https://github.com/gakonst/ethers-rs#edf3353cb419451a5eb2e89685e3e26e10783670"
 dependencies = [
  "arrayvec",
  "bytes",
@@ -2157,7 +2157,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#70e5f022b1bd94c26dbc85d57b5342e5e23ba8c2"
+source = "git+https://github.com/gakonst/ethers-rs#edf3353cb419451a5eb2e89685e3e26e10783670"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -2172,7 +2172,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#70e5f022b1bd94c26dbc85d57b5342e5e23ba8c2"
+source = "git+https://github.com/gakonst/ethers-rs#edf3353cb419451a5eb2e89685e3e26e10783670"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -2198,7 +2198,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#70e5f022b1bd94c26dbc85d57b5342e5e23ba8c2"
+source = "git+https://github.com/gakonst/ethers-rs#edf3353cb419451a5eb2e89685e3e26e10783670"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -2236,7 +2236,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#70e5f022b1bd94c26dbc85d57b5342e5e23ba8c2"
+source = "git+https://github.com/gakonst/ethers-rs#edf3353cb419451a5eb2e89685e3e26e10783670"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -2249,6 +2249,7 @@ dependencies = [
  "futures-executor",
  "futures-util",
  "home",
+ "protobuf",
  "rand 0.8.5",
  "rusoto_core",
  "rusoto_kms",
@@ -2263,7 +2264,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#70e5f022b1bd94c26dbc85d57b5342e5e23ba8c2"
+source = "git+https://github.com/gakonst/ethers-rs#edf3353cb419451a5eb2e89685e3e26e10783670"
 dependencies = [
  "cfg-if",
  "const-hex",
@@ -5171,9 +5172,9 @@ dependencies = [
 
 [[package]]
 name = "protobuf"
-version = "3.3.0"
+version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b65f4a8ec18723a734e5dc09c173e0abf9690432da5340285d536edcb4dac190"
+checksum = "b55bad9126f378a853655831eb7363b7b01b81d19f8cb1218861086ca4a1a61e"
 dependencies = [
  "once_cell",
  "protobuf-support",
@@ -5182,9 +5183,9 @@ dependencies = [
 
 [[package]]
 name = "protobuf-support"
-version = "3.3.0"
+version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6872f4d4f4b98303239a2b5838f5bbbb77b01ffc892d627957f37a22d7cfe69c"
+checksum = "a5d4d7b8601c814cfb36bcebb79f0e61e45e1e93640cf778837833bbed05c372"
 dependencies = [
  "thiserror",
 ]

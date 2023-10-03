@@ -49,6 +49,5 @@ url = "2"
 # Using const-hex instead of hex for speed
 hex.workspace = true
 
-
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
