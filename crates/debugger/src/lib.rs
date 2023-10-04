@@ -858,16 +858,19 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
         f.render_widget(paragraph, area);
     }
 
+    /// The memory_access variable stores the index on the stack that indicates the memory
+    /// offset/size accessed by the given opcode:
+    ///   (read memory offset, read memory size, write memory offset, write memory size)
+    ///   >= 1: the stack index
+    ///   0: no memory access
+    ///   -1: a fixed size of 32 bytes
+    ///   -2: a fixed size of 1 byte
+    /// The return value is a tuple about accessed memory region by the given opcode:
+    ///   (read memory offset, read memory size, write memory offset, write memory size)
     fn get_memory_access(
         op: u8,
         stack: &Vec<U256>,
     ) -> (Option<usize>, Option<usize>, Option<usize>, Option<usize>) {
-        // The index on the stack that indicates the memory offset/size to be accessed
-        // (read memory offset, read memory size, write memory offset, write memory size)
-        // >= 1: the stack index
-        // 0: no memory access
-        // -1: a fixed size of 32 bytes
-        // -2: a fixed size of 1 byte
         let memory_access = match op {
             opcode::KECCAK256 | opcode::RETURN | opcode::REVERT => (1, 2, 0, 0),
             opcode::CALLDATACOPY | opcode::CODECOPY | opcode::RETURNDATACOPY => (0, 0, 1, 3),
@@ -919,8 +922,8 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
         let max_i = memory.len() / 32;
         let min_len = format!("{:x}", max_i * 32).len();
 
-        // color memory words based on write/read
-        let mut word: Option<usize> = None;
+        // color memory region based on write/read
+        let mut offset: Option<usize> = None;
         let mut size: Option<usize> = None;
         let mut color = None;
         if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
@@ -929,11 +932,11 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                 let (read_offset, read_size, write_offset, write_size) =
                     Tui::get_memory_access(op, &debug_steps[current_step].stack);
                 if read_offset.is_some() {
-                    word = read_offset;
+                    offset = read_offset;
                     size = read_size;
                     color = Some(Color::Cyan);
                 } else if write_offset.is_some() {
-                    word = write_offset;
+                    offset = write_offset;
                     size = write_size;
                     color = Some(Color::Red);
                 }
@@ -947,7 +950,7 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                 let (_, _, write_offset, write_size) =
                     Tui::get_memory_access(op, &debug_steps[prev_step].stack);
                 if write_offset.is_some() {
-                    word = write_offset;
+                    offset = write_offset;
                     size = write_size;
                     color = Some(Color::Green);
                 }
@@ -969,11 +972,15 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                     .map(|(j, byte)| {
                         Span::styled(
                             format!("{byte:02x} "),
-                            if let (Some(w), Some(size), Some(color)) = (word, size, color) {
-                                if (i == w / 32 && j >= w % 32) ||
-                                    (i > w / 32 && i < (w + size - 1) / 32) ||
-                                    (i == (w + size - 1) / 32 && j <= (w + size - 1) % 32)
+                            if let (Some(offset), Some(size), Some(color)) = (offset, size, color) {
+                                if (i == offset / 32 && j >= offset % 32) ||
+                                    (i > offset / 32 && i < (offset + size - 1) / 32) ||
+                                    (i == (offset + size - 1) / 32 &&
+                                        j <= (offset + size - 1) % 32)
                                 {
+                                    // [offset, offset + size] is the memory region to be colored.
+                                    // If a byte at row i and column j in the memory panel
+                                    // falls in this region, set the color.
                                     Style::default().fg(color)
                                 } else if *byte == 0 {
                                     Style::default().add_modifier(Modifier::DIM)
