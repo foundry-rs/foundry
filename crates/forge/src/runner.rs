@@ -327,7 +327,7 @@ impl<'a> ContractRunner<'a> {
         // Run unit test
         let mut executor = self.executor.clone();
         let start = Instant::now();
-        let mut debug_arena = None;
+        let debug_arena;
         let (reverted, reason, gas, stipend, coverage, state_changeset, breakpoints) =
             match executor.execute_test::<(), _, _>(
                 self.sender.to_alloy(),
@@ -362,6 +362,7 @@ impl<'a> ContractRunner<'a> {
                     labeled_addresses
                         .extend(err.labels.into_iter().map(|l| (l.0.to_ethers(), l.1)));
                     logs.extend(err.logs);
+                    debug_arena = err.debug;
                     (
                         err.reverted,
                         Some(err.reason),
