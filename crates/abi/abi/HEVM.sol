@@ -5,7 +5,6 @@ struct DirEntry { string errorMessage; string path; uint64 depth; bool isDir; bo
 struct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created; }
 struct Wallet { address addr; uint256 publicKeyX; uint256 publicKeyY; uint256 privateKey; }
 struct FfiResult { int32 exitCode; bytes stdout; bytes stderr; }
-struct RecordedAccesses { bytes32[] reads; bytes32[] writes; }
 
 allowCheatcodes(address)
 
@@ -82,7 +81,7 @@ expectRevert()
 expectRevert(bytes)
 expectRevert(bytes4)
 record()
-accesses(address)(RecordedAccesses)
+accesses(address)(bytes32[], bytes32[])
 skip(bool)
 
 recordLogs()
