@@ -9,7 +9,14 @@ use foundry_utils::types::ToAlloy;
 use revm::{Database, EVMData};
 use serde::Deserialize;
 use serde_json::Value;
-use std::{collections::BTreeMap, env, path::Path, process::Command, str::FromStr, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    collections::BTreeMap,
+    env,
+    path::Path,
+    process::Command,
+    str::FromStr,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 /// Invokes a `Command` with the given args and returns the exit code, stdout, and stderr.
 ///

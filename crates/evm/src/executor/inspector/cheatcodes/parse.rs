@@ -85,12 +85,24 @@ pub fn apply<DB: Database>(
     call: &HEVMCalls,
 ) -> Option<Result> {
     Some(match call {
-        HEVMCalls::ToString0(inner) => Ok(DynSolValue::String(inner.0.pretty()).abi_encode().into()),
-        HEVMCalls::ToString1(inner) => Ok(DynSolValue::String(inner.0.pretty()).abi_encode().into()),
-        HEVMCalls::ToString2(inner) => Ok(DynSolValue::String(inner.0.pretty()).abi_encode().into()),
-        HEVMCalls::ToString3(inner) => Ok(DynSolValue::String(inner.0.pretty()).abi_encode().into()),
-        HEVMCalls::ToString4(inner) => Ok(DynSolValue::String(inner.0.pretty()).abi_encode().into()),
-        HEVMCalls::ToString5(inner) => Ok(DynSolValue::String(inner.0.pretty()).abi_encode().into()),
+        HEVMCalls::ToString0(inner) => {
+            Ok(DynSolValue::String(inner.0.pretty()).abi_encode().into())
+        }
+        HEVMCalls::ToString1(inner) => {
+            Ok(DynSolValue::String(inner.0.pretty()).abi_encode().into())
+        }
+        HEVMCalls::ToString2(inner) => {
+            Ok(DynSolValue::String(inner.0.pretty()).abi_encode().into())
+        }
+        HEVMCalls::ToString3(inner) => {
+            Ok(DynSolValue::String(inner.0.pretty()).abi_encode().into())
+        }
+        HEVMCalls::ToString4(inner) => {
+            Ok(DynSolValue::String(inner.0.pretty()).abi_encode().into())
+        }
+        HEVMCalls::ToString5(inner) => {
+            Ok(DynSolValue::String(inner.0.pretty()).abi_encode().into())
+        }
         HEVMCalls::ParseBytes(inner) => parse(&inner.0, &DynSolType::Bytes),
         HEVMCalls::ParseAddress(inner) => parse(&inner.0, &DynSolType::Address),
         HEVMCalls::ParseUint(inner) => parse(&inner.0, &DynSolType::Uint(256)),

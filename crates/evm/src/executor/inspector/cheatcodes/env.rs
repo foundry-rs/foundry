@@ -307,8 +307,7 @@ fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
                             entry
                                 .inner
                                 .topics()
-                                .clone()
-                                .into_iter()
+                                .iter()
                                 .map(|t| DynSolValue::FixedBytes(*t, 32))
                                 .collect(),
                         ),
