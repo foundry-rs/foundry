@@ -60,7 +60,23 @@ pub struct MultiContractRunner {
 
 impl MultiContractRunner {
     /// Returns the number of matching tests
-    pub fn count_filtered_tests(&self, filter: &impl TestFilter) -> usize {
+    pub fn matching_test_function_count(&self, filter: &impl TestFilter) -> usize {
+        self.matching_test_functions(filter).count()
+    }
+
+    /// Returns all test functions matching the filter
+    pub fn get_matching_test_functions<'a>(
+        &'a self,
+        filter: &'a impl TestFilter,
+    ) -> Vec<&Function> {
+        self.matching_test_functions(filter).collect()
+    }
+
+    /// Returns all test functions matching the filter
+    pub fn matching_test_functions<'a>(
+        &'a self,
+        filter: &'a impl TestFilter,
+    ) -> impl Iterator<Item = &Function> {
         self.contracts
             .iter()
             .filter(|(id, _)| {
@@ -70,10 +86,10 @@ impl MultiContractRunner {
             .flat_map(|(_, (abi, _, _))| {
                 abi.functions().filter(|func| filter.matches_test(func.signature()))
             })
-            .count()
     }
 
-    /// Get an iterator over all test functions that matches the filter path and contract name
+    /// Get an iterator over all test contract functions that matches the filter path and contract
+    /// name
     fn filtered_tests<'a>(
         &'a self,
         filter: &'a impl TestFilter,
@@ -93,11 +109,6 @@ impl MultiContractRunner {
             .map(|func| func.name.clone())
             .filter(|name| name.is_test())
             .collect()
-    }
-
-    /// Returns all test functions matching the filter
-    pub fn get_typed_tests<'a>(&'a self, filter: &'a impl TestFilter) -> Vec<&Function> {
-        self.filtered_tests(filter).filter(|func| func.name.is_test()).collect()
     }
 
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))

@@ -326,7 +326,6 @@ impl Executor {
         // Persist the snapshot failure recorded on the fuzz backend wrapper.
         self.backend
             .set_snapshot_failure(self.backend.has_snapshot_failure() || db.has_snapshot_failure());
-
         convert_executed_result(env, inspector, result)
     }
 
