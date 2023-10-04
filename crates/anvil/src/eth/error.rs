@@ -84,7 +84,7 @@ pub enum BlockchainError {
     EIP1559TransactionUnsupportedAtHardfork,
     #[error("Access list received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork berlin' or later.")]
     EIP2930TransactionUnsupportedAtHardfork,
-    #[error("op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--op'.")]
+    #[error("op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'.")]
     OpDepositTransactionUnsupported,
     #[error("Excess blob gas not set.")]
     ExcessBlobGasNotSet,

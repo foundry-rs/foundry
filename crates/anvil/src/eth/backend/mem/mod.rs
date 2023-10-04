@@ -555,7 +555,7 @@ impl Backend {
 
     /// Returns true if op-stack deposits are active
     pub fn is_op_deposits(&self) -> bool {
-        true
+        self.env.read().cfg.optimism
     }
 
     /// Returns an error if EIP1559 is not active (pre Berlin)
@@ -2195,7 +2195,7 @@ fn get_pool_transactions_nonce(
         .filter(|tx| *tx.pending_transaction.sender() == address)
         .reduce(|accum, item| {
             let nonce = item.pending_transaction.nonce();
-            if nonce.gt(&accum.pending_transaction.nonce()) {
+            if nonce.gt(accum.pending_transaction.nonce()) {
                 item
             } else {
                 accum
