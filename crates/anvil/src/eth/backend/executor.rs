@@ -38,6 +38,7 @@ pub struct ExecutedTransaction {
     gas_used: u64,
     logs: Vec<Log>,
     traces: Vec<CallTraceNode>,
+    nonce: u64,
 }
 
 // == impl ExecutedTransaction ==
@@ -177,6 +178,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                     Some(Output::Create(b, _)) => Some(ethers::types::Bytes(b.0)),
                     _ => None,
                 },
+                nonce: tx.nonce,
             };
 
             transaction_infos.push(info);
@@ -255,6 +257,8 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             return Some(TransactionExecutionOutcome::Invalid(transaction, err))
         }
 
+        let nonce = account.nonce;
+
         let mut evm = revm::EVM::new();
         evm.env = env;
         evm.database(&mut self.db);
@@ -318,6 +322,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             gas_used,
             logs: logs.unwrap_or_default().into_iter().map(Into::into).collect(),
             traces: inspector.tracer.unwrap_or_default().traces.arena,
+            nonce,
         };
 
         Some(TransactionExecutionOutcome::Executed(tx))

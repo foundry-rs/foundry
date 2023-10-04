@@ -95,7 +95,6 @@ pub struct EthTransactionRequest {
 impl EthTransactionRequest {
     /// Converts the request into a [TypedTransactionRequest]
     pub fn into_typed_request(self) -> Option<TypedTransactionRequest> {
-        println!("into_typed_request({0})", self.from?.to_string());
         let EthTransactionRequest {
             from,
             to,
@@ -156,7 +155,6 @@ impl EthTransactionRequest {
             }
             // op-stack deposit
             (Some(126), None, None, None, None) => {
-                println!("into_typed_request()");
                 Some(TypedTransactionRequest::OpDeposit(OpDepositTransactionRequest {
                     source_hash: source_hash.unwrap_or_default(),
                     from: from.unwrap_or_default(),
@@ -716,7 +714,7 @@ impl TypedTransaction {
             TypedTransaction::OpDeposit(t) => TransactionEssentials {
                 kind: t.kind,
                 input: t.input.clone(),
-                nonce: t.nonce(),
+                nonce: t.nonce,
                 gas_limit: t.gas_limit,
                 gas_price: Some(U256::from(0)),
                 max_fee_per_gas: None,
@@ -728,7 +726,7 @@ impl TypedTransaction {
         }
     }
 
-    pub fn nonce(&self) -> U256 {
+    pub fn nonce(&self) -> &U256 {
         match self {
             TypedTransaction::Legacy(t) => t.nonce(),
             TypedTransaction::EIP2930(t) => t.nonce(),
@@ -834,7 +832,7 @@ impl TypedTransaction {
                 Signature { r, s, v: v.into() }
             }
             TypedTransaction::OpDeposit(_) => {
-                Signature { r: U256::from(0), s: U256::from(0), v: 0 }
+                Signature { r: U256::zero(), s: U256::zero(), v: 0 }
             },
         }
     }
@@ -1003,8 +1001,8 @@ pub struct LegacyTransaction {
 }
 
 impl LegacyTransaction {
-    pub fn nonce(&self) -> U256 {
-        self.nonce
+    pub fn nonce(&self) -> &U256 {
+        &self.nonce
     }
 
     pub fn hash(&self) -> H256 {
@@ -1090,8 +1088,8 @@ pub struct EIP2930Transaction {
 }
 
 impl EIP2930Transaction {
-    pub fn nonce(&self) -> U256 {
-        self.nonce
+    pub fn nonce(&self) -> &U256 {
+        &self.nonce
     }
 
     pub fn hash(&self) -> H256 {
@@ -1179,8 +1177,8 @@ pub struct EIP1559Transaction {
 }
 
 impl EIP1559Transaction {
-    pub fn nonce(&self) -> U256 {
-        self.nonce
+    pub fn nonce(&self) -> &U256 {
+        &self.nonce
     }
 
     pub fn hash(&self) -> H256 {
@@ -1255,6 +1253,7 @@ impl Decodable for EIP1559Transaction {
 #[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OpDepositTransaction {
+    pub nonce: U256,
     pub source_hash: H256,
     pub from: Address,
     pub kind: TransactionKind,
@@ -1266,8 +1265,8 @@ pub struct OpDepositTransaction {
 }
 
 impl OpDepositTransaction {
-    pub fn nonce(&self) -> U256 {
-        U256::from(0)
+    pub fn nonce(&self) -> &U256 {
+        &self.nonce
     }
 
     pub fn hash(&self) -> H256 {
@@ -1282,16 +1281,6 @@ impl OpDepositTransaction {
     pub fn chain_id(&self) -> Option<u64> {
         None
     }
-
-    // /// See <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
-    // /// > If you do, then the v of the signature MUST be set to {0,1} + CHAIN_ID * 2 + 35 where
-    // /// > {0,1} is the parity of the y value of the curve point for which r is the x-value in the
-    // /// > secp256k1 signing process.
-    // pub fn meets_eip155(&self, chain_id: u64) -> bool {
-    //     let double_chain_id = chain_id.saturating_mul(2);
-    //     let v = self.signature.v;
-    //     v == double_chain_id + 35 || v == double_chain_id + 36
-    // }
 }
 
 impl Encodable for OpDepositTransaction {
@@ -1323,6 +1312,7 @@ impl Decodable for OpDepositTransaction {
             gas_limit: rlp.val_at(5)?,
             is_system_tx: rlp.val_at(6)?,
             input: rlp.val_at::<Vec<u8>>(7)?.into(),
+            nonce: U256::from(0),
         })
     }
 }
@@ -1374,8 +1364,8 @@ impl PendingTransaction {
         Self { hash, transaction, sender }
     }
 
-    pub fn nonce(&self) -> U256 {
-        self.transaction.nonce()
+    pub fn nonce(&self) -> &U256 {
+        &self.transaction.nonce()
     }
 
     pub fn hash(&self) -> &TxHash {
@@ -1470,13 +1460,13 @@ impl PendingTransaction {
             }
             TypedTransaction::OpDeposit(tx) => {
                 let chain_id = tx.chain_id();
-                let OpDepositTransaction { source_hash, gas_limit, value, kind, mint, input, is_system_tx, .. } = tx;
+                let OpDepositTransaction { nonce, source_hash, gas_limit, value, kind, mint, input, is_system_tx, .. } = tx;
                 TxEnv {
                     caller: caller.to_alloy(),
                     transact_to: transact_to(kind),
                     data: alloy_primitives::Bytes(input.0.clone()),
                     chain_id,
-                    nonce: Some(tx.nonce().as_u64()),
+                    nonce: Some(nonce.as_u64()),
                     value: (*value).to_alloy(),
                     gas_price: 0.to_alloy(),
                     gas_priority_fee: None,
@@ -1508,6 +1498,7 @@ pub struct TransactionInfo {
     pub traces: CallTraceArena,
     pub exit: InstructionResult,
     pub out: Option<Bytes>,
+    pub nonce: u64,
 }
 
 // === impl TransactionInfo ===

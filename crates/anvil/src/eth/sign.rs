@@ -12,7 +12,7 @@ use ethers::{
         transaction::{
             eip2718::TypedTransaction as EthersTypedTransactionRequest, eip712::TypedData,
         },
-        Signature, H256,
+        Signature, H256, U256,
     },
 };
 use std::collections::HashMap;
@@ -208,6 +208,7 @@ pub fn build_typed_transaction(
                 source_hash,
                 mint,
                 is_system_tx,
+                nonce: U256::zero(),
             })
         }
     };

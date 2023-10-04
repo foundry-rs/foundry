@@ -162,6 +162,10 @@ impl Decodable for TypedReceipt {
             return rlp::decode(s).map(TypedReceipt::EIP1559)
         }
 
+        if first == 0x7E {
+            return rlp::decode(s).map(TypedReceipt::OpDeposit)
+        }
+
         Err(DecoderError::Custom("unknown receipt type"))
     }
 }

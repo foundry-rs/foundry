@@ -1929,6 +1929,11 @@ impl Backend {
             TypedTransaction::OpDeposit(_) => U256::from(0),
         };
 
+        let mut deposit_nonce: Option<u64> = None;
+        if transaction_type.unwrap_or_default() == 0x7E {
+            deposit_nonce = Some(info.nonce);
+        }
+
         let inner = TransactionReceipt {
             transaction_hash: info.transaction_hash,
             transaction_index: info.transaction_index.into(),
@@ -1970,7 +1975,7 @@ impl Backend {
             logs_bloom,
             transaction_type: transaction_type.map(Into::into),
             effective_gas_price: Some(effective_gas_price),
-            deposit_nonce: None,
+            deposit_nonce,
             l1_fee: None,
             l1_fee_scalar: None,
             l1_gas_price: None,
@@ -2222,12 +2227,6 @@ impl TransactionValidator for Backend {
     ) -> Result<(), InvalidTransactionError> {
         let tx = &pending.transaction;
 
-        // let is_deposit_tx = match &pending.transaction.transaction {
-        //     TypedTransaction::OpDeposit(_) => true,
-        //     default => false,
-        // };
-        let is_deposit_tx = matches!(&pending.transaction.transaction, TypedTransaction::OpDeposit(_));
-
         if let Some(tx_chain_id) = tx.chain_id() {
             let chain_id = self.chain_id();
             if chain_id != tx_chain_id {
@@ -2259,9 +2258,10 @@ impl TransactionValidator for Backend {
         }
 
         // check nonce
+        let is_deposit_tx = matches!(&pending.transaction.transaction, TypedTransaction::OpDeposit(_));
         let nonce: u64 =
-            (tx.nonce()).try_into().map_err(|_| InvalidTransactionError::NonceMaxValue)?;
-        if nonce < account.nonce {
+            (*tx.nonce()).try_into().map_err(|_| InvalidTransactionError::NonceMaxValue)?;
+        if nonce < account.nonce && !is_deposit_tx {
             warn!(target: "backend", "[{:?}] nonce too low", tx.hash());
             return Err(InvalidTransactionError::NonceTooLow)
         }
@@ -2322,6 +2322,9 @@ pub fn transaction_build(
     base_fee: Option<U256>,
 ) -> Transaction {
     let mut transaction: Transaction = eth_transaction.clone().into();
+    if info.is_some() && transaction.transaction_type.unwrap_or(U64::zero()).as_u64() == 0x7E {
+        transaction.nonce = U256::from(info.as_ref().unwrap().nonce);
+    }
 
     if eth_transaction.is_dynamic_fee() {
         if block.is_none() && info.is_none() {

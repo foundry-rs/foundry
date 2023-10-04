@@ -898,7 +898,7 @@ impl EthApi {
 
         let on_chain_nonce = self.backend.current_nonce(*pending_transaction.sender()).await?;
         let from = *pending_transaction.sender();
-        let nonce = pending_transaction.transaction.nonce();
+        let nonce = *pending_transaction.transaction.nonce();
         let requires = required_marker(nonce, on_chain_nonce, from);
 
         let priority = self.transaction_priority(&pending_transaction.transaction);
