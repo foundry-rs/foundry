@@ -42,7 +42,7 @@ pub fn parse_private_key(private_key: U256) -> Result<SigningKey> {
 fn addr(private_key: U256) -> Result {
     let key = parse_private_key(private_key)?;
     let addr = utils::secret_key_to_address(&key);
-    Ok(DynSolValue::Address(addr.to_alloy()).encode().into())
+    Ok(DynSolValue::Address(addr.to_alloy()).abi_encode().into())
 }
 
 fn sign(private_key: U256, digest: B256, chain_id: U256) -> Result {
@@ -65,7 +65,7 @@ fn sign(private_key: U256, digest: B256, chain_id: U256) -> Result {
         DynSolValue::FixedBytes(r_bytes.into(), 32),
         DynSolValue::FixedBytes(s_bytes.into(), 32),
     ])
-    .encode()
+    .abi_encode()
     .into())
 }
 
@@ -94,7 +94,7 @@ fn create_wallet(private_key: U256, label: Option<String>, state: &mut Cheatcode
         DynSolValue::Uint(pub_key_y, 256),
         DynSolValue::Uint(private_key, 256),
     ])
-    .encode()
+    .abi_encode()
     .into())
 }
 
@@ -145,7 +145,7 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
         None => return Err("Failed to parse private key.".to_string().into()),
     };
 
-    Ok(DynSolValue::Uint(private_key, 256).encode().into())
+    Ok(DynSolValue::Uint(private_key, 256).abi_encode().into())
 }
 
 fn derive_key_with_wordlist(mnemonic: &str, path: &str, index: u32, lang: &str) -> Result {
@@ -171,7 +171,7 @@ fn remember_key(state: &mut Cheatcodes, private_key: U256, chain_id: U256) -> Re
 
     state.script_wallets.push(wallet);
 
-    Ok(DynSolValue::Address(address.to_alloy()).encode().into())
+    Ok(DynSolValue::Address(address.to_alloy()).abi_encode().into())
 }
 
 #[instrument(level = "error", name = "util", target = "evm::cheatcodes", skip_all)]
@@ -226,7 +226,7 @@ pub fn apply<DB: Database>(
                 .get(&inner.0.to_alloy())
                 .cloned()
                 .unwrap_or_else(|| format!("unlabeled:{:?}", inner.0));
-            Ok(DynSolValue::String(label).encode().into())
+            Ok(DynSolValue::String(label).abi_encode().into())
         }
         _ => return None,
     })

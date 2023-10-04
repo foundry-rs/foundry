@@ -544,7 +544,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if !self.expected_emits.is_empty() {
             handle_expect_emit(
                 self,
-                RawLog { topics: topics.iter().copied().collect_vec(), data: data.to_vec().into() },
+                RawLog::new_unchecked(topics.iter().copied().collect_vec(), data.to_vec().into()),
                 address,
             );
         }
@@ -553,10 +553,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(storage_recorded_logs) = &mut self.recorded_logs {
             storage_recorded_logs.entries.push(RecordedLog {
                 emitter: *address,
-                inner: RawLog {
-                    topics: topics.iter().copied().collect_vec(),
-                    data: data.to_vec().into(),
-                },
+                inner: RawLog::new_unchecked(
+                    topics.iter().copied().collect_vec(),
+                    data.to_vec().into(),
+                ),
             });
         }
     }
@@ -714,7 +714,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             Gas::new(0),
                             DynSolValue::String("Staticcalls are not allowed after vm.broadcast. Either remove it, or use vm.startBroadcast instead."
                             .to_string())
-                            .encode()
+                            .abi_encode()
                             .into()
                         );
                     }
@@ -822,7 +822,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 return (
                     InstructionResult::Revert,
                     remaining_gas,
-                    DynSolValue::String("Log != expected log".to_string()).encode().into(),
+                    DynSolValue::String("Log != expected log".to_string()).abi_encode().into(),
                 )
             } else {
                 // All emits were found, we're good.
@@ -866,7 +866,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                                 return (
                                     InstructionResult::Revert,
                                     remaining_gas,
-                                    DynSolValue::String(failure_message).encode().into(),
+                                    DynSolValue::String(failure_message).abi_encode().into(),
                                 )
                             }
                         }
@@ -893,7 +893,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                                 return (
                                     InstructionResult::Revert,
                                     remaining_gas,
-                                    DynSolValue::String(failure_message).encode().into(),
+                                    DynSolValue::String(failure_message).abi_encode().into(),
                                 )
                             }
                         }
@@ -914,7 +914,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 return (
                     InstructionResult::Revert,
                     remaining_gas,
-                    DynSolValue::String(failure_message.to_string()).encode().into(),
+                    DynSolValue::String(failure_message.to_string()).abi_encode().into(),
                 )
             }
         }
@@ -926,7 +926,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 return (
                     status,
                     remaining_gas,
-                    DynSolValue::String(err.to_error_msg(self)).encode().into(),
+                    DynSolValue::String(err.to_error_msg(self)).abi_encode().into(),
                 )
             }
         }
@@ -1153,7 +1153,7 @@ mod revert_helper {
             size,
             ranges.iter().map(|r| format!("(0x{:02X}, 0x{:02X}]", r.start, r.end)).join(" ∪ ")
         ))
-        .encode()
+        .abi_encode()
         .into();
         mstore_revert_string(revert_string, interpreter);
     }

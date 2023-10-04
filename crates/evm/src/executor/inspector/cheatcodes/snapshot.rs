@@ -10,7 +10,7 @@ pub fn apply<DB: DatabaseExt>(data: &mut EVMData<'_, DB>, call: &HEVMCalls) -> O
     Some(match call {
         HEVMCalls::Snapshot(_) => {
             Ok(DynSolValue::Uint(data.db.snapshot(&data.journaled_state, data.env), 256)
-                .encode()
+                .abi_encode()
                 .into())
         }
         HEVMCalls::RevertTo(snapshot) => {
@@ -23,7 +23,7 @@ pub fn apply<DB: DatabaseExt>(data: &mut EVMData<'_, DB>, call: &HEVMCalls) -> O
             } else {
                 false
             };
-            Ok(DynSolValue::Bool(res).encode().into())
+            Ok(DynSolValue::Bool(res).abi_encode().into())
         }
         _ => return None,
     })

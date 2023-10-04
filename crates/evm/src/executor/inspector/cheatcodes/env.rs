@@ -238,7 +238,7 @@ fn read_callers(state: &Cheatcodes, default_sender: Address) -> Bytes {
         ]
     };
 
-    DynSolValue::Tuple(data).encode().into()
+    DynSolValue::Tuple(data).abi_encode().into()
 }
 
 #[derive(Clone, Debug, Default)]
@@ -271,11 +271,11 @@ fn accesses(state: &mut Cheatcodes, address: Address) -> Bytes {
             DynSolValue::Array(read_accesses),
             DynSolValue::Array(write_accesses),
         ])
-        .encode_params()
+        .abi_encode_params()
         .into()
     } else {
         DynSolValue::Tuple(vec![DynSolValue::Array(vec![]), DynSolValue::Array(vec![])])
-            .encode_params()
+            .abi_encode_params()
             .into()
     }
 }
@@ -306,10 +306,10 @@ fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
                         DynSolValue::Array(
                             entry
                                 .inner
-                                .topics
+                                .topics()
                                 .clone()
                                 .into_iter()
-                                .map(|t| DynSolValue::FixedBytes(t, 32))
+                                .map(|t| DynSolValue::FixedBytes(*t, 32))
                                 .collect(),
                         ),
                         DynSolValue::Bytes(entry.inner.data.clone().to_vec()),
@@ -318,10 +318,10 @@ fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
                 })
                 .collect::<Vec<DynSolValue>>(),
         )
-        .encode()
+        .abi_encode()
         .into()
     } else {
-        DynSolValue::Array(vec![]).encode().into()
+        DynSolValue::Array(vec![]).abi_encode().into()
     }
 }
 
@@ -425,7 +425,7 @@ pub fn apply<DB: DatabaseExt>(
                 U256::from_be_bytes(inner.1),
                 data.db,
             )?;
-            DynSolValue::from(val).encode().into()
+            DynSolValue::from(val).abi_encode().into()
         }
         HEVMCalls::Cool(inner) => cool_account(data, inner.0.to_alloy())?,
         HEVMCalls::Breakpoint0(inner) => add_breakpoint(state, caller, &inner.0, true)?,
@@ -574,7 +574,7 @@ pub fn apply<DB: DatabaseExt>(
 
             // we can safely unwrap because `load_account` insert inner.0 to DB.
             let account = data.journaled_state.state().get(&inner.0.to_alloy()).unwrap();
-            DynSolValue::from(account.info.nonce).encode().into()
+            DynSolValue::from(account.info.nonce).abi_encode().into()
         }
         // [function getNonce(Wallet)] returns the current nonce of the Wallet's ETH address
         HEVMCalls::GetNonce0(inner) => {
@@ -591,7 +591,7 @@ pub fn apply<DB: DatabaseExt>(
 
             // we can safely unwrap because `load_account` insert inner.0 to DB.
             let account = data.journaled_state.state().get(&inner.0.addr.to_alloy()).unwrap();
-            DynSolValue::from(account.info.nonce.to_alloy()).encode().into()
+            DynSolValue::from(account.info.nonce.to_alloy()).abi_encode().into()
         }
         HEVMCalls::ChainId(inner) => {
             ensure!(

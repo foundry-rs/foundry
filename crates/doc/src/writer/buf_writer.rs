@@ -1,4 +1,3 @@
-use ethers_core::utils::hex;
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use solang_parser::pt::Parameter;
@@ -183,7 +182,7 @@ impl BufWriter {
 
             let row = [
                 Markdown::Bold(&network).as_doc()?,
-                Markdown::Code(&format!("0x{}", hex::encode(deployment.address))).as_doc()?,
+                Markdown::Code(&format!("{:?}", deployment.address)).as_doc()?,
             ];
             self.write_piped(&row.join("|"))?;
         }

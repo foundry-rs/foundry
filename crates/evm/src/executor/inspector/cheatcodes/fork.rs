@@ -65,7 +65,7 @@ pub fn apply<DB: DatabaseExt>(
             Ok(Bytes::new())
         }
         HEVMCalls::IsPersistent(acc) => {
-            Ok(DynSolValue::Bool(data.db.is_persistent(&acc.0.to_alloy())).encode().into())
+            Ok(DynSolValue::Bool(data.db.is_persistent(&acc.0.to_alloy())).abi_encode().into())
         }
         HEVMCalls::RevokePersistent0(acc) => {
             data.db.remove_persistent_account(&acc.0.to_alloy());
@@ -80,7 +80,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::ActiveFork(_) => data
             .db
             .active_fork_id()
-            .map(|id| DynSolValue::Uint(id, 256).encode().into())
+            .map(|id| DynSolValue::Uint(id, 256).abi_encode().into())
             .ok_or_else(|| fmt_err!("No active fork")),
         HEVMCalls::RollFork0(fork) => data
             .db
@@ -113,7 +113,7 @@ pub fn apply<DB: DatabaseExt>(
             .map(empty)
             .map_err(Into::into),
         HEVMCalls::RpcUrl(rpc) => {
-            state.config.get_rpc_url(&rpc.0).map(|url| DynSolValue::String(url).encode().into())
+            state.config.get_rpc_url(&rpc.0).map(|url| DynSolValue::String(url).abi_encode().into())
         }
         HEVMCalls::RpcUrls(_) => {
             let mut urls = Vec::with_capacity(state.config.rpc_endpoints.len());
@@ -135,7 +135,7 @@ pub fn apply<DB: DatabaseExt>(
                     })
                     .collect_vec(),
             )
-            .encode()
+            .abi_encode()
             .into())
         }
         HEVMCalls::RpcUrlStructs(_) => {
@@ -158,7 +158,7 @@ pub fn apply<DB: DatabaseExt>(
                     })
                     .collect_vec(),
             );
-            Ok(urls.encode().into())
+            Ok(urls.abi_encode().into())
         }
         HEVMCalls::AllowCheatcodes(addr) => {
             data.db.allow_cheatcode_access(addr.0.to_alloy());
@@ -220,7 +220,7 @@ fn create_select_fork<DB: DatabaseExt>(
 
     let fork = create_fork_request(state, url_or_alias, block, data)?;
     let id = data.db.create_select_fork(fork, data.env, &mut data.journaled_state)?;
-    Ok(DynSolValue::Uint(id, 256).encode().into())
+    Ok(DynSolValue::Uint(id, 256).abi_encode().into())
 }
 
 /// Creates a new fork
@@ -232,7 +232,7 @@ fn create_fork<DB: DatabaseExt>(
 ) -> Result {
     let fork = create_fork_request(state, url_or_alias, block, data)?;
     let id = data.db.create_fork(fork)?;
-    Ok(DynSolValue::Uint(id, 256).encode().into())
+    Ok(DynSolValue::Uint(id, 256).abi_encode().into())
 }
 /// Creates and then also selects the new fork at the given transaction
 fn create_select_fork_at_transaction<DB: DatabaseExt>(
@@ -255,7 +255,7 @@ fn create_select_fork_at_transaction<DB: DatabaseExt>(
         &mut data.journaled_state,
         transaction,
     )?;
-    Ok(DynSolValue::Uint(id, 256).encode().into())
+    Ok(DynSolValue::Uint(id, 256).abi_encode().into())
 }
 
 /// Creates a new fork at the given transaction
@@ -267,7 +267,7 @@ fn create_fork_at_transaction<DB: DatabaseExt>(
 ) -> Result {
     let fork = create_fork_request(state, url_or_alias, None, data)?;
     let id = data.db.create_fork_at_transaction(fork, transaction)?;
-    Ok(DynSolValue::Uint(id, 256).encode().into())
+    Ok(DynSolValue::Uint(id, 256).abi_encode().into())
 }
 
 /// Creates the request object for a new fork request
@@ -319,7 +319,7 @@ fn eth_getlogs<DB: DatabaseExt>(data: &EVMData<DB>, inner: &EthGetLogsCall) -> R
         .map_err(|_| fmt_err!("Error in calling eth_getLogs"))?;
 
     if logs.is_empty() {
-        let empty: Bytes = DynSolValue::Array(vec![]).encode().into();
+        let empty: Bytes = DynSolValue::Array(vec![]).abi_encode().into();
         return Ok(empty)
     }
 
@@ -387,7 +387,7 @@ fn eth_getlogs<DB: DatabaseExt>(data: &EVMData<DB>, inner: &EthGetLogsCall) -> R
             })
             .collect::<Vec<DynSolValue>>(),
     )
-    .encode()
+    .abi_encode()
     .into();
     Ok(result)
 }
@@ -407,5 +407,5 @@ fn rpc<DB: DatabaseExt>(data: &EVMData<DB>, inner: &RpcCall) -> Result {
     let result_as_tokens =
         value_to_token(&result).map_err(|err| fmt_err!("Failed to parse result: {err}"))?;
 
-    Ok(result_as_tokens.encode().into())
+    Ok(result_as_tokens.abi_encode().into())
 }

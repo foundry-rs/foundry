@@ -79,7 +79,7 @@ pub fn handle_expect_revert(
     if actual_revert.len() >= 4 &&
         matches!(actual_revert[..4].try_into(), Ok(ERROR_PREFIX | REVERT_PREFIX))
     {
-        if let Ok(parsed_bytes) = DynSolType::Bytes.decode(&actual_revert[4..]) {
+        if let Ok(parsed_bytes) = DynSolType::Bytes.abi_decode(&actual_revert[4..]) {
             if let Some(bytes) = parsed_bytes.as_bytes().map(|b| b.to_vec()) {
                 actual_revert = bytes.into();
             }
@@ -91,11 +91,11 @@ pub fn handle_expect_revert(
     } else {
         let stringify = |data: &mut Bytes| {
             DynSolType::String
-                .decode(data.0.as_ref())
+                .abi_decode(data.0.as_ref())
                 .ok()
                 .and_then(|d| d.as_str().map(|s| s.to_owned()))
                 .or_else(|| std::str::from_utf8(data.as_ref()).ok().map(ToOwned::to_owned))
-                .unwrap_or_else(|| format!("0x{}", hex::encode(data)))
+                .unwrap_or_else(|| hex::encode_prefixed(data))
         };
         Err(fmt_err!(
             "Error != expected error: {} != {}",
@@ -153,23 +153,23 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address
 
     match event_to_fill_or_check.log {
         Some(ref expected) => {
-            let expected_topic_0 = expected.topics.get(0);
-            let log_topic_0 = log.topics.get(0);
+            let expected_topic_0 = expected.topics().get(0);
+            let log_topic_0 = log.topics().get(0);
 
             // same topic0 and equal number of topics should be verified further, others are a no
             // match
             if expected_topic_0
                 .zip(log_topic_0)
-                .map_or(false, |(a, b)| a == b && expected.topics.len() == log.topics.len())
+                .map_or(false, |(a, b)| a == b && expected.topics().len() == log.topics().len())
             {
                 // Match topics
                 event_to_fill_or_check.found = log
-                    .topics
+                    .topics()
                     .iter()
                     .skip(1)
                     .enumerate()
                     .filter(|(i, _)| event_to_fill_or_check.checks[*i])
-                    .all(|(i, topic)| topic == &expected.topics[i + 1]);
+                    .all(|(i, topic)| topic == &expected.topics()[i + 1]);
 
                 // Maybe match source address
                 if let Some(addr) = event_to_fill_or_check.address {

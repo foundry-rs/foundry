@@ -9,7 +9,7 @@ use foundry_utils::types::ToAlloy;
 use revm::{Database, EVMData};
 use serde::Deserialize;
 use serde_json::Value;
-use std::{collections::BTreeMap, env, path::Path, process::Command, str::FromStr};
+use std::{collections::BTreeMap, env, path::Path, process::Command, str::FromStr, time::{SystemTime, UNIX_EPOCH}};
 
 /// Invokes a `Command` with the given args and returns the exit code, stdout, and stderr.
 ///
@@ -52,7 +52,7 @@ fn try_ffi(state: &Cheatcodes, args: &[String]) -> Result {
         DynSolValue::Bytes(output.stderr),
     ]);
 
-    Ok(res.encode().into())
+    Ok(res.abi_encode().into())
 }
 
 /// Invokes a `Command` with the given args and returns the abi encoded response
@@ -83,9 +83,9 @@ fn ffi(state: &Cheatcodes, args: &[String]) -> Result {
     let output = String::from_utf8(output.stdout)?;
     let trimmed = output.trim();
     if let Ok(hex) = hex::decode(trimmed) {
-        Ok(DynSolValue::Bytes(hex).encode().into())
+        Ok(DynSolValue::Bytes(hex).abi_encode().into())
     } else {
-        Ok(DynSolValue::String(trimmed.to_owned()).encode().into())
+        Ok(DynSolValue::String(trimmed.to_owned()).abi_encode().into())
     }
 }
 
@@ -146,7 +146,7 @@ struct HuffArtifact {
 fn get_code(state: &Cheatcodes, path: &str) -> Result {
     let bytecode = read_bytecode(state, path)?;
     if let Some(bin) = bytecode.into_bytecode() {
-        Ok(DynSolValue::Bytes(bin.to_vec()).encode().into())
+        Ok(DynSolValue::Bytes(bin.to_vec()).abi_encode().into())
     } else {
         Err(fmt_err!("No bytecode for contract. Is it abstract or unlinked?"))
     }
@@ -156,7 +156,7 @@ fn get_code(state: &Cheatcodes, path: &str) -> Result {
 fn get_deployed_code(state: &Cheatcodes, path: &str) -> Result {
     let bytecode = read_bytecode(state, path)?;
     if let Some(bin) = bytecode.into_deployed_bytecode() {
-        Ok(DynSolValue::Bytes(bin.to_vec()).encode().into())
+        Ok(DynSolValue::Bytes(bin.to_vec()).abi_encode().into())
     } else {
         Err(fmt_err!("No deployed bytecode for contract. Is it abstract or unlinked?"))
     }
@@ -294,11 +294,11 @@ fn canonicalize_json_key(key: &str) -> String {
 /// Encodes a vector of [`DynSolValue`] into a vector of bytes.
 fn encode_abi_values(values: Vec<DynSolValue>) -> Vec<u8> {
     if values.is_empty() {
-        DynSolValue::Bytes(Vec::new()).encode()
+        DynSolValue::Bytes(Vec::new()).abi_encode()
     } else if values.len() == 1 {
-        DynSolValue::Bytes(values[0].encode()).encode()
+        DynSolValue::Bytes(values[0].abi_encode()).abi_encode()
     } else {
-        DynSolValue::Bytes(DynSolValue::Array(values).encode()).encode()
+        DynSolValue::Bytes(DynSolValue::Array(values).abi_encode()).abi_encode()
     }
 }
 
@@ -390,7 +390,7 @@ fn parse_json_keys(json_str: &str, key: &str) -> Result {
         .collect::<Vec<DynSolValue>>();
 
     // encode the bytes as the 'bytes' solidity type
-    let abi_encoded = DynSolValue::Array(res).encode();
+    let abi_encoded = DynSolValue::Array(res).abi_encode();
     Ok(abi_encoded.into())
 }
 
@@ -431,7 +431,7 @@ fn serialize_json(
 
     let stringified = serde_json::to_string(&json)
         .map_err(|err| fmt_err!("Failed to stringify hashmap: {err}"))?;
-    Ok(DynSolValue::String(stringified).encode().into())
+    Ok(DynSolValue::String(stringified).abi_encode().into())
 }
 
 /// Converts an array to it's stringified version, adding the appropriate quotes around it's
@@ -511,6 +511,16 @@ fn sleep(milliseconds: &U256) -> Result {
     std::thread::sleep(sleep_duration);
 
     Ok(Default::default())
+}
+
+/// Returns the time since unix epoch in milliseconds
+fn duration_since_epoch() -> Result {
+    let sys_time = SystemTime::now();
+    let difference = sys_time
+        .duration_since(UNIX_EPOCH)
+        .expect("Failed getting timestamp in unixTime cheatcode");
+    let millis = difference.as_millis();
+    Ok(DynSolValue::Uint(U256::from(millis), 256).abi_encode().into())
 }
 
 /// Skip the current test, by returning a magic value that will be checked by the test runner.
@@ -721,6 +731,7 @@ pub fn apply<DB: Database>(
             serialize_json(state, &inner.0, Some(&inner.1), &array_str_to_str(&inner.2))
         }
         HEVMCalls::Sleep(inner) => sleep(&inner.0.to_alloy()),
+        HEVMCalls::UnixTime(_) => duration_since_epoch(),
         HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
         HEVMCalls::WriteJson1(inner) => write_json(state, &inner.0, &inner.1, Some(&inner.2)),
         HEVMCalls::KeyExists(inner) => key_exists(&inner.0, &inner.1),

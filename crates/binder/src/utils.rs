@@ -421,21 +421,6 @@ fn maybe_spurious(err: &eyre::Error) -> bool {
             _ => (),
         }
     }
-    if let Some(curl_err) = err.downcast_ref::<curl::Error>() {
-        if curl_err.is_couldnt_connect() ||
-            curl_err.is_couldnt_resolve_proxy() ||
-            curl_err.is_couldnt_resolve_host() ||
-            curl_err.is_operation_timedout() ||
-            curl_err.is_recv_error() ||
-            curl_err.is_send_error() ||
-            curl_err.is_http2_error() ||
-            curl_err.is_http2_stream_error() ||
-            curl_err.is_ssl_connect_error() ||
-            curl_err.is_partial_file()
-        {
-            return true
-        }
-    }
     false
 }
 

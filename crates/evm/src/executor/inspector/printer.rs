@@ -39,7 +39,7 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         inputs: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
         println!(
-            "SM CALL:   {:?},context:{:?}, is_static:{:?}, transfer:{:?}, input_size:{:?}",
+            "SM CALL:   {},context:{:?}, is_static:{:?}, transfer:{:?}, input_size:{:?}",
             inputs.contract,
             inputs.context,
             inputs.is_static,
@@ -55,7 +55,7 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         inputs: &mut CreateInputs,
     ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         println!(
-            "CREATE CALL: caller:{:?}, scheme:{:?}, value:{:?}, init_code:{:?}, gas:{:?}",
+            "CREATE CALL: caller:{}, scheme:{:?}, value:{:?}, init_code:{:?}, gas:{:?}",
             inputs.caller,
             inputs.scheme,
             inputs.value,

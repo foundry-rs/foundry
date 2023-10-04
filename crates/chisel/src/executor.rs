@@ -229,7 +229,8 @@ impl SessionSource {
         offset += 32;
         let data = &mem[offset..offset + len];
         // `tokens` is guaranteed to have the same length as the provided types
-        let token = DynSolType::decode(&ty, data).wrap_err("Could not decode inspected values")?;
+        let token =
+            DynSolType::abi_decode(&ty, data).wrap_err("Could not decode inspected values")?;
         Ok((should_continue(contract_expr), Some(format_token(token))))
     }
 
@@ -318,13 +319,13 @@ impl SessionSource {
 fn format_token(token: DynSolValue) -> String {
     match token {
         DynSolValue::Address(a) => {
-            format!("Type: {}\n└ Data: {}", Paint::red("address"), Paint::cyan(format!("0x{a:x}")))
+            format!("Type: {}\n└ Data: {}", Paint::red("address"), Paint::cyan(a.to_string()))
         }
         DynSolValue::FixedBytes(b, _) => {
             format!(
                 "Type: {}\n└ Data: {}",
                 Paint::red(format!("bytes{}", b.len())),
-                Paint::cyan(format!("0x{}", hex::encode(b)))
+                Paint::cyan(hex::encode_prefixed(b))
             )
         }
         DynSolValue::Int(i, _) => {
@@ -347,8 +348,8 @@ fn format_token(token: DynSolValue) -> String {
             format!("Type: {}\n└ Value: {}", Paint::red("bool"), Paint::cyan(b))
         }
         DynSolValue::String(_) | DynSolValue::Bytes(_) => {
-            let hex = hex::encode(token.encode());
-            let s = token.as_str().map(|s| s.to_owned());
+            let hex = hex::encode(token.abi_encode());
+            let s = token.as_str();
             format!(
                 "Type: {}\n{}├ Hex (Memory):\n├─ Length ({}): {}\n├─ Contents ({}): {}\n├ Hex (Tuple Encoded):\n├─ Pointer ({}): {}\n├─ Length ({}): {}\n└─ Contents ({}): {}",
                 Paint::red(if s.is_some() { "string" } else { "dynamic bytes" }),
