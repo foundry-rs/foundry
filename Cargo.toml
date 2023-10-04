@@ -135,8 +135,9 @@ foundry-utils = { path = "crates/utils" }
 foundry-debugger = { path = "crates/debugger" }
 
 ## revm
-revm = { version = "3", default-features = false } # no default features to avoid c-kzg
-revm-primitives = "1"
+# no default features to avoid c-kzg
+revm = { version = "3", default-features = false } #
+revm-primitives = { version  = "1" , default-features = false }
 
 ## ethers
 ethers = { version = "2.0", default-features = false }
