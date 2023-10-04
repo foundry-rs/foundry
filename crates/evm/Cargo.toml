@@ -40,7 +40,8 @@ once_cell = "1"
 # EVM
 bytes = "1"
 hashbrown = { version = "0.14", features = ["serde"] }
-revm = { workspace = true, features = [
+revm = { workspace = true, default-features = false, features = [
+  "std",
   "serde",
   "memory_limit",
   "optional_eip3607",

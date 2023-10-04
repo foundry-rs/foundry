@@ -13,7 +13,7 @@ repository.workspace = true
 # foundry internal
 foundry-evm = { path = "../../evm" }
 foundry-utils = { path = "../../utils" }
-revm = { workspace = true, features = ["serde", "memory_limit"] }
+revm = { workspace = true,  default-features = false, features = ["std", "serde", "memory_limit"] }
 
 alloy-primitives = { workspace = true, features = ["serde"] }
 ethers-core.workspace = true
