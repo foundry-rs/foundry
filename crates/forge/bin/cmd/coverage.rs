@@ -29,10 +29,9 @@ use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
 use foundry_config::{Config, SolcReq};
 use foundry_utils::types::ToEthers;
 use semver::Version;
-use std::{collections::HashMap, sync::mpsc::channel};
+use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel};
 use tracing::trace;
 use yansi::Paint;
-use std::path::PathBuf;
 
 /// A map, keyed by contract ID, to a tuple of the deployment source map and the runtime source map.
 type SourceMaps = HashMap<ContractId, (SourceMap, SourceMap)>;
@@ -57,7 +56,7 @@ pub struct CoverageArgs {
     ir_minimum: bool,
 
     /// The path to output the report.
-    /// 
+    ///
     /// If not specified, the report will be stored in the root of the project.
     #[clap(
         long,
@@ -75,7 +74,6 @@ pub struct CoverageArgs {
 
     #[clap(flatten)]
     opts: CoreBuildArgs,
-    
 }
 
 impl CoverageArgs {
@@ -356,10 +354,18 @@ impl CoverageArgs {
             match report_kind {
                 CoverageReportKind::Summary => SummaryReporter::default().report(&report),
                 CoverageReportKind::Lcov => {
-                        match self.report_file {
-                            Some(_) => return LcovReporter::new(&mut fs::create_file(root.join(self.report_file.as_ref().unwrap()))?).report(&report),
-                            None =>  return LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?).report(&report)
-                        };                        
+                    match self.report_file {
+                        Some(_) => {
+                            return LcovReporter::new(&mut fs::create_file(
+                                root.join(self.report_file.as_ref().unwrap()),
+                            )?)
+                            .report(&report)
+                        }
+                        None => {
+                            return LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?)
+                                .report(&report)
+                        }
+                    };
                 }
                 CoverageReportKind::Debug => DebugReporter.report(&report),
             }?;
