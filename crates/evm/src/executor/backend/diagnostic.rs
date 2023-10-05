@@ -1,6 +1,7 @@
 use crate::executor::{backend::LocalForkId, inspector::Cheatcodes};
 use alloy_primitives::Address;
 use foundry_common::fmt::UIfmt;
+
 use foundry_utils::types::ToEthers;
 use itertools::Itertools;
 
@@ -25,11 +26,13 @@ pub enum RevertDiagnostic {
 impl RevertDiagnostic {
     /// Converts the diagnostic to a readable error message
     pub fn to_error_msg(&self, cheats: &Cheatcodes) -> String {
-        let get_label = |addr| cheats.labels.get(addr).cloned().unwrap_or_else(|| addr.pretty());
+        let get_label = |addr: &Address| {
+            cheats.labels.get(addr).cloned().unwrap_or_else(|| addr.to_ethers().pretty())
+        };
 
         match self {
             RevertDiagnostic::ContractExistsOnOtherForks { contract, active, available_on } => {
-                let contract_label = get_label(&(*contract).to_ethers());
+                let contract_label = get_label(contract);
 
                 format!(
                     r#"Contract {} does not exist on active fork with id `{}`
@@ -40,7 +43,7 @@ impl RevertDiagnostic {
                 )
             }
             RevertDiagnostic::ContractDoesNotExist { contract, persistent, .. } => {
-                let contract_label = get_label(&contract.to_ethers());
+                let contract_label = get_label(contract);
                 if *persistent {
                     format!("Contract {contract_label} does not exist")
                 } else {

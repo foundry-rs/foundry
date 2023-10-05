@@ -152,9 +152,11 @@ ethers-etherscan = { version = "2.0", default-features = false }
 ethers-solc = { version = "2.0", default-features = false }
 
 ## alloy
-alloy-primitives = "0.4"
-alloy-dyn-abi = "0.4"
-alloy-json-abi = "0.4"
+
+alloy-primitives = { version = "0.4", default-features = false }
+alloy-dyn-abi = { version = "0.4", default-features = false }
+alloy-json-abi = { version = "0.4", default-features = false }
+alloy-sol-types = { version = "0.4", default-features = false }
 
 solang-parser = "=0.3.2"
 
@@ -193,3 +195,8 @@ revm = { git = "https://github.com/bluealloy/revm/", branch = "main" }
 revm-interpreter = { git = "https://github.com/bluealloy/revm/", branch = "main" }
 revm-precompile = { git = "https://github.com/bluealloy/revm/", branch = "main" }
 revm-primitives = { git = "https://github.com/bluealloy/revm/", branch = "main" }
+
+alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/", branch = "main"}
+alloy-primitives = { git = "https://github.com/alloy-rs/core/", branch = "main"}
+alloy-json-abi = { git = "https://github.com/alloy-rs/core/", branch = "main"}
+alloy-sol-types = { git = "https://github.com/alloy-rs/core/", branch = "main"}
