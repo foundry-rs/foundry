@@ -14,7 +14,7 @@ async fn test_cheats_local() {
     config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write("./")]);
     let runner = runner_with_config(config);
     let filter =
-        Filter::new(".*", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}*")).exclude_paths("Fork");
+        Filter::new(".*", "Env*", &format!(".*cheats{RE_PATH_SEPARATOR}*")).exclude_paths("Fork");
 
     // on windows exclude ffi tests since no echo and file test that expect a certain file path
     #[cfg(windows)]

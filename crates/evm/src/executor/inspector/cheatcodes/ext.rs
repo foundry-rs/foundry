@@ -195,11 +195,12 @@ fn set_env(key: &str, val: &str) -> Result {
 }
 
 fn get_env(key: &str, ty: DynSolType, delim: Option<&str>, default: Option<String>) -> Result {
-    let val = env::var(key).or_else(|e| {
+    let mut val = env::var(key).or_else(|e| {
         default.ok_or_else(|| {
             fmt_err!("Failed to get environment variable `{key}` as type `{ty}`: {e}")
         })
     })?;
+    println!("got val: {}", val);
     if let Some(d) = delim {
         parse::parse_array(val.split(d).map(str::trim), &ty)
     } else {
