@@ -2754,6 +2754,7 @@ name = "foundry-evm"
 version = "0.2.0"
 dependencies = [
  "alloy-dyn-abi",
+ "alloy-json-abi",
  "alloy-primitives",
  "auto_impl",
  "bytes",

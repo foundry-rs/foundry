@@ -1,10 +1,7 @@
 //! commonly used contract types and functions
 
 use alloy_json_abi::{Event, Function, JsonAbi as Abi};
-use ethers_core::{
-    types::{Address, H256},
-    utils::hex,
-};
+use alloy_primitives::{hex, Address, B256};
 use foundry_compilers::{
     artifacts::{CompactContractBytecode, ContractBytecodeSome},
     ArtifactId, ProjectPathsConfig,
@@ -47,22 +44,22 @@ impl ContractsByArtifact {
     }
 
     /// Flattens a group of contracts into maps of all events and functions
-    pub fn flatten(&self) -> (BTreeMap<[u8; 4], Function>, BTreeMap<H256, Event>, Abi) {
+    pub fn flatten(&self) -> (BTreeMap<[u8; 4], Function>, BTreeMap<B256, Event>, Abi) {
         let flattened_funcs: BTreeMap<[u8; 4], Function> = self
             .iter()
             .flat_map(|(_name, (abi, _code))| {
                 abi.functions()
-                    .map(|func| (func.short_signature(), func.clone()))
+                    .map(|func| (func.selector().into(), func.clone()))
                     .collect::<BTreeMap<[u8; 4], Function>>()
             })
             .collect();
 
-        let flattened_events: BTreeMap<H256, Event> = self
+        let flattened_events: BTreeMap<B256, Event> = self
             .iter()
             .flat_map(|(_name, (abi, _code))| {
                 abi.events()
-                    .map(|event| (event.signature(), event.clone()))
-                    .collect::<BTreeMap<H256, Event>>()
+                    .map(|event| (event.selector(), event.clone()))
+                    .collect::<BTreeMap<B256, Event>>()
             })
             .collect();
 

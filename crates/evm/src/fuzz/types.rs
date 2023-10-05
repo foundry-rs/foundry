@@ -1,5 +1,5 @@
 use crate::{coverage::HitMaps, debug::DebugArena, executor::RawCallResult, trace::CallTraceArena};
-use ethers::types::Bytes;
+use alloy_primitives::Bytes;
 use foundry_common::evm::Breakpoints;
 use revm::interpreter::InstructionResult;
 use serde::{Deserialize, Serialize};

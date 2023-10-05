@@ -452,7 +452,7 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
             name: "@openzeppelin/".into(),
             path: sources_path.join("@openzeppelin").display().to_string(),
         };
-        settings.remappings.push(oz);
+        // settings.remappings.push(oz);
     }
 
     // root/
@@ -460,7 +460,7 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
     //     [source code]
     let paths = ProjectPathsConfig::builder()
         .sources(sources_path.clone())
-        .remappings(settings.remappings.clone())
+        // .remappings(settings.remappings.clone())
         .build_with_root(sources_path);
 
     let v = metadata.compiler_version()?;
@@ -468,7 +468,7 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
     let solc = Solc::find_or_install_svm_version(v)?;
 
     Ok(Project::builder()
-        .solc_config(SolcConfig::builder().settings(settings).build())
+        .solc_config(SolcConfig::builder().build())
         .no_auto_detect()
         .paths(paths)
         .solc(solc)

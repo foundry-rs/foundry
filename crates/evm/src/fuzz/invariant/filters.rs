@@ -1,5 +1,6 @@
 use crate::utils::get_function;
-use ethers::abi::{Abi, Address, FixedBytes, Function};
+use alloy_json_abi::{Function, JsonAbi as Abi};
+use alloy_primitives::{Address, FixedBytes};
 use foundry_compilers::ArtifactId;
 use std::collections::BTreeMap;
 
@@ -7,13 +8,12 @@ use std::collections::BTreeMap;
 /// artifact identifiers.
 #[derive(Default)]
 pub struct ArtifactFilters {
-    /// List of `contract_path:contract_name` which are to be targeted. If list of functions is not
-    /// empty, target only those.
-    pub targeted: BTreeMap<String, Vec<FixedBytes>>,
+    /// List of `contract_path:contract_name` along with selectors, which are to be targeted. If
+    /// list of functions is not empty, target only those.
+    pub targeted: BTreeMap<String, Vec<FixedBytes<4>>>,
     /// List of `contract_path:contract_name` which are to be excluded.
     pub excluded: Vec<String>,
 }
-
 impl ArtifactFilters {
     /// Gets all the targeted functions from `artifact`. Returns error, if selectors do not match
     /// the `artifact`.
@@ -30,25 +30,20 @@ impl ArtifactFilters {
                 .iter()
                 .map(|selector| get_function(&artifact.name, selector, abi))
                 .collect::<eyre::Result<Vec<_>>>()?;
-
             // targetArtifactSelectors > excludeArtifacts > targetArtifacts
             if functions.is_empty() && self.excluded.contains(&artifact.identifier()) {
                 return Ok(None)
             }
-
             return Ok(Some(functions))
         }
-
         // If no contract is specifically targeted, and this contract is not excluded, then accept
         // all functions.
         if self.targeted.is_empty() && !self.excluded.contains(&artifact.identifier()) {
             return Ok(Some(vec![]))
         }
-
         Ok(None)
     }
 }
-
 /// Filter for acceptable senders to use for invariant testing. Exclusion takes priority if
 /// clashing.
 ///
@@ -61,13 +56,11 @@ pub struct SenderFilters {
 
 impl SenderFilters {
     pub fn new(mut targeted: Vec<Address>, mut excluded: Vec<Address>) -> Self {
-        let addr_0 = Address::zero();
+        let addr_0 = Address::ZERO;
         if !excluded.contains(&addr_0) {
             excluded.push(addr_0);
         }
-
         targeted.retain(|addr| !excluded.contains(addr));
-
         SenderFilters { targeted, excluded }
     }
 }

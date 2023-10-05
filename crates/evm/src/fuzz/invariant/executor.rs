@@ -19,11 +19,11 @@ use crate::{
     utils::get_function,
     CALLER,
 };
-use ethers::abi::{Abi, Address, Detokenize, FixedBytes, Tokenizable, TokenizableItem};
+use alloy_json_abi::JsonAbi as Abi;
+use alloy_primitives::{Address, FixedBytes};
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::{FuzzDictionaryConfig, InvariantConfig};
-use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::{Mutex, RwLock};
 use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},
@@ -149,12 +149,7 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Executes the call from the randomly generated sequence.
                 let call_result = executor
-                    .call_raw(
-                        sender.to_alloy(),
-                        address.to_alloy(),
-                        calldata.0.clone().into(),
-                        rU256::ZERO,
-                    )
+                    .call_raw(*sender, *address, calldata.0.clone().into(), rU256::ZERO)
                     .expect("could not make raw evm call");
 
                 // Collect data for fuzzing from the state changeset.
@@ -287,7 +282,7 @@ impl<'a> InvariantExecutor<'a> {
         // EVM execution.
         let mut call_generator = None;
         if self.config.call_override {
-            let target_contract_ref = Arc::new(RwLock::new(Address::zero()));
+            let target_contract_ref = Arc::new(RwLock::new(Address::ZERO));
 
             call_generator = Some(RandomCallGenerator::new(
                 invariant_contract.address,
@@ -334,9 +329,13 @@ impl<'a> InvariantExecutor<'a> {
 
         // Insert them into the executor `targeted_abi`.
         for (contract, selectors) in targeted_abi {
-            let identifier = self.validate_selected_contract(contract, &selectors)?;
+            let identifier = self.validate_selected_contract(contract, &selectors.to_vec())?;
 
-            self.artifact_filters.targeted.entry(identifier).or_default().extend(selectors);
+            self.artifact_filters
+                .targeted
+                .entry(identifier)
+                .or_default()
+                .extend(selectors.to_vec());
         }
 
         // targetArtifacts -> string[]
@@ -360,7 +359,8 @@ impl<'a> InvariantExecutor<'a> {
                 .filter(|func| {
                     !matches!(
                         func.state_mutability,
-                        ethers::abi::StateMutability::Pure | ethers::abi::StateMutability::View
+                        alloy_json_abi::StateMutability::Pure |
+                            alloy_json_abi::StateMutability::View
                     )
                 })
                 .count() ==
@@ -391,7 +391,7 @@ impl<'a> InvariantExecutor<'a> {
     fn validate_selected_contract(
         &mut self,
         contract: String,
-        selectors: &[FixedBytes],
+        selectors: &[FixedBytes<4>],
     ) -> eyre::Result<String> {
         if let Some((artifact, (abi, _))) =
             self.project_contracts.find_by_name_or_identifier(&contract)?
@@ -399,7 +399,7 @@ impl<'a> InvariantExecutor<'a> {
             // Check that the selectors really exist for this contract.
             for selector in selectors {
                 abi.functions()
-                    .find(|func| func.short_signature().as_slice() == selector.as_slice())
+                    .find(|func| func.selector().as_slice() == selector.as_slice())
                     .wrap_err(format!("{contract} does not have the selector {selector:?}"))?;
             }
 
@@ -425,8 +425,8 @@ impl<'a> InvariantExecutor<'a> {
             .into_iter()
             .filter(|(addr, (identifier, _))| {
                 *addr != invariant_address &&
-                    *addr != CHEATCODE_ADDRESS.to_ethers() &&
-                    *addr != HARDHAT_CONSOLE_ADDRESS.to_ethers() &&
+                    *addr != CHEATCODE_ADDRESS &&
+                    *addr != HARDHAT_CONSOLE_ADDRESS &&
                     (selected.is_empty() || selected.contains(addr)) &&
                     (self.artifact_filters.targeted.is_empty() ||
                         self.artifact_filters.targeted.contains_key(identifier)) &&
@@ -484,7 +484,7 @@ impl<'a> InvariantExecutor<'a> {
                             contract_abi.functions.extend(abi.functions.clone());
                         })
                         // Otherwise insert it into the map.
-                        .or_insert_with(|| (identifier.clone(), abi.clone(), vec![]));
+                        .or_insert_with(|| (identifier.to_string(), abi.clone(), vec![]));
                 }
             }
         }
@@ -534,7 +534,7 @@ impl<'a> InvariantExecutor<'a> {
     fn add_address_with_functions(
         &self,
         address: Address,
-        bytes4_array: Vec<Vec<u8>>,
+        bytes4_array: Vec<FixedBytes<4>>,
         targeted_contracts: &mut TargetedContracts,
     ) -> eyre::Result<()> {
         if let Some((name, abi, address_selectors)) = targeted_contracts.get_mut(&address) {
@@ -560,31 +560,30 @@ impl<'a> InvariantExecutor<'a> {
         Ok(())
     }
 
-    /// Gets list of `T` by calling the contract `method_name` function.
-    fn get_list<T>(&self, address: Address, abi: &Abi, method_name: &str) -> Vec<T>
-    where
-        T: Tokenizable + Detokenize + TokenizableItem,
-    {
-        if let Some(func) = abi.functions().find(|func| func.name == method_name) {
-            if let Ok(call_result) = self.executor.call::<Vec<T>, _, _>(
-                CALLER,
-                address.to_alloy(),
-                func.clone(),
-                (),
-                rU256::ZERO,
-                Some(abi),
-            ) {
-                return call_result.result
-            } else {
-                warn!(
-                    "The function {} was found but there was an error querying its data.",
-                    method_name
-                );
-            }
-        };
+    // /// Gets list of `T` by calling the contract `method_name` function.
+    // fn get_list<T>(&self, address: Address, abi: &Abi, method_name: &str) -> Vec<T>
+    // where
+    //     T: Tokenizable + Detokenize + TokenizableItem,
+    // {
+    //     if let Some(func) = abi.functions().find(|func| func.name == method_name) {
+    //         if let Ok(call_result) = self.executor.call::<Vec<T>, _, _>(
+    //             CALLER,
+    //             address.to_alloy(),
+    //             func.clone(),
+    //             (),
+    //             rU256::ZERO,
+    //             Some(abi),
+    //         ) { return call_result.result
+    //         } else {
+    //             warn!(
+    //                 "The function {} was found but there was an error querying its data.",
+    //                 method_name
+    //             );
+    //         }
+    //     };
 
-        Vec::new()
-    }
+    //     Vec::new()
+    // }
 }
 
 /// Collects data from call for fuzzing. However, it first verifies that the sender is not an EOA
@@ -599,8 +598,7 @@ fn collect_data(
 ) {
     // Verify it has no code.
     let mut has_code = false;
-    if let Some(Some(code)) =
-        state_changeset.get(&sender.to_alloy()).map(|account| account.info.code.as_ref())
+    if let Some(Some(code)) = state_changeset.get(sender).map(|account| account.info.code.as_ref())
     {
         has_code = !code.is_empty();
     }
@@ -608,14 +606,14 @@ fn collect_data(
     // We keep the nonce changes to apply later.
     let mut sender_changeset = None;
     if !has_code {
-        sender_changeset = state_changeset.remove(&sender.to_alloy());
+        sender_changeset = state_changeset.remove(sender);
     }
 
     collect_state_from_call(&call_result.logs, &*state_changeset, fuzz_state, config);
 
     // Re-add changes
     if let Some(changed) = sender_changeset {
-        state_changeset.insert(sender.to_alloy(), changed);
+        state_changeset.insert(*sender, changed);
     }
 }
 
@@ -637,9 +635,10 @@ fn can_continue(
     let mut call_results = None;
 
     // Detect handler assertion failures first.
-    let handlers_failed = targeted_contracts.lock().iter().any(|contract| {
-        !executor.is_success(contract.0.to_alloy(), false, state_changeset.clone(), false)
-    });
+    let handlers_failed = targeted_contracts
+        .lock()
+        .iter()
+        .any(|contract| !executor.is_success(*contract.0, false, state_changeset.clone(), false));
 
     // Assert invariants IFF the call did not revert and the handlers did not fail.
     if !call_result.reverted && !handlers_failed {

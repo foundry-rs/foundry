@@ -3,7 +3,7 @@ use crate::{
     utils,
 };
 use alloy_primitives::Bytes;
-use foundry_utils::types::{ToAlloy, ToEthers};
+use foundry_utils::types::ToEthers;
 use revm::{
     interpreter::{CallInputs, CallScheme, Gas, InstructionResult, Interpreter},
     Database, EVMData, Inspector,
@@ -96,21 +96,21 @@ impl Fuzzer {
     fn override_call(&mut self, call: &mut CallInputs) {
         if let Some(ref mut call_generator) = self.call_generator {
             // We only override external calls which are not coming from the test contract.
-            if call.context.caller != call_generator.test_address.to_alloy() &&
+            if call.context.caller != call_generator.test_address &&
                 call.context.scheme == CallScheme::Call &&
                 !call_generator.used
             {
                 // There's only a 30% chance that an override happens.
                 if let Some((sender, (contract, input))) =
-                    call_generator.next(call.context.caller.to_ethers(), call.contract.to_ethers())
+                    call_generator.next(call.context.caller, call.contract)
                 {
                     *call.input = input.0;
-                    call.context.caller = sender.to_alloy();
-                    call.contract = contract.to_alloy();
+                    call.context.caller = sender;
+                    call.contract = contract;
 
                     // TODO: in what scenarios can the following be problematic
-                    call.context.code_address = contract.to_alloy();
-                    call.context.address = contract.to_alloy();
+                    call.context.code_address = contract;
+                    call.context.address = contract;
 
                     call_generator.used = true;
                 }

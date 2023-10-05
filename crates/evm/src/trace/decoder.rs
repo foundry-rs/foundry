@@ -9,6 +9,7 @@ use crate::{
     trace::{node::CallTraceNode, utils},
     CALLER, TEST_CONTRACT_ADDRESS,
 };
+use alloy_primitives::FixedBytes;
 use ethers::{
     abi::{Abi, Address, Event, Function, Param, ParamType, Token},
     types::{H160, H256},
@@ -94,7 +95,7 @@ pub struct CallTraceDecoder {
     /// Information whether the contract address has a receive function
     pub receive_contracts: HashMap<Address, bool>,
     /// A mapping of signatures to their known functions
-    pub functions: BTreeMap<[u8; 4], Vec<Function>>,
+    pub functions: BTreeMap<FixedBytes<4>, Vec<Function>>,
     /// All known events
     pub events: BTreeMap<(H256, usize), Vec<Event>>,
     /// All known errors
@@ -216,15 +217,12 @@ impl CallTraceDecoder {
             if let Some(abi) = &identity.abi {
                 // Store known functions for the address
                 for function in abi.functions() {
-                    self.functions
-                        .entry(function.short_signature())
-                        .or_default()
-                        .push(function.clone())
+                    self.functions.entry(function.selector()).or_default().push(function.clone())
                 }
 
                 // Flatten events from all ABIs
                 for event in abi.events() {
-                    let sig = (event.signature(), indexed_inputs(event));
+                    let sig = (event.selector(), indexed_inputs(event));
                     self.events.entry(sig).or_default().push(event.clone());
                 }
 
@@ -233,7 +231,7 @@ impl CallTraceDecoder {
                     self.errors.errors.entry(error.name.clone()).or_default().push(error.clone());
                 }
 
-                self.receive_contracts.entry(address).or_insert(abi.receive);
+                self.receive_contracts.entry(address).or_insert(abi.receive.is_some());
             }
         }
     }

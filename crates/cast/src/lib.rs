@@ -1944,7 +1944,7 @@ impl SimpleCast {
             eyre::bail!("Number of leading zeroes must not be greater than 4");
         }
         if optimize == 0 {
-            let selector = HumanReadableParser::parse_function(signature)?.short_signature();
+            let selector = HumanReadableParser::parse_function(signature)?.selector();
             return Ok((hex::encode_prefixed(selector), String::from(signature)))
         }
         let Some((name, params)) = signature.split_once('(') else {

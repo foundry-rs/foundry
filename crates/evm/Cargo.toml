@@ -53,6 +53,7 @@ revm = { workspace = true, default-features = false, features = [
 ] }
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
 alloy-dyn-abi = { workspace = true, features = ["arbitrary"] }
+alloy-json-abi = { workspace = true }
 
 # Fuzzer
 proptest = "1"

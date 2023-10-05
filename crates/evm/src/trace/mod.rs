@@ -9,7 +9,7 @@ use ethers::{
 };
 pub use executor::TracingExecutor;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
-use foundry_utils::types::ToEthers;
+use foundry_utils::types::{ToAlloy, ToEthers};
 use hashbrown::HashMap;
 use node::CallTraceNode;
 use revm::interpreter::{opcode, CallContext, InstructionResult, Memory, Stack};
@@ -619,7 +619,7 @@ pub fn load_contracts(
         .iter()
         .filter_map(|(addr, name)| {
             if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(name) {
-                return Some((*addr, (name.clone(), abi.clone())))
+                return Some(((*addr).to_alloy(), (name.clone(), abi.clone())))
             }
             None
         })

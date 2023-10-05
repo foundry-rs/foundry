@@ -454,19 +454,16 @@ impl ScriptArgs {
     pub fn get_method_and_calldata(&self, abi: &Abi) -> Result<(Function, Bytes)> {
         let (func, data) = if let Ok(func) = HumanReadableParser::parse_function(&self.sig) {
             (
-                abi.functions()
-                    .find(|&abi_func| abi_func.short_signature() == func.short_signature())
-                    .wrap_err(format!(
-                        "Function `{}` is not implemented in your script.",
-                        self.sig
-                    ))?,
+                abi.functions().find(|&abi_func| abi_func.selector() == func.selector()).wrap_err(
+                    format!("Function `{}` is not implemented in your script.", self.sig),
+                )?,
                 encode_args(&func, &self.args)?.into(),
             )
         } else {
             let decoded = hex::decode(&self.sig).wrap_err("Invalid hex calldata")?;
             let selector = &decoded[..SELECTOR_LEN];
             (
-                abi.functions().find(|&func| selector == &func.short_signature()[..]).ok_or_else(
+                abi.functions().find(|&func| selector == &func.selector()[..]).ok_or_else(
                     || {
                         eyre::eyre!(
                             "Function selector `{}` not found in the ABI",

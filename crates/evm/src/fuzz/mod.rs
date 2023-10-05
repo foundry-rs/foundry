@@ -5,12 +5,11 @@ use crate::{
     executor::{Executor, RawCallResult},
     trace::CallTraceArena,
 };
-use alloy_primitives::U256;
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
+use alloy_json_abi::{Function, JsonAbi as Abi};
+use alloy_primitives::{Address, Bytes, U256};
 use error::{FuzzError, ASSUME_MAGIC_RETURN_CODE};
-use ethers::{
-    abi::{Abi, Function, Token},
-    types::{Address, Bytes, Log},
-};
+use ethers::types::Log;
 use eyre::Result;
 use foundry_common::{calc, contracts::ContractsByAddress};
 use foundry_config::FuzzConfig;
@@ -173,7 +172,7 @@ impl<'a> FuzzedExecutor<'a> {
                 let reason = reason.to_string();
                 result.reason = if reason.is_empty() { None } else { Some(reason) };
 
-                let args = func.decode_input(&calldata.as_ref()[4..]).unwrap_or_default();
+                let args = func.abi_decode_input(&calldata.as_ref()[4..], false).unwrap_or_default();
                 result.counterexample = Some(CounterExample::Single(BaseCounterExample {
                     sender: None,
                     addr: None,
@@ -201,12 +200,7 @@ impl<'a> FuzzedExecutor<'a> {
     ) -> Result<FuzzOutcome, TestCaseError> {
         let call = self
             .executor
-            .call_raw(
-                self.sender.to_alloy(),
-                address.to_alloy(),
-                calldata.0.clone().into(),
-                U256::ZERO,
-            )
+            .call_raw(self.sender, address, calldata.0.clone().into(), U256::ZERO)
             .map_err(|_| TestCaseError::fail(FuzzError::FailedContractCall))?;
         let state_changeset = call
             .state_changeset
@@ -231,12 +225,8 @@ impl<'a> FuzzedExecutor<'a> {
             .as_ref()
             .map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
 
-        let success = self.executor.is_success(
-            address.to_alloy(),
-            call.reverted,
-            state_changeset.clone(),
-            should_fail,
-        );
+        let success =
+            self.executor.is_success(address, call.reverted, state_changeset.clone(), should_fail);
 
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
@@ -288,9 +278,8 @@ pub struct BaseCounterExample {
     pub contract_name: Option<String>,
     /// Traces
     pub traces: Option<CallTraceArena>,
-    // Token does not implement Serde (lol), so we just serialize the calldata
     #[serde(skip)]
-    pub args: Vec<Token>,
+    pub args: Vec<DynSolValue>,
 }
 
 impl BaseCounterExample {
@@ -302,11 +291,9 @@ impl BaseCounterExample {
         traces: Option<CallTraceArena>,
     ) -> Self {
         if let Some((name, abi)) = &contracts.get(&addr) {
-            if let Some(func) =
-                abi.functions().find(|f| f.short_signature() == bytes.0.as_ref()[0..4])
-            {
+            if let Some(func) = abi.functions().find(|f| f.selector() == bytes.0.as_ref()[0..4]) {
                 // skip the function selector when decoding
-                if let Ok(args) = func.decode_input(&bytes.0.as_ref()[4..]) {
+                if let Ok(args) = func.abi_decode_input(&bytes.0.as_ref()[4..], false) {
                     return BaseCounterExample {
                         sender: Some(sender),
                         addr: Some(addr),

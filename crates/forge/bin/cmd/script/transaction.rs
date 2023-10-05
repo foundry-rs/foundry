@@ -192,7 +192,7 @@ impl TransactionWithMetadata {
                     if let Some(function) = info
                         .abi
                         .functions()
-                        .find(|function| function.short_signature() == data.0[..SELECTOR_LEN])
+                        .find(|function| function.selector() == data.0[..SELECTOR_LEN])
                     {
                         self.function = Some(function.signature());
                         self.arguments = Some(
