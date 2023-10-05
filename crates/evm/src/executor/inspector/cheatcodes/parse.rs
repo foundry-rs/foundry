@@ -40,22 +40,23 @@ fn parse_token(s: &str, ty: &DynSolType) -> Result<DynSolValue, String> {
         }
         DynSolType::Int(256) => parse_int(s).map(|s| DynSolValue::Int(I256::from_raw(s), 256)),
         DynSolType::Address => s.parse().map(DynSolValue::Address).map_err(|e| e.to_string()),
-        DynSolType::FixedBytes(32) => { 
+        DynSolType::FixedBytes(32) => {
             let mut val = s.to_string();
-            // Previously with ethabi, strings were automatically padded to 32 bytes if it wasn't the case.
-            // This is not the case anymore, so we need to do it manually for compatibility reasons.
-            // Get the total length, either for a prefixed or unprefixed string.
-            let total_len =  if val.starts_with("0x") { 66 } else { 64 };
+            // Previously with ethabi, strings were automatically padded to 32 bytes if it wasn't
+            // the case. This is not the case anymore, so we need to do it manually for
+            // compatibility reasons. Get the total length, either for a prefixed or
+            // unprefixed string.
+            let total_len = if val.starts_with("0x") { 66 } else { 64 };
             // Pad accordingly until it's the correct size.
             if val.len() != total_len {
                 while val.len() < total_len {
                     val.push('0')
-                } 
+                }
             }
-            val
-            .parse::<FixedBytes<32>>()
-            .map(|b| DynSolValue::FixedBytes(b, 32))
-            .map_err(|e| e.to_string()) },
+            val.parse::<FixedBytes<32>>()
+                .map(|b| DynSolValue::FixedBytes(b, 32))
+                .map_err(|e| e.to_string())
+        }
         DynSolType::Bytes => parse_bytes(s).map(DynSolValue::Bytes),
         DynSolType::String => Ok(DynSolValue::String(s.to_string())),
         _ => Err("unsupported type".into()),
