@@ -356,11 +356,11 @@ impl CoverageArgs {
                 CoverageReportKind::Lcov => {
                     if let Some(report_file) = self.report_file {
                         return LcovReporter::new(&mut fs::create_file(root.join(report_file))?)
-                            .report(&report);
+                            .report(&report)
                     } else {
                         return LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?)
-                            .report(&report);
-                    } 
+                            .report(&report)
+                    }
                 }
                 CoverageReportKind::Debug => DebugReporter.report(&report),
             }?;
