@@ -2,9 +2,10 @@
 
 use ethers::{
     prelude::artifacts::YulDetails,
-    solc::artifacts::RevertStrings,
     types::{Address, H256, U256},
 };
+use foundry_compilers::artifacts::RevertStrings;
+
 use foundry_cli::utils as forge_utils;
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
@@ -12,8 +13,9 @@ use foundry_config::{
 };
 use foundry_evm::executor::opts::EvmOpts;
 use foundry_test_utils::{
-    ethers_solc::{remappings::Remapping, EvmVersion},
-    forgetest, forgetest_init, pretty_eq,
+    forgetest, forgetest_init,
+    foundry_compilers::{remappings::Remapping, EvmVersion},
+    pretty_eq,
     util::{pretty_err, OutputExt, TestCommand, TestProject},
 };
 use path_slash::PathBufExt;
@@ -373,7 +375,7 @@ contract Foo {}
     assert!(cmd.stderr_lossy().contains("this/solc/does/not/exist does not exist"));
 
     // 0.7.1 was installed in previous step, so we can use the path to this directly
-    let local_solc = ethers::solc::Solc::find_svm_installed_version("0.7.1")
+    let local_solc = foundry_compilers::Solc::find_svm_installed_version("0.7.1")
         .unwrap()
         .expect("solc 0.7.1 is installed");
     cmd.forge_fuse().args(["build", "--force", "--use"]).arg(local_solc.solc).root_arg();

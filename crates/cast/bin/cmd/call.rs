@@ -1,15 +1,13 @@
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::{
-    solc::EvmVersion,
-    types::{BlockId, NameOrAddress, U256},
-};
+use ethers::types::{BlockId, NameOrAddress, U256};
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
 use foundry_common::runtime_client::RuntimeClient;
+use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{executor::opts::EvmOpts, trace::TracingExecutor};
 use foundry_utils::types::ToAlloy;

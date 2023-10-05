@@ -11,7 +11,6 @@ use ethers::{
     },
     providers::{Http, Middleware},
     signers::LocalWallet,
-    solc::contracts::ArtifactContracts,
     types::{
         transaction::eip2718::TypedTransaction, Chain, Log, NameOrAddress, TransactionRequest,
     },
@@ -36,6 +35,7 @@ use foundry_common::{
     evm::{Breakpoints, EvmArgs},
     shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
+use foundry_compilers::contracts::ArtifactContracts;
 use foundry_config::{
     figment,
     figment::{

@@ -1,9 +1,9 @@
-use ethers_solc::{
+use eyre::{Result, WrapErr};
+use foundry_compilers::{
     cache::SolFilesCache,
     project_util::{copy_dir, TempProject},
     ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig, Solc,
 };
-use eyre::{Result, WrapErr};
 use foundry_config::Config;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;

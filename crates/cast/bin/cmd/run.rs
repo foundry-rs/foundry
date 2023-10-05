@@ -1,5 +1,5 @@
 use clap::Parser;
-use ethers::{prelude::Middleware, solc::EvmVersion, types::H160};
+use ethers::{prelude::Middleware, types::H160};
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     init_progress,
@@ -7,6 +7,7 @@ use foundry_cli::{
     update_progress, utils,
     utils::{handle_traces, TraceResult},
 };
+use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{
     executor::{inspector::cheatcodes::util::configure_tx_env, opts::EvmOpts, EvmError},

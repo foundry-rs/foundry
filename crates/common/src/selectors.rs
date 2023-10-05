@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 //! Support for handling/identifying selectors
 use crate::abi::abi_decode;
-use ethers_solc::artifacts::LosslessAbi;
+use foundry_compilers::artifacts::LosslessAbi;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{

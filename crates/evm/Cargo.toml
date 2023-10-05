@@ -18,6 +18,8 @@ foundry-macros.workspace = true
 
 ethers = { workspace = true, features = ["ethers-solc"] }
 
+foundry-compilers.workspace = true
+
 # Encoding/decoding
 serde_json = "1"
 serde = "1"

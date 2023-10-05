@@ -1,8 +1,6 @@
 use crate::utils::get_function;
-use ethers::{
-    abi::{Abi, Address, FixedBytes, Function},
-    solc::ArtifactId,
-};
+use ethers::abi::{Abi, Address, FixedBytes, Function};
+use foundry_compilers::ArtifactId;
 use std::collections::BTreeMap;
 
 /// Contains which contracts are to be targeted or excluded on an invariant test through their

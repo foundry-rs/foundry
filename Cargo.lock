@@ -2477,6 +2477,7 @@ dependencies = [
  "forge-fmt",
  "foundry-cli",
  "foundry-common",
+ "foundry-compilers",
  "foundry-config",
  "foundry-debugger",
  "foundry-evm",
@@ -2520,6 +2521,7 @@ dependencies = [
  "ethers-solc",
  "eyre",
  "forge-fmt",
+ "foundry-compilers",
  "foundry-config",
  "foundry-utils",
  "futures-util",
@@ -2628,6 +2630,9 @@ dependencies = [
 name = "foundry-common"
 version = "0.2.0"
 dependencies = [
+ "alloy-dyn-abi",
+ "alloy-json-abi",
+ "alloy-primitives",
  "async-trait",
  "auto_impl",
  "clap",
@@ -2638,8 +2643,8 @@ dependencies = [
  "ethers-etherscan",
  "ethers-middleware",
  "ethers-providers",
- "ethers-solc",
  "eyre",
+ "foundry-compilers",
  "foundry-config",
  "foundry-macros",
  "globset",
@@ -2659,6 +2664,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "foundry-compilers"
+version = "0.1.0"
+source = "git+https://github.com/foundry-rs/compilers#7b63c75c8a06e66e56bcfbb7ba0920fd9ad15fc7"
+dependencies = [
+ "alloy-dyn-abi",
+ "alloy-json-abi",
+ "alloy-primitives",
+ "cfg-if",
+ "const-hex",
+ "dirs 5.0.1",
+ "dunce",
+ "fs_extra",
+ "futures-util",
+ "glob",
+ "home",
+ "md-5 0.10.6",
+ "num_cpus",
+ "once_cell",
+ "path-slash",
+ "rand 0.8.5",
+ "rayon",
+ "regex",
+ "semver 1.0.19",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "solang-parser",
+ "svm-rs",
+ "svm-rs-builds",
+ "tempfile",
+ "thiserror",
+ "tiny-keccak",
+ "tokio",
+ "tracing",
+ "walkdir",
+ "yansi 0.5.1",
+]
+
+[[package]]
 name = "foundry-config"
 version = "0.2.0"
 dependencies = [
@@ -2666,9 +2710,9 @@ dependencies = [
  "dirs-next",
  "ethers-core",
  "ethers-etherscan",
- "ethers-solc",
  "eyre",
  "figment",
+ "foundry-compilers",
  "globset",
  "number_prefix",
  "once_cell",
@@ -2718,6 +2762,7 @@ dependencies = [
  "eyre",
  "foundry-abi",
  "foundry-common",
+ "foundry-compilers",
  "foundry-config",
  "foundry-macros",
  "foundry-utils",
@@ -2770,6 +2815,7 @@ dependencies = [
  "ethers-solc",
  "eyre",
  "foundry-common",
+ "foundry-compilers",
  "foundry-config",
  "foundry-utils",
  "once_cell",
@@ -2796,6 +2842,7 @@ dependencies = [
  "eyre",
  "forge-fmt",
  "foundry-common",
+ "foundry-compilers",
  "futures",
  "glob",
  "once_cell",

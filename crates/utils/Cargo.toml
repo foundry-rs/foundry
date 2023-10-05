@@ -21,6 +21,8 @@ ethers-solc.workspace = true
 alloy-primitives.workspace = true
 alloy-dyn-abi.workspace = true
 
+foundry-compilers.workspace = true
+
 eyre = { version = "0.6", default-features = false }
 futures = "0.3"
 glob = "0.3"

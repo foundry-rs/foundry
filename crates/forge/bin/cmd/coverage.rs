@@ -1,12 +1,9 @@
 use super::{install, test::FilterArgs};
 use alloy_primitives::{Address, Bytes, U256};
 use clap::{Parser, ValueEnum};
-use ethers::{
-    prelude::{
-        artifacts::{Ast, CompactBytecode, CompactDeployedBytecode},
-        Artifact, Project, ProjectCompileOutput,
-    },
-    solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap},
+use ethers::prelude::{
+    artifacts::{Ast, CompactBytecode, CompactDeployedBytecode},
+    Artifact, Project, ProjectCompileOutput,
 };
 use eyre::{Context, Result};
 use forge::{
@@ -26,6 +23,7 @@ use foundry_cli::{
     utils::{LoadConfig, STATIC_FUZZ_SEED},
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
+use foundry_compilers::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap};
 use foundry_config::{Config, SolcReq};
 use foundry_utils::types::ToEthers;
 use semver::Version;

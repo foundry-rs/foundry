@@ -9,14 +9,14 @@ use ethers::{
         },
         info::ContractInfo,
     },
-    solc::{
-        artifacts::{LosslessAbi, StorageLayout},
-        utils::canonicalize,
-    },
 };
 use eyre::Result;
 use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
 use foundry_common::compile;
+use foundry_compilers::{
+    artifacts::{LosslessAbi, StorageLayout},
+    utils::canonicalize,
+};
 use serde_json::{to_value, Value};
 use std::fmt;
 use tracing::trace;

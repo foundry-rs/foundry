@@ -20,6 +20,8 @@ foundry-utils.workspace = true
 ethers-solc = { workspace = true, features = ["async"] }
 ethers-core.workspace = true
 
+foundry-compilers = { workspace = true, features = ["async"] }
+
 # tracing
 tracing = "0.1"
 

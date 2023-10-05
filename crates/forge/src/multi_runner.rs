@@ -3,10 +3,11 @@ use alloy_primitives::{Address, Bytes, U256};
 use ethers::{
     abi::{Abi, Function},
     prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
-    solc::{contracts::ArtifactContracts, Artifact, ProjectCompileOutput},
 };
+
 use eyre::Result;
 use foundry_common::{ContractsByArtifact, TestFunctionExt};
+use foundry_compilers::{contracts::ArtifactContracts, Artifact, ProjectCompileOutput};
 use foundry_evm::{
     executor::{
         backend::Backend, fork::CreateFork, inspector::CheatsConfig, opts::EvmOpts, Executor,

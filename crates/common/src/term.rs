@@ -1,5 +1,5 @@
 //! terminal utils
-use ethers_solc::{
+use foundry_compilers::{
     remappings::Remapping,
     report::{self, BasicStdoutReporter, Reporter, SolcCompilerIoReporter},
     CompilerInput, CompilerOutput, Solc,

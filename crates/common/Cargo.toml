@@ -16,11 +16,15 @@ foundry-macros.workspace = true
 
 # eth
 ethers-core.workspace = true
-ethers-solc.workspace = true
 ethers-providers = { workspace = true, features = ["ws", "ipc"] }
 ethers-middleware.workspace = true
 ethers-etherscan = { workspace = true, features = ["ethers-solc"] }
 
+# alloy
+alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-dyn-abi = { workspace = true, features = ["arbitrary"] }
+alloy-json-abi.workspace = true
+foundry-compilers.workspace = true
 # io
 reqwest = { version = "0.11", default-features = false }
 

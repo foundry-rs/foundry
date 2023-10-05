@@ -1,8 +1,7 @@
 use super::{EtherscanSourceProvider, VerifyArgs};
-use ethers::{
-    etherscan::verify::CodeFormat, prelude::artifacts::StandardJsonCompilerInput, solc::Project,
-};
+use ethers::{etherscan::verify::CodeFormat, prelude::artifacts::StandardJsonCompilerInput};
 use eyre::{Context, Result};
+use foundry_compilers::Project;
 use semver::Version;
 use std::path::Path;
 use tracing::trace;

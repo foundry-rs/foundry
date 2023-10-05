@@ -8,12 +8,12 @@ use ethers::{
         Client,
     },
     prelude::errors::EtherscanError,
-    solc::{artifacts::CompactContract, cache::CacheEntry, Project, Solc},
     utils::to_checksum,
 };
 use eyre::{eyre, Context, Result};
 use foundry_cli::utils::{get_cached_entry_by_name, read_constructor_args_file, LoadConfig};
 use foundry_common::abi::encode_args;
+use foundry_compilers::{artifacts::CompactContract, cache::CacheEntry, Project, Solc};
 use foundry_config::{Chain, Config, SolcReq};
 use foundry_utils::{types::ToEthers, Retry};
 use futures::FutureExt;

@@ -1,11 +1,11 @@
 //! commonly used contract types and functions
 
+use alloy_json_abi::{Event, Function, JsonAbi as Abi};
 use ethers_core::{
-    abi::{Abi, Event, Function},
     types::{Address, H256},
     utils::hex,
 };
-use ethers_solc::{
+use foundry_compilers::{
     artifacts::{CompactContractBytecode, ContractBytecodeSome},
     ArtifactId, ProjectPathsConfig,
 };

@@ -13,9 +13,10 @@ repository.workspace = true
 [dependencies]
 # eth
 ethers-core.workspace = true
-ethers-solc = { workspace = true, features = ["async", "svm-solc"] }
 ethers-etherscan.workspace = true
 revm-primitives = { workspace = true, default-features = false, features = ["std"] }
+
+foundry-compilers = { workspace = true, features = ["async", "svm-solc"] }
 
 # formats
 Inflector = "0.11"

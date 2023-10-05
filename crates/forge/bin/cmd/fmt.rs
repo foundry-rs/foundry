@@ -83,7 +83,7 @@ impl FmtArgs {
                     }
 
                     if path.is_dir() {
-                        inputs.extend(ethers::solc::utils::source_files_iter(path));
+                        inputs.extend(foundry_compilers::utils::source_files_iter(path));
                     } else if path.is_sol() {
                         inputs.push(path.to_path_buf());
                     } else {

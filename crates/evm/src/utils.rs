@@ -181,7 +181,7 @@ pub fn get_function(
 }
 
 // TODO: Add this once solc is removed from this crate
-pub use ethers::solc::utils::RuntimeOrHandle;
+pub use foundry_compilers::utils::RuntimeOrHandle;
 
 /*
 use tokio::runtime::{Handle, Runtime};

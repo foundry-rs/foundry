@@ -3,7 +3,6 @@ use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Middleware, MiddlewareBuilder},
-    solc::{info::ContractInfo, utils::canonicalized},
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
 use eyre::{Context, Result};
@@ -12,6 +11,7 @@ use foundry_cli::{
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
 use foundry_common::{abi::parse_tokens, compile, estimate_eip1559_fees};
+use foundry_compilers::{info::ContractInfo, utils::canonicalized};
 use foundry_utils::types::ToAlloy;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};

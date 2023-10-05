@@ -4,8 +4,14 @@
 
 use crate::cache::StorageCachingConfig;
 use ethers_core::types::{Address, Chain::Mainnet, H160, H256, U256};
-pub use ethers_solc::{self, artifacts::OptimizerDetails};
-use ethers_solc::{
+use eyre::{ContextCompat, WrapErr};
+use figment::{
+    providers::{Env, Format, Serialized, Toml},
+    value::{Dict, Map, Value},
+    Error, Figment, Metadata, Profile, Provider,
+};
+pub use foundry_compilers::{self, artifacts::OptimizerDetails};
+use foundry_compilers::{
     artifacts::{
         output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
         Libraries, ModelCheckerSettings, ModelCheckerTarget, Optimizer, RevertStrings, Settings,
@@ -15,12 +21,6 @@ use ethers_solc::{
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
     ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
-};
-use eyre::{ContextCompat, WrapErr};
-use figment::{
-    providers::{Env, Format, Serialized, Toml},
-    value::{Dict, Map, Value},
-    Error, Figment, Metadata, Profile, Provider,
 };
 use inflector::Inflector;
 use once_cell::sync::Lazy;
@@ -339,7 +339,7 @@ pub struct Config {
     ///
     /// If this option is enabled, only the required contracts/files will be selected to be
     /// included in solc's output selection, see also
-    /// [OutputSelection](ethers_solc::artifacts::output_selection::OutputSelection)
+    /// [OutputSelection](foundry_compilers::artifacts::output_selection::OutputSelection)
     pub sparse_mode: bool,
     /// Whether to emit additional build info files
     ///
@@ -999,7 +999,7 @@ impl Config {
         Optimizer { enabled: Some(self.optimizer), runs: Some(self.optimizer_runs), details }
     }
 
-    /// returns the [`ethers_solc::ConfigurableArtifacts`] for this config, that includes the
+    /// returns the [`foundry_compilers::ConfigurableArtifacts`] for this config, that includes the
     /// `extra_output` fields
     pub fn configured_artifacts_handler(&self) -> ConfigurableArtifacts {
         let mut extra_output = self.extra_output.clone();
@@ -2511,7 +2511,7 @@ pub(crate) mod from_str_lowercase {
 
 fn canonic(path: impl Into<PathBuf>) -> PathBuf {
     let path = path.into();
-    ethers_solc::utils::canonicalize(&path).unwrap_or(path)
+    foundry_compilers::utils::canonicalize(&path).unwrap_or(path)
 }
 
 #[cfg(test)]
@@ -2524,8 +2524,8 @@ mod tests {
         fs_permissions::PathPermission,
     };
     use ethers_core::types::Chain::Moonbeam;
-    use ethers_solc::artifacts::{ModelCheckerEngine, YulDetails};
     use figment::{error::Kind::InvalidType, value::Value, Figment};
+    use foundry_compilers::artifacts::{ModelCheckerEngine, YulDetails};
     use pretty_assertions::assert_eq;
     use std::{collections::BTreeMap, fs::File, io::Write, str::FromStr};
     use tempfile::tempdir;
@@ -4062,7 +4062,7 @@ mod tests {
             // canonicalize the jail path using the standard library. The standard library *always*
             // transforms Windows paths to some weird extended format, which none of our code base
             // does.
-            let dir = ethers_solc::utils::canonicalize(jail.directory())
+            let dir = foundry_compilers::utils::canonicalize(jail.directory())
                 .expect("Could not canonicalize jail path");
             assert_eq!(
                 loaded.model_checker,

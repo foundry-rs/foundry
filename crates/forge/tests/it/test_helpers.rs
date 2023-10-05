@@ -3,9 +3,9 @@
 use super::*;
 use ethers::{
     prelude::{artifacts::Settings, Lazy, ProjectCompileOutput, SolcConfig},
-    solc::{artifacts::Libraries, Project, ProjectPathsConfig},
     types::{Address, U256},
 };
+use foundry_compilers::{artifacts::Libraries, Project, ProjectPathsConfig};
 use foundry_config::Config;
 use foundry_evm::{
     executor::{

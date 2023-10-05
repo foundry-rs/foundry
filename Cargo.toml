@@ -158,6 +158,9 @@ alloy-dyn-abi = { version = "0.4", default-features = false }
 alloy-json-abi = { version = "0.4", default-features = false }
 alloy-sol-types = { version = "0.4", default-features = false }
 
+# solc utils
+foundry-compilers = { version = "0.1", default-features = false}
+
 solang-parser = "=0.3.2"
 
 ## misc
@@ -190,6 +193,8 @@ ethers-signers = { git = "https://github.com/gakonst/ethers-rs" }
 ethers-middleware = { git = "https://github.com/gakonst/ethers-rs" }
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs" }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs" }
+
+foundry-compilers = {git = "https://github.com/foundry-rs/compilers"}
 
 revm = { git = "https://github.com/bluealloy/revm/", branch = "main" }
 revm-interpreter = { git = "https://github.com/bluealloy/revm/", branch = "main" }

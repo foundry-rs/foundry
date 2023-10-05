@@ -1,9 +1,9 @@
 use super::install::DependencyInstallOpts;
 use clap::{Parser, ValueHint};
-use ethers::solc::remappings::Remapping;
 use eyre::Result;
 use foundry_cli::{p_println, utils::Git};
 use foundry_common::fs;
+use foundry_compilers::remappings::Remapping;
 use foundry_config::Config;
 use std::path::{Path, PathBuf};
 use yansi::Paint;
@@ -223,7 +223,7 @@ fn init_vscode(root: &Path) -> Result<()> {
         fs::create_dir_all(&vscode_dir)?;
         serde_json::json!({})
     } else if settings_file.exists() {
-        ethers::solc::utils::read_json_file(&settings_file)?
+        foundry_compilers::utils::read_json_file(&settings_file)?
     } else {
         serde_json::json!({})
     };

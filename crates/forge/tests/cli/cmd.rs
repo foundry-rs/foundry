@@ -1,17 +1,15 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use ethers::{
-    prelude::remappings::Remapping,
-    solc::{
-        artifacts::{BytecodeHash, Metadata},
-        ConfigurableContractArtifact,
-    },
+use ethers::prelude::remappings::Remapping;
+use foundry_compilers::{
+    artifacts::{BytecodeHash, Metadata},
+    ConfigurableContractArtifact,
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use foundry_test_utils::{
-    ethers_solc::PathStyle,
     forgetest, forgetest_init,
+    foundry_compilers::PathStyle,
     util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},
 };
 use semver::Version;
@@ -355,7 +353,7 @@ forgetest!(can_init_vscode, |prj: TestProject, mut cmd: TestCommand| {
 
     let settings = prj.root().join(".vscode/settings.json");
     assert!(settings.is_file());
-    let settings: serde_json::Value = ethers::solc::utils::read_json_file(&settings).unwrap();
+    let settings: serde_json::Value = foundry_compilers::utils::read_json_file(&settings).unwrap();
     assert_eq!(
         settings,
         serde_json::json!({
@@ -447,7 +445,7 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
 
     let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
-        ethers::solc::utils::read_json_file(artifact_path).unwrap();
+        foundry_compilers::utils::read_json_file(artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
 
     cmd.forge_fuse().args(["build", "--extra-output-files", "metadata", "--force"]).root_arg();
@@ -455,7 +453,7 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
 
     let metadata_path =
         prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.metadata.json"));
-    let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
+    let _artifact: Metadata = foundry_compilers::utils::read_json_file(metadata_path).unwrap();
 });
 
 // checks that extra output works
@@ -465,7 +463,7 @@ forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: Test
 
     let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
-        ethers::solc::utils::read_json_file(artifact_path).unwrap();
+        foundry_compilers::utils::read_json_file(artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
     assert!(artifact.ir.is_some());
     assert!(artifact.ir_optimized.is_some());
@@ -484,7 +482,7 @@ forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: Test
 
     let metadata_path =
         prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.metadata.json"));
-    let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
+    let _artifact: Metadata = foundry_compilers::utils::read_json_file(metadata_path).unwrap();
 
     let iropt = prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.iropt"));
     std::fs::read_to_string(iropt).unwrap();

@@ -1,16 +1,13 @@
-use ethers::{
-    abi::Abi,
-    core::types::Chain,
-    solc::{
-        artifacts::{CompactBytecode, CompactDeployedBytecode},
-        cache::{CacheEntry, SolFilesCache},
-        info::ContractInfo,
-        utils::read_json_file,
-        Artifact, ProjectCompileOutput,
-    },
-};
+use ethers::{abi::Abi, core::types::Chain};
 use eyre::{Result, WrapErr};
 use foundry_common::{cli_warn, fs, TestFunctionExt};
+use foundry_compilers::{
+    artifacts::{CompactBytecode, CompactDeployedBytecode},
+    cache::{CacheEntry, SolFilesCache},
+    info::ContractInfo,
+    utils::read_json_file,
+    Artifact, ProjectCompileOutput,
+};
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain as ConfigChain, Config};
 use foundry_debugger::DebuggerArgs;
 use foundry_evm::{

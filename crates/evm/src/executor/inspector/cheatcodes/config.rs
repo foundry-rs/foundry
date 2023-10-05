@@ -1,7 +1,7 @@
 use super::{ensure, fmt_err, Result};
 use crate::executor::opts::EvmOpts;
-use ethers::solc::{utils::canonicalize, ProjectPathsConfig};
 use foundry_common::fs::normalize_path;
+use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
 use foundry_config::{
     cache::StorageCachingConfig, fs_permissions::FsAccessKind, Config, FsPermissions,
     ResolvedRpcEndpoints,

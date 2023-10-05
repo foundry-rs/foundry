@@ -2,10 +2,7 @@ use crate::opts::parse_slot;
 use cast::Cast;
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
-use ethers::{
-    abi::ethabi::ethereum_types::BigEndianHash, etherscan::Client, prelude::*,
-    solc::artifacts::StorageLayout,
-};
+use ethers::{abi::ethabi::ethereum_types::BigEndianHash, etherscan::Client, prelude::*};
 use eyre::Result;
 use foundry_cli::{
     opts::{CoreBuildArgs, EtherscanOpts, RpcOpts},
@@ -16,6 +13,7 @@ use foundry_common::{
     compile::{compile, etherscan_project, suppress_compile},
     RetryProvider,
 };
+use foundry_compilers::artifacts::StorageLayout;
 use foundry_config::{
     figment::{self, value::Dict, Metadata, Profile},
     impl_figment_convert_cast, Config,

@@ -128,11 +128,11 @@ impl ScriptSequence {
             broadcasted,
         )?;
 
-        let mut script_sequence: Self = ethers::solc::utils::read_json_file(&path)
+        let mut script_sequence: Self = foundry_compilers::utils::read_json_file(&path)
             .wrap_err(format!("Deployment not found for chain `{chain_id}`."))?;
 
         let sensitive_script_sequence: SensitiveScriptSequence =
-            ethers::solc::utils::read_json_file(&sensitive_path).wrap_err(format!(
+            foundry_compilers::utils::read_json_file(&sensitive_path).wrap_err(format!(
                 "Deployment's sensitive details not found for chain `{chain_id}`."
             ))?;
 

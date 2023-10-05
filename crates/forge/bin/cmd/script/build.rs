@@ -1,20 +1,18 @@
 use super::*;
 use alloy_primitives::{Address, Bytes};
-use ethers::{
-    prelude::{
-        artifacts::Libraries, cache::SolFilesCache, ArtifactId, Project, ProjectCompileOutput,
-    },
-    solc::{
-        artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
-        contracts::ArtifactContracts,
-        info::ContractInfo,
-    },
+use ethers::prelude::{
+    artifacts::Libraries, cache::SolFilesCache, ArtifactId, Project, ProjectCompileOutput,
 };
 use eyre::{Context, ContextCompat, Result};
 use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::{
     compact_to_contract,
     compile::{self, ContractSources},
+};
+use foundry_compilers::{
+    artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
+    contracts::ArtifactContracts,
+    info::ContractInfo,
 };
 use foundry_utils::{PostLinkInput, ResolvedDependency};
 use std::{collections::BTreeMap, fs, str::FromStr};
