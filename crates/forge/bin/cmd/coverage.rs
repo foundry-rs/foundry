@@ -354,18 +354,13 @@ impl CoverageArgs {
             match report_kind {
                 CoverageReportKind::Summary => SummaryReporter::default().report(&report),
                 CoverageReportKind::Lcov => {
-                    match self.report_file {
-                        Some(_) => {
-                            return LcovReporter::new(&mut fs::create_file(
-                                root.join(self.report_file.as_ref().unwrap()),
-                            )?)
-                            .report(&report)
-                        }
-                        None => {
-                            return LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?)
-                                .report(&report)
-                        }
-                    };
+                    if let Some(report_file) = self.report_file {
+                        return LcovReporter::new(&mut fs::create_file(root.join(report_file))?)
+                            .report(&report);
+                    } else {
+                        return LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?)
+                            .report(&report);
+                    } 
                 }
                 CoverageReportKind::Debug => DebugReporter.report(&report),
             }?;
