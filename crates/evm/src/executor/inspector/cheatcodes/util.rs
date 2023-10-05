@@ -6,7 +6,7 @@ use crate::{
     },
     utils::h256_to_u256_be,
 };
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use bytes::{BufMut, BytesMut};
 use ethers::{
     core::k256::elliptic_curve::Curve,
