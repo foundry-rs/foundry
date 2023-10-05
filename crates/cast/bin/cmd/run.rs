@@ -16,6 +16,11 @@ use foundry_evm::{
 use foundry_utils::types::ToAlloy;
 use tracing::trace;
 
+const OPTIMISM_SENDER: H160 = H160([
+    0xde, 0xad, 0xde, 0xad, 0xde, 0xad, 0xde, 0xad, 0xde, 0xad, 0xde, 0xad, 0xde, 0xad, 0xde, 0xad,
+    0xde, 0xad, 0x00, 0x01,
+]);
+
 const ARBITRUM_SENDER: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x0a, 0x4b, 0x05,
@@ -135,8 +140,9 @@ impl RunArgs {
 
                 for (index, tx) in block.transactions.into_iter().enumerate() {
                     // arbitrum L1 transaction at the start of every block that has gas price 0
-                    // and gas limit 0 which causes reverts, so we skip it
-                    if tx.from == ARBITRUM_SENDER {
+                    // and gas limit 0, and optimism's also has gas price 0
+                    // both txs causes reverts on validating tx, so we skip it
+                    if tx.from == ARBITRUM_SENDER || tx.from == OPTIMISM_SENDER {
                         update_progress!(pb, index);
                         continue
                     }
