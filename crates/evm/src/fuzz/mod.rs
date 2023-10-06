@@ -13,7 +13,7 @@ use ethers::types::Log;
 use eyre::Result;
 use foundry_common::{calc, contracts::ContractsByAddress};
 use foundry_config::FuzzConfig;
-use foundry_utils::types::{ToAlloy, ToEthers};
+use foundry_utils::types::ToEthers;
 pub use proptest::test_runner::Reason;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 use serde::{Deserialize, Serialize};
@@ -196,7 +196,7 @@ impl<'a> FuzzedExecutor<'a> {
         state: &EvmFuzzState,
         address: Address,
         should_fail: bool,
-        calldata: ethers::types::Bytes,
+        calldata: alloy_primitives::Bytes,
     ) -> Result<FuzzOutcome, TestCaseError> {
         let call = self
             .executor

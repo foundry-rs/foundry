@@ -34,7 +34,7 @@ pub struct CaseOutcome {
 #[derive(Debug)]
 pub struct CounterExampleOutcome {
     /// Minimal reproduction test case for failing test
-    pub counterexample: (ethers::types::Bytes, RawCallResult),
+    pub counterexample: (alloy_primitives::Bytes, RawCallResult),
     /// The status of the call
     pub exit_reason: InstructionResult,
     /// The debug nodes of the call
