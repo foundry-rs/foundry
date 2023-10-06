@@ -2,11 +2,8 @@ use crate::{
     abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier, CallKind,
 };
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
-use ethers::{
-    abi::{ethereum_types::BigEndianHash, Address, RawLog},
-    core::utils::to_checksum,
-    types::{Bytes, DefaultFrame, GethDebugTracingOptions, StructLog, H256, U256},
-};
+use ethers::types::{DefaultFrame, GethDebugTracingOptions, StructLog};
+use alloy_primitives::{Address, B256, U256, Log as RawLog, Bytes};
 pub use executor::TracingExecutor;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_utils::types::{ToAlloy, ToEthers};
@@ -97,7 +94,7 @@ impl CallTraceArena {
     // Recursively fill in the geth trace by going through the traces
     fn add_to_geth_trace(
         &self,
-        storage: &mut HashMap<Address, BTreeMap<H256, H256>>,
+        storage: &mut HashMap<Address, BTreeMap<B256, B256>>,
         trace_node: &CallTraceNode,
         struct_logs: &mut Vec<StructLog>,
         opts: &GethDebugTracingOptions,
@@ -111,7 +108,7 @@ impl CallTraceArena {
             if !opts.disable_storage.unwrap_or_default() {
                 let contract_storage = storage.entry(step.contract).or_default();
                 if let Some((key, value)) = step.state_diff {
-                    contract_storage.insert(H256::from_uint(&key), H256::from_uint(&value));
+                    contract_storage.insert(B256::from(key), B256::from(value));
                     log.storage = Some(contract_storage.clone());
                 }
             }
@@ -275,7 +272,7 @@ impl fmt::Display for RawOrDecodedLog {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             RawOrDecodedLog::Raw(log) => {
-                for (i, topic) in log.topics.iter().enumerate() {
+                for (i, topic) in log.topics().iter().enumerate() {
                     writeln!(
                         f,
                         "{:>13}: {}",
@@ -505,7 +502,7 @@ impl Default for CallTrace {
 
 impl fmt::Display for CallTrace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let address = to_checksum(&self.address, None);
+        let address = self.address.to_checksum(None);
         if self.created() {
             write!(
                 f,
@@ -543,7 +540,7 @@ impl fmt::Display for CallTrace {
                 self.gas_cost,
                 color.paint(self.label.as_ref().unwrap_or(&address)),
                 color.paint(func),
-                if !self.value.is_zero() {
+                if !self.value == U256::ZERO {
                     format!("{{value: {}}}", self.value)
                 } else {
                     "".to_string()
@@ -593,7 +590,7 @@ impl TraceKind {
 
 /// Chooses the color of the trace depending on the destination address and status of the call.
 fn trace_color(trace: &CallTrace) -> Color {
-    if trace.address == CHEATCODE_ADDRESS.to_ethers() {
+    if trace.address == CHEATCODE_ADDRESS {
         Color::Blue
     } else if trace.success {
         Color::Green
@@ -619,7 +616,7 @@ pub fn load_contracts(
         .iter()
         .filter_map(|(addr, name)| {
             if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(name) {
-                return Some(((*addr).to_alloy(), (name.clone(), abi.clone())))
+                return Some((*addr, (name.clone(), abi.clone())))
             }
             None
         })

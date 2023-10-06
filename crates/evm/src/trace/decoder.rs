@@ -9,11 +9,9 @@ use crate::{
     trace::{node::CallTraceNode, utils},
     CALLER, TEST_CONTRACT_ADDRESS,
 };
-use alloy_primitives::FixedBytes;
-use ethers::{
-    abi::{Abi, Address, Event, Function, Param, ParamType, Token},
-    types::{H160, H256},
-};
+use alloy_primitives::{Address, FixedBytes, B256};
+use alloy_dyn_abi::{DynSolType, DynSolValue};
+use alloy_json_abi::{JsonAbi as Abi, Event, Function, Param};
 use foundry_common::{abi::get_indexed_event, SELECTOR_LEN};
 use foundry_utils::types::ToEthers;
 use hashbrown::HashSet;
@@ -47,7 +45,7 @@ impl CallTraceDecoderBuilder {
         for event in events {
             self.decoder
                 .events
-                .entry((event.signature(), indexed_inputs(&event)))
+                .entry((event.selector(), indexed_inputs(&event)))
                 .or_default()
                 .push(event);
         }
@@ -97,7 +95,7 @@ pub struct CallTraceDecoder {
     /// A mapping of signatures to their known functions
     pub functions: BTreeMap<FixedBytes<4>, Vec<Function>>,
     /// All known events
-    pub events: BTreeMap<(H256, usize), Vec<Event>>,
+    pub events: BTreeMap<(B256, usize), Vec<Event>>,
     /// All known errors
     pub errors: Abi,
     /// A signature identifier for events and functions.
@@ -110,17 +108,15 @@ pub struct CallTraceDecoder {
 macro_rules! precompiles {
     ($($number:literal : $name:ident($( $name_in:ident : $in:expr ),* $(,)?) -> ($( $name_out:ident : $out:expr ),* $(,)?)),+ $(,)?) => {{
         use std::string::String as RustString;
-        use ParamType::*;
         [$(
             (
-                H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, $number]),
+                Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, $number]),
                 #[allow(deprecated)]
                 Function {
                     name: RustString::from(stringify!($name)),
-                    inputs: vec![$(Param { name: RustString::from(stringify!($name_in)), kind: $in, internal_type: None, }),*],
-                    outputs: vec![$(Param { name: RustString::from(stringify!($name_out)), kind: $out, internal_type: None, }),*],
-                    constant: None,
-                    state_mutability: ethers::abi::StateMutability::Pure,
+                    inputs: vec![$(Param { name: RustString::from(stringify!($name_in)), ty: $in, components: vec![], internal_type: None, }),*],
+                    outputs: vec![$(Param { name: RustString::from(stringify!($name_out)), ty: $out, components: vec![], internal_type: None, }),*],
+                    state_mutability: alloy_json_abi::StateMutability::Pure,
                 },
             ),
         )+]
@@ -144,25 +140,25 @@ impl CallTraceDecoder {
             // TODO: These are the Ethereum precompiles. We should add a way to support precompiles
             // for other networks, too.
             precompiles: precompiles!(
-                0x01: ecrecover(hash: FixedBytes(32), v: Uint(256), r: Uint(256), s: Uint(256)) -> (publicAddress: Address),
-                0x02: sha256(data: Bytes) -> (hash: FixedBytes(32)),
-                0x03: ripemd(data: Bytes) -> (hash: FixedBytes(32)),
-                0x04: identity(data: Bytes) -> (data: Bytes),
-                0x05: modexp(Bsize: Uint(256), Esize: Uint(256), Msize: Uint(256), BEM: Bytes) -> (value: Bytes),
-                0x06: ecadd(x1: Uint(256), y1: Uint(256), x2: Uint(256), y2: Uint(256)) -> (x: Uint(256), y: Uint(256)),
-                0x07: ecmul(x1: Uint(256), y1: Uint(256), s: Uint(256)) -> (x: Uint(256), y: Uint(256)),
-                0x08: ecpairing(x1: Uint(256), y1: Uint(256), x2: Uint(256), y2: Uint(256), x3: Uint(256), y3: Uint(256)) -> (success: Uint(256)),
-                0x09: blake2f(rounds: Uint(4), h: FixedBytes(64), m: FixedBytes(128), t: FixedBytes(16), f: FixedBytes(1)) -> (h: FixedBytes(64)),
+                0x01: ecrecover(hash: format!("bytes32"), v: format!("uint256"), r: format!("uint256"), s: format!("uint256")) -> (publicAddress: format!("address")),
+                0x02: sha256(data: format!("bytes")) -> (hash: format!("bytes32")),
+                0x03: ripemd(data: format!("bytes")) -> (hash: format!("bytes32")),
+                0x04: identity(data: format!("bytes")) -> (data: format!("bytes")),
+                0x05: modexp(Bsize: format!("uint256"), Esize: format!("uint256"), Msize: format!("uint256"), BEM: format!("bytes")) -> (value: format!("bytes")),
+                0x06: ecadd(x1: format!("uint256"), y1: format!("uint256"), x2: format!("uint256"), y2: format!("uint256")) -> (x: format!("uint256"), y: format!("uint256")),
+                0x07: ecmul(x1: format!("uint256"), y1: format!("uint256"), s: format!("uint256")) -> (x: format!("uint256"), y: format!("uint256")),
+                0x08: ecpairing(x1: format!("uint256"), y1: format!("uint256"), x2: format!("uint256"), y2: format!("uint256"), x3: format!("uint256"), y3: format!("uint256")) -> (success: Uint(256)),
+                0x09: blake2f(rounds: DynSolType::Uint(4).to_string(), h: DynSolType::FixedBytes(64).to_string(), m: DynSolType::FixedBytes(128).to_string(), t: DynSolType::FixedBytes(16).to_string(), f: DynSolType::FixedBytes(1).to_string()) -> (h: DynSolType::FixedBytes(64).to_string()),
             ).into(),
 
             contracts: Default::default(),
 
             labels: [
-                (CHEATCODE_ADDRESS.to_ethers(), "VM".to_string()),
-                (HARDHAT_CONSOLE_ADDRESS.to_ethers(), "console".to_string()),
-                (DEFAULT_CREATE2_DEPLOYER.to_ethers(), "Create2Deployer".to_string()),
-                (CALLER.to_ethers(), "DefaultSender".to_string()),
-                (TEST_CONTRACT_ADDRESS.to_ethers(), "DefaultTestContract".to_string()),
+                (CHEATCODE_ADDRESS, "VM".to_string()),
+                (HARDHAT_CONSOLE_ADDRESS, "console".to_string()),
+                (DEFAULT_CREATE2_DEPLOYER, "Create2Deployer".to_string()),
+                (CALLER, "DefaultSender".to_string()),
+                (TEST_CONTRACT_ADDRESS, "DefaultTestContract".to_string()),
             ]
             .into(),
 

@@ -3,12 +3,11 @@ use crate::executor::{
     backend::error::{DatabaseError, DatabaseResult},
     fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
 };
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256, keccak256};
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
     providers::Middleware,
     types::{Block, BlockId, NameOrAddress, Transaction},
-    utils::keccak256,
 };
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
 use foundry_utils::types::{ToAlloy, ToEthers};

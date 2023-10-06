@@ -10,11 +10,10 @@ use crate::{
     },
     CALLER, TEST_CONTRACT_ADDRESS,
 };
-use alloy_primitives::{b256, Address, B256, U256, U64};
+use alloy_primitives::{b256, Address, B256, U256, U64, keccak256};
 use ethers::{
     prelude::Block,
     types::{BlockNumber, Transaction},
-    utils::keccak256,
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
 pub use in_memory_db::MemDb;
