@@ -632,7 +632,7 @@ impl TestSummaryReporter {
         let mut table = Table::new();
         table.apply_modifier(UTF8_ROUND_CORNERS);
         let mut row = Row::from(vec![
-            Cell::new("Test Suites")
+            Cell::new("Test Suite")
                 .set_alignment(CellAlignment::Center)
                 .add_attribute(Attribute::Bold),
             Cell::new("Passed")
