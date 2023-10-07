@@ -674,14 +674,34 @@ impl TestSummaryReporter {
                 let mut row = Row::new();
                 let suite_name = contract.split(':').nth(1).unwrap();
                 let suite_path = contract.split(':').nth(0).unwrap();
+
                 let passed = suite.successes().count();
+                let mut passed_cell = Cell::new(passed).set_alignment(CellAlignment::Center);
+
                 let failed = suite.failures().count();
+                let mut failed_cell = Cell::new(failed).set_alignment(CellAlignment::Center);
+
                 let skipped = suite.skips().count();
+                let mut skipped_cell = Cell::new(skipped).set_alignment(CellAlignment::Center);
+
                 let duration = suite.duration();
+
                 row.add_cell(Cell::new(suite_name));
-                row.add_cell(Cell::new(passed));
-                row.add_cell(Cell::new(failed));
-                row.add_cell(Cell::new(skipped));
+
+                if passed > 0 {
+                    passed_cell = passed_cell.fg(Color::Green);
+                }
+                row.add_cell(passed_cell);
+
+                if failed > 0 {
+                    failed_cell = failed_cell.fg(Color::Red);
+                }
+                row.add_cell(failed_cell);
+
+                if skipped > 0 {
+                    skipped_cell = skipped_cell.fg(Color::Yellow);
+                }
+                row.add_cell(skipped_cell);
 
                 if self.is_detailed {
                     row.add_cell(Cell::new(suite_path));
