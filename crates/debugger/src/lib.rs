@@ -1,6 +1,6 @@
 #![warn(unused_crate_dependencies)]
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
@@ -677,10 +677,11 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                     text_output.extend(Text::from("No sourcemap for contract"));
                 }
             } else {
-                text_output.extend(Text::from("No srcmap index for contract {contract_name}"));
+                text_output
+                    .extend(Text::from(format!("No srcmap index for contract {contract_name}")));
             }
         } else {
-            text_output.extend(Text::from(format!("Unknown contract at address {address:?}")));
+            text_output.extend(Text::from(format!("Unknown contract at address {address}")));
         }
 
         let paragraph =
@@ -700,7 +701,7 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
     ) {
         let block_source_code = Block::default()
             .title(format!(
-                "Address: {:?} | PC: {} | Gas used in call: {}",
+                "Address: {} | PC: {} | Gas used in call: {}",
                 address,
                 if let Some(step) = debug_steps.get(current_step) {
                     step.pc.to_string()
@@ -858,6 +859,53 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
         f.render_widget(paragraph, area);
     }
 
+    /// The memory_access variable stores the index on the stack that indicates the memory
+    /// offset/size accessed by the given opcode:
+    ///   (read memory offset, read memory size, write memory offset, write memory size)
+    ///   >= 1: the stack index
+    ///   0: no memory access
+    ///   -1: a fixed size of 32 bytes
+    ///   -2: a fixed size of 1 byte
+    /// The return value is a tuple about accessed memory region by the given opcode:
+    ///   (read memory offset, read memory size, write memory offset, write memory size)
+    fn get_memory_access(
+        op: u8,
+        stack: &Vec<U256>,
+    ) -> (Option<usize>, Option<usize>, Option<usize>, Option<usize>) {
+        let memory_access = match op {
+            opcode::KECCAK256 | opcode::RETURN | opcode::REVERT => (1, 2, 0, 0),
+            opcode::CALLDATACOPY | opcode::CODECOPY | opcode::RETURNDATACOPY => (0, 0, 1, 3),
+            opcode::EXTCODECOPY => (0, 0, 2, 4),
+            opcode::MLOAD => (1, -1, 0, 0),
+            opcode::MSTORE => (0, 0, 1, -1),
+            opcode::MSTORE8 => (0, 0, 1, -2),
+            opcode::LOG0 | opcode::LOG1 | opcode::LOG2 | opcode::LOG3 | opcode::LOG4 => {
+                (1, 2, 0, 0)
+            }
+            opcode::CREATE | opcode::CREATE2 => (2, 3, 0, 0),
+            opcode::CALL | opcode::CALLCODE => (4, 5, 0, 0),
+            opcode::DELEGATECALL | opcode::STATICCALL => (3, 4, 0, 0),
+            _ => Default::default(),
+        };
+
+        let stack_len = stack.len();
+        let get_size = |stack_index| match stack_index {
+            -2 => Some(1),
+            -1 => Some(32),
+            0 => None,
+            1.. => Some(stack[stack_len - stack_index as usize].to()),
+            _ => panic!("invalid stack index"),
+        };
+
+        let (read_offset, read_size, write_offset, write_size) = (
+            get_size(memory_access.0),
+            get_size(memory_access.1),
+            get_size(memory_access.2),
+            get_size(memory_access.3),
+        );
+        (read_offset, read_size, write_offset, write_size)
+    }
+
     /// Draw memory in memory pane
     fn draw_memory<B: Backend>(
         f: &mut Frame<B>,
@@ -875,23 +923,23 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
         let max_i = memory.len() / 32;
         let min_len = format!("{:x}", max_i * 32).len();
 
-        // color memory words based on write/read
-        let mut word: Option<usize> = None;
+        // color memory region based on write/read
+        let mut offset: Option<usize> = None;
+        let mut size: Option<usize> = None;
         let mut color = None;
         if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
             let stack_len = debug_steps[current_step].stack.len();
             if stack_len > 0 {
-                let w = debug_steps[current_step].stack[stack_len - 1];
-                match op {
-                    opcode::MLOAD => {
-                        word = Some(w.to());
-                        color = Some(Color::Cyan);
-                    }
-                    opcode::MSTORE => {
-                        word = Some(w.to());
-                        color = Some(Color::Red);
-                    }
-                    _ => {}
+                let (read_offset, read_size, write_offset, write_size) =
+                    Tui::get_memory_access(op, &debug_steps[current_step].stack);
+                if read_offset.is_some() {
+                    offset = read_offset;
+                    size = read_size;
+                    color = Some(Color::Cyan);
+                } else if write_offset.is_some() {
+                    offset = write_offset;
+                    size = write_size;
+                    color = Some(Color::Red);
                 }
             }
         }
@@ -899,11 +947,12 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
         // color word on previous write op
         if current_step > 0 {
             let prev_step = current_step - 1;
-            let stack_len = debug_steps[prev_step].stack.len();
             if let Instruction::OpCode(op) = debug_steps[prev_step].instruction {
-                if op == opcode::MSTORE {
-                    let prev_top = debug_steps[prev_step].stack[stack_len - 1];
-                    word = Some(prev_top.to());
+                let (_, _, write_offset, write_size) =
+                    Tui::get_memory_access(op, &debug_steps[prev_step].stack);
+                if write_offset.is_some() {
+                    offset = write_offset;
+                    size = write_size;
                     color = Some(Color::Green);
                 }
             }
@@ -924,8 +973,15 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                     .map(|(j, byte)| {
                         Span::styled(
                             format!("{byte:02x} "),
-                            if let (Some(w), Some(color)) = (word, color) {
-                                if (i == w / 32 && j >= w % 32) || (i == w / 32 + 1 && j < w % 32) {
+                            if let (Some(offset), Some(size), Some(color)) = (offset, size, color) {
+                                if (i == offset / 32 && j >= offset % 32) ||
+                                    (i > offset / 32 && i < (offset + size - 1) / 32) ||
+                                    (i == (offset + size - 1) / 32 &&
+                                        j <= (offset + size - 1) % 32)
+                                {
+                                    // [offset, offset + size] is the memory region to be colored.
+                                    // If a byte at row i and column j in the memory panel
+                                    // falls in this region, set the color.
                                     Style::default().fg(color)
                                 } else if *byte == 0 {
                                     Style::default().add_modifier(Modifier::DIM)

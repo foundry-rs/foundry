@@ -1,5 +1,5 @@
 use super::{multi::MultiChainSequence, sequence::ScriptSequence, verify::VerifyBundle, *};
-use alloy_primitives::{Bytes, U256};
+use alloy_primitives::Bytes;
 use ethers::{
     prelude::{Middleware, Signer},
     types::transaction::eip2718::TypedTransaction,
@@ -23,7 +23,7 @@ impl ScriptArgs {
         let (config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
         let mut script_config = ScriptConfig {
             // dapptools compatibility
-            sender_nonce: U256::from(1),
+            sender_nonce: 1,
             config,
             evm_opts,
             debug: self.debug,
@@ -277,7 +277,7 @@ impl ScriptArgs {
                 default_known_contracts,
                 Libraries::parse(&deployment_sequence.libraries)?,
                 script_config.config.sender.to_alloy(), // irrelevant, since we're not creating any
-                U256::ZERO,                             // irrelevant, since we're not creating any
+                0,                                      // irrelevant, since we're not creating any
             )?;
 
             verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);

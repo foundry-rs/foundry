@@ -38,7 +38,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
                     println!(
                         "\nSubmitting verification for [{}] {:?}.",
                         args.contract.name,
-                        args.address.to_checksum(None)
+                        args.address.to_string()
                     );
                     let response = client
                         .post(args.verifier.verifier_url.as_deref().unwrap_or(SOURCIFY_URL))
@@ -158,7 +158,7 @@ metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.tom
         }
 
         let req = SourcifyVerifyRequest {
-            address: format!("{:?}", args.address),
+            address: args.address.to_string(),
             chain: args.etherscan.chain.unwrap_or_default().id().to_string(),
             files,
             chosen_contract: None,

@@ -12,11 +12,10 @@ repository.workspace = true
 [dependencies]
 # foundry internal
 foundry-evm = { path = "../../evm" }
-foundry-utils = { path = "../../utils"}
-revm = { workspace = true, default-features = false, features = ["std", "serde", "memory_limit"] }
+foundry-utils = { path = "../../utils" }
+revm = { workspace = true,  default-features = false, features = ["std", "serde", "memory_limit"] }
 
-
-alloy-primitives = { workspace = true, default-features = false, features = ["std", "serde"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
 ethers-core.workspace = true
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = "1"

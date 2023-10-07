@@ -146,7 +146,6 @@ impl EthApi {
 
         let mut res: Vec<_> = vec![];
 
-        dbg!(to, from);
         for n in (to..=from).rev() {
             if n == to {
                 last_page = true;
@@ -271,7 +270,7 @@ impl EthApi {
 
         // loop in reverse, since we want the latest deploy to the address
         for n in (from..=to).rev() {
-            if let Some(traces) = dbg!(self.backend.mined_parity_trace_block(n)) {
+            if let Some(traces) = self.backend.mined_parity_trace_block(n) {
                 for trace in traces.into_iter().rev() {
                     match (trace.action, trace.result) {
                         (

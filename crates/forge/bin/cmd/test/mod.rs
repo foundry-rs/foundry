@@ -210,16 +210,16 @@ impl TestArgs {
 
         if should_debug {
             filter.args_mut().test_pattern = self.debug.clone();
-            let n = runner.count_filtered_tests(&filter);
-            if n != 1 {
+            let num_filtered = runner.matching_test_function_count(&filter);
+            if num_filtered != 1 {
                 return Err(
-                        eyre::eyre!("{n} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
+                        eyre::eyre!("{num_filtered} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
                         \n
                         Use --match-contract and --match-path to further limit the search."));
             }
-            let test_funcs = runner.get_typed_tests(&filter);
+            let test_funcs = runner.get_matching_test_functions(&filter);
             // if we debug a fuzz test, we should not collect data on the first run
-            if !test_funcs.get(0).unwrap().inputs.is_empty() {
+            if !test_funcs.get(0).expect("matching function exists").inputs.is_empty() {
                 runner_builder = runner_builder.set_debug(false);
                 runner = runner_builder.clone().build(
                     project_root,
@@ -240,7 +240,6 @@ impl TestArgs {
 
         if should_debug {
             let tests = outcome.clone().into_tests();
-
             let mut decoders = Vec::new();
             for test in tests {
                 let mut result = test.result;
@@ -319,7 +318,6 @@ impl TestArgs {
 
             let test = outcome.clone().into_tests().next().unwrap();
             let result = test.result;
-
             // Run the debugger
             let debugger = DebuggerArgs {
                 debug: result.debug.map_or(vec![], |debug| vec![debug]),
@@ -744,8 +742,8 @@ async fn test(
     detailed: bool,
 ) -> Result<TestOutcome> {
     trace!(target: "forge::test", "running all tests");
-
-    if runner.count_filtered_tests(&filter) == 0 {
+ 
+    if runner.matching_test_function_count(&filter) == 0 {
         let filter_str = filter.to_string();
         if filter_str.is_empty() {
             println!(
