@@ -683,7 +683,7 @@ impl TestSummaryReporter {
 
         // Traverse the test_results vector and build the table
         for suite in &test_results {
-            for (contract, _suite_result) in &suite.results {
+            for contract in suite.results.keys() {
                 let mut row = Row::new();
                 let suite_name = contract.split(':').nth(1).unwrap();
                 let suite_path = contract.split(':').nth(0).unwrap();
@@ -744,7 +744,6 @@ async fn test(
     detailed: bool,
 ) -> Result<TestOutcome> {
     trace!(target: "forge::test", "running all tests");
-
     if runner.count_filtered_tests(&filter) == 0 {
         let filter_str = filter.to_string();
         if filter_str.is_empty() {
