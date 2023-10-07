@@ -191,10 +191,10 @@ ethers-middleware = { git = "https://github.com/gakonst/ethers-rs" }
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs" }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs" }
 
-revm = { git = "https://github.com/bluealloy/revm/", branch = "main" }
-revm-interpreter = { git = "https://github.com/bluealloy/revm/", branch = "main" }
-revm-precompile = { git = "https://github.com/bluealloy/revm/", branch = "main" }
-revm-primitives = { git = "https://github.com/bluealloy/revm/", branch = "main" }
+# revm = { git = "https://github.com/bluealloy/revm/", branch = "main" }
+# revm-interpreter = { git = "https://github.com/bluealloy/revm/", branch = "main" }
+# revm-precompile = { git = "https://github.com/bluealloy/revm/", branch = "main" }
+# revm-primitives = { git = "https://github.com/bluealloy/revm/", branch = "main" }
 
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/", branch = "main"}
 alloy-primitives = { git = "https://github.com/alloy-rs/core/", branch = "main"}
