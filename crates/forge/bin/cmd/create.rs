@@ -117,7 +117,12 @@ impl CreateArgs {
             None => vec![],
         };
 
-        let chain_id = provider.get_chainid().await?.as_u64();
+        // respect chain, if set explicitly via cmd args
+        let chain_id = if let Some(chain) = self.eth.etherscan.chain {
+            chain.id()
+        } else {
+            provider.get_chainid().await?.as_u64()
+        };
         if self.unlocked {
             // Deploy with unlocked account
             let sender = self.eth.wallet.from.expect("required");
