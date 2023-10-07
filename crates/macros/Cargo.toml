@@ -10,7 +10,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-foundry-macros-impl.path = "impl"
+foundry-macros-impl = { path = "impl" }
 
 ethers-core.workspace = true
 serde = "1.0"
