@@ -116,6 +116,10 @@ pub struct TestArgs {
     /// Print test summary table
     #[clap(long)]
     pub summary: bool,
+
+    /// Print detailed test summary table
+    #[clap(long)]
+    pub detailed: bool,
 }
 
 impl TestArgs {
@@ -347,6 +351,11 @@ impl TestArgs {
         } else if self.list {
             list(runner, filter, self.json)
         } else {
+            if self.detailed && !self.summary {
+                return Err(eyre::eyre!(
+                    "Missing `--summary` option in your command. You must pass it along with the `--detailed` option to view detailed test summary."
+                ));
+            }
             test(
                 config,
                 runner,
@@ -358,6 +367,7 @@ impl TestArgs {
                 self.gas_report,
                 self.fail_fast,
                 self.summary,
+                self.detailed,
             )
             .await
         }
@@ -613,42 +623,109 @@ fn list(
 }
 
 /// Creates table summary header
-fn create_test_summary_table_header(summary_table: &mut Table) -> Row {
-    summary_table.apply_modifier(UTF8_ROUND_CORNERS);
-    Row::from(vec![
-        Cell::new("Test Suites")
-            .set_alignment(CellAlignment::Center)
-            .add_attribute(Attribute::Bold),
-        Cell::new("Passed")
-            .set_alignment(CellAlignment::Center)
-            .add_attribute(Attribute::Bold)
-            .fg(Color::Green),
-        Cell::new("Failed")
-            .set_alignment(CellAlignment::Center)
-            .add_attribute(Attribute::Bold)
-            .fg(Color::Red),
-        Cell::new("Skipped")
-            .set_alignment(CellAlignment::Center)
-            .add_attribute(Attribute::Bold)
-            .fg(Color::Yellow),
-    ])
+// fn create_test_summary_table_header(summary_table: &mut Table) -> Row {
+//     summary_table.apply_modifier(UTF8_ROUND_CORNERS);
+//     Row::from(vec![
+//         Cell::new("Test Suites")
+//             .set_alignment(CellAlignment::Center)
+//             .add_attribute(Attribute::Bold),
+//         Cell::new("Passed")
+//             .set_alignment(CellAlignment::Center)
+//             .add_attribute(Attribute::Bold)
+//             .fg(Color::Green),
+//         Cell::new("Failed")
+//             .set_alignment(CellAlignment::Center)
+//             .add_attribute(Attribute::Bold)
+//             .fg(Color::Red),
+//         Cell::new("Skipped")
+//             .set_alignment(CellAlignment::Center)
+//             .add_attribute(Attribute::Bold)
+//             .fg(Color::Yellow),
+//     ])
+// }
+
+// /// Creates table summary row
+// fn create_test_summary_table_row(
+//     contract_name: String,
+//     success_count: usize,
+//     failure_count: usize,
+//     skip_count: usize,
+// ) -> Row { Row::from(vec![ Cell::new(contract_name.split(':').nth(1).unwrap()),
+//   Cell::new(success_count).fg(Color::Green).set_alignment(CellAlignment::Center),
+//   Cell::new(failure_count).fg(Color::Red).set_alignment(CellAlignment::Center),
+//   Cell::new(skip_count).fg(Color::Yellow).set_alignment(CellAlignment::Center), ])
+// }
+
+/// A simple summary reporter that prints the test results in a table.
+pub struct TestSummaryReporter {
+    /// The test summary table.
+    table: Table,
 }
 
-/// Creates table summary row
-fn create_test_summary_table_row(
-    contract_name: String,
-    success_count: usize,
-    failure_count: usize,
-    skip_count: usize,
-) -> Row {
-    Row::from(vec![
-        Cell::new(contract_name.split(':').nth(1).unwrap()),
-        Cell::new(success_count).fg(Color::Green).set_alignment(CellAlignment::Center),
-        Cell::new(failure_count).fg(Color::Red).set_alignment(CellAlignment::Center),
-        Cell::new(skip_count).fg(Color::Yellow).set_alignment(CellAlignment::Center),
-    ])
-}
+impl TestSummaryReporter {
+    fn new(is_detailed: bool) -> Self {
+        let mut table = Table::new();
+        table.apply_modifier(UTF8_ROUND_CORNERS);
+        let mut row = Row::from(vec![
+            Cell::new("Test Suites")
+                .set_alignment(CellAlignment::Center)
+                .add_attribute(Attribute::Bold),
+            Cell::new("Passed")
+                .set_alignment(CellAlignment::Center)
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Green),
+            Cell::new("Failed")
+                .set_alignment(CellAlignment::Center)
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Red),
+            Cell::new("Skipped")
+                .set_alignment(CellAlignment::Center)
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Yellow),
+        ]);
+        if is_detailed {
+            row.add_cell(
+                Cell::new("File Path")
+                    .set_alignment(CellAlignment::Center)
+                    .add_attribute(Attribute::Bold),
+            );
+            row.add_cell(
+                Cell::new("Duration")
+                    .set_alignment(CellAlignment::Center)
+                    .add_attribute(Attribute::Bold),
+            );
+        }
+        table.set_header(row);
+        Self { table }
+    }
 
+    fn print_summary(&mut self, test_results: Vec<TestOutcome>, is_detailed: bool) {
+        // Traversing the test_results vector
+        for suite in &test_results {
+            for (contract, _suite_result) in &suite.results {
+                let mut row = Row::new();
+                let suite_name = contract.split(':').nth(1).unwrap();
+                let suite_path = contract.split(':').nth(0).unwrap();
+                let passed = suite.successes().count();
+                let failed = suite.failures().count();
+                let skipped = suite.skips().count();
+                let duration = suite.duration();
+                row.add_cell(Cell::new(suite_name));
+                row.add_cell(Cell::new(passed));
+                row.add_cell(Cell::new(failed));
+                row.add_cell(Cell::new(skipped));
+
+                if is_detailed {
+                    row.add_cell(Cell::new(suite_path));
+                    row.add_cell(Cell::new(format!("{:.2?}", duration).to_string()));
+                }
+
+                self.table.add_row(row);
+            }
+        }
+        println!("\n{}", self.table);
+    }
+}
 /// Runs all the tests
 #[allow(clippy::too_many_arguments)]
 async fn test(
@@ -662,8 +739,10 @@ async fn test(
     gas_reporting: bool,
     fail_fast: bool,
     summary: bool,
+    detailed: bool,
 ) -> Result<TestOutcome> {
     trace!(target: "forge::test", "running all tests");
+
     if runner.count_filtered_tests(&filter) == 0 {
         let filter_str = filter.to_string();
         if filter_str.is_empty() {
@@ -711,12 +790,7 @@ async fn test(
     let mut total_passed = 0;
     let mut total_failed = 0;
     let mut total_skipped = 0;
-    let mut summary_table: Table = Table::new();
-
-    if summary {
-        let table_header = create_test_summary_table_header(&mut summary_table);
-        summary_table.set_header(table_header);
-    }
+    let mut suite_results: Vec<TestOutcome> = Vec::new();
 
     'outer: for (contract_name, suite_result) in rx {
         results.insert(contract_name.clone(), suite_result.clone());
@@ -815,17 +889,11 @@ async fn test(
         total_failed += block_outcome.failures().count();
         total_skipped += block_outcome.skips().count();
 
-        if summary {
-            let row = create_test_summary_table_row(
-                contract_name,
-                block_outcome.successes().count(),
-                block_outcome.failures().count(),
-                block_outcome.skips().count(),
-            );
-            summary_table.add_row(row);
-        }
-
         println!("{}", block_outcome.summary());
+
+        if summary {
+            suite_results.push(block_outcome.clone());
+        }
     }
 
     if gas_reporting {
@@ -841,8 +909,9 @@ async fn test(
         );
 
         if summary {
+            let mut summary_table: TestSummaryReporter = TestSummaryReporter::new(detailed);
             println!("\n\nTest Summary:");
-            println!("{summary_table}");
+            summary_table.print_summary(suite_results, detailed);
         }
     }
 
