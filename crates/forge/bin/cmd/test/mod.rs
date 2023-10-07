@@ -152,8 +152,8 @@ impl TestArgs {
         let mut project = config.project()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config, self.build_args().silent)
-            && config.auto_detect_remappings
+        if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
+            config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
@@ -275,12 +275,12 @@ impl TestArgs {
                             // tests At verbosity level 5, we display
                             // all traces for all tests
                             TraceKind::Setup => {
-                                (verbosity >= 5)
-                                    || (verbosity == 4 && result.status == TestStatus::Failure)
+                                (verbosity >= 5) ||
+                                    (verbosity == 4 && result.status == TestStatus::Failure)
                             }
                             TraceKind::Execution => {
-                                verbosity > 3
-                                    || (verbosity == 3 && result.status == TestStatus::Failure)
+                                verbosity > 3 ||
+                                    (verbosity == 3 && result.status == TestStatus::Failure)
                             }
                             _ => false,
                         };
@@ -491,7 +491,7 @@ impl TestOutcome {
     pub fn ensure_ok(&self) -> Result<()> {
         let failures = self.failures().count();
         if self.allow_failure || failures == 0 {
-            return Ok(());
+            return Ok(())
         }
 
         if !shell::verbosity().is_normal() {
@@ -504,7 +504,7 @@ impl TestOutcome {
         for (suite_name, suite) in self.results.iter() {
             let failures = suite.failures().count();
             if failures == 0 {
-                continue;
+                continue
             }
 
             let term = if failures > 1 { "tests" } else { "test" };
@@ -766,7 +766,7 @@ async fn test(
     if json {
         let results = runner.test(filter, None, test_options).await;
         println!("{}", serde_json::to_string(&results)?);
-        return Ok(TestOutcome::new(results, allow_failure));
+        return Ok(TestOutcome::new(results, allow_failure))
     }
 
     // Set up identifiers
@@ -809,7 +809,7 @@ async fn test(
 
             // If the test failed, we want to stop processing the rest of the tests
             if fail_fast && result.status == TestStatus::Failure {
-                break 'outer;
+                break 'outer
             }
 
             // We only display logs at level 2 and above
@@ -826,7 +826,7 @@ async fn test(
             }
 
             if result.traces.is_empty() {
-                continue;
+                continue
             }
 
             // Identify addresses in each trace
