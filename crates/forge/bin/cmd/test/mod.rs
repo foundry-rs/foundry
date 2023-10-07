@@ -667,8 +667,21 @@ impl TestSummaryReporter {
         Self { table, is_detailed }
     }
 
-    fn print_summary(&mut self, test_results: Vec<TestOutcome>) {
-        // Traversing the test_results vector
+    fn print_summary(&mut self, mut test_results: Vec<TestOutcome>) {
+        // Sort by suite name first
+
+        // Using `sort_by_cached_key` so that the key extraction logic runs only once
+        test_results.sort_by_cached_key(|test_outcome| {
+            test_outcome
+                .results
+                .keys()
+                .next()
+                .and_then(|suite| suite.split(':').nth(1))
+                .unwrap()
+                .to_string()
+        });
+
+        // Traverse the test_results vector and build the table
         for suite in &test_results {
             for (contract, _suite_result) in &suite.results {
                 let mut row = Row::new();
@@ -711,6 +724,7 @@ impl TestSummaryReporter {
                 self.table.add_row(row);
             }
         }
+        // Print the summary table
         println!("\n{}", self.table);
     }
 }
