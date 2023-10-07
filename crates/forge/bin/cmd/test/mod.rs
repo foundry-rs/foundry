@@ -152,8 +152,8 @@ impl TestArgs {
         let mut project = config.project()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
-            config.auto_detect_remappings
+        if install::install_missing_dependencies(&mut config, self.build_args().silent)
+            && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
@@ -210,16 +210,16 @@ impl TestArgs {
 
         if should_debug {
             filter.args_mut().test_pattern = self.debug.clone();
-            let n = runner.count_filtered_tests(&filter);
-            if n != 1 {
+            let num_filtered = runner.matching_test_function_count(&filter);
+            if num_filtered != 1 {
                 return Err(
-                        eyre::eyre!("{n} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
+                        eyre::eyre!("{num_filtered} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
                         \n
                         Use --match-contract and --match-path to further limit the search."));
             }
-            let test_funcs = runner.get_typed_tests(&filter);
+            let test_funcs = runner.get_matching_test_functions(&filter);
             // if we debug a fuzz test, we should not collect data on the first run
-            if !test_funcs.get(0).unwrap().inputs.is_empty() {
+            if !test_funcs.get(0).expect("matching function exists").inputs.is_empty() {
                 runner_builder = runner_builder.set_debug(false);
                 runner = runner_builder.clone().build(
                     project_root,
@@ -240,7 +240,6 @@ impl TestArgs {
 
         if should_debug {
             let tests = outcome.clone().into_tests();
-
             let mut decoders = Vec::new();
             for test in tests {
                 let mut result = test.result;
@@ -276,12 +275,12 @@ impl TestArgs {
                             // tests At verbosity level 5, we display
                             // all traces for all tests
                             TraceKind::Setup => {
-                                (verbosity >= 5) ||
-                                    (verbosity == 4 && result.status == TestStatus::Failure)
+                                (verbosity >= 5)
+                                    || (verbosity == 4 && result.status == TestStatus::Failure)
                             }
                             TraceKind::Execution => {
-                                verbosity > 3 ||
-                                    (verbosity == 3 && result.status == TestStatus::Failure)
+                                verbosity > 3
+                                    || (verbosity == 3 && result.status == TestStatus::Failure)
                             }
                             _ => false,
                         };
@@ -319,7 +318,6 @@ impl TestArgs {
 
             let test = outcome.clone().into_tests().next().unwrap();
             let result = test.result;
-
             // Run the debugger
             let debugger = DebuggerArgs {
                 debug: result.debug.map_or(vec![], |debug| vec![debug]),
@@ -493,7 +491,7 @@ impl TestOutcome {
     pub fn ensure_ok(&self) -> Result<()> {
         let failures = self.failures().count();
         if self.allow_failure || failures == 0 {
-            return Ok(())
+            return Ok(());
         }
 
         if !shell::verbosity().is_normal() {
@@ -506,7 +504,7 @@ impl TestOutcome {
         for (suite_name, suite) in self.results.iter() {
             let failures = suite.failures().count();
             if failures == 0 {
-                continue
+                continue;
             }
 
             let term = if failures > 1 { "tests" } else { "test" };
@@ -744,7 +742,8 @@ async fn test(
     detailed: bool,
 ) -> Result<TestOutcome> {
     trace!(target: "forge::test", "running all tests");
-    if runner.count_filtered_tests(&filter) == 0 {
+
+    if runner.matching_test_function_count(&filter) == 0 {
         let filter_str = filter.to_string();
         if filter_str.is_empty() {
             println!(
@@ -767,7 +766,7 @@ async fn test(
     if json {
         let results = runner.test(filter, None, test_options).await;
         println!("{}", serde_json::to_string(&results)?);
-        return Ok(TestOutcome::new(results, allow_failure))
+        return Ok(TestOutcome::new(results, allow_failure));
     }
 
     // Set up identifiers
@@ -810,7 +809,7 @@ async fn test(
 
             // If the test failed, we want to stop processing the rest of the tests
             if fail_fast && result.status == TestStatus::Failure {
-                break 'outer
+                break 'outer;
             }
 
             // We only display logs at level 2 and above
@@ -827,7 +826,7 @@ async fn test(
             }
 
             if result.traces.is_empty() {
-                continue
+                continue;
             }
 
             // Identify addresses in each trace

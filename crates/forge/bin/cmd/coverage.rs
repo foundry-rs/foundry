@@ -1,6 +1,6 @@
 use super::{install, test::FilterArgs};
 use alloy_primitives::{Address, Bytes, U256};
-use clap::{Parser, ValueEnum};
+use clap::{Parser, ValueEnum, ValueHint};
 use ethers::{
     prelude::{
         artifacts::{Ast, CompactBytecode, CompactDeployedBytecode},
@@ -29,7 +29,7 @@ use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
 use foundry_config::{Config, SolcReq};
 use foundry_utils::types::ToEthers;
 use semver::Version;
-use std::{collections::HashMap, sync::mpsc::channel};
+use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel};
 use tracing::trace;
 use yansi::Paint;
 
@@ -54,6 +54,17 @@ pub struct CoverageArgs {
     /// relatively accurate source map.
     #[clap(long)]
     ir_minimum: bool,
+
+    /// The path to output the report.
+    ///
+    /// If not specified, the report will be stored in the root of the project.
+    #[clap(
+        long,
+        short,
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH"
+    )]
+    report_file: Option<PathBuf>,
 
     #[clap(flatten)]
     filter: FilterArgs,
@@ -342,9 +353,14 @@ impl CoverageArgs {
         for report_kind in self.report {
             match report_kind {
                 CoverageReportKind::Summary => SummaryReporter::default().report(&report),
-                // TODO: Sensible place to put the LCOV file
                 CoverageReportKind::Lcov => {
-                    LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?).report(&report)
+                    if let Some(report_file) = self.report_file {
+                        return LcovReporter::new(&mut fs::create_file(root.join(report_file))?)
+                            .report(&report)
+                    } else {
+                        return LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?)
+                            .report(&report)
+                    }
                 }
                 CoverageReportKind::Debug => DebugReporter.report(&report),
             }?;

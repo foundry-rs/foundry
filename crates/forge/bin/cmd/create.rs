@@ -117,7 +117,12 @@ impl CreateArgs {
             None => vec![],
         };
 
-        let chain_id = provider.get_chainid().await?.as_u64();
+        // respect chain, if set explicitly via cmd args
+        let chain_id = if let Some(chain_id) = self.chain_id() {
+            chain_id
+        } else {
+            provider.get_chainid().await?.as_u64()
+        };
         if self.unlocked {
             // Deploy with unlocked account
             let sender = self.eth.wallet.from.expect("required");
@@ -129,6 +134,11 @@ impl CreateArgs {
             let provider = provider.with_signer(signer);
             self.deploy(abi, bin, params, provider, chain_id).await
         }
+    }
+
+    /// Returns the provided chain id, if any.
+    fn chain_id(&self) -> Option<u64> {
+        self.eth.etherscan.chain.map(|chain| chain.id())
     }
 
     /// Ensures the verify command can be executed.
@@ -271,14 +281,14 @@ impl CreateArgs {
         let address = deployed_contract.address().to_alloy();
         if self.json {
             let output = json!({
-                "deployer": deployer_address.to_alloy().to_checksum(None),
-                "deployedTo": address.to_checksum(None),
+                "deployer": deployer_address.to_alloy().to_string(),
+                "deployedTo": address.to_string(),
                 "transactionHash": receipt.transaction_hash
             });
             println!("{output}");
         } else {
-            println!("Deployer: {}", deployer_address.to_alloy().to_checksum(None));
-            println!("Deployed to: {}", address.to_checksum(None));
+            println!("Deployer: {}", deployer_address.to_alloy());
+            println!("Deployed to: {address}");
             println!("Transaction hash: {:?}", receipt.transaction_hash);
         };
 
@@ -344,5 +354,20 @@ mod tests {
         ]);
         assert_eq!(args.retry.retries, 10);
         assert_eq!(args.retry.delay, 30);
+    }
+    #[test]
+    fn can_parse_chain_id() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--verify",
+            "--retries",
+            "10",
+            "--delay",
+            "30",
+            "--chain-id",
+            "9999",
+        ]);
+        assert_eq!(args.chain_id(), Some(9999));
     }
 }

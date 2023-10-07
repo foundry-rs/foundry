@@ -247,9 +247,10 @@ impl ScriptArgs {
                 .map_err(|_| eyre::eyre!("Not able to query the EOA nonce."))?;
 
             let tx_nonce = tx.nonce().expect("no nonce");
-
-            if nonce != (*tx_nonce).to_alloy() {
-                bail!("EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider.")
+            if let Ok(tx_nonce) = u64::try_from(tx_nonce.to_alloy()) {
+                if nonce != tx_nonce {
+                    bail!("EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider.")
+                }
             }
         }
 

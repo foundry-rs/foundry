@@ -71,7 +71,7 @@ impl UIfmt for Bytes {
 
 impl<const N: usize> UIfmt for [u8; N] {
     fn pretty(&self) -> String {
-        format!("0x{}", hex::encode(&self[..]))
+        hex::encode_prefixed(&self[..])
     }
 }
 

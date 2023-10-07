@@ -6,16 +6,15 @@ use crate::{
     },
     utils::h256_to_u256_be,
 };
-use alloy_primitives::Address as rAddress;
-use bytes::{BufMut, Bytes, BytesMut};
+use alloy_primitives::{Address, Bytes, U256};
+use bytes::{BufMut, BytesMut};
 use ethers::{
-    abi::Address,
     core::k256::elliptic_curve::Curve,
     prelude::{
         k256::{ecdsa::SigningKey, elliptic_curve::bigint::Encoding, Secp256k1},
-        H160, *,
+        Transaction,
     },
-    types::{transaction::eip2718::TypedTransaction, NameOrAddress, U256},
+    types::{transaction::eip2718::TypedTransaction, NameOrAddress},
 };
 use foundry_common::RpcUrl;
 use foundry_utils::types::{ToAlloy, ToEthers};
@@ -29,7 +28,7 @@ use std::collections::VecDeque;
 pub const MAGIC_SKIP_BYTES: &[u8] = b"FOUNDRY::SKIP";
 
 /// Address of the default CREATE2 deployer 0x4e59b44847b379578588920ca78fbf26c0b4956c
-pub const DEFAULT_CREATE2_DEPLOYER: rAddress = rAddress::new([
+pub const DEFAULT_CREATE2_DEPLOYER: Address = Address::new([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
 ]);
 
@@ -80,7 +79,6 @@ pub fn with_journaled_account<F, R, DB: Database>(
 where
     F: FnMut(&mut Account) -> R,
 {
-    let addr = addr.to_alloy();
     journaled_state.load_account(addr, db)?;
     journaled_state.touch(&addr);
     let account = journaled_state.state.get_mut(&addr).expect("account loaded;");
@@ -96,7 +94,6 @@ pub fn process_create<DB>(
 where
     DB: Database<Error = DatabaseError>,
 {
-    let broadcast_sender = broadcast_sender.to_alloy();
     match call.scheme {
         revm::primitives::CreateScheme::Create => {
             call.caller = broadcast_sender;
@@ -141,7 +138,7 @@ where
             calldata.put(bytecode);
 
             Ok((
-                calldata.freeze(),
+                calldata.freeze().into(),
                 Some(NameOrAddress::Address(DEFAULT_CREATE2_DEPLOYER.to_ethers())),
                 nonce,
             ))
@@ -150,14 +147,13 @@ where
 }
 
 pub fn parse_private_key(private_key: U256) -> Result<SigningKey> {
-    ensure!(!private_key.is_zero(), "Private key cannot be 0.");
+    ensure!(private_key != U256::ZERO, "Private key cannot be 0.");
     ensure!(
-        private_key < U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()),
+        private_key < U256::from_be_bytes(Secp256k1::ORDER.to_be_bytes()),
         "Private key must be less than the secp256k1 curve order \
         (115792089237316195423570985008687907852837564279074904382605163141518161494337).",
     );
-    let mut bytes: [u8; 32] = [0; 32];
-    private_key.to_big_endian(&mut bytes);
+    let bytes = private_key.to_be_bytes();
     SigningKey::from_bytes((&bytes).into()).map_err(Into::into)
 }
 
@@ -171,14 +167,14 @@ pub fn check_if_fixed_gas_limit<DB: DatabaseExt>(
     // time of the call, which should be rather close to configured gas limit.
     // TODO: Find a way to reliably make this determination. (for example by
     // generating it in the compilation or evm simulation process)
-    U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit.to_ethers() &&
-        U256::from(call_gas_limit) <= data.env.block.gas_limit.to_ethers()
+    U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit &&
+        U256::from(call_gas_limit) <= data.env.block.gas_limit
         // Transfers in forge scripts seem to be estimated at 2300 by revm leading to "Intrinsic
         // gas too low" failure when simulated on chain
         && call_gas_limit > 2300
 }
 
 /// Small utility function that checks if an address is a potential precompile.
-pub fn is_potential_precompile(address: H160) -> bool {
-    address < H160::from_low_u64_be(10) && address != H160::zero()
+pub fn is_potential_precompile(address: Address) -> bool {
+    address < Address::with_last_byte(10) && address != Address::ZERO
 }

@@ -258,7 +258,7 @@ async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<
         if arg.contains('.') {
             let addr = provider.resolve_name(arg).await;
             match addr {
-                Ok(addr) => format!("0x{}", hex::encode(addr.as_bytes())),
+                Ok(addr) => format!("{addr:?}"),
                 Err(_) => arg.to_string(),
             }
         } else {

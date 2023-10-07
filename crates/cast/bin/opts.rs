@@ -886,6 +886,7 @@ pub fn parse_slot(s: &str) -> Result<H256> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cast::SimpleCast;
     use ethers::types::BlockNumber;
 
     #[test]
@@ -903,6 +904,29 @@ mod tests {
                     args,
                     vec!["5c9d55b78febcc2061715ba4f57ecf8ea2711f2c".to_string(), "2".to_string()]
                 )
+            }
+            _ => unreachable!(),
+        };
+    }
+
+    // <https://github.com/foundry-rs/book/issues/1019>
+    #[test]
+    fn parse_signature() {
+        let args: Opts = Opts::parse_from([
+            "foundry-cli",
+            "sig",
+            "__$_$__$$$$$__$$_$$$_$$__$$___$$(address,address,uint256)",
+        ]);
+        match args.sub {
+            Subcommands::Sig { sig, .. } => {
+                let sig = sig.unwrap();
+                assert_eq!(
+                    sig,
+                    "__$_$__$$$$$__$$_$$$_$$__$$___$$(address,address,uint256)".to_string()
+                );
+
+                let selector = SimpleCast::get_selector(&sig, None).unwrap();
+                assert_eq!(selector.0, "0x23b872dd".to_string());
             }
             _ => unreachable!(),
         };

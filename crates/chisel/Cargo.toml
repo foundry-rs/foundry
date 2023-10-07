@@ -31,9 +31,9 @@ ethers.workspace = true
 ethers-solc = { workspace = true, features = ["project-util", "full"] }
 
 # alloy
-alloy-dyn-abi = { workspace = true, default-features = false, features = ["std", "arbitrary"] }
-alloy-primitives = { workspace = true, default-features = false, features = ["std", "serde", "getrandom", "arbitrary", "rlp"] }
-alloy-json-abi = { workspace = true, default-features = false, features = ["std"]}
+alloy-dyn-abi = { workspace = true, features = ["arbitrary"] }
+alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-json-abi.workspace = true
 
 # async
 tokio = { version = "1", features = ["full"] }
@@ -41,7 +41,7 @@ reqwest = { version = "0.11", default-features = false }
 
 # misc
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
-rustyline = "11"
+rustyline = "12"
 solang-parser.workspace = true
 yansi = "0.5"
 strum = { version = "0.25", features = ["derive"] }
@@ -49,7 +49,7 @@ serde = "1"
 serde_json = { version = "1", features = ["raw_value"] }
 semver = "1"
 bytes = "1"
-revm = { workspace = true, default-features = false, features = ["std"] }
+revm.workspace = true
 eyre = "0.6"
 dirs = "5"
 time = { version = "0.3", features = ["formatting"] }

@@ -19,8 +19,8 @@ fn fmt_token(f: &mut fmt::Formatter, item: &Token) -> fmt::Result {
             write!(f, "{}", utils::to_checksum(inner, None))
         }
         // add 0x
-        Token::Bytes(inner) => write!(f, "0x{}", hex::encode(inner)),
-        Token::FixedBytes(inner) => write!(f, "0x{}", hex::encode(inner)),
+        Token::Bytes(inner) => f.write_str(&hex::encode_prefixed(inner)),
+        Token::FixedBytes(inner) => f.write_str(&hex::encode_prefixed(inner)),
         // print as decimal
         Token::Uint(inner) => write!(f, "{inner}"),
         Token::Int(inner) => write!(f, "{}", I256::from_raw(*inner)),

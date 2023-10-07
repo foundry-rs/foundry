@@ -18,7 +18,7 @@ foundry-utils.workspace = true
 
 ethers.workspace = true
 ethers-solc = { workspace = true, features = ["project-util"] }
-alloy-primitives = { workspace = true, features = ["std"]}
+alloy-primitives.workspace = true
 
 eyre = "0.6"
 once_cell = "1"

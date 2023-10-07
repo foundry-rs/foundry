@@ -135,11 +135,11 @@ foundry-utils = { path = "crates/utils" }
 foundry-debugger = { path = "crates/debugger" }
 
 ## revm
-revm = { version = "3", default-features = false }
-revm-primitives = { version = "1", default-features = false }
+# no default features to avoid c-kzg
+revm = { version = "3", default-features = false } #
+revm-primitives = { version  = "1" , default-features = false }
 
 ## ethers
-
 ethers = { version = "2.0", default-features = false }
 ethers-addressbook = { version = "2.0", default-features = false }
 ethers-core = { version = "2.0", default-features = false }
@@ -153,9 +153,10 @@ ethers-solc = { version = "2.0", default-features = false }
 
 ## alloy
 
-alloy-primitives = { version = "0.3", default-features = false }
-alloy-dyn-abi = { version = "0.3", default-features = false }
-alloy-json-abi = { version = "0.3", default-features = false }
+alloy-primitives = { version = "0.4", default-features = false }
+alloy-dyn-abi = { version = "0.4", default-features = false }
+alloy-json-abi = { version = "0.4", default-features = false }
+alloy-sol-types = { version = "0.4", default-features = false }
 
 solang-parser = "=0.3.2"
 
@@ -164,6 +165,7 @@ toml = "0.8"
 itertools = "0.11"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 hex = { package = "const-hex", version = "1.6", features = ["hex"] }
+protobuf = "=3.2.0"
 
 #[patch."https://github.com/gakonst/ethers-rs"]
 #ethers = { path = "../ethers-rs/ethers" }
@@ -189,7 +191,12 @@ ethers-middleware = { git = "https://github.com/gakonst/ethers-rs" }
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs" }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs" }
 
-revm = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
-revm-interpreter = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
-revm-precompile = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
-revm-primitives = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
+# revm = { git = "https://github.com/bluealloy/revm/", branch = "main" }
+# revm-interpreter = { git = "https://github.com/bluealloy/revm/", branch = "main" }
+# revm-precompile = { git = "https://github.com/bluealloy/revm/", branch = "main" }
+# revm-primitives = { git = "https://github.com/bluealloy/revm/", branch = "main" }
+
+alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/", branch = "main"}
+alloy-primitives = { git = "https://github.com/alloy-rs/core/", branch = "main"}
+alloy-json-abi = { git = "https://github.com/alloy-rs/core/", branch = "main"}
+alloy-sol-types = { git = "https://github.com/alloy-rs/core/", branch = "main"}

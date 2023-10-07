@@ -1,11 +1,6 @@
 use super::Cheatcodes;
-use alloy_primitives::Bytes;
-use ethers::{
-    abi::{self, Token},
-    types::{Address, U256},
-    utils::keccak256,
-};
-use foundry_utils::types::ToEthers;
+use alloy_dyn_abi::DynSolValue;
+use alloy_primitives::{keccak256, Address, Bytes, U256};
 use revm::{
     interpreter::{opcode, Interpreter},
     Database, EVMData,
@@ -55,7 +50,7 @@ pub fn get_mapping_length(state: &Cheatcodes, address: Address, slot: U256) -> B
         }
         None => 0,
     };
-    abi::encode(&[Token::Uint(result.into())]).into()
+    DynSolValue::Uint(U256::from(result), 256).abi_encode().into()
 }
 
 pub fn get_mapping_slot_at(state: &Cheatcodes, address: Address, slot: U256, index: U256) -> Bytes {
@@ -63,12 +58,12 @@ pub fn get_mapping_slot_at(state: &Cheatcodes, address: Address, slot: U256, ind
         Some(mapping_slots) => mapping_slots
             .children
             .get(&slot)
-            .and_then(|set| set.get(index.as_usize()))
+            .and_then(|set| set.get(index.to::<usize>()))
             .copied()
             .unwrap_or_default(),
-        None => 0.into(),
+        None => U256::from(0),
     };
-    abi::encode(&[Token::Uint(result)]).into()
+    DynSolValue::FixedBytes(U256::from(result).into(), 256).abi_encode().into()
 }
 
 pub fn get_mapping_key_and_parent(state: &Cheatcodes, address: Address, slot: U256) -> Bytes {
@@ -78,12 +73,18 @@ pub fn get_mapping_key_and_parent(state: &Cheatcodes, address: Address, slot: U2
                 Some(key) => (true, *key, mapping_slots.parent_slots[&slot]),
                 None => match mapping_slots.seen_sha3.get(&slot).copied() {
                     Some(maybe_info) => (true, maybe_info.0, maybe_info.1),
-                    None => (false, U256::zero(), U256::zero()),
+                    None => (false, U256::ZERO, U256::ZERO),
                 },
             },
-            None => (false, U256::zero(), U256::zero()),
+            None => (false, U256::ZERO, U256::ZERO),
         };
-    abi::encode(&[Token::Bool(found), Token::Uint(key), Token::Uint(parent)]).into()
+    DynSolValue::Tuple(vec![
+        DynSolValue::Bool(found),
+        DynSolValue::FixedBytes(key.into(), 256),
+        DynSolValue::FixedBytes(parent.into(), 256),
+    ])
+    .abi_encode()
+    .into()
 }
 
 pub fn on_evm_step<DB: Database>(
@@ -96,23 +97,20 @@ pub fn on_evm_step<DB: Database>(
             if interpreter.stack.peek(1) == Ok(revm::primitives::U256::from(0x40)) {
                 let address = interpreter.contract.address;
                 let offset = interpreter.stack.peek(0).expect("stack size > 1").to::<usize>();
-                let low = U256::from(interpreter.memory.slice(offset, 0x20));
-                let high = U256::from(interpreter.memory.slice(offset + 0x20, 0x20));
-                let result = U256::from(keccak256(interpreter.memory.slice(offset, 0x40)));
+                let low = U256::try_from_be_slice(interpreter.memory.slice(offset, 0x20))
+                    .expect("This should be a 32 byte slice and therefore should not fail.");
+                let high = U256::try_from_be_slice(interpreter.memory.slice(offset + 0x20, 0x20))
+                    .expect("This should be a 32 byte slice and therefore should not fail.");
+                let result =
+                    U256::from_be_bytes(keccak256(interpreter.memory.slice(offset, 0x40)).0);
 
-                mapping_slots
-                    .entry(address.to_ethers())
-                    .or_default()
-                    .seen_sha3
-                    .insert(result, (low, high));
+                mapping_slots.entry(address).or_default().seen_sha3.insert(result, (low, high));
             }
         }
         opcode::SSTORE => {
-            if let Some(mapping_slots) =
-                mapping_slots.get_mut(&interpreter.contract.address.to_ethers())
-            {
+            if let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.contract.address) {
                 if let Ok(slot) = interpreter.stack.peek(0) {
-                    mapping_slots.insert(slot.to_ethers());
+                    mapping_slots.insert(slot);
                 }
             }
         }
