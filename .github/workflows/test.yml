@@ -1,10 +1,14 @@
+name: test
+
 on:
     push:
         branches:
             - master
     pull_request:
 
-name: test
+concurrency:
+    cancel-in-progress: true
+    group: ${{github.workflow}}-${{github.ref}}
 
 env:
     CARGO_TERM_COLOR: always
