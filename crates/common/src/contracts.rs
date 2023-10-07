@@ -222,6 +222,20 @@ pub fn find_constructor_args(data: &[u8]) -> Option<&[u8]> {
     Some(args)
 }
 
+/// Helper function to convert CompactContractBytecode ~> ContractBytecodeSome
+pub fn compact_to_contract(
+    contract: CompactContractBytecode,
+) -> eyre::Result<ContractBytecodeSome> {
+    Ok(ContractBytecodeSome {
+        abi: contract.abi.ok_or(eyre::eyre!("No contract abi"))?,
+        bytecode: contract.bytecode.ok_or(eyre::eyre!("No contract bytecode"))?.into(),
+        deployed_bytecode: contract
+            .deployed_bytecode
+            .ok_or(eyre::eyre!("No contract deployed bytecode"))?
+            .into(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,18 +281,4 @@ mod tests {
 
         let _decoded = abi::decode(&params, args).unwrap();
     }
-}
-
-/// Helper function to convert CompactContractBytecode ~> ContractBytecodeSome
-pub fn compact_to_contract(
-    contract: CompactContractBytecode,
-) -> eyre::Result<ContractBytecodeSome> {
-    Ok(ContractBytecodeSome {
-        abi: contract.abi.ok_or(eyre::eyre!("No contract abi"))?,
-        bytecode: contract.bytecode.ok_or(eyre::eyre!("No contract bytecode"))?.into(),
-        deployed_bytecode: contract
-            .deployed_bytecode
-            .ok_or(eyre::eyre!("No contract deployed bytecode"))?
-            .into(),
-    })
 }
