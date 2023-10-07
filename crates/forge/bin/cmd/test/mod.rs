@@ -114,11 +114,11 @@ pub struct TestArgs {
     pub watch: WatchArgs,
 
     /// Print test summary table
-    #[clap(long)]
+    #[clap(long, help_heading = "Display options")]
     pub summary: bool,
 
     /// Print detailed test summary table
-    #[clap(long)]
+    #[clap(long, help_heading = "Display options")]
     pub detailed: bool,
 }
 
