@@ -206,7 +206,7 @@ impl Cheatcodes {
         Self { config, fs_commit: true, ..Default::default() }
     }
 
-    #[instrument(level = "error", name = "apply", target = "evm::cheatcodes", skip_all)]
+    #[instrument(level = "error", name = "apply", skip_all)]
     fn apply_cheatcode<DB: DatabaseExt>(
         &mut self,
         data: &mut EVMData<'_, DB>,
