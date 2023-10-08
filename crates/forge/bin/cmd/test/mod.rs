@@ -1,6 +1,7 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use alloy_primitives::U256;
 use clap::Parser;
+
 use eyre::Result;
 use forge::{
     decode::decode_console_logs,
@@ -40,6 +41,9 @@ use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 
 mod filter;
+mod summary;
+use summary::TestSummaryReporter;
+
 pub use filter::FilterArgs;
 
 // Loads project's figment and merges the build cli arguments into it
@@ -109,6 +113,14 @@ pub struct TestArgs {
 
     #[clap(flatten)]
     pub watch: WatchArgs,
+
+    /// Print test summary table
+    #[clap(long, help_heading = "Display options")]
+    pub summary: bool,
+
+    /// Print detailed test summary table
+    #[clap(long, help_heading = "Display options")]
+    pub detailed: bool,
 }
 
 impl TestArgs {
@@ -338,6 +350,11 @@ impl TestArgs {
         } else if self.list {
             list(runner, filter, self.json)
         } else {
+            if self.detailed && !self.summary {
+                return Err(eyre::eyre!(
+                    "Missing `--summary` option in your command. You must pass it along with the `--detailed` option to view detailed test summary."
+                ));
+            }
             test(
                 config,
                 runner,
@@ -348,6 +365,8 @@ impl TestArgs {
                 test_options,
                 self.gas_report,
                 self.fail_fast,
+                self.summary,
+                self.detailed,
             )
             .await
         }
@@ -614,8 +633,11 @@ async fn test(
     test_options: TestOptions,
     gas_reporting: bool,
     fail_fast: bool,
+    summary: bool,
+    detailed: bool,
 ) -> Result<TestOutcome> {
     trace!(target: "forge::test", "running all tests");
+
     if runner.matching_test_function_count(&filter) == 0 {
         let filter_str = filter.to_string();
         if filter_str.is_empty() {
@@ -663,6 +685,7 @@ async fn test(
     let mut total_passed = 0;
     let mut total_failed = 0;
     let mut total_skipped = 0;
+    let mut suite_results: Vec<TestOutcome> = Vec::new();
 
     'outer: for (contract_name, suite_result) in rx {
         results.insert(contract_name.clone(), suite_result.clone());
@@ -754,13 +777,18 @@ async fn test(
                 gas_report.analyze(&result.traces);
             }
         }
-        let block_outcome = TestOutcome::new([(contract_name, suite_result)].into(), allow_failure);
+        let block_outcome =
+            TestOutcome::new([(contract_name.clone(), suite_result)].into(), allow_failure);
 
         total_passed += block_outcome.successes().count();
         total_failed += block_outcome.failures().count();
         total_skipped += block_outcome.skips().count();
 
         println!("{}", block_outcome.summary());
+
+        if summary {
+            suite_results.push(block_outcome.clone());
+        }
     }
 
     if gas_reporting {
@@ -774,12 +802,19 @@ async fn test(
             "{}",
             format_aggregated_summary(num_test_suites, total_passed, total_failed, total_skipped)
         );
+
+        if summary {
+            let mut summary_table = TestSummaryReporter::new(detailed);
+            println!("\n\nTest Summary:");
+            summary_table.print_summary(suite_results);
+        }
     }
 
     // reattach the thread
     let _results = handle.await?;
 
     trace!(target: "forge::test", "received {} results", results.len());
+
     Ok(TestOutcome::new(results, allow_failure))
 }
 
