@@ -2505,6 +2505,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "vergen",
  "watchexec",
  "yansi 0.5.1",
