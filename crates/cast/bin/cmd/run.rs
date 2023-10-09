@@ -127,7 +127,7 @@ impl RunArgs {
             env.block.timestamp = block.timestamp.to_alloy();
             env.block.coinbase = block.author.unwrap_or_default().to_alloy();
             env.block.difficulty = block.difficulty.to_alloy();
-            env.block.prevrandao = block.mix_hash.map(|h| h.to_alloy());
+            env.block.prevrandao = Some(block.mix_hash.map(|h| h.to_alloy()).unwrap_or_default());
             env.block.basefee = block.base_fee_per_gas.unwrap_or_default().to_alloy();
             env.block.gas_limit = block.gas_limit.to_alloy();
         }
