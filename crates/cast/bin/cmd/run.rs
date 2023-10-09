@@ -132,8 +132,6 @@ impl RunArgs {
             env.block.gas_limit = block.gas_limit.to_alloy();
         }
 
-        std::fs::write("block.json", serde_json::to_string_pretty(&block).unwrap()).unwrap();
-
         // Set the state to the moment right before the transaction
         if !self.quick {
             println!("Executing previous transactions from the block.");
