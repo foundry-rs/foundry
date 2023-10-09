@@ -137,7 +137,7 @@ foundry-debugger = { path = "crates/debugger" }
 ## revm
 # no default features to avoid c-kzg
 revm = { version = "3", default-features = false } #
-revm-primitives = { version  = "1" , default-features = false }
+revm-primitives = { version = "1", default-features = false }
 
 ## ethers
 ethers = { version = "2.0", default-features = false }
@@ -152,11 +152,10 @@ ethers-etherscan = { version = "2.0", default-features = false }
 ethers-solc = { version = "2.0", default-features = false }
 
 ## alloy
-
-alloy-primitives = { version = "0.4", default-features = false }
-alloy-dyn-abi = { version = "0.4", default-features = false }
-alloy-json-abi = { version = "0.4", default-features = false }
-alloy-sol-types = { version = "0.4", default-features = false }
+alloy-primitives = "0.4.1"
+alloy-dyn-abi = "0.4.1"
+alloy-json-abi = "0.4.1"
+alloy-sol-types = "0.4.1"
 
 solang-parser = "=0.3.2"
 
@@ -195,8 +194,3 @@ ethers-solc = { git = "https://github.com/gakonst/ethers-rs" }
 # revm-interpreter = { git = "https://github.com/bluealloy/revm/", branch = "main" }
 # revm-precompile = { git = "https://github.com/bluealloy/revm/", branch = "main" }
 # revm-primitives = { git = "https://github.com/bluealloy/revm/", branch = "main" }
-
-alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/", branch = "main"}
-alloy-primitives = { git = "https://github.com/alloy-rs/core/", branch = "main"}
-alloy-json-abi = { git = "https://github.com/alloy-rs/core/", branch = "main"}
-alloy-sol-types = { git = "https://github.com/alloy-rs/core/", branch = "main"}
