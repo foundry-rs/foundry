@@ -200,7 +200,6 @@ fn get_env(key: &str, ty: DynSolType, delim: Option<&str>, default: Option<Strin
             fmt_err!("Failed to get environment variable `{key}` as type `{ty}`: {e}")
         })
     })?;
-    println!("got val: {}", val);
     if let Some(d) = delim {
         parse::parse_array(val.split(d).map(str::trim), &ty)
     } else {
