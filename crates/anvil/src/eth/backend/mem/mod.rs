@@ -2106,8 +2106,17 @@ impl Backend {
             };
             let account = maybe_account.unwrap_or_default();
 
-            let proof =
-                recorder.drain().into_iter().map(|r| r.data).map(Into::into).collect::<Vec<_>>();
+            let proof = recorder
+                .drain()
+                .into_iter()
+                .map(|r| r.data)
+                .map(|record| {
+                    // proof is rlp encoded:
+                    // <https://github.com/foundry-rs/foundry/issues/5004>
+                    // <https://www.quicknode.com/docs/ethereum/eth_getProof>
+                    rlp::encode(&record).to_vec().into()
+                })
+                .collect::<Vec<_>>();
 
             let account_db =
                 block_db.maybe_account_db(address).ok_or(BlockchainError::DataUnavailable)?;
@@ -2127,7 +2136,15 @@ impl Backend {
                             |(storage_proof, storage_value)| StorageProof {
                                 key,
                                 value: storage_value.into_uint(),
-                                proof: storage_proof.into_iter().map(Into::into).collect(),
+                                proof: storage_proof
+                                    .into_iter()
+                                    .map(|proof| {
+                                        // proof is rlp encoded:
+                                        // <https://github.com/foundry-rs/foundry/issues/5004>
+                                        // <https://www.quicknode.com/docs/ethereum/eth_getProof>
+                                        rlp::encode(&proof).to_vec().into()
+                                    })
+                                    .collect(),
                             },
                         )
                     })
