@@ -5,7 +5,6 @@ use ethers::{
     prelude::{artifacts::BytecodeObject, ContractFactory, Middleware, MiddlewareBuilder},
     solc::{info::ContractInfo, utils::canonicalized},
     types::{transaction::eip2718::TypedTransaction, Chain},
-    utils::to_checksum,
 };
 use eyre::{Context, Result};
 use foundry_cli::{
@@ -13,6 +12,7 @@ use foundry_cli::{
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
 use foundry_common::{abi::parse_tokens, compile, estimate_eip1559_fees};
+use foundry_utils::types::ToAlloy;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 
@@ -117,7 +117,12 @@ impl CreateArgs {
             None => vec![],
         };
 
-        let chain_id = provider.get_chainid().await?.as_u64();
+        // respect chain, if set explicitly via cmd args
+        let chain_id = if let Some(chain_id) = self.chain_id() {
+            chain_id
+        } else {
+            provider.get_chainid().await?.as_u64()
+        };
         if self.unlocked {
             // Deploy with unlocked account
             let sender = self.eth.wallet.from.expect("required");
@@ -129,6 +134,11 @@ impl CreateArgs {
             let provider = provider.with_signer(signer);
             self.deploy(abi, bin, params, provider, chain_id).await
         }
+    }
+
+    /// Returns the provided chain id, if any.
+    fn chain_id(&self) -> Option<u64> {
+        self.eth.etherscan.chain.map(|chain| chain.id())
     }
 
     /// Ensures the verify command can be executed.
@@ -268,17 +278,17 @@ impl CreateArgs {
         // Deploy the actual contract
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
 
-        let address = deployed_contract.address();
+        let address = deployed_contract.address().to_alloy();
         if self.json {
             let output = json!({
-                "deployer": to_checksum(&deployer_address, None),
-                "deployedTo": to_checksum(&address, None),
+                "deployer": deployer_address.to_alloy().to_string(),
+                "deployedTo": address.to_string(),
                 "transactionHash": receipt.transaction_hash
             });
             println!("{output}");
         } else {
-            println!("Deployer: {}", to_checksum(&deployer_address, None));
-            println!("Deployed to: {}", to_checksum(&address, None));
+            println!("Deployer: {}", deployer_address.to_alloy());
+            println!("Deployed to: {address}");
             println!("Transaction hash: {:?}", receipt.transaction_hash);
         };
 
@@ -344,5 +354,20 @@ mod tests {
         ]);
         assert_eq!(args.retry.retries, 10);
         assert_eq!(args.retry.delay, 30);
+    }
+    #[test]
+    fn can_parse_chain_id() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--verify",
+            "--retries",
+            "10",
+            "--delay",
+            "30",
+            "--chain-id",
+            "9999",
+        ]);
+        assert_eq!(args.chain_id(), Some(9999));
     }
 }

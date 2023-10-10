@@ -46,3 +46,15 @@ pub struct TransactionOpts {
     #[clap(long)]
     pub legacy: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_priority_gas_tx_opts() {
+        let args: TransactionOpts =
+            TransactionOpts::parse_from(["foundry-cli", "--priority-gas-price", "100"]);
+        assert!(args.priority_gas_price.is_some());
+    }
+}

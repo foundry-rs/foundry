@@ -65,6 +65,7 @@ use foundry_evm::{
         primitives::BlockEnv,
     },
 };
+use foundry_utils::types::ToEthers;
 use futures::channel::mpsc::Receiver;
 use parking_lot::RwLock;
 use std::{collections::HashSet, sync::Arc, time::Duration};
@@ -157,7 +158,7 @@ impl EthApi {
             EthRequest::EthChainId(_) => self.eth_chain_id().to_rpc_result(),
             EthRequest::EthNetworkId(_) => self.network_id().to_rpc_result(),
             EthRequest::NetListening(_) => self.net_listening().to_rpc_result(),
-            EthRequest::EthGasPrice(_) => self.gas_price().to_rpc_result(),
+            EthRequest::EthGasPrice(_) => self.eth_gas_price().to_rpc_result(),
             EthRequest::EthMaxPriorityFeePerGas(_) => {
                 self.gas_max_priority_fee_per_gas().to_rpc_result()
             }
@@ -503,6 +504,12 @@ impl EthApi {
     pub fn net_listening(&self) -> Result<bool> {
         node_info!("net_listening");
         Ok(self.net_listening)
+    }
+
+    /// Returns the current gas price
+    fn eth_gas_price(&self) -> Result<U256> {
+        node_info!("eth_gasPrice");
+        self.gas_price()
     }
 
     /// Returns the current gas price
@@ -2062,7 +2069,7 @@ impl EthApi {
 
         // get the highest possible gas limit, either the request's set value or the currently
         // configured gas limit
-        let mut highest_gas_limit = request.gas.unwrap_or(block_env.gas_limit.into());
+        let mut highest_gas_limit = request.gas.unwrap_or(block_env.gas_limit.to_ethers());
 
         // check with the funds of the sender
         if let Some(from) = request.from {
@@ -2234,7 +2241,7 @@ impl EthApi {
         self.backend.chain_id().as_u64()
     }
 
-    pub fn get_fork(&self) -> Option<&ClientFork> {
+    pub fn get_fork(&self) -> Option<ClientFork> {
         self.backend.get_fork()
     }
 

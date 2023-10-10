@@ -1,7 +1,7 @@
 use crate::executor::backend::{error::NoCheatcodeAccessError, DatabaseError};
-use ethers::{
-    abi::AbiEncode, prelude::k256::ecdsa::signature::Error as SignatureError, types::Bytes,
-};
+use alloy_dyn_abi::DynSolValue;
+use alloy_primitives::Bytes;
+use ethers::prelude::k256::ecdsa::signature::Error as SignatureError;
 use foundry_common::errors::FsPathError;
 use foundry_config::UnresolvedEnvVarError;
 use foundry_utils::error::{encode_error, SolError};
@@ -179,7 +179,7 @@ impl SolError for Error {
     fn encode_string(&self) -> Bytes {
         match self {
             Self::CustomBytes(cow) => cow_to_bytes(cow),
-            e => e.to_string().encode().into(),
+            e => DynSolValue::String(e.to_string()).abi_encode().into(),
         }
     }
 }

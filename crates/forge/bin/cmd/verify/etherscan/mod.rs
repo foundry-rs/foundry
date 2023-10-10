@@ -15,7 +15,7 @@ use eyre::{eyre, Context, Result};
 use foundry_cli::utils::{get_cached_entry_by_name, read_constructor_args_file, LoadConfig};
 use foundry_common::abi::encode_args;
 use foundry_config::{Chain, Config, SolcReq};
-use foundry_utils::Retry;
+use foundry_utils::{types::ToEthers, Retry};
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -119,7 +119,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
         {}",
                 resp.message,
                 resp.result,
-                etherscan.address_url(args.address)
+                etherscan.address_url(args.address.to_ethers())
             );
 
             if args.watch {
@@ -312,7 +312,7 @@ impl EtherscanVerificationProvider {
         let compiler_version = format!("v{}", ensure_solc_build_metadata(compiler_version).await?);
         let constructor_args = self.constructor_args(args, &project)?;
         let mut verify_args =
-            VerifyContract::new(args.address, contract_name, source, compiler_version)
+            VerifyContract::new(args.address.to_ethers(), contract_name, source, compiler_version)
                 .constructor_arguments(constructor_args)
                 .code_format(code_format);
 
@@ -530,10 +530,10 @@ mod tests {
         let root = temp.path();
         let root_path = root.as_os_str().to_str().unwrap();
 
-        let config = r#"
+        let config = r"
                 [profile.default]
                 cache = false
-            "#;
+            ";
 
         let toml_file = root.join(Config::FILE_NAME);
         fs::write(toml_file, config).unwrap();

@@ -83,6 +83,13 @@ pub fn parse_u256(s: &str) -> Result<U256> {
     Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })
 }
 
+/// parse a hex str or decimal str as U256
+// TODO: rm after alloy transition
+pub fn alloy_parse_u256(s: &str) -> Result<alloy_primitives::U256> {
+    use foundry_utils::types::ToAlloy;
+    Ok(parse_u256(s)?.to_alloy())
+}
+
 /// Returns a [RetryProvider](foundry_common::RetryProvider) instantiated using [Config]'s RPC URL
 /// and chain.
 ///
@@ -131,6 +138,12 @@ pub fn parse_ether_value(value: &str) -> Result<U256> {
     } else {
         U256::from(LenientTokenizer::tokenize_uint(value)?)
     })
+}
+
+// TODO: rm after alloy transition
+pub fn alloy_parse_ether_value(value: &str) -> Result<alloy_primitives::U256> {
+    use foundry_utils::types::ToAlloy;
+    Ok(parse_ether_value(value)?.to_alloy())
 }
 
 /// Parses a `Duration` from a &str
@@ -367,6 +380,22 @@ impl<'a> Git<'a> {
             .map(drop)
     }
 
+    pub fn fetch(
+        shallow: bool,
+        remote: impl AsRef<OsStr>,
+        branch: Option<impl AsRef<OsStr>>,
+    ) -> Result<()> {
+        Self::cmd_no_root()
+            .stderr(Stdio::inherit())
+            .arg("fetch")
+            .args(shallow.then_some("--no-tags"))
+            .args(shallow.then_some("--depth=1"))
+            .arg(remote)
+            .args(branch)
+            .exec()
+            .map(drop)
+    }
+
     #[inline]
     pub fn root(self, root: &Path) -> Git<'_> {
         Git { root, ..self }
@@ -403,6 +432,23 @@ impl<'a> Git<'a> {
         S: AsRef<OsStr>,
     {
         self.cmd().arg("add").args(paths).exec().map(drop)
+    }
+
+    pub fn reset(self, hard: bool, tree: impl AsRef<OsStr>) -> Result<()> {
+        self.cmd().arg("reset").args(hard.then_some("--hard")).arg(tree).exec().map(drop)
+    }
+
+    pub fn commit_tree(
+        self,
+        tree: impl AsRef<OsStr>,
+        msg: Option<impl AsRef<OsStr>>,
+    ) -> Result<String> {
+        self.cmd()
+            .arg("commit-tree")
+            .arg(tree)
+            .args(msg.as_ref().is_some().then_some("-m"))
+            .args(msg)
+            .get_stdout_lossy()
     }
 
     pub fn rm<I, S>(self, force: bool, paths: I) -> Result<()>
@@ -471,8 +517,12 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
         }
     }
 
-    pub fn commit_hash(self, short: bool) -> Result<String> {
-        self.cmd().arg("rev-parse").args(short.then_some("--short")).arg("HEAD").get_stdout_lossy()
+    pub fn commit_hash(self, short: bool, revision: &str) -> Result<String> {
+        self.cmd()
+            .arg("rev-parse")
+            .args(short.then_some("--short"))
+            .arg(revision)
+            .get_stdout_lossy()
     }
 
     pub fn tag(self) -> Result<String> {
@@ -508,7 +558,13 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
             .map(drop)
     }
 
-    pub fn submodule_update<I, S>(self, force: bool, remote: bool, paths: I) -> Result<()>
+    pub fn submodule_update<I, S>(
+        self,
+        force: bool,
+        remote: bool,
+        no_fetch: bool,
+        paths: I,
+    ) -> Result<()>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
@@ -519,9 +575,14 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
             .args(self.shallow.then_some("--depth=1"))
             .args(force.then_some("--force"))
             .args(remote.then_some("--remote"))
+            .args(no_fetch.then_some("--no-fetch"))
             .args(paths)
             .exec()
             .map(drop)
+    }
+
+    pub fn submodule_init(self) -> Result<()> {
+        self.cmd().stderr(self.stderr()).args(["submodule", "init"]).exec().map(drop)
     }
 
     pub fn cmd(self) -> Command {

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 
-FROM alpine:3.16 as build-environment
+FROM alpine:3.18 as build-environment
 
 ARG TARGETARCH
 WORKDIR /opt

@@ -2,10 +2,8 @@ use crate::cmd::{
     retry::RetryArgs,
     verify::{VerifierArgs, VerifyArgs},
 };
-use ethers::{
-    abi::Address,
-    solc::{info::ContractInfo, Project},
-};
+use alloy_primitives::Address;
+use ethers::solc::{info::ContractInfo, Project};
 use foundry_cli::opts::{EtherscanOpts, ProjectPathsArgs};
 use foundry_common::ContractsByArtifact;
 use foundry_config::{Chain, Config};

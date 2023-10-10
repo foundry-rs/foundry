@@ -852,12 +852,12 @@ mod tests {
     #[test]
     fn fixture_regex_matches() {
         assert!(IGNORE_IN_FIXTURES.is_match(
-            r#"
+            r"
 Location:
    [35mcli/src/compile.rs[0m:[35m151[0m
 
 Backtrace omitted.
-        "#
+        "
         ));
     }
 }

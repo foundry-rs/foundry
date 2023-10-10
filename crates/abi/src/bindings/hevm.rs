@@ -5139,6 +5139,24 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("unixTime"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("unixTime"),
+                            inputs: ::std::vec![],
+                            outputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("warp"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -7456,6 +7474,14 @@ pub mod hevm {
         ) -> ::ethers_contract::builders::ContractCall<M, ()> {
             self.0
                 .method_hash([72, 245, 12, 15], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `unixTime` (0x625387dc) function
+        pub fn unix_time(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<M, ::ethers_core::types::U256> {
+            self.0
+                .method_hash([98, 83, 135, 220], ())
                 .expect("method not found (this should never happen)")
         }
         ///Calls the contract's `warp` (0xe5d6bf02) function
@@ -10477,6 +10503,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "txGasPrice", abi = "txGasPrice(uint256)")]
     pub struct TxGasPriceCall(pub ::ethers_core::types::U256);
+    ///Container type for all input parameters for the `unixTime` function with signature `unixTime()` and selector `0x625387dc`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "unixTime", abi = "unixTime()")]
+    pub struct UnixTimeCall;
     ///Container type for all input parameters for the `warp` function with signature `warp(uint256)` and selector `0xe5d6bf02`
     #[derive(
         Clone,
@@ -10771,6 +10810,7 @@ pub mod hevm {
         Transact1(Transact1Call),
         TryFfi(TryFfiCall),
         TxGasPrice(TxGasPriceCall),
+        UnixTime(UnixTimeCall),
         Warp(WarpCall),
         WriteFile(WriteFileCall),
         WriteFileBinary(WriteFileBinaryCall),
@@ -11813,6 +11853,11 @@ pub mod hevm {
             ) {
                 return Ok(Self::TxGasPrice(decoded));
             }
+            if let Ok(decoded) = <UnixTimeCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
+                return Ok(Self::UnixTime(decoded));
+            }
             if let Ok(decoded) = <WarpCall as ::ethers_core::abi::AbiDecode>::decode(
                 data,
             ) {
@@ -12341,6 +12386,7 @@ pub mod hevm {
                 Self::TxGasPrice(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
+                Self::UnixTime(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::Warp(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::WriteFile(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
@@ -12589,6 +12635,7 @@ pub mod hevm {
                 Self::Transact1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::TryFfi(element) => ::core::fmt::Display::fmt(element, f),
                 Self::TxGasPrice(element) => ::core::fmt::Display::fmt(element, f),
+                Self::UnixTime(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Warp(element) => ::core::fmt::Display::fmt(element, f),
                 Self::WriteFile(element) => ::core::fmt::Display::fmt(element, f),
                 Self::WriteFileBinary(element) => ::core::fmt::Display::fmt(element, f),
@@ -13626,6 +13673,11 @@ pub mod hevm {
     impl ::core::convert::From<TxGasPriceCall> for HEVMCalls {
         fn from(value: TxGasPriceCall) -> Self {
             Self::TxGasPrice(value)
+        }
+    }
+    impl ::core::convert::From<UnixTimeCall> for HEVMCalls {
+        fn from(value: UnixTimeCall) -> Self {
+            Self::UnixTime(value)
         }
     }
     impl ::core::convert::From<WarpCall> for HEVMCalls {
@@ -15088,6 +15140,18 @@ pub mod hevm {
     pub struct TryFfiReturn(
         pub (i32, ::ethers_core::types::Bytes, ::ethers_core::types::Bytes),
     );
+    ///Container type for all return fields from the `unixTime` function with signature `unixTime()` and selector `0x625387dc`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct UnixTimeReturn(pub ::ethers_core::types::U256);
     ///`DirEntry(string,string,uint64,bool,bool)`
     #[derive(
         Clone,

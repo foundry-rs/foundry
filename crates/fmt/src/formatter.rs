@@ -13,7 +13,7 @@ use crate::{
     visit::{Visitable, Visitor},
     FormatterConfig, InlineConfig, IntTypes, NumberUnderscore,
 };
-use ethers_core::{types::H160, utils::to_checksum};
+use alloy_primitives::Address;
 use foundry_config::fmt::{MultilineFuncHeaderStyle, SingleLineBlockStyle};
 use itertools::{Either, Itertools};
 use solang_parser::pt::ImportPath;
@@ -2029,7 +2029,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::HexNumberLiteral(loc, val, unit) => {
                 // ref: https://docs.soliditylang.org/en/latest/types.html?highlight=address%20literal#address-literals
                 let val = if val.len() == 42 {
-                    to_checksum(&H160::from_str(val).expect(""), None)
+                    Address::from_str(val).expect("").to_string()
                 } else {
                     val.to_owned()
                 };

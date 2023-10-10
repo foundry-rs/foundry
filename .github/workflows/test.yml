@@ -1,10 +1,14 @@
+name: test
+
 on:
     push:
         branches:
             - master
     pull_request:
 
-name: test
+concurrency:
+    cancel-in-progress: true
+    group: ${{github.workflow}}-${{github.ref}}
 
 env:
     CARGO_TERM_COLOR: always
@@ -50,6 +54,8 @@ jobs:
               with:
                   target: ${{ matrix.target }}
             - uses: Swatinem/rust-cache@v2
+              with:
+                  cache-on-failure: true
             - uses: taiki-e/install-action@nextest
             - name: Build archive
               shell: bash
@@ -116,6 +122,8 @@ jobs:
             - uses: actions/checkout@v3
             - uses: dtolnay/rust-toolchain@stable
             - uses: Swatinem/rust-cache@v2
+              with:
+                  cache-on-failure: true
             - name: cargo test
               run: cargo test --doc
 
@@ -127,6 +135,8 @@ jobs:
             - uses: actions/checkout@v3
             - uses: dtolnay/rust-toolchain@clippy
             - uses: Swatinem/rust-cache@v2
+              with:
+                  cache-on-failure: true
             - run: cargo clippy --workspace --all-targets --all-features
               env:
                   RUSTFLAGS: -Dwarnings
@@ -150,6 +160,8 @@ jobs:
             - uses: actions/checkout@v3
             - uses: dtolnay/rust-toolchain@stable
             - uses: Swatinem/rust-cache@v2
+              with:
+                  cache-on-failure: true
             - name: forge fmt
               run: cargo run --bin forge -- fmt --check testdata/
 
@@ -162,5 +174,7 @@ jobs:
             - uses: dtolnay/rust-toolchain@stable
             - uses: taiki-e/install-action@cargo-hack
             - uses: Swatinem/rust-cache@v2
+              with:
+                  cache-on-failure: true
             - name: cargo hack
               run: cargo hack check

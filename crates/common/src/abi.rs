@@ -160,8 +160,8 @@ pub fn format_tokens(tokens: &[Token]) -> impl Iterator<Item = String> + '_ {
 pub fn format_token(param: &Token) -> String {
     match param {
         Token::Address(addr) => to_checksum(addr, None),
-        Token::FixedBytes(bytes) => format!("0x{}", hex::encode(bytes)),
-        Token::Bytes(bytes) => format!("0x{}", hex::encode(bytes)),
+        Token::FixedBytes(bytes) => hex::encode_prefixed(bytes),
+        Token::Bytes(bytes) => hex::encode_prefixed(bytes),
         Token::Int(num) => format!("{}", I256::from_raw(*num)),
         Token::Uint(num) => format_uint_with_exponential_notation_hint(*num),
         Token::Bool(b) => format!("{b}"),

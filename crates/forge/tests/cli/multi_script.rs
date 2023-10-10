@@ -5,6 +5,7 @@ use foundry_test_utils::{
     util::{TestCommand, TestProject},
     ScriptOutcome, ScriptTester,
 };
+use foundry_utils::types::ToEthers;
 
 forgetest_async!(
     can_deploy_multi_chain_script_without_lib,
@@ -20,11 +21,35 @@ forgetest_async!(
             .args(vec![handle1.http_endpoint(), handle2.http_endpoint()])
             .broadcast(ScriptOutcome::OkBroadcast);
 
-        assert!(1 == api1.transaction_count(tester.accounts_pub[0], None).await.unwrap().as_u32());
-        assert!(1 == api1.transaction_count(tester.accounts_pub[1], None).await.unwrap().as_u32());
+        assert!(
+            1 == api1
+                .transaction_count(tester.accounts_pub[0].to_ethers(), None)
+                .await
+                .unwrap()
+                .as_u32()
+        );
+        assert!(
+            1 == api1
+                .transaction_count(tester.accounts_pub[1].to_ethers(), None)
+                .await
+                .unwrap()
+                .as_u32()
+        );
 
-        assert!(2 == api2.transaction_count(tester.accounts_pub[0], None).await.unwrap().as_u32());
-        assert!(3 == api2.transaction_count(tester.accounts_pub[1], None).await.unwrap().as_u32());
+        assert!(
+            2 == api2
+                .transaction_count(tester.accounts_pub[0].to_ethers(), None)
+                .await
+                .unwrap()
+                .as_u32()
+        );
+        assert!(
+            3 == api2
+                .transaction_count(tester.accounts_pub[1].to_ethers(), None)
+                .await
+                .unwrap()
+                .as_u32()
+        );
     }
 );
 

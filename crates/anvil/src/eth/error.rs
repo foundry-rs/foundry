@@ -14,7 +14,11 @@ use ethers::{
 use foundry_common::SELECTOR_LEN;
 use foundry_evm::{
     executor::backend::DatabaseError,
-    revm::{self, interpreter::InstructionResult, primitives::EVMError},
+    revm::{
+        self,
+        interpreter::InstructionResult,
+        primitives::{EVMError, InvalidHeader},
+    },
 };
 use serde::Serialize;
 use tracing::error;
@@ -81,6 +85,8 @@ pub enum BlockchainError {
     EIP1559TransactionUnsupportedAtHardfork,
     #[error("Access list received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork berlin' or later.")]
     EIP2930TransactionUnsupportedAtHardfork,
+    #[error("Excess blob gas not set.")]
+    ExcessBlobGasNotSet,
 }
 
 impl From<RpcError> for BlockchainError {
@@ -96,7 +102,10 @@ where
     fn from(err: EVMError<T>) -> Self {
         match err {
             EVMError::Transaction(err) => InvalidTransactionError::from(err).into(),
-            EVMError::PrevrandaoNotSet => BlockchainError::PrevrandaoNotSet,
+            EVMError::Header(err) => match err {
+                InvalidHeader::ExcessBlobGasNotSet => BlockchainError::ExcessBlobGasNotSet,
+                InvalidHeader::PrevrandaoNotSet => BlockchainError::PrevrandaoNotSet,
+            },
             EVMError::Database(err) => err.into(),
         }
     }
@@ -184,6 +193,17 @@ pub enum InvalidTransactionError {
     /// Thrown when an access list is used before the berlin hard fork.
     #[error("Access lists are not supported before the Berlin hardfork")]
     AccessListNotSupported,
+    /// Thrown when the block's `blob_gas_price` is greater than tx-specified
+    /// `max_fee_per_blob_gas` after Cancun.
+    #[error("Block `blob_gas_price` is greater than tx-specified `max_fee_per_blob_gas`")]
+    BlobGasPriceGreaterThanMax,
+    /// Thrown when we receive a tx with `blob_versioned_hashes` and we're not on the Cancun hard
+    /// fork.
+    #[error("Block `blob_versioned_hashes` is not supported before the Cancun hardfork")]
+    BlobVersionedHashesNotSupported,
+    /// Thrown when `max_fee_per_blob_gas` is not supported for blocks before the Cancun hardfork.
+    #[error("`max_fee_per_blob_gas` is not supported for blocks before the Cancun hardfork.")]
+    MaxFeePerBlobGasNotSupported,
 }
 
 impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
@@ -191,7 +211,7 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
         use revm::primitives::InvalidTransaction;
         match err {
             InvalidTransaction::InvalidChainId => InvalidTransactionError::InvalidChainId,
-            InvalidTransaction::GasMaxFeeGreaterThanPriorityFee => {
+            InvalidTransaction::PriorityFeeGreaterThanMaxFee => {
                 InvalidTransactionError::TipAboveFeeCap
             }
             InvalidTransaction::GasPriceLessThanBasefee => InvalidTransactionError::FeeCapTooLow,
@@ -223,6 +243,18 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::AccessListNotSupported => {
                 InvalidTransactionError::AccessListNotSupported
             }
+            InvalidTransaction::BlobGasPriceGreaterThanMax => {
+                InvalidTransactionError::BlobGasPriceGreaterThanMax
+            }
+            InvalidTransaction::BlobVersionedHashesNotSupported => {
+                InvalidTransactionError::BlobVersionedHashesNotSupported
+            }
+            InvalidTransaction::MaxFeePerBlobGasNotSupported => {
+                InvalidTransactionError::MaxFeePerBlobGasNotSupported
+            }
+            // TODO: Blob-related errors should be handled once the Reth migration is done and code
+            // is moved over.
+            _ => todo!(),
         }
     }
 }
@@ -372,6 +404,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::EIP2930TransactionUnsupportedAtHardfork => {
+                    RpcError::invalid_params(err.to_string())
+                }
+                err @ BlockchainError::ExcessBlobGasNotSet => {
                     RpcError::invalid_params(err.to_string())
                 }
             }

@@ -1,12 +1,12 @@
-use crate::utils::{
-    apply_chain_and_block_specific_env_changes, h160_to_b160, h256_to_b256, u256_to_ru256,
-};
+use crate::utils::apply_chain_and_block_specific_env_changes;
+use alloy_primitives::{Address, U256};
 use ethers::{
     providers::Middleware,
-    types::{Address, Block, TxHash, U256},
+    types::{Block, TxHash},
 };
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
+use foundry_utils::types::ToAlloy;
 use futures::TryFutureExt;
 use revm::primitives::{BlockEnv, CfgEnv, Env, TxEnv};
 
@@ -66,20 +66,22 @@ where
     // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the caller
     // is a contract. So we disable the check by default.
     cfg.disable_eip3607 = true;
+
     let mut env = Env {
         cfg,
         block: BlockEnv {
-            number: u256_to_ru256(block.number.expect("block number not found").as_u64().into()),
-            timestamp: block.timestamp.into(),
-            coinbase: h160_to_b160(block.author.unwrap_or_default()),
-            difficulty: block.difficulty.into(),
-            prevrandao: Some(block.mix_hash.map(h256_to_b256).unwrap_or_default()),
-            basefee: block.base_fee_per_gas.unwrap_or_default().into(),
-            gas_limit: block.gas_limit.into(),
+            number: U256::from(block.number.expect("block number not found").as_u64()),
+            timestamp: block.timestamp.to_alloy(),
+            coinbase: block.author.unwrap_or_default().to_alloy(),
+            difficulty: block.difficulty.to_alloy(),
+            prevrandao: Some(block.mix_hash.map(|h| h.to_alloy()).unwrap_or_default()),
+            basefee: block.base_fee_per_gas.unwrap_or_default().to_alloy(),
+            gas_limit: block.gas_limit.to_alloy(),
+            ..Default::default()
         },
         tx: TxEnv {
-            caller: h160_to_b160(origin),
-            gas_price: gas_price.map(U256::from).unwrap_or(fork_gas_price).into(),
+            caller: origin,
+            gas_price: gas_price.map(U256::from).unwrap_or(fork_gas_price.to_alloy()),
             chain_id: Some(override_chain_id.unwrap_or(rpc_chain_id.as_u64())),
             gas_limit: block.gas_limit.as_u64(),
             ..Default::default()

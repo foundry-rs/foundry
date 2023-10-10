@@ -91,7 +91,10 @@ contract EnvTest is DSTest {
 
     function testEnvBytes32() public {
         string memory key = "_foundryCheatcodeEnvBytes32TestKey";
-        string[numEnvBytes32Tests] memory values = ["0x7109709ECfa91a80626fF3989D68f67F5b1DD12D", "0x00"];
+        string[numEnvBytes32Tests] memory values = [
+            "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D000000000000000000000000",
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
+        ];
         bytes32[numEnvBytes32Tests] memory expected = [
             bytes32(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D000000000000000000000000),
             bytes32(0x0000000000000000000000000000000000000000000000000000000000000000)
@@ -187,7 +190,8 @@ contract EnvTest is DSTest {
 
     function testEnvBytes32Arr() public {
         string memory key = "_foundryCheatcodeEnvBytes32ArrTestKey";
-        string memory value = "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D," "0x00";
+        string memory value = "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D000000000000000000000000,"
+            "0x0000000000000000000000000000000000000000000000000000000000000000";
         bytes32[2] memory expected = [
             bytes32(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D000000000000000000000000),
             bytes32(0x0000000000000000000000000000000000000000000000000000000000000000)

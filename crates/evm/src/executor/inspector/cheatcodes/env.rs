@@ -9,16 +9,14 @@ use crate::{
             DealRecord,
         },
     },
-    utils::{b160_to_h160, h160_to_b160, ru256_to_u256, u256_to_ru256},
 };
-use ethers::{
-    abi::{self, AbiEncode, RawLog, Token, Tokenizable, Tokenize},
-    signers::{LocalWallet, Signer},
-    types::{Address, Bytes, U256},
-};
+use alloy_dyn_abi::DynSolValue;
+use alloy_primitives::{Address, Bytes, Log, B256, U256};
+use ethers::signers::{LocalWallet, Signer};
 use foundry_config::Config;
+use foundry_utils::types::{ToAlloy, ToEthers};
 use revm::{
-    primitives::{Bytecode, SpecId, B256, KECCAK_EMPTY},
+    primitives::{Bytecode, SpecId, KECCAK_EMPTY},
     Database, EVMData,
 };
 use std::collections::BTreeMap;
@@ -102,7 +100,7 @@ enum CallerMode {
 
 impl From<CallerMode> for U256 {
     fn from(value: CallerMode) -> Self {
-        (value as i8).into()
+        U256::from(value as u8)
     }
 }
 
@@ -140,10 +138,17 @@ fn broadcast_key(
     single_call: bool,
 ) -> Result {
     let key = super::util::parse_private_key(private_key)?;
-    let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
+    let wallet = LocalWallet::from(key).with_chain_id(chain_id.to::<u64>());
     let new_origin = wallet.address();
 
-    let result = broadcast(state, new_origin, original_caller, original_origin, depth, single_call);
+    let result = broadcast(
+        state,
+        new_origin.to_alloy(),
+        original_caller,
+        original_origin,
+        depth,
+        single_call,
+    );
     if result.is_ok() {
         state.script_wallets.push(wallet);
     }
@@ -208,10 +213,10 @@ fn read_callers(state: &Cheatcodes, default_sender: Address) -> Bytes {
         let caller_mode =
             if prank.single_call { CallerMode::Prank } else { CallerMode::RecurrentPrank };
 
-        [
-            Token::Uint(caller_mode.into()),
-            Token::Address(prank.new_caller),
-            Token::Address(prank.new_origin.unwrap_or(default_sender)),
+        vec![
+            DynSolValue::Uint(caller_mode.into(), 256),
+            DynSolValue::Address(prank.new_caller),
+            DynSolValue::Address(prank.new_origin.unwrap_or(default_sender)),
         ]
     } else if let Some(broadcast) = broadcast {
         let caller_mode = if broadcast.single_call {
@@ -220,20 +225,20 @@ fn read_callers(state: &Cheatcodes, default_sender: Address) -> Bytes {
             CallerMode::RecurrentBroadcast
         };
 
-        [
-            Token::Uint(caller_mode.into()),
-            Token::Address(broadcast.new_origin),
-            Token::Address(broadcast.new_origin),
+        vec![
+            DynSolValue::Uint(caller_mode.into(), 256),
+            DynSolValue::Address(broadcast.new_origin),
+            DynSolValue::Address(broadcast.new_origin),
         ]
     } else {
-        [
-            Token::Uint(CallerMode::None.into()),
-            Token::Address(default_sender),
-            Token::Address(default_sender),
+        vec![
+            DynSolValue::Uint(CallerMode::None.into(), 256),
+            DynSolValue::Address(default_sender),
+            DynSolValue::Address(default_sender),
         ]
     };
 
-    abi::encode(&data).into()
+    DynSolValue::Tuple(data).abi_encode().into()
 }
 
 #[derive(Clone, Debug, Default)]
@@ -248,27 +253,42 @@ fn start_record(state: &mut Cheatcodes) {
 
 fn accesses(state: &mut Cheatcodes, address: Address) -> Bytes {
     if let Some(storage_accesses) = &mut state.accesses {
-        let first_token =
-            |x: Option<Vec<_>>| x.unwrap_or_default().into_tokens().into_iter().next().unwrap();
-        ethers::abi::encode(&[
-            first_token(storage_accesses.reads.remove(&address)),
-            first_token(storage_accesses.writes.remove(&address)),
+        let write_accesses: Vec<DynSolValue> = storage_accesses
+            .writes
+            .entry(address)
+            .or_default()
+            .iter_mut()
+            .map(|u| DynSolValue::FixedBytes(u.to_owned().into(), 32))
+            .collect();
+        let read_accesses = storage_accesses
+            .reads
+            .entry(address)
+            .or_default()
+            .iter_mut()
+            .map(|u| DynSolValue::FixedBytes(u.to_owned().into(), 32))
+            .collect();
+        DynSolValue::Tuple(vec![
+            DynSolValue::Array(read_accesses),
+            DynSolValue::Array(write_accesses),
         ])
+        .abi_encode_params()
         .into()
     } else {
-        ethers::abi::encode(&[Token::Array(vec![]), Token::Array(vec![])]).into()
+        DynSolValue::Tuple(vec![DynSolValue::Array(vec![]), DynSolValue::Array(vec![])])
+            .abi_encode_params()
+            .into()
     }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct RecordedLogs {
-    pub entries: Vec<Log>,
+    pub entries: Vec<RecordedLog>,
 }
 
 #[derive(Clone, Debug)]
-pub struct Log {
+pub struct RecordedLog {
     pub emitter: Address,
-    pub inner: RawLog,
+    pub inner: Log,
 }
 
 fn start_record_logs(state: &mut Cheatcodes) {
@@ -277,23 +297,30 @@ fn start_record_logs(state: &mut Cheatcodes) {
 
 fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
     if let Some(recorded_logs) = state.recorded_logs.replace(Default::default()) {
-        abi::encode(
-            &recorded_logs
+        DynSolValue::Array(
+            recorded_logs
                 .entries
                 .iter()
                 .map(|entry| {
-                    Token::Tuple(vec![
-                        entry.inner.topics.clone().into_token(),
-                        Token::Bytes(entry.inner.data.clone()),
-                        entry.emitter.into_token(),
+                    DynSolValue::Tuple(vec![
+                        DynSolValue::Array(
+                            entry
+                                .inner
+                                .topics()
+                                .iter()
+                                .map(|t| DynSolValue::FixedBytes(*t, 32))
+                                .collect(),
+                        ),
+                        DynSolValue::Bytes(entry.inner.data.clone().to_vec()),
+                        DynSolValue::Address(entry.emitter),
                     ])
                 })
-                .collect::<Vec<Token>>()
-                .into_tokens(),
+                .collect::<Vec<DynSolValue>>(),
         )
+        .abi_encode()
         .into()
     } else {
-        abi::encode(&[Token::Array(vec![])]).into()
+        DynSolValue::Array(vec![]).abi_encode().into()
     }
 }
 
@@ -310,7 +337,7 @@ fn add_breakpoint(state: &mut Cheatcodes, caller: Address, inner: &str, add: boo
 
     // add a breakpoint from the interpreter
     if add {
-        state.breakpoints.insert(point, (caller, state.pc));
+        state.breakpoints.insert(point, (caller.to_ethers(), state.pc));
     } else {
         state.breakpoints.remove(&point);
     }
@@ -320,7 +347,7 @@ fn add_breakpoint(state: &mut Cheatcodes, caller: Address, inner: &str, add: boo
 
 // mark the slots of an account and the account address as cold
 fn cool_account<DB: DatabaseExt>(data: &mut EVMData<'_, DB>, address: Address) -> Result {
-    if let Some(account) = data.journaled_state.state.get_mut(&h160_to_b160(address)) {
+    if let Some(account) = data.journaled_state.state.get_mut(&address) {
         if account.is_touched() {
             account.unmark_touch();
         }
@@ -339,7 +366,7 @@ pub fn apply<DB: DatabaseExt>(
 ) -> Result<Option<Bytes>> {
     let result = match call {
         HEVMCalls::Warp(inner) => {
-            data.env.block.timestamp = inner.0.into();
+            data.env.block.timestamp = inner.0.to_alloy();
             Bytes::new()
         }
         HEVMCalls::Difficulty(inner) => {
@@ -349,7 +376,7 @@ pub fn apply<DB: DatabaseExt>(
                  use `prevrandao` instead. \
                  For more information, please see https://eips.ethereum.org/EIPS/eip-4399"
             );
-            data.env.block.difficulty = inner.0.into();
+            data.env.block.difficulty = inner.0.to_alloy();
             Bytes::new()
         }
         HEVMCalls::Prevrandao(inner) => {
@@ -363,77 +390,84 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::Roll(inner) => {
-            data.env.block.number = inner.0.into();
+            data.env.block.number = inner.0.to_alloy();
             Bytes::new()
         }
         HEVMCalls::Fee(inner) => {
-            data.env.block.basefee = inner.0.into();
+            data.env.block.basefee = inner.0.to_alloy();
             Bytes::new()
         }
         HEVMCalls::Coinbase(inner) => {
-            data.env.block.coinbase = h160_to_b160(inner.0);
+            data.env.block.coinbase = inner.0.to_alloy();
             Bytes::new()
         }
         HEVMCalls::Store(inner) => {
-            ensure!(!is_potential_precompile(inner.0), "Store cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
-            data.journaled_state.load_account(h160_to_b160(inner.0), data.db)?;
+            ensure!(!is_potential_precompile(inner.0.to_alloy()), "Store cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
+            data.journaled_state.load_account(inner.0.to_alloy(), data.db)?;
             // ensure the account is touched
-            data.journaled_state.touch(&h160_to_b160(inner.0));
+            data.journaled_state.touch(&inner.0.to_alloy());
 
             data.journaled_state.sstore(
-                h160_to_b160(inner.0),
-                u256_to_ru256(inner.1.into()),
-                u256_to_ru256(inner.2.into()),
+                inner.0.to_alloy(),
+                U256::from_be_bytes(inner.1),
+                U256::from_be_bytes(inner.2),
                 data.db,
             )?;
             Bytes::new()
         }
         HEVMCalls::Load(inner) => {
-            ensure!(!is_potential_precompile(inner.0), "Load cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
+            ensure!(!is_potential_precompile(inner.0.to_alloy()), "Load cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
             // TODO: Does this increase gas usage?
-            data.journaled_state.load_account(h160_to_b160(inner.0), data.db)?;
+            data.journaled_state.load_account(inner.0.to_alloy(), data.db)?;
             let (val, _) = data.journaled_state.sload(
-                h160_to_b160(inner.0),
-                u256_to_ru256(inner.1.into()),
+                inner.0.to_alloy(),
+                U256::from_be_bytes(inner.1),
                 data.db,
             )?;
-            ru256_to_u256(val).encode().into()
+            DynSolValue::from(val).abi_encode().into()
         }
-        HEVMCalls::Cool(inner) => cool_account(data, inner.0)?,
+        HEVMCalls::Cool(inner) => cool_account(data, inner.0.to_alloy())?,
         HEVMCalls::Breakpoint0(inner) => add_breakpoint(state, caller, &inner.0, true)?,
         HEVMCalls::Breakpoint1(inner) => add_breakpoint(state, caller, &inner.0, inner.1)?,
         HEVMCalls::Etch(inner) => {
-            ensure!(!is_potential_precompile(inner.0), "Etch cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
+            ensure!(!is_potential_precompile(inner.0.to_alloy()), "Etch cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
             let code = inner.1.clone();
             trace!(address=?inner.0, code=?hex::encode(&code), "etch cheatcode");
             // TODO: Does this increase gas usage?
-            data.journaled_state.load_account(h160_to_b160(inner.0), data.db)?;
-            data.journaled_state
-                .set_code(h160_to_b160(inner.0), Bytecode::new_raw(code.0).to_checked());
+            data.journaled_state.load_account(inner.0.to_alloy(), data.db)?;
+            data.journaled_state.set_code(
+                inner.0.to_alloy(),
+                Bytecode::new_raw(alloy_primitives::Bytes(code.0)).to_checked(),
+            );
             Bytes::new()
         }
         HEVMCalls::Deal(inner) => {
             let who = inner.0;
             let value = inner.1;
             trace!(?who, ?value, "deal cheatcode");
-            with_journaled_account(&mut data.journaled_state, data.db, who, |account| {
-                // record the deal
-                let record = DealRecord {
-                    address: who,
-                    old_balance: account.info.balance.into(),
-                    new_balance: value,
-                };
-                state.eth_deals.push(record);
+            with_journaled_account(
+                &mut data.journaled_state,
+                data.db,
+                who.to_alloy(),
+                |account| {
+                    // record the deal
+                    let record = DealRecord {
+                        address: who.to_alloy(),
+                        old_balance: account.info.balance,
+                        new_balance: value.to_alloy(),
+                    };
+                    state.eth_deals.push(record);
 
-                account.info.balance = value.into();
-            })?;
+                    account.info.balance = value.to_alloy();
+                },
+            )?;
             Bytes::new()
         }
         HEVMCalls::Prank0(inner) => prank(
             state,
             caller,
-            b160_to_h160(data.env.tx.caller),
-            inner.0,
+            data.env.tx.caller,
+            inner.0.to_alloy(),
             None,
             data.journaled_state.depth(),
             true,
@@ -441,17 +475,17 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::Prank1(inner) => prank(
             state,
             caller,
-            b160_to_h160(data.env.tx.caller),
-            inner.0,
-            Some(inner.1),
+            data.env.tx.caller,
+            inner.0.to_alloy(),
+            Some(inner.1.to_alloy()),
             data.journaled_state.depth(),
             true,
         )?,
         HEVMCalls::StartPrank0(inner) => prank(
             state,
             caller,
-            b160_to_h160(data.env.tx.caller),
-            inner.0,
+            data.env.tx.caller,
+            inner.0.to_alloy(),
             None,
             data.journaled_state.depth(),
             false,
@@ -459,9 +493,9 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::StartPrank1(inner) => prank(
             state,
             caller,
-            b160_to_h160(data.env.tx.caller),
-            inner.0,
-            Some(inner.1),
+            data.env.tx.caller,
+            inner.0.to_alloy(),
+            Some(inner.1.to_alloy()),
             data.journaled_state.depth(),
             false,
         )?,
@@ -470,12 +504,12 @@ pub fn apply<DB: DatabaseExt>(
             state.prank = None;
             Bytes::new()
         }
-        HEVMCalls::ReadCallers(_) => read_callers(state, b160_to_h160(data.env.tx.caller)),
+        HEVMCalls::ReadCallers(_) => read_callers(state, data.env.tx.caller),
         HEVMCalls::Record(_) => {
             start_record(state);
             Bytes::new()
         }
-        HEVMCalls::Accesses(inner) => accesses(state, inner.0),
+        HEVMCalls::Accesses(inner) => accesses(state, inner.0.to_alloy()),
         HEVMCalls::RecordLogs(_) => {
             start_record_logs(state);
             Bytes::new()
@@ -485,7 +519,7 @@ pub fn apply<DB: DatabaseExt>(
             with_journaled_account(
                 &mut data.journaled_state,
                 data.db,
-                inner.0,
+                inner.0.to_alloy(),
                 |account| -> Result {
                     // nonce must increment only
                     let current = account.info.nonce;
@@ -503,7 +537,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::SetNonceUnsafe(inner) => with_journaled_account(
             &mut data.journaled_state,
             data.db,
-            inner.0,
+            inner.0.to_alloy(),
             |account| -> Result {
                 let new = inner.1;
                 account.info.nonce = new;
@@ -513,7 +547,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::ResetNonce(inner) => with_journaled_account(
             &mut data.journaled_state,
             data.db,
-            inner.0,
+            inner.0.to_alloy(),
             |account| -> Result {
                 // Per EIP-161, EOA nonces start at 0, but contract nonces
                 // start at 1. Comparing by code_hash instead of code
@@ -527,7 +561,7 @@ pub fn apply<DB: DatabaseExt>(
         // [function getNonce(address)] returns the current nonce of a given ETH address
         HEVMCalls::GetNonce1(inner) => {
             correct_sender_nonce(
-                b160_to_h160(data.env.tx.caller),
+                data.env.tx.caller,
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
@@ -535,16 +569,16 @@ pub fn apply<DB: DatabaseExt>(
 
             // TODO:  this is probably not a good long-term solution since it might mess up the gas
             // calculations
-            data.journaled_state.load_account(h160_to_b160(inner.0), data.db)?;
+            data.journaled_state.load_account(inner.0.to_alloy(), data.db)?;
 
             // we can safely unwrap because `load_account` insert inner.0 to DB.
-            let account = data.journaled_state.state().get(&h160_to_b160(inner.0)).unwrap();
-            abi::encode(&[Token::Uint(account.info.nonce.into())]).into()
+            let account = data.journaled_state.state().get(&inner.0.to_alloy()).unwrap();
+            DynSolValue::from(account.info.nonce).abi_encode().into()
         }
         // [function getNonce(Wallet)] returns the current nonce of the Wallet's ETH address
         HEVMCalls::GetNonce0(inner) => {
             correct_sender_nonce(
-                b160_to_h160(data.env.tx.caller),
+                data.env.tx.caller,
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
@@ -552,115 +586,118 @@ pub fn apply<DB: DatabaseExt>(
 
             // TODO:  this is probably not a good long-term solution since it might mess up the gas
             // calculations
-            data.journaled_state.load_account(h160_to_b160(inner.0.addr), data.db)?;
+            data.journaled_state.load_account(inner.0.addr.to_alloy(), data.db)?;
 
             // we can safely unwrap because `load_account` insert inner.0 to DB.
-            let account = data.journaled_state.state().get(&h160_to_b160(inner.0.addr)).unwrap();
-            abi::encode(&[Token::Uint(account.info.nonce.into())]).into()
+            let account = data.journaled_state.state().get(&inner.0.addr.to_alloy()).unwrap();
+            DynSolValue::from(account.info.nonce.to_alloy()).abi_encode().into()
         }
         HEVMCalls::ChainId(inner) => {
-            ensure!(inner.0 <= U256::from(u64::MAX), "Chain ID must be less than 2^64 - 1");
+            ensure!(
+                inner.0.to_alloy() <= U256::from(u64::MAX),
+                "Chain ID must be less than 2^64 - 1"
+            );
             data.env.cfg.chain_id = inner.0.as_u64();
             Bytes::new()
         }
         HEVMCalls::TxGasPrice(inner) => {
-            data.env.tx.gas_price = inner.0.into();
+            data.env.tx.gas_price = inner.0.to_alloy();
             Bytes::new()
         }
         HEVMCalls::Broadcast0(_) => {
             correct_sender_nonce(
-                b160_to_h160(data.env.tx.caller),
+                data.env.tx.caller,
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
             )?;
             broadcast(
                 state,
-                b160_to_h160(data.env.tx.caller),
+                data.env.tx.caller,
                 caller,
-                b160_to_h160(data.env.tx.caller),
+                data.env.tx.caller,
                 data.journaled_state.depth(),
                 true,
             )?
         }
         HEVMCalls::Broadcast1(inner) => {
             correct_sender_nonce(
-                b160_to_h160(data.env.tx.caller),
+                data.env.tx.caller,
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
             )?;
             broadcast(
                 state,
-                inner.0,
+                inner.0.to_alloy(),
                 caller,
-                b160_to_h160(data.env.tx.caller),
+                data.env.tx.caller,
                 data.journaled_state.depth(),
                 true,
             )?
         }
         HEVMCalls::Broadcast2(inner) => {
             correct_sender_nonce(
-                b160_to_h160(data.env.tx.caller),
+                data.env.tx.caller,
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
             )?;
             broadcast_key(
                 state,
-                inner.0,
+                inner.0.to_alloy(),
                 caller,
-                b160_to_h160(data.env.tx.caller),
-                data.env.cfg.chain_id.into(),
+                data.env.tx.caller,
+                U256::from(data.env.cfg.chain_id),
                 data.journaled_state.depth(),
                 true,
             )?
         }
         HEVMCalls::StartBroadcast0(_) => {
             correct_sender_nonce(
-                b160_to_h160(data.env.tx.caller),
+                data.env.tx.caller,
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
             )?;
             broadcast(
                 state,
-                b160_to_h160(data.env.tx.caller),
+                data.env.tx.caller,
                 caller,
-                b160_to_h160(data.env.tx.caller),
+                data.env.tx.caller,
                 data.journaled_state.depth(),
                 false,
             )?
         }
         HEVMCalls::StartBroadcast1(inner) => {
             correct_sender_nonce(
-                b160_to_h160(data.env.tx.caller),
+                data.env.tx.caller,
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
             )?;
             broadcast(
                 state,
-                inner.0,
+                inner.0.to_alloy(),
                 caller,
-                b160_to_h160(data.env.tx.caller),
+                data.env.tx.caller,
                 data.journaled_state.depth(),
                 false,
             )?
         }
         HEVMCalls::StartBroadcast2(inner) => {
             correct_sender_nonce(
-                b160_to_h160(data.env.tx.caller),
+                data.env.tx.caller,
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
             )?;
             broadcast_key(
                 state,
-                inner.0,
+                inner.0.to_alloy(),
                 caller,
-                b160_to_h160(data.env.tx.caller),
-                data.env.cfg.chain_id.into(),
+                data.env.tx.caller,
+                U256::from(data.env.cfg.chain_id),
                 data.journaled_state.depth(),
                 false,
             )?
@@ -690,12 +727,17 @@ pub fn apply<DB: DatabaseExt>(
             state.mapping_slots = None;
             Bytes::new()
         }
-        HEVMCalls::GetMappingLength(inner) => get_mapping_length(state, inner.0, inner.1.into()),
-        HEVMCalls::GetMappingSlotAt(inner) => {
-            get_mapping_slot_at(state, inner.0, inner.1.into(), inner.2)
+        HEVMCalls::GetMappingLength(inner) => {
+            get_mapping_length(state, inner.0.to_alloy(), U256::from_be_bytes(inner.1))
         }
+        HEVMCalls::GetMappingSlotAt(inner) => get_mapping_slot_at(
+            state,
+            inner.0.to_alloy(),
+            U256::from_be_bytes(inner.1),
+            inner.2.to_alloy(),
+        ),
         HEVMCalls::GetMappingKeyAndParentOf(inner) => {
-            get_mapping_key_and_parent(state, inner.0, inner.1.into())
+            get_mapping_key_and_parent(state, inner.0.to_alloy(), U256::from_be_bytes(inner.1))
         }
         _ => return Ok(None),
     };
@@ -711,7 +753,7 @@ fn correct_sender_nonce<DB: Database>(
     db: &mut DB,
     state: &mut Cheatcodes,
 ) -> Result<(), DB::Error> {
-    if !state.corrected_nonce && sender != Config::DEFAULT_SENDER {
+    if !state.corrected_nonce && sender.to_ethers() != Config::DEFAULT_SENDER {
         with_journaled_account(journaled_state, db, sender, |account| {
             account.info.nonce = account.info.nonce.saturating_sub(1);
             state.corrected_nonce = true;

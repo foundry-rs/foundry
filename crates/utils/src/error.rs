@@ -1,6 +1,7 @@
 //! error handling and support
 
-use ethers_core::{abi::AbiEncode, types::Bytes};
+use alloy_dyn_abi::DynSolValue;
+use alloy_primitives::Bytes;
 use std::fmt::Display;
 
 /// Solidity revert prefix.
@@ -26,11 +27,14 @@ pub trait SolError: std::error::Error {
     ///
     /// See also [`AbiEncode`](ethers::abi::AbiEncode)
     fn encode_string(&self) -> Bytes {
-        self.to_string().encode().into()
+        let err = DynSolValue::from(self.to_string());
+        err.abi_encode().into()
     }
 }
 
 /// Encodes the given messages as solidity custom error
 pub fn encode_error(reason: impl Display) -> Bytes {
-    [ERROR_PREFIX.as_slice(), reason.to_string().encode().as_slice()].concat().into()
+    [ERROR_PREFIX.as_slice(), DynSolValue::String(reason.to_string()).abi_encode().as_slice()]
+        .concat()
+        .into()
 }

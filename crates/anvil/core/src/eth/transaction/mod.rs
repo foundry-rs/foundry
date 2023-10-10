@@ -15,6 +15,7 @@ use ethers_core::{
     },
 };
 use foundry_evm::trace::CallTraceArena;
+use foundry_utils::types::ToAlloy;
 use revm::{
     interpreter::InstructionResult,
     primitives::{CreateScheme, TransactTo, TxEnv},
@@ -66,6 +67,7 @@ pub struct EthTransactionRequest {
     /// value of th tx in wei
     pub value: Option<U256>,
     /// Any additional data sent
+    #[cfg_attr(feature = "serde", serde(alias = "input"))]
     pub data: Option<Bytes>,
     /// Transaction nonce
     pub nonce: Option<U256>,
@@ -1185,7 +1187,7 @@ impl PendingTransaction {
     pub fn to_revm_tx_env(&self) -> TxEnv {
         fn transact_to(kind: &TransactionKind) -> TransactTo {
             match kind {
-                TransactionKind::Call(c) => TransactTo::Call((*c).into()),
+                TransactionKind::Call(c) => TransactTo::Call((*c).to_alloy()),
                 TransactionKind::Create => TransactTo::Create(CreateScheme::Create),
             }
         }
@@ -1196,16 +1198,17 @@ impl PendingTransaction {
                 let chain_id = tx.chain_id();
                 let LegacyTransaction { nonce, gas_price, gas_limit, value, kind, input, .. } = tx;
                 TxEnv {
-                    caller: caller.into(),
+                    caller: caller.to_alloy(),
                     transact_to: transact_to(kind),
-                    data: input.0.clone(),
+                    data: alloy_primitives::Bytes(input.0.clone()),
                     chain_id,
                     nonce: Some(nonce.as_u64()),
-                    value: (*value).into(),
-                    gas_price: (*gas_price).into(),
+                    value: (*value).to_alloy(),
+                    gas_price: (*gas_price).to_alloy(),
                     gas_priority_fee: None,
                     gas_limit: gas_limit.as_u64(),
                     access_list: vec![],
+                    ..Default::default()
                 }
             }
             TypedTransaction::EIP2930(tx) => {
@@ -1221,16 +1224,17 @@ impl PendingTransaction {
                     ..
                 } = tx;
                 TxEnv {
-                    caller: caller.into(),
+                    caller: (caller).to_alloy(),
                     transact_to: transact_to(kind),
-                    data: input.0.clone(),
+                    data: alloy_primitives::Bytes(input.0.clone()),
                     chain_id: Some(*chain_id),
                     nonce: Some(nonce.as_u64()),
-                    value: (*value).into(),
-                    gas_price: (*gas_price).into(),
+                    value: (*value).to_alloy(),
+                    gas_price: (*gas_price).to_alloy(),
                     gas_priority_fee: None,
                     gas_limit: gas_limit.as_u64(),
                     access_list: to_revm_access_list(access_list.0.clone()),
+                    ..Default::default()
                 }
             }
             TypedTransaction::EIP1559(tx) => {
@@ -1247,16 +1251,17 @@ impl PendingTransaction {
                     ..
                 } = tx;
                 TxEnv {
-                    caller: caller.into(),
+                    caller: (caller).to_alloy(),
                     transact_to: transact_to(kind),
-                    data: input.0.clone(),
+                    data: alloy_primitives::Bytes(input.0.clone()),
                     chain_id: Some(*chain_id),
                     nonce: Some(nonce.as_u64()),
-                    value: (*value).into(),
-                    gas_price: (*max_fee_per_gas).into(),
-                    gas_priority_fee: Some((*max_priority_fee_per_gas).into()),
+                    value: (*value).to_alloy(),
+                    gas_price: (*max_fee_per_gas).to_alloy(),
+                    gas_priority_fee: Some((*max_priority_fee_per_gas).to_alloy()),
                     gas_limit: gas_limit.as_u64(),
                     access_list: to_revm_access_list(access_list.0.clone()),
+                    ..Default::default()
                 }
             }
         }

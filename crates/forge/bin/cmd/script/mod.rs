@@ -1,19 +1,19 @@
 use self::{build::BuildOutput, runner::ScriptRunner};
 use super::{build::BuildArgs, retry::RetryArgs};
+use alloy_primitives::{Address, Bytes, U256};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers::{
     abi::{Abi, Function, HumanReadableParser},
     prelude::{
         artifacts::{ContractBytecodeSome, Libraries},
-        ArtifactId, Bytes, Project,
+        ArtifactId, Project,
     },
     providers::{Http, Middleware},
     signers::LocalWallet,
     solc::contracts::ArtifactContracts,
     types::{
-        transaction::eip2718::TypedTransaction, Address, Chain, Log, NameOrAddress,
-        TransactionRequest, U256,
+        transaction::eip2718::TypedTransaction, Chain, Log, NameOrAddress, TransactionRequest,
     },
 };
 use eyre::{ContextCompat, Result, WrapErr};
@@ -28,7 +28,7 @@ use forge::{
     },
     CallKind,
 };
-use foundry_cli::{opts::MultiWallet, utils::parse_ether_value};
+use foundry_cli::opts::MultiWallet;
 use foundry_common::{
     abi::{encode_args, format_token},
     contracts::get_contract_name,
@@ -51,6 +51,7 @@ use foundry_evm::{
         DEFAULT_CREATE2_DEPLOYER,
     },
 };
+use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::future;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -114,7 +115,7 @@ pub struct ScriptArgs {
     #[clap(
         long,
         env = "ETH_PRIORITY_GAS_PRICE",
-        value_parser = parse_ether_value,
+        value_parser = foundry_cli::utils::alloy_parse_ether_value,
         value_name = "PRICE"
     )]
     pub priority_gas_price: Option<U256>,
@@ -191,7 +192,7 @@ pub struct ScriptArgs {
     #[clap(
         long,
         env = "ETH_GAS_PRICE",
-        value_parser = parse_ether_value,
+        value_parser = foundry_cli::utils::alloy_parse_ether_value,
         value_name = "PRICE",
     )]
     pub with_gas_price: Option<U256>,
@@ -229,7 +230,9 @@ impl ScriptArgs {
 
         let mut local_identifier = LocalTraceIdentifier::new(known_contracts);
         let mut decoder = CallTraceDecoderBuilder::new()
-            .with_labels(result.labeled_addresses.iter().map(|(a, s)| (*a, s.clone())))
+            .with_labels(
+                result.labeled_addresses.iter().map(|(a, s)| ((*a).to_ethers(), s.clone())),
+            )
             .with_verbosity(verbosity)
             .with_signature_identifier(SignaturesIdentifier::new(
                 Config::foundry_cache_dir(),
@@ -399,7 +402,7 @@ impl ScriptArgs {
                     match &tx.transaction {
                         TypedTransaction::Legacy(tx) => {
                             if tx.to.is_none() {
-                                let sender = tx.from.expect("no sender");
+                                let sender = tx.from.expect("no sender").to_alloy();
                                 if let Some(ns) = new_sender {
                                     if sender != ns {
                                         shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
@@ -423,7 +426,7 @@ impl ScriptArgs {
     fn create_deploy_transactions(
         &self,
         from: Address,
-        nonce: U256,
+        nonce: u64,
         data: &[Bytes],
         fork_url: &Option<RpcUrl>,
     ) -> BroadcastableTransactions {
@@ -432,9 +435,9 @@ impl ScriptArgs {
             .map(|(i, bytes)| BroadcastableTransaction {
                 rpc: fork_url.clone(),
                 transaction: TypedTransaction::Legacy(TransactionRequest {
-                    from: Some(from),
-                    data: Some(bytes.clone()),
-                    nonce: Some(nonce + i),
+                    from: Some(from.to_ethers()),
+                    data: Some(bytes.clone().0.into()),
+                    nonce: Some(ethers::types::U256::from(nonce + i as u64)),
                     ..Default::default()
                 }),
             })
@@ -550,7 +553,7 @@ impl ScriptArgs {
 
             // Find if it's a CREATE or CREATE2. Otherwise, skip transaction.
             if let Some(NameOrAddress::Address(to)) = to {
-                if *to == DEFAULT_CREATE2_DEPLOYER {
+                if to.to_alloy() == DEFAULT_CREATE2_DEPLOYER {
                     // Size of the salt prefix.
                     offset = 32;
                 }
@@ -637,7 +640,7 @@ pub struct NestedValue {
 pub struct ScriptConfig {
     pub config: Config,
     pub evm_opts: EvmOpts,
-    pub sender_nonce: U256,
+    pub sender_nonce: u64,
     /// Maps a rpc url to a backend
     pub backends: HashMap<RpcUrl, Backend>,
     /// Script target contract
@@ -766,7 +769,7 @@ mod tests {
         ]);
         assert!(args.unlocked);
 
-        let key = U256::zero();
+        let key = U256::ZERO;
         let args = ScriptArgs::try_parse_from([
             "foundry-cli",
             "Contract.sol",
@@ -978,5 +981,13 @@ mod tests {
         assert_eq!(etherscan, Some("polygonkey".to_string()));
         let etherscan = config.get_etherscan_api_key(Option::<u64>::None);
         assert_eq!(etherscan, Some("polygonkey".to_string()));
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/5923>
+    #[test]
+    fn test_5923() {
+        let args: ScriptArgs =
+            ScriptArgs::parse_from(["foundry-cli", "DeployV1", "--priority-gas-price", "100"]);
+        assert!(args.priority_gas_price.is_some());
     }
 }

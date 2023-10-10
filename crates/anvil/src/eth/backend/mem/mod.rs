@@ -27,6 +27,7 @@ use crate::{
         db::DatabaseRef,
         primitives::{AccountInfo, U256 as rU256},
     },
+    NodeConfig,
 };
 use anvil_core::{
     eth::{
@@ -52,7 +53,7 @@ use ethers::{
         DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, OtherFields,
         Trace, Transaction, TransactionReceipt, H160,
     },
-    utils::{get_contract_address, hex, keccak256, rlp},
+    utils::{hex, keccak256, rlp},
 };
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
@@ -67,15 +68,13 @@ use foundry_evm::{
         db::CacheDB,
         interpreter::{return_ok, InstructionResult},
         primitives::{
-            Account, BlockEnv, CreateScheme, EVMError, Env, ExecutionResult, Output, SpecId,
-            TransactTo, TxEnv, KECCAK_EMPTY,
+            Account, BlockEnv, CreateScheme, EVMError, Env, ExecutionResult, InvalidHeader, Output,
+            SpecId, TransactTo, TxEnv, KECCAK_EMPTY,
         },
     },
-    utils::{
-        eval_to_instruction_result, h256_to_b256, halt_to_instruction_result, ru256_to_u256,
-        u256_to_h256_be, u256_to_ru256,
-    },
+    utils::{eval_to_instruction_result, halt_to_instruction_result, u256_to_h256_be},
 };
+use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
@@ -150,7 +149,7 @@ pub struct Backend {
     /// env data of the chain
     env: Arc<RwLock<Env>>,
     /// this is set if this is currently forked off another client
-    fork: Option<ClientFork>,
+    fork: Arc<RwLock<Option<ClientFork>>>,
     /// provides time related info, like timestamp
     time: TimeManager,
     /// Contains state of custom overrides
@@ -168,6 +167,7 @@ pub struct Backend {
     prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
     transaction_block_keeper: Option<usize>,
+    node_config: Arc<AsyncRwLock<NodeConfig>>,
 }
 
 impl Backend {
@@ -178,14 +178,15 @@ impl Backend {
         env: Arc<RwLock<Env>>,
         genesis: GenesisConfig,
         fees: FeeManager,
-        fork: Option<ClientFork>,
+        fork: Arc<RwLock<Option<ClientFork>>>,
         enable_steps_tracing: bool,
         prune_state_history_config: PruneStateHistoryConfig,
         transaction_block_keeper: Option<usize>,
         automine_block_time: Option<Duration>,
+        node_config: Arc<AsyncRwLock<NodeConfig>>,
     ) -> Self {
         // if this is a fork then adjust the blockchain storage
-        let blockchain = if let Some(ref fork) = fork {
+        let blockchain = if let Some(fork) = fork.read().as_ref() {
             trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
             Blockchain::forked(fork.block_number(), fork.block_hash(), fork.total_difficulty())
         } else {
@@ -196,8 +197,11 @@ impl Backend {
             )
         };
 
-        let start_timestamp =
-            if let Some(fork) = fork.as_ref() { fork.timestamp() } else { genesis.timestamp };
+        let start_timestamp = if let Some(fork) = fork.read().as_ref() {
+            fork.timestamp()
+        } else {
+            genesis.timestamp
+        };
 
         let states = if prune_state_history_config.is_config_enabled() {
             // if prune state history is enabled, configure the state cache only for memory
@@ -225,6 +229,7 @@ impl Backend {
             enable_steps_tracing,
             prune_state_history_config,
             transaction_block_keeper,
+            node_config,
         };
 
         if let Some(interval_block_time) = automine_block_time {
@@ -254,7 +259,7 @@ impl Backend {
     async fn apply_genesis(&self) -> DatabaseResult<()> {
         trace!(target: "backend", "setting genesis balances");
 
-        if self.fork.is_some() {
+        if self.fork.read().is_some() {
             // fetch all account first
             let mut genesis_accounts_futures = Vec::with_capacity(self.genesis.accounts.len());
             for address in self.genesis.accounts.iter().copied() {
@@ -264,7 +269,7 @@ impl Backend {
                 // accounts concurrently by spawning the job to a new task
                 genesis_accounts_futures.push(tokio::task::spawn(async move {
                     let db = db.read().await;
-                    let info = db.basic(address.into())?.unwrap_or_default();
+                    let info = db.basic(address.to_alloy())?.unwrap_or_default();
                     Ok::<_, DatabaseError>((address, info))
                 }));
             }
@@ -327,8 +332,8 @@ impl Backend {
     }
 
     /// Returns the configured fork, if any
-    pub fn get_fork(&self) -> Option<&ClientFork> {
-        self.fork.as_ref()
+    pub fn get_fork(&self) -> Option<ClientFork> {
+        self.fork.read().clone()
     }
 
     /// Returns the database
@@ -338,12 +343,12 @@ impl Backend {
 
     /// Returns the `AccountInfo` from the database
     pub async fn get_account(&self, address: Address) -> DatabaseResult<AccountInfo> {
-        Ok(self.db.read().await.basic(address.into())?.unwrap_or_default())
+        Ok(self.db.read().await.basic(address.to_alloy())?.unwrap_or_default())
     }
 
     /// Whether we're forked off some remote client
     pub fn is_fork(&self) -> bool {
-        self.fork.is_some()
+        self.fork.read().is_some()
     }
 
     pub fn precompiles(&self) -> Vec<Address> {
@@ -352,6 +357,28 @@ impl Backend {
 
     /// Resets the fork to a fresh state
     pub async fn reset_fork(&self, forking: Forking) -> Result<(), BlockchainError> {
+        if !self.is_fork() {
+            if let Some(eth_rpc_url) = forking.clone().json_rpc_url {
+                let mut env = self.env.read().clone();
+
+                let mut node_config = self.node_config.write().await;
+                let (_db, forking) =
+                    node_config.setup_fork_db(eth_rpc_url, &mut env, &self.fees).await;
+
+                // TODO: Something like this is needed but...
+                // This won't compile because dyn Db is not Sized (and AFAIK cannot be made Sized)
+                // *self.db.write().await = *db.read().await;
+
+                *self.env.write() = env;
+                *self.fork.write() = forking;
+            } else {
+                return Err(RpcError::invalid_params(
+                    "Forking not enabled and RPC URL not provided to start forking",
+                )
+                .into())
+            }
+        }
+
         if let Some(fork) = self.get_fork() {
             let block_number =
                 forking.block_number.map(BlockNumber::from).unwrap_or(BlockNumber::Latest);
@@ -369,17 +396,18 @@ impl Backend {
 
                 env.block = BlockEnv {
                     number: rU256::from(fork_block_number),
-                    timestamp: fork_block.timestamp.into(),
-                    gas_limit: fork_block.gas_limit.into(),
-                    difficulty: fork_block.difficulty.into(),
-                    prevrandao: fork_block.mix_hash.map(h256_to_b256),
+                    timestamp: fork_block.timestamp.to_alloy(),
+                    gas_limit: fork_block.gas_limit.to_alloy(),
+                    difficulty: fork_block.difficulty.to_alloy(),
+                    prevrandao: fork_block.mix_hash.map(|h| h.to_alloy()),
                     // Keep previous `coinbase` and `basefee` value
                     coinbase: env.block.coinbase,
                     basefee: env.block.basefee,
+                    ..Default::default()
                 };
 
-                self.time.reset(ru256_to_u256(env.block.timestamp).as_u64());
-                self.fees.set_base_fee(env.block.basefee.into());
+                self.time.reset((env.block.timestamp.to_ethers()).as_u64());
+                self.fees.set_base_fee(env.block.basefee.to_ethers());
 
                 // also reset the total difficulty
                 self.blockchain.storage.write().total_difficulty = fork.total_difficulty();
@@ -450,12 +478,12 @@ impl Backend {
     /// Sets the block number
     pub fn set_block_number(&self, number: U256) {
         let mut env = self.env.write();
-        env.block.number = number.into();
+        env.block.number = number.to_alloy();
     }
 
     /// Returns the client coinbase address.
     pub fn coinbase(&self) -> Address {
-        self.env.read().block.coinbase.into()
+        self.env.read().block.coinbase.to_ethers()
     }
 
     /// Returns the client coinbase address.
@@ -465,7 +493,7 @@ impl Backend {
 
     /// Returns balance of the given account.
     pub async fn current_balance(&self, address: Address) -> DatabaseResult<U256> {
-        Ok(self.get_account(address).await?.balance.into())
+        Ok(self.get_account(address).await?.balance.to_ethers())
     }
 
     /// Returns balance of the given account.
@@ -475,7 +503,7 @@ impl Backend {
 
     /// Sets the coinbase address
     pub fn set_coinbase(&self, address: Address) {
-        self.env.write().block.coinbase = address.into();
+        self.env.write().block.coinbase = address.to_alloy();
     }
 
     /// Sets the nonce of the given address
@@ -541,12 +569,12 @@ impl Backend {
 
     /// Returns the block gas limit
     pub fn gas_limit(&self) -> U256 {
-        self.env.read().block.gas_limit.into()
+        self.env.read().block.gas_limit.to_ethers()
     }
 
     /// Sets the block gas limit
     pub fn set_gas_limit(&self, gas_limit: U256) {
-        self.env.write().block.gas_limit = gas_limit.into();
+        self.env.write().block.gas_limit = gas_limit.to_alloy();
     }
 
     /// Returns the current base fee
@@ -685,7 +713,7 @@ impl Backend {
         let mut env = self.env.read().clone();
         // increase block number for this block
         env.block.number = env.block.number.saturating_add(rU256::from(1));
-        env.block.basefee = self.base_fee().into();
+        env.block.basefee = self.base_fee().to_alloy();
         env.block.timestamp = rU256::from(self.time.current_call_timestamp());
         env
     }
@@ -712,7 +740,7 @@ impl Backend {
         };
         let state = result_and_state.state;
         let state: revm::primitives::HashMap<H160, Account> =
-            state.into_iter().map(|kv| (kv.0.into(), kv.1)).collect();
+            state.into_iter().map(|kv| (kv.0.to_ethers(), kv.1)).collect();
         let (exit_reason, gas_used, out, logs) = match result_and_state.result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
                 (eval_to_instruction_result(reason), gas_used, Some(output), Some(logs))
@@ -801,7 +829,7 @@ impl Backend {
 
             // increase block number for this block
             env.block.number = env.block.number.saturating_add(rU256::from(1));
-            env.block.basefee = current_base_fee.into();
+            env.block.basefee = current_base_fee.to_alloy();
             env.block.timestamp = rU256::from(self.time.next_timestamp());
 
             let best_hash = self.blockchain.storage.read().best_hash;
@@ -838,7 +866,7 @@ impl Backend {
             let BlockInfo { block, transactions, receipts } = block;
 
             let header = block.header.clone();
-            let block_number: U64 = ru256_to_u256(env.block.number).as_u64().into();
+            let block_number: U64 = (env.block.number.to_ethers()).as_u64().into();
 
             trace!(
                 target: "backend",
@@ -984,7 +1012,7 @@ impl Backend {
         overrides: Option<StateOverride>,
     ) -> Result<(InstructionResult, Option<Output>, u64, State), BlockchainError> {
         self.with_database_at(block_request, |state, block| {
-            let block_number = ru256_to_u256(block.number).as_u64();
+            let block_number = (block.number.to_ethers()).as_u64();
             let (exit, out, gas, state) = match overrides {
                 None => self.call_with_state(state, request, fee_details, block),
                 Some(overrides) => {
@@ -1007,7 +1035,7 @@ impl Backend {
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
 
-        let gas_limit = gas.unwrap_or(block_env.gas_limit.into());
+        let gas_limit = gas.unwrap_or(block_env.gas_limit.to_ethers());
         let mut env = self.env.read().clone();
         env.block = block_env;
         // we want to disable this in eth_call, since this is common practice used by other node
@@ -1015,26 +1043,27 @@ impl Backend {
         env.cfg.disable_block_gas_limit = true;
 
         if let Some(base) = max_fee_per_gas {
-            env.block.basefee = base.into();
+            env.block.basefee = base.to_alloy();
         }
 
         let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| self.gas_price());
         let caller = from.unwrap_or_default();
 
         env.tx = TxEnv {
-            caller: caller.into(),
+            caller: caller.to_alloy(),
             gas_limit: gas_limit.as_u64(),
-            gas_price: gas_price.into(),
-            gas_priority_fee: max_priority_fee_per_gas.map(u256_to_ru256),
+            gas_price: gas_price.to_alloy(),
+            gas_priority_fee: max_priority_fee_per_gas.map(|f| f.to_alloy()),
             transact_to: match to {
-                Some(addr) => TransactTo::Call(addr.into()),
+                Some(addr) => TransactTo::Call(addr.to_alloy()),
                 None => TransactTo::Create(CreateScheme::Create),
             },
-            value: value.unwrap_or_default().into(),
+            value: value.unwrap_or_default().to_alloy(),
             data: data.unwrap_or_default().to_vec().into(),
             chain_id: None,
             nonce: nonce.map(|n| n.as_u64()),
             access_list: to_revm_access_list(access_list.unwrap_or_default()),
+            ..Default::default()
         };
 
         if env.block.basefee == revm::primitives::U256::ZERO {
@@ -1066,13 +1095,20 @@ impl Backend {
                 EVMError::Transaction(invalid_tx) => {
                     return Err(BlockchainError::InvalidTransaction(invalid_tx.into()))
                 }
-                EVMError::PrevrandaoNotSet => return Err(BlockchainError::PrevrandaoNotSet),
                 EVMError::Database(e) => return Err(BlockchainError::DatabaseError(e)),
+                EVMError::Header(e) => match e {
+                    InvalidHeader::ExcessBlobGasNotSet => {
+                        return Err(BlockchainError::ExcessBlobGasNotSet)
+                    }
+                    InvalidHeader::PrevrandaoNotSet => {
+                        return Err(BlockchainError::PrevrandaoNotSet)
+                    }
+                },
             },
         };
         let state = result_and_state.state;
         let state: revm::primitives::HashMap<H160, Account> =
-            state.into_iter().map(|kv| (kv.0.into(), kv.1)).collect();
+            state.into_iter().map(|kv| (kv.0.to_ethers(), kv.1)).collect();
         let (exit_reason, gas_used, out) = match result_and_state.result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (eval_to_instruction_result(reason), gas_used, Some(output))
@@ -1134,19 +1170,19 @@ impl Backend {
     where
         D: DatabaseRef<Error = DatabaseError>,
     {
-        let from = request.from.unwrap_or_default();
+        let from = request.from.unwrap_or_default().to_alloy();
         let to = if let Some(to) = request.to {
-            to
+            to.to_alloy()
         } else {
-            let nonce = state.basic(from.into())?.unwrap_or_default().nonce;
-            get_contract_address(from, nonce)
+            let nonce = state.basic(from)?.unwrap_or_default().nonce;
+            from.create(nonce)
         };
 
         let mut tracer = AccessListTracer::new(
             AccessList(request.access_list.clone().unwrap_or_default()),
             from,
             to,
-            self.precompiles(),
+            self.precompiles().into_iter().map(|p| p.to_alloy()).collect(),
         );
 
         let mut evm = revm::EVM::new();
@@ -1585,13 +1621,14 @@ impl Backend {
                     .with_pending_block(pool_transactions, |state, block| {
                         let block = block.block;
                         let block = BlockEnv {
-                            number: block.header.number.into(),
-                            coinbase: block.header.beneficiary.into(),
+                            number: block.header.number.to_alloy(),
+                            coinbase: block.header.beneficiary.to_alloy(),
                             timestamp: rU256::from(block.header.timestamp),
-                            difficulty: block.header.difficulty.into(),
-                            prevrandao: Some(block.header.mix_hash.into()),
-                            basefee: block.header.base_fee_per_gas.unwrap_or_default().into(),
-                            gas_limit: block.header.gas_limit.into(),
+                            difficulty: block.header.difficulty.to_alloy(),
+                            prevrandao: Some(block.header.mix_hash).map(|h| h.to_alloy()),
+                            basefee: block.header.base_fee_per_gas.unwrap_or_default().to_alloy(),
+                            gas_limit: block.header.gas_limit.to_alloy(),
+                            ..Default::default()
                         };
                         f(state, block)
                     })
@@ -1603,7 +1640,7 @@ impl Backend {
         };
         let block_number: U256 = self.convert_block_number(block_number).into();
 
-        if block_number < self.env.read().block.number.into() {
+        if block_number.to_alloy() < self.env.read().block.number {
             {
                 let mut states = self.states.write();
 
@@ -1612,13 +1649,14 @@ impl Backend {
                     .and_then(|block| Some((states.get(&block.header.hash())?, block)))
                 {
                     let block = BlockEnv {
-                        number: block.header.number.into(),
-                        coinbase: block.header.beneficiary.into(),
+                        number: block.header.number.to_alloy(),
+                        coinbase: block.header.beneficiary.to_alloy(),
                         timestamp: rU256::from(block.header.timestamp),
-                        difficulty: block.header.difficulty.into(),
-                        prevrandao: Some(block.header.mix_hash).map(Into::into),
-                        basefee: block.header.base_fee_per_gas.unwrap_or_default().into(),
-                        gas_limit: block.header.gas_limit.into(),
+                        difficulty: block.header.difficulty.to_alloy(),
+                        prevrandao: Some(block.header.mix_hash).map(|h| h.to_alloy()),
+                        basefee: block.header.base_fee_per_gas.unwrap_or_default().to_alloy(),
+                        gas_limit: block.header.gas_limit.to_alloy(),
+                        ..Default::default()
                     };
                     return Ok(f(Box::new(state), block))
                 }
@@ -1635,9 +1673,9 @@ impl Backend {
                     let db = self.db.read().await;
                     let gen_db = self.genesis.state_db_at_genesis(Box::new(&*db));
 
-                    block.number = block_number.into();
+                    block.number = block_number.to_alloy();
                     block.timestamp = rU256::from(fork.timestamp());
-                    block.basefee = fork.base_fee().unwrap_or_default().into();
+                    block.basefee = fork.base_fee().unwrap_or_default().to_alloy();
 
                     return Ok(f(Box::new(&gen_db), block))
                 }
@@ -1645,7 +1683,7 @@ impl Backend {
 
             warn!(target: "backend", "Not historic state found for block={}", block_number);
             return Err(BlockchainError::BlockOutOfRange(
-                ru256_to_u256(self.env.read().block.number).as_u64(),
+                self.env.read().block.number.to_ethers().as_u64(),
                 block_number.as_u64(),
             ))
         }
@@ -1663,8 +1701,8 @@ impl Backend {
     ) -> Result<H256, BlockchainError> {
         self.with_database_at(block_request, |db, _| {
             trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
-            let val = db.storage(address.into(), index.into())?;
-            Ok(u256_to_h256_be(ru256_to_u256(val)))
+            let val = db.storage(address.to_alloy(), index.to_alloy())?;
+            Ok(u256_to_h256_be(val.to_ethers()))
         })
         .await?
     }
@@ -1690,7 +1728,7 @@ impl Backend {
         D: DatabaseRef<Error = DatabaseError>,
     {
         trace!(target: "backend", "get code for {:?}", address);
-        let account = state.basic(address.into())?.unwrap_or_default();
+        let account = state.basic(address.to_alloy())?.unwrap_or_default();
         if account.code_hash == KECCAK_EMPTY {
             // if the code hash is `KECCAK_EMPTY`, we check no further
             return Ok(Default::default())
@@ -1724,7 +1762,7 @@ impl Backend {
         D: DatabaseRef<Error = DatabaseError>,
     {
         trace!(target: "backend", "get balance for {:?}", address);
-        Ok(state.basic(address.into())?.unwrap_or_default().balance.into())
+        Ok(state.basic(address.to_alloy())?.unwrap_or_default().balance.to_ethers())
     }
 
     /// Returns the nonce of the address
@@ -1747,7 +1785,7 @@ impl Backend {
         };
         self.with_database_at(final_block_request, |db, _| {
             trace!(target: "backend", "get nonce for {:?}", address);
-            Ok(db.basic(address.into())?.unwrap_or_default().nonce.into())
+            Ok(db.basic(address.to_alloy())?.unwrap_or_default().nonce.into())
         })
         .await?
     }
@@ -2041,7 +2079,7 @@ impl Backend {
     pub async fn prove_account_at(
         &self,
         address: Address,
-        values: Vec<H256>,
+        keys: Vec<H256>,
         block_request: Option<BlockRequest>,
     ) -> Result<AccountProof, BlockchainError> {
         let account_key = H256::from(keccak256(address.as_bytes()));
@@ -2068,8 +2106,17 @@ impl Backend {
             };
             let account = maybe_account.unwrap_or_default();
 
-            let proof =
-                recorder.drain().into_iter().map(|r| r.data).map(Into::into).collect::<Vec<_>>();
+            let proof = recorder
+                .drain()
+                .into_iter()
+                .map(|r| r.data)
+                .map(|record| {
+                    // proof is rlp encoded:
+                    // <https://github.com/foundry-rs/foundry/issues/5004>
+                    // <https://www.quicknode.com/docs/ethereum/eth_getProof>
+                    rlp::encode(&record).to_vec().into()
+                })
+                .collect::<Vec<_>>();
 
             let account_db =
                 block_db.maybe_account_db(address).ok_or(BlockchainError::DataUnavailable)?;
@@ -2081,15 +2128,24 @@ impl Backend {
                 code_hash: account.code_hash,
                 storage_hash: account.storage_root,
                 account_proof: proof,
-                storage_proof: values
+                storage_proof: keys
                     .into_iter()
                     .map(|storage_key| {
+                        // the key that should be proofed is the keccak256 of the storage key
                         let key = H256::from(keccak256(storage_key));
                         prove_storage(&account, &account_db.0, key).map(
                             |(storage_proof, storage_value)| StorageProof {
-                                key,
+                                key: storage_key,
                                 value: storage_value.into_uint(),
-                                proof: storage_proof.into_iter().map(Into::into).collect(),
+                                proof: storage_proof
+                                    .into_iter()
+                                    .map(|proof| {
+                                        // proof is rlp encoded:
+                                        // <https://github.com/foundry-rs/foundry/issues/5004>
+                                        // <https://www.quicknode.com/docs/ethereum/eth_getProof>
+                                        rlp::encode(&proof).to_vec().into()
+                                    })
+                                    .collect(),
                             },
                         )
                     })
@@ -2189,7 +2245,7 @@ impl TransactionValidator for Backend {
         }
 
         // Check gas limit, iff block gas limit is set.
-        if !env.cfg.disable_block_gas_limit && tx.gas_limit() > env.block.gas_limit.into() {
+        if !env.cfg.disable_block_gas_limit && tx.gas_limit() > env.block.gas_limit.to_ethers() {
             warn!(target: "backend", "[{:?}] gas too high", tx.hash());
             return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
                 detail: String::from("tx.gas_limit > env.block.gas_limit"),
@@ -2205,7 +2261,7 @@ impl TransactionValidator for Backend {
         }
 
         if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
-            if tx.gas_price() < env.block.basefee.into() {
+            if tx.gas_price() < env.block.basefee.to_ethers() {
                 warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
                 return Err(InvalidTransactionError::FeeCapTooLow)
             }
@@ -2229,7 +2285,7 @@ impl TransactionValidator for Backend {
             InvalidTransactionError::InsufficientFunds
         })?;
 
-        if account.balance < req_funds.into() {
+        if account.balance < req_funds.to_alloy() {
             warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
             return Err(InvalidTransactionError::InsufficientFunds)
         }

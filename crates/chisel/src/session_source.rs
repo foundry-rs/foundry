@@ -185,7 +185,8 @@ impl SessionSource {
     /// A new instance of [SessionSource]
     #[track_caller]
     pub fn new(solc: Solc, config: SessionSourceConfig) -> Self {
-        debug_assert!(solc.version().is_ok(), "{:?}", solc.version());
+        #[cfg(debug_assertions)]
+        let _ = solc.version().unwrap();
 
         Self {
             file_name: PathBuf::from("ReplContract.sol".to_string()),

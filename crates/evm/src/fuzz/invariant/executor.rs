@@ -16,23 +16,21 @@ use crate::{
         },
         FuzzCase, FuzzedCases,
     },
-    utils::{get_function, h160_to_b160},
+    utils::get_function,
     CALLER,
 };
-use ethers::{
-    abi::{Abi, Address, Detokenize, FixedBytes, Tokenizable, TokenizableItem},
-    prelude::U256,
-};
+use ethers::abi::{Abi, Address, Detokenize, FixedBytes, Tokenizable, TokenizableItem};
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::{FuzzDictionaryConfig, InvariantConfig};
+use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::{Mutex, RwLock};
 use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
 use revm::{
-    primitives::{HashMap, B160},
+    primitives::{Address as rAddress, HashMap, U256 as rU256},
     DatabaseCommit,
 };
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
@@ -151,7 +149,12 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Executes the call from the randomly generated sequence.
                 let call_result = executor
-                    .call_raw(*sender, *address, calldata.0.clone(), U256::zero())
+                    .call_raw(
+                        sender.to_alloy(),
+                        address.to_alloy(),
+                        calldata.0.clone().into(),
+                        rU256::ZERO,
+                    )
                     .expect("could not make raw evm call");
 
                 // Collect data for fuzzing from the state changeset.
@@ -422,8 +425,8 @@ impl<'a> InvariantExecutor<'a> {
             .into_iter()
             .filter(|(addr, (identifier, _))| {
                 *addr != invariant_address &&
-                    *addr != CHEATCODE_ADDRESS &&
-                    *addr != HARDHAT_CONSOLE_ADDRESS &&
+                    *addr != CHEATCODE_ADDRESS.to_ethers() &&
+                    *addr != HARDHAT_CONSOLE_ADDRESS.to_ethers() &&
                     (selected.is_empty() || selected.contains(addr)) &&
                     (self.artifact_filters.targeted.is_empty() ||
                         self.artifact_filters.targeted.contains_key(identifier)) &&
@@ -565,10 +568,10 @@ impl<'a> InvariantExecutor<'a> {
         if let Some(func) = abi.functions().find(|func| func.name == method_name) {
             if let Ok(call_result) = self.executor.call::<Vec<T>, _, _>(
                 CALLER,
-                address,
+                address.to_alloy(),
                 func.clone(),
                 (),
-                U256::zero(),
+                rU256::ZERO,
                 Some(abi),
             ) {
                 return call_result.result
@@ -588,7 +591,7 @@ impl<'a> InvariantExecutor<'a> {
 /// before inserting it into the dictionary. Otherwise, we flood the dictionary with
 /// randomly generated addresses.
 fn collect_data(
-    state_changeset: &mut HashMap<B160, revm::primitives::Account>,
+    state_changeset: &mut HashMap<rAddress, revm::primitives::Account>,
     sender: &Address,
     call_result: &RawCallResult,
     fuzz_state: EvmFuzzState,
@@ -597,7 +600,7 @@ fn collect_data(
     // Verify it has no code.
     let mut has_code = false;
     if let Some(Some(code)) =
-        state_changeset.get(&h160_to_b160(*sender)).map(|account| account.info.code.as_ref())
+        state_changeset.get(&sender.to_alloy()).map(|account| account.info.code.as_ref())
     {
         has_code = !code.is_empty();
     }
@@ -605,14 +608,14 @@ fn collect_data(
     // We keep the nonce changes to apply later.
     let mut sender_changeset = None;
     if !has_code {
-        sender_changeset = state_changeset.remove(&h160_to_b160(*sender));
+        sender_changeset = state_changeset.remove(&sender.to_alloy());
     }
 
     collect_state_from_call(&call_result.logs, &*state_changeset, fuzz_state, config);
 
     // Re-add changes
     if let Some(changed) = sender_changeset {
-        state_changeset.insert(h160_to_b160(*sender), changed);
+        state_changeset.insert(sender.to_alloy(), changed);
     }
 }
 
@@ -634,10 +637,9 @@ fn can_continue(
     let mut call_results = None;
 
     // Detect handler assertion failures first.
-    let handlers_failed = targeted_contracts
-        .lock()
-        .iter()
-        .any(|contract| !executor.is_success(*contract.0, false, state_changeset.clone(), false));
+    let handlers_failed = targeted_contracts.lock().iter().any(|contract| {
+        !executor.is_success(contract.0.to_alloy(), false, state_changeset.clone(), false)
+    });
 
     // Assert invariants IFF the call did not revert and the handlers did not fail.
     if !call_result.reverted && !handlers_failed {

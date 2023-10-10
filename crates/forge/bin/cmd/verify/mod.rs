@@ -1,6 +1,7 @@
 use super::retry::RetryArgs;
+use alloy_primitives::Address;
 use clap::{Parser, ValueHint};
-use ethers::{abi::Address, solc::info::ContractInfo};
+use ethers::solc::info::ContractInfo;
 use eyre::Result;
 use foundry_cli::{opts::EtherscanOpts, utils::LoadConfig};
 use foundry_config::{figment, impl_figment_convert, impl_figment_convert_cast, Config};
@@ -139,7 +140,7 @@ impl VerifyArgs {
         }
 
         let verifier_url = self.verifier.verifier_url.clone();
-        println!("Start verifying contract `{:?}` deployed on {chain}", self.address);
+        println!("Start verifying contract `{}` deployed on {chain}", self.address);
         self.verifier.verifier.client(&self.etherscan.key)?.verify(self).await.map_err(|err| {
             if let Some(verifier_url) = verifier_url {
                  match Url::parse(&verifier_url) {

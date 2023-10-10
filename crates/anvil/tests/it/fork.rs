@@ -15,8 +15,7 @@ use ethers::{
 };
 use foundry_common::get_http_provider;
 use foundry_config::Config;
-use foundry_evm::utils::h160_to_b160;
-use foundry_utils::{rpc, rpc::next_http_rpc_endpoint};
+use foundry_utils::{rpc, rpc::next_http_rpc_endpoint, types::ToAlloy};
 use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
 
@@ -224,6 +223,31 @@ async fn test_fork_reset() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_setup() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    assert_eq!(block_number, 0.into());
+
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(rpc::next_http_archive_rpc_endpoint()),
+        block_number: Some(BLOCK_NUMBER),
+    }))
+    .await
+    .unwrap();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    assert_eq!(block_number, BLOCK_NUMBER.into());
+
+    // TODO: This won't work because we don't replace the DB with a ForkedDatabase yet
+    // let addr: Address = "000000000000000000000000000000000000dEaD".parse().unwrap();
+
+    // let remote_balance = provider.get_balance(addr, None).await.unwrap();
+    // assert_eq!(remote_balance, 12556069338441120059867u128.into());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fork_snapshotting() {
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
@@ -278,9 +302,9 @@ async fn test_separate_states() {
 
     let fork = api.get_fork().unwrap();
     let fork_db = fork.database.read().await;
-    let acc = fork_db.inner().db().accounts.read().get(&h160_to_b160(addr)).cloned().unwrap();
+    let acc = fork_db.inner().db().accounts.read().get(&addr.to_alloy()).cloned().unwrap();
 
-    assert_eq!(acc.balance, remote_balance.into())
+    assert_eq!(acc.balance, remote_balance.to_alloy())
 }
 
 #[tokio::test(flavor = "multi_thread")]

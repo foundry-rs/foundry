@@ -241,7 +241,7 @@ impl NodeArgs {
         let (api, mut handle) = crate::spawn(self.into_node_config()).await;
 
         // sets the signal handler to gracefully shutdown.
-        let mut fork = api.get_fork().cloned();
+        let mut fork = api.get_fork();
         let running = Arc::new(AtomicUsize::new(0));
 
         // handle for the currently running rt, this must be obtained before setting the crtlc

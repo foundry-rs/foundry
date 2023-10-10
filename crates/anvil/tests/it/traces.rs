@@ -51,7 +51,7 @@ async fn test_parity_suicide_trace() {
     let prj = TempProject::dapptools().unwrap();
     prj.add_source(
         "Contract",
-        r#"
+        r"
 pragma solidity 0.8.13;
 contract Contract {
     address payable private owner;
@@ -62,7 +62,7 @@ contract Contract {
         selfdestruct(owner);
     }
 }
-"#,
+",
     )
     .unwrap();
 
@@ -98,7 +98,7 @@ async fn test_transfer_debug_trace_call() {
     let prj = TempProject::dapptools().unwrap();
     prj.add_source(
         "Contract",
-        r#"
+        r"
 pragma solidity 0.8.13;
 contract Contract {
     address payable private owner;
@@ -109,7 +109,7 @@ contract Contract {
         selfdestruct(owner);
     }
 }
-"#,
+",
     )
     .unwrap();
 

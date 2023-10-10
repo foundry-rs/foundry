@@ -1,38 +1,36 @@
 use proc_macro2::{Delimiter, Group, Ident, TokenStream};
 use quote::{format_ident, quote};
 use syn::{
-    punctuated::Punctuated, Data, DataEnum, DataStruct, DeriveInput, Field, Fields, Path, Token,
-    Type,
+    punctuated::Punctuated, Data, DataEnum, DataStruct, DeriveInput, Field, Fields, Token, Type,
 };
 
-pub fn console_fmt(input: DeriveInput) -> TokenStream {
-    let krate = crate::krate();
-    let name = input.ident;
-    let tokens = match input.data {
-        Data::Struct(s) => derive_struct(s, &krate),
-        Data::Enum(e) => derive_enum(e, &krate),
+pub fn console_fmt(input: &DeriveInput) -> TokenStream {
+    let name = &input.ident;
+    let tokens = match &input.data {
+        Data::Struct(s) => derive_struct(s),
+        Data::Enum(e) => derive_enum(e),
         Data::Union(_) => return quote!(compile_error!("Unions are unsupported");),
     };
     quote! {
-        impl #krate::ConsoleFmt for #name {
+        impl ::foundry_macros::ConsoleFmt for #name {
             #tokens
         }
     }
 }
 
-fn derive_struct(s: DataStruct, krate: &Path) -> TokenStream {
-    let imp = impl_struct(s, krate).unwrap_or_else(|| quote!(String::new()));
+fn derive_struct(s: &DataStruct) -> TokenStream {
+    let imp = impl_struct(s).unwrap_or_else(|| quote!(String::new()));
     quote! {
-        fn fmt(&self, _spec: #krate::FormatSpec) -> String {
+        fn fmt(&self, _spec: ::foundry_macros::FormatSpec) -> String {
             #imp
         }
     }
 }
 
-fn impl_struct(s: DataStruct, krate: &Path) -> Option<TokenStream> {
-    let fields: Punctuated<Field, Token![,]> = match s.fields {
-        Fields::Named(fields) => fields.named.into_iter(),
-        Fields::Unnamed(fields) => fields.unnamed.into_iter(),
+fn impl_struct(s: &DataStruct) -> Option<TokenStream> {
+    let fields: Punctuated<&Field, Token![,]> = match &s.fields {
+        Fields::Named(fields) => fields.named.iter(),
+        Fields::Unnamed(fields) => fields.unnamed.iter(),
         Fields::Unit => return None,
     }
     .collect();
@@ -51,7 +49,7 @@ fn impl_struct(s: DataStruct, krate: &Path) -> Option<TokenStream> {
         .into_iter()
         .enumerate()
         .map(|(i, field)| {
-            let ident = field.ident.unwrap_or_else(|| format_ident!("{i}"));
+            let ident = field.ident.as_ref().cloned().unwrap_or_else(|| format_ident!("{i}"));
             quote!(&self.#ident)
         })
         .collect();
@@ -63,14 +61,14 @@ fn impl_struct(s: DataStruct, krate: &Path) -> Option<TokenStream> {
         let first = first.value();
         let n = n - 1;
         quote! {
-            let args: [&dyn #krate::ConsoleFmt; #n] = [#(#args)*];
-            #krate::console_format((#first).as_str(), args)
+            let args: [&dyn ::foundry_macros::ConsoleFmt; #n] = [#(#args)*];
+            ::foundry_macros::console_format((#first).as_str(), args)
         }
     } else {
         // console_format("", [...args])
         quote! {
-            let args: [&dyn #krate::ConsoleFmt; #n] = [#args];
-            #krate::console_format("", args)
+            let args: [&dyn ::foundry_macros::ConsoleFmt; #n] = [#args];
+            ::foundry_macros::console_format("", args)
         }
     };
 
@@ -78,18 +76,20 @@ fn impl_struct(s: DataStruct, krate: &Path) -> Option<TokenStream> {
 }
 
 /// Delegates to variants.
-fn derive_enum(e: DataEnum, krate: &Path) -> TokenStream {
-    let arms = e.variants.into_iter().map(|variant| {
-        let name = variant.ident;
-        let (fields, delimiter) = match variant.fields {
-            Fields::Named(fields) => (fields.named.into_iter(), Delimiter::Brace),
-            Fields::Unnamed(fields) => (fields.unnamed.into_iter(), Delimiter::Parenthesis),
+fn derive_enum(e: &DataEnum) -> TokenStream {
+    let arms = e.variants.iter().map(|variant| {
+        let name = &variant.ident;
+        let (fields, delimiter) = match &variant.fields {
+            Fields::Named(fields) => (fields.named.iter(), Delimiter::Brace),
+            Fields::Unnamed(fields) => (fields.unnamed.iter(), Delimiter::Parenthesis),
             Fields::Unit => return quote!(),
         };
 
         let fields: Punctuated<Ident, Token![,]> = fields
             .enumerate()
-            .map(|(i, field)| field.ident.unwrap_or_else(|| format_ident!("__var_{i}")))
+            .map(|(i, field)| {
+                field.ident.as_ref().cloned().unwrap_or_else(|| format_ident!("__var_{i}"))
+            })
             .collect();
 
         if fields.len() != 1 {
@@ -99,12 +99,12 @@ fn derive_enum(e: DataEnum, krate: &Path) -> TokenStream {
         let field = fields.into_iter().next().unwrap();
         let fields = Group::new(delimiter, quote!(#field));
         quote! {
-            Self::#name #fields => #krate::ConsoleFmt::fmt(#field, spec),
+            Self::#name #fields => ::foundry_macros::ConsoleFmt::fmt(#field, spec),
         }
     });
 
     quote! {
-        fn fmt(&self, spec: #krate::FormatSpec) -> String {
+        fn fmt(&self, spec: ::foundry_macros::FormatSpec) -> String {
             match self {
                 #(#arms)*
 

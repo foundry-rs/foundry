@@ -1,10 +1,10 @@
 use super::{install, test::FilterArgs};
-use clap::{Parser, ValueEnum};
+use alloy_primitives::{Address, Bytes, U256};
+use clap::{Parser, ValueEnum, ValueHint};
 use ethers::{
-    abi::Address,
     prelude::{
         artifacts::{Ast, CompactBytecode, CompactDeployedBytecode},
-        Artifact, Bytes, Project, ProjectCompileOutput, U256,
+        Artifact, Project, ProjectCompileOutput,
     },
     solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap},
 };
@@ -27,8 +27,9 @@ use foundry_cli::{
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
 use foundry_config::{Config, SolcReq};
+use foundry_utils::types::ToEthers;
 use semver::Version;
-use std::{collections::HashMap, sync::mpsc::channel};
+use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel};
 use tracing::trace;
 use yansi::Paint;
 
@@ -54,6 +55,17 @@ pub struct CoverageArgs {
     #[clap(long)]
     ir_minimum: bool,
 
+    /// The path to output the report.
+    ///
+    /// If not specified, the report will be stored in the root of the project.
+    #[clap(
+        long,
+        short,
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH"
+    )]
+    report_file: Option<PathBuf>,
+
     #[clap(flatten)]
     filter: FilterArgs,
 
@@ -77,7 +89,7 @@ impl CoverageArgs {
         }
 
         // Set fuzz seed so coverage reports are deterministic
-        config.fuzz.seed = Some(U256::from_big_endian(&STATIC_FUZZ_SEED));
+        config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED).to_ethers());
 
         let (project, output) = self.build(&config)?;
         p_println!(!self.opts.silent => "Analysing contracts...");
@@ -341,9 +353,14 @@ impl CoverageArgs {
         for report_kind in self.report {
             match report_kind {
                 CoverageReportKind::Summary => SummaryReporter::default().report(&report),
-                // TODO: Sensible place to put the LCOV file
                 CoverageReportKind::Lcov => {
-                    LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?).report(&report)
+                    if let Some(report_file) = self.report_file {
+                        return LcovReporter::new(&mut fs::create_file(root.join(report_file))?)
+                            .report(&report)
+                    } else {
+                        return LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?)
+                            .report(&report)
+                    }
                 }
                 CoverageReportKind::Debug => DebugReporter.report(&report),
             }?;
@@ -372,12 +389,12 @@ fn dummy_link_bytecode(mut obj: CompactBytecode) -> Option<Bytes> {
     let link_references = obj.link_references.clone();
     for (file, libraries) in link_references {
         for library in libraries.keys() {
-            obj.link(&file, library, Address::zero());
+            obj.link(&file, library, Address::ZERO.to_ethers());
         }
     }
 
     obj.object.resolve();
-    obj.object.into_bytes()
+    obj.object.into_bytes().map(|o| o.0.into())
 }
 
 /// Helper function that will link references in unlinked bytecode to the 0 address.

@@ -6,7 +6,7 @@ use ethers_core::{
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
-use foundry_evm::utils::{b256_to_h256, h256_to_b256};
+use foundry_utils::types::{ToAlloy, ToEthers};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]
@@ -21,9 +21,9 @@ impl From<revm::primitives::Log> for Log {
     fn from(log: revm::primitives::Log) -> Self {
         let revm::primitives::Log { address, topics, data } = log;
         Log {
-            address: address.into(),
-            topics: topics.into_iter().map(b256_to_h256).collect(),
-            data: data.into(),
+            address: address.to_ethers(),
+            topics: topics.into_iter().map(|h| h.to_ethers()).collect(),
+            data: ethers_core::types::Bytes(data.0),
         }
     }
 }
@@ -32,9 +32,9 @@ impl From<Log> for revm::primitives::Log {
     fn from(log: Log) -> Self {
         let Log { address, topics, data } = log;
         revm::primitives::Log {
-            address: address.into(),
-            topics: topics.into_iter().map(h256_to_b256).collect(),
-            data: data.0,
+            address: address.to_alloy(),
+            topics: topics.into_iter().map(|t| t.to_alloy()).collect(),
+            data: alloy_primitives::Bytes(data.0),
         }
     }
 }

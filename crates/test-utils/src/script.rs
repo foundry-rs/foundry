@@ -1,11 +1,9 @@
 use crate::TestCommand;
-use ethers::{
-    abi::Address,
-    prelude::{Middleware, NameOrAddress, U256},
-    utils::hex,
-};
+use alloy_primitives::{Address, U256};
+use ethers::prelude::{Middleware, NameOrAddress};
 use eyre::Result;
 use foundry_common::{get_http_provider, RetryProvider};
+use foundry_utils::types::{ToAlloy, ToEthers};
 use std::{collections::BTreeMap, path::Path, str::FromStr};
 
 pub const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
@@ -112,12 +110,12 @@ impl ScriptTester {
             if let Some(provider) = &self.provider {
                 let nonce = provider
                     .get_transaction_count(
-                        NameOrAddress::Address(self.accounts_pub[index as usize]),
+                        NameOrAddress::Address(self.accounts_pub[index as usize].to_ethers()),
                         None,
                     )
                     .await
                     .unwrap();
-                self.nonces.insert(index, nonce);
+                self.nonces.insert(index, nonce.to_alloy());
             }
         }
         self
@@ -129,25 +127,21 @@ impl ScriptTester {
                 .provider
                 .as_ref()
                 .unwrap()
-                .get_transaction_count(NameOrAddress::Address(address), None)
+                .get_transaction_count(NameOrAddress::Address(address.to_ethers()), None)
                 .await
                 .unwrap();
-            self.address_nonces.insert(address, nonce);
+            self.address_nonces.insert(address, nonce.to_alloy());
         }
         self
     }
 
     pub fn add_deployer(&mut self, index: u32) -> &mut Self {
-        self.cmd.args([
-            "--sender",
-            &format!("0x{}", hex::encode(self.accounts_pub[index as usize].as_bytes())),
-        ]);
-        self
+        self.sender(self.accounts_pub[index as usize])
     }
 
     /// Adds given address as sender
     pub fn sender(&mut self, addr: Address) -> &mut Self {
-        self.cmd.args(["--sender", format!("{addr:?}").as_str()]);
+        self.cmd.args(["--sender", addr.to_string().as_str()]);
         self
     }
 
@@ -184,14 +178,16 @@ impl ScriptTester {
                 .as_ref()
                 .unwrap()
                 .get_transaction_count(
-                    NameOrAddress::Address(self.accounts_pub[private_key_slot as usize]),
+                    NameOrAddress::Address(
+                        self.accounts_pub[private_key_slot as usize].to_ethers(),
+                    ),
                     None,
                 )
                 .await
                 .unwrap();
             let prev_nonce = self.nonces.get(&private_key_slot).unwrap();
 
-            assert_eq!(nonce, prev_nonce + U256::from(expected_increment));
+            assert_eq!(nonce, (prev_nonce + U256::from(expected_increment)).to_ethers());
         }
         self
     }
@@ -206,12 +202,12 @@ impl ScriptTester {
                 .provider
                 .as_ref()
                 .unwrap()
-                .get_transaction_count(NameOrAddress::Address(address), None)
+                .get_transaction_count(NameOrAddress::Address(address.to_ethers()), None)
                 .await
                 .unwrap();
             let prev_nonce = self.address_nonces.get(&address).unwrap();
 
-            assert_eq!(nonce, prev_nonce + U256::from(expected_increment));
+            assert_eq!(nonce, (prev_nonce + U256::from(expected_increment)).to_ethers());
         }
         self
     }

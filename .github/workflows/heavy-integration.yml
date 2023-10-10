@@ -21,6 +21,8 @@ jobs:
             - uses: dtolnay/rust-toolchain@stable
             - uses: taiki-e/install-action@nextest
             - uses: Swatinem/rust-cache@v2
+              with:
+                  cache-on-failure: true
             - name: Forge RPC cache
               uses: actions/cache@v3
               with:
@@ -45,6 +47,7 @@ jobs:
         needs: heavy-integration
         if: ${{ failure() }}
         steps:
+            - uses: actions/checkout@v3
             - uses: JasonEtco/create-an-issue@v2
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

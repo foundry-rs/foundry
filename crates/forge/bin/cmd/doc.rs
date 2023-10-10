@@ -74,7 +74,7 @@ impl DocArgs {
             }
         }
 
-        let commit = foundry_cli::utils::Git::new(&root).commit_hash(false).ok();
+        let commit = foundry_cli::utils::Git::new(&root).commit_hash(false, "HEAD").ok();
 
         let mut builder = DocBuilder::new(root.clone(), config.project_paths().sources)
             .with_should_build(self.build)

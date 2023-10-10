@@ -9,6 +9,7 @@ use ethers::{
 };
 pub use executor::TracingExecutor;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use foundry_utils::types::ToEthers;
 use hashbrown::HashMap;
 use node::CallTraceNode;
 use revm::interpreter::{opcode, CallContext, InstructionResult, Memory, Stack};
@@ -279,15 +280,11 @@ impl fmt::Display for RawOrDecodedLog {
                         f,
                         "{:>13}: {}",
                         if i == 0 { "emit topic 0".to_string() } else { format!("topic {i}") },
-                        Paint::cyan(format!("0x{}", hex::encode(topic)))
+                        Paint::cyan(format!("{topic:?}"))
                     )?;
                 }
 
-                write!(
-                    f,
-                    "          data: {}",
-                    Paint::cyan(format!("0x{}", hex::encode(&log.data)))
-                )
+                write!(f, "          data: {}", Paint::cyan(hex::encode_prefixed(&log.data)))
             }
             RawOrDecodedLog::Decoded(name, params) => {
                 let params = params
@@ -377,10 +374,10 @@ impl fmt::Display for RawOrDecodedReturnData {
                 if bytes.is_empty() {
                     write!(f, "()")
                 } else {
-                    write!(f, "0x{}", hex::encode(bytes))
+                    bytes.fmt(f)
                 }
             }
-            RawOrDecodedReturnData::Decoded(decoded) => write!(f, "{}", decoded.clone()),
+            RawOrDecodedReturnData::Decoded(decoded) => f.write_str(decoded),
         }
     }
 }
@@ -429,7 +426,7 @@ impl From<&CallTraceStep> for StructLog {
             } else {
                 None
             },
-            stack: Some(step.stack.data().iter().copied().map(|data| data.into()).collect()),
+            stack: Some(step.stack.data().iter().copied().map(|s| s.to_ethers()).collect()),
             // Filled in `CallTraceArena::geth_trace` as a result of compounding all slot changes
             storage: None,
         }
@@ -596,7 +593,7 @@ impl TraceKind {
 
 /// Chooses the color of the trace depending on the destination address and status of the call.
 fn trace_color(trace: &CallTrace) -> Color {
-    if trace.address == CHEATCODE_ADDRESS {
+    if trace.address == CHEATCODE_ADDRESS.to_ethers() {
         Color::Blue
     } else if trace.success {
         Color::Green

@@ -1,4 +1,5 @@
-use ethers::types::{Address, BlockId, H256, U256};
+use alloy_primitives::{Address, B256, U256};
+use ethers::types::BlockId;
 use foundry_utils::error::SolError;
 use futures::channel::mpsc::{SendError, TrySendError};
 use std::{
@@ -16,7 +17,7 @@ pub enum DatabaseError {
     #[error("Failed to fetch AccountInfo {0:?}")]
     MissingAccount(Address),
     #[error("Could should already be loaded: {0:?}")]
-    MissingCode(H256),
+    MissingCode(B256),
     #[error(transparent)]
     Recv(#[from] RecvError),
     #[error(transparent)]
@@ -34,9 +35,9 @@ pub enum DatabaseError {
     #[error("Block {0:?} does not exist")]
     BlockNotFound(BlockId),
     #[error("Failed to get transaction {0:?}: {1:?}")]
-    GetTransaction(H256, Arc<eyre::Error>),
+    GetTransaction(B256, Arc<eyre::Error>),
     #[error("Transaction {0:?} not found")]
-    TransactionNotFound(H256),
+    TransactionNotFound(B256),
     #[error(
         "CREATE2 Deployer (0x4e59b44847b379578588920ca78fbf26c0b4956c) not present on this chain.\n\nFor a production environment, you can deploy it using the pre-signed transaction from https://github.com/Arachnid/deterministic-deployment-proxy.\n\nFor a test environment, you can use vm.etch to place the required bytecode at that address."
     )]
@@ -104,7 +105,7 @@ pub struct NoCheatcodeAccessError(pub Address);
 
 impl fmt::Display for NoCheatcodeAccessError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "No cheatcode access granted for: {:?}, see `vm.allowCheatcodes()`", self.0)
+        write!(f, "No cheatcode access granted for: {}, see `vm.allowCheatcodes()`", self.0)
     }
 }
 

@@ -8,7 +8,7 @@ use foundry_test_utils::{
     util::{OutputExt, TestCommand, TestProject},
     ScriptOutcome, ScriptTester,
 };
-use foundry_utils::rpc;
+use foundry_utils::{rpc, types::ToAlloy};
 use regex::Regex;
 use serde_json::Value;
 use std::{env, path::PathBuf, str::FromStr};
@@ -456,15 +456,15 @@ forgetest_async!(
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
-            .load_addresses(vec![
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
-            ])
+            .load_addresses(vec![Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906")
+                .unwrap()
+                .to_alloy()])
             .await
             .add_sig("BroadcastTest", "deployPrivateKey()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment_addresses(vec![(
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
+                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap().to_alloy(),
                 3,
             )])
             .await;
@@ -495,15 +495,15 @@ forgetest_async!(
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
-            .load_addresses(vec![
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
-            ])
+            .load_addresses(vec![Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906")
+                .unwrap()
+                .to_alloy()])
             .await
             .add_sig("BroadcastTest", "deployRememberKey()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment_addresses(vec![(
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
+                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap().to_alloy(),
                 2,
             )])
             .await;
@@ -519,9 +519,9 @@ forgetest_async!(
 
         tester
             .add_deployer(0)
-            .load_addresses(vec![
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
-            ])
+            .load_addresses(vec![Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906")
+                .unwrap()
+                .to_alloy()])
             .await
             .add_sig("BroadcastTest", "deployRememberKeyResume()")
             .simulate(ScriptOutcome::OkSimulation)
@@ -531,7 +531,7 @@ forgetest_async!(
             .await
             .run(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment_addresses(vec![(
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
+                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap().to_alloy(),
                 1,
             )])
             .await
@@ -737,7 +737,7 @@ forgetest_async!(
 
         // Check sensitive logs
         // Ignore port number since it can change inbetween runs
-        let re = Regex::new(r#":[0-9]+"#).unwrap();
+        let re = Regex::new(r":[0-9]+").unwrap();
 
         let fixtures_log = std::fs::read_to_string(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))

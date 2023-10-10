@@ -6,13 +6,11 @@ use crate::{
     trace::{load_contracts, TraceKind, Traces},
     CALLER,
 };
-use ethers::{
-    abi::Function,
-    types::{Address, U256},
-};
-use eyre::{Result, WrapErr};
+use ethers::abi::Function;
+use eyre::Result;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use proptest::test_runner::TestError;
+use revm::primitives::U256;
 
 #[derive(Debug, Clone)]
 pub struct InvariantFuzzError {
@@ -108,7 +106,12 @@ impl InvariantFuzzError {
         // Replay each call from the sequence until we break the invariant.
         for (sender, (addr, bytes)) in calls.iter() {
             let call_result = executor
-                .call_raw_committing(*sender, *addr, bytes.0.clone(), U256::zero())
+                .call_raw_committing(
+                    sender.to_alloy(),
+                    addr.to_alloy(),
+                    bytes.0.clone().into(),
+                    U256::ZERO,
+                )
                 .expect("bad call to evm");
 
             logs.extend(call_result.logs);
@@ -120,21 +123,18 @@ impl InvariantFuzzError {
                 known_contracts,
             ));
 
-            counterexample_sequence.push(
-                BaseCounterExample::create(
-                    *sender,
-                    *addr,
-                    bytes,
-                    &ided_contracts,
-                    call_result.traces,
-                )
-                .wrap_err("Failed to create counter example")?,
-            );
+            counterexample_sequence.push(BaseCounterExample::create(
+                *sender,
+                *addr,
+                bytes,
+                &ided_contracts,
+                call_result.traces,
+            ));
 
             // Checks the invariant.
             if let Some(func) = &self.func {
                 let error_call_result = executor
-                    .call_raw(CALLER, self.addr, func.0.clone(), U256::zero())
+                    .call_raw(CALLER, self.addr.to_alloy(), func.0.clone().into(), U256::ZERO)
                     .expect("bad call to evm");
 
                 traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
@@ -169,13 +169,18 @@ impl InvariantFuzzError {
             let (sender, (addr, bytes)) = details;
 
             executor
-                .call_raw_committing(*sender, *addr, bytes.0.clone(), 0.into())
+                .call_raw_committing(
+                    sender.to_alloy(),
+                    addr.to_alloy(),
+                    bytes.0.clone().into(),
+                    U256::ZERO,
+                )
                 .expect("bad call to evm");
 
             // Checks the invariant. If we exit before the last call, all the better.
             if let Some(func) = &self.func {
                 let error_call_result = executor
-                    .call_raw(CALLER, self.addr, func.0.clone(), 0.into())
+                    .call_raw(CALLER, self.addr.to_alloy(), func.0.clone().into(), U256::ZERO)
                     .expect("bad call to evm");
 
                 if error_call_result.reverted {
