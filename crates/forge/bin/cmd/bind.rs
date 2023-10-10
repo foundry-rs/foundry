@@ -9,8 +9,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use ethers::contract::{Deserialize, Serialize};
-
 impl_figment_convert!(BindArgs, build_args);
 
 const DEFAULT_CRATE_NAME: &str = "foundry-contracts";
@@ -113,7 +111,7 @@ impl BindArgs {
                 "console[2]?",
                 "CommonBase",
                 "Components",
-                "[Ss]td(Chains|Math|Error|Json|Utils|Cheats|Assertions|Storage(Safe)?)",
+                "[Ss]td(Chains|Math|Error|Json|Utils|Cheats|Style|Invariant|Assertions|Storage(Safe)?)",
                 "[Vv]m.*",
             ])
             .extend_names(["IMulticall3"])
@@ -174,8 +172,7 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
         let bindings = self.get_multi(&artifacts)?.build()?;
         println!("Generating bindings for {} contracts", bindings.len());
         if !self.module {
-            bindings.dependencies(r#"serde = "1""#)?;
-            bindings.write_to_crate(
+            bindings.dependencies([r#"serde = "1""#]).write_to_crate(
                 &self.crate_name,
                 &self.crate_version,
                 self.bindings_root(&artifacts),
