@@ -2079,7 +2079,7 @@ impl Backend {
     pub async fn prove_account_at(
         &self,
         address: Address,
-        values: Vec<H256>,
+        keys: Vec<H256>,
         block_request: Option<BlockRequest>,
     ) -> Result<AccountProof, BlockchainError> {
         let account_key = H256::from(keccak256(address.as_bytes()));
@@ -2128,13 +2128,14 @@ impl Backend {
                 code_hash: account.code_hash,
                 storage_hash: account.storage_root,
                 account_proof: proof,
-                storage_proof: values
+                storage_proof: keys
                     .into_iter()
                     .map(|storage_key| {
+                        // the key that should be proofed is the keccak256 of the storage key
                         let key = H256::from(keccak256(storage_key));
                         prove_storage(&account, &account_db.0, key).map(
                             |(storage_proof, storage_value)| StorageProof {
-                                key,
+                                key: storage_key,
                                 value: storage_value.into_uint(),
                                 proof: storage_proof
                                     .into_iter()

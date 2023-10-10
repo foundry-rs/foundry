@@ -58,10 +58,11 @@ async fn can_get_proof() {
     let proof = proof.storage_proof[0].clone();
     let storage_proof: Vec<Vec<u8>> =
         proof.proof.into_iter().map(|node| rlp::decode::<Vec<u8>>(&node).unwrap()).collect();
+    let key = H256::from(keccak256(proof.key.as_bytes()));
     verify_proof::<ExtensionLayout>(
         &account.storage_root.0,
         &storage_proof,
-        proof.key.as_bytes(),
+        key.as_bytes(),
         Some(expected_value.as_ref()),
     )
     .unwrap();
