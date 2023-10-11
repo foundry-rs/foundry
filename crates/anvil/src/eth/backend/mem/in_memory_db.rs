@@ -2,13 +2,14 @@
 
 use crate::{
     eth::backend::db::{
-        AsHashDB, Db, MaybeHashDatabase, SerializableAccountRecord, SerializableState, StateDb,
+        AsHashDB, Db, MaybeForkedDatabase, MaybeHashDatabase, SerializableAccountRecord,
+        SerializableState, StateDb,
     },
     mem::state::{state_merkle_trie_root, trie_hash_db},
     revm::primitives::AccountInfo,
     Address, U256,
 };
-use ethers::prelude::H256;
+use ethers::{prelude::H256, types::BlockId};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use tracing::{trace, warn};
 
@@ -112,6 +113,16 @@ impl MaybeHashDatabase for MemDb {
 
     fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
         self.inner.init_from_snapshot(snapshot)
+    }
+}
+
+impl MaybeForkedDatabase for MemDb {
+    fn maybe_reset(&mut self, _url: Option<String>, _block_number: BlockId) -> Result<(), String> {
+        Err("not supported".to_string())
+    }
+
+    fn maybe_flush_cache(&self) -> Result<(), String> {
+        Err("not supported".to_string())
     }
 }
 

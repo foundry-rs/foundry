@@ -804,11 +804,11 @@ impl NodeConfig {
         };
         let fees = FeeManager::new(env.cfg.spec_id, self.get_base_fee(), self.get_gas_price());
 
-        let (db, fork): (Arc<tokio::sync::RwLock<dyn Db>>, Option<ClientFork>) =
+        let (db, fork): (Arc<tokio::sync::RwLock<Box<dyn Db>>>, Option<ClientFork>) =
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
                 self.setup_fork_db(eth_rpc_url, &mut env, &fees).await
             } else {
-                (Arc::new(tokio::sync::RwLock::new(MemDb::default())), None)
+                (Arc::new(tokio::sync::RwLock::new(Box::new(MemDb::default()))), None)
             };
 
         // if provided use all settings of `genesis.json`
@@ -870,7 +870,7 @@ impl NodeConfig {
         eth_rpc_url: String,
         env: &mut revm::primitives::Env,
         fees: &FeeManager,
-    ) -> (Arc<tokio::sync::RwLock<dyn Db>>, Option<ClientFork>) {
+    ) -> (Arc<tokio::sync::RwLock<Box<dyn Db>>>, Option<ClientFork>) {
         // TODO make provider agnostic
         let provider = Arc::new(
             ProviderBuilder::new(&eth_rpc_url)
@@ -1022,7 +1022,8 @@ latest block number: {latest_block}"
             Some(fork_block_number.into()),
         );
 
-        let db = Arc::new(tokio::sync::RwLock::new(ForkedDatabase::new(backend, block_chain_db)));
+        let db: Arc<tokio::sync::RwLock<Box<dyn Db>>> = Arc::new(tokio::sync::RwLock::new(Box::new(ForkedDatabase::new(backend, block_chain_db))));
+
         let fork = ClientFork::new(
             ClientForkConfig {
                 eth_rpc_url,

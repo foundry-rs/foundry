@@ -141,7 +141,7 @@ pub struct Backend {
     /// endpoints. Therefor the `Db` is guarded by a `tokio::sync::RwLock` here so calls that
     /// need to read from it, while it's currently written to, don't block. E.g. a new block is
     /// currently mined and a new [`Self::set_storage()`] request is being executed.
-    db: Arc<AsyncRwLock<dyn Db>>,
+    db: Arc<AsyncRwLock<Box<dyn Db>>>,
     /// stores all block related data in memory
     blockchain: Blockchain,
     /// Historic states of previous blocks
@@ -174,7 +174,7 @@ impl Backend {
     /// Initialises the balance of the given accounts
     #[allow(clippy::too_many_arguments)]
     pub async fn with_genesis(
-        db: Arc<AsyncRwLock<dyn Db>>,
+        db: Arc<AsyncRwLock<Box<dyn Db>>>,
         env: Arc<RwLock<Env>>,
         genesis: GenesisConfig,
         fees: FeeManager,
@@ -337,7 +337,7 @@ impl Backend {
     }
 
     /// Returns the database
-    pub fn get_db(&self) -> &Arc<AsyncRwLock<dyn Db>> {
+    pub fn get_db(&self) -> &Arc<AsyncRwLock<Box<dyn Db>>> {
         &self.db
     }
 
@@ -362,12 +362,11 @@ impl Backend {
                 let mut env = self.env.read().clone();
 
                 let mut node_config = self.node_config.write().await;
-                let (_db, forking) =
+                let (db, forking) =
                     node_config.setup_fork_db(eth_rpc_url, &mut env, &self.fees).await;
 
-                // TODO: Something like this is needed but...
-                // This won't compile because dyn Db is not Sized (and AFAIK cannot be made Sized)
-                // *self.db.write().await = *db.read().await;
+                // TODO: This won't compile because it cannot move out of dereference
+                *self.db.write().await = *db.read().await;
 
                 *self.env.write() = env;
                 *self.fork.write() = forking;
