@@ -808,7 +808,7 @@ impl NodeConfig {
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
                 self.setup_fork_db(eth_rpc_url, &mut env, &fees).await
             } else {
-                (Arc::new(tokio::sync::RwLock::new(Box::new(MemDb::default()))), None)
+                (Arc::new(tokio::sync::RwLock::new(Box::<MemDb>::default())), None)
             };
 
         // if provided use all settings of `genesis.json`
@@ -861,7 +861,8 @@ impl NodeConfig {
     }
 
     /// Configures everything related to forking based on the passed `eth_rpc_url`:
-    ///  - returning a tuple of a [ForkedDatabase](ForkedDatabase) and [ClientFork](ClientFork)
+    ///  - returning a tuple of a [ForkedDatabase](ForkedDatabase) wrapped in an [Arc](Arc)
+    ///    [RwLock](tokio::sync::RwLock) and [ClientFork](ClientFork) wrapped in an [Option](Option)
     ///    which can be used in a [Backend](mem::Backend) to fork from.
     ///  - modifying some parameters of the passed `env`
     ///  - mutating some members of `self`
@@ -871,6 +872,28 @@ impl NodeConfig {
         env: &mut revm::primitives::Env,
         fees: &FeeManager,
     ) -> (Arc<tokio::sync::RwLock<Box<dyn Db>>>, Option<ClientFork>) {
+        let (db, config) = self.setup_fork_db_config(eth_rpc_url, env, fees).await;
+
+        let db: Arc<tokio::sync::RwLock<Box<dyn Db>>> =
+            Arc::new(tokio::sync::RwLock::new(Box::new(db)));
+
+        let fork = ClientFork::new(config, Arc::clone(&db));
+
+        (db, Some(fork))
+    }
+
+    /// Configures everything related to forking based on the passed `eth_rpc_url`:
+    ///  - returning a tuple of a [ForkedDatabase](ForkedDatabase) and
+    ///    [ClientForkConfig](ClientForkConfig) which can be used to build a
+    ///    [ClientFork](ClientFork) to fork from.
+    ///  - modifying some parameters of the passed `env`
+    ///  - mutating some members of `self`
+    pub async fn setup_fork_db_config(
+        &mut self,
+        eth_rpc_url: String,
+        env: &mut revm::primitives::Env,
+        fees: &FeeManager,
+    ) -> (ForkedDatabase, ClientForkConfig) {
         // TODO make provider agnostic
         let provider = Arc::new(
             ProviderBuilder::new(&eth_rpc_url)
@@ -1022,28 +1045,23 @@ latest block number: {latest_block}"
             Some(fork_block_number.into()),
         );
 
-        let db: Arc<tokio::sync::RwLock<Box<dyn Db>>> = Arc::new(tokio::sync::RwLock::new(Box::new(ForkedDatabase::new(backend, block_chain_db))));
+        let config = ClientForkConfig {
+            eth_rpc_url,
+            block_number: fork_block_number,
+            block_hash,
+            provider,
+            chain_id,
+            override_chain_id,
+            timestamp: block.timestamp.as_u64(),
+            base_fee: block.base_fee_per_gas,
+            timeout: self.fork_request_timeout,
+            retries: self.fork_request_retries,
+            backoff: self.fork_retry_backoff,
+            compute_units_per_second: self.compute_units_per_second,
+            total_difficulty: block.total_difficulty.unwrap_or_default(),
+        };
 
-        let fork = ClientFork::new(
-            ClientForkConfig {
-                eth_rpc_url,
-                block_number: fork_block_number,
-                block_hash,
-                provider,
-                chain_id,
-                override_chain_id,
-                timestamp: block.timestamp.as_u64(),
-                base_fee: block.base_fee_per_gas,
-                timeout: self.fork_request_timeout,
-                retries: self.fork_request_retries,
-                backoff: self.fork_retry_backoff,
-                compute_units_per_second: self.compute_units_per_second,
-                total_difficulty: block.total_difficulty.unwrap_or_default(),
-            },
-            Arc::clone(&db),
-        );
-
-        (db, Some(fork))
+        (ForkedDatabase::new(backend, block_chain_db), config)
     }
 }
 

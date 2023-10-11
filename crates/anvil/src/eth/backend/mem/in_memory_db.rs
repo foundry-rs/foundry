@@ -15,8 +15,11 @@ use tracing::{trace, warn};
 
 // reexport for convenience
 use crate::mem::state::storage_trie_db;
-use foundry_evm::executor::backend::{snapshot::StateSnapshot, DatabaseResult};
 pub use foundry_evm::executor::{backend::MemDb, DatabaseRef};
+use foundry_evm::executor::{
+    backend::{snapshot::StateSnapshot, DatabaseResult},
+    fork::BlockchainDb,
+};
 
 impl Db for MemDb {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
@@ -122,6 +125,10 @@ impl MaybeForkedDatabase for MemDb {
     }
 
     fn maybe_flush_cache(&self) -> Result<(), String> {
+        Err("not supported".to_string())
+    }
+
+    fn maybe_inner(&self) -> Result<&BlockchainDb, String> {
         Err("not supported".to_string())
     }
 }

@@ -362,14 +362,16 @@ impl Backend {
                 let mut env = self.env.read().clone();
 
                 let mut node_config = self.node_config.write().await;
-                let (db, forking) =
-                    node_config.setup_fork_db(eth_rpc_url, &mut env, &self.fees).await;
 
-                // TODO: This won't compile because it cannot move out of dereference
-                *self.db.write().await = *db.read().await;
+                let (db, config) =
+                    node_config.setup_fork_db_config(eth_rpc_url, &mut env, &self.fees).await;
+
+                *self.db.write().await = Box::new(db);
+
+                let fork = ClientFork::new(config, Arc::clone(&self.db));
 
                 *self.env.write() = env;
-                *self.fork.write() = forking;
+                *self.fork.write() = Some(fork);
             } else {
                 return Err(RpcError::invalid_params(
                     "Forking not enabled and RPC URL not provided to start forking",

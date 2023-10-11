@@ -12,6 +12,7 @@ use foundry_common::errors::FsPathError;
 use foundry_evm::{
     executor::{
         backend::{snapshot::StateSnapshot, DatabaseError, DatabaseResult, MemDb},
+        fork::BlockchainDb,
         DatabaseRef,
     },
     revm::{
@@ -77,6 +78,8 @@ pub trait MaybeForkedDatabase {
     fn maybe_reset(&mut self, _url: Option<String>, block_number: BlockId) -> Result<(), String>;
 
     fn maybe_flush_cache(&self) -> Result<(), String>;
+
+    fn maybe_inner(&self) -> Result<&BlockchainDb, String>;
 }
 
 /// This bundles all required revm traits
@@ -267,6 +270,10 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeForkedDatabase for CacheDB<T> {
     }
 
     fn maybe_flush_cache(&self) -> Result<(), String> {
+        Err("not supported".to_string())
+    }
+
+    fn maybe_inner(&self) -> Result<&BlockchainDb, String> {
         Err("not supported".to_string())
     }
 }

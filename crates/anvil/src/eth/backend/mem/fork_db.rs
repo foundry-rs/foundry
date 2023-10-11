@@ -11,7 +11,7 @@ pub use foundry_evm::executor::fork::database::ForkedDatabase;
 use foundry_evm::{
     executor::{
         backend::{snapshot::StateSnapshot, DatabaseResult},
-        fork::database::ForkDbSnapshot,
+        fork::{database::ForkDbSnapshot, BlockchainDb},
     },
     revm::Database,
 };
@@ -122,6 +122,11 @@ impl MaybeForkedDatabase for ForkedDatabase {
     }
 
     fn maybe_flush_cache(&self) -> Result<(), String> {
-        Ok(self.flush_cache())
+        self.flush_cache();
+        Ok(())
+    }
+
+    fn maybe_inner(&self) -> Result<&BlockchainDb, String> {
+        Ok(self.inner())
     }
 }
