@@ -20,6 +20,7 @@ use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
 
 const BLOCK_NUMBER: u64 = 14_608_400u64;
+const DEAD_BALANCE_AT_BLOCK_NUMBER: u128 = 12_556_069_338_441_120_059_867u128;
 
 const BLOCK_TIMESTAMP: u64 = 1_650_274_250u64;
 
@@ -227,8 +228,13 @@ async fn test_fork_reset_setup() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
+    let dead_addr: Address = "000000000000000000000000000000000000dEaD".parse().unwrap();
+
     let block_number = provider.get_block_number().await.unwrap();
     assert_eq!(block_number, 0.into());
+
+    let local_balance = provider.get_balance(dead_addr, None).await.unwrap();
+    assert_eq!(local_balance, 0.into());
 
     api.anvil_reset(Some(Forking {
         json_rpc_url: Some(rpc::next_http_archive_rpc_endpoint()),
@@ -240,11 +246,8 @@ async fn test_fork_reset_setup() {
     let block_number = provider.get_block_number().await.unwrap();
     assert_eq!(block_number, BLOCK_NUMBER.into());
 
-    // TODO: This won't work because we don't replace the DB with a ForkedDatabase yet
-    // let addr: Address = "000000000000000000000000000000000000dEaD".parse().unwrap();
-
-    // let remote_balance = provider.get_balance(addr, None).await.unwrap();
-    // assert_eq!(remote_balance, 12556069338441120059867u128.into());
+    let remote_balance = provider.get_balance(dead_addr, None).await.unwrap();
+    assert_eq!(remote_balance, DEAD_BALANCE_AT_BLOCK_NUMBER.into());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -302,7 +305,15 @@ async fn test_separate_states() {
 
     let fork = api.get_fork().unwrap();
     let fork_db = fork.database.read().await;
-    let acc = fork_db.inner().db().accounts.read().get(&addr.to_alloy()).cloned().unwrap();
+    let acc = fork_db
+        .maybe_inner()
+        .expect("could not get fork db inner")
+        .db()
+        .accounts
+        .read()
+        .get(&addr.to_alloy())
+        .cloned()
+        .unwrap();
 
     assert_eq!(acc.balance, remote_balance.to_alloy())
 }

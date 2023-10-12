@@ -288,7 +288,11 @@ impl NodeArgs {
             // this will make sure that the fork RPC cache is flushed if caching is configured
             if let Some(fork) = fork.take() {
                 trace!("flushing cache on shutdown");
-                fork.database.read().await.flush_cache();
+                fork.database
+                    .read()
+                    .await
+                    .maybe_flush_cache()
+                    .expect("Could not flush cache on fork DB");
                 // cleaning up and shutting down
                 // this will make sure that the fork RPC cache is flushed if caching is configured
             }
