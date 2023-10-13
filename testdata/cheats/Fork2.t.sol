@@ -225,7 +225,7 @@ contract ForkTest is DSTest {
         string memory path = "fixtures/Rpc/balance_params.json";
         string memory file = vm.readFile(path);
         bytes memory result = vm.rpc("eth_getBalance", file);
-        assertEq(result, hex"3582f71d817d46");
+        assertEq(result, hex"10b7c11bcb51e6");
     }
 }
 

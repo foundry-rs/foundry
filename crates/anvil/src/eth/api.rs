@@ -66,9 +66,9 @@ use foundry_evm::{
     },
 };
 use foundry_utils::types::ToEthers;
-use futures::channel::mpsc::Receiver;
+use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
 use tracing::{trace, warn};
 
 use super::{backend::mem::BlockRequest, sign::build_typed_transaction};
@@ -939,11 +939,16 @@ impl EthApi {
         )?
         .or_zero_fees();
 
-        let (exit, out, gas, _) =
-            self.backend.call(request, fees, Some(block_request), overrides).await?;
-        trace!(target : "node", "Call status {:?}, gas {}", exit, gas);
+        // this can be blocking for a bit, especially in forking mode
+        // <https://github.com/foundry-rs/foundry/issues/6036>
+        self.on_blocking_task(|this| async move {
+            let (exit, out, gas, _) =
+                this.backend.call(request, fees, Some(block_request), overrides).await?;
+            trace!(target : "node", "Call status {:?}, gas {}", exit, gas);
 
-        ensure_return_ok(exit, &out)
+            ensure_return_ok(exit, &out)
+        })
+        .await
     }
 
     /// This method creates an EIP2930 type accessList based on a given Transaction. The accessList
@@ -1985,6 +1990,25 @@ impl EthApi {
 // === impl EthApi utility functions ===
 
 impl EthApi {
+    /// Executes the future on a new blocking task.
+    async fn on_blocking_task<C, F, R>(&self, c: C) -> Result<R>
+    where
+        C: FnOnce(Self) -> F,
+        F: Future<Output = Result<R>> + Send + 'static,
+        R: Send + 'static,
+    {
+        let (tx, rx) = oneshot::channel();
+        let this = self.clone();
+        let f = c(this);
+        tokio::task::spawn_blocking(move || {
+            tokio::runtime::Handle::current().block_on(async move {
+                let res = f.await;
+                let _ = tx.send(res);
+            })
+        });
+        rx.await.map_err(|_| BlockchainError::Internal("blocking task panicked".to_string()))?
+    }
+
     /// Executes the `evm_mine` and returns the number of blocks mined
     async fn do_evm_mine(&self, opts: Option<EvmMineOptions>) -> Result<u64> {
         let mut blocks_to_mine = 1u64;
