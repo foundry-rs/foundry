@@ -7,6 +7,8 @@ use ethers::{
 };
 use eyre::Result;
 use foundry_config::{Chain, Config};
+use std::error::Error;
+use std::fmt;
 use std::{
     ffi::OsStr,
     future::Future,
@@ -19,7 +21,6 @@ use std::{
 use tracing_error::ErrorLayer;
 use tracing_subscriber::prelude::*;
 use yansi::Paint;
-
 mod cmd;
 pub use cmd::*;
 
@@ -78,9 +79,43 @@ pub fn subscriber() {
         .init()
 }
 
+#[derive(Debug, Clone)]
+pub enum ParseU256Error {
+    HexWithPrefix,
+    HexWithoutPrefix,
+    Decimal,
+}
+
+impl fmt::Display for ParseU256Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            ParseU256Error::HexWithPrefix => {
+                write!(f, "Failed to parse as hex string with 0x prefix")
+            }
+            ParseU256Error::HexWithoutPrefix => {
+                write!(f, "Failed to parse as hex string without 0x prefix")
+            }
+            ParseU256Error::Decimal => write!(f, "Failed to parse as a decimal string"),
+        }
+    }
+}
+
+impl Error for ParseU256Error {}
+
+/// Determines if a string represents a hexadecimal value.
+fn is_hex(s: &str) -> bool {
+    s.chars().all(|c| c.is_digit(16))
+}
+
 /// parse a hex str or decimal str as U256
-pub fn parse_u256(s: &str) -> Result<U256> {
-    Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })
+pub fn parse_u256(s: &str) -> Result<U256, ParseU256Error> {
+    if s.starts_with("0x") {
+        U256::from_str(&s[2..]).map_err(|_| ParseU256Error::HexWithPrefix)
+    } else if is_hex(s) {
+        U256::from_str(&format!("0x{}", s)).map_err(|_| ParseU256Error::HexWithoutPrefix)
+    } else {
+        U256::from_dec_str(s).map_err(|_| ParseU256Error::Decimal)
+    }
 }
 
 /// parse a hex str or decimal str as U256
@@ -476,7 +511,7 @@ impl<'a> Git<'a> {
                     output.status.code(),
                     stdout.trim(),
                     stderr.trim()
-                ))
+                ));
             }
         }
         Ok(())
