@@ -7,8 +7,7 @@ use ethers::{
 };
 use eyre::Result;
 use foundry_config::{Chain, Config};
-use std::error::Error;
-use std::fmt;
+
 use std::{
     ffi::OsStr,
     future::Future,
@@ -79,42 +78,22 @@ pub fn subscriber() {
         .init()
 }
 
-#[derive(Debug, Clone)]
+use thiserror::Error;
+
+#[derive(Debug, Error, PartialEq)]
 pub enum ParseU256Error {
-    HexWithPrefix,
-    HexWithoutPrefix,
-    Decimal,
+    #[error("Failed to parse as hexadecimal value")]
+    HexParseError,
+
+    #[error("Invalid format: Expected a hexadecimal string with a '0x' prefix")]
+    InvalidFormat,
 }
 
-impl fmt::Display for ParseU256Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            ParseU256Error::HexWithPrefix => {
-                write!(f, "Failed to parse as hex string with 0x prefix")
-            }
-            ParseU256Error::HexWithoutPrefix => {
-                write!(f, "Failed to parse as hex string without 0x prefix")
-            }
-            ParseU256Error::Decimal => write!(f, "Failed to parse as a decimal string"),
-        }
-    }
-}
-
-impl Error for ParseU256Error {}
-
-/// Determines if a string represents a hexadecimal value.
-fn is_hex(s: &str) -> bool {
-    s.chars().all(|c| c.is_digit(16))
-}
-
-/// parse a hex str or decimal str as U256
 pub fn parse_u256(s: &str) -> Result<U256, ParseU256Error> {
     if s.starts_with("0x") {
-        U256::from_str(&s[2..]).map_err(|_| ParseU256Error::HexWithPrefix)
-    } else if is_hex(s) {
-        U256::from_str(&format!("0x{}", s)).map_err(|_| ParseU256Error::HexWithoutPrefix)
+        U256::from_str(&s[2..]).map_err(|_| ParseU256Error::HexParseError)
     } else {
-        U256::from_dec_str(s).map_err(|_| ParseU256Error::Decimal)
+        Err(ParseU256Error::InvalidFormat)
     }
 }
 
@@ -648,6 +627,44 @@ mod tests {
     use foundry_common::fs;
     use std::{env, fs::File, io::Write};
     use tempfile::tempdir;
+
+    #[test]
+    fn test_parse_u256_valid_hex() {
+        let input = "0x1a3f";
+        assert!(parse_u256(input).is_ok());
+    }
+
+    #[test]
+    fn test_parse_u256_invalid_hex() {
+        let input = "0x1a3g"; 
+        let result = parse_u256(input);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), ParseU256Error::HexParseError);
+    }
+
+    #[test]
+    fn test_parse_u256_no_prefix_decimal_lookalike() {
+        let input = "4567";
+        let result = parse_u256(input);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), ParseU256Error::InvalidFormat);
+    }
+
+    #[test]
+    fn test_parse_u256_no_prefix_hex_lookalike() {
+        let input = "1a3f";
+        let result = parse_u256(input);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), ParseU256Error::InvalidFormat);
+    }
+
+    #[test]
+    fn test_parse_u256_empty_string() {
+        let input = "";
+        let result = parse_u256(input);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), ParseU256Error::InvalidFormat);
+    }
 
     #[test]
     fn foundry_path_ext_works() {
