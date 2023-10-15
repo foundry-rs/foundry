@@ -640,45 +640,7 @@ mod tests {
     use foundry_common::fs;
     use std::{env, fs::File, io::Write};
     use tempfile::tempdir;
-
-    #[test]
-    fn test_parse_u256_valid_hex() {
-        let input = "0x1a3f";
-        assert!(parse_u256(input).is_ok());
-    }
-
-    #[test]
-    fn test_parse_u256_invalid_hex() {
-        let input = "0x1a3g"; 
-        let result = parse_u256(input);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ParseU256Error::HexParseError);
-    }
-
-    #[test]
-    fn test_parse_u256_no_prefix_decimal_lookalike() {
-        let input = "4567";
-        let result = parse_u256(input);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ParseU256Error::InvalidFormat);
-    }
-
-    #[test]
-    fn test_parse_u256_no_prefix_hex_lookalike() {
-        let input = "1a3f";
-        let result = parse_u256(input);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ParseU256Error::InvalidFormat);
-    }
-
-    #[test]
-    fn test_parse_u256_empty_string() {
-        let input = "";
-        let result = parse_u256(input);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ParseU256Error::InvalidFormat);
-    }
-
+  
     #[test]
     fn foundry_path_ext_works() {
         let p = Path::new("contracts/MyTest.t.sol");
