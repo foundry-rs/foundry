@@ -82,19 +82,32 @@ use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq)]
 pub enum ParseU256Error {
-    #[error("Failed to parse as hexadecimal value")]
-    HexParseError,
+    #[error("Failed to parse as a decimal or hexadecimal value")]
+    ParseError,
 
-    #[error("Invalid format: Expected a hexadecimal string with a '0x' prefix")]
+    #[error("Invalid format")]
     InvalidFormat,
 }
 
 pub fn parse_u256(s: &str) -> Result<U256, ParseU256Error> {
+    // If decoding as a decimal fails, check if it has the "0x" prefix and try to decode as hex
     if s.starts_with("0x") {
-        U256::from_str(&s[2..]).map_err(|_| ParseU256Error::HexParseError)
-    } else {
-        Err(ParseU256Error::InvalidFormat)
+        return U256::from_str(&s[2..]).map_err(|_| ParseU256Error::ParseError);
     }
+
+    // Try to decode the string as a decimal value
+    if let Ok(value) = U256::from_dec_str(s) {
+        return Ok(value);
+    }
+
+    // If there's no "0x" prefix, add the prefix and try to decode as hex
+    let hex_str = format!("0x{}", s);
+    if let Ok(value) = U256::from_str(&hex_str[2..]) {
+        return Ok(value);
+    }
+
+    // If all attempts fail, return an error
+    Err(ParseU256Error::InvalidFormat)
 }
 
 /// parse a hex str or decimal str as U256
