@@ -89,21 +89,25 @@ pub enum ParseU256Error {
     InvalidFormat,
 }
 
+/// Parses a string as a U256 value.
+/// It will try to parse the string either:
+/// 1. As a hex value, by stripping the "0x" prefix if it has it.
+/// 2. As a decimal value.
+/// If both options fail, the function will assume it is an unprefixed hex string.
 pub fn parse_u256(s: &str) -> Result<U256, ParseU256Error> {
     // If decoding as a decimal fails, check if it has the "0x" prefix and try to decode as hex
-    if s.starts_with("0x") {
-        return U256::from_str(&s[2..]).map_err(|_| ParseU256Error::ParseError);
+    if let Some(stripped) = s.strip_prefix("0x") {
+        return U256::from_str_radix(stripped, 16).map_err(|_| ParseU256Error::ParseError)
     }
 
     // Try to decode the string as a decimal value
     if let Ok(value) = U256::from_dec_str(s) {
-        return Ok(value);
+        return Ok(value)
     }
 
-    // If there's no "0x" prefix, add the prefix and try to decode as hex
-    let hex_str = format!("0x{}", s);
-    if let Ok(value) = U256::from_str(&hex_str[2..]) {
-        return Ok(value);
+    // If there's no "0x" prefix but we failed to decode as a decimal, try to decode as hex
+    if let Ok(value) = U256::from_str_radix(s, 16) {
+        return Ok(value)
     }
 
     // If all attempts fail, return an error
@@ -503,7 +507,7 @@ impl<'a> Git<'a> {
                     output.status.code(),
                     stdout.trim(),
                     stderr.trim()
-                ));
+                ))
             }
         }
         Ok(())
@@ -640,7 +644,7 @@ mod tests {
     use foundry_common::fs;
     use std::{env, fs::File, io::Write};
     use tempfile::tempdir;
-  
+
     #[test]
     fn foundry_path_ext_works() {
         let p = Path::new("contracts/MyTest.t.sol");
