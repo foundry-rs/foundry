@@ -30,6 +30,7 @@ impl Remappings {
         Self { remappings }
     }
 
+    /// Filters the remappings vector by name and context.
     fn filter_key(r: &Remapping) -> String {
         match &r.context {
             Some(str) => str.clone() + &r.name.clone(),
