@@ -421,6 +421,10 @@ pub enum EthRequest {
     )]
     SetCoinbase(Address),
 
+    /// Sets the chain id
+    #[cfg_attr(feature = "serde", serde(rename = "anvil_setChainId", with = "sequence"))]
+    SetChainId(u64),
+
     /// Enable or disable logging
     #[cfg_attr(
         feature = "serde",

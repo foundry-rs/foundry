@@ -303,6 +303,7 @@ impl EthApi {
                 self.anvil_set_storage_at(addr, slot, val).await.to_rpc_result()
             }
             EthRequest::SetCoinbase(addr) => self.anvil_set_coinbase(addr).await.to_rpc_result(),
+            EthRequest::SetChainId(id) => self.anvil_set_chain_id(id).await.to_rpc_result(),
             EthRequest::SetLogging(log) => self.anvil_set_logging(log).await.to_rpc_result(),
             EthRequest::SetMinGasPrice(gas) => {
                 self.anvil_set_min_gas_price(gas).await.to_rpc_result()
@@ -1534,6 +1535,12 @@ impl EthApi {
         } else {
             Err(BlockchainError::RpcUnimplemented)
         }
+    }
+
+    pub async fn anvil_set_chain_id(&self, chain_id: u64) -> Result<()> {
+        node_info!("anvil_setChainId");
+        self.backend.set_chain_id(chain_id);
+        Ok(())
     }
 
     /// Modifies the balance of an account.

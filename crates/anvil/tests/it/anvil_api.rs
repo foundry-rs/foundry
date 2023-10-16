@@ -483,3 +483,18 @@ async fn test_get_transaction_receipt() {
         new_receipt.unwrap().effective_gas_price.unwrap().as_u64()
     );
 }
+
+// test can set chain id
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_chain_id() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let chain_id = provider.get_chainid().await.unwrap();
+    assert_eq!(chain_id, U256::from(31337));
+
+    let chain_id = 1234;
+    api.anvil_set_chain_id(chain_id).await.unwrap();
+
+    let chain_id = provider.get_chainid().await.unwrap();
+    assert_eq!(chain_id, U256::from(1234));
+}
