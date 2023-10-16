@@ -82,10 +82,10 @@ use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq)]
 pub enum ParseU256Error {
-    #[error("Failed to parse as a decimal or hexadecimal value")]
+    #[error("Failed to parse as a decimal or hexadecimal value. If using a hex string, make sure it is prefixed with '0x'.")]
     ParseError,
 
-    #[error("Invalid format")]
+    #[error("Invalid format. If you're using a hex string, make sure it is prefixed with '0x'")]
     InvalidFormat,
 }
 
@@ -93,6 +93,7 @@ pub enum ParseU256Error {
 /// It will try to parse the string either:
 /// 1. As a hex value, by stripping the "0x" prefix if it has it.
 /// 2. As a decimal value.
+///
 /// If both options fail, the function will assume it is an unprefixed hex string.
 pub fn parse_u256(s: &str) -> Result<U256, ParseU256Error> {
     // If decoding as a decimal fails, check if it has the "0x" prefix and try to decode as hex
@@ -102,11 +103,6 @@ pub fn parse_u256(s: &str) -> Result<U256, ParseU256Error> {
 
     // Try to decode the string as a decimal value
     if let Ok(value) = U256::from_dec_str(s) {
-        return Ok(value)
-    }
-
-    // If there's no "0x" prefix but we failed to decode as a decimal, try to decode as hex
-    if let Ok(value) = U256::from_str_radix(s, 16) {
         return Ok(value)
     }
 
@@ -652,6 +648,20 @@ mod tests {
         assert!(p.is_sol());
         let p = Path::new("contracts/Greeter.sol");
         assert!(!p.is_sol_test());
+    }
+
+    #[test]
+    fn can_parse_u256s_correctly() {
+        let num = "1";
+        let res = parse_u256(num);
+        assert!(res.is_ok());
+        let num = "0x10";
+        let res = parse_u256(num);
+        assert_eq!(U256::from(16), res.unwrap());
+        // This should not be parse-able, as we explicitly need prefixed hex strings.
+        let num = "ff";
+        let res = parse_u256(num);
+        assert!(res.is_err());
     }
 
     // loads .env from cwd and project dir, See [`find_project_root_path()`]
