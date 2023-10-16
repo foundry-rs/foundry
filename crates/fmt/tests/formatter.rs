@@ -36,7 +36,7 @@ fn test_directory(base_name: &str) {
                         let default_config =
                             FormatterConfig { line_length: 80, ..Default::default() };
 
-                        let mut config = toml::Value::try_from(&default_config).unwrap();
+                        let mut config = toml::Value::try_from(default_config).unwrap();
                         let config_table = config.as_table_mut().unwrap();
                         let mut lines = source.split('\n').peekable();
                         let mut line_num = 1;

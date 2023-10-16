@@ -1,5 +1,5 @@
 use crate::TestCommand;
-use alloy_primitives::{hex, Address, U256};
+use alloy_primitives::{Address, U256};
 use ethers::prelude::{Middleware, NameOrAddress};
 use eyre::Result;
 use foundry_common::{get_http_provider, RetryProvider};
@@ -136,16 +136,12 @@ impl ScriptTester {
     }
 
     pub fn add_deployer(&mut self, index: u32) -> &mut Self {
-        self.cmd.args([
-            "--sender",
-            &format!("0x{}", hex::encode(self.accounts_pub[index as usize].to_ethers())),
-        ]);
-        self
+        self.sender(self.accounts_pub[index as usize])
     }
 
     /// Adds given address as sender
     pub fn sender(&mut self, addr: Address) -> &mut Self {
-        self.cmd.args(["--sender", format!("{addr:?}").as_str()]);
+        self.cmd.args(["--sender", addr.to_string().as_str()]);
         self
     }
 

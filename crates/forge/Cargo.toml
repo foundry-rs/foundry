@@ -24,7 +24,7 @@ foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
 
-comfy-table = "6"
+comfy-table = "7"
 ethers = { workspace = true, features = ["solc-full"] }
 eyre = "0.6"
 proptest = "1"
@@ -39,14 +39,14 @@ forge-doc.workspace = true
 foundry-cli.workspace = true
 foundry-debugger.workspace = true
 
-alloy-primitives = { workspace = true, default-features = false, features = ["std", "serde"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
 
 async-trait = "0.1"
 bytes = "1.4"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"
 clap_complete_fig = "4"
-dialoguer = { version = "0.10", default-features = false }
+dialoguer = { version = "0.11", default-features = false }
 dunce = "1"
 futures = "0.3"
 hex.workspace = true
@@ -75,6 +75,7 @@ path-slash = "0.2"
 pretty_assertions = "1"
 serial_test = "2"
 svm = { package = "svm-rs", version = "0.3", default-features = false, features = ["rustls"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 [features]
 default = ["rustls"]

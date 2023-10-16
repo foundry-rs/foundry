@@ -1,17 +1,22 @@
 use super::{bail, ensure, fmt_err, util::MAGIC_SKIP_BYTES, Cheatcodes, Error, Result};
 use crate::{abi::HEVMCalls, executor::inspector::cheatcodes::parse};
-use alloy_primitives::Bytes;
-use ethers::{
-    abi::{self, AbiEncode, JsonAbi, ParamType, Token},
-    prelude::artifacts::CompactContractBytecode,
-    types::*,
-};
+use alloy_dyn_abi::{DynSolType, DynSolValue};
+use alloy_primitives::{Address, Bytes, B256, I256, U256};
+use ethers::{abi::JsonAbi, prelude::artifacts::CompactContractBytecode};
 use foundry_common::{fmt::*, fs, get_artifact_path};
 use foundry_config::fs_permissions::FsAccessKind;
+use foundry_utils::types::ToAlloy;
 use revm::{Database, EVMData};
 use serde::Deserialize;
 use serde_json::Value;
-use std::{collections::BTreeMap, env, path::Path, process::Command};
+use std::{
+    collections::BTreeMap,
+    env,
+    path::Path,
+    process::Command,
+    str::FromStr,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 /// Invokes a `Command` with the given args and returns the exit code, stdout, and stderr.
 ///
@@ -40,20 +45,21 @@ fn try_ffi(state: &Cheatcodes, args: &[String]) -> Result {
 
     // The stdout might be encoded on valid hex, or it might just be a string,
     // so we need to determine which it is to avoid improperly encoding later.
-    let encoded_stdout: Token = if let Ok(hex) = hex::decode(trimmed_stdout) {
-        Token::Bytes(hex)
+    let encoded_stdout: DynSolValue = if let Ok(hex) = hex::decode(trimmed_stdout) {
+        DynSolValue::Bytes(hex)
     } else {
-        Token::Bytes(trimmed_stdout.into())
+        DynSolValue::Bytes(trimmed_stdout.into())
     };
-
-    let res = abi::encode(&[Token::Tuple(vec![
-        Token::Int(exit_code.into()),
+    let exit_code = I256::from_dec_str(&exit_code.to_string())
+        .map_err(|err| fmt_err!("Could not convert exit code: {err}"))?;
+    let res = DynSolValue::Tuple(vec![
+        DynSolValue::Int(exit_code, 256),
         encoded_stdout,
         // We can grab the stderr output as-is.
-        Token::Bytes(output.stderr),
-    ])]);
+        DynSolValue::Bytes(output.stderr),
+    ]);
 
-    Ok(res.into())
+    Ok(res.abi_encode().into())
 }
 
 /// Invokes a `Command` with the given args and returns the abi encoded response
@@ -84,9 +90,9 @@ fn ffi(state: &Cheatcodes, args: &[String]) -> Result {
     let output = String::from_utf8(output.stdout)?;
     let trimmed = output.trim();
     if let Ok(hex) = hex::decode(trimmed) {
-        Ok(abi::encode(&[Token::Bytes(hex)]).into())
+        Ok(DynSolValue::Bytes(hex).abi_encode().into())
     } else {
-        Ok(trimmed.encode().into())
+        Ok(DynSolValue::String(trimmed.to_owned()).abi_encode().into())
     }
 }
 
@@ -147,7 +153,7 @@ struct HuffArtifact {
 fn get_code(state: &Cheatcodes, path: &str) -> Result {
     let bytecode = read_bytecode(state, path)?;
     if let Some(bin) = bytecode.into_bytecode() {
-        Ok(bin.0.clone().encode().into())
+        Ok(DynSolValue::Bytes(bin.to_vec()).abi_encode().into())
     } else {
         Err(fmt_err!("No bytecode for contract. Is it abstract or unlinked?"))
     }
@@ -157,7 +163,7 @@ fn get_code(state: &Cheatcodes, path: &str) -> Result {
 fn get_deployed_code(state: &Cheatcodes, path: &str) -> Result {
     let bytecode = read_bytecode(state, path)?;
     if let Some(bin) = bytecode.into_deployed_bytecode() {
-        Ok(bin.0.clone().encode().into())
+        Ok(DynSolValue::Bytes(bin.to_vec()).abi_encode().into())
     } else {
         Err(fmt_err!("No deployed bytecode for contract. Is it abstract or unlinked?"))
     }
@@ -188,7 +194,7 @@ fn set_env(key: &str, val: &str) -> Result {
     }
 }
 
-fn get_env(key: &str, ty: ParamType, delim: Option<&str>, default: Option<String>) -> Result {
+fn get_env(key: &str, ty: DynSolType, delim: Option<&str>, default: Option<String>) -> Result {
     let val = env::var(key).or_else(|e| {
         default.ok_or_else(|| {
             fmt_err!("Failed to get environment variable `{key}` as type `{ty}`: {e}")
@@ -201,25 +207,25 @@ fn get_env(key: &str, ty: ParamType, delim: Option<&str>, default: Option<String
     }
 }
 
-/// Converts a JSON [`Value`] to a [`Token`].
+/// Converts a JSON [`Value`] to a [`DynSolValue`].
 ///
 /// The function is designed to run recursively, so that in case of an object
 /// it will call itself to convert each of it's value and encode the whole as a
 /// Tuple
-pub fn value_to_token(value: &Value) -> Result<Token> {
+pub fn value_to_token(value: &Value) -> Result<DynSolValue> {
     match value {
-        Value::Null => Ok(Token::FixedBytes(vec![0; 32])),
-        Value::Bool(boolean) => Ok(Token::Bool(*boolean)),
+        Value::Null => Ok(DynSolValue::FixedBytes(B256::ZERO, 32)),
+        Value::Bool(boolean) => Ok(DynSolValue::Bool(*boolean)),
         Value::Array(array) => {
             let values = array.iter().map(value_to_token).collect::<Result<Vec<_>>>()?;
-            Ok(Token::Array(values))
+            Ok(DynSolValue::Array(values))
         }
         value @ Value::Object(_) => {
             // See: [#3647](https://github.com/foundry-rs/foundry/pull/3647)
             let ordered_object: BTreeMap<String, Value> =
                 serde_json::from_value(value.clone()).unwrap();
             let values = ordered_object.values().map(value_to_token).collect::<Result<Vec<_>>>()?;
-            Ok(Token::Tuple(values))
+            Ok(DynSolValue::Tuple(values))
         }
         Value::Number(number) => {
             if let Some(f) = number.as_f64() {
@@ -232,25 +238,30 @@ pub fn value_to_token(value: &Value) -> Result<Token> {
                     // Example: 18446744073709551615 becomes 18446744073709552000 after parsing it
                     // to f64.
                     let s = number.to_string();
+                    // Coerced to scientific notation, so short-ciruit to using fallback.
+                    // This will not have a problem with hex numbers, as for parsing these
+                    // We'd need to prefix this with 0x.
+                    // See also <https://docs.soliditylang.org/en/latest/types.html#rational-and-integer-literals>
+                    if s.contains('e') {
+                        // Calling Number::to_string with powers of ten formats the number using
+                        // scientific notation and causes from_dec_str to fail. Using format! with
+                        // f64 keeps the full number representation.
+                        // Example: 100000000000000000000 becomes 1e20 when Number::to_string is
+                        // used.
+                        let fallback_s = format!("{f}");
+                        if let Ok(n) = U256::from_str(&fallback_s) {
+                            return Ok(DynSolValue::Uint(n, 256))
+                        }
+                        if let Ok(n) = I256::from_dec_str(&fallback_s) {
+                            return Ok(DynSolValue::Int(n, 256))
+                        }
+                    }
 
-                    // Calling Number::to_string with powers of ten formats the number using
-                    // scientific notation and causes from_dec_str to fail. Using format! with f64
-                    // keeps the full number representation.
-                    // Example: 100000000000000000000 becomes 1e20 when Number::to_string is
-                    // used.
-                    let fallback_s = format!("{f}");
-
-                    if let Ok(n) = U256::from_dec_str(&s) {
-                        return Ok(Token::Uint(n))
+                    if let Ok(n) = U256::from_str(&s) {
+                        return Ok(DynSolValue::Uint(n, 256))
                     }
-                    if let Ok(n) = I256::from_dec_str(&s) {
-                        return Ok(Token::Int(n.into_raw()))
-                    }
-                    if let Ok(n) = U256::from_dec_str(&fallback_s) {
-                        return Ok(Token::Uint(n))
-                    }
-                    if let Ok(n) = I256::from_dec_str(&fallback_s) {
-                        return Ok(Token::Int(n.into_raw()))
+                    if let Ok(n) = I256::from_str(&s) {
+                        return Ok(DynSolValue::Int(n, 256))
                     }
                 }
             }
@@ -266,12 +277,12 @@ pub fn value_to_token(value: &Value) -> Result<Token> {
                 }
                 let bytes = hex::decode(val)?;
                 Ok(match bytes.len() {
-                    20 => Token::Address(Address::from_slice(&bytes)),
-                    32 => Token::FixedBytes(bytes),
-                    _ => Token::Bytes(bytes),
+                    20 => DynSolValue::Address(Address::from_slice(&bytes)),
+                    32 => DynSolValue::FixedBytes(B256::from_slice(&bytes), 32),
+                    _ => DynSolValue::Bytes(bytes),
                 })
             } else {
-                Ok(Token::String(string.to_owned()))
+                Ok(DynSolValue::String(string.to_owned()))
             }
         }
     }
@@ -287,32 +298,34 @@ fn canonicalize_json_key(key: &str) -> String {
     }
 }
 
-/// Encodes a vector of [`Token`] into a vector of bytes.
-fn encode_abi_values(values: Vec<Token>) -> Vec<u8> {
+/// Encodes a vector of [`DynSolValue`] into a vector of bytes.
+fn encode_abi_values(values: Vec<DynSolValue>) -> Vec<u8> {
     if values.is_empty() {
-        abi::encode(&[Token::Bytes(Vec::new())])
+        DynSolValue::Bytes(Vec::new()).abi_encode()
     } else if values.len() == 1 {
-        abi::encode(&[Token::Bytes(abi::encode(&values))])
+        DynSolValue::Bytes(values[0].abi_encode()).abi_encode()
     } else {
-        abi::encode(&[Token::Bytes(abi::encode(&[Token::Array(values)]))])
+        DynSolValue::Bytes(DynSolValue::Array(values).abi_encode()).abi_encode()
     }
 }
 
-/// Parses a vector of [`Value`]s into a vector of [`Token`]s.
-fn parse_json_values(values: Vec<&Value>, key: &str) -> Result<Vec<Token>> {
+/// Parses a vector of [`Value`]s into a vector of [`DynSolValue`]s.
+fn parse_json_values(values: Vec<&Value>, key: &str) -> Result<Vec<DynSolValue>> {
+    trace!(?values, %key, "parseing json values");
     values
         .iter()
         .map(|inner| {
             value_to_token(inner).map_err(|err| fmt_err!("Failed to parse key \"{key}\": {err}"))
         })
-        .collect::<Result<Vec<Token>>>()
+        .collect::<Result<Vec<DynSolValue>>>()
 }
 
 /// Parses a JSON and returns a single value, an array or an entire JSON object encoded as tuple.
 /// As the JSON object is parsed serially, with the keys ordered alphabetically, they must be
 /// deserialized in the same order. That means that the solidity `struct` should order it's fields
 /// alphabetically and not by efficient packing or some other taxonomy.
-fn parse_json(json_str: &str, key: &str, coerce: Option<ParamType>) -> Result {
+fn parse_json(json_str: &str, key: &str, coerce: Option<DynSolType>) -> Result {
+    trace!(%json_str, %key, ?coerce, "parsing json");
     let json =
         serde_json::from_str(json_str).map_err(|err| fmt_err!("Failed to parse JSON: {err}"))?;
     match key {
@@ -328,15 +341,16 @@ fn parse_json(json_str: &str, key: &str, coerce: Option<ParamType>) -> Result {
         }
         _ => {
             let values = jsonpath_lib::select(&json, &canonicalize_json_key(key))?;
+            trace!(?values, "selected json values");
 
             // values is an array of items. Depending on the JsonPath key, they
             // can be many or a single item. An item can be a single value or
             // an entire JSON object.
             if let Some(coercion_type) = coerce {
                 ensure!(
-            values.iter().all(|value| !value.is_object()),
-            "You can only coerce values or arrays, not JSON objects. The key '{key}' returns an object",
-        );
+                    values.iter().all(|value| !value.is_object()),
+                    "You can only coerce values or arrays, not JSON objects. The key '{key}' returns an object",
+                );
 
                 ensure!(!values.is_empty(), "No matching value or array found for key {key}");
 
@@ -354,7 +368,6 @@ fn parse_json(json_str: &str, key: &str, coerce: Option<ParamType>) -> Result {
             }
 
             let res = parse_json_values(values, key)?;
-
             // encode the bytes as the 'bytes' solidity type
             let abi_encoded = encode_abi_values(res);
             Ok(abi_encoded.into())
@@ -384,11 +397,11 @@ fn parse_json_keys(json_str: &str, key: &str) -> Result {
         .as_object()
         .ok_or(eyre::eyre!("Unexpected error while extracting JSON-object"))?
         .keys()
-        .map(|key| Token::String(key.to_owned()))
-        .collect::<Vec<Token>>();
+        .map(|key| DynSolValue::String(key.to_owned()))
+        .collect::<Vec<DynSolValue>>();
 
     // encode the bytes as the 'bytes' solidity type
-    let abi_encoded = abi::encode(&[Token::Array(res)]);
+    let abi_encoded = DynSolValue::Array(res).abi_encode();
     Ok(abi_encoded.into())
 }
 
@@ -429,7 +442,7 @@ fn serialize_json(
 
     let stringified = serde_json::to_string(&json)
         .map_err(|err| fmt_err!("Failed to stringify hashmap: {err}"))?;
-    Ok(abi::encode(&[Token::String(stringified)]).into())
+    Ok(DynSolValue::String(stringified).abi_encode().into())
 }
 
 /// Converts an array to it's stringified version, adding the appropriate quotes around it's
@@ -499,16 +512,26 @@ fn key_exists(json_str: &str, key: &str) -> Result {
     let json: Value =
         serde_json::from_str(json_str).map_err(|e| format!("Could not convert to JSON: {e}"))?;
     let values = jsonpath_lib::select(&json, &canonicalize_json_key(key))?;
-    let exists = parse::parse(&(!values.is_empty()).to_string(), &ParamType::Bool)?;
+    let exists = parse::parse(&(!values.is_empty()).to_string(), &DynSolType::Bool)?;
     Ok(exists)
 }
 
 /// Sleeps for a given amount of milliseconds.
 fn sleep(milliseconds: &U256) -> Result {
-    let sleep_duration = std::time::Duration::from_millis(milliseconds.as_u64());
+    let sleep_duration = std::time::Duration::from_millis(milliseconds.to::<u64>());
     std::thread::sleep(sleep_duration);
 
     Ok(Default::default())
+}
+
+/// Returns the time since unix epoch in milliseconds
+fn duration_since_epoch() -> Result {
+    let sys_time = SystemTime::now();
+    let difference = sys_time
+        .duration_since(UNIX_EPOCH)
+        .expect("Failed getting timestamp in unixTime cheatcode");
+    let millis = difference.as_millis();
+    Ok(DynSolValue::Uint(U256::from(millis), 256).abi_encode().into())
 }
 
 /// Skip the current test, by returning a magic value that will be checked by the test runner.
@@ -551,81 +574,83 @@ pub fn apply<DB: Database>(
         HEVMCalls::GetCode(inner) => get_code(state, &inner.0),
         HEVMCalls::GetDeployedCode(inner) => get_deployed_code(state, &inner.0),
         HEVMCalls::SetEnv(inner) => set_env(&inner.0, &inner.1),
-        HEVMCalls::EnvBool0(inner) => get_env(&inner.0, ParamType::Bool, None, None),
-        HEVMCalls::EnvUint0(inner) => get_env(&inner.0, ParamType::Uint(256), None, None),
-        HEVMCalls::EnvInt0(inner) => get_env(&inner.0, ParamType::Int(256), None, None),
-        HEVMCalls::EnvAddress0(inner) => get_env(&inner.0, ParamType::Address, None, None),
-        HEVMCalls::EnvBytes320(inner) => get_env(&inner.0, ParamType::FixedBytes(32), None, None),
-        HEVMCalls::EnvString0(inner) => get_env(&inner.0, ParamType::String, None, None),
-        HEVMCalls::EnvBytes0(inner) => get_env(&inner.0, ParamType::Bytes, None, None),
-        HEVMCalls::EnvBool1(inner) => get_env(&inner.0, ParamType::Bool, Some(&inner.1), None),
-        HEVMCalls::EnvUint1(inner) => get_env(&inner.0, ParamType::Uint(256), Some(&inner.1), None),
-        HEVMCalls::EnvInt1(inner) => get_env(&inner.0, ParamType::Int(256), Some(&inner.1), None),
+        HEVMCalls::EnvBool0(inner) => get_env(&inner.0, DynSolType::Bool, None, None),
+        HEVMCalls::EnvUint0(inner) => get_env(&inner.0, DynSolType::Uint(256), None, None),
+        HEVMCalls::EnvInt0(inner) => get_env(&inner.0, DynSolType::Int(256), None, None),
+        HEVMCalls::EnvAddress0(inner) => get_env(&inner.0, DynSolType::Address, None, None),
+        HEVMCalls::EnvBytes320(inner) => get_env(&inner.0, DynSolType::FixedBytes(32), None, None),
+        HEVMCalls::EnvString0(inner) => get_env(&inner.0, DynSolType::String, None, None),
+        HEVMCalls::EnvBytes0(inner) => get_env(&inner.0, DynSolType::Bytes, None, None),
+        HEVMCalls::EnvBool1(inner) => get_env(&inner.0, DynSolType::Bool, Some(&inner.1), None),
+        HEVMCalls::EnvUint1(inner) => {
+            get_env(&inner.0, DynSolType::Uint(256), Some(&inner.1), None)
+        }
+        HEVMCalls::EnvInt1(inner) => get_env(&inner.0, DynSolType::Int(256), Some(&inner.1), None),
         HEVMCalls::EnvAddress1(inner) => {
-            get_env(&inner.0, ParamType::Address, Some(&inner.1), None)
+            get_env(&inner.0, DynSolType::Address, Some(&inner.1), None)
         }
         HEVMCalls::EnvBytes321(inner) => {
-            get_env(&inner.0, ParamType::FixedBytes(32), Some(&inner.1), None)
+            get_env(&inner.0, DynSolType::FixedBytes(32), Some(&inner.1), None)
         }
-        HEVMCalls::EnvString1(inner) => get_env(&inner.0, ParamType::String, Some(&inner.1), None),
-        HEVMCalls::EnvBytes1(inner) => get_env(&inner.0, ParamType::Bytes, Some(&inner.1), None),
+        HEVMCalls::EnvString1(inner) => get_env(&inner.0, DynSolType::String, Some(&inner.1), None),
+        HEVMCalls::EnvBytes1(inner) => get_env(&inner.0, DynSolType::Bytes, Some(&inner.1), None),
         HEVMCalls::EnvOr0(inner) => {
-            get_env(&inner.0, ParamType::Bool, None, Some(inner.1.to_string()))
+            get_env(&inner.0, DynSolType::Bool, None, Some(inner.1.to_string()))
         }
         HEVMCalls::EnvOr1(inner) => {
-            get_env(&inner.0, ParamType::Uint(256), None, Some(inner.1.to_string()))
+            get_env(&inner.0, DynSolType::Uint(256), None, Some(inner.1.to_string()))
         }
         HEVMCalls::EnvOr2(inner) => {
-            get_env(&inner.0, ParamType::Int(256), None, Some(inner.1.to_string()))
+            get_env(&inner.0, DynSolType::Int(256), None, Some(inner.1.to_string()))
         }
         HEVMCalls::EnvOr3(inner) => {
-            get_env(&inner.0, ParamType::Address, None, Some(hex::encode(inner.1)))
+            get_env(&inner.0, DynSolType::Address, None, Some(hex::encode(inner.1)))
         }
         HEVMCalls::EnvOr4(inner) => {
-            get_env(&inner.0, ParamType::FixedBytes(32), None, Some(hex::encode(inner.1)))
+            get_env(&inner.0, DynSolType::FixedBytes(32), None, Some(hex::encode(inner.1)))
         }
         HEVMCalls::EnvOr5(inner) => {
-            get_env(&inner.0, ParamType::String, None, Some(inner.1.to_string()))
+            get_env(&inner.0, DynSolType::String, None, Some(inner.1.to_string()))
         }
         HEVMCalls::EnvOr6(inner) => {
-            get_env(&inner.0, ParamType::Bytes, None, Some(hex::encode(&inner.1)))
+            get_env(&inner.0, DynSolType::Bytes, None, Some(hex::encode(&inner.1)))
         }
         HEVMCalls::EnvOr7(inner) => get_env(
             &inner.0,
-            ParamType::Bool,
+            DynSolType::Bool,
             Some(&inner.1),
             Some(inner.2.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(&inner.1)),
         ),
         HEVMCalls::EnvOr8(inner) => get_env(
             &inner.0,
-            ParamType::Uint(256),
+            DynSolType::Uint(256),
             Some(&inner.1),
             Some(inner.2.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(&inner.1)),
         ),
         HEVMCalls::EnvOr9(inner) => get_env(
             &inner.0,
-            ParamType::Int(256),
+            DynSolType::Int(256),
             Some(&inner.1),
             Some(inner.2.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(&inner.1)),
         ),
         HEVMCalls::EnvOr10(inner) => get_env(
             &inner.0,
-            ParamType::Address,
+            DynSolType::Address,
             Some(&inner.1),
             Some(inner.2.iter().map(hex::encode).collect::<Vec<_>>().join(&inner.1)),
         ),
         HEVMCalls::EnvOr11(inner) => get_env(
             &inner.0,
-            ParamType::FixedBytes(32),
+            DynSolType::FixedBytes(32),
             Some(&inner.1),
             Some(inner.2.iter().map(hex::encode).collect::<Vec<_>>().join(&inner.1)),
         ),
         HEVMCalls::EnvOr12(inner) => {
-            get_env(&inner.0, ParamType::String, Some(&inner.1), Some(inner.2.join(&inner.1)))
+            get_env(&inner.0, DynSolType::String, Some(&inner.1), Some(inner.2.join(&inner.1)))
         }
         HEVMCalls::EnvOr13(inner) => get_env(
             &inner.0,
-            ParamType::Bytes,
+            DynSolType::Bytes,
             Some(&inner.1),
             Some(inner.2.iter().map(hex::encode).collect::<Vec<_>>().join(&inner.1)),
         ),
@@ -634,42 +659,44 @@ pub fn apply<DB: Database>(
         // "$" is the JSONPath key for the root of the object
         HEVMCalls::ParseJson0(inner) => parse_json(&inner.0, "$", None),
         HEVMCalls::ParseJson1(inner) => parse_json(&inner.0, &inner.1, None),
-        HEVMCalls::ParseJsonBool(inner) => parse_json(&inner.0, &inner.1, Some(ParamType::Bool)),
+        HEVMCalls::ParseJsonBool(inner) => parse_json(&inner.0, &inner.1, Some(DynSolType::Bool)),
         HEVMCalls::ParseJsonKeys(inner) => parse_json_keys(&inner.0, &inner.1),
         HEVMCalls::ParseJsonBoolArray(inner) => {
-            parse_json(&inner.0, &inner.1, Some(ParamType::Bool))
+            parse_json(&inner.0, &inner.1, Some(DynSolType::Bool))
         }
         HEVMCalls::ParseJsonUint(inner) => {
-            parse_json(&inner.0, &inner.1, Some(ParamType::Uint(256)))
+            parse_json(&inner.0, &inner.1, Some(DynSolType::Uint(256)))
         }
         HEVMCalls::ParseJsonUintArray(inner) => {
-            parse_json(&inner.0, &inner.1, Some(ParamType::Uint(256)))
+            parse_json(&inner.0, &inner.1, Some(DynSolType::Uint(256)))
         }
-        HEVMCalls::ParseJsonInt(inner) => parse_json(&inner.0, &inner.1, Some(ParamType::Int(256))),
+        HEVMCalls::ParseJsonInt(inner) => {
+            parse_json(&inner.0, &inner.1, Some(DynSolType::Int(256)))
+        }
         HEVMCalls::ParseJsonIntArray(inner) => {
-            parse_json(&inner.0, &inner.1, Some(ParamType::Int(256)))
+            parse_json(&inner.0, &inner.1, Some(DynSolType::Int(256)))
         }
         HEVMCalls::ParseJsonString(inner) => {
-            parse_json(&inner.0, &inner.1, Some(ParamType::String))
+            parse_json(&inner.0, &inner.1, Some(DynSolType::String))
         }
         HEVMCalls::ParseJsonStringArray(inner) => {
-            parse_json(&inner.0, &inner.1, Some(ParamType::String))
+            parse_json(&inner.0, &inner.1, Some(DynSolType::String))
         }
         HEVMCalls::ParseJsonAddress(inner) => {
-            parse_json(&inner.0, &inner.1, Some(ParamType::Address))
+            parse_json(&inner.0, &inner.1, Some(DynSolType::Address))
         }
         HEVMCalls::ParseJsonAddressArray(inner) => {
-            parse_json(&inner.0, &inner.1, Some(ParamType::Address))
+            parse_json(&inner.0, &inner.1, Some(DynSolType::Address))
         }
-        HEVMCalls::ParseJsonBytes(inner) => parse_json(&inner.0, &inner.1, Some(ParamType::Bytes)),
+        HEVMCalls::ParseJsonBytes(inner) => parse_json(&inner.0, &inner.1, Some(DynSolType::Bytes)),
         HEVMCalls::ParseJsonBytesArray(inner) => {
-            parse_json(&inner.0, &inner.1, Some(ParamType::Bytes))
+            parse_json(&inner.0, &inner.1, Some(DynSolType::Bytes))
         }
         HEVMCalls::ParseJsonBytes32(inner) => {
-            parse_json(&inner.0, &inner.1, Some(ParamType::FixedBytes(32)))
+            parse_json(&inner.0, &inner.1, Some(DynSolType::FixedBytes(32)))
         }
         HEVMCalls::ParseJsonBytes32Array(inner) => {
-            parse_json(&inner.0, &inner.1, Some(ParamType::FixedBytes(32)))
+            parse_json(&inner.0, &inner.1, Some(DynSolType::FixedBytes(32)))
         }
         HEVMCalls::SerializeJson(inner) => serialize_json(state, &inner.0, None, &inner.1.pretty()),
         HEVMCalls::SerializeBool0(inner) => {
@@ -714,7 +741,8 @@ pub fn apply<DB: Database>(
         HEVMCalls::SerializeBytes1(inner) => {
             serialize_json(state, &inner.0, Some(&inner.1), &array_str_to_str(&inner.2))
         }
-        HEVMCalls::Sleep(inner) => sleep(&inner.0),
+        HEVMCalls::Sleep(inner) => sleep(&inner.0.to_alloy()),
+        HEVMCalls::UnixTime(_) => duration_since_epoch(),
         HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
         HEVMCalls::WriteJson1(inner) => write_json(state, &inner.0, &inner.1, Some(&inner.2)),
         HEVMCalls::KeyExists(inner) => key_exists(&inner.0, &inner.1),

@@ -28,7 +28,7 @@ use forge::{
     },
     CallKind,
 };
-use foundry_cli::{opts::MultiWallet, utils::parse_ether_value};
+use foundry_cli::opts::MultiWallet;
 use foundry_common::{
     abi::{encode_args, format_token},
     contracts::get_contract_name,
@@ -115,7 +115,7 @@ pub struct ScriptArgs {
     #[clap(
         long,
         env = "ETH_PRIORITY_GAS_PRICE",
-        value_parser = parse_ether_value,
+        value_parser = foundry_cli::utils::alloy_parse_ether_value,
         value_name = "PRICE"
     )]
     pub priority_gas_price: Option<U256>,
@@ -192,7 +192,7 @@ pub struct ScriptArgs {
     #[clap(
         long,
         env = "ETH_GAS_PRICE",
-        value_parser = parse_ether_value,
+        value_parser = foundry_cli::utils::alloy_parse_ether_value,
         value_name = "PRICE",
     )]
     pub with_gas_price: Option<U256>,
@@ -426,7 +426,7 @@ impl ScriptArgs {
     fn create_deploy_transactions(
         &self,
         from: Address,
-        nonce: U256,
+        nonce: u64,
         data: &[Bytes],
         fork_url: &Option<RpcUrl>,
     ) -> BroadcastableTransactions {
@@ -437,7 +437,7 @@ impl ScriptArgs {
                 transaction: TypedTransaction::Legacy(TransactionRequest {
                     from: Some(from.to_ethers()),
                     data: Some(bytes.clone().0.into()),
-                    nonce: Some(nonce + U256::from(i)).map(|n| n.to_ethers()),
+                    nonce: Some(ethers::types::U256::from(nonce + i as u64)),
                     ..Default::default()
                 }),
             })
@@ -640,7 +640,7 @@ pub struct NestedValue {
 pub struct ScriptConfig {
     pub config: Config,
     pub evm_opts: EvmOpts,
-    pub sender_nonce: U256,
+    pub sender_nonce: u64,
     /// Maps a rpc url to a backend
     pub backends: HashMap<RpcUrl, Backend>,
     /// Script target contract
@@ -981,5 +981,13 @@ mod tests {
         assert_eq!(etherscan, Some("polygonkey".to_string()));
         let etherscan = config.get_etherscan_api_key(Option::<u64>::None);
         assert_eq!(etherscan, Some("polygonkey".to_string()));
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/5923>
+    #[test]
+    fn test_5923() {
+        let args: ScriptArgs =
+            ScriptArgs::parse_from(["foundry-cli", "DeployV1", "--priority-gas-price", "100"]);
+        assert!(args.priority_gas_price.is_some());
     }
 }

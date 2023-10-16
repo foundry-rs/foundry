@@ -530,10 +530,10 @@ mod tests {
         let root = temp.path();
         let root_path = root.as_os_str().to_str().unwrap();
 
-        let config = r#"
+        let config = r"
                 [profile.default]
                 cache = false
-            "#;
+            ";
 
         let toml_file = root.join(Config::FILE_NAME);
         fs::write(toml_file, config).unwrap();

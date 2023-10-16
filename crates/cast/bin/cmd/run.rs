@@ -1,5 +1,5 @@
 use clap::Parser;
-use ethers::{prelude::Middleware, solc::EvmVersion, types::H160};
+use ethers::{prelude::Middleware, solc::EvmVersion};
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     init_progress,
@@ -7,6 +7,7 @@ use foundry_cli::{
     update_progress, utils,
     utils::{handle_traces, TraceResult},
 };
+use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{
     executor::{inspector::cheatcodes::util::configure_tx_env, opts::EvmOpts, EvmError},
@@ -15,11 +16,6 @@ use foundry_evm::{
 };
 use foundry_utils::types::ToAlloy;
 use tracing::trace;
-
-const ARBITRUM_SENDER: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x0a, 0x4b, 0x05,
-]);
 
 /// CLI arguments for `cast run`.
 #[derive(Debug, Clone, Parser)]
@@ -101,11 +97,22 @@ impl RunArgs {
             .await?
             .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
+        // check if the tx is a system transaction
+        if is_known_system_sender(tx.from) ||
+            tx.transaction_type.map(|ty| ty.as_u64()) == Some(SYSTEM_TRANSACTION_TYPE)
+        {
+            return Err(eyre::eyre!(
+                "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
+                tx.hash
+            ))
+        }
+
         let tx_block_number = tx
             .block_number
             .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?
             .as_u64();
 
+        // we need to fork off the parent block
         config.fork_block_number = Some(tx_block_number - 1);
 
         let (mut env, fork, chain) = TracingExecutor::get_fork_material(&config, evm_opts).await?;
@@ -120,7 +127,7 @@ impl RunArgs {
             env.block.timestamp = block.timestamp.to_alloy();
             env.block.coinbase = block.author.unwrap_or_default().to_alloy();
             env.block.difficulty = block.difficulty.to_alloy();
-            env.block.prevrandao = block.mix_hash.map(|h| h.to_alloy());
+            env.block.prevrandao = Some(block.mix_hash.map(|h| h.to_alloy()).unwrap_or_default());
             env.block.basefee = block.base_fee_per_gas.unwrap_or_default().to_alloy();
             env.block.gas_limit = block.gas_limit.to_alloy();
         }
@@ -134,13 +141,16 @@ impl RunArgs {
                 pb.set_position(0);
 
                 for (index, tx) in block.transactions.into_iter().enumerate() {
-                    // arbitrum L1 transaction at the start of every block that has gas price 0
-                    // and gas limit 0 which causes reverts, so we skip it
-                    if tx.from == ARBITRUM_SENDER {
+                    // System transactions such as on L2s don't contain any pricing info so we skip
+                    // them otherwise this would cause reverts
+                    if is_known_system_sender(tx.from) ||
+                        tx.transaction_type.map(|ty| ty.as_u64()) ==
+                            Some(SYSTEM_TRANSACTION_TYPE)
+                    {
                         update_progress!(pb, index);
                         continue
                     }
-                    if tx.hash().eq(&tx_hash) {
+                    if tx.hash.eq(&tx_hash) {
                         break
                     }
 
@@ -149,7 +159,10 @@ impl RunArgs {
                     if let Some(to) = tx.to {
                         trace!(tx=?tx.hash,?to, "executing previous call transaction");
                         executor.commit_tx_with_env(env.clone()).wrap_err_with(|| {
-                            format!("Failed to execute transaction: {:?}", tx.hash())
+                            format!(
+                                "Failed to execute transaction: {:?} in block {}",
+                                tx.hash, env.block.number
+                            )
                         })?;
                     } else {
                         trace!(tx=?tx.hash, "executing previous create transaction");
@@ -159,7 +172,10 @@ impl RunArgs {
                                 EvmError::Execution(_) => (),
                                 error => {
                                     return Err(error).wrap_err_with(|| {
-                                        format!("Failed to deploy transaction: {:?}", tx.hash())
+                                        format!(
+                                            "Failed to deploy transaction: {:?} in block {}",
+                                            tx.hash, env.block.number
+                                        )
                                     })
                                 }
                             }

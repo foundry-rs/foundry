@@ -1,5 +1,5 @@
 use super::*;
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes};
 use ethers::{
     prelude::{
         artifacts::Libraries, cache::SolFilesCache, ArtifactId, Project, ProjectCompileOutput,
@@ -80,7 +80,7 @@ impl ScriptArgs {
         contracts: ArtifactContracts,
         libraries_addresses: Libraries,
         sender: Address,
-        nonce: U256,
+        nonce: u64,
     ) -> Result<BuildOutput> {
         let mut run_dependencies = vec![];
         let mut contract = CompactContractBytecode::default();

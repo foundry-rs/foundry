@@ -1271,9 +1271,21 @@ impl SimpleCast {
             "eth" | "ether" => ethers_core::utils::format_units(value, 18)?
                 .trim_end_matches(".000000000000000000")
                 .to_string(),
+            "milli" | "milliether" => ethers_core::utils::format_units(value, 15)?
+                .trim_end_matches(".000000000000000")
+                .to_string(),
+            "micro" | "microether" => ethers_core::utils::format_units(value, 12)?
+                .trim_end_matches(".000000000000")
+                .to_string(),
             "gwei" | "nano" | "nanoether" => ethers_core::utils::format_units(value, 9)?
                 .trim_end_matches(".000000000")
                 .to_string(),
+            "mwei" | "mega" | "megaether" => {
+                ethers_core::utils::format_units(value, 6)?.trim_end_matches(".000000").to_string()
+            }
+            "kwei" | "kilo" | "kiloether" => {
+                ethers_core::utils::format_units(value, 3)?.trim_end_matches(".000").to_string()
+            }
             "wei" => ethers_core::utils::format_units(value, 0)?.trim_end_matches(".0").to_string(),
             _ => eyre::bail!("invalid unit: \"{}\"", unit),
         })
@@ -1441,7 +1453,7 @@ impl SimpleCast {
     /// Encodes string into bytes32 value
     pub fn format_bytes32_string(s: &str) -> Result<String> {
         let formatted = format_bytes32_string(s)?;
-        Ok(format!("0x{}", hex::encode(formatted)))
+        Ok(hex::encode_prefixed(formatted))
     }
 
     /// Decodes string from bytes32 value
@@ -1933,7 +1945,7 @@ impl SimpleCast {
         }
         if optimize == 0 {
             let selector = HumanReadableParser::parse_function(signature)?.short_signature();
-            return Ok((format!("0x{}", hex::encode(selector)), String::from(signature)))
+            return Ok((hex::encode_prefixed(selector), String::from(signature)))
         }
         let Some((name, params)) = signature.split_once('(') else {
             eyre::bail!("Invalid signature");
@@ -1955,7 +1967,7 @@ impl SimpleCast {
 
                     if selector.iter().take_while(|&&byte| byte == 0).count() == optimize {
                         found.store(true, Ordering::Relaxed);
-                        return Some((nonce, format!("0x{}", hex::encode(selector)), input))
+                        return Some((nonce, hex::encode_prefixed(selector), input))
                     }
 
                     nonce += nonce_step;

@@ -1,15 +1,12 @@
 use super::{bail, ensure, fmt_err, Cheatcodes, Result};
 use crate::{abi::HEVMCalls, executor::backend::DatabaseExt};
-use alloy_primitives::Bytes;
-use ethers::{
-    abi::{AbiDecode, RawLog},
-    contract::Lazy,
-    types::{Address, H160, U256},
-};
+use alloy_dyn_abi::DynSolType;
+use alloy_primitives::{Address, Bytes, Log as RawLog, U256};
 use foundry_utils::{
     error::{ERROR_PREFIX, REVERT_PREFIX},
     types::ToAlloy,
 };
+use once_cell::sync::Lazy;
 use revm::{
     interpreter::{return_ok, InstructionResult},
     primitives::Bytecode,
@@ -27,7 +24,7 @@ static DUMMY_CALL_OUTPUT: Lazy<Bytes> = Lazy::new(|| Bytes::from_static(&[0u8; 8
 
 /// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
 static DUMMY_CREATE_ADDRESS: Address =
-    H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+    Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
 
 #[derive(Clone, Debug, Default)]
 pub struct ExpectedRevert {
@@ -82,8 +79,10 @@ pub fn handle_expect_revert(
     if actual_revert.len() >= 4 &&
         matches!(actual_revert[..4].try_into(), Ok(ERROR_PREFIX | REVERT_PREFIX))
     {
-        if let Ok(bytes) = ethers::types::Bytes::decode(&actual_revert[4..]) {
-            actual_revert = bytes.0.into();
+        if let Ok(parsed_bytes) = DynSolType::Bytes.abi_decode(&actual_revert[4..]) {
+            if let Some(bytes) = parsed_bytes.as_bytes().map(|b| b.to_vec()) {
+                actual_revert = bytes.into();
+            }
         }
     }
 
@@ -91,10 +90,12 @@ pub fn handle_expect_revert(
         success_return!()
     } else {
         let stringify = |data: &mut Bytes| {
-            String::decode(data.0.as_ref())
+            DynSolType::String
+                .abi_decode(data.0.as_ref())
                 .ok()
+                .and_then(|d| d.as_str().map(|s| s.to_owned()))
                 .or_else(|| std::str::from_utf8(data.as_ref()).ok().map(ToOwned::to_owned))
-                .unwrap_or_else(|| format!("0x{}", hex::encode(data)))
+                .unwrap_or_else(|| hex::encode_prefixed(data))
         };
         Err(fmt_err!(
             "Error != expected error: {} != {}",
@@ -152,23 +153,23 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address
 
     match event_to_fill_or_check.log {
         Some(ref expected) => {
-            let expected_topic_0 = expected.topics.get(0);
-            let log_topic_0 = log.topics.get(0);
+            let expected_topic_0 = expected.topics().get(0);
+            let log_topic_0 = log.topics().get(0);
 
             // same topic0 and equal number of topics should be verified further, others are a no
             // match
             if expected_topic_0
                 .zip(log_topic_0)
-                .map_or(false, |(a, b)| a == b && expected.topics.len() == log.topics.len())
+                .map_or(false, |(a, b)| a == b && expected.topics().len() == log.topics().len())
             {
                 // Match topics
                 event_to_fill_or_check.found = log
-                    .topics
+                    .topics()
                     .iter()
                     .skip(1)
                     .enumerate()
                     .filter(|(i, _)| event_to_fill_or_check.checks[*i])
-                    .all(|(i, topic)| topic == &expected.topics[i + 1]);
+                    .all(|(i, topic)| topic == &expected.topics()[i + 1]);
 
                 // Maybe match source address
                 if let Some(addr) = event_to_fill_or_check.address {
@@ -284,7 +285,7 @@ fn expect_safe_memory(state: &mut Cheatcodes, start: u64, end: u64, depth: u64) 
 #[allow(clippy::too_many_arguments)]
 fn expect_call(
     state: &mut Cheatcodes,
-    target: H160,
+    target: Address,
     calldata: Vec<u8>,
     value: Option<U256>,
     gas: Option<u64>,
@@ -355,7 +356,7 @@ pub fn apply<DB: DatabaseExt>(
             state.expected_emits.push_back(ExpectedEmit {
                 depth: data.journaled_state.depth(),
                 checks: [true, true, true, true],
-                address: Some(inner.0),
+                address: Some(inner.0.to_alloy()),
                 ..Default::default()
             });
             Ok(Bytes::new())
@@ -372,14 +373,14 @@ pub fn apply<DB: DatabaseExt>(
             state.expected_emits.push_back(ExpectedEmit {
                 depth: data.journaled_state.depth(),
                 checks: [inner.0, inner.1, inner.2, inner.3],
-                address: Some(inner.4),
+                address: Some(inner.4.to_alloy()),
                 ..Default::default()
             });
             Ok(Bytes::new())
         }
         HEVMCalls::ExpectCall0(inner) => expect_call(
             state,
-            inner.0,
+            inner.0.to_alloy(),
             inner.1.to_vec(),
             None,
             None,
@@ -389,7 +390,7 @@ pub fn apply<DB: DatabaseExt>(
         ),
         HEVMCalls::ExpectCall1(inner) => expect_call(
             state,
-            inner.0,
+            inner.0.to_alloy(),
             inner.1.to_vec(),
             None,
             None,
@@ -399,9 +400,9 @@ pub fn apply<DB: DatabaseExt>(
         ),
         HEVMCalls::ExpectCall2(inner) => expect_call(
             state,
-            inner.0,
+            inner.0.to_alloy(),
             inner.2.to_vec(),
-            Some(inner.1),
+            Some(inner.1.to_alloy()),
             None,
             None,
             1,
@@ -409,23 +410,23 @@ pub fn apply<DB: DatabaseExt>(
         ),
         HEVMCalls::ExpectCall3(inner) => expect_call(
             state,
-            inner.0,
+            inner.0.to_alloy(),
             inner.2.to_vec(),
-            Some(inner.1),
+            Some(inner.1.to_alloy()),
             None,
             None,
             inner.3,
             ExpectedCallType::Count,
         ),
         HEVMCalls::ExpectCall4(inner) => {
-            let value = inner.1;
+            let value = inner.1.to_alloy();
             // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
             // to ensure that the basic fallback function can be called.
-            let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
+            let positive_value_cost_stipend = if value > U256::ZERO { 2300 } else { 0 };
 
             expect_call(
                 state,
-                inner.0,
+                inner.0.to_alloy(),
                 inner.3.to_vec(),
                 Some(value),
                 Some(inner.2 + positive_value_cost_stipend),
@@ -435,14 +436,14 @@ pub fn apply<DB: DatabaseExt>(
             )
         }
         HEVMCalls::ExpectCall5(inner) => {
-            let value = inner.1;
+            let value = inner.1.to_alloy();
             // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
             // to ensure that the basic fallback function can be called.
-            let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
+            let positive_value_cost_stipend = if value > U256::ZERO { 2300 } else { 0 };
 
             expect_call(
                 state,
-                inner.0,
+                inner.0.to_alloy(),
                 inner.3.to_vec(),
                 Some(value),
                 Some(inner.2 + positive_value_cost_stipend),
@@ -452,14 +453,14 @@ pub fn apply<DB: DatabaseExt>(
             )
         }
         HEVMCalls::ExpectCallMinGas0(inner) => {
-            let value = inner.1;
+            let value = inner.1.to_alloy();
             // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
             // to ensure that the basic fallback function can be called.
-            let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
+            let positive_value_cost_stipend = if value > U256::ZERO { 2300 } else { 0 };
 
             expect_call(
                 state,
-                inner.0,
+                inner.0.to_alloy(),
                 inner.3.to_vec(),
                 Some(value),
                 None,
@@ -469,14 +470,14 @@ pub fn apply<DB: DatabaseExt>(
             )
         }
         HEVMCalls::ExpectCallMinGas1(inner) => {
-            let value = inner.1;
+            let value = inner.1.to_alloy();
             // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
             // to ensure that the basic fallback function can be called.
-            let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
+            let positive_value_cost_stipend = if value > U256::ZERO { 2300 } else { 0 };
 
             expect_call(
                 state,
-                inner.0,
+                inner.0.to_alloy(),
                 inner.3.to_vec(),
                 Some(value),
                 None,
@@ -506,7 +507,7 @@ pub fn apply<DB: DatabaseExt>(
                         .to_checked();
                 data.journaled_state.set_code(inner.0.to_alloy(), code);
             }
-            state.mocked_calls.entry(inner.0).or_default().insert(
+            state.mocked_calls.entry(inner.0.to_alloy()).or_default().insert(
                 MockCallDataContext { calldata: inner.1.clone().0.into(), value: None },
                 MockCallReturnData {
                     data: inner.2.clone().0.into(),
@@ -520,8 +521,11 @@ pub fn apply<DB: DatabaseExt>(
                 return Some(Err(err.into()))
             }
 
-            state.mocked_calls.entry(inner.0).or_default().insert(
-                MockCallDataContext { calldata: inner.2.to_vec().into(), value: Some(inner.1) },
+            state.mocked_calls.entry(inner.0.to_alloy()).or_default().insert(
+                MockCallDataContext {
+                    calldata: inner.2.to_vec().into(),
+                    value: Some(inner.1.to_alloy()),
+                },
                 MockCallReturnData {
                     data: inner.3.to_vec().into(),
                     ret_type: InstructionResult::Return,
@@ -530,7 +534,7 @@ pub fn apply<DB: DatabaseExt>(
             Ok(Bytes::new())
         }
         HEVMCalls::MockCallRevert0(inner) => {
-            state.mocked_calls.entry(inner.0).or_default().insert(
+            state.mocked_calls.entry(inner.0.to_alloy()).or_default().insert(
                 MockCallDataContext { calldata: inner.1.to_vec().into(), value: None },
                 MockCallReturnData {
                     data: inner.2.to_vec().into(),
@@ -540,8 +544,11 @@ pub fn apply<DB: DatabaseExt>(
             Ok(Bytes::new())
         }
         HEVMCalls::MockCallRevert1(inner) => {
-            state.mocked_calls.entry(inner.0).or_default().insert(
-                MockCallDataContext { calldata: inner.2.to_vec().into(), value: Some(inner.1) },
+            state.mocked_calls.entry(inner.0.to_alloy()).or_default().insert(
+                MockCallDataContext {
+                    calldata: inner.2.to_vec().into(),
+                    value: Some(inner.1.to_alloy()),
+                },
                 MockCallReturnData {
                     data: inner.3.to_vec().into(),
                     ret_type: InstructionResult::Revert,

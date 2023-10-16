@@ -111,7 +111,7 @@ impl BindArgs {
                 "console[2]?",
                 "CommonBase",
                 "Components",
-                "[Ss]td(Chains|Math|Error|Json|Utils|Cheats|Assertions|Storage(Safe)?)",
+                "[Ss]td(Chains|Math|Error|Json|Utils|Cheats|Style|Invariant|Assertions|Storage(Safe)?)",
                 "[Vv]m.*",
             ])
             .extend_names(["IMulticall3"])
@@ -131,7 +131,11 @@ impl BindArgs {
                     Some(path)
                 }
             })
-            .map(Abigen::from_file)
+            .map(|x| {
+                Abigen::from_file(x)?
+                    .add_derive("serde::Serialize")?
+                    .add_derive("serde::Deserialize")
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let multi = MultiAbigen::from_abigens(abigens).with_filter(self.get_filter());
 
@@ -168,7 +172,7 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
         let bindings = self.get_multi(&artifacts)?.build()?;
         println!("Generating bindings for {} contracts", bindings.len());
         if !self.module {
-            bindings.write_to_crate(
+            bindings.dependencies([r#"serde = "1""#]).write_to_crate(
                 &self.crate_name,
                 &self.crate_version,
                 self.bindings_root(&artifacts),

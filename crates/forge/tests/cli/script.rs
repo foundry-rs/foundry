@@ -737,7 +737,7 @@ forgetest_async!(
 
         // Check sensitive logs
         // Ignore port number since it can change inbetween runs
-        let re = Regex::new(r#":[0-9]+"#).unwrap();
+        let re = Regex::new(r":[0-9]+").unwrap();
 
         let fixtures_log = std::fs::read_to_string(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
