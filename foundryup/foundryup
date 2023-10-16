@@ -24,6 +24,8 @@ main() {
       -p|--path)        shift; FOUNDRYUP_LOCAL_REPO=$1;;
       -P|--pr)          shift; FOUNDRYUP_PR=$1;;
       -C|--commit)      shift; FOUNDRYUP_COMMIT=$1;;
+      --arch)           shift; FOUNDRYUP_ARCH=$1;;
+      --platform)       shift; FOUNDRYUP_PLATFORM=$1;;
       -h|--help)
         usage
         exit 0
@@ -98,16 +100,14 @@ main() {
 
     say "installing foundry (version ${FOUNDRYUP_VERSION}, tag ${FOUNDRYUP_TAG})"
 
-    PLATFORM="$(uname -s)"
+    PLATFORM=$(tolower "${FOUNDRYUP_PLATFORM:-$(uname -s)}")
     EXT="tar.gz"
     case $PLATFORM in
-      Linux)
-        PLATFORM="linux"
-        ;;
-      Darwin)
+      linux) ;;
+      darwin|mac*)
         PLATFORM="darwin"
         ;;
-      MINGW*)
+      mingw*|win*)
         EXT="zip"
         PLATFORM="win32"
         ;;
@@ -116,7 +116,7 @@ main() {
         ;;
     esac
 
-    ARCHITECTURE="$(uname -m)"
+    ARCHITECTURE=$(tolower "${FOUNDRYUP_ARCH:-$(uname -m)}")
     if [ "${ARCHITECTURE}" = "x86_64" ]; then
       # Redirect stderr to /dev/null to avoid printing errors if non Rosetta.
       if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
@@ -242,6 +242,8 @@ OPTIONS:
     -C, --commit    Install a specific commit
     -r, --repo      Install from a remote GitHub repo (uses default branch if no other options are set)
     -p, --path      Install a local repository
+    --arch          Install a specific architecture
+    --platform      Install a specific platform
 EOF
 }
 
@@ -256,6 +258,10 @@ warn() {
 err() {
   say "$1" >&2
   exit 1
+}
+
+tolower() {
+  echo "$1" | awk '{print tolower($0)}'
 }
 
 need_cmd() {
