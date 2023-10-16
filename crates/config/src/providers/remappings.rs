@@ -41,7 +41,7 @@ impl Remappings {
     pub fn into_inner(self) -> Vec<Remapping> {
         let mut tmp = HashSet::new();
         let remappings =
-            self.remappings.iter().filter(|r| tmp.insert(Self::filter_key(&r))).cloned().collect();
+            self.remappings.iter().filter(|r| tmp.insert(Self::filter_key(r))).cloned().collect();
         remappings
     }
 
