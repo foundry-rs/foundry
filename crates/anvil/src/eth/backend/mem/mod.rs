@@ -492,6 +492,10 @@ impl Backend {
         self.env.read().cfg.chain_id.into()
     }
 
+    pub fn set_chain_id(&self, chain_id: u64) {
+        self.env.write().cfg.chain_id = chain_id;
+    }
+
     /// Returns balance of the given account.
     pub async fn current_balance(&self, address: Address) -> DatabaseResult<U256> {
         Ok(self.get_account(address).await?.balance.to_ethers())
