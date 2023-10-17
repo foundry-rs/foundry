@@ -2594,6 +2594,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "foundry-block-explorers"
+version = "0.1.0"
+source = "git+https://github.com/foundry-rs/block-explorers#e218510395e79031396887e2daf81a0921d6ae3e"
+dependencies = [
+ "alloy-json-abi",
+ "alloy-primitives",
+ "ethers-core",
+ "foundry-compilers",
+ "reqwest",
+ "semver 1.0.19",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "foundry-cli"
 version = "0.2.0"
 dependencies = [
@@ -2647,6 +2664,7 @@ dependencies = [
  "ethers-middleware",
  "ethers-providers",
  "eyre",
+ "foundry-block-explorers",
  "foundry-compilers",
  "foundry-config",
  "foundry-macros",
