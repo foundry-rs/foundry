@@ -242,8 +242,8 @@ OPTIONS:
     -C, --commit    Install a specific commit
     -r, --repo      Install from a remote GitHub repo (uses default branch if no other options are set)
     -p, --path      Install a local repository
-    --arch          Install a specific architecture
-    --platform      Install a specific platform
+    --arch          Install a specific architecture (supports amd64 and arm64)
+    --platform      Install a specific platform (supports win32, linux, and darwin)
 EOF
 }
 
