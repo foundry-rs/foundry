@@ -48,7 +48,7 @@ impl EthApi {
         node_info!("ots_getInternalOperations");
 
         self.backend
-            .mined_parity_trace_transaction(hash)
+            .mined_trace_transaction(hash)
             .map(OtsInternalOperation::batch_build)
             .ok_or_else(|| BlockchainError::DataUnavailable)
     }

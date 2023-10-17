@@ -238,8 +238,6 @@ contract Contract {
     let call = contract.method::<_, ()>("trigger_revert", ()).unwrap().gas(150_000u64);
     let receipt = call.send().await.unwrap().await.unwrap().unwrap();
 
-    let _block = api.block_by_number_full(BlockNumber::Latest).await.unwrap().unwrap();
-
     let res = api.ots_get_transaction_error(receipt.transaction_hash).await.unwrap().unwrap();
     assert_eq!(res, Bytes::from_str("0x8d6ea8be00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000012526576657274537472696e67466f6f4261720000000000000000000000000000").unwrap());
 }
