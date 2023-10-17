@@ -12,7 +12,7 @@ use ethers::{
 };
 use eyre::{eyre, Context, Result};
 use foundry_cli::utils::{get_cached_entry_by_name, read_constructor_args_file, LoadConfig};
-use foundry_common::abi::encode_args;
+use foundry_common::abi::encode_function_args;
 use foundry_compilers::{artifacts::CompactContract, cache::CacheEntry, Project, Solc};
 use foundry_config::{Chain, Config, SolcReq};
 use foundry_utils::{types::ToEthers, Retry};
@@ -419,7 +419,7 @@ impl EtherscanVerificationProvider {
                 constant: None,
                 state_mutability: Default::default(),
             };
-            let encoded_args = encode_args(
+            let encoded_args = encode_function_args(
                 &func,
                 &read_constructor_args_file(constructor_args_path.to_path_buf())?,
             )?;

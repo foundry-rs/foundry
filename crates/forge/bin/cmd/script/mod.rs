@@ -29,7 +29,7 @@ use forge::{
 };
 use foundry_cli::opts::MultiWallet;
 use foundry_common::{
-    abi::{encode_args, format_token},
+    abi::{encode_function_args, format_token},
     contracts::get_contract_name,
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
@@ -457,7 +457,7 @@ impl ScriptArgs {
                 abi.functions().find(|&abi_func| abi_func.selector() == func.selector()).wrap_err(
                     format!("Function `{}` is not implemented in your script.", self.sig),
                 )?,
-                encode_args(&func, &self.args)?.into(),
+                encode_function_args(&func, &self.args)?.into(),
             )
         } else {
             let decoded = hex::decode(&self.sig).wrap_err("Invalid hex calldata")?;

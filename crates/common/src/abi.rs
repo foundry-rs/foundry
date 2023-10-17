@@ -1,14 +1,9 @@
 //! ABI related helper functions
-
-use ethers_core::{
-    abi::{
-        token::{LenientTokenizer, StrictTokenizer, Tokenizer},
-        Event, Function, HumanReadableParser, ParamType, RawLog, Token,
-    },
-    types::{Address, Chain, I256, U256},
-    utils::{hex, to_checksum},
-};
-use ethers_etherscan::{contract::ContractMetadata, errors::EtherscanError, Client};
+use alloy_json_abi::{Function, Event};
+use alloy_dyn_abi::{DynSolValue, DynSolType, JsonAbiExt, FunctionExt};
+use alloy_primitives::{Address, I256, U256, Log, hex};
+use ethers_core::types::Chain;
+use foundry_block_explorers::{contract::ContractMetadata, errors::EtherscanError, Client};
 use eyre::{ContextCompat, Result, WrapErr};
 use std::{future::Future, pin::Pin, str::FromStr};
 use yansi::Paint;
@@ -17,15 +12,15 @@ use crate::calc::to_exponential_notation;
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to ethabi
 /// Tokens and then ABI encode them.
-pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>> {
+pub fn encode_function_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>> {
     let params = func
         .inputs
         .iter()
         .zip(args)
-        .map(|(input, arg)| (&input.kind, arg.as_ref()))
+        .map(|(input, arg)| (&input.ty, arg.as_ref()))
         .collect::<Vec<_>>();
-    let tokens = parse_tokens(params, true)?;
-    Ok(func.encode_input(&tokens)?)
+    let args = params.iter().map(|(_, arg)| DynSolValue::from(arg.to_owned().to_string())).collect::<Vec<_>>();
+    Ok(func.abi_encode_input(&args)?)
 }
 
 /// Decodes the calldata of the function
@@ -33,18 +28,18 @@ pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>>
 /// # Panics
 ///
 /// If the `sig` is an invalid function signature
-pub fn abi_decode(sig: &str, calldata: &str, input: bool, fn_selector: bool) -> Result<Vec<Token>> {
-    let func = IntoFunction::into(sig);
+pub fn abi_decode_calldata(sig: &str, calldata: &str, input: bool, fn_selector: bool) -> Result<Vec<DynSolValue>> {
+    let func = Function::parse(sig)?;
     let calldata = hex::decode(calldata)?;
     let res = if input {
         // If function selector is prefixed in "calldata", remove it (first 4 bytes)
         if fn_selector {
-            func.decode_input(&calldata[4..])?
+            func.abi_decode_input(&calldata[4..], false)?
         } else {
-            func.decode_input(&calldata)?
+            func.abi_decode_input(&calldata, false)?
         }
     } else {
-        func.decode_output(&calldata)?
+        func.abi_decode_output(&calldata, false)?
     };
 
     // in case the decoding worked but nothing was decoded
@@ -127,70 +122,71 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
 /// ```
 ///
 /// This will handle this edge case
-pub fn sanitize_token(token: Token) -> Token {
+pub fn sanitize_token(token: DynSolValue) -> DynSolValue {
     match token {
-        Token::Array(tokens) => {
+        DynSolValue::Array(tokens) => {
             let mut sanitized = Vec::with_capacity(tokens.len());
             for token in tokens {
                 let token = match token {
-                    Token::String(val) => {
+                    DynSolValue::String(val) => {
                         let val = match val.as_str() {
                             // this is supposed to be an empty string
                             "\"\"" | "''" => "".to_string(),
                             _ => val,
                         };
-                        Token::String(val)
+                        DynSolValue::String(val)
                     }
                     _ => sanitize_token(token),
                 };
                 sanitized.push(token)
             }
-            Token::Array(sanitized)
+            DynSolValue::Array(sanitized)
         }
         _ => token,
     }
 }
 
 /// Pretty print a slice of tokens.
-pub fn format_tokens(tokens: &[Token]) -> impl Iterator<Item = String> + '_ {
+pub fn format_tokens(tokens: &[DynSolValue]) -> impl Iterator<Item = String> + '_ {
     tokens.iter().map(format_token)
 }
 
 /// Gets pretty print strings for tokens
-pub fn format_token(param: &Token) -> String {
+pub fn format_token(param: &DynSolValue) -> String {
     match param {
-        Token::Address(addr) => to_checksum(addr, None),
-        Token::FixedBytes(bytes) => hex::encode_prefixed(bytes),
-        Token::Bytes(bytes) => hex::encode_prefixed(bytes),
-        Token::Int(num) => format!("{}", I256::from_raw(*num)),
-        Token::Uint(num) => format_uint_with_exponential_notation_hint(*num),
-        Token::Bool(b) => format!("{b}"),
-        Token::String(s) => s.to_string(),
-        Token::FixedArray(tokens) => {
+        DynSolValue::Address(addr) => addr.to_checksum(None),
+        DynSolValue::FixedBytes(bytes, _) => hex::encode_prefixed(bytes),
+        DynSolValue::Bytes(bytes) => hex::encode_prefixed(bytes),
+        DynSolValue::Int(num, _) => format!("{}", num),
+        DynSolValue::Uint(num, _) => format_uint_with_exponential_notation_hint(*num),
+        DynSolValue::Bool(b) => format!("{b}"),
+        DynSolValue::String(s) => s.to_string(),
+        DynSolValue::FixedArray(tokens) => {
             let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
             format!("[{string}]")
         }
-        Token::Array(tokens) => {
+        DynSolValue::Array(tokens) => {
             let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
             format!("[{string}]")
         }
-        Token::Tuple(tokens) => {
+        DynSolValue::Tuple(tokens) => {
             let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
             format!("({string})")
-        }
+        },
+        DynSolValue::Function(_) => unimplemented!()
     }
 }
 
 /// Gets pretty print strings for tokens, without adding
 /// exponential notation hints for large numbers (e.g. [1e7] for 10000000)
-pub fn format_token_raw(param: &Token) -> String {
+pub fn format_token_raw(param: &DynSolValue) -> String {
     match param {
-        Token::Uint(num) => format!("{}", num),
-        Token::FixedArray(tokens) | Token::Array(tokens) => {
+        DynSolValue::Uint(num, _) => format!("{}", num),
+        DynSolValue::FixedArray(tokens) | DynSolValue::Array(tokens) => {
             let string = tokens.iter().map(format_token_raw).collect::<Vec<String>>().join(", ");
             format!("[{string}]")
         }
-        Token::Tuple(tokens) => {
+        DynSolValue::Tuple(tokens) => {
             let string = tokens.iter().map(format_token_raw).collect::<Vec<String>>().join(", ");
             format!("({string})")
         }
@@ -246,53 +242,41 @@ impl IntoFunction for String {
 
 impl<'a> IntoFunction for &'a str {
     fn into(self) -> Function {
-        HumanReadableParser::parse_function(self)
-            .unwrap_or_else(|_| panic!("could not convert {self} to function"))
+        Function::parse(self).expect("could not parse function")
     }
 }
 
 /// Given a function signature string, it tries to parse it as a `Function`
 pub fn get_func(sig: &str) -> Result<Function> {
-    Ok(match HumanReadableParser::parse_function(sig) {
+    Ok(match Function::parse(sig) {
         Ok(func) => func,
         Err(err) => {
-            if let Ok(constructor) = HumanReadableParser::parse_constructor(sig) {
-                #[allow(deprecated)]
-                Function {
-                    name: "constructor".to_string(),
-                    inputs: constructor.inputs,
-                    outputs: vec![],
-                    constant: None,
-                    state_mutability: Default::default(),
-                }
-            } else {
                 // we return the `Function` parse error as this case is more likely
                 return Err(err.into())
-            }
         }
     })
 }
 
 /// Given an event signature string, it tries to parse it as a `Event`
 pub fn get_event(sig: &str) -> Result<Event> {
-    Ok(HumanReadableParser::parse_event(sig)?)
+    Ok(Event::parse(sig)?)
 }
 
 /// Given an event without indexed parameters and a rawlog, it tries to return the event with the
 /// proper indexed parameters. Otherwise, it returns the original event.
-pub fn get_indexed_event(mut event: Event, raw_log: &RawLog) -> Event {
-    if !event.anonymous && raw_log.topics.len() > 1 {
-        let indexed_params = raw_log.topics.len() - 1;
+pub fn get_indexed_event(mut event: Event, raw_log: &Log) -> Event {
+    if !event.anonymous && raw_log.topics().len() > 1 {
+        let indexed_params = raw_log.topics().len() - 1;
         let num_inputs = event.inputs.len();
         let num_address_params =
-            event.inputs.iter().filter(|p| p.kind == ParamType::Address).count();
+            event.inputs.iter().filter(|p| p.ty == "address").count();
 
         event.inputs.iter_mut().enumerate().for_each(|(index, param)| {
             if param.name.is_empty() {
                 param.name = format!("param{index}");
             }
             if num_inputs == indexed_params ||
-                (num_address_params == indexed_params && param.kind == ParamType::Address)
+                (num_address_params == indexed_params && param.ty == "address")
             {
                 param.indexed = true;
             }
@@ -318,7 +302,7 @@ pub async fn get_func_etherscan(
     let funcs = abi.functions.remove(function_name).unwrap_or_default();
 
     for func in funcs {
-        let res = encode_args(&func, args);
+        let res = encode_function_args(&func, args);
         if res.is_ok() {
             return Ok(func)
         }
@@ -362,7 +346,8 @@ pub fn find_source(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers_core::types::H256;
+    use alloy_dyn_abi::EventExt;
+    use alloy_primitives::B256;
 
     #[test]
     fn can_sanitize_token() {
@@ -396,66 +381,60 @@ mod tests {
 
     #[test]
     fn parse_hex_uint_tokens() {
-        let param = ParamType::Uint(256);
+        let param = DynSolType::Uint(256);
 
         let tokens = parse_tokens(std::iter::once((&param, "100")), true).unwrap();
-        assert_eq!(tokens, vec![Token::Uint(100u64.into())]);
+        assert_eq!(tokens, vec![DynSolValue::Uint(U256::from(100), 256)]);
 
-        let val: U256 = 100u64.into();
+        let val: U256 = U256::from(100u64);
         let hex_val = format!("0x{val:x}");
         let tokens = parse_tokens(std::iter::once((&param, hex_val.as_str())), true).unwrap();
-        assert_eq!(tokens, vec![Token::Uint(100u64.into())]);
+        assert_eq!(tokens, vec![DynSolValue::Uint(U256::from(100), 256)]);
     }
 
     #[test]
     fn test_indexed_only_address() {
         let event = get_event("event Ev(address,uint256,address)").unwrap();
 
-        let param0 = H256::random();
+        let param0 = B256::random();
         let param1 = vec![3; 32];
-        let param2 = H256::random();
-        let log = RawLog { topics: vec![event.signature(), param0, param2], data: param1.clone() };
+        let param2 = B256::random();
+        let log = Log::new_unchecked(vec![event.selector(), param0, param2], param1.clone().into());
         let event = get_indexed_event(event, &log);
 
         assert_eq!(event.inputs.len(), 3);
 
         // Only the address fields get indexed since total_params > num_indexed_params
-        let parsed = event.parse_log(log).unwrap();
+        let parsed = event.decode_log(&log, false).unwrap();
 
         assert_eq!(event.inputs.iter().filter(|param| param.indexed).count(), 2);
-        assert_eq!(parsed.params[0].name, "param0");
-        assert_eq!(parsed.params[0].value, Token::Address(param0.into()));
-        assert_eq!(parsed.params[1].name, "param1");
-        assert_eq!(parsed.params[1].value, Token::Uint(U256::from_big_endian(&param1)));
-        assert_eq!(parsed.params[2].name, "param2");
-        assert_eq!(parsed.params[2].value, Token::Address(param2.into()));
+        assert_eq!(parsed.body[0], DynSolValue::Address(Address::from_word(param0)));
+        assert_eq!(parsed.body[1], DynSolValue::Uint(U256::from_be_bytes([3; 32]), 256));
+        assert_eq!(parsed.body[2], DynSolValue::Address(Address::from_word(param2)));
     }
 
     #[test]
     fn test_indexed_all() {
         let event = get_event("event Ev(address,uint256,address)").unwrap();
 
-        let param0 = H256::random();
+        let param0 = B256::random();
         let param1 = vec![3; 32];
-        let param2 = H256::random();
-        let log = RawLog {
-            topics: vec![event.signature(), param0, H256::from_slice(&param1), param2],
-            data: vec![],
-        };
+        let param2 = B256::random();
+        let log = Log::new_unchecked(
+            vec![event.selector(), param0, B256::from_slice(&param1), param2],
+            vec![].into(),
+        );
         let event = get_indexed_event(event, &log);
 
         assert_eq!(event.inputs.len(), 3);
 
         // All parameters get indexed since num_indexed_params == total_params
         assert_eq!(event.inputs.iter().filter(|param| param.indexed).count(), 3);
-        let parsed = event.parse_log(log).unwrap();
+        let parsed = event.decode_log(&log, false).unwrap();
 
-        assert_eq!(parsed.params[0].name, "param0");
-        assert_eq!(parsed.params[0].value, Token::Address(param0.into()));
-        assert_eq!(parsed.params[1].name, "param1");
-        assert_eq!(parsed.params[1].value, Token::Uint(U256::from_big_endian(&param1)));
-        assert_eq!(parsed.params[2].name, "param2");
-        assert_eq!(parsed.params[2].value, Token::Address(param2.into()));
+        assert_eq!(parsed.body[0], DynSolValue::Address(Address::from_word(param0)));
+        assert_eq!(parsed.body[1], DynSolValue::Uint(U256::from_be_bytes([3; 32]), 256));
+        assert_eq!(parsed.body[2], DynSolValue::Address(Address::from_word(param2)));
     }
 
     #[test]
@@ -463,14 +442,14 @@ mod tests {
         // copied from testcases in https://github.com/ethereum/EIPs/blob/master/EIPS/eip-55.md
         let eip55 = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
         assert_eq!(
-            format_token(&Token::Address(Address::from_str(&eip55.to_lowercase()).unwrap())),
+            format_token(&DynSolValue::Address(Address::from_str(&eip55.to_lowercase()).unwrap())),
             eip55.to_string()
         );
 
         // copied from testcases in https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1191.md
         let eip1191 = "0xFb6916095cA1Df60bb79ce92cE3EA74c37c5d359";
         assert_ne!(
-            format_token(&Token::Address(Address::from_str(&eip1191.to_lowercase()).unwrap())),
+            format_token(&DynSolValue::Address(Address::from_str(&eip1191.to_lowercase()).unwrap())),
             eip1191.to_string()
         );
     }

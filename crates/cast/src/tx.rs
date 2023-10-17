@@ -8,7 +8,7 @@ use ethers_core::{
 };
 use ethers_providers::Middleware;
 use eyre::{eyre, Result};
-use foundry_common::abi::{encode_args, get_func, get_func_etherscan};
+use foundry_common::abi::{encode_function_args, get_func, get_func_etherscan};
 use foundry_config::Chain;
 use futures::future::join_all;
 
@@ -200,7 +200,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         if sig.starts_with("0x") {
             Ok((hex::decode(sig)?, func))
         } else {
-            Ok((encode_args(&func, &args)?, func))
+            Ok((encode_function_args(&func, &args)?, func))
         }
     }
 

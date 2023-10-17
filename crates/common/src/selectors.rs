@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 //! Support for handling/identifying selectors
-use crate::abi::abi_decode;
+use crate::abi::abi_decode_calldata;
 use foundry_compilers::artifacts::LosslessAbi;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -224,7 +224,7 @@ impl SignEthClient {
         // filter for signatures that can be decoded
         Ok(sigs
             .iter()
-            .filter(|sig| abi_decode(sig, calldata, true, true).is_ok())
+            .filter(|sig| abi_decode_calldata(sig, calldata, true, true).is_ok())
             .cloned()
             .collect::<Vec<String>>())
     }

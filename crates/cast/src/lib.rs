@@ -16,7 +16,7 @@ use ethers_etherscan::{errors::EtherscanError, Client};
 use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
 use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, Result};
-use foundry_common::{abi::encode_args, fmt::*, TransactionReceiptWithRevertReason};
+use foundry_common::{abi::encode_function_args, fmt::*, TransactionReceiptWithRevertReason};
 pub use foundry_evm::*;
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
@@ -1603,7 +1603,7 @@ impl SimpleCast {
                 }
             }
         };
-        let calldata = match encode_args(&func, args) {
+        let calldata = match encode_function_args(&func, args) {
             Ok(res) => hex::encode(res),
             Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
         };
@@ -1628,7 +1628,7 @@ impl SimpleCast {
     /// ```
     pub fn calldata_encode(sig: impl AsRef<str>, args: &[impl AsRef<str>]) -> Result<String> {
         let func = HumanReadableParser::parse_function(sig.as_ref())?;
-        let calldata = encode_args(&func, args)?;
+        let calldata = encode_function_args(&func, args)?;
         Ok(hex::encode_prefixed(calldata))
     }
 

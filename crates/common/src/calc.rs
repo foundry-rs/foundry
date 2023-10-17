@@ -1,6 +1,6 @@
 //! commonly used calculations
 
-use ethers_core::types::U256;
+use alloy_primitives::U256;
 use std::ops::{Add, Div};
 
 /// Returns the mean of the slice
@@ -10,10 +10,10 @@ where
     T: Into<U256> + Copy,
 {
     if values.is_empty() {
-        return U256::zero()
+        return U256::ZERO
     }
 
-    values.iter().copied().fold(U256::zero(), |sum, val| sum + val.into()) / values.len()
+    values.iter().copied().fold(U256::ZERO, |sum, val| sum + val.into()).div(U256::from(values.len()))
 }
 
 /// Returns the median of a _sorted_ slice
@@ -76,16 +76,16 @@ mod tests {
 
     #[test]
     fn calc_mean_empty() {
-        let values: [u64; 0] = [];
+        let values: [U256; 0] = [];
         let m = mean(&values);
-        assert_eq!(m, U256::zero());
+        assert_eq!(m, U256::ZERO);
     }
 
     #[test]
     fn calc_mean() {
-        let values = [0u64, 1u64, 2u64, 3u64, 4u64, 5u64, 6u64];
+        let values = [U256::ZERO, U256::from(1), U256::from(2u64), U256::from(3u64), U256::from(4u64), U256::from(5u64), U256::from(6u64)];
         let m = mean(&values);
-        assert_eq!(m, 3u64.into());
+        assert_eq!(m, U256::from(3u64));
     }
 
     #[test]
@@ -115,18 +115,18 @@ mod tests {
     fn test_format_to_exponential_notation() {
         let value = 1234124124u64;
 
-        let formatted = to_exponential_notation(value.into(), 4, false);
+        let formatted = to_exponential_notation(U256::from(value), 4, false);
         assert_eq!(formatted, "1.234e9");
 
-        let formatted = to_exponential_notation(value.into(), 3, true);
+        let formatted = to_exponential_notation(U256::from(value), 3, true);
         assert_eq!(formatted, "1.23e9");
 
         let value = 10000000u64;
 
-        let formatted = to_exponential_notation(value.into(), 4, false);
+        let formatted = to_exponential_notation(U256::from(value), 4, false);
         assert_eq!(formatted, "1.000e7");
 
-        let formatted = to_exponential_notation(value.into(), 3, true);
+        let formatted = to_exponential_notation(U256::from(value), 3, true);
         assert_eq!(formatted, "1e7");
     }
 }
