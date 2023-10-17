@@ -106,7 +106,7 @@ impl IntStrategy {
         let rng = runner.rng();
 
         let offset = I256::from_raw(U256::from(rng.gen_range(0..4)));
-        let umax: U256 = (U256::from(1u8).rotate_left(self.bits - 1)).sub(U256::from(1u8));
+        let umax: U256 = (U256::from(1u8).shl(self.bits - 1)).sub(U256::from(1u8));
         // Choose if we want values around min, -0, +0, or max
         let kind = rng.gen_range(0..4);
         let start = match kind {

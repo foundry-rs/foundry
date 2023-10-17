@@ -1,3 +1,5 @@
+use std::ops::Shl;
+
 use ethers::core::rand::Rng;
 use proptest::{
     strategy::{NewTree, Strategy, ValueTree},
@@ -99,7 +101,7 @@ impl UintStrategy {
         let is_min = rng.gen_bool(0.5);
         let offset = U256::from(rng.gen_range(0..4));
         let max = if self.bits < 256 {
-            (U256::from(1u8).rotate_left(self.bits)) - U256::from(1)
+            (U256::from(1u8).shl(self.bits)) - U256::from(1)
         } else {
             U256::MAX
         };

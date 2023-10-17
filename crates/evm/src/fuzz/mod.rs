@@ -151,7 +151,7 @@ impl<'a> FuzzedExecutor<'a> {
             counterexample: None,
             decoded_logs: decode_console_logs(&call.logs),
             logs: call.logs,
-            labeled_addresses: call.labels.into_iter().map(|l| (l.0.to_ethers(), l.1)).collect(),
+            labeled_addresses: call.labels,
             traces: if run_result.is_ok() { traces.into_inner() } else { call.traces.clone() },
             coverage: coverage.into_inner(),
         };

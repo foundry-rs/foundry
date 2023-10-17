@@ -77,8 +77,8 @@ checksum = "0942ffc6dcaadf03badf6e6a2d0228460359d5e34b57ccdc720b7382dfbd5ec5"
 
 [[package]]
 name = "alloy-dyn-abi"
-version = "0.4.0"
-source = "git+https://github.com/alloy-rs/core/?branch=main#fe4a5353080471fe966df5d12edc71727a03da1e"
+version = "0.4.2"
+source = "git+https://github.com/alloy-rs/core/?branch=main#0706604639cd7ff87316f42bd9da523545ee4fab"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -95,8 +95,8 @@ dependencies = [
 
 [[package]]
 name = "alloy-json-abi"
-version = "0.4.0"
-source = "git+https://github.com/alloy-rs/core/?branch=main#fe4a5353080471fe966df5d12edc71727a03da1e"
+version = "0.4.2"
+source = "git+https://github.com/alloy-rs/core/?branch=main#0706604639cd7ff87316f42bd9da523545ee4fab"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-type-parser",
@@ -106,8 +106,8 @@ dependencies = [
 
 [[package]]
 name = "alloy-primitives"
-version = "0.4.0"
-source = "git+https://github.com/alloy-rs/core/?branch=main#fe4a5353080471fe966df5d12edc71727a03da1e"
+version = "0.4.2"
+source = "git+https://github.com/alloy-rs/core/?branch=main#0706604639cd7ff87316f42bd9da523545ee4fab"
 dependencies = [
  "alloy-rlp",
  "arbitrary",
@@ -152,12 +152,14 @@ dependencies = [
 
 [[package]]
 name = "alloy-sol-macro"
-version = "0.4.0"
-source = "git+https://github.com/alloy-rs/core/?branch=main#fe4a5353080471fe966df5d12edc71727a03da1e"
+version = "0.4.2"
+source = "git+https://github.com/alloy-rs/core/?branch=main#0706604639cd7ff87316f42bd9da523545ee4fab"
 dependencies = [
  "const-hex",
  "dunce",
  "heck",
+ "indexmap 2.0.2",
+ "proc-macro-error",
  "proc-macro2",
  "quote",
  "syn 2.0.37",
@@ -167,16 +169,16 @@ dependencies = [
 
 [[package]]
 name = "alloy-sol-type-parser"
-version = "0.4.0"
-source = "git+https://github.com/alloy-rs/core/?branch=main#fe4a5353080471fe966df5d12edc71727a03da1e"
+version = "0.4.2"
+source = "git+https://github.com/alloy-rs/core/?branch=main#0706604639cd7ff87316f42bd9da523545ee4fab"
 dependencies = [
  "winnow",
 ]
 
 [[package]]
 name = "alloy-sol-types"
-version = "0.4.0"
-source = "git+https://github.com/alloy-rs/core/?branch=main#fe4a5353080471fe966df5d12edc71727a03da1e"
+version = "0.4.2"
+source = "git+https://github.com/alloy-rs/core/?branch=main#0706604639cd7ff87316f42bd9da523545ee4fab"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-macro",
@@ -2568,6 +2570,7 @@ dependencies = [
 name = "foundry-abi"
 version = "0.2.0"
 dependencies = [
+ "alloy-sol-types",
  "ethers-contract",
  "ethers-contract-abigen",
  "ethers-core",
@@ -6576,8 +6579,8 @@ dependencies = [
 
 [[package]]
 name = "syn-solidity"
-version = "0.4.0"
-source = "git+https://github.com/alloy-rs/core/?branch=main#fe4a5353080471fe966df5d12edc71727a03da1e"
+version = "0.4.2"
+source = "git+https://github.com/alloy-rs/core/?branch=main#0706604639cd7ff87316f42bd9da523545ee4fab"
 dependencies = [
  "paste",
  "proc-macro2",

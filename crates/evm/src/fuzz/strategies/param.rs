@@ -101,7 +101,7 @@ pub fn fuzz_param_from_state(
             .collect::<Vec<_>>()
             .prop_map(DynSolValue::Tuple)
             .boxed(),
-        _ => panic!("Unimplemented"),
+        _ => unimplemented!(),
     }
 }
 
@@ -109,23 +109,21 @@ pub fn fuzz_param_from_state(
 mod tests {
     use crate::fuzz::strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state};
     use alloy_json_abi::Function;
-    use ethers::abi::HumanReadableParser;
     use foundry_config::FuzzDictionaryConfig;
     use revm::db::{CacheDB, EmptyDB};
 
-    // TODO: Need a human readable function parser to re-enable the test.
-    // #[test]
-    // fn can_fuzz_array() {
-    //     let f = "function testArray(uint64[2] calldata values)";
-    //     let func = HumanReadableParser::parse_function(f).unwrap();
-    //     let db = CacheDB::new(EmptyDB::default());
-    //     let state = build_initial_state(&db, &FuzzDictionaryConfig::default());
-    //     let strat = proptest::strategy::Union::new_weighted(vec![
-    //         (60, fuzz_calldata(func.clone())),
-    //         (40, fuzz_calldata_from_state(func, state)),
-    //     ]);
-    //     let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default()
-    // };     let mut runner = proptest::test_runner::TestRunner::new(cfg);
-    //     let _ = runner.run(&strat, |_| Ok(()));
-    // }
+    #[test]
+    fn can_fuzz_array() {
+        let f = "function testArray(uint64[2] calldata values)";
+        let func = Function::parse(f).unwrap();
+        let db = CacheDB::new(EmptyDB::default());
+        let state = build_initial_state(&db, &FuzzDictionaryConfig::default());
+        let strat = proptest::strategy::Union::new_weighted(vec![
+            (60, fuzz_calldata(func.clone())),
+            (40, fuzz_calldata_from_state(func, state)),
+        ]);
+        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default()
+    };     let mut runner = proptest::test_runner::TestRunner::new(cfg);
+        let _ = runner.run(&strat, |_| Ok(()));
+    }
 }
