@@ -22,3 +22,4 @@ foundry-macros.workspace = true
 ethers-core.workspace = true
 ethers-contract = { workspace = true, features = ["abigen", "providers"] }
 ethers-providers.workspace = true
+alloy-sol-types.workspace = true

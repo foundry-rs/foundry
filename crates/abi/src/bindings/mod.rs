@@ -6,3 +6,4 @@
 pub mod console;
 pub mod hardhat_console;
 pub mod hevm;
+pub mod alloy_console;
