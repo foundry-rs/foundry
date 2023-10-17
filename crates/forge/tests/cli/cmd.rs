@@ -989,7 +989,7 @@ forgetest!(
 
         let install = |cmd: &mut TestCommand| {
             // install main dependency
-            cmd.forge_fuse().args(["install", "jameswenzel/forge-5980-test", "--no-commit"]);
+            cmd.forge_fuse().args(["install", "evalir/forge-5980-test", "--no-commit"]);
             cmd.assert_non_empty_stdout();
 
             // assert pathbufs exist
@@ -997,7 +997,7 @@ forgetest!(
             assert!(package_mod.exists());
 
             let submods = read_string(&git_mod_file);
-            assert!(submods.contains("https://github.com/jameswenzel/forge-5980-test"));
+            assert!(submods.contains("https://github.com/evalir/forge-5980-test"));
         };
 
         install(&mut cmd);
