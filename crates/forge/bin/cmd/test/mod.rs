@@ -162,14 +162,12 @@ impl TestArgs {
         }
 
         let compiler = ProjectCompiler::default();
-        let output = if config.sparse_mode {
-            compiler.compile_sparse(&project, filter.clone())
-        } else if self.opts.silent {
-            compile::suppress_compile(&project)
-        } else {
-            compiler.compile(&project)
+        let output = match (config.sparse_mode, self.opts.silent | self.json) {
+            (false, false) => compiler.compile(&project),
+            (true, false) => compiler.compile_sparse(&project, filter.clone()),
+            (false, true) => compile::suppress_compile(&project),
+            (true, true) => compile::suppress_compile_sparse(&project, filter.clone()),
         }?;
-
         // Create test options from general project settings
         // and compiler output
         let project_root = &project.paths.root;
