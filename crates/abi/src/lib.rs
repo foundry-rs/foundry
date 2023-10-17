@@ -6,4 +6,4 @@
 
 mod bindings;
 
-pub use bindings::{console, alloy_console, hardhat_console, hevm};
+pub use bindings::{console, hardhat_console, hevm};
