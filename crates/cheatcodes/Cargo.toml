@@ -1,0 +1,59 @@
+[package]
+name = "foundry-cheatcodes"
+description = "Foundry cheatcodes definitions and implementations"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[dependencies]
+foundry-macros.workspace = true
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# schema
+schemars = { version = "0.8.15", optional = true }
+
+# impls
+foundry-common = { workspace = true, optional = true }
+foundry-config = { workspace = true, optional = true }
+foundry-utils = { workspace = true, optional = true }
+alloy-dyn-abi = { workspace = true, optional = true }
+alloy-json-abi = { workspace = true, optional = true }
+ethers = { workspace = true, optional = true, features = ["ethers-solc"] }
+eyre = { workspace = true, optional = true }
+futures = { version = "0.3", optional = true }
+hex = { workspace = true, optional = true }
+itertools = { workspace = true, optional = true }
+jsonpath_lib = { workspace = true, optional = true }
+revm = { workspace = true, optional = true }
+thiserror = { version = "1", optional = true }
+tracing = { workspace = true, optional = true }
+walkdir = { version = "2", optional = true }
+
+[features]
+schema = ["dep:schemars"]
+impls = [
+    "dep:foundry-common",
+    "dep:foundry-config",
+    "dep:foundry-utils",
+    "dep:alloy-dyn-abi",
+    "dep:alloy-json-abi",
+    "dep:ethers",
+    "dep:eyre",
+    "dep:futures",
+    "dep:hex",
+    "dep:itertools",
+    "dep:jsonpath_lib",
+    "dep:revm",
+    "dep:thiserror",
+    "dep:tracing",
+    "dep:walkdir",
+]
