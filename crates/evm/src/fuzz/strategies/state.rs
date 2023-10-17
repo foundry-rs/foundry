@@ -4,7 +4,7 @@ use crate::{
     fuzz::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts},
     utils,
 };
-use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
+use alloy_dyn_abi::{DynSolType, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, U256};
 use bytes::Bytes;

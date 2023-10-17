@@ -8,38 +8,8 @@ pub const MAX_ARRAY_LEN: usize = 256;
 /// Given a parameter type, returns a strategy for generating values for that type.
 ///
 /// Works with ABI Encoder v2 tuples.
-pub fn fuzz_param(param: &DynSolType) -> BoxedStrategy<DynSolValue> {
-    match param {
-        DynSolType::Address => {
-            // The key to making this work is the `boxed()` call which type erases everything
-            // https://altsysrq.github.io/proptest-book/proptest/tutorial/transforming-strategies.html
-            any::<[u8; 20]>().prop_map(|x| DynSolValue::Address(x.into())).boxed()
-        }
-        DynSolType::Bytes => any::<Vec<u8>>().prop_map(|x| DynSolValue::Bytes(x)).boxed(),
-        DynSolType::Int(n) => {
-            super::IntStrategy::new(*n, vec![]).prop_map(|x| DynSolValue::Int(x, 256)).boxed()
-        }
-        DynSolType::Uint(n) => {
-            super::UintStrategy::new(*n, vec![]).prop_map(|x| DynSolValue::Uint(x, 256)).boxed()
-        }
-        DynSolType::Bool => any::<bool>().prop_map(|x| DynSolValue::Bool(x)).boxed(),
-        DynSolType::String => any::<Vec<u8>>()
-            .prop_map(|x| DynSolValue::String(unsafe { String::from_utf8_unchecked(x) }))
-            .boxed(),
-        DynSolType::Array(param) => proptest::collection::vec(fuzz_param(param), 0..MAX_ARRAY_LEN)
-            .prop_map(DynSolValue::Array)
-            .boxed(),
-        DynSolType::FixedBytes(size) => prop::collection::vec(any::<u8>(), *size)
-            .prop_map(|e| DynSolValue::FixedBytes(FixedBytes::from_slice(&e), *size))
-            .boxed(),
-        DynSolType::FixedArray(param, size) => prop::collection::vec(fuzz_param(param), *size)
-            .prop_map(DynSolValue::FixedArray)
-            .boxed(),
-        DynSolType::Tuple(params) => {
-            params.iter().map(fuzz_param).collect::<Vec<_>>().prop_map(DynSolValue::Tuple).boxed()
-        }
-        _ => panic!("Unimplemented"),
-    }
+pub fn fuzz_param(param: &DynSolType) -> SBoxedStrategy<DynSolValue> {
+    return DynSolValue::type_strategy(param)
 }
 
 /// Given a parameter type, returns a strategy for generating values for that type, given some EVM
@@ -143,6 +113,7 @@ mod tests {
     use foundry_config::FuzzDictionaryConfig;
     use revm::db::{CacheDB, EmptyDB};
 
+    // TODO: Need a human readable function parser to re-enable the test.
     // #[test]
     // fn can_fuzz_array() {
     //     let f = "function testArray(uint64[2] calldata values)";
