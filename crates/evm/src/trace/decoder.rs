@@ -170,7 +170,7 @@ impl CallTraceDecoder {
 
             events: CONSOLE_ABI
                 .events()
-                .map(|event| ((event.signature(), indexed_inputs(event)), vec![event.clone()]))
+                .map(|event| ((event.selector(), indexed_inputs(event)), vec![event.clone()]))
                 .collect(),
 
             errors: Default::default(),

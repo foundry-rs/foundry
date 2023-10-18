@@ -6,7 +6,7 @@ use crate::{
 use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{Bytes, Log as AlloyLog, B256};
-use alloy_sol_types::{sol, SolEvent, sol_data::String as SolString, SolType};
+use alloy_sol_types::{sol, sol_data::String as SolString, SolEvent, SolType};
 use ethers::{
     abi::{decode, Contract as Abi, ParamType, RawLog, Token},
     contract::EthLogDecode,
@@ -173,9 +173,8 @@ pub fn decode_revert(
             }
         }
         // keccak(Error(string))
-        [8, 195, 121, 160] => {
-            SolString::abi_decode(&err[SELECTOR_LEN..], false).map_err(|_| eyre::eyre!("Bad string decode"))
-        }
+        [8, 195, 121, 160] => SolString::abi_decode(&err[SELECTOR_LEN..], false)
+            .map_err(|_| eyre::eyre!("Bad string decode")),
         // keccak(expectRevert(bytes))
         [242, 141, 206, 179] => {
             let err_data = &err[SELECTOR_LEN..];
