@@ -108,7 +108,7 @@ impl CoverageArgs {
             if self.ir_minimum {
                 // TODO: How to detect solc version if the user does not specify a solc version in
                 // config  case1: specify local installed solc ?
-                //  case2: mutliple solc versions used and  auto_detect_solc == true
+                //  case2: multiple solc versions used and  auto_detect_solc == true
                 if let Some(SolcReq::Version(version)) = &config.solc {
                     if *version < Version::new(0, 8, 13) {
                         return Err(eyre::eyre!(

@@ -116,7 +116,7 @@ impl OtsBlockDetails {
     /// their `gas_used`. This would be extremely inefficient in a real blockchain RPC, but we can
     /// get away with that in this context.
     ///
-    /// The [original spec](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_getblockdetails) also mentions we can hardcode `transactions` and `logsBloom` to an empty array to save bandwith, because fields weren't intended to be used in the Otterscan UI at this point. This has two problems though:
+    /// The [original spec](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_getblockdetails) also mentions we can hardcode `transactions` and `logsBloom` to an empty array to save bandwidth, because fields weren't intended to be used in the Otterscan UI at this point. This has two problems though:
     ///   - It makes the endpoint too specific to Otterscan's implementation
     ///   - It breaks the abstraction built in `OtsBlock<TX>` which computes `transaction_count`
     ///   based on the existing list.
