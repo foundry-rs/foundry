@@ -2596,7 +2596,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/block-explorers#e218510395e79031396887e2daf81a0921d6ae3e"
+source = "git+https://github.com/foundry-rs/block-explorers#c9c34705987ddeb54416a26109fd0a07a5fde779"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -2660,7 +2660,6 @@ dependencies = [
  "const-hex",
  "dunce",
  "ethers-core",
- "ethers-etherscan",
  "ethers-middleware",
  "ethers-providers",
  "eyre",
@@ -2730,9 +2729,9 @@ dependencies = [
  "Inflector",
  "dirs-next",
  "ethers-core",
- "ethers-etherscan",
  "eyre",
  "figment",
+ "foundry-block-explorers",
  "foundry-compilers",
  "globset",
  "number_prefix",
@@ -2784,6 +2783,7 @@ dependencies = [
  "ethers",
  "eyre",
  "foundry-abi",
+ "foundry-block-explorers",
  "foundry-common",
  "foundry-compilers",
  "foundry-config",

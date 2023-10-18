@@ -1,7 +1,7 @@
 //! Support for compiling [foundry_compilers::Project]
 use crate::{compact_to_contract, glob::GlobMatcher, term, TestFunctionExt};
 use comfy_table::{presets::ASCII_MARKDOWN, *};
-use ethers_etherscan::contract::Metadata;
+use foundry_block_explorers::contract::Metadata;
 use eyre::Result;
 use foundry_compilers::{
     artifacts::{BytecodeObject, ContractBytecodeSome},
@@ -452,7 +452,7 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
             name: "@openzeppelin/".into(),
             path: sources_path.join("@openzeppelin").display().to_string(),
         };
-        // settings.remappings.push(oz);
+        settings.remappings.push(oz);
     }
 
     // root/

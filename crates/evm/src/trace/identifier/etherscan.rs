@@ -1,10 +1,6 @@
 use super::{AddressIdentity, TraceIdentifier};
 use crate::utils::RuntimeOrHandle;
-use ethers::{
-    etherscan,
-    etherscan::contract::{ContractMetadata, Metadata},
-    prelude::errors::EtherscanError,
-};
+use foundry_block_explorers::{contract::{ContractMetadata, Metadata}, errors::EtherscanError};
 use alloy_primitives::Address;
 use foundry_common::compile::{self, ContractSources};
 use foundry_config::{Chain, Config};
@@ -29,7 +25,7 @@ use tokio::time::{Duration, Interval};
 #[derive(Default)]
 pub struct EtherscanIdentifier {
     /// The Etherscan client
-    client: Option<Arc<etherscan::Client>>,
+    client: Option<Arc<foundry_block_explorers::Client>>,
     /// Tracks whether the API key provides was marked as invalid
     ///
     /// After the first [EtherscanError::InvalidApiKey] this will get set to true, so we can

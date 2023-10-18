@@ -251,11 +251,11 @@ impl ResolvedEtherscanConfig {
         self
     }
 
-    /// Returns the corresponding `ethers_etherscan::Client`, configured with the `api_url`,
+    /// Returns the corresponding `foundry_block_explorers::Client`, configured with the `api_url`,
     /// `api_key` and cache
     pub fn into_client(
         self,
-    ) -> Result<ethers_etherscan::Client, ethers_etherscan::errors::EtherscanError> {
+    ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError> {
         let ResolvedEtherscanConfig { api_url, browser_url, key: api_key, chain } = self;
         let (mainnet_api, mainnet_url) =
             ethers_core::types::Chain::Mainnet.etherscan_urls().expect("exist; qed");
@@ -278,7 +278,7 @@ impl ResolvedEtherscanConfig {
             }
         }
 
-        ethers_etherscan::Client::builder()
+        foundry_block_explorers::Client::builder()
             .with_client(reqwest::Client::builder().user_agent(ETHERSCAN_USER_AGENT).build()?)
             .with_api_key(api_key)
             .with_api_url(api_url.as_str())?
