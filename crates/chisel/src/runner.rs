@@ -46,7 +46,7 @@ pub struct ChiselResult {
     /// Map of addresses to their labels
     pub labeled_addresses: BTreeMap<Address, String>,
     /// Return data
-    pub returned: bytes::Bytes,
+    pub returned: Bytes,
     /// Called address
     pub address: Option<Address>,
     /// EVM State at the final instruction of the `run()` function
@@ -200,7 +200,7 @@ impl ChiselRunner {
         let RawCallResult { result, reverted, logs, traces, labels, chisel_state, .. } = res;
 
         Ok(ChiselResult {
-            returned: result.0,
+            returned: result,
             success: !reverted,
             gas_used,
             logs,

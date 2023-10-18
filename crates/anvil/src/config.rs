@@ -173,7 +173,7 @@ pub struct NodeConfig {
 
 impl NodeConfig {
     fn as_string(&self, fork: Option<&ClientFork>) -> String {
-        let mut config_string: String = "".to_owned();
+        let mut config_string: String = String::new();
         let _ = write!(config_string, "\n{}", Paint::green(BANNER));
         let _ = write!(config_string, "\n    {VERSION_MESSAGE}");
         let _ = write!(

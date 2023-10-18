@@ -13,12 +13,12 @@ repository.workspace = true
 # foundry internal
 foundry-evm = { path = "../../evm" }
 foundry-utils = { path = "../../utils" }
-revm = { workspace = true,  default-features = false, features = ["std", "serde", "memory_limit"] }
+revm = { workspace = true, default-features = false, features = ["std", "serde", "memory_limit"] }
 
 alloy-primitives = { workspace = true, features = ["serde"] }
 ethers-core.workspace = true
-serde = { version = "1", features = ["derive"], optional = true }
-serde_json = "1"
+serde = { workspace = true, optional = true }
+serde_json.workspace = true
 bytes = { version = "1.4" }
 open-fastrlp = { version = "0.1.4", optional = true }
 
@@ -30,7 +30,7 @@ reference-trie = { version = "0.25" }
 keccak-hasher = { version = "0.15" }
 
 [dev-dependencies]
-serde = { version = "1.0", features = ["derive"] }
+serde.workspace = true
 
 [features]
 default = []

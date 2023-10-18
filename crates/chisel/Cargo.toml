@@ -45,12 +45,11 @@ rustyline = "12"
 solang-parser.workspace = true
 yansi = "0.5"
 strum = { version = "0.25", features = ["derive"] }
-serde = "1"
-serde_json = { version = "1", features = ["raw_value"] }
+serde.workspace = true
+serde_json.workspace = true
 semver = "1"
-bytes = "1"
 revm.workspace = true
-eyre = "0.6"
+eyre.workspace = true
 dirs = "5"
 time = { version = "0.3", features = ["formatting"] }
 regex = "1"
