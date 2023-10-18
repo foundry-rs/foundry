@@ -21,6 +21,7 @@ use crate::{
 };
 use alloy_json_abi::JsonAbi as Abi;
 use alloy_primitives::{Address, FixedBytes};
+use alloy_sol_types::SolValue;
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::{FuzzDictionaryConfig, InvariantConfig};
@@ -560,17 +561,17 @@ impl<'a> InvariantExecutor<'a> {
         Ok(())
     }
 
-    // /// Gets list of `T` by calling the contract `method_name` function.
+    // /// Get the function output by calling the contract `method_name` function, encoded as a [DynSolValue].
     // fn get_list<T>(&self, address: Address, abi: &Abi, method_name: &str) -> Vec<T>
     // where
-    //     T: Tokenizable + Detokenize + TokenizableItem,
+    //     T: SolValue,
     // {
     //     if let Some(func) = abi.functions().find(|func| func.name == method_name) {
-    //         if let Ok(call_result) = self.executor.call::<Vec<T>, _, _>(
+    //         if let Ok(call_result) = self.executor.call::<_, _>(
     //             CALLER,
-    //             address.to_alloy(),
+    //             address,
     //             func.clone(),
-    //             (),
+    //             vec![],
     //             rU256::ZERO,
     //             Some(abi),
     //         ) { return call_result.result

@@ -7,9 +7,7 @@ use crate::{
     },
     CallKind,
 };
-use alloy_primitives::{Address, Bytes, B256, U256};
-use ethers::abi::RawLog;
-use foundry_utils::types::ToEthers;
+use alloy_primitives::{Address, Bytes, B256, U256, Log as RawLog};
 use revm::{
     interpreter::{
         opcode, return_ok, CallInputs, CallScheme, CreateInputs, Gas, InstructionResult,
@@ -46,12 +44,12 @@ impl Tracer {
             0,
             CallTrace {
                 depth,
-                address: address.to_ethers(),
+                address: address,
                 kind,
                 data: RawOrDecodedCall::Raw(data.into()),
-                value: value.to_ethers(),
+                value: value,
                 status: InstructionResult::Continue,
-                caller: caller.to_ethers(),
+                caller: caller,
                 ..Default::default()
             },
         ));
@@ -74,7 +72,7 @@ impl Tracer {
         trace.output = RawOrDecodedReturnData::Raw(output.into());
 
         if let Some(address) = address {
-            trace.address = address.to_ethers();
+            trace.address = address;
         }
     }
 
@@ -89,7 +87,7 @@ impl Tracer {
             depth: data.journaled_state.depth(),
             pc: interp.program_counter(),
             op: OpCode(interp.current_opcode()),
-            contract: interp.contract.address.to_ethers(),
+            contract: interp.contract.address,
             stack: interp.stack.clone(),
             memory: interp.memory.clone(),
             gas: interp.gas.remaining(),
@@ -124,7 +122,7 @@ impl Tracer {
                 Some(JournalEntry::StorageChange { address, key, .. }),
             ) => {
                 let value = data.journaled_state.state[address].storage[key].present_value();
-                Some((key.to_ethers(), value.to_ethers()))
+                Some((*key, value))
             }
             _ => None,
         };
@@ -163,9 +161,8 @@ impl<DB: Database> Inspector<DB> for Tracer {
     #[inline]
     fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[B256], data: &Bytes) {
         let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
-        let topics: Vec<_> = topics.iter().copied().map(|t| t.to_ethers()).collect();
         node.ordering.push(LogCallOrder::Log(node.logs.len()));
-        node.logs.push(RawOrDecodedLog::Raw(RawLog { topics, data: data.to_vec() }));
+        node.logs.push(RawOrDecodedLog::Raw(RawLog::new(topics.to_vec(), *data).expect("Received invalid log")));
     }
 
     #[inline]
