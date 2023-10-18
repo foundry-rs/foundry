@@ -1,12 +1,12 @@
 use crate::{
     abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier, CallKind,
 };
+use alloy_primitives::{Address, Bytes, Log as RawLog, B256, U256};
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::types::{DefaultFrame, GethDebugTracingOptions, StructLog};
-use alloy_primitives::{Address, B256, U256, Log as RawLog, Bytes};
 pub use executor::TracingExecutor;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
-use foundry_utils::types::{ToEthers};
+use foundry_utils::types::ToEthers;
 use hashbrown::HashMap;
 use node::CallTraceNode;
 use revm::interpreter::{opcode, CallContext, InstructionResult, Memory, Stack};

@@ -1,9 +1,9 @@
 //! utilities used within tracing
 
 use crate::decode;
+use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
+use alloy_json_abi::{Function, JsonAbi as Abi};
 use alloy_primitives::Address;
-use alloy_json_abi::{JsonAbi as Abi, Function};
-use alloy_dyn_abi::{DynSolValue, DynSolType, JsonAbiExt};
 use foundry_common::{abi::format_token, SELECTOR_LEN};
 use std::collections::HashMap;
 

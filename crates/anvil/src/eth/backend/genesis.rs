@@ -59,7 +59,7 @@ impl GenesisConfig {
     /// If an initial `genesis.json` was provided, this applies the account alloc to the db
     pub fn apply_genesis_json_alloc(
         &self,
-        mut db: RwLockWriteGuard<'_, dyn Db>,
+        mut db: RwLockWriteGuard<'_, Box<dyn Db>>,
     ) -> DatabaseResult<()> {
         if let Some(ref genesis) = self.genesis_init {
             for (addr, mut acc) in genesis.alloc.accounts.clone() {

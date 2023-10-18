@@ -1,8 +1,8 @@
 //! Support for compiling [foundry_compilers::Project]
 use crate::{compact_to_contract, glob::GlobMatcher, term, TestFunctionExt};
 use comfy_table::{presets::ASCII_MARKDOWN, *};
-use foundry_block_explorers::contract::Metadata;
 use eyre::Result;
+use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     artifacts::{BytecodeObject, ContractBytecodeSome},
     remappings::Remapping,

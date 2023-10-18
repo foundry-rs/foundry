@@ -200,7 +200,6 @@ fn get_env(key: &str, ty: DynSolType, delim: Option<&str>, default: Option<Strin
             fmt_err!("Failed to get environment variable `{key}` as type `{ty}`: {e}")
         })
     })?;
-    println!("got val: {}", val);
     if let Some(d) = delim {
         parse::parse_array(val.split(d).map(str::trim), &ty)
     } else {
@@ -239,11 +238,11 @@ pub fn value_to_token(value: &Value) -> Result<DynSolValue> {
                     // Example: 18446744073709551615 becomes 18446744073709552000 after parsing it
                     // to f64.
                     let s = number.to_string();
-
                     // Coerced to scientific notation, so short-ciruit to using fallback.
                     // This will not have a problem with hex numbers, as for parsing these
                     // We'd need to prefix this with 0x.
-                    if s.starts_with("1e") {
+                    // See also <https://docs.soliditylang.org/en/latest/types.html#rational-and-integer-literals>
+                    if s.contains('e') {
                         // Calling Number::to_string with powers of ten formats the number using
                         // scientific notation and causes from_dec_str to fail. Using format! with
                         // f64 keeps the full number representation.
@@ -312,6 +311,7 @@ fn encode_abi_values(values: Vec<DynSolValue>) -> Vec<u8> {
 
 /// Parses a vector of [`Value`]s into a vector of [`DynSolValue`]s.
 fn parse_json_values(values: Vec<&Value>, key: &str) -> Result<Vec<DynSolValue>> {
+    trace!(?values, %key, "parseing json values");
     values
         .iter()
         .map(|inner| {
@@ -325,6 +325,7 @@ fn parse_json_values(values: Vec<&Value>, key: &str) -> Result<Vec<DynSolValue>>
 /// deserialized in the same order. That means that the solidity `struct` should order it's fields
 /// alphabetically and not by efficient packing or some other taxonomy.
 fn parse_json(json_str: &str, key: &str, coerce: Option<DynSolType>) -> Result {
+    trace!(%json_str, %key, ?coerce, "parsing json");
     let json =
         serde_json::from_str(json_str).map_err(|err| fmt_err!("Failed to parse JSON: {err}"))?;
     match key {
@@ -340,6 +341,8 @@ fn parse_json(json_str: &str, key: &str, coerce: Option<DynSolType>) -> Result {
         }
         _ => {
             let values = jsonpath_lib::select(&json, &canonicalize_json_key(key))?;
+            trace!(?values, "selected json values");
+
             // values is an array of items. Depending on the JsonPath key, they
             // can be many or a single item. An item can be a single value or
             // an entire JSON object.

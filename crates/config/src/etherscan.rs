@@ -255,7 +255,8 @@ impl ResolvedEtherscanConfig {
     /// `api_key` and cache
     pub fn into_client(
         self,
-    ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError> {
+    ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError>
+    {
         let ResolvedEtherscanConfig { api_url, browser_url, key: api_key, chain } = self;
         let (mainnet_api, mainnet_url) =
             ethers_core::types::Chain::Mainnet.etherscan_urls().expect("exist; qed");

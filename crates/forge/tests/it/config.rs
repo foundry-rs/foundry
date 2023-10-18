@@ -132,6 +132,13 @@ pub fn test_opts() -> TestOptions {
     }
 }
 
+#[allow(unused)]
+pub(crate) fn init_tracing() {
+    let _ = tracing_subscriber::FmtSubscriber::builder()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+}
+
 pub fn manifest_root() -> PathBuf {
     let mut root = Path::new(env!("CARGO_MANIFEST_DIR"));
     // need to check here where we're executing the test from, if in `forge` we need to also allow

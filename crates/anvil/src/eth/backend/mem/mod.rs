@@ -141,7 +141,7 @@ pub struct Backend {
     /// endpoints. Therefor the `Db` is guarded by a `tokio::sync::RwLock` here so calls that
     /// need to read from it, while it's currently written to, don't block. E.g. a new block is
     /// currently mined and a new [`Self::set_storage()`] request is being executed.
-    db: Arc<AsyncRwLock<dyn Db>>,
+    db: Arc<AsyncRwLock<Box<dyn Db>>>,
     /// stores all block related data in memory
     blockchain: Blockchain,
     /// Historic states of previous blocks
@@ -174,7 +174,7 @@ impl Backend {
     /// Initialises the balance of the given accounts
     #[allow(clippy::too_many_arguments)]
     pub async fn with_genesis(
-        db: Arc<AsyncRwLock<dyn Db>>,
+        db: Arc<AsyncRwLock<Box<dyn Db>>>,
         env: Arc<RwLock<Env>>,
         genesis: GenesisConfig,
         fees: FeeManager,
@@ -337,7 +337,7 @@ impl Backend {
     }
 
     /// Returns the database
-    pub fn get_db(&self) -> &Arc<AsyncRwLock<dyn Db>> {
+    pub fn get_db(&self) -> &Arc<AsyncRwLock<Box<dyn Db>>> {
         &self.db
     }
 
@@ -362,15 +362,16 @@ impl Backend {
                 let mut env = self.env.read().clone();
 
                 let mut node_config = self.node_config.write().await;
-                let (_db, forking) =
-                    node_config.setup_fork_db(eth_rpc_url, &mut env, &self.fees).await;
 
-                // TODO: Something like this is needed but...
-                // This won't compile because dyn Db is not Sized (and AFAIK cannot be made Sized)
-                // *self.db.write().await = *db.read().await;
+                let (db, config) =
+                    node_config.setup_fork_db_config(eth_rpc_url, &mut env, &self.fees).await;
+
+                *self.db.write().await = Box::new(db);
+
+                let fork = ClientFork::new(config, Arc::clone(&self.db));
 
                 *self.env.write() = env;
-                *self.fork.write() = forking;
+                *self.fork.write() = Some(fork);
             } else {
                 return Err(RpcError::invalid_params(
                     "Forking not enabled and RPC URL not provided to start forking",
@@ -489,6 +490,10 @@ impl Backend {
     /// Returns the client coinbase address.
     pub fn chain_id(&self) -> U256 {
         self.env.read().cfg.chain_id.into()
+    }
+
+    pub fn set_chain_id(&self, chain_id: u64) {
+        self.env.write().cfg.chain_id = chain_id;
     }
 
     /// Returns balance of the given account.
@@ -2079,7 +2084,7 @@ impl Backend {
     pub async fn prove_account_at(
         &self,
         address: Address,
-        values: Vec<H256>,
+        keys: Vec<H256>,
         block_request: Option<BlockRequest>,
     ) -> Result<AccountProof, BlockchainError> {
         let account_key = H256::from(keccak256(address.as_bytes()));
@@ -2106,8 +2111,17 @@ impl Backend {
             };
             let account = maybe_account.unwrap_or_default();
 
-            let proof =
-                recorder.drain().into_iter().map(|r| r.data).map(Into::into).collect::<Vec<_>>();
+            let proof = recorder
+                .drain()
+                .into_iter()
+                .map(|r| r.data)
+                .map(|record| {
+                    // proof is rlp encoded:
+                    // <https://github.com/foundry-rs/foundry/issues/5004>
+                    // <https://www.quicknode.com/docs/ethereum/eth_getProof>
+                    rlp::encode(&record).to_vec().into()
+                })
+                .collect::<Vec<_>>();
 
             let account_db =
                 block_db.maybe_account_db(address).ok_or(BlockchainError::DataUnavailable)?;
@@ -2119,15 +2133,24 @@ impl Backend {
                 code_hash: account.code_hash,
                 storage_hash: account.storage_root,
                 account_proof: proof,
-                storage_proof: values
+                storage_proof: keys
                     .into_iter()
                     .map(|storage_key| {
+                        // the key that should be proofed is the keccak256 of the storage key
                         let key = H256::from(keccak256(storage_key));
                         prove_storage(&account, &account_db.0, key).map(
                             |(storage_proof, storage_value)| StorageProof {
-                                key,
+                                key: storage_key,
                                 value: storage_value.into_uint(),
-                                proof: storage_proof.into_iter().map(Into::into).collect(),
+                                proof: storage_proof
+                                    .into_iter()
+                                    .map(|proof| {
+                                        // proof is rlp encoded:
+                                        // <https://github.com/foundry-rs/foundry/issues/5004>
+                                        // <https://www.quicknode.com/docs/ethereum/eth_getProof>
+                                        rlp::encode(&proof).to_vec().into()
+                                    })
+                                    .collect(),
                             },
                         )
                     })

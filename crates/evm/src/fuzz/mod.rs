@@ -171,7 +171,8 @@ impl<'a> FuzzedExecutor<'a> {
                 let reason = reason.to_string();
                 result.reason = if reason.is_empty() { None } else { Some(reason) };
 
-                let args = func.abi_decode_input(&calldata.as_ref()[4..], false).unwrap_or_default();
+                let args =
+                    func.abi_decode_input(&calldata.as_ref()[4..], false).unwrap_or_default();
                 result.counterexample = Some(CounterExample::Single(BaseCounterExample {
                     sender: None,
                     addr: None,
@@ -393,7 +394,8 @@ impl FuzzTestResult {
 
     /// Returns the average gas use of all test cases
     pub fn mean_gas(&self, with_stipend: bool) -> u64 {
-        let mut values = self.gas_values(with_stipend).into_iter().map(|g| U256::from(g)).collect::<Vec<_>>();
+        let mut values =
+            self.gas_values(with_stipend).into_iter().map(|g| U256::from(g)).collect::<Vec<_>>();
         values.sort_unstable();
         calc::mean(&values).to::<u64>()
     }
@@ -447,7 +449,8 @@ impl FuzzedCases {
     /// Returns the average gas use of all test cases
     #[inline]
     pub fn mean_gas(&self, with_stipend: bool) -> u64 {
-        let mut values = self.gas_values(with_stipend).into_iter().map(|g| U256::from(g)).collect::<Vec<_>>();
+        let mut values =
+            self.gas_values(with_stipend).into_iter().map(|g| U256::from(g)).collect::<Vec<_>>();
         values.sort_unstable();
         calc::mean(&values).to::<u64>()
     }

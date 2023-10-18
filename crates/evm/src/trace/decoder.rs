@@ -9,9 +9,9 @@ use crate::{
     trace::{node::CallTraceNode, utils},
     CALLER, TEST_CONTRACT_ADDRESS,
 };
-use alloy_primitives::{Address, FixedBytes, B256};
 use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt};
-use alloy_json_abi::{JsonAbi as Abi, Event, Function, Param};
+use alloy_json_abi::{Event, Function, JsonAbi as Abi, Param};
+use alloy_primitives::{Address, FixedBytes, B256};
 use foundry_common::{abi::get_indexed_event, SELECTOR_LEN};
 use foundry_utils::types::ToEthers;
 use hashbrown::HashSet;

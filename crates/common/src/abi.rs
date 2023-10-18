@@ -1,10 +1,10 @@
 //! ABI related helper functions
-use alloy_json_abi::{Function, Event};
-use alloy_dyn_abi::{DynSolValue, DynSolType, JsonAbiExt, FunctionExt};
-use alloy_primitives::{Address, I256, U256, Log, hex};
+use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
+use alloy_json_abi::{Event, Function};
+use alloy_primitives::{hex, Address, Log, I256, U256};
 use ethers_core::types::Chain;
-use foundry_block_explorers::{contract::ContractMetadata, errors::EtherscanError, Client};
 use eyre::{ContextCompat, Result, WrapErr};
+use foundry_block_explorers::{contract::ContractMetadata, errors::EtherscanError, Client};
 use std::{future::Future, pin::Pin, str::FromStr};
 use yansi::Paint;
 
@@ -19,7 +19,10 @@ pub fn encode_function_args(func: &Function, args: &[impl AsRef<str>]) -> Result
         .zip(args)
         .map(|(input, arg)| (&input.ty, arg.as_ref()))
         .collect::<Vec<_>>();
-    let args = params.iter().map(|(_, arg)| DynSolValue::from(arg.to_owned().to_string())).collect::<Vec<_>>();
+    let args = params
+        .iter()
+        .map(|(_, arg)| DynSolValue::from(arg.to_owned().to_string()))
+        .collect::<Vec<_>>();
     Ok(func.abi_encode_input(&args)?)
 }
 
@@ -28,7 +31,12 @@ pub fn encode_function_args(func: &Function, args: &[impl AsRef<str>]) -> Result
 /// # Panics
 ///
 /// If the `sig` is an invalid function signature
-pub fn abi_decode_calldata(sig: &str, calldata: &str, input: bool, fn_selector: bool) -> Result<Vec<DynSolValue>> {
+pub fn abi_decode_calldata(
+    sig: &str,
+    calldata: &str,
+    input: bool,
+    fn_selector: bool,
+) -> Result<Vec<DynSolValue>> {
     let func = Function::parse(sig)?;
     let calldata = hex::decode(calldata)?;
     let res = if input {
@@ -51,53 +59,52 @@ pub fn abi_decode_calldata(sig: &str, calldata: &str, input: bool, fn_selector: 
 }
 
 /// Parses string input as Token against the expected ParamType
-pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
-    params: I,
-    lenient: bool,
-) -> Result<Vec<Token>> {
-    let mut tokens = Vec::new();
+// pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
+//     params: I,
+//     lenient: bool,
+// ) -> Result<Vec<Token>> { let mut tokens = Vec::new();
 
-    for (param, value) in params.into_iter() {
-        let mut token = if lenient {
-            LenientTokenizer::tokenize(param, value)
-        } else {
-            StrictTokenizer::tokenize(param, value)
-        };
-        if token.is_err() && value.starts_with("0x") {
-            match param {
-                ParamType::FixedBytes(32) => {
-                    if value.len() < 66 {
-                        let padded_value = [value, &"0".repeat(66 - value.len())].concat();
-                        token = if lenient {
-                            LenientTokenizer::tokenize(param, &padded_value)
-                        } else {
-                            StrictTokenizer::tokenize(param, &padded_value)
-                        };
-                    }
-                }
-                ParamType::Uint(_) => {
-                    // try again if value is hex
-                    if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
-                        token = if lenient {
-                            LenientTokenizer::tokenize(param, &value)
-                        } else {
-                            StrictTokenizer::tokenize(param, &value)
-                        };
-                    }
-                }
-                // TODO: Not sure what to do here. Put the no effect in for now, but that is not
-                // ideal. We could attempt massage for every value type?
-                _ => {}
-            }
-        }
+//     for (param, value) in params.into_iter() {
+//         let mut token = if lenient {
+//             LenientTokenizer::tokenize(param, value)
+//         } else {
+//             StrictTokenizer::tokenize(param, value)
+//         };
+//         if token.is_err() && value.starts_with("0x") {
+//             match param {
+//                 ParamType::FixedBytes(32) => {
+//                     if value.len() < 66 {
+//                         let padded_value = [value, &"0".repeat(66 - value.len())].concat();
+//                         token = if lenient {
+//                             LenientTokenizer::tokenize(param, &padded_value)
+//                         } else {
+//                             StrictTokenizer::tokenize(param, &padded_value)
+//                         };
+//                     }
+//                 }
+//                 ParamType::Uint(_) => {
+//                     // try again if value is hex
+//                     if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
+//                         token = if lenient {
+//                             LenientTokenizer::tokenize(param, &value)
+//                         } else {
+//                             StrictTokenizer::tokenize(param, &value)
+//                         };
+//                     }
+//                 }
+//                 // TODO: Not sure what to do here. Put the no effect in for now, but that is not
+//                 // ideal. We could attempt massage for every value type?
+//                 _ => {}
+//             }
+//         }
 
-        let token = token.map(sanitize_token).wrap_err_with(|| {
-            format!("Failed to parse `{value}`, expected value of type: {param}")
-        })?;
-        tokens.push(token);
-    }
-    Ok(tokens)
-}
+//         let token = token.map(sanitize_token).wrap_err_with(|| {
+//             format!("Failed to parse `{value}`, expected value of type: {param}")
+//         })?;
+//         tokens.push(token);
+//     }
+//     Ok(tokens)
+// }
 
 /// Cleans up potential shortcomings of the ethabi Tokenizer.
 ///
@@ -172,8 +179,8 @@ pub fn format_token(param: &DynSolValue) -> String {
         DynSolValue::Tuple(tokens) => {
             let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
             format!("({string})")
-        },
-        DynSolValue::Function(_) => unimplemented!()
+        }
+        _ => unimplemented!(),
     }
 }
 
@@ -251,8 +258,8 @@ pub fn get_func(sig: &str) -> Result<Function> {
     Ok(match Function::parse(sig) {
         Ok(func) => func,
         Err(err) => {
-                // we return the `Function` parse error as this case is more likely
-                return Err(err.into())
+            // we return the `Function` parse error as this case is more likely
+            return Err(err.into())
         }
     })
 }
@@ -268,8 +275,7 @@ pub fn get_indexed_event(mut event: Event, raw_log: &Log) -> Event {
     if !event.anonymous && raw_log.topics().len() > 1 {
         let indexed_params = raw_log.topics().len() - 1;
         let num_inputs = event.inputs.len();
-        let num_address_params =
-            event.inputs.iter().filter(|p| p.ty == "address").count();
+        let num_address_params = event.inputs.iter().filter(|p| p.ty == "address").count();
 
         event.inputs.iter_mut().enumerate().for_each(|(index, param)| {
             if param.name.is_empty() {
@@ -349,48 +355,48 @@ mod tests {
     use alloy_dyn_abi::EventExt;
     use alloy_primitives::B256;
 
-    #[test]
-    fn can_sanitize_token() {
-        let token =
-            Token::Array(LenientTokenizer::tokenize_array("[\"\"]", &ParamType::String).unwrap());
-        let sanitized = sanitize_token(token);
-        assert_eq!(sanitized, Token::Array(vec![Token::String("".to_string())]));
+    // #[test]
+    // fn can_sanitize_token() {
+    //     let token =
+    //         Token::Array(LenientTokenizer::tokenize_array("[\"\"]",
+    // &ParamType::String).unwrap());     let sanitized = sanitize_token(token);
+    //     assert_eq!(sanitized, Token::Array(vec![Token::String("".to_string())]));
 
-        let token =
-            Token::Array(LenientTokenizer::tokenize_array("['']", &ParamType::String).unwrap());
-        let sanitized = sanitize_token(token);
-        assert_eq!(sanitized, Token::Array(vec![Token::String("".to_string())]));
+    //     let token =
+    //         Token::Array(LenientTokenizer::tokenize_array("['']", &ParamType::String).unwrap());
+    //     let sanitized = sanitize_token(token);
+    //     assert_eq!(sanitized, Token::Array(vec![Token::String("".to_string())]));
 
-        let token = Token::Array(
-            LenientTokenizer::tokenize_array("[\"\",\"\"]", &ParamType::String).unwrap(),
-        );
-        let sanitized = sanitize_token(token);
-        assert_eq!(
-            sanitized,
-            Token::Array(vec![Token::String("".to_string()), Token::String("".to_string())])
-        );
+    //     let token = Token::Array(
+    //         LenientTokenizer::tokenize_array("[\"\",\"\"]", &ParamType::String).unwrap(),
+    //     );
+    //     let sanitized = sanitize_token(token);
+    //     assert_eq!(
+    //         sanitized,
+    //         Token::Array(vec![Token::String("".to_string()), Token::String("".to_string())])
+    //     );
 
-        let token =
-            Token::Array(LenientTokenizer::tokenize_array("['','']", &ParamType::String).unwrap());
-        let sanitized = sanitize_token(token);
-        assert_eq!(
-            sanitized,
-            Token::Array(vec![Token::String("".to_string()), Token::String("".to_string())])
-        );
-    }
+    //     let token =
+    //         Token::Array(LenientTokenizer::tokenize_array("['','']",
+    // &ParamType::String).unwrap());     let sanitized = sanitize_token(token);
+    //     assert_eq!(
+    //         sanitized,
+    //         Token::Array(vec![Token::String("".to_string()), Token::String("".to_string())])
+    //     );
+    // }
 
-    #[test]
-    fn parse_hex_uint_tokens() {
-        let param = DynSolType::Uint(256);
+    // #[test]
+    // fn parse_hex_uint_tokens() {
+    //     let param = DynSolType::Uint(256);
 
-        let tokens = parse_tokens(std::iter::once((&param, "100")), true).unwrap();
-        assert_eq!(tokens, vec![DynSolValue::Uint(U256::from(100), 256)]);
+    //     let tokens = parse_tokens(std::iter::once((&param, "100")), true).unwrap();
+    //     assert_eq!(tokens, vec![DynSolValue::Uint(U256::from(100), 256)]);
 
-        let val: U256 = U256::from(100u64);
-        let hex_val = format!("0x{val:x}");
-        let tokens = parse_tokens(std::iter::once((&param, hex_val.as_str())), true).unwrap();
-        assert_eq!(tokens, vec![DynSolValue::Uint(U256::from(100), 256)]);
-    }
+    //     let val: U256 = U256::from(100u64);
+    //     let hex_val = format!("0x{val:x}");
+    //     let tokens = parse_tokens(std::iter::once((&param, hex_val.as_str())), true).unwrap();
+    //     assert_eq!(tokens, vec![DynSolValue::Uint(U256::from(100), 256)]);
+    // }
 
     #[test]
     fn test_indexed_only_address() {
@@ -449,7 +455,9 @@ mod tests {
         // copied from testcases in https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1191.md
         let eip1191 = "0xFb6916095cA1Df60bb79ce92cE3EA74c37c5d359";
         assert_ne!(
-            format_token(&DynSolValue::Address(Address::from_str(&eip1191.to_lowercase()).unwrap())),
+            format_token(&DynSolValue::Address(
+                Address::from_str(&eip1191.to_lowercase()).unwrap()
+            )),
             eip1191.to_string()
         );
     }

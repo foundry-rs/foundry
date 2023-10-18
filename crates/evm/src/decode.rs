@@ -3,10 +3,9 @@ use crate::{
     abi::ConsoleEvents::{self, *},
     executor::inspector::cheatcodes::util::MAGIC_SKIP_BYTES,
 };
-use alloy_dyn_abi::{JsonAbiExt, DynSolValue, DynSolType};
+use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{B256, Bytes};
-use alloy_primitives::{Log as AlloyLog};
+use alloy_primitives::{Bytes, Log as AlloyLog, B256};
 use alloy_sol_types::{sol, SolEvent};
 use ethers::{
     abi::{decode, AbiDecode, Contract as Abi, ParamType, RawLog, Token},
@@ -55,7 +54,10 @@ pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
 /// This function returns [None] if it is not a DSTest log or the result of a Hardhat
 /// `console.log`.
 pub fn decode_console_log(log: &Log) -> Option<String> {
-    let raw_log = AlloyLog::new_unchecked(log.topics.into_iter().map(|h| h.to_alloy()).collect_vec(), log.data.0.into());
+    let raw_log = AlloyLog::new_unchecked(
+        log.topics.into_iter().map(|h| h.to_alloy()).collect_vec(),
+        log.data.0.into(),
+    );
     let data = log_address::abi_decode_data(&raw_log.data, false);
     if let Ok(inner) = log::abi_decode_data(&raw_log.data, false) {
         return Some(inner.0)
@@ -215,7 +217,8 @@ pub fn decode_revert(
                     if abi_error.signature()[..SELECTOR_LEN].as_bytes() == &err[..SELECTOR_LEN] {
                         // if we don't decode, don't return an error, try to decode as a
                         // string later
-                        if let Ok(decoded) = abi_error.abi_decode_input(&err[SELECTOR_LEN..], false) {
+                        if let Ok(decoded) = abi_error.abi_decode_input(&err[SELECTOR_LEN..], false)
+                        {
                             let inputs = decoded
                                 .iter()
                                 .map(foundry_common::abi::format_token)
@@ -306,7 +309,8 @@ pub fn decode_custom_error_args(err: &[u8], args: usize) -> Option<DynSolValue> 
     // brute force decode all possible combinations
     for num in (2..=args).rev() {
         for candidate in TYPES.iter().cloned().combinations(num) {
-            if let Ok(decoded) = DynSolType::abi_decode_sequence( &DynSolType::Tuple(candidate), err) {
+            if let Ok(decoded) = DynSolType::abi_decode_sequence(&DynSolType::Tuple(candidate), err)
+            {
                 return Some(decoded)
             }
         }

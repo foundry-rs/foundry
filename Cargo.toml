@@ -127,6 +127,7 @@ foundry-abi = { path = "crates/abi" }
 foundry-binder = { path = "crates/binder" }
 foundry-cli = { path = "crates/cli" }
 foundry-common = { path = "crates/common" }
+foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-config = { path = "crates/config" }
 foundry-evm = { path = "crates/evm" }
 foundry-macros = { path = "crates/macros" }
@@ -137,7 +138,7 @@ foundry-debugger = { path = "crates/debugger" }
 ## revm
 # no default features to avoid c-kzg
 revm = { version = "3", default-features = false } #
-revm-primitives = { version  = "1" , default-features = false }
+revm-primitives = { version = "1", default-features = false }
 
 ## ethers
 ethers = { version = "2.0", default-features = false }
@@ -152,11 +153,11 @@ ethers-etherscan = { version = "2.0", default-features = false }
 ethers-solc = { version = "2.0", default-features = false }
 
 ## alloy
-
-alloy-primitives = { version = "0.4", default-features = false }
-alloy-dyn-abi = { version = "0.4", default-features = false }
-alloy-json-abi = { version = "0.4", default-features = false }
-alloy-sol-types = { version = "0.4", default-features = false }
+alloy-primitives = "0.4.1"
+alloy-dyn-abi = "0.4.1"
+alloy-json-abi = "0.4.1"
+alloy-sol-types = "0.4.1"
+syn-solidity = "0.4.1"
 
 # solc utils
 foundry-compilers = { version = "0.1", default-features = false }
@@ -171,6 +172,12 @@ itertools = "0.11"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 hex = { package = "const-hex", version = "1.6", features = ["hex"] }
 protobuf = "=3.2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+jsonpath_lib = "0.3"
+eyre = "0.6"
+color-eyre = "0.6"
 
 #[patch."https://github.com/gakonst/ethers-rs"]
 #ethers = { path = "../ethers-rs/ethers" }
@@ -198,11 +205,6 @@ ethers-solc = { git = "https://github.com/gakonst/ethers-rs" }
 
 foundry-compilers = {git = "https://github.com/foundry-rs/compilers"}
 foundry-block-explorers = {git = "https://github.com/foundry-rs/block-explorers"}
-
-revm = { git = "https://github.com/bluealloy/revm/", branch = "main" }
-revm-interpreter = { git = "https://github.com/bluealloy/revm/", branch = "main" }
-revm-precompile = { git = "https://github.com/bluealloy/revm/", branch = "main" }
-revm-primitives = { git = "https://github.com/bluealloy/revm/", branch = "main" }
 
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/", branch = "main"}
 alloy-primitives = { git = "https://github.com/alloy-rs/core/", branch = "main"}

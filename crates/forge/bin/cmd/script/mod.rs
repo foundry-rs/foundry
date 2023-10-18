@@ -241,7 +241,7 @@ impl ScriptArgs {
             .build();
 
         // Decoding traces using etherscan is costly as we run into rate limits,
-        // causing scripts to run for a very long time unnecesarily.
+        // causing scripts to run for a very long time unnecessarily.
         // Therefore, we only try and use etherscan if the user has provided an API key.
         let should_use_etherscan_traces = script_config.config.etherscan_api_key.is_some();
 

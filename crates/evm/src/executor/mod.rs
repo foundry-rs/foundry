@@ -13,15 +13,12 @@ pub use abi::{
     patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
     HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
 };
+use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
+use alloy_json_abi::{Function, JsonAbi as Abi};
 /// Reexport commonly used revm types
 pub use alloy_primitives::{Address, Bytes, U256};
-use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
-use alloy_json_abi::{JsonAbi as Abi, Function};
 use backend::FuzzBackendWrapper;
-use ethers::{
-    signers::LocalWallet,
-    types::Log,
-};
+use ethers::{signers::LocalWallet, types::Log};
 use foundry_common::{abi::IntoFunction, evm::Breakpoints};
 use revm::primitives::hex_literal::hex;
 pub use revm::{
@@ -192,11 +189,7 @@ impl Executor {
     ///
     /// Ayn changes made during the setup call to env's block environment are persistent, for
     /// example `vm.chainId()` will change the `block.chainId` for all subsequent test calls.
-    pub fn setup(
-        &mut self,
-        from: Option<Address>,
-        to: Address,
-    ) -> Result<CallResult, EvmError> {
+    pub fn setup(&mut self, from: Option<Address>, to: Address) -> Result<CallResult, EvmError> {
         trace!(?from, ?to, "setting up contract");
 
         let from = from.unwrap_or(CALLER);
@@ -524,17 +517,13 @@ impl Executor {
         let mut success = !reverted;
         if success {
             // Check if a DSTest assertion failed
-            let call = executor.call::<_, _>(
-                CALLER,
-                address,
-                "failed()(bool)",
-                vec![],
-                U256::ZERO,
-                None,
-            );
+            let call =
+                executor.call::<_, _>(CALLER, address, "failed()(bool)", vec![], U256::ZERO, None);
 
             if let Ok(CallResult { result: failed, .. }) = call {
-                let failed = failed.as_bool().expect("Failed to decode DSTest `failed` variable. This is a bug");
+                let failed = failed
+                    .as_bool()
+                    .expect("Failed to decode DSTest `failed` variable. This is a bug");
                 success = !failed;
             }
         }

@@ -5,13 +5,14 @@ use alloy_primitives::{Address as B160, B256, U256 as rU256};
 use anvil_core::eth::trie::KeccakHasher;
 use ethers::{
     prelude::{Address, Bytes},
-    types::H256,
+    types::{BlockId, H256},
     utils::keccak256,
 };
 use foundry_common::errors::FsPathError;
 use foundry_evm::{
     executor::{
         backend::{snapshot::StateSnapshot, DatabaseError, DatabaseResult, MemDb},
+        fork::BlockchainDb,
         DatabaseRef,
     },
     revm::{
@@ -71,12 +72,24 @@ where
     fn init_from_snapshot(&mut self, _snapshot: StateSnapshot) {}
 }
 
+/// Helper trait to reset the DB if it's forked
+#[auto_impl::auto_impl(Box)]
+pub trait MaybeForkedDatabase {
+    fn maybe_reset(&mut self, _url: Option<String>, block_number: BlockId) -> Result<(), String>;
+
+    fn maybe_flush_cache(&self) -> Result<(), String>;
+
+    fn maybe_inner(&self) -> Result<&BlockchainDb, String>;
+}
+
 /// This bundles all required revm traits
+#[auto_impl::auto_impl(Box)]
 pub trait Db:
     DatabaseRef<Error = DatabaseError>
     + Database<Error = DatabaseError>
     + DatabaseCommit
     + MaybeHashDatabase
+    + MaybeForkedDatabase
     + fmt::Debug
     + Send
     + Sync
@@ -248,6 +261,20 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeHashDatabase for CacheDB<T> {
             );
         }
         self.block_hashes = block_hashes;
+    }
+}
+
+impl<T: DatabaseRef<Error = DatabaseError>> MaybeForkedDatabase for CacheDB<T> {
+    fn maybe_reset(&mut self, _url: Option<String>, _block_number: BlockId) -> Result<(), String> {
+        Err("not supported".to_string())
+    }
+
+    fn maybe_flush_cache(&self) -> Result<(), String> {
+        Err("not supported".to_string())
+    }
+
+    fn maybe_inner(&self) -> Result<&BlockchainDb, String> {
+        Err("not supported".to_string())
     }
 }
 

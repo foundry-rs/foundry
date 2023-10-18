@@ -561,9 +561,9 @@ impl<'a> InvariantExecutor<'a> {
         Ok(())
     }
 
-    // /// Get the function output by calling the contract `method_name` function, encoded as a [DynSolValue].
-    // fn get_list<T>(&self, address: Address, abi: &Abi, method_name: &str) -> Vec<T>
-    // where
+    // /// Get the function output by calling the contract `method_name` function, encoded as a
+    // [DynSolValue]. fn get_list<T>(&self, address: Address, abi: &Abi, method_name: &str) ->
+    // Vec<T> where
     //     T: SolValue,
     // {
     //     if let Some(func) = abi.functions().find(|func| func.name == method_name) {

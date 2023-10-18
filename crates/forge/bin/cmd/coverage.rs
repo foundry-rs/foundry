@@ -1,10 +1,6 @@
 use super::{install, test::FilterArgs};
 use alloy_primitives::{Address, Bytes, U256};
-use clap::{Parser, ValueEnum};
-use ethers::prelude::{
-    artifacts::{Ast, CompactBytecode, CompactDeployedBytecode},
-    Artifact, Project, ProjectCompileOutput,
-};
+use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, Result};
 use forge::{
     coverage::{
@@ -23,11 +19,15 @@ use foundry_cli::{
     utils::{LoadConfig, STATIC_FUZZ_SEED},
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
-use foundry_compilers::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap};
+use foundry_compilers::{
+    artifacts::{contract::CompactContractBytecode, Ast, CompactBytecode, CompactDeployedBytecode},
+    sourcemap::SourceMap,
+    Artifact, Project, ProjectCompileOutput,
+};
 use foundry_config::{Config, SolcReq};
 use foundry_utils::types::ToEthers;
 use semver::Version;
-use std::{collections::HashMap, sync::mpsc::channel};
+use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel};
 use tracing::trace;
 use yansi::Paint;
 
@@ -52,6 +52,17 @@ pub struct CoverageArgs {
     /// relatively accurate source map.
     #[clap(long)]
     ir_minimum: bool,
+
+    /// The path to output the report.
+    ///
+    /// If not specified, the report will be stored in the root of the project.
+    #[clap(
+        long,
+        short,
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH"
+    )]
+    report_file: Option<PathBuf>,
 
     #[clap(flatten)]
     filter: FilterArgs,
@@ -95,7 +106,7 @@ impl CoverageArgs {
             if self.ir_minimum {
                 // TODO: How to detect solc version if the user does not specify a solc version in
                 // config  case1: specify local installed solc ?
-                //  case2: mutliple solc versions used and  auto_detect_solc == true
+                //  case2: multiple solc versions used and  auto_detect_solc == true
                 if let Some(SolcReq::Version(version)) = &config.solc {
                     if *version < Version::new(0, 8, 13) {
                         return Err(eyre::eyre!(
@@ -340,9 +351,14 @@ impl CoverageArgs {
         for report_kind in self.report {
             match report_kind {
                 CoverageReportKind::Summary => SummaryReporter::default().report(&report),
-                // TODO: Sensible place to put the LCOV file
                 CoverageReportKind::Lcov => {
-                    LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?).report(&report)
+                    if let Some(report_file) = self.report_file {
+                        return LcovReporter::new(&mut fs::create_file(root.join(report_file))?)
+                            .report(&report)
+                    } else {
+                        return LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?)
+                            .report(&report)
+                    }
                 }
                 CoverageReportKind::Debug => DebugReporter.report(&report),
             }?;

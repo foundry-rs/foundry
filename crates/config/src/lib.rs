@@ -2053,8 +2053,14 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
             .map(Value::from)
             .ok();
         for (profile, mut dict) in self.0.data()? {
-            if let Some(v) = solc_env.clone().or_else(|| dict.remove("solc_version")) {
+            if let Some(v) = solc_env.clone() {
+                // ENV var takes precedence over config file
                 dict.insert("solc".to_string(), v);
+            } else if let Some(v) = dict.remove("solc_version") {
+                // only insert older variant if not already included
+                if !dict.contains_key("solc") {
+                    dict.insert("solc".to_string(), v);
+                }
             }
             map.insert(profile, dict);
         }
@@ -3502,6 +3508,41 @@ mod tests {
             jail.set_env("FOUNDRY_SOLC_VERSION", "0.6.6");
             let config = Config::load();
             assert_eq!(config.solc, Some(SolcReq::Version("0.6.6".parse().unwrap())));
+            Ok(())
+        });
+    }
+
+    // ensures the newer `solc` takes precedence over `solc_version`
+    #[test]
+    fn test_backwards_solc_version() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                solc = "0.8.12"
+                solc_version = "0.8.20"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(config.solc, Some(SolcReq::Version("0.8.12".parse().unwrap())));
+
+            Ok(())
+        });
+
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                solc_version = "0.8.20"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(config.solc, Some(SolcReq::Version("0.8.20".parse().unwrap())));
+
             Ok(())
         });
     }

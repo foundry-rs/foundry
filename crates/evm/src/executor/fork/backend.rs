@@ -3,7 +3,7 @@ use crate::executor::{
     backend::error::{DatabaseError, DatabaseResult},
     fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
 };
-use alloy_primitives::{Address, Bytes, B256, U256, keccak256};
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
     providers::Middleware,

@@ -3,18 +3,25 @@
 use crate::{
     abi::CHEATCODE_ADDRESS,
     executor::{
-        backend::snapshot::BackendSnapshot,
+        backend::{
+            error::NoCheatcodeAccessError, in_memory_db::FoundryEvmInMemoryDB,
+            snapshot::BackendSnapshot,
+        },
         fork::{CreateFork, ForkId, MultiFork, SharedBackend},
-        inspector::{cheatcodes::Cheatcodes, DEFAULT_CREATE2_DEPLOYER},
+        inspector::{
+            cheatcodes::{util::configure_tx_env, Cheatcodes},
+            DEFAULT_CREATE2_DEPLOYER,
+        },
         snapshot::Snapshots,
     },
     CALLER, TEST_CONTRACT_ADDRESS,
 };
-use alloy_primitives::{b256, Address, B256, U256, U64, keccak256};
+use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
 use ethers::{
     prelude::Block,
     types::{BlockNumber, Transaction},
 };
+use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use foundry_utils::types::{ToAlloy, ToEthers};
 pub use in_memory_db::MemDb;
 use revm::{
@@ -42,10 +49,6 @@ mod diagnostic;
 pub use diagnostic::RevertDiagnostic;
 
 pub mod error;
-use crate::executor::{
-    backend::{error::NoCheatcodeAccessError, in_memory_db::FoundryEvmInMemoryDB},
-    inspector::cheatcodes::util::configure_tx_env,
-};
 pub use error::{DatabaseError, DatabaseResult};
 
 mod in_memory_db;
@@ -860,7 +863,15 @@ impl Backend {
             .get_full_block(BlockNumber::Number(env.block.number.to_ethers().as_u64().into()))?;
 
         for tx in full_block.transactions.into_iter() {
-            if tx.hash().eq(&tx_hash.to_ethers()) {
+            // System transactions such as on L2s don't contain any pricing info so we skip them
+            // otherwise this would cause reverts
+            if is_known_system_sender(tx.from) ||
+                tx.transaction_type.map(|ty| ty.as_u64()) == Some(SYSTEM_TRANSACTION_TYPE)
+            {
+                continue
+            }
+
+            if tx.hash.eq(&tx_hash.to_ethers()) {
                 // found the target transaction
                 return Ok(Some(tx))
             }

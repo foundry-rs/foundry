@@ -13,7 +13,11 @@ where
         return U256::ZERO
     }
 
-    values.iter().copied().fold(U256::ZERO, |sum, val| sum + val.into()).div(U256::from(values.len()))
+    values
+        .iter()
+        .copied()
+        .fold(U256::ZERO, |sum, val| sum + val.into())
+        .div(U256::from(values.len()))
 }
 
 /// Returns the median of a _sorted_ slice
@@ -83,7 +87,15 @@ mod tests {
 
     #[test]
     fn calc_mean() {
-        let values = [U256::ZERO, U256::from(1), U256::from(2u64), U256::from(3u64), U256::from(4u64), U256::from(5u64), U256::from(6u64)];
+        let values = [
+            U256::ZERO,
+            U256::from(1),
+            U256::from(2u64),
+            U256::from(3u64),
+            U256::from(4u64),
+            U256::from(5u64),
+            U256::from(6u64),
+        ];
         let m = mean(&values);
         assert_eq!(m, U256::from(3u64));
     }

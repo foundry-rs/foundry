@@ -7,7 +7,7 @@ use crate::{
     },
     CallKind,
 };
-use alloy_primitives::{Address, Bytes, B256, U256, Log as RawLog};
+use alloy_primitives::{Address, Bytes, Log as RawLog, B256, U256};
 use revm::{
     interpreter::{
         opcode, return_ok, CallInputs, CallScheme, CreateInputs, Gas, InstructionResult,
@@ -44,12 +44,12 @@ impl Tracer {
             0,
             CallTrace {
                 depth,
-                address: address,
+                address,
                 kind,
                 data: RawOrDecodedCall::Raw(data.into()),
-                value: value,
+                value,
                 status: InstructionResult::Continue,
-                caller: caller,
+                caller,
                 ..Default::default()
             },
         ));
@@ -162,7 +162,9 @@ impl<DB: Database> Inspector<DB> for Tracer {
     fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[B256], data: &Bytes) {
         let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
         node.ordering.push(LogCallOrder::Log(node.logs.len()));
-        node.logs.push(RawOrDecodedLog::Raw(RawLog::new(topics.to_vec(), *data).expect("Received invalid log")));
+        node.logs.push(RawOrDecodedLog::Raw(
+            RawLog::new(topics.to_vec(), *data).expect("Received invalid log"),
+        ));
     }
 
     #[inline]

@@ -122,8 +122,8 @@ mod tests {
             (60, fuzz_calldata(func.clone())),
             (40, fuzz_calldata_from_state(func, state)),
         ]);
-        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default()
-    };     let mut runner = proptest::test_runner::TestRunner::new(cfg);
+        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+        let mut runner = proptest::test_runner::TestRunner::new(cfg);
         let _ = runner.run(&strat, |_| Ok(()));
     }
 }

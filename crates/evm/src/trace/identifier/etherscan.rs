@@ -1,7 +1,10 @@
 use super::{AddressIdentity, TraceIdentifier};
 use crate::utils::RuntimeOrHandle;
-use foundry_block_explorers::{contract::{ContractMetadata, Metadata}, errors::EtherscanError};
 use alloy_primitives::Address;
+use foundry_block_explorers::{
+    contract::{ContractMetadata, Metadata},
+    errors::EtherscanError,
+};
 use foundry_common::compile::{self, ContractSources};
 use foundry_config::{Chain, Config};
 use futures::{
