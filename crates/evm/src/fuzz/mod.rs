@@ -13,7 +13,6 @@ use ethers::types::Log;
 use eyre::Result;
 use foundry_common::{calc, contracts::ContractsByAddress};
 use foundry_config::FuzzConfig;
-use foundry_utils::types::ToEthers;
 pub use proptest::test_runner::Reason;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 use serde::{Deserialize, Serialize};
@@ -394,9 +393,9 @@ impl FuzzTestResult {
 
     /// Returns the average gas use of all test cases
     pub fn mean_gas(&self, with_stipend: bool) -> u64 {
-        let mut values = self.gas_values(with_stipend);
+        let mut values = self.gas_values(with_stipend).into_iter().map(|g| U256::from(g)).collect::<Vec<_>>();
         values.sort_unstable();
-        calc::mean(&values).as_u64()
+        calc::mean(&values).to::<u64>()
     }
 
     fn gas_values(&self, with_stipend: bool) -> Vec<u64> {
@@ -448,9 +447,9 @@ impl FuzzedCases {
     /// Returns the average gas use of all test cases
     #[inline]
     pub fn mean_gas(&self, with_stipend: bool) -> u64 {
-        let mut values = self.gas_values(with_stipend);
+        let mut values = self.gas_values(with_stipend).into_iter().map(|g| U256::from(g)).collect::<Vec<_>>();
         values.sort_unstable();
-        calc::mean(&values).as_u64()
+        calc::mean(&values).to::<u64>()
     }
 
     #[inline]

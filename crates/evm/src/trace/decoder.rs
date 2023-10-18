@@ -323,23 +323,18 @@ impl CallTraceDecoder {
                 }
             }
 
-            for mut event in events {
-                // ensure all params are named, otherwise this will cause issues with decoding: See also <https://github.com/rust-ethereum/ethabi/issues/206>
-                let empty_params = patch_nameless_params(&mut event);
-                if let Ok(decoded) = event.decode_log(raw_log, false) {
+            for event in events {
+                if let Ok(decoded) = event.decode_log(&raw_log, false) {
                     *log = RawOrDecodedLog::Decoded(
                         event.name,
                         decoded
-                            .params
+                            .body
                             .into_iter()
-                            .map(|param| {
+                            .zip(event.inputs.iter())
+                            .map(|(param, input)| {
                                 // undo patched names
-                                let name = if empty_params.contains(&param.name) {
-                                    "".to_string()
-                                } else {
-                                    param.name
-                                };
-                                (name, self.apply_label(&param.value))
+                                let name = input.name.clone();
+                                (name, self.apply_label(&param))
                             })
                             .collect(),
                     );
@@ -352,21 +347,6 @@ impl CallTraceDecoder {
     fn apply_label(&self, token: &DynSolValue) -> String {
         utils::label(token, &self.labels)
     }
-}
-
-/// This is a bit horrible but due to <https://github.com/rust-ethereum/ethabi/issues/206> we need to patch nameless (valid) params before decoding a logs, otherwise [`Event::parse_log()`] will result in wrong results since they're identified by name.
-///
-/// Returns a set of patched param names, that originally were empty.
-fn patch_nameless_params(event: &mut Event) -> HashSet<String> {
-    let mut patches = HashSet::new();
-    if event.inputs.iter().filter(|input| input.name.is_empty()).count() > 1 {
-        for (idx, param) in event.inputs.iter_mut().enumerate() {
-            // this is an illegal arg name, which ensures patched identifiers are unique
-            param.name = format!("<patched {idx}>");
-            patches.insert(param.name.clone());
-        }
-    }
-    patches
 }
 
 fn indexed_inputs(event: &Event) -> usize {
