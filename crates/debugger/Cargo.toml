@@ -17,7 +17,7 @@ foundry-utils.workspace = true
 alloy-primitives.workspace = true
 
 crossterm = "0.27"
-eyre = "0.6"
-tracing = "0.1"
+eyre.workspace = true
+tracing.workspace = true
 revm = { workspace = true, default-features = false, features = ["std", "serde", "arbitrary"] }
 ratatui = { version = "0.23.0", default-features = false, features = ["crossterm"] }

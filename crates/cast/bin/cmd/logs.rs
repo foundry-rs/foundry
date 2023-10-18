@@ -305,7 +305,7 @@ mod tests {
             None,
             None,
             Some(TRANSFER_SIG.to_string()),
-            vec!["".to_string(), ADDRESS.to_string()],
+            vec![String::new(), ADDRESS.to_string()],
         )
         .unwrap();
         assert_eq!(filter, expected)
@@ -352,7 +352,7 @@ mod tests {
             None,
             None,
             Some(TRANSFER_TOPIC.to_string()),
-            vec!["".to_string(), TRANSFER_TOPIC.to_string()],
+            vec![String::new(), TRANSFER_TOPIC.to_string()],
         )
         .unwrap();
 

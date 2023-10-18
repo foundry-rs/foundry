@@ -136,7 +136,7 @@ pub fn sanitize_token(token: Token) -> Token {
                     Token::String(val) => {
                         let val = match val.as_str() {
                             // this is supposed to be an empty string
-                            "\"\"" | "''" => "".to_string(),
+                            "\"\"" | "''" => String::new(),
                             _ => val,
                         };
                         Token::String(val)
@@ -369,12 +369,12 @@ mod tests {
         let token =
             Token::Array(LenientTokenizer::tokenize_array("[\"\"]", &ParamType::String).unwrap());
         let sanitized = sanitize_token(token);
-        assert_eq!(sanitized, Token::Array(vec![Token::String("".to_string())]));
+        assert_eq!(sanitized, Token::Array(vec![Token::String(String::new())]));
 
         let token =
             Token::Array(LenientTokenizer::tokenize_array("['']", &ParamType::String).unwrap());
         let sanitized = sanitize_token(token);
-        assert_eq!(sanitized, Token::Array(vec![Token::String("".to_string())]));
+        assert_eq!(sanitized, Token::Array(vec![Token::String(String::new())]));
 
         let token = Token::Array(
             LenientTokenizer::tokenize_array("[\"\",\"\"]", &ParamType::String).unwrap(),
@@ -382,7 +382,7 @@ mod tests {
         let sanitized = sanitize_token(token);
         assert_eq!(
             sanitized,
-            Token::Array(vec![Token::String("".to_string()), Token::String("".to_string())])
+            Token::Array(vec![Token::String(String::new()), Token::String(String::new())])
         );
 
         let token =
@@ -390,7 +390,7 @@ mod tests {
         let sanitized = sanitize_token(token);
         assert_eq!(
             sanitized,
-            Token::Array(vec![Token::String("".to_string()), Token::String("".to_string())])
+            Token::Array(vec![Token::String(String::new()), Token::String(String::new())])
         );
     }
 

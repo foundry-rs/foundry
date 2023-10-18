@@ -43,7 +43,7 @@ tower = "0.4"
 tower-http = { version = "0.4", features = ["trace"] }
 
 # tracing
-tracing = "0.1"
+tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # async
@@ -54,8 +54,8 @@ async-trait = "0.1"
 
 # misc
 flate2 = "1.0"
-serde_json = "1"
-serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+serde.workspace = true
 thiserror = "1"
 yansi = "0.5"
 tempfile = "3"

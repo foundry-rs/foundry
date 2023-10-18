@@ -13,8 +13,8 @@ repository.workspace = true
 [dependencies]
 foundry-config.workspace = true
 ethers-contract = { workspace = true, features = ["abigen"] }
-eyre = "0.6"
+eyre.workspace = true
 git2 = { version = "0.18", default-features = false }
 url = "2"
-tracing = "0.1"
+tracing.workspace = true
 tempfile = "3"

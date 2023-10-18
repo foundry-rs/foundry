@@ -1254,7 +1254,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         ident: &mut Option<Identifier>,
     ) -> Result<()> {
         let ident =
-            if let Some(ident) = ident { format!(":{}", ident.name) } else { "".to_owned() };
+            if let Some(ident) = ident { format!(":{}", ident.name) } else { String::new() };
         write_chunk!(self, loc.start(), loc.end(), "{val}{ident}")?;
         Ok(())
     }

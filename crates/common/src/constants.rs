@@ -19,7 +19,7 @@ pub const CONTRACT_MAX_SIZE: usize = 24576;
 /// responses. This timeout should be a reasonable amount of time to wait for a request.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 
-/// Alchemy free tier cups <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
+/// Alchemy free tier cups: <https://docs.alchemy.com/reference/pricing-plans>
 pub const ALCHEMY_FREE_TIER_CUPS: u64 = 330;
 
 /// Logged when an error is indicative that the user is trying to fork from a non-archive node.
