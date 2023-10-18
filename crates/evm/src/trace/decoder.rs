@@ -10,7 +10,7 @@ use crate::{
     CALLER, TEST_CONTRACT_ADDRESS,
 };
 use alloy_primitives::{Address, FixedBytes, B256};
-use alloy_dyn_abi::{DynSolType, DynSolValue};
+use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt};
 use alloy_json_abi::{JsonAbi as Abi, Event, Function, Param};
 use foundry_common::{abi::get_indexed_event, SELECTOR_LEN};
 use foundry_utils::types::ToEthers;
@@ -251,7 +251,7 @@ impl CallTraceDecoder {
                 if bytes.len() >= 4 {
                     if let Some(funcs) = self.functions.get(&bytes[..SELECTOR_LEN]) {
                         node.decode_function(funcs, &self.labels, &self.errors, self.verbosity);
-                    } else if node.trace.address == DEFAULT_CREATE2_DEPLOYER.to_ethers() {
+                    } else if node.trace.address == DEFAULT_CREATE2_DEPLOYER {
                         node.trace.data =
                             RawOrDecodedCall::Decoded("create2".to_string(), String::new(), vec![]);
                     } else if let Some(identifier) = &self.signature_identifier {
@@ -308,16 +308,16 @@ impl CallTraceDecoder {
     async fn decode_event(&self, log: &mut RawOrDecodedLog) {
         if let RawOrDecodedLog::Raw(raw_log) = log {
             // do not attempt decoding if no topics
-            if raw_log.topics.is_empty() {
+            if raw_log.topics().is_empty() {
                 return
             }
 
             let mut events = vec![];
-            if let Some(evs) = self.events.get(&(raw_log.topics[0], raw_log.topics.len() - 1)) {
+            if let Some(evs) = self.events.get(&(raw_log.topics()[0], raw_log.topics().len() - 1)) {
                 events = evs.clone();
             } else if let Some(identifier) = &self.signature_identifier {
                 if let Some(event) =
-                    identifier.write().await.identify_event(&raw_log.topics[0].0).await
+                    identifier.write().await.identify_event(&raw_log.topics()[0].0).await
                 {
                     events.push(get_indexed_event(event, raw_log));
                 }
@@ -326,7 +326,7 @@ impl CallTraceDecoder {
             for mut event in events {
                 // ensure all params are named, otherwise this will cause issues with decoding: See also <https://github.com/rust-ethereum/ethabi/issues/206>
                 let empty_params = patch_nameless_params(&mut event);
-                if let Ok(decoded) = event.parse_log(raw_log.clone()) {
+                if let Ok(decoded) = event.decode_log(raw_log, false) {
                     *log = RawOrDecodedLog::Decoded(
                         event.name,
                         decoded
@@ -349,7 +349,7 @@ impl CallTraceDecoder {
         }
     }
 
-    fn apply_label(&self, token: &Token) -> String {
+    fn apply_label(&self, token: &DynSolValue) -> String {
         utils::label(token, &self.labels)
     }
 }

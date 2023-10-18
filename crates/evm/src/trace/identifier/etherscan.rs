@@ -151,7 +151,7 @@ type EtherscanFuture =
 /// Fetches information about multiple addresses concurrently, while respecting rate limits.
 pub struct EtherscanFetcher {
     /// The Etherscan client
-    client: Arc<etherscan::Client>,
+    client: Arc<foundry_block_explorers::Client>,
     /// The time we wait if we hit the rate limit
     timeout: Duration,
     /// The interval we are currently waiting for before making a new request
@@ -168,7 +168,7 @@ pub struct EtherscanFetcher {
 
 impl EtherscanFetcher {
     pub fn new(
-        client: Arc<etherscan::Client>,
+        client: Arc<foundry_block_explorers::Client>,
         timeout: Duration,
         concurrency: usize,
         invalid_api_key: Arc<AtomicBool>,

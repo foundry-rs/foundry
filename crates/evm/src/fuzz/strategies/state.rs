@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_dyn_abi::{DynSolType, JsonAbiExt};
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use bytes::Bytes;
 use ethers::types::Log;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
@@ -97,7 +97,7 @@ pub fn build_initial_state<DB: DatabaseRef>(
     for (address, account) in db.accounts.iter() {
         let address: Address = *address;
         // Insert basic account information
-        state.values_mut().insert(B256::from_slice(address.into_word()).into());
+        state.values_mut().insert(address.into_word().into());
 
         // Insert push bytes
         if config.include_push_bytes {
@@ -136,7 +136,7 @@ pub fn build_initial_state<DB: DatabaseRef>(
     // fuzzing
     if state.values().is_empty() {
         // prefill with a random addresses
-        state.values_mut().insert(B256::from_slice(Address::random().into_word()).into());
+        state.values_mut().insert(Address::random().into_word().into());
     }
 
     Arc::new(RwLock::new(state))
@@ -153,7 +153,7 @@ pub fn collect_state_from_call(
 
     for (address, account) in state_changeset {
         // Insert basic account information
-        state.values_mut().insert(B256::from_slice(address.into_word()).into());
+        state.values_mut().insert(address.into_word().into());
 
         if config.include_push_bytes && state.addresses.len() < config.max_fuzz_dictionary_addresses
         {

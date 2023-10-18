@@ -349,7 +349,7 @@ mod tests {
             DynSolValue::Tuple(vec![
                 DynSolValue::Address(err.0),
                 DynSolValue::Bool(err.1),
-                DynSolValue::Uint(U256::from(100u64)),
+                DynSolValue::Uint(U256::from(100u64), 256),
             ])
         );
     }

@@ -1,4 +1,4 @@
-use std::ops::{Add, Sub};
+use std::ops::{Add, Sub, Shl};
 
 use ethers::core::rand::Rng;
 use proptest::{

@@ -87,6 +87,7 @@ dependencies = [
  "arbitrary",
  "const-hex",
  "derive_arbitrary",
+ "derive_more",
  "itoa",
  "proptest",
  "serde",
