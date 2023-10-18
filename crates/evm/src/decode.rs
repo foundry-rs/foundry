@@ -3,7 +3,11 @@ use crate::{
     abi::ConsoleEvents::{self, *},
     executor::inspector::cheatcodes::util::MAGIC_SKIP_BYTES,
 };
-use alloy_primitives::B256;
+use alloy_dyn_abi::{JsonAbiExt, DynSolValue, DynSolType};
+use alloy_json_abi::JsonAbi;
+use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{Log as AlloyLog};
+use alloy_sol_types::{sol, SolEvent};
 use ethers::{
     abi::{decode, AbiDecode, Contract as Abi, ParamType, RawLog, Token},
     contract::EthLogDecode,
@@ -11,10 +15,35 @@ use ethers::{
     types::Log,
 };
 use foundry_common::{abi::format_token, SELECTOR_LEN};
-use foundry_utils::error::ERROR_PREFIX;
+use foundry_utils::{error::ERROR_PREFIX, types::ToAlloy};
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use revm::interpreter::{return_ok, InstructionResult};
+
+sol! {
+    event log(string);
+    event logs                   (bytes);
+    event log_address            (address);
+    event log_bytes32            (bytes32);
+    event log_int                (int);
+    event log_uint               (uint);
+    event log_bytes              (bytes);
+    event log_string             (string);
+    event log_array              (uint256[] val);
+    event log_array              (int256[] val);
+    event log_array              (address[] val);
+    event log_named_address      (string key, address val);
+    event log_named_bytes32      (string key, bytes32 val);
+    event log_named_decimal_int  (string key, int val, uint decimals);
+    event log_named_decimal_uint (string key, uint val, uint decimals);
+    event log_named_int          (string key, int val);
+    event log_named_uint         (string key, uint val);
+    event log_named_bytes        (string key, bytes val);
+    event log_named_string       (string key, string val);
+    event log_named_array        (string key, uint256[] val);
+    event log_named_array        (string key, int256[] val);
+    event log_named_array        (string key, address[] val);
+}
 
 /// Decode a set of logs, only returning logs from DSTest logging events and Hardhat's `console.log`
 pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
@@ -26,52 +55,65 @@ pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
 /// This function returns [None] if it is not a DSTest log or the result of a Hardhat
 /// `console.log`.
 pub fn decode_console_log(log: &Log) -> Option<String> {
-    // NOTE: We need to do this conversion because ethers-rs does not
-    // support passing `Log`s
-    let raw_log = RawLog { topics: log.topics.clone(), data: log.data.to_vec() };
-    let decoded = match ConsoleEvents::decode_log(&raw_log).ok()? {
-        LogsFilter(inner) => format!("{}", inner.0),
-        LogBytesFilter(inner) => format!("{}", inner.0),
-        LogNamedAddressFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
-        LogNamedBytes32Filter(inner) => {
-            format!("{}: {}", inner.key, B256::new(inner.val))
-        }
-        LogNamedDecimalIntFilter(inner) => {
-            let (sign, val) = inner.val.into_sign_and_abs();
-            format!(
-                "{}: {}{}",
-                inner.key,
-                sign,
-                ethers::utils::format_units(val, inner.decimals.as_u32()).unwrap()
-            )
-        }
-        LogNamedDecimalUintFilter(inner) => {
-            format!(
-                "{}: {}",
-                inner.key,
-                ethers::utils::format_units(inner.val, inner.decimals.as_u32()).unwrap()
-            )
-        }
-        LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
-        LogNamedUintFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
-        LogNamedBytesFilter(inner) => {
-            format!("{}: {}", inner.key, inner.val)
-        }
-        LogNamedStringFilter(inner) => format!("{}: {}", inner.key, inner.val),
-        LogNamedArray1Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
-        LogNamedArray2Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
-        LogNamedArray3Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
+    let raw_log = AlloyLog::new_unchecked(log.topics.into_iter().map(|h| h.to_alloy()).collect_vec(), log.data.0.into());
+    let data = log_address::abi_decode_data(&raw_log.data, false);
+    if let Ok(inner) = log::abi_decode_data(&raw_log.data, false) {
+        return Some(inner.0)
+    } else if let Ok(inner) = logs::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{}", Bytes::from(inner.0)))
+    } else if let Ok(inner) = log_address::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{}", inner.0))
+    } else if let Ok(inner) = log_bytes32::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{}", inner.0))
+    } else if let Ok(inner) = log_int::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{}", inner.0))
+    } else if let Ok(inner) = log_uint::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{}", inner.0))
+    } else if let Ok(inner) = log_bytes::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{}", Bytes::from(inner.0)))
+    } else if let Ok(inner) = log_string::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{}", inner.0))
+    } else if let Ok(inner) = log_array_0::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{:?}", inner.0))
+    } else if let Ok(inner) = log_array_1::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{:?}", inner.0))
+    } else if let Ok(inner) = log_array_2::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{:?}", inner.0))
+    } else if let Ok(inner) = log_named_address::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{}: {}", inner.0, inner.1))
+    } else if let Ok(inner) = log_named_bytes32::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{}: {}", inner.0, inner.1))
+    } else if let Ok(inner) = log_named_decimal_int::abi_decode_data(&raw_log.data, false) {
+        let (sign, val) = inner.1.into_sign_and_abs();
+        // TODO: Format units
+        return Some(format!("{}: {}{}", inner.0, sign, val))
+    } else if let Ok(inner) = log_named_decimal_uint::abi_decode_data(&raw_log.data, false) {
+        // TODO: Format units
+        return Some(format!("{}: {}", inner.0, inner.1))
+    } else if let Ok(inner) = log_named_int::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{}: {}", inner.0, inner.1))
+    } else if let Ok(inner) = log_named_uint::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{}: {}", inner.0, inner.1))
+    } else if let Ok(inner) = log_named_bytes::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{}: {}", inner.0, Bytes::from(inner.1)))
+    } else if let Ok(inner) = log_named_string::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{}: {}", inner.0, inner.1))
+    } else if let Ok(inner) = log_named_array_0::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{}: {:?}", inner.0, inner.1))
+    } else if let Ok(inner) = log_named_array_1::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{}: {:?}", inner.0, inner.1))
+    } else if let Ok(inner) = log_named_array_2::abi_decode_data(&raw_log.data, false) {
+        return Some(format!("{}: {:?}", inner.0, inner.1))
+    }
 
-        e => e.to_string(),
-    };
-    Some(decoded)
+    return None
 }
 
 /// Given an ABI encoded error string with the function signature `Error(string)`, it decodes
 /// it and returns the revert error message.
 pub fn decode_revert(
     err: &[u8],
-    maybe_abi: Option<&Abi>,
+    maybe_abi: Option<&JsonAbi>,
     status: Option<InstructionResult>,
 ) -> eyre::Result<String> {
     if err.len() < SELECTOR_LEN {
@@ -170,10 +212,10 @@ pub fn decode_revert(
             // try to decode a custom error if provided an abi
             if let Some(abi) = maybe_abi {
                 for abi_error in abi.errors() {
-                    if abi_error.signature()[..SELECTOR_LEN] == err[..SELECTOR_LEN] {
+                    if abi_error.signature()[..SELECTOR_LEN].as_bytes() == &err[..SELECTOR_LEN] {
                         // if we don't decode, don't return an error, try to decode as a
                         // string later
-                        if let Ok(decoded) = abi_error.decode(&err[SELECTOR_LEN..]) {
+                        if let Ok(decoded) = abi_error.abi_decode_input(&err[SELECTOR_LEN..], false) {
                             let inputs = decoded
                                 .iter()
                                 .map(foundry_common::abi::format_token)
@@ -220,34 +262,34 @@ pub fn decode_revert(
 }
 
 /// Tries to optimistically decode a custom solc error, with at most 4 arguments
-pub fn decode_custom_error(err: &[u8]) -> Option<Token> {
+pub fn decode_custom_error(err: &[u8]) -> Option<DynSolValue> {
     decode_custom_error_args(err, 4)
 }
 
 /// Tries to optimistically decode a custom solc error with a maximal amount of arguments
 ///
 /// This will brute force decoding of custom errors with up to `args` arguments
-pub fn decode_custom_error_args(err: &[u8], args: usize) -> Option<Token> {
+pub fn decode_custom_error_args(err: &[u8], args: usize) -> Option<DynSolValue> {
     if err.len() <= SELECTOR_LEN {
         return None
     }
 
     let err = &err[SELECTOR_LEN..];
     /// types we check against
-    static TYPES: Lazy<Vec<ParamType>> = Lazy::new(|| {
+    static TYPES: Lazy<Vec<DynSolType>> = Lazy::new(|| {
         vec![
-            ParamType::Address,
-            ParamType::Bool,
-            ParamType::Uint(256),
-            ParamType::Int(256),
-            ParamType::Bytes,
-            ParamType::String,
+            DynSolType::Address,
+            DynSolType::Bool,
+            DynSolType::Uint(256),
+            DynSolType::Int(256),
+            DynSolType::Bytes,
+            DynSolType::String,
         ]
     });
 
     macro_rules! try_decode {
         ($ty:ident) => {
-            if let Ok(mut decoded) = decode(&[$ty], err) {
+            if let Ok(mut decoded) = DynSolType::abi_decode(&[$ty], err) {
                 return Some(decoded.remove(0))
             }
         };
@@ -264,14 +306,14 @@ pub fn decode_custom_error_args(err: &[u8], args: usize) -> Option<Token> {
     // brute force decode all possible combinations
     for num in (2..=args).rev() {
         for candidate in TYPES.iter().cloned().combinations(num) {
-            if let Ok(decoded) = decode(&candidate, err) {
-                return Some(Token::Tuple(decoded))
+            if let Ok(decoded) = DynSolType::abi_decode_sequence( &DynSolType::Tuple(candidate), err) {
+                return Some(decoded)
             }
         }
     }
 
     // try as array
-    for ty in TYPES.iter().cloned().map(|ty| ParamType::Array(Box::new(ty))) {
+    for ty in TYPES.iter().cloned().map(|ty| DynSolType::Array(Box::new(ty))) {
         try_decode!(ty);
     }
 
@@ -281,10 +323,7 @@ pub fn decode_custom_error_args(err: &[u8], args: usize) -> Option<Token> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers::{
-        abi::{AbiEncode, Address},
-        contract::EthError,
-    };
+    use alloy_primitives::{Address, U256};
 
     #[test]
     fn test_decode_custom_error_address() {
@@ -294,7 +333,7 @@ mod tests {
 
         let encoded = err.clone().encode();
         let decoded = decode_custom_error(&encoded).unwrap();
-        assert_eq!(decoded, Token::Address(err.0));
+        assert_eq!(decoded, DynSolType::Address(err.0));
     }
 
     #[test]
@@ -307,10 +346,10 @@ mod tests {
         let decoded = decode_custom_error(&encoded).unwrap();
         assert_eq!(
             decoded,
-            Token::Tuple(vec![
-                Token::Address(err.0),
-                Token::Bool(err.1),
-                Token::Uint(100u64.into()),
+            DynSolValue::Tuple(vec![
+                DynSolValue::Address(err.0),
+                DynSolValue::Bool(err.1),
+                DynSolValue::Uint(U256::from(100u64)),
             ])
         );
     }
