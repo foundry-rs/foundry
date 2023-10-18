@@ -6,9 +6,9 @@ use crate::{
 use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{Bytes, Log as AlloyLog, B256};
-use alloy_sol_types::{sol, SolEvent};
+use alloy_sol_types::{sol, SolEvent, sol_data::String as SolString, SolType};
 use ethers::{
-    abi::{decode, AbiDecode, Contract as Abi, ParamType, RawLog, Token},
+    abi::{decode, Contract as Abi, ParamType, RawLog, Token},
     contract::EthLogDecode,
     prelude::U256,
     types::Log,
@@ -174,7 +174,7 @@ pub fn decode_revert(
         }
         // keccak(Error(string))
         [8, 195, 121, 160] => {
-            String::decode(&err[SELECTOR_LEN..]).map_err(|_| eyre::eyre!("Bad string decode"))
+            SolString::abi_decode(&err[SELECTOR_LEN..], false).map_err(|_| eyre::eyre!("Bad string decode"))
         }
         // keccak(expectRevert(bytes))
         [242, 141, 206, 179] => {
@@ -230,19 +230,19 @@ pub fn decode_revert(
                 }
             }
             // optimistically try to decode as string, unknown selector or `CheatcodeError`
-            String::decode(err)
+            SolString::abi_decode(err, false)
                 .ok()
                 .or_else(|| {
                     // try decoding as cheatcode error
                     if err.starts_with(ERROR_PREFIX.as_slice()) {
-                        String::decode(&err[ERROR_PREFIX.len()..]).ok()
+                        SolString::abi_decode(&err[ERROR_PREFIX.len()..], false).ok()
                     } else {
                         None
                     }
                 })
                 .or_else(|| {
                     // try decoding as unknown err
-                    String::decode(&err[SELECTOR_LEN..])
+                    SolString::abi_decode(&err[SELECTOR_LEN..], false)
                         .map(|err_str| format!("{}:{err_str}", hex::encode(&err[..SELECTOR_LEN])))
                         .ok()
                 })
@@ -353,7 +353,7 @@ mod tests {
             DynSolValue::Tuple(vec![
                 DynSolValue::Address(err.0),
                 DynSolValue::Bool(err.1),
-                DynSolValue::Uint(U256::from(100u64),),
+                DynSolValue::Uint(U256::from(100u64)),
             ])
         );
     }
