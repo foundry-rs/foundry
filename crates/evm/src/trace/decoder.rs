@@ -147,7 +147,7 @@ impl CallTraceDecoder {
                 0x05: modexp(Bsize: format!("uint256"), Esize: format!("uint256"), Msize: format!("uint256"), BEM: format!("bytes")) -> (value: format!("bytes")),
                 0x06: ecadd(x1: format!("uint256"), y1: format!("uint256"), x2: format!("uint256"), y2: format!("uint256")) -> (x: format!("uint256"), y: format!("uint256")),
                 0x07: ecmul(x1: format!("uint256"), y1: format!("uint256"), s: format!("uint256")) -> (x: format!("uint256"), y: format!("uint256")),
-                0x08: ecpairing(x1: format!("uint256"), y1: format!("uint256"), x2: format!("uint256"), y2: format!("uint256"), x3: format!("uint256"), y3: format!("uint256")) -> (success: Uint(256)),
+                0x08: ecpairing(x1: format!("uint256"), y1: format!("uint256"), x2: format!("uint256"), y2: format!("uint256"), x3: format!("uint256"), y3: format!("uint256")) -> (success: format!("uint256")),
                 0x09: blake2f(rounds: DynSolType::Uint(4).to_string(), h: DynSolType::FixedBytes(64).to_string(), m: DynSolType::FixedBytes(128).to_string(), t: DynSolType::FixedBytes(16).to_string(), f: DynSolType::FixedBytes(1).to_string()) -> (h: DynSolType::FixedBytes(64).to_string()),
             ).into(),
 
@@ -165,7 +165,7 @@ impl CallTraceDecoder {
             functions: HARDHAT_CONSOLE_ABI
                 .functions()
                 .chain(HEVM_ABI.functions())
-                .map(|func| (func.short_signature(), vec![func.clone()]))
+                .map(|func| (func.selector(), vec![func.clone()]))
                 .collect(),
 
             events: CONSOLE_ABI

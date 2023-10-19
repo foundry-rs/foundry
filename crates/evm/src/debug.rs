@@ -180,7 +180,7 @@ impl Display for Instruction {
                 "VM_{}",
                 &*HEVM_ABI
                     .functions()
-                    .find(|func| func.short_signature() == *cheat)
+                    .find(|func| func.selector() == *cheat)
                     .expect("unknown cheatcode found in debugger")
                     .name
                     .to_uppercase()

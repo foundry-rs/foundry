@@ -1,10 +1,11 @@
 //! Several ABI-related utilities for executors.
 
+use alloy_json_abi::JsonAbi;
 use alloy_primitives::Address;
 pub use foundry_abi::{
-    console::{self, ConsoleEvents, CONSOLE_ABI},
-    hardhat_console::{self, HardhatConsoleCalls, HARDHATCONSOLE_ABI as HARDHAT_CONSOLE_ABI},
-    hevm::{self, HEVMCalls, HEVM_ABI},
+    console::{self, ConsoleEvents},
+    hardhat_console::{self, HardhatConsoleCalls},
+    hevm::{self, HEVMCalls},
 };
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -37,6 +38,46 @@ pub fn patch_hardhat_console_selector(input: &mut Vec<u8>) {
         *selector = *abigen_selector;
     }
 }
+
+pub static HEVM_ABI: Lazy<JsonAbi> = Lazy::new(|| {
+    let json =
+        std::fs::read_to_string("../../../../abi/abi/HEVM.sol").expect("Could not read HEVM abi");
+    JsonAbi::parse(json.lines()).expect("Could not parse HEVM abi")
+});
+
+pub static HARDHAT_CONSOLE_ABI: Lazy<JsonAbi> = Lazy::new(|| {
+    let json =
+        std::fs::read_to_string("assets/HardhatConsole.json").expect("Could not read console ABI");
+    serde_json::from_str(&json).expect("Could not create console ABI")
+});
+
+pub static CONSOLE_ABI: Lazy<JsonAbi> = Lazy::new(|| {
+    JsonAbi::parse([
+        "event log(string)",
+        "event logs                   (bytes)",
+        "event log_address            (address)",
+        "event log_bytes32            (bytes32)",
+        "event log_int                (int)",
+        "event log_uint               (uint)",
+        "event log_bytes              (bytes)",
+        "event log_string             (string)",
+        "event log_array              (uint256[] val)",
+        "event log_array              (int256[] val)",
+        "event log_array              (address[] val)",
+        "event log_named_address      (string key, address val)",
+        "event log_named_decimal_int  (string key, int val, uint decimals)",
+        "event log_named_bytes32      (string key, bytes32 val)",
+        "event log_named_decimal_uint (string key, uint val, uint decimals)",
+        "event log_named_int          (string key, int val)",
+        "event log_named_uint         (string key, uint val)",
+        "event log_named_bytes        (string key, bytes val)",
+        "event log_named_string       (string key, string val)",
+        "event log_named_array        (string key, uint256[] val)",
+        "event log_named_array        (string key, int256[] val)",
+        "event log_named_array        (string key, address[] val)",
+    ])
+    .expect("Could not parase console ABI")
+});
 
 /// This contains a map with all the  `hardhat/console.log` log selectors that use `uint` or `int`
 /// as key and the selector of the call with `uint256`,
