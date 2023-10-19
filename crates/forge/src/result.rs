@@ -1,6 +1,6 @@
 //! test outcomes
 
-use crate::Address;
+use alloy_primitives::Address;
 use ethers::prelude::Log;
 use foundry_common::evm::Breakpoints;
 use foundry_evm::{

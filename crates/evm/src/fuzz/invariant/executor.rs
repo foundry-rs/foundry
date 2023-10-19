@@ -561,9 +561,9 @@ impl<'a> InvariantExecutor<'a> {
         Ok(())
     }
 
-    // TODO: Requires executor rework 
+    // TODO: Requires executor rework
     // /// Get the function output by calling the contract `method_name` function, encoded as a
-    // [DynSolValue]. 
+    // [DynSolValue].
     // fn get_list<T>(&self, address: Address, abi: &Abi, method_name: &str) ->
     // Vec<T> where
     //     T: DynSolValue,

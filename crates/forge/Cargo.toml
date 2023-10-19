@@ -41,6 +41,8 @@ foundry-cli.workspace = true
 foundry-debugger.workspace = true
 
 alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-json-abi.workspace = true
+alloy-dyn-abi.workspace = true
 
 async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }

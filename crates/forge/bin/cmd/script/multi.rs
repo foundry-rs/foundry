@@ -4,13 +4,11 @@ use super::{
     verify::VerifyBundle,
     ScriptArgs,
 };
-use ethers::{
-    prelude::{artifacts::Libraries, ArtifactId},
-    signers::LocalWallet,
-};
+use ethers::signers::LocalWallet;
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_cli::utils::now;
 use foundry_common::{fs, get_http_provider};
+use foundry_compilers::{artifacts::Libraries, ArtifactId};
 use foundry_config::Config;
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};

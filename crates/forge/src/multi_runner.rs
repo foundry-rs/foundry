@@ -1,13 +1,12 @@
 use crate::{result::SuiteResult, ContractRunner, TestFilter, TestOptions};
+use alloy_json_abi::{Function, JsonAbi as Abi};
 use alloy_primitives::{Address, Bytes, U256};
-use ethers::{
-    abi::{Abi, Function},
-    prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
-};
-
 use eyre::Result;
 use foundry_common::{ContractsByArtifact, TestFunctionExt};
-use foundry_compilers::{contracts::ArtifactContracts, Artifact, ProjectCompileOutput};
+use foundry_compilers::{
+    artifacts::CompactContractBytecode, contracts::ArtifactContracts, Artifact, ArtifactId,
+    ArtifactOutput, ProjectCompileOutput,
+};
 use foundry_evm::{
     executor::{
         backend::Backend, fork::CreateFork, inspector::CheatsConfig, opts::EvmOpts, Executor,

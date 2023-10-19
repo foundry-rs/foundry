@@ -2,8 +2,8 @@ use crate::{
     executor::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
     trace::{CallTraceArena, RawOrDecodedCall, TraceKind},
 };
+use alloy_primitives::U256;
 use comfy_table::{presets::ASCII_MARKDOWN, *};
-use ethers::types::U256;
 use foundry_common::{calc, TestFunctionExt};
 use foundry_utils::types::ToEthers;
 use serde::{Deserialize, Serialize};

@@ -1,4 +1,5 @@
 use super::{artifacts::ArtifactInfo, ScriptResult};
+use alloy_dyn_abi::FunctionExt;
 use alloy_primitives::{Address, B256};
 use ethers::{abi, prelude::NameOrAddress, types::transaction::eip2718::TypedTransaction};
 use eyre::{ContextCompat, Result, WrapErr};
@@ -161,7 +162,7 @@ impl TransactionWithMetadata {
                         // the constructor args start after bytecode
                         let constructor_args = &creation_code[info.code.len()..];
 
-                        if let Ok(arguments) = abi::decode(&params, constructor_args) {
+                        if let Ok(arguments) = constructor.abi_decode_output(constructor_args) {
                             self.arguments = Some(arguments.iter().map(format_token_raw).collect());
                         } else {
                             let (signature, bytecode) = on_err();

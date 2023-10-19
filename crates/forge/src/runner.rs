@@ -2,11 +2,8 @@ use crate::{
     result::{SuiteResult, TestKind, TestResult, TestSetup, TestStatus},
     TestFilter, TestOptions,
 };
-use alloy_primitives::U256 as rU256;
-use ethers::{
-    abi::{Abi, Function},
-    types::{Address, Bytes, U256},
-};
+use alloy_json_abi::{Function, JsonAbi as Abi};
+use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
@@ -27,7 +24,6 @@ use foundry_evm::{
     trace::{load_contracts, TraceKind},
     CALLER,
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use proptest::test_runner::{TestError, TestRunner};
 use rayon::prelude::*;
 use std::{
@@ -98,22 +94,18 @@ impl<'a> ContractRunner<'a> {
         trace!(?setup, "Setting test contract");
 
         // We max out their balance so that they can deploy and make calls.
-        self.executor.set_balance(self.sender.to_alloy(), rU256::MAX)?;
-        self.executor.set_balance(CALLER, rU256::MAX)?;
+        self.executor.set_balance(self.sender, U256::MAX)?;
+        self.executor.set_balance(CALLER, U256::MAX)?;
 
         // We set the nonce of the deployer accounts to 1 to get the same addresses as DappTools
-        self.executor.set_nonce(self.sender.to_alloy(), 1)?;
+        self.executor.set_nonce(self.sender, 1)?;
 
         // Deploy libraries
         let mut logs = Vec::new();
         let mut traces = Vec::with_capacity(self.predeploy_libs.len());
         for code in self.predeploy_libs.iter() {
-            match self.executor.deploy(
-                self.sender.to_alloy(),
-                code.0.clone().into(),
-                rU256::ZERO,
-                self.errors,
-            ) {
+            match self.executor.deploy(self.sender, code.0.clone().into(), U256::ZERO, self.errors)
+            {
                 Ok(d) => {
                     logs.extend(d.logs);
                     traces.extend(d.traces.map(|traces| (TraceKind::Deployment, traces)));
@@ -126,9 +118,9 @@ impl<'a> ContractRunner<'a> {
 
         // Deploy the test contract
         let address = match self.executor.deploy(
-            self.sender.to_alloy(),
+            self.sender,
             self.code.0.clone().into(),
-            rU256::ZERO,
+            U256::ZERO,
             self.errors,
         ) {
             Ok(d) => {
@@ -143,9 +135,9 @@ impl<'a> ContractRunner<'a> {
 
         // Now we set the contracts initial balance, and we also reset `self.sender`s and `CALLER`s
         // balance to the initial balance we want
-        self.executor.set_balance(address, self.initial_balance.to_alloy())?;
-        self.executor.set_balance(self.sender.to_alloy(), self.initial_balance.to_alloy())?;
-        self.executor.set_balance(CALLER, self.initial_balance.to_alloy())?;
+        self.executor.set_balance(address, self.initial_balance)?;
+        self.executor.set_balance(self.sender, self.initial_balance)?;
+        self.executor.set_balance(CALLER, self.initial_balance)?;
 
         self.executor.deploy_create2_deployer()?;
 
@@ -171,18 +163,9 @@ impl<'a> ContractRunner<'a> {
             traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
             logs.extend(setup_logs);
 
-            TestSetup {
-                address: address.to_ethers(),
-                logs,
-                traces,
-                labeled_addresses: labeled_addresses
-                    .into_iter()
-                    .map(|l| (l.0.to_ethers(), l.1))
-                    .collect(),
-                reason,
-            }
+            TestSetup { address, logs, traces, labeled_addresses, reason }
         } else {
-            TestSetup::success(address.to_ethers(), logs, traces, Default::default())
+            TestSetup::success(address, logs, traces, Default::default())
         };
 
         Ok(setup)
@@ -330,11 +313,11 @@ impl<'a> ContractRunner<'a> {
         let debug_arena;
         let (reverted, reason, gas, stipend, coverage, state_changeset, breakpoints) =
             match executor.execute_test::<(), _, _>(
-                self.sender.to_alloy(),
-                address.to_alloy(),
+                self.sender,
+                address,
                 func.clone(),
                 (),
-                rU256::ZERO,
+                U256::ZERO,
                 self.errors,
             ) {
                 Ok(CallResult {
@@ -351,16 +334,14 @@ impl<'a> ContractRunner<'a> {
                     ..
                 }) => {
                     traces.extend(execution_trace.map(|traces| (TraceKind::Execution, traces)));
-                    labeled_addresses
-                        .extend(new_labels.into_iter().map(|l| (l.0.to_ethers(), l.1)));
+                    labeled_addresses.extend(new_labels);
                     logs.extend(execution_logs);
                     debug_arena = debug;
                     (reverted, None, gas, stipend, coverage, state_changeset, breakpoints)
                 }
                 Err(EvmError::Execution(err)) => {
                     traces.extend(err.traces.map(|traces| (TraceKind::Execution, traces)));
-                    labeled_addresses
-                        .extend(err.labels.into_iter().map(|l| (l.0.to_ethers(), l.1)));
+                    labeled_addresses.extend(err.labels);
                     logs.extend(err.logs);
                     debug_arena = err.debug;
                     (
@@ -398,7 +379,7 @@ impl<'a> ContractRunner<'a> {
             };
 
         let success = executor.is_success(
-            setup.address.to_alloy(),
+            setup.address,
             reverted,
             state_changeset.expect("we should have a state changeset"),
             should_fail,
@@ -446,11 +427,11 @@ impl<'a> ContractRunner<'a> {
 
         // First, run the test normally to see if it needs to be skipped.
         if let Err(EvmError::SkipError) = self.executor.clone().execute_test::<(), _, _>(
-            self.sender.to_alloy(),
-            address.to_alloy(),
+            self.sender,
+            address,
             func.clone(),
             (),
-            rU256::ZERO,
+            U256::ZERO,
             self.errors,
         ) {
             return TestResult {

@@ -8,13 +8,11 @@ use crate::cmd::{
     verify::provider::VerificationProviderType,
 };
 use alloy_primitives::{Address, TxHash};
-use ethers::{
-    prelude::{artifacts::Libraries, ArtifactId, TransactionReceipt},
-    types::transaction::eip2718::TypedTransaction,
-};
+use ethers::{prelude::TransactionReceipt, types::transaction::eip2718::TypedTransaction};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_cli::utils::now;
 use foundry_common::{fs, shell, SELECTOR_LEN};
+use foundry_compilers::{artifacts::Libraries, ArtifactId};
 use foundry_config::Config;
 use foundry_utils::types::{ToAlloy, ToEthers};
 use serde::{Deserialize, Serialize};

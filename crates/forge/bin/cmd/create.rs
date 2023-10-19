@@ -11,7 +11,7 @@ use foundry_cli::{
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
 use foundry_common::{abi::parse_tokens, compile, estimate_eip1559_fees};
-use foundry_compilers::{info::ContractInfo, utils::canonicalized};
+use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalized};
 use foundry_utils::types::ToAlloy;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};

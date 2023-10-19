@@ -11,7 +11,6 @@ use forge::{
         inspector::{cheatcodes::util::BroadcastableTransactions, CheatsConfig},
         Backend, ExecutorBuilder,
     },
-    revm::primitives::U256 as rU256,
     trace::{CallTraceDecoder, Traces},
     CallKind,
 };
@@ -188,7 +187,7 @@ impl ScriptArgs {
 
                         // Simulate mining the transaction if the user passes `--slow`.
                         if self.slow {
-                            runner.executor.env.block.number += rU256::from(1);
+                            runner.executor.env.block.number += U256::from(1);
                         }
 
                         let is_fixed_gas_limit = tx.gas.is_some();

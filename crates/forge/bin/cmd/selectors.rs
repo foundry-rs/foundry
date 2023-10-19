@@ -1,6 +1,5 @@
 use clap::Parser;
 use comfy_table::Table;
-use ethers::prelude::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
 use eyre::Result;
 use foundry_cli::{
     opts::{CompilerArgs, CoreBuildArgs, ProjectPathsArgs},
@@ -10,6 +9,7 @@ use foundry_common::{
     compile,
     selectors::{import_selectors, SelectorImportData},
 };
+use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
 use std::fs::canonicalize;
 
 /// CLI arguments for `forge selectors`.

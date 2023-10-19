@@ -1,20 +1,18 @@
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
-use ethers::{
-    abi::RawAbi,
-    prelude::{
-        artifacts::output_selection::{
-            BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
-            EvmOutputSelection, EwasmOutputSelection,
-        },
-        info::ContractInfo,
-    },
-};
+use ethers::abi::RawAbi;
 use eyre::Result;
 use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
 use foundry_common::compile;
 use foundry_compilers::{
-    artifacts::{LosslessAbi, StorageLayout},
+    artifacts::{
+        output_selection::{
+            BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
+            EvmOutputSelection, EwasmOutputSelection,
+        },
+        LosslessAbi, StorageLayout,
+    },
+    info::ContractInfo,
     utils::canonicalize,
 };
 use serde_json::{to_value, Value};

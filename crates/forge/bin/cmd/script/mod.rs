@@ -1,14 +1,10 @@
 use self::{build::BuildOutput, runner::ScriptRunner};
 use super::{build::BuildArgs, retry::RetryArgs};
+use alloy_json_abi::{Function, JsonAbi as Abi};
 use alloy_primitives::{Address, Bytes, U256};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers::{
-    abi::{Abi, Function, HumanReadableParser},
-    prelude::{
-        artifacts::{ContractBytecodeSome, Libraries},
-        ArtifactId, Project,
-    },
     providers::{Http, Middleware},
     signers::LocalWallet,
     types::{
@@ -35,7 +31,11 @@ use foundry_common::{
     evm::{Breakpoints, EvmArgs},
     shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
-use foundry_compilers::contracts::ArtifactContracts;
+use foundry_compilers::{
+    artifacts::{ContractBytecodeSome, Libraries},
+    contracts::ArtifactContracts,
+    ArtifactId, Project,
+};
 use foundry_config::{
     figment,
     figment::{
@@ -452,7 +452,7 @@ impl ScriptArgs {
     ///
     /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
     pub fn get_method_and_calldata(&self, abi: &Abi) -> Result<(Function, Bytes)> {
-        let (func, data) = if let Ok(func) = HumanReadableParser::parse_function(&self.sig) {
+        let (func, data) = if let Ok(func) = Function::parse(&self.sig) {
             (
                 abi.functions().find(|&abi_func| abi_func.selector() == func.selector()).wrap_err(
                     format!("Function `{}` is not implemented in your script.", self.sig),
