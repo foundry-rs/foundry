@@ -148,6 +148,7 @@ fn to_ethers_transaction_with_hash_and_sender(
             source_hash: None,
             mint: None,
             is_system_tx: None,
+            other: Default::default(),
         },
         TypedTransaction::EIP2930(t) => EthersTransaction {
             hash,
@@ -172,6 +173,7 @@ fn to_ethers_transaction_with_hash_and_sender(
             source_hash: None,
             mint: None,
             is_system_tx: None,
+            other: Default::default(),
         },
         TypedTransaction::EIP1559(t) => EthersTransaction {
             hash,
@@ -196,6 +198,7 @@ fn to_ethers_transaction_with_hash_and_sender(
             source_hash: None,
             mint: None,
             is_system_tx: None,
+            other: Default::default(),
         },
         TypedTransaction::OpDeposit(t) => EthersTransaction {
             hash,
@@ -220,6 +223,7 @@ fn to_ethers_transaction_with_hash_and_sender(
             source_hash: Some(t.source_hash),
             mint: Some(t.mint),
             is_system_tx: Some(t.is_system_tx),
+            other: Default::default(),
         },
     }
 }

@@ -313,7 +313,7 @@ s                    {}
 to                   {}
 transactionIndex     {}
 v                    {}
-value                {}",
+value                {}{}",
             self.block_hash.pretty(),
             self.block_number.pretty(),
             self.from.pretty(),
@@ -328,6 +328,7 @@ value                {}",
             self.transaction_index.pretty(),
             self.v.pretty(),
             self.value.pretty(),
+            self.other.pretty()
         )
     }
 }
@@ -356,10 +357,10 @@ pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<Strin
         "transactionIndex" | "transaction_index" => Some(transaction.transaction_index.pretty()),
         "v" => Some(transaction.v.pretty()),
         "value" => Some(transaction.value.pretty()),
-        _other => {
-            // if let Some(value) = transaction.other.get(other) {
-            //     return Some(value.to_string().trim_matches('"').to_string())
-            // }
+        other => {
+            if let Some(value) = transaction.other.get(other) {
+                return Some(value.to_string().trim_matches('"').to_string())
+            }
             None
         }
     }

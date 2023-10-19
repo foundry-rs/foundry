@@ -1843,16 +1843,16 @@ impl EthApi {
                             // insert revert reason if failure
                             if receipt.inner.status.unwrap_or_default().as_u64() == 0 {
                                 if let Some(reason) = decode_revert_reason(&output) {
-                                    // tx.other.insert(
-                                    //     "revertReason".to_string(),
-                                    //     serde_json::to_value(reason).expect("Infallible"),
-                                    // );
+                                    tx.other.insert(
+                                        "revertReason".to_string(),
+                                        serde_json::to_value(reason).expect("Infallible"),
+                                    );
                                 }
                             }
-                            // tx.other.insert(
-                            //     "output".to_string(),
-                            //     serde_json::to_value(output).expect("Infallible"),
-                            // );
+                            tx.other.insert(
+                                "output".to_string(),
+                                serde_json::to_value(output).expect("Infallible"),
+                            );
                         }
                     }
                 }
