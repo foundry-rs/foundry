@@ -87,7 +87,7 @@ pub enum OtsInternalOperationType {
     Transfer = 0,
     SelfDestruct = 1,
     Create = 2,
-    // The spec asks for a Create2 entry as well, but we don't have that info
+    Create2 = 3,
 }
 
 /// Otterscan's representation of a trace
@@ -252,7 +252,12 @@ impl OtsInternalOperation {
                     to: node.trace.address,
                     value: node.trace.value,
                 }),
-
+                (CallKind::Create2, _) => Some(Self {
+                    r#type: OtsInternalOperationType::Create2,
+                    from: node.trace.caller,
+                    to: node.trace.address,
+                    value: node.trace.value,
+                }),
                 (_, InstructionResult::SelfDestruct) => {
                     Some(Self {
                         r#type: OtsInternalOperationType::SelfDestruct,
@@ -262,7 +267,6 @@ impl OtsInternalOperation {
                         value: node.trace.value,
                     })
                 }
-
                 _ => None,
             })
             .collect()

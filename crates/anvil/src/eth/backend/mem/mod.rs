@@ -1814,7 +1814,7 @@ impl Backend {
     }
 
     /// Returns the traces for the given transaction
-    pub(crate) fn mined_trace_transaction(&self, hash: H256) -> Option<MinedTransaction> {
+    pub(crate) fn mined_transaction(&self, hash: H256) -> Option<MinedTransaction> {
         self.blockchain.storage.read().transactions.get(&hash).cloned()
     }
 
