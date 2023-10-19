@@ -4,7 +4,7 @@ use super::EthTransactionRequest;
 use crate::eth::transaction::{
     EIP1559TransactionRequest, EIP2930TransactionRequest, LegacyTransactionRequest,
     MaybeImpersonatedTransaction, TypedTransaction, TypedTransactionRequest,
-    OpDepositTransactionRequest,
+    DepositTransactionRequest,
 };
 use ethers_core::types::{
     transaction::eip2718::TypedTransaction as EthersTypedTransactionRequest, Address,
@@ -88,8 +88,8 @@ impl From<TypedTransactionRequest> for EthersTypedTransactionRequest {
                     chain_id: Some(chain_id.into()),
                 })
             }
-            TypedTransactionRequest::OpDeposit(tx) => {
-                let OpDepositTransactionRequest {
+            TypedTransactionRequest::Deposit(tx) => {
+                let DepositTransactionRequest {
                     source_hash,
                     from,
                     kind,
@@ -200,7 +200,7 @@ fn to_ethers_transaction_with_hash_and_sender(
             is_system_tx: None,
             other: Default::default(),
         },
-        TypedTransaction::OpDeposit(t) => EthersTransaction {
+        TypedTransaction::Deposit(t) => EthersTransaction {
             hash,
             nonce: t.nonce,
             block_hash: None,

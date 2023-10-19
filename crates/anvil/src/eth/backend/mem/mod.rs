@@ -579,7 +579,7 @@ impl Backend {
         if self.is_op_deposits() {
             return Ok(())
         }
-        Err(BlockchainError::OpDepositTransactionUnsupported)
+        Err(BlockchainError::DepositTransactionUnsupported)
     }
 
     /// Returns the block gas limit
@@ -1926,7 +1926,7 @@ impl Backend {
                 .unwrap_or(self.base_fee())
                 .checked_add(t.max_priority_fee_per_gas)
                 .unwrap_or_else(U256::max_value),
-            TypedTransaction::OpDeposit(_) => U256::from(0),
+            TypedTransaction::Deposit(_) => U256::from(0),
         };
 
         let mut deposit_nonce: Option<u64> = None;
@@ -2258,7 +2258,7 @@ impl TransactionValidator for Backend {
         }
 
         // check nonce
-        let is_deposit_tx = matches!(&pending.transaction.transaction, TypedTransaction::OpDeposit(_));
+        let is_deposit_tx = matches!(&pending.transaction.transaction, TypedTransaction::Deposit(_));
         let nonce: u64 =
             (*tx.nonce()).try_into().map_err(|_| InvalidTransactionError::NonceMaxValue)?;
         if nonce < account.nonce && !is_deposit_tx {

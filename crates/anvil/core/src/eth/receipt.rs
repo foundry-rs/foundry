@@ -94,7 +94,7 @@ impl Decodable for EIP658Receipt {
 // same underlying data structure
 pub type EIP2930Receipt = EIP658Receipt;
 pub type EIP1559Receipt = EIP658Receipt;
-pub type OpDepositReceipt = EIP658Receipt;
+pub type DepositReceipt = EIP658Receipt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -106,7 +106,7 @@ pub enum TypedReceipt {
     /// EIP-1559 receipt
     EIP1559(EIP1559Receipt),
     /// op-stack deposit receipt
-    OpDeposit(OpDepositReceipt),
+    Deposit(DepositReceipt),
 }
 
 // == impl TypedReceipt ==
@@ -115,7 +115,7 @@ impl TypedReceipt {
     /// Returns the gas used by the transactions
     pub fn gas_used(&self) -> U256 {
         match self {
-            TypedReceipt::Legacy(r) | TypedReceipt::EIP2930(r) | TypedReceipt::EIP1559(r) | TypedReceipt::OpDeposit(r) => {
+            TypedReceipt::Legacy(r) | TypedReceipt::EIP2930(r) | TypedReceipt::EIP1559(r) | TypedReceipt::Deposit(r) => {
                 r.gas_used
             }
         }
@@ -124,7 +124,7 @@ impl TypedReceipt {
     /// Returns the gas used by the transactions
     pub fn logs_bloom(&self) -> &Bloom {
         match self {
-            TypedReceipt::Legacy(r) | TypedReceipt::EIP2930(r) | TypedReceipt::EIP1559(r) | TypedReceipt::OpDeposit(r) => {
+            TypedReceipt::Legacy(r) | TypedReceipt::EIP2930(r) | TypedReceipt::EIP1559(r) | TypedReceipt::Deposit(r) => {
                 &r.logs_bloom
             }
         }
@@ -137,7 +137,7 @@ impl Encodable for TypedReceipt {
             TypedReceipt::Legacy(r) => r.rlp_append(s),
             TypedReceipt::EIP2930(r) => enveloped(1, r, s),
             TypedReceipt::EIP1559(r) => enveloped(2, r, s),
-            TypedReceipt::OpDeposit(r) => enveloped(0x7E, r, s),
+            TypedReceipt::Deposit(r) => enveloped(0x7E, r, s),
         }
     }
 }
@@ -163,7 +163,7 @@ impl Decodable for TypedReceipt {
         }
 
         if first == 0x7E {
-            return rlp::decode(s).map(TypedReceipt::OpDeposit)
+            return rlp::decode(s).map(TypedReceipt::Deposit)
         }
 
         Err(DecoderError::Custom("unknown receipt type"))
@@ -179,7 +179,7 @@ impl open_fastrlp::Encodable for TypedReceipt {
                 let payload_len = match receipt {
                     TypedReceipt::EIP2930(r) => r.length() + 1,
                     TypedReceipt::EIP1559(r) => r.length() + 1,
-                    TypedReceipt::OpDeposit(r) => r.length() + 1,
+                    TypedReceipt::Deposit(r) => r.length() + 1,
                     _ => unreachable!("receipt already matched"),
                 };
 
@@ -197,7 +197,7 @@ impl open_fastrlp::Encodable for TypedReceipt {
                 let payload_len = match receipt {
                     TypedReceipt::EIP2930(r) => r.length() + 1,
                     TypedReceipt::EIP1559(r) => r.length() + 1,
-                    TypedReceipt::OpDeposit(r) => r.length() + 1,
+                    TypedReceipt::Deposit(r) => r.length() + 1,
                     _ => unreachable!("receipt already matched"),
                 };
 
@@ -218,7 +218,7 @@ impl open_fastrlp::Encodable for TypedReceipt {
                         out.put_u8(0x02);
                         r.encode(out);
                     }
-                    TypedReceipt::OpDeposit(r) => {
+                    TypedReceipt::Deposit(r) => {
                         let receipt_string_header =
                             Header { list: false, payload_length: payload_len };
 
@@ -264,8 +264,8 @@ impl open_fastrlp::Decodable for TypedReceipt {
                         .map(TypedReceipt::EIP1559)
                 } else if receipt_type == 0x7E {
                     buf.advance(1);
-                    <OpDepositReceipt as open_fastrlp::Decodable>::decode(buf)
-                        .map(TypedReceipt::OpDeposit)
+                    <DepositReceipt as open_fastrlp::Decodable>::decode(buf)
+                        .map(TypedReceipt::Deposit)
                 } else {
                     Err(open_fastrlp::DecodeError::Custom("invalid receipt type"))
                 }
@@ -286,7 +286,7 @@ impl From<TypedReceipt> for EIP658Receipt {
             TypedReceipt::Legacy(receipt) => receipt,
             TypedReceipt::EIP2930(receipt) => receipt,
             TypedReceipt::EIP1559(receipt) => receipt,
-            TypedReceipt::OpDeposit(receipt) => receipt,
+            TypedReceipt::Deposit(receipt) => receipt,
         }
     }
 }

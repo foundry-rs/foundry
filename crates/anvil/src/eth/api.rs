@@ -2428,9 +2428,9 @@ impl EthApi {
                 }
                 TypedTransactionRequest::EIP1559(m)
             }
-            Some(TypedTransactionRequest::OpDeposit(mut m)) => {
+            Some(TypedTransactionRequest::Deposit(mut m)) => {
                 m.gas_limit = gas_limit;
-                TypedTransactionRequest::OpDeposit(m)
+                TypedTransactionRequest::Deposit(m)
             }
             _ => return Err(BlockchainError::FailedToDecodeTransaction),
         };
@@ -2508,7 +2508,7 @@ impl EthApi {
         match &tx {
             TypedTransaction::EIP2930(_) => self.backend.ensure_eip2930_active(),
             TypedTransaction::EIP1559(_) => self.backend.ensure_eip1559_active(),
-            TypedTransaction::OpDeposit(_) => self.backend.ensure_op_deposits_active(),
+            TypedTransaction::Deposit(_) => self.backend.ensure_op_deposits_active(),
             TypedTransaction::Legacy(_) => Ok(()),
         }
     }
@@ -2597,7 +2597,7 @@ fn determine_base_gas_by_kind(request: EthTransactionRequest) -> U256 {
                 TransactionKind::Call(_) => MIN_TRANSACTION_GAS,
                 TransactionKind::Create => MIN_CREATE_GAS,
             },
-            TypedTransactionRequest::OpDeposit(req) => match req.kind {
+            TypedTransactionRequest::Deposit(req) => match req.kind {
                 TransactionKind::Call(_) => MIN_TRANSACTION_GAS,
                 TransactionKind::Create => MIN_CREATE_GAS,
             },

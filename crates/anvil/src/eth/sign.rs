@@ -2,7 +2,7 @@ use crate::eth::error::BlockchainError;
 use anvil_core::eth::transaction::{
     EIP1559Transaction, EIP1559TransactionRequest, EIP2930Transaction, EIP2930TransactionRequest,
     LegacyTransaction, LegacyTransactionRequest, TypedTransaction, TypedTransactionRequest,
-    OpDepositTransaction, OpDepositTransactionRequest,
+    DepositTransaction, DepositTransactionRequest,
 };
 use ethers::{
     core::k256::ecdsa::SigningKey,
@@ -195,11 +195,11 @@ pub fn build_typed_transaction(
                 },
             })
         }
-        TypedTransactionRequest::OpDeposit(tx) => {
-            let OpDepositTransactionRequest {
+        TypedTransactionRequest::Deposit(tx) => {
+            let DepositTransactionRequest {
                 from, gas_limit, kind, value, input, source_hash, mint, is_system_tx, ..
             } = tx;
-            TypedTransaction::OpDeposit(OpDepositTransaction {
+            TypedTransaction::Deposit(DepositTransaction {
                 from,
                 gas_limit,
                 kind,

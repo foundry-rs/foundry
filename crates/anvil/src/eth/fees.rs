@@ -256,7 +256,7 @@ impl FeeHistoryService {
                             .max_priority_fee_per_gas
                             .min(t.max_fee_per_gas.saturating_sub(base_fee))
                             .as_u64(),
-                        Some(TypedTransaction::OpDeposit(_)) => {
+                        Some(TypedTransaction::Deposit(_)) => {
                             0
                         }
                         None => 0,
