@@ -3,10 +3,8 @@ use crate::{
 };
 use alloy_primitives::{Address, Bytes, Log as RawLog, B256, U256};
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
-use ethers::types::{DefaultFrame, GethDebugTracingOptions, StructLog};
 pub use executor::TracingExecutor;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
-use foundry_utils::types::ToEthers;
 use hashbrown::HashMap;
 use node::CallTraceNode;
 use revm::interpreter::{opcode, CallContext, InstructionResult, Memory, Stack};
@@ -15,6 +13,7 @@ use std::{
     collections::{BTreeMap, HashSet},
     fmt::{self, Write},
 };
+use trace_types::{DefaultFrame, GethDebugTracingOptions, StructLog};
 use yansi::{Color, Paint};
 
 /// Call trace address identifiers.
@@ -25,6 +24,7 @@ pub mod identifier;
 mod decoder;
 mod executor;
 pub mod node;
+pub mod trace_types;
 pub mod utils;
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
@@ -423,7 +423,7 @@ impl From<&CallTraceStep> for StructLog {
             } else {
                 None
             },
-            stack: Some(step.stack.data().iter().copied().map(|s| s.to_ethers()).collect()),
+            stack: Some(step.stack.data().iter().copied().collect()),
             // Filled in `CallTraceArena::geth_trace` as a result of compounding all slot changes
             storage: None,
         }
