@@ -1,3 +1,4 @@
+use super::trace_types::{Action, Call, CallResult, Create, CreateResult, Res, Suicide};
 use crate::{
     decode,
     executor::CHEATCODE_ADDRESS,
@@ -9,8 +10,7 @@ use crate::{
 };
 use alloy_dyn_abi::{FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi as Abi};
-use alloy_primitives::Address;
-use ethers::types::{Action, Call, CallResult, Create, CreateResult, Res, Suicide};
+use alloy_primitives::{Address, U256};
 use foundry_common::SELECTOR_LEN;
 use revm::interpreter::InstructionResult;
 use serde::{Deserialize, Serialize};
@@ -50,12 +50,12 @@ impl CallTraceNode {
         match self.kind() {
             CallKind::Call | CallKind::StaticCall | CallKind::CallCode | CallKind::DelegateCall => {
                 Res::Call(CallResult {
-                    gas_used: self.trace.gas_cost.into(),
+                    gas_used: U256::from(self.trace.gas_cost),
                     output: self.trace.output.to_raw().into(),
                 })
             }
             CallKind::Create | CallKind::Create2 => Res::Create(CreateResult {
-                gas_used: self.trace.gas_cost.into(),
+                gas_used: U256::from(self.trace.gas_cost),
                 code: self.trace.output.to_raw().into(),
                 address: self.trace.address,
             }),
@@ -78,7 +78,7 @@ impl CallTraceNode {
                     from: self.trace.caller,
                     to: self.trace.address,
                     value: self.trace.value,
-                    gas: self.trace.gas_cost.into(),
+                    gas: U256::from(self.trace.gas_cost),
                     input: self.trace.data.to_raw().into(),
                     call_type: self.kind().into(),
                 })
@@ -86,7 +86,7 @@ impl CallTraceNode {
             CallKind::Create | CallKind::Create2 => Action::Create(Create {
                 from: self.trace.caller,
                 value: self.trace.value,
-                gas: self.trace.gas_cost.into(),
+                gas: U256::from(self.trace.gas_cost),
                 init: self.trace.data.to_raw().into(),
             }),
         }
