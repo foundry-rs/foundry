@@ -170,7 +170,8 @@ impl WalletSubcommands {
 
                 let builder = MnemonicBuilder::<English>::default().phrase(phrase.as_str());
                 let derivation_path = "m/44'/60'/0'/0/";
-                let wallets = (0..accounts).map(|i| {
+                let wallets = (0..accounts)
+                    .map(|i| {
                         builder
                             .clone()
                             .derivation_path(&format!("{derivation_path}{i}"))
