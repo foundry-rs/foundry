@@ -7,9 +7,13 @@ use crate::{
 use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
-use ethers::utils::WEI_IN_ETHER;
+use ethers::{
+    signers::coins_bip39::{English, Mnemonic},
+    utils::WEI_IN_ETHER,
+};
 use foundry_config::{Chain, Config};
 use futures::FutureExt;
+use rand::{rngs::StdRng, SeedableRng};
 use std::{
     future::Future,
     net::IpAddr,
@@ -45,8 +49,22 @@ pub struct NodeArgs {
     pub timestamp: Option<u64>,
 
     /// BIP39 mnemonic phrase used for generating accounts.
-    #[clap(long, short)]
+    /// Cannot be used if `mnemonic_random` or `mnemonic_seed` are used
+    #[clap(long, short, conflicts_with_all = &["mnemonic_seed", "mnemonic_random"])]
     pub mnemonic: Option<String>,
+
+    /// Automatically generates a BIP39 mnemonic phrase, and derives accounts from it.
+    /// Cannot be used with other `mnemonic` options
+    /// You can specify the number of words you want in the mnemonic.
+    /// [default: 12]
+    #[clap(long, conflicts_with_all = &["mnemonic", "mnemonic_seed"], default_missing_value = "12", num_args(0..=1))]
+    pub mnemonic_random: Option<usize>,
+
+    /// Generates a BIP39 mnemonic phrase from a given seed
+    /// CAREFUL: this is obviously NOT SAFE and should only be used for testing
+    /// Cannot be used with other `mnemonic` options
+    #[clap(long, conflicts_with_all = &["mnemonic", "mnemonic_random"])]
+    pub mnemonic_seed: Option<u64>,
 
     /// Sets the derivation path of the child key to be derived.
     ///
@@ -217,6 +235,17 @@ impl NodeArgs {
             .phrase(DEFAULT_MNEMONIC)
             .chain_id(self.evm_opts.chain_id.unwrap_or_else(|| CHAIN_ID.into()));
         if let Some(ref mnemonic) = self.mnemonic {
+            gen = gen.phrase(mnemonic);
+        } else if let Some(count) = self.mnemonic_random {
+            let mut rng = rand::thread_rng();
+            let mnemonic = match Mnemonic::<English>::new_with_count(&mut rng, count) {
+                Ok(mnemonic) => mnemonic.to_phrase(),
+                Err(_) => DEFAULT_MNEMONIC.to_string(),
+            };
+            gen = gen.phrase(mnemonic);
+        } else if let Some(seed) = self.mnemonic_seed {
+            let mut seed = StdRng::seed_from_u64(seed);
+            let mnemonic = Mnemonic::<English>::new(&mut seed).to_phrase();
             gen = gen.phrase(mnemonic);
         }
         if let Some(ref derivation) = self.derivation_path {
