@@ -257,7 +257,7 @@ impl ScriptArgs {
     pub fn get_returns(
         &self,
         script_config: &ScriptConfig,
-        returned: &bytes::Bytes,
+        returned: &Bytes,
     ) -> Result<HashMap<String, NestedValue>> {
         let func = script_config.called_function.as_ref().expect("There should be a function.");
         let mut returns = HashMap::new();
@@ -283,7 +283,7 @@ impl ScriptArgs {
                 }
             }
             Err(_) => {
-                shell::println(format!("{:x?}", (&returned)))?;
+                shell::println(format!("{returned:?}"))?;
             }
         }
 
@@ -614,7 +614,7 @@ pub struct ScriptResult {
     pub gas_used: u64,
     pub labeled_addresses: BTreeMap<Address, String>,
     pub transactions: Option<BroadcastableTransactions>,
-    pub returned: bytes::Bytes,
+    pub returned: Bytes,
     pub address: Option<Address>,
     pub script_wallets: Vec<LocalWallet>,
     pub breakpoints: Breakpoints,

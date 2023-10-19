@@ -27,11 +27,11 @@ foundry-evm.workspace = true
 comfy-table = "7"
 ethers = { workspace = true, features = ["solc-full"] }
 foundry-compilers = { workspace = true, features = ["full"]}
-eyre = "0.6"
+eyre.workspace = true
 proptest = "1"
 rayon = "1"
-serde = "1"
-tracing = "0.1"
+serde.workspace = true
+tracing.workspace = true
 yansi = "0.5"
 
 # bin
@@ -43,7 +43,6 @@ foundry-debugger.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 
 async-trait = "0.1"
-bytes = "1.4"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"
 clap_complete_fig = "4"
@@ -58,7 +57,7 @@ parking_lot = "0.12"
 regex = { version = "1", default-features = false }
 reqwest = { version = "0.11", default-features = false, features = ["json"] }
 semver = "1"
-serde_json = "1"
+serde_json.workspace = true
 similar = { version = "2", features = ["inline"] }
 solang-parser.workspace = true
 strum = { version = "0.25", features = ["derive"] }

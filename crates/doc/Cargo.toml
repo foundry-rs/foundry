@@ -23,7 +23,7 @@ ethers-core.workspace = true
 foundry-compilers = { workspace = true, features = ["async"] }
 
 # tracing
-tracing = "0.1"
+tracing.workspace = true
 
 # mdbook
 mdbook = { version = "0.4", default-features = false, features = ["search"] }
@@ -33,7 +33,7 @@ futures-util = "0.3"
 
 # misc
 solang-parser.workspace = true
-eyre = "0.6"
+eyre.workspace = true
 thiserror = "1"
 rayon = "1"
 itertools.workspace = true
@@ -41,5 +41,5 @@ toml.workspace = true
 auto_impl = "1"
 derive_more = "0.99"
 once_cell = "1"
-serde = "1.0.163"
-serde_json = "1.0.96"
+serde.workspace = true
+serde_json.workspace = true

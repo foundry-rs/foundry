@@ -427,7 +427,7 @@ pub fn to_table(value: serde_json::Value) -> String {
             }
             s
         }
-        _ => "".to_owned(),
+        _ => String::new(),
     }
 }
 

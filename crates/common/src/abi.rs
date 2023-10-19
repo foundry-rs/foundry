@@ -138,7 +138,7 @@ pub fn sanitize_token(token: DynSolValue) -> DynSolValue {
                     DynSolValue::String(val) => {
                         let val = match val.as_str() {
                             // this is supposed to be an empty string
-                            "\"\"" | "''" => "".to_string(),
+                            "\"\"" | "''" => String::new(),
                             _ => val,
                         };
                         DynSolValue::String(val)

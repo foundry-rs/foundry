@@ -13,7 +13,7 @@ repository.workspace = true
 
 [build-dependencies]
 ethers-contract-abigen.workspace = true
-eyre = "0.6"
+eyre.workspace = true
 syn = "2.0"
 
 [dependencies]

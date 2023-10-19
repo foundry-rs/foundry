@@ -122,7 +122,7 @@ impl VanityArgs {
                     nonce.unwrap(),
                 ))
             } else {
-                "".to_string()
+                String::new()
             },
             SimpleCast::to_checksum_address(&wallet.address()),
             hex::encode(wallet.signer().to_bytes()),

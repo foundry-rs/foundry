@@ -740,7 +740,7 @@ impl TestCommand {
             let suggest = if out.stderr.is_empty() {
                 "\n\nDid your forge command end up with no output?".to_string()
             } else {
-                "".to_string()
+                String::new()
             };
             eyre::bail!(
                 "\n\n==========\n\

@@ -1,4 +1,4 @@
-use alloy_primitives::{Address as rAddress, U256 as rU256};
+use alloy_primitives::{Address as aAddress, U256 as rU256};
 use ethers_core::{
     types::{transaction::eip2930::AccessListItem, Address, U256},
     utils::{
@@ -23,7 +23,7 @@ pub fn to_access_list(list: Vec<AccessListItem>) -> Vec<(Address, Vec<U256>)> {
         .collect()
 }
 
-pub fn to_revm_access_list(list: Vec<AccessListItem>) -> Vec<(rAddress, Vec<rU256>)> {
+pub fn to_revm_access_list(list: Vec<AccessListItem>) -> Vec<(aAddress, Vec<rU256>)> {
     list.into_iter()
         .map(|item| {
             (

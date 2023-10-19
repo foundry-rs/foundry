@@ -1,9 +1,8 @@
 //! Support for generating the state root for memdb storage
 
 use crate::eth::{backend::db::AsHashDB, error::BlockchainError};
-use alloy_primitives::{Address as rAddress, U256 as rU256};
+use alloy_primitives::{Address, Bytes, U256 as rU256};
 use anvil_core::eth::{state::StateOverride, trie::RefSecTrieDBMut};
-use bytes::Bytes;
 use ethers::{
     types::H256,
     utils::{rlp, rlp::RlpStream},
@@ -63,7 +62,7 @@ pub fn storage_trie_db(storage: &Map<rU256, rU256>) -> (AsHashDB, H256) {
 }
 
 /// Returns the account data as `HashDB`
-pub fn trie_hash_db(accounts: &Map<rAddress, DbAccount>) -> (AsHashDB, H256) {
+pub fn trie_hash_db(accounts: &Map<Address, DbAccount>) -> (AsHashDB, H256) {
     let accounts = trie_accounts(accounts);
 
     // Populate DB with full trie from entries.
@@ -83,7 +82,7 @@ pub fn trie_hash_db(accounts: &Map<rAddress, DbAccount>) -> (AsHashDB, H256) {
 }
 
 /// Returns all RLP-encoded Accounts
-pub fn trie_accounts(accounts: &Map<rAddress, DbAccount>) -> Vec<(rAddress, Bytes)> {
+pub fn trie_accounts(accounts: &Map<Address, DbAccount>) -> Vec<(Address, Bytes)> {
     accounts
         .iter()
         .map(|(address, account)| {
@@ -93,7 +92,7 @@ pub fn trie_accounts(accounts: &Map<rAddress, DbAccount>) -> Vec<(rAddress, Byte
         .collect()
 }
 
-pub fn state_merkle_trie_root(accounts: &Map<rAddress, DbAccount>) -> H256 {
+pub fn state_merkle_trie_root(accounts: &Map<Address, DbAccount>) -> H256 {
     trie_hash_db(accounts).1
 }
 
@@ -104,7 +103,7 @@ pub fn trie_account_rlp(info: &AccountInfo, storage: &Map<rU256, rU256>) -> Byte
     stream.append(&info.balance.to_ethers());
     stream.append(&storage_trie_db(storage).1);
     stream.append(&info.code_hash.as_slice());
-    stream.out().freeze()
+    stream.out().freeze().into()
 }
 
 /// Applies the given state overrides to the state, returning a new CacheDB state

@@ -14,14 +14,16 @@ pub trait ToAlloy {
 impl ToAlloy for H160 {
     type To = Address;
 
+    #[inline(always)]
     fn to_alloy(self) -> Self::To {
-        Address::from_slice(self.as_bytes())
+        Address::new(self.0)
     }
 }
 
 impl ToAlloy for H256 {
     type To = B256;
 
+    #[inline(always)]
     fn to_alloy(self) -> Self::To {
         B256::new(self.0)
     }
@@ -30,6 +32,7 @@ impl ToAlloy for H256 {
 impl ToAlloy for U256 {
     type To = AlloyU256;
 
+    #[inline(always)]
     fn to_alloy(self) -> Self::To {
         AlloyU256::from_limbs(self.0)
     }
@@ -38,6 +41,7 @@ impl ToAlloy for U256 {
 impl ToAlloy for U64 {
     type To = AlloyU64;
 
+    #[inline(always)]
     fn to_alloy(self) -> Self::To {
         AlloyU64::from_limbs(self.0)
     }
@@ -46,6 +50,7 @@ impl ToAlloy for U64 {
 impl ToAlloy for u64 {
     type To = AlloyU256;
 
+    #[inline(always)]
     fn to_alloy(self) -> Self::To {
         AlloyU256::from(self)
     }
@@ -62,14 +67,16 @@ pub trait ToEthers {
 impl ToEthers for Address {
     type To = H160;
 
+    #[inline(always)]
     fn to_ethers(self) -> Self::To {
-        H160::from_slice(self.as_slice())
+        H160(self.0 .0)
     }
 }
 
 impl ToEthers for B256 {
     type To = H256;
 
+    #[inline(always)]
     fn to_ethers(self) -> Self::To {
         H256(self.0)
     }
@@ -78,7 +85,8 @@ impl ToEthers for B256 {
 impl ToEthers for AlloyU256 {
     type To = U256;
 
+    #[inline(always)]
     fn to_ethers(self) -> Self::To {
-        U256::from_little_endian(&self.as_le_bytes())
+        U256(self.into_limbs())
     }
 }

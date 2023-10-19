@@ -158,7 +158,7 @@ impl ScriptRunner {
         Ok((
             address,
             ScriptResult {
-                returned: bytes::Bytes::new(),
+                returned: Bytes::new(),
                 success,
                 gas_used,
                 labeled_addresses: labeled_addresses
@@ -235,7 +235,7 @@ impl ScriptRunner {
             };
 
             Ok(ScriptResult {
-                returned: bytes::Bytes::new(),
+                returned: Bytes::new(),
                 success: address != Address::ZERO,
                 gas_used,
                 logs,
@@ -296,7 +296,7 @@ impl ScriptRunner {
         let breakpoints = res.cheatcodes.map(|cheats| cheats.breakpoints).unwrap_or_default();
 
         Ok(ScriptResult {
-            returned: result.0,
+            returned: result,
             success: !reverted,
             gas_used,
             logs,

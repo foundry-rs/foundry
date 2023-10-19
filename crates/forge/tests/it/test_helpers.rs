@@ -63,7 +63,7 @@ pub static COMPILED_WITH_LIBS: Lazy<ProjectCompileOutput> = Lazy::new(|| {
 
 pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
     env: Env {
-        gas_limit: 18446744073709551615,
+        gas_limit: u64::MAX,
         chain_id: None,
         tx_origin: Config::DEFAULT_SENDER.to_alloy(),
         block_number: 1,
