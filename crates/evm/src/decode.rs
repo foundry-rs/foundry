@@ -1,18 +1,11 @@
 //! Various utilities to decode test results
-use crate::{
-    abi::ConsoleEvents::{self, *},
-    executor::inspector::cheatcodes::util::MAGIC_SKIP_BYTES,
-};
+use crate::executor::inspector::cheatcodes::util::MAGIC_SKIP_BYTES;
 use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{Bytes, Log as AlloyLog, B256};
+use alloy_primitives::{Bytes, Log as AlloyLog, U256};
 use alloy_sol_types::{sol, sol_data::String as SolString, SolEvent, SolType};
-use ethers::{
-    abi::{decode, Contract as Abi, ParamType, RawLog, Token},
-    contract::EthLogDecode,
-    prelude::U256,
-    types::Log,
-};
+use ethers::types::Log;
+use eyre::ContextCompat;
 use foundry_common::{abi::format_token, SELECTOR_LEN};
 use foundry_utils::{error::ERROR_PREFIX, types::ToAlloy};
 use itertools::Itertools;
@@ -179,7 +172,9 @@ pub fn decode_revert(
         [242, 141, 206, 179] => {
             let err_data = &err[SELECTOR_LEN..];
             if err_data.len() > 64 {
-                let len = U256::from(&err_data[32..64]).as_usize();
+                let len = U256::try_from_be_slice(&err_data[32..64])
+                    .wrap_err_with(|| "Could not decode slice")?
+                    .to::<usize>();
                 if err_data.len() > 64 + len {
                     let actual_err = &err_data[64..64 + len];
                     if let Ok(decoded) = decode_revert(actual_err, maybe_abi, None) {
@@ -289,18 +284,12 @@ pub fn decode_custom_error_args(err: &[u8], args: usize) -> Option<DynSolValue> 
         ]
     });
 
-    macro_rules! try_decode {
-        ($ty:ident) => {
-            if let Ok(mut decoded) = DynSolType::abi_decode(&[$ty], err) {
-                return Some(decoded.remove(0))
-            }
-        };
-    }
-
     // check if single param, but only if it's a single word
     if err.len() == 32 {
         for ty in TYPES.iter().cloned() {
-            try_decode!(ty);
+            if let Ok(mut decoded) = ty.abi_decode(err) {
+                return Some(decoded)
+            }
         }
         return None
     }
@@ -308,8 +297,7 @@ pub fn decode_custom_error_args(err: &[u8], args: usize) -> Option<DynSolValue> 
     // brute force decode all possible combinations
     for num in (2..=args).rev() {
         for candidate in TYPES.iter().cloned().combinations(num) {
-            if let Ok(decoded) = DynSolType::abi_decode_sequence(&DynSolType::Tuple(candidate), err)
-            {
+            if let Ok(decoded) = DynSolType::abi_decode(&DynSolType::Tuple(candidate), err) {
                 return Some(decoded)
             }
         }
@@ -317,7 +305,9 @@ pub fn decode_custom_error_args(err: &[u8], args: usize) -> Option<DynSolValue> 
 
     // try as array
     for ty in TYPES.iter().cloned().map(|ty| DynSolType::Array(Box::new(ty))) {
-        try_decode!(ty);
+        if let Ok(mut decoded) = ty.abi_decode(err) {
+            return Some(decoded)
+        }
     }
 
     None
@@ -327,32 +317,35 @@ pub fn decode_custom_error_args(err: &[u8], args: usize) -> Option<DynSolValue> 
 mod tests {
     use super::*;
     use alloy_primitives::{Address, U256};
+    use alloy_sol_types::{sol, SolError};
 
     #[test]
     fn test_decode_custom_error_address() {
-        #[derive(Debug, Clone, EthError)]
-        struct AddressErr(Address);
-        let err = AddressErr(Address::random());
+        sol! {
+            error AddressErr(address addr);
+        }
+        let err = AddressErr { addr: Address::random() };
 
-        let encoded = err.clone().encode();
+        let encoded = err.abi_encode();
         let decoded = decode_custom_error(&encoded).unwrap();
-        assert_eq!(decoded, DynSolType::Address(err.0));
+        assert_eq!(decoded, DynSolValue::Address(err.addr));
     }
 
     #[test]
     fn test_decode_custom_error_args3() {
-        #[derive(Debug, Clone, EthError)]
-        struct MyError(Address, bool, U256);
-        let err = MyError(Address::random(), true, 100u64.into());
+        sol! {
+            error MyError(address addr, bool b, uint256 val);
+        }
+        let err = MyError { addr: Address::random(), b: true, val: U256::from(100u64) };
 
-        let encoded = err.clone().encode();
+        let encoded = err.clone().abi_encode();
         let decoded = decode_custom_error(&encoded).unwrap();
         assert_eq!(
             decoded,
             DynSolValue::Tuple(vec![
-                DynSolValue::Address(err.0),
-                DynSolValue::Bool(err.1),
-                DynSolValue::Uint(U256::from(100u64)),
+                DynSolValue::Address(err.addr),
+                DynSolValue::Bool(err.b),
+                DynSolValue::Uint(U256::from(100u64), 256),
             ])
         );
     }
