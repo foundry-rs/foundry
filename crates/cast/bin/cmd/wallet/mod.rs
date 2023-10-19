@@ -2,8 +2,11 @@ use alloy_primitives::Address;
 use clap::Parser;
 use ethers::{
     core::rand::thread_rng,
-    signers::{LocalWallet, Signer},
-    types::{transaction::eip712::TypedData, Signature},
+    signers::{
+        coins_bip39::{English, Mnemonic},
+        LocalWallet, MnemonicBuilder, Signer,
+    },
+    types::{transaction::eip712::TypedData, Address, Signature},
 };
 use eyre::{Context, Result};
 use foundry_cli::opts::{RawWallet, Wallet};
@@ -36,6 +39,18 @@ pub enum WalletSubcommands {
         /// This is UNSAFE to use and we recommend using the --password.
         #[clap(long, requires = "path", env = "CAST_PASSWORD", value_name = "PASSWORD")]
         unsafe_password: Option<String>,
+    },
+
+    /// Generates a random BIP39 mnemonic phrase
+    #[clap(visible_alias = "nm")]
+    NewMnemonic {
+        /// Number of words for the mnemonic
+        #[clap(long, short, default_value = "12")]
+        words: usize,
+
+        /// Number of accounts to display
+        #[clap(long, short, default_value = "1")]
+        accounts: u8,
     },
 
     /// Generate a vanity address.
@@ -147,6 +162,33 @@ impl WalletSubcommands {
                     println!("Successfully created new keypair.");
                     println!("Address:     {}", wallet.address().to_alloy().to_checksum(None));
                     println!("Private key: 0x{}", hex::encode(wallet.signer().to_bytes()));
+                }
+            }
+            WalletSubcommands::NewMnemonic { words, accounts } => {
+                let mut rng = thread_rng();
+                let phrase = Mnemonic::<English>::new_with_count(&mut rng, words)?.to_phrase();
+
+                let builder = MnemonicBuilder::<English>::default().phrase(phrase.as_str());
+                let derivation_path = "m/44'/60'/0'/0/";
+                let wallets = (0..accounts)
+                    .into_iter()
+                    .map(|i| {
+                        builder
+                            .clone()
+                            .derivation_path(&format!("{derivation_path}{i}"))
+                            .unwrap()
+                            .build()
+                            .unwrap()
+                    })
+                    .collect::<Vec<_>>();
+
+                println!("Successfully generated a new mnemonic.");
+                println!("Phrase:\n{phrase}");
+                println!("\nAccounts:");
+                for (i, wallet) in wallets.iter().enumerate() {
+                    println!("- Account {i}:");
+                    println!("Address:     {}", SimpleCast::to_checksum_address(&wallet.address()));
+                    println!("Private key: 0x{}\n", hex::encode(wallet.signer().to_bytes()));
                 }
             }
             WalletSubcommands::Vanity(cmd) => {
