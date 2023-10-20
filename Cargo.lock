@@ -943,6 +943,9 @@ checksum = "df8670b8c7b9dae1793364eafadf7239c40d669904660c5960d74cfd80b46a53"
 name = "cast"
 version = "0.2.0"
 dependencies = [
+ "alloy-dyn-abi",
+ "alloy-json-abi",
+ "alloy-primitives",
  "async-trait",
  "chrono",
  "clap",
@@ -1030,6 +1033,7 @@ dependencies = [
  "forge-fmt",
  "foundry-cli",
  "foundry-common",
+ "foundry-compilers",
  "foundry-config",
  "foundry-evm",
  "foundry-utils",
@@ -2640,6 +2644,7 @@ dependencies = [
 name = "foundry-cli"
 version = "0.2.0"
 dependencies = [
+ "alloy-json-abi",
  "alloy-primitives",
  "async-trait",
  "clap",
@@ -2649,6 +2654,7 @@ dependencies = [
  "ethers",
  "eyre",
  "foundry-common",
+ "foundry-compilers",
  "foundry-config",
  "foundry-debugger",
  "foundry-evm",
