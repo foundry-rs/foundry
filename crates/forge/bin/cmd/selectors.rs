@@ -51,6 +51,21 @@ pub enum SelectorsSubcommands {
         #[clap(flatten)]
         project_paths: ProjectPathsArgs,
     },
+
+    /// List selectors from current workspace
+    #[clap(visible_alias = "ls")]
+    List {
+        /// The name of the contract to list selectors for.
+        #[clap(required_unless_present = "all")]
+        contract: Option<String>,
+
+        /// List selectors for all contracts in the project.
+        #[clap(long, required_unless_present = "contract")]
+        all: bool,
+
+        #[clap(flatten)]
+        project_paths: ProjectPathsArgs,
+    },
 }
 
 impl SelectorsSubcommands {
@@ -174,6 +189,123 @@ impl SelectorsSubcommands {
                     });
                     println!("{} collisions found:", colliding_methods.len());
                     println!("{table}");
+                }
+            }
+            SelectorsSubcommands::List { contract, all, project_paths } => {
+                println!("Listing selectors for contracts in the project...");
+                let build_args = CoreBuildArgs {
+                    project_paths: project_paths.clone(),
+                    compiler: CompilerArgs {
+                        extra_output: vec![ContractOutputSelection::Abi],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+
+                let project = build_args.project()?;
+                let outcome = compile::suppress_compile(&project)?;
+                let artifacts = if all {
+                    outcome
+                        .into_artifacts_with_files()
+                        .filter(|(file, _, _)| {
+                            let is_sources_path = file
+                                .starts_with(&project.paths.sources.to_string_lossy().to_string());
+                            let is_test = file.is_sol_test();
+
+                            is_sources_path && !is_test
+                        })
+                        .map(|(_, contract, artifact)| (contract, artifact))
+                        .collect()
+                } else {
+                    let contract = contract.unwrap();
+                    let found_artifact = outcome.find_first(&contract);
+                    let artifact = found_artifact
+                        .ok_or_else(|| {
+                            eyre::eyre!(
+                                "Could not find artifact `{contract}` in the compiled artifacts"
+                            )
+                        })?
+                        .clone();
+                    vec![(contract, artifact)]
+                };
+
+                let mut artifacts = artifacts.into_iter().peekable();
+
+                while let Some((contract, artifact)) = artifacts.next() {
+                    let mut table = Table::new();
+  
+                    let abi = artifact.abi.ok_or(eyre::eyre!("Unable to fetch abi"))?;
+                    if abi.abi.functions.is_empty() &&
+                        abi.abi.events.is_empty() &&
+                        abi.abi.errors.is_empty()
+                    {
+                        continue
+                    }                    
+
+                    println!("{contract}");
+
+                    table.set_header(vec![String::from("Signature"), String::from("Selector")]);
+
+                    let functions_sigs = abi.abi.functions().map(|func| {
+                        (
+                            func.signature().split(':').next().unwrap_or("").to_string(),
+                            func.short_signature(),
+                        )
+                    });
+
+                    let events_sigs = abi.abi.events().map(|event| {
+                        (
+                            (
+                                event.name.to_owned(),
+                                event
+                                    .inputs
+                                    .iter()
+                                    .map(|p| p.kind.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(","),
+                            ),
+                            event.signature(),
+                        )
+                    });
+
+                    let errors_sigs = abi.abi.errors().map(|error| {
+                        (
+                            (
+                                error.name.to_owned(),
+                                error
+                                    .inputs
+                                    .iter()
+                                    .map(|p| p.kind.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(","),
+                            ),
+                            error.signature(),
+                        )
+                    });
+
+                    for fu in functions_sigs {
+                        table.add_row([fu.0, hex::encode_prefixed(fu.1)]);
+                    }
+
+                    for ev in events_sigs {
+                        table.add_row([
+                            format!("{}({})", ev.0 .0, ev.0 .1),
+                            hex::encode_prefixed(ev.1),
+                        ]);
+                    }
+
+                    for er in errors_sigs {
+                        table.add_row([
+                            format!("{}({})", er.0 .0, er.0 .1),
+                            hex::encode_prefixed(er.1),
+                        ]);
+                    }
+
+                    println!("{table}");
+
+                    if artifacts.peek().is_some() {
+                        println!()
+                    }
                 }
             }
         }
