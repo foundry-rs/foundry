@@ -115,7 +115,7 @@ impl CallTraceArena {
                         contract_storage
                             .clone()
                             .into_iter()
-                            .map(|(t)| (t.0.to_ethers(), t.1.to_ethers()))
+                            .map(|t| (t.0.to_ethers(), t.1.to_ethers()))
                             .collect(),
                     );
                 }

@@ -193,7 +193,7 @@ impl CreateArgs {
             panic!("no bytecode found in bin object for {}", self.contract.name)
         });
         let provider = Arc::new(provider);
-        let factory = ContractFactory::new(abi.clone(), bin.clone(), provider.clone());
+        let factory = ContractFactory::new(abi.clone(), bin.clone().0.into(), provider.clone());
 
         let is_args_empty = args.is_empty();
         let deployer =

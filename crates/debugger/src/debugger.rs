@@ -1,7 +1,6 @@
 use crate::{TUIExitReason, Tui, Ui};
 use foundry_common::{compile::ContractSources, evm::Breakpoints, get_contract_name};
 use foundry_evm::{debug::DebugArena, trace::CallTraceDecoder};
-use foundry_utils::types::ToAlloy;
 use tracing::{error, trace};
 
 /// Standardized way of firing up the debugger

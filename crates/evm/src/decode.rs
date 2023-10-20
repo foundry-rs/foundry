@@ -51,7 +51,6 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
         log.topics.clone().into_iter().map(|h| h.to_alloy()).collect_vec(),
         log.data.clone().0.into(),
     );
-    let data = log_address::abi_decode_data(&raw_log.data, false);
     if let Ok(inner) = log::abi_decode_data(&raw_log.data, false) {
         return Some(inner.0)
     } else if let Ok(inner) = logs::abi_decode_data(&raw_log.data, false) {
@@ -287,7 +286,7 @@ pub fn decode_custom_error_args(err: &[u8], args: usize) -> Option<DynSolValue> 
     // check if single param, but only if it's a single word
     if err.len() == 32 {
         for ty in TYPES.iter().cloned() {
-            if let Ok(mut decoded) = ty.abi_decode(err) {
+            if let Ok(decoded) = ty.abi_decode(err) {
                 return Some(decoded)
             }
         }
@@ -305,7 +304,7 @@ pub fn decode_custom_error_args(err: &[u8], args: usize) -> Option<DynSolValue> 
 
     // try as array
     for ty in TYPES.iter().cloned().map(|ty| DynSolType::Array(Box::new(ty))) {
-        if let Ok(mut decoded) = ty.abi_decode(err) {
+        if let Ok(decoded) = ty.abi_decode(err) {
             return Some(decoded)
         }
     }

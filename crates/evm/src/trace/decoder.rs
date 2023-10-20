@@ -13,8 +13,6 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt};
 use alloy_json_abi::{Event, Function, JsonAbi as Abi, Param};
 use alloy_primitives::{Address, FixedBytes, B256};
 use foundry_common::{abi::get_indexed_event, SELECTOR_LEN};
-use foundry_utils::types::ToEthers;
-use hashbrown::HashSet;
 use once_cell::sync::OnceCell;
 use std::collections::{BTreeMap, HashMap};
 

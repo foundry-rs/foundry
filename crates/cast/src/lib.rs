@@ -1,7 +1,7 @@
 use crate::rlp_converter::Item;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::{Function, JsonAbi as Abi};
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{B256, U256, I256};
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
@@ -30,7 +30,7 @@ use std::{
     io,
     path::PathBuf,
     str::FromStr,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, Ordering}, ops::Shl,
 };
 use tokio::signal::ctrl_c;
 pub use tx::TxBuilder;
@@ -1020,7 +1020,7 @@ impl SimpleCast {
                 if MAX {
                     Ok(max.to_string())
                 } else {
-                    let min = I256::from_raw(max).wrapping_neg() + I256::minus_one();
+                    let min = I256::from_raw(max).wrapping_neg() + I256::MINUS_ONE;
                     Ok(min.to_string())
                 }
             }
@@ -1028,7 +1028,7 @@ impl SimpleCast {
                 if MAX {
                     let mut max = U256::MAX;
                     if n < 255 {
-                        max &= U256::one() << U256::from(n);
+                        max &= U256::from(1).wrapping_shl(n);
                     }
                     Ok(max.to_string())
                 } else {

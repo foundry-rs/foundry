@@ -18,7 +18,6 @@ use foundry_evm::{
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-use foundry_utils::types::ToEthers;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use reqwest::Url;
