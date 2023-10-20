@@ -1,7 +1,7 @@
 use crate::rlp_converter::Item;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
-use alloy_json_abi::{Function, JsonAbi as Abi};
-use alloy_primitives::{B256, I256, U256};
+use alloy_json_abi::Function;
+use alloy_primitives::{I256, U256};
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
@@ -28,7 +28,6 @@ pub use rusoto_core::{
 pub use rusoto_kms::KmsClient;
 use std::{
     io,
-    ops::Shl,
     path::PathBuf,
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
@@ -2027,7 +2026,10 @@ mod tests {
     fn abi_decode() {
         let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
         let sig = "balanceOf(address, uint256)(uint256)";
-        assert_eq!("1", Cast::abi_decode(sig, data, false).unwrap()[0].to_string());
+        assert_eq!(
+            "1",
+            Cast::abi_decode(sig, data, false).unwrap()[0].as_uint().unwrap().0.to_string()
+        );
 
         let data = "0x0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
         let sig = "safeTransferFrom(address,address,uint256,uint256,bytes)";
@@ -2049,7 +2051,8 @@ mod tests {
     fn calldata_decode() {
         let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
         let sig = "balanceOf(address, uint256)(uint256)";
-        let decoded = Cast::calldata_decode(sig, data, false).unwrap()[0].to_string();
+        let decoded =
+            Cast::calldata_decode(sig, data, false).unwrap()[0].as_uint().unwrap().0.to_string();
         assert_eq!(decoded, "1");
 
         // Passing `input = true` will decode the data with the input function signature.
@@ -2057,12 +2060,27 @@ mod tests {
         let data = "0xf242432a0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
         let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
         let decoded = Cast::calldata_decode(sig, data, true).unwrap();
+        let decoded = [
+            decoded[0].as_address().unwrap().to_string(),
+            decoded[1].as_address().unwrap().to_string(),
+            decoded[2].as_uint().unwrap().0.to_string(),
+            decoded[3].as_uint().unwrap().0.to_string(),
+            decoded[4]
+                .as_bytes()
+                .unwrap()
+                .to_owned()
+                .into_iter()
+                .map(|v| format!("{:02x}", v))
+                .collect::<String>(),
+        ]
+        .into_iter()
+        .collect::<Vec<_>>();
         assert_eq!(
             decoded,
             vec![
-                "8dbd1b711dc621e1404633da156fcc779e1c6f3e",
-                "d9f3c9cc99548bf3b44a43e0a2d07399eb918adc",
-                "2a",
+                "0x8dbd1b711dc621e1404633da156fcc779e1c6f3e",
+                "0xd9f3c9cc99548bf3b44a43e0a2d07399eb918adc",
+                "42",
                 "1",
                 ""
             ]
