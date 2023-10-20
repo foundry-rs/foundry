@@ -1269,25 +1269,27 @@ impl SimpleCast {
         let value = U256::from(LenientTokenizer::tokenize_uint(value)?);
 
         Ok(match unit {
-            "eth" | "ether" => ethers_core::utils::format_units(value, 18)?
+            "eth" | "ether" => foundry_common::units::format_units(value, 18)?
                 .trim_end_matches(".000000000000000000")
                 .to_string(),
-            "milli" | "milliether" => ethers_core::utils::format_units(value, 15)?
+            "milli" | "milliether" => foundry_common::units::format_units(value, 15)?
                 .trim_end_matches(".000000000000000")
                 .to_string(),
-            "micro" | "microether" => ethers_core::utils::format_units(value, 12)?
+            "micro" | "microether" => foundry_common::units::format_units(value, 12)?
                 .trim_end_matches(".000000000000")
                 .to_string(),
-            "gwei" | "nano" | "nanoether" => ethers_core::utils::format_units(value, 9)?
+            "gwei" | "nano" | "nanoether" => foundry_common::units::format_units(value, 9)?
                 .trim_end_matches(".000000000")
                 .to_string(),
-            "mwei" | "mega" | "megaether" => {
-                ethers_core::utils::format_units(value, 6)?.trim_end_matches(".000000").to_string()
-            }
+            "mwei" | "mega" | "megaether" => foundry_common::units::format_units(value, 6)?
+                .trim_end_matches(".000000")
+                .to_string(),
             "kwei" | "kilo" | "kiloether" => {
-                ethers_core::utils::format_units(value, 3)?.trim_end_matches(".000").to_string()
+                foundry_common::units::format_units(value, 3)?.trim_end_matches(".000").to_string()
             }
-            "wei" => ethers_core::utils::format_units(value, 0)?.trim_end_matches(".0").to_string(),
+            "wei" => {
+                foundry_common::units::format_units(value, 0)?.trim_end_matches(".0").to_string()
+            }
             _ => eyre::bail!("invalid unit: \"{}\"", unit),
         })
     }
