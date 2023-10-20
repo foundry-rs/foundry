@@ -162,8 +162,9 @@ impl<DB: Database> Inspector<DB> for Tracer {
     fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[B256], data: &Bytes) {
         let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
         node.ordering.push(LogCallOrder::Log(node.logs.len()));
+        let data = data.clone();
         node.logs.push(RawOrDecodedLog::Raw(
-            RawLog::new(topics.to_vec(), *data).expect("Received invalid log"),
+            RawLog::new(topics.to_vec(), data).expect("Received invalid log"),
         ));
     }
 

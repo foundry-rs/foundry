@@ -1,4 +1,3 @@
-use super::trace_types::{Action, Call, CallResult, Create, CreateResult, Res, Suicide};
 use crate::{
     decode,
     executor::CHEATCODE_ADDRESS,
@@ -11,7 +10,10 @@ use crate::{
 use alloy_dyn_abi::{FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi as Abi};
 use alloy_primitives::{Address, U256};
+use ethers::types::{Action, Call, CallResult, Create, CreateResult, Res, Suicide, U256 as eU256};
+// use super::trace_types::{Action, Call, CallResult, Create, CreateResult, Res, Suicide};
 use foundry_common::SELECTOR_LEN;
+use foundry_utils::types::ToEthers;
 use revm::interpreter::InstructionResult;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -50,14 +52,14 @@ impl CallTraceNode {
         match self.kind() {
             CallKind::Call | CallKind::StaticCall | CallKind::CallCode | CallKind::DelegateCall => {
                 Res::Call(CallResult {
-                    gas_used: U256::from(self.trace.gas_cost),
+                    gas_used: self.trace.gas_cost.into(),
                     output: self.trace.output.to_raw().into(),
                 })
             }
             CallKind::Create | CallKind::Create2 => Res::Create(CreateResult {
-                gas_used: U256::from(self.trace.gas_cost),
+                gas_used: self.trace.gas_cost.into(),
                 code: self.trace.output.to_raw().into(),
-                address: self.trace.address,
+                address: self.trace.address.to_ethers(),
             }),
         }
     }
@@ -66,27 +68,27 @@ impl CallTraceNode {
     pub fn parity_action(&self) -> Action {
         if self.status() == InstructionResult::SelfDestruct {
             return Action::Suicide(Suicide {
-                address: self.trace.address,
+                address: self.trace.address.to_ethers(),
                 // TODO deserialize from calldata here?
                 refund_address: Default::default(),
-                balance: self.trace.value,
+                balance: self.trace.value.to_ethers(),
             })
         }
         match self.kind() {
             CallKind::Call | CallKind::StaticCall | CallKind::CallCode | CallKind::DelegateCall => {
                 Action::Call(Call {
-                    from: self.trace.caller,
-                    to: self.trace.address,
-                    value: self.trace.value,
-                    gas: U256::from(self.trace.gas_cost),
+                    from: self.trace.caller.to_ethers(),
+                    to: self.trace.address.to_ethers(),
+                    value: self.trace.value.to_ethers(),
+                    gas: self.trace.gas_cost.into(),
                     input: self.trace.data.to_raw().into(),
                     call_type: self.kind().into(),
                 })
             }
             CallKind::Create | CallKind::Create2 => Action::Create(Create {
-                from: self.trace.caller,
-                value: self.trace.value,
-                gas: U256::from(self.trace.gas_cost),
+                from: self.trace.caller.to_ethers(),
+                value: self.trace.value.to_ethers(),
+                gas: self.trace.gas_cost.into(),
                 init: self.trace.data.to_raw().into(),
             }),
         }

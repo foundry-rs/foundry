@@ -48,8 +48,8 @@ pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
 /// `console.log`.
 pub fn decode_console_log(log: &Log) -> Option<String> {
     let raw_log = AlloyLog::new_unchecked(
-        log.topics.into_iter().map(|h| h.to_alloy()).collect_vec(),
-        log.data.0.into(),
+        log.topics.clone().into_iter().map(|h| h.to_alloy()).collect_vec(),
+        log.data.clone().0.into(),
     );
     let data = log_address::abi_decode_data(&raw_log.data, false);
     if let Ok(inner) = log::abi_decode_data(&raw_log.data, false) {

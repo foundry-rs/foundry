@@ -954,7 +954,12 @@ impl ChiselDispatcher {
 
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_labels(
-                result.labeled_addresses.iter().map(|(a, s)| ((*a).to_ethers(), s.clone())),
+                result
+                    .labeled_addresses
+                    .clone()
+                    .into_iter()
+                    .map(|(a, s)| (a, s))
+                    .collect::<Vec<_>>(),
             )
             .with_signature_identifier(SignaturesIdentifier::new(
                 Config::foundry_cache_dir(),

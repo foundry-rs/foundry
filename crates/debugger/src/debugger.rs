@@ -33,9 +33,7 @@ impl DebuggerArgs<'_> {
             .decoder
             .contracts
             .iter()
-            .map(|(addr, identifier)| {
-                ((*addr).to_alloy(), get_contract_name(identifier).to_string())
-            })
+            .map(|(addr, identifier)| ((*addr), get_contract_name(identifier).to_string()))
             .collect();
 
         let tui = Tui::new(

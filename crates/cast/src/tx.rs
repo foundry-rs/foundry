@@ -1,19 +1,19 @@
 use crate::errors::FunctionSignatureError;
-use ethers_core::{
-    abi::Function,
-    types::{
-        transaction::eip2718::TypedTransaction, Eip1559TransactionRequest, NameOrAddress,
-        TransactionRequest, H160, U256,
-    },
+use alloy_json_abi::Function;
+use alloy_primitives::{Address, U256};
+use ethers_core::types::{
+    transaction::eip2718::TypedTransaction, Eip1559TransactionRequest, NameOrAddress,
+    TransactionRequest,
 };
 use ethers_providers::Middleware;
 use eyre::{eyre, Result};
 use foundry_common::abi::{encode_function_args, get_func, get_func_etherscan};
 use foundry_config::Chain;
+use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::future::join_all;
 
 pub struct TxBuilder<'a, M: Middleware> {
-    to: Option<H160>,
+    to: Option<Address>,
     chain: Chain,
     tx: TypedTransaction,
     func: Option<Function>,
@@ -55,16 +55,16 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         let from_addr = resolve_ens(provider, from).await?;
 
         let mut tx: TypedTransaction = if chain.is_legacy() || legacy {
-            TransactionRequest::new().from(from_addr).chain_id(chain.id()).into()
+            TransactionRequest::new().from(from_addr.to_ethers()).chain_id(chain.id()).into()
         } else {
-            Eip1559TransactionRequest::new().from(from_addr).chain_id(chain.id()).into()
+            Eip1559TransactionRequest::new().from(from_addr.to_ethers()).chain_id(chain.id()).into()
         };
 
         let to_addr = if let Some(to) = to {
             let addr =
                 resolve_ens(provider, foundry_utils::resolve_addr(to, chain.try_into().ok())?)
                     .await?;
-            tx.set_to(addr);
+            tx.set_to(addr.to_ethers());
             Some(addr)
         } else {
             None
@@ -74,7 +74,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
 
     /// Set gas for tx
     pub fn set_gas(&mut self, v: U256) -> &mut Self {
-        self.tx.set_gas(v);
+        self.tx.set_gas(v.to_ethers());
         self
     }
 
@@ -88,7 +88,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
 
     /// Set gas price
     pub fn set_gas_price(&mut self, v: U256) -> &mut Self {
-        self.tx.set_gas_price(v);
+        self.tx.set_gas_price(v.to_ethers());
         self
     }
 
@@ -103,7 +103,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
     /// Set priority gas price
     pub fn set_priority_gas_price(&mut self, v: U256) -> &mut Self {
         if let TypedTransaction::Eip1559(tx) = &mut self.tx {
-            tx.max_priority_fee_per_gas = Some(v)
+            tx.max_priority_fee_per_gas = Some(v.to_ethers())
         }
         self
     }
@@ -118,7 +118,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
 
     /// Set value
     pub fn set_value(&mut self, v: U256) -> &mut Self {
-        self.tx.set_value(v);
+        self.tx.set_value(v.to_ethers());
         self
     }
 
@@ -132,7 +132,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
 
     /// Set nonce
     pub fn set_nonce(&mut self, v: U256) -> &mut Self {
-        self.tx.set_nonce(v);
+        self.tx.set_nonce(v.to_ethers());
         self
     }
 
@@ -244,13 +244,16 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
     }
 }
 
-async fn resolve_ens<M: Middleware, T: Into<NameOrAddress>>(provider: &M, addr: T) -> Result<H160> {
+async fn resolve_ens<M: Middleware, T: Into<NameOrAddress>>(
+    provider: &M,
+    addr: T,
+) -> Result<Address> {
     let from_addr = match addr.into() {
         NameOrAddress::Name(ref ens_name) => provider.resolve_name(ens_name).await,
         NameOrAddress::Address(addr) => Ok(addr),
     }
     .map_err(|x| eyre!("Failed to resolve ENS name: {x}"))?;
-    Ok(from_addr)
+    Ok(from_addr.to_alloy())
 }
 
 async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<String> {
@@ -271,11 +274,11 @@ async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<
 #[cfg(test)]
 mod tests {
     use crate::TxBuilder;
+    use alloy_primitives::{Address, U256};
     use async_trait::async_trait;
-    use ethers_core::types::{
-        transaction::eip2718::TypedTransaction, Address, Chain, NameOrAddress, H160, U256,
-    };
+    use ethers_core::types::{transaction::eip2718::TypedTransaction, Chain, NameOrAddress, H160};
     use ethers_providers::{JsonRpcClient, Middleware, ProviderError};
+    use foundry_utils::types::ToEthers;
     use serde::{de::DeserializeOwned, Serialize};
     use std::str::FromStr;
 
@@ -309,7 +312,7 @@ mod tests {
             self
         }
 
-        async fn resolve_name(&self, ens_name: &str) -> Result<Address, Self::Error> {
+        async fn resolve_name(&self, ens_name: &str) -> Result<H160, Self::Error> {
             match ens_name {
                 "a.eth" => Ok(H160::from_str(ADDR_1).unwrap()),
                 "b.eth" => Ok(H160::from_str(ADDR_2).unwrap()),
@@ -323,8 +326,11 @@ mod tests {
         let builder =
             TxBuilder::new(&provider, "a.eth", Some("b.eth"), Chain::Mainnet, false).await?;
         let (tx, args) = builder.build();
-        assert_eq!(*tx.from().unwrap(), H160::from_str(ADDR_1).unwrap());
-        assert_eq!(*tx.to().unwrap(), NameOrAddress::Address(H160::from_str(ADDR_2).unwrap()));
+        assert_eq!(*tx.from().unwrap(), Address::from_str(ADDR_1).unwrap().to_ethers());
+        assert_eq!(
+            *tx.to().unwrap(),
+            NameOrAddress::Address(Address::from_str(ADDR_2).unwrap().to_ethers())
+        );
         assert_eq!(args, None);
 
         match tx {

@@ -1,11 +1,11 @@
 use crate::rlp_converter::Item;
+use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
+use alloy_json_abi::{Function, JsonAbi as Abi};
+use alloy_primitives::{B256, U256};
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
-    abi::{
-        token::{LenientTokenizer, Tokenizer},
-        Function, HumanReadableParser, ParamType, RawAbi, Token,
-    },
+    abi::RawAbi,
     types::{transaction::eip2718::TypedTransaction, Chain, *},
     utils::{
         format_bytes32_string, format_units, get_contract_address, keccak256, parse_bytes32_string,
@@ -18,6 +18,7 @@ use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, Result};
 use foundry_common::{abi::encode_function_args, fmt::*, TransactionReceiptWithRevertReason};
 pub use foundry_evm::*;
+use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
 pub use rusoto_core::{
@@ -105,7 +106,7 @@ where
 
         if let Some(func) = func {
             // decode args into tokens
-            decoded = match func.decode_output(res.as_ref()) {
+            decoded = match func.abi_decode_output(res.as_ref(), false) {
                 Ok(decoded) => decoded,
                 Err(err) => {
                     // ensure the address is a contract
@@ -196,7 +197,7 @@ where
         who: T,
         block: Option<BlockId>,
     ) -> Result<U256> {
-        Ok(self.provider.get_balance(who, block).await?)
+        Ok(self.provider.get_balance(who, block).await?.to_alloy())
     }
 
     /// Sends a transaction to the specified address
@@ -301,7 +302,7 @@ where
 
         let res = self.provider.estimate_gas(tx, None).await?;
 
-        Ok::<_, eyre::Error>(res)
+        Ok::<_, eyre::Error>(res.to_alloy())
     }
 
     /// # Example
@@ -460,7 +461,7 @@ where
     }
 
     pub async fn chain_id(&self) -> Result<U256> {
-        Ok(self.provider.get_chainid().await?)
+        Ok(self.provider.get_chainid().await?.to_alloy())
     }
 
     pub async fn block_number(&self) -> Result<U64> {
@@ -468,7 +469,7 @@ where
     }
 
     pub async fn gas_price(&self) -> Result<U256> {
-        Ok(self.provider.get_gas_price().await?)
+        Ok(self.provider.get_gas_price().await?.to_alloy())
     }
 
     /// # Example
@@ -493,7 +494,7 @@ where
         who: T,
         block: Option<BlockId>,
     ) -> Result<U256> {
-        Ok(self.provider.get_transaction_count(who, block).await?)
+        Ok(self.provider.get_transaction_count(who, block).await?.to_alloy())
     }
 
     /// # Example
@@ -582,10 +583,10 @@ where
         let unpacked = if let Some(n) = nonce {
             n
         } else {
-            self.provider.get_transaction_count(address.into(), None).await?
+            self.provider.get_transaction_count(address.into(), None).await?.to_alloy()
         };
 
-        Ok(get_contract_address(address, unpacked))
+        Ok(get_contract_address(address, unpacked.to_ethers()))
     }
 
     /// # Example
@@ -1011,12 +1012,11 @@ impl SimpleCast {
     }
 
     fn max_min_int<const MAX: bool>(s: &str) -> Result<String> {
-        let ty = HumanReadableParser::parse_type(s)
-            .wrap_err("Invalid type, expected `(u)int<bit size>`")?;
+        let ty = DynSolType::parse(s).wrap_err("Invalid type, expected `(u)int<bit size>`")?;
         match ty {
-            ParamType::Int(n) => {
-                let mask = U256::one() << U256::from(n - 1);
-                let max = (U256::MAX & mask) - 1;
+            DynSolType::Int(n) => {
+                let mask = U256::from(1).wrapping_shl(n - 1);
+                let max = (U256::MAX & mask).saturating_sub(U256::from(1));
                 if MAX {
                     Ok(max.to_string())
                 } else {
@@ -1024,7 +1024,7 @@ impl SimpleCast {
                     Ok(min.to_string())
                 }
             }
-            ParamType::Uint(n) => {
+            DynSolType::Uint(n) => {
                 if MAX {
                     let mut max = U256::MAX;
                     if n < 255 {
@@ -1521,8 +1521,8 @@ impl SimpleCast {
     ///     # Ok(())
     /// }
     /// ```
-    pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
-        foundry_common::abi::abi_decode(sig, calldata, input, false)
+    pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<DynSolValue>> {
+        foundry_common::abi::abi_decode_calldata(sig, calldata, input, false)
     }
 
     /// Decodes calldata-encoded hex input or output
@@ -1557,8 +1557,8 @@ impl SimpleCast {
     ///     # Ok(())
     /// }
     /// ```
-    pub fn calldata_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
-        foundry_common::abi::abi_decode(sig, calldata, input, true)
+    pub fn calldata_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<DynSolValue>> {
+        foundry_common::abi::abi_decode_calldata(sig, calldata, input, true)
     }
 
     /// Performs ABI encoding based off of the function signature. Does not include
@@ -1582,25 +1582,10 @@ impl SimpleCast {
     /// # }
     /// ```
     pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = match HumanReadableParser::parse_function(sig) {
+        let func = match Function::parse(sig) {
             Ok(func) => func,
             Err(err) => {
-                if let Ok(constructor) = HumanReadableParser::parse_constructor(sig) {
-                    #[allow(deprecated)]
-                    Function {
-                        name: "constructor".to_string(),
-                        inputs: constructor.inputs,
-                        outputs: vec![],
-                        constant: None,
-                        state_mutability: Default::default(),
-                    }
-                } else {
-                    // we return the `Function` parse error as this case is more likely
-                    eyre::bail!("Could not process human-readable ABI. Please check if you've left the parenthesis unclosed or if some type is incomplete.\nError:\n{}", err)
-                    // return Err(err.into()).wrap_err("Could not process human-readable ABI. Please
-                    // check if you've left the parenthesis unclosed or if some type is
-                    // incomplete.")
-                }
+                eyre::bail!("Could not process human-readable ABI. Please check if you've left the parenthesis unclosed or if some type is incomplete.\nError:\n{}", err)
             }
         };
         let calldata = match encode_function_args(&func, args) {
@@ -1627,7 +1612,7 @@ impl SimpleCast {
     /// # }
     /// ```
     pub fn calldata_encode(sig: impl AsRef<str>, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = HumanReadableParser::parse_function(sig.as_ref())?;
+        let func = Function::parse(sig.as_ref())?;
         let calldata = encode_function_args(&func, args)?;
         Ok(hex::encode_prefixed(calldata))
     }
@@ -1944,7 +1929,7 @@ impl SimpleCast {
             eyre::bail!("Number of leading zeroes must not be greater than 4");
         }
         if optimize == 0 {
-            let selector = HumanReadableParser::parse_function(signature)?.selector();
+            let selector = Function::parse(signature)?.selector();
             return Ok((hex::encode_prefixed(selector), String::from(signature)))
         }
         let Some((name, params)) = signature.split_once('(') else {
@@ -2044,7 +2029,7 @@ mod tests {
         let data = "0x0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
         let sig = "safeTransferFrom(address,address,uint256,uint256,bytes)";
         let decoded = Cast::abi_decode(sig, data, true).unwrap();
-        let decoded = decoded.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let decoded = decoded.iter().map(|v| v.sol_type_name().unwrap()).collect::<Vec<_>>();
         assert_eq!(
             decoded,
             vec![
@@ -2069,7 +2054,6 @@ mod tests {
         let data = "0xf242432a0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
         let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
         let decoded = Cast::calldata_decode(sig, data, true).unwrap();
-        let decoded = decoded.iter().map(ToString::to_string).collect::<Vec<_>>();
         assert_eq!(
             decoded,
             vec![

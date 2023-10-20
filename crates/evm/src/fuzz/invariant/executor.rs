@@ -19,10 +19,11 @@ use crate::{
     utils::get_function,
     CALLER,
 };
+use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::JsonAbi as Abi;
 use alloy_primitives::{Address, FixedBytes};
 use alloy_sol_types::SolValue;
-use eyre::{eyre, ContextCompat, Result};
+use eyre::{bail, eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::{FuzzDictionaryConfig, InvariantConfig};
 use parking_lot::{Mutex, RwLock};
@@ -319,10 +320,34 @@ impl<'a> InvariantExecutor<'a> {
     ) -> eyre::Result<()> {
         // targetArtifactSelectors -> (string, bytes4[])[].
         let targeted_abi = self
-            .get_list::<(String, Vec<FixedBytes>)>(
+            .get_list::<(String, Vec<FixedBytes<4>>)>(
                 invariant_address,
                 abi,
                 "targetArtifactSelectors",
+                |v| {
+                    if let Some(list) = v.as_tuple() {
+                        list.into_iter()
+                            .map(|v| {
+                                if let Some(elements) = v.as_tuple() {
+                                    let name = elements[0].as_str().unwrap().to_string();
+                                    let selectors = elements[1]
+                                        .as_array()
+                                        .unwrap()
+                                        .into_iter()
+                                        .map(|v| {
+                                            FixedBytes::from_slice(v.as_fixed_bytes().unwrap().0)
+                                        })
+                                        .collect::<Vec<_>>();
+                                    (name, selectors)
+                                } else {
+                                    panic!("targetArtifactSelectors should be a tuple array")
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    } else {
+                        panic!("targetArtifactSelectors should be a tuple array")
+                    }
+                },
             )
             .into_iter()
             .map(|(contract, functions)| (contract, functions))
@@ -341,8 +366,15 @@ impl<'a> InvariantExecutor<'a> {
 
         // targetArtifacts -> string[]
         // excludeArtifacts -> string[].
-        let [selected_abi, excluded_abi] = ["targetArtifacts", "excludeArtifacts"]
-            .map(|method| self.get_list::<String>(invariant_address, abi, method));
+        let [selected_abi, excluded_abi] = ["targetArtifacts", "excludeArtifacts"].map(|method| {
+            self.get_list::<String>(invariant_address, abi, method, |v| {
+                if let Some(list) = v.as_array() {
+                    list.into_iter().map(|v| v.as_str().unwrap().to_string()).collect::<Vec<_>>()
+                } else {
+                    panic!("targetArtifacts should be an array")
+                }
+            })
+        });
 
         // Insert `excludeArtifacts` into the executor `excluded_abi`.
         for contract in excluded_abi {
@@ -417,8 +449,17 @@ impl<'a> InvariantExecutor<'a> {
         abi: &Abi,
     ) -> eyre::Result<(SenderFilters, TargetedContracts)> {
         let [targeted_senders, excluded_senders, selected, excluded] =
-            ["targetSenders", "excludeSenders", "targetContracts", "excludeContracts"]
-                .map(|method| self.get_list::<Address>(invariant_address, abi, method));
+            ["targetSenders", "excludeSenders", "targetContracts", "excludeContracts"].map(
+                |method| {
+                    self.get_list::<Address>(invariant_address, abi, method, |v| {
+                        if let Some(list) = v.as_array() {
+                            list.into_iter().map(|v| v.as_address().unwrap()).collect::<Vec<_>>()
+                        } else {
+                            panic!("targetSenders should be an array")
+                        }
+                    })
+                },
+            );
 
         let mut contracts: TargetedContracts = self
             .setup_contracts
@@ -455,8 +496,33 @@ impl<'a> InvariantExecutor<'a> {
         abi: &Abi,
         targeted_contracts: &mut TargetedContracts,
     ) -> eyre::Result<()> {
-        let interfaces =
-            self.get_list::<(Address, Vec<String>)>(invariant_address, abi, "targetInterfaces");
+        let interfaces = self.get_list::<(Address, Vec<String>)>(
+            invariant_address,
+            abi,
+            "targetInterfaces",
+            |v| {
+                if let Some(l) = v.as_array() {
+                    l.into_iter()
+                        .map(|v| {
+                            if let Some(elements) = v.as_tuple() {
+                                let addr = elements[0].as_address().unwrap();
+                                let interfaces = elements[1]
+                                    .as_array()
+                                    .unwrap()
+                                    .into_iter()
+                                    .map(|v| v.as_str().unwrap().to_string())
+                                    .collect::<Vec<_>>();
+                                (addr, interfaces)
+                            } else {
+                                panic!("targetInterfaces should be a tuple array")
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    panic!("targetInterfaces should be a tuple array")
+                }
+            },
+        );
 
         // Since `targetInterfaces` returns a tuple array there is no guarantee
         // that the addresses are unique this map is used to merge functions of
@@ -523,7 +589,28 @@ impl<'a> InvariantExecutor<'a> {
 
         // `targetSelectors() -> (address, bytes4[])[]`.
         let selectors =
-            self.get_list::<(Address, Vec<FixedBytes>)>(address, abi, "targetSelectors");
+            self.get_list::<(Address, Vec<FixedBytes<4>>)>(address, abi, "targetSelectors", |v| {
+                if let Some(l) = v.as_array() {
+                    l.into_iter()
+                        .map(|v| {
+                            if let Some(elements) = v.as_tuple() {
+                                let addr = elements[0].as_address().unwrap();
+                                let selectors = elements[1]
+                                    .as_array()
+                                    .unwrap()
+                                    .into_iter()
+                                    .map(|v| FixedBytes::from_slice(v.as_fixed_bytes().unwrap().0))
+                                    .collect::<Vec<_>>();
+                                (addr, selectors)
+                            } else {
+                                panic!("targetSelectors should be a tuple array")
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    panic!("targetSelectors should be a tuple array")
+                }
+            });
 
         for (address, bytes4_array) in selectors.into_iter() {
             self.add_address_with_functions(address, bytes4_array, targeted_contracts)?;
@@ -561,32 +648,35 @@ impl<'a> InvariantExecutor<'a> {
         Ok(())
     }
 
-    // TODO: Requires executor rework
-    // /// Get the function output by calling the contract `method_name` function, encoded as a
-    // [DynSolValue].
-    // fn get_list<T>(&self, address: Address, abi: &Abi, method_name: &str) ->
-    // Vec<T> where
-    //     T: DynSolValue,
-    // {
-    //     if let Some(func) = abi.functions().find(|func| func.name == method_name) {
-    //         if let Ok(call_result) = self.executor.call::<_, _>(
-    //             CALLER,
-    //             address,
-    //             func.clone(),
-    //             vec![],
-    //             rU256::ZERO,
-    //             Some(abi),
-    //         ) { return call_result.result
-    //         } else {
-    //             warn!(
-    //                 "The function {} was found but there was an error querying its data.",
-    //                 method_name
-    //             );
-    //         }
-    //     };
+    /// Get the function output by calling the contract `method_name` function, encoded as a
+    /// [DynSolValue].
+    fn get_list<T>(
+        &self,
+        address: Address,
+        abi: &Abi,
+        method_name: &str,
+        f: fn(DynSolValue) -> Vec<T>,
+    ) -> Vec<T> {
+        if let Some(func) = abi.functions().find(|func| func.name == method_name) {
+            if let Ok(call_result) = self.executor.call::<_, _>(
+                CALLER,
+                address,
+                func.clone(),
+                vec![],
+                rU256::ZERO,
+                Some(abi),
+            ) {
+                return f(call_result.result)
+            } else {
+                warn!(
+                    "The function {} was found but there was an error querying its data.",
+                    method_name
+                );
+            }
+        };
 
-    //     Vec::new()
-    // }
+        Vec::new()
+    }
 }
 
 /// Collects data from call for fuzzing. However, it first verifies that the sender is not an EOA

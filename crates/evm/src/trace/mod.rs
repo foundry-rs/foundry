@@ -3,9 +3,12 @@ use crate::{
 };
 use alloy_primitives::{Address, Bytes, Log as RawLog, B256, U256};
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
+use ethers::types::{DefaultFrame, GethDebugTracingOptions, StructLog};
 pub use executor::TracingExecutor;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use foundry_utils::types::ToEthers;
 use hashbrown::HashMap;
+use itertools::Itertools;
 use node::CallTraceNode;
 use revm::interpreter::{opcode, CallContext, InstructionResult, Memory, Stack};
 use serde::{Deserialize, Serialize};
@@ -13,7 +16,6 @@ use std::{
     collections::{BTreeMap, HashSet},
     fmt::{self, Write},
 };
-use trace_types::{DefaultFrame, GethDebugTracingOptions, StructLog};
 use yansi::{Color, Paint};
 
 /// Call trace address identifiers.
@@ -109,7 +111,13 @@ impl CallTraceArena {
                 let contract_storage = storage.entry(step.contract).or_default();
                 if let Some((key, value)) = step.state_diff {
                     contract_storage.insert(B256::from(key), B256::from(value));
-                    log.storage = Some(contract_storage.clone());
+                    log.storage = Some(
+                        contract_storage
+                            .clone()
+                            .into_iter()
+                            .map(|(t)| (t.0.to_ethers(), t.1.to_ethers()))
+                            .collect(),
+                    );
                 }
             }
             if opts.disable_stack.unwrap_or_default() {
@@ -167,8 +175,8 @@ impl CallTraceArena {
         let mut acc = DefaultFrame {
             // If the top-level trace succeeded, then it was a success
             failed: !main_trace.success,
-            gas: receipt_gas_used,
-            return_value: main_trace.output.to_bytes(),
+            gas: receipt_gas_used.to_ethers(),
+            return_value: main_trace.output.to_bytes().0.into(),
             ..Default::default()
         };
 
@@ -423,7 +431,7 @@ impl From<&CallTraceStep> for StructLog {
             } else {
                 None
             },
-            stack: Some(step.stack.data().iter().copied().collect()),
+            stack: Some(step.stack.data().iter().copied().map(|v| v.to_ethers()).collect_vec()),
             // Filled in `CallTraceArena::geth_trace` as a result of compounding all slot changes
             storage: None,
         }

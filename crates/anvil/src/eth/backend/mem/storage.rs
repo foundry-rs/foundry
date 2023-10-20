@@ -16,7 +16,7 @@ use ethers::{
     types::{ActionType, Bytes, GethDebugTracingOptions, TransactionReceipt, U256},
 };
 use foundry_evm::revm::{interpreter::InstructionResult, primitives::Env};
-use foundry_utils::types::ToEthers;
+use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, VecDeque},
@@ -406,7 +406,7 @@ impl MinedTransaction {
     }
 
     pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> DefaultFrame {
-        self.info.traces.geth_trace(self.receipt.gas_used(), opts)
+        self.info.traces.geth_trace(self.receipt.gas_used().to_alloy(), opts)
     }
 }
 
