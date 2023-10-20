@@ -16,9 +16,8 @@ use forge::{
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{shell, RpcUrl};
-use foundry_compilers::{
-    artifacts::CompactContractBytecode, types::transaction::eip2718::TypedTransaction,
-};
+use foundry_compilers::artifacts::CompactContractBytecode;
+use ethers::types::transaction::eip2718::TypedTransaction;
 use foundry_utils::types::ToEthers;
 use futures::future::join_all;
 use parking_lot::RwLock;
@@ -134,7 +133,7 @@ impl ScriptArgs {
                         abi,
                         code,
                     };
-                    return Some(((*addr).to_alloy(), info))
+                    return Some((*addr, info))
                 }
                 None
             })
@@ -176,7 +175,7 @@ impl ScriptArgs {
                                     if matches!(node.kind(), CallKind::Create | CallKind::Create2) {
                                         return Some(AdditionalContract {
                                             opcode: node.kind(),
-                                            address: node.trace.address.to_alloy(),
+                                            address: node.trace.address,
                                             init_code: node.trace.data.to_raw(),
                                         })
                                     }

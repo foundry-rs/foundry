@@ -1,5 +1,6 @@
 use super::{EtherscanSourceProvider, VerifyArgs};
-use ethers::{etherscan::verify::CodeFormat, prelude::artifacts::StandardJsonCompilerInput};
+use ethers::etherscan::verify::CodeFormat;
+use foundry_compilers::artifacts::StandardJsonCompilerInput;
 use eyre::{Context, Result};
 use foundry_compilers::Project;
 use semver::Version;

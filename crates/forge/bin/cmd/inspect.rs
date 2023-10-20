@@ -169,8 +169,8 @@ impl InspectArgs {
                     // Print the signature of all errors
                     for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
                         let types =
-                            er.inputs.iter().map(|p| p.kind.to_string()).collect::<Vec<_>>();
-                        let sig = format!("{:x}", er.signature());
+                            er.inputs.iter().map(|p| p.ty).collect::<Vec<_>>();
+                        let sig = format!("{:x}", er.selector());
                         let sig_trimmed = &sig[0..8];
                         out.insert(
                             format!("{}({})", er.name, types.join(",")),
@@ -186,7 +186,7 @@ impl InspectArgs {
                     // print the signature of all events including anonymous
                     for ev in abi.events.iter().flat_map(|(_, events)| events) {
                         let types =
-                            ev.inputs.iter().map(|p| p.kind.to_string()).collect::<Vec<_>>();
+                            ev.inputs.iter().map(|p| p.ty).collect::<Vec<_>>();
                         out.insert(
                             format!("{}({})", ev.name, types.join(",")),
                             format!("{:?}", ev.signature()).into(),

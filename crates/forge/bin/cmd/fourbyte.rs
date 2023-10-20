@@ -1,5 +1,4 @@
 use clap::Parser;
-use ethers::prelude::artifacts::output_selection::ContractOutputSelection;
 use eyre::Result;
 use foundry_cli::{
     opts::{CompilerArgs, CoreBuildArgs, ProjectPathsArgs},

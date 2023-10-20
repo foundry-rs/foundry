@@ -1,6 +1,7 @@
 use self::{build::BuildOutput, runner::ScriptRunner};
 use super::{build::BuildArgs, retry::RetryArgs};
-use alloy_json_abi::{Function, JsonAbi as Abi};
+use alloy_dyn_abi::FunctionExt;
+use alloy_json_abi::{Function, JsonAbi as Abi, InternalType};
 use alloy_primitives::{Address, Bytes, U256};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
@@ -231,7 +232,7 @@ impl ScriptArgs {
         let mut local_identifier = LocalTraceIdentifier::new(known_contracts);
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_labels(
-                result.labeled_addresses.iter().map(|(a, s)| ((*a).to_ethers(), s.clone())),
+                result.labeled_addresses,
             )
             .with_verbosity(verbosity)
             .with_signature_identifier(SignaturesIdentifier::new(
@@ -262,10 +263,10 @@ impl ScriptArgs {
         let func = script_config.called_function.as_ref().expect("There should be a function.");
         let mut returns = HashMap::new();
 
-        match func.decode_output(returned) {
+        match func.abi_decode_output(returned, false) {
             Ok(decoded) => {
                 for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
-                    let internal_type = output.internal_type.as_deref().unwrap_or("unknown");
+                    let internal_type = output.internal_type.clone().unwrap_or(InternalType::Other { contract: None, ty: "unknown".to_string() });
 
                     let label = if !output.name.is_empty() {
                         output.name.to_string()
@@ -330,10 +331,10 @@ impl ScriptArgs {
 
         if result.success && !result.returned.is_empty() {
             shell::println("\n== Return ==")?;
-            match func.decode_output(&result.returned) {
+            match func.abi_decode_output(&result.returned, false) {
                 Ok(decoded) => {
                     for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
-                        let internal_type = output.internal_type.as_deref().unwrap_or("unknown");
+                        let internal_type = output.internal_type.clone().unwrap_or(InternalType::Other { contract: None, ty: "unknown".to_string() });
 
                         let label = if !output.name.is_empty() {
                             output.name.to_string()

@@ -1,7 +1,7 @@
 //! Commonly used traits
 
 use auto_impl::auto_impl;
-use ethers_core::abi::Function;
+use alloy_json_abi::Function;
 
 /// Extension trait for matching tests
 #[auto_impl(&)]

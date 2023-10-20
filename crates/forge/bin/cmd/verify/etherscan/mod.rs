@@ -1,7 +1,7 @@
 use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
 use crate::cmd::retry::RETRY_CHECK_ON_VERIFY;
+use alloy_json_abi::Function;
 use ethers::{
-    abi::Function,
     etherscan::{
         utils::lookup_compiler_version,
         verify::{CodeFormat, VerifyContract},
@@ -416,8 +416,7 @@ impl EtherscanVerificationProvider {
                 name: "constructor".to_string(),
                 inputs: constructor.inputs.clone(),
                 outputs: vec![],
-                constant: None,
-                state_mutability: Default::default(),
+                state_mutability: alloy_json_abi::StateMutability::NonPayable,
             };
             let encoded_args = encode_function_args(
                 &func,

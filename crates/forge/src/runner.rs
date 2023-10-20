@@ -312,11 +312,11 @@ impl<'a> ContractRunner<'a> {
         let start = Instant::now();
         let debug_arena;
         let (reverted, reason, gas, stipend, coverage, state_changeset, breakpoints) =
-            match executor.execute_test::<(), _, _>(
+            match executor.execute_test::<_, _>(
                 self.sender,
                 address,
                 func.clone(),
-                (),
+                vec![],
                 U256::ZERO,
                 self.errors,
             ) {
@@ -426,11 +426,11 @@ impl<'a> ContractRunner<'a> {
         let TestSetup { address, logs, traces, labeled_addresses, .. } = setup;
 
         // First, run the test normally to see if it needs to be skipped.
-        if let Err(EvmError::SkipError) = self.executor.clone().execute_test::<(), _, _>(
+        if let Err(EvmError::SkipError) = self.executor.clone().execute_test::<_, _>(
             self.sender,
             address,
             func.clone(),
-            (),
+            vec![],
             U256::ZERO,
             self.errors,
         ) {

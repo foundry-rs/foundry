@@ -2,7 +2,7 @@ use super::{retry::RetryArgs, verify};
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
-    prelude::{artifacts::BytecodeObject, ContractFactory, Middleware, MiddlewareBuilder},
+    prelude::{ContractFactory, Middleware, MiddlewareBuilder},
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
 use eyre::{Context, Result};

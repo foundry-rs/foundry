@@ -5,7 +5,6 @@ use crate::{
 use alloy_primitives::U256;
 use comfy_table::{presets::ASCII_MARKDOWN, *};
 use foundry_common::{calc, TestFunctionExt};
-use foundry_utils::types::ToEthers;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt::Display};
 
@@ -47,8 +46,8 @@ impl GasReport {
         let node = &arena.arena[node_index];
         let trace = &node.trace;
 
-        if trace.address == CHEATCODE_ADDRESS.to_ethers() ||
-            trace.address == HARDHAT_CONSOLE_ADDRESS.to_ethers()
+        if trace.address == CHEATCODE_ADDRESS ||
+            trace.address == HARDHAT_CONSOLE_ADDRESS
         {
             return
         }
@@ -76,8 +75,8 @@ impl GasReport {
 
                 match &trace.data {
                     RawOrDecodedCall::Raw(bytes) if trace.created() => {
-                        contract_report.gas = trace.gas_cost.into();
-                        contract_report.size = bytes.len().into();
+                        contract_report.gas = U256::from(trace.gas_cost);
+                        contract_report.size = U256::from(bytes.len());
                     }
                     // TODO: More robust test contract filtering
                     RawOrDecodedCall::Decoded(func, sig, _)
@@ -89,7 +88,7 @@ impl GasReport {
                             .or_default()
                             .entry(sig.clone())
                             .or_default();
-                        function_report.calls.push(trace.gas_cost.into());
+                        function_report.calls.push(U256::from(trace.gas_cost));
                     }
                     _ => (),
                 }
@@ -110,7 +109,7 @@ impl GasReport {
                     func.min = func.calls.first().copied().unwrap_or_default();
                     func.max = func.calls.last().copied().unwrap_or_default();
                     func.mean = calc::mean(&func.calls);
-                    func.median = calc::median_sorted(&func.calls);
+                    func.median = U256::from(calc::median_sorted(func.calls.iter().map(|c| c.to::<u64>()).collect::<Vec<_>>().as_slice()));
                 });
             });
         });

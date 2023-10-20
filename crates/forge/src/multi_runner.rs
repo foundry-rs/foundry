@@ -14,7 +14,7 @@ use foundry_evm::{
     },
     revm,
 };
-use foundry_utils::{types::ToEthers, PostLinkInput, ResolvedDependency};
+use foundry_utils::{PostLinkInput, ResolvedDependency};
 use rayon::prelude::*;
 use revm::primitives::SpecId;
 use std::{
@@ -219,8 +219,8 @@ impl MultiContractRunner {
             executor,
             contract,
             deploy_code.0.into(),
-            self.evm_opts.initial_balance.to_ethers(),
-            self.sender.map(|a| a.to_ethers()),
+            self.evm_opts.initial_balance,
+            self.sender,
             self.errors.as_ref(),
             &libs,
             self.debug,
