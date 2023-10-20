@@ -1,7 +1,7 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use ethers::prelude::remappings::Remapping;
+use foundry_compilers::remappings::Remapping;
 use foundry_compilers::{
     artifacts::{BytecodeHash, Metadata},
     ConfigurableContractArtifact,

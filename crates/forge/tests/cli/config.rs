@@ -1,10 +1,7 @@
 //! Contains various tests for checking forge commands related to config values
 
-use ethers::{
-    prelude::artifacts::YulDetails,
-    types::{Address, H256, U256},
-};
-use foundry_compilers::artifacts::RevertStrings;
+use ethers::types::{Address, H256, U256};
+use foundry_compilers::artifacts::{RevertStrings, YulDetails};
 
 use foundry_cli::utils as forge_utils;
 use foundry_config::{
