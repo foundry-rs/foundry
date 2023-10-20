@@ -2,8 +2,10 @@
 
 use super::*;
 use alloy_primitives::{Address, U256};
-use once_cell::sync::Lazy;
-use foundry_compilers::{artifacts::{Libraries, Settings}, ProjectCompileOutput, SolcConfig, Project, ProjectPathsConfig};
+use foundry_compilers::{
+    artifacts::{Libraries, Settings},
+    Project, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
+};
 use foundry_config::Config;
 use foundry_evm::{
     executor::{
@@ -15,6 +17,7 @@ use foundry_evm::{
     CALLER,
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
+use once_cell::sync::Lazy;
 use std::{path::PathBuf, str::FromStr};
 
 pub static PROJECT: Lazy<Project> = Lazy::new(|| {

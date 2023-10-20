@@ -163,9 +163,16 @@ impl TransactionWithMetadata {
                         // the constructor args start after bytecode
                         let constructor_args = &creation_code[info.code.len()..];
 
-                        let constructor_fn = Function { name: "constructor".to_string(), inputs: constructor.inputs, outputs: vec![], state_mutability: constructor.state_mutability };
+                        let constructor_fn = Function {
+                            name: "constructor".to_string(),
+                            inputs: constructor.inputs,
+                            outputs: vec![],
+                            state_mutability: constructor.state_mutability,
+                        };
 
-                        if let Ok(arguments) = constructor_fn.abi_decode_output(constructor_args, false) {
+                        if let Ok(arguments) =
+                            constructor_fn.abi_decode_output(constructor_args, false)
+                        {
                             self.arguments = Some(arguments.iter().map(format_token_raw).collect());
                         } else {
                             let (signature, bytecode) = on_err();

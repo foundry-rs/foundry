@@ -5,6 +5,7 @@ use super::{
     *,
 };
 use alloy_primitives::{Address, Bytes, U256};
+use ethers::types::transaction::eip2718::TypedTransaction;
 use eyre::Result;
 use forge::{
     executor::{
@@ -17,7 +18,6 @@ use forge::{
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{shell, RpcUrl};
 use foundry_compilers::artifacts::CompactContractBytecode;
-use ethers::types::transaction::eip2718::TypedTransaction;
 use foundry_utils::types::ToEthers;
 use futures::future::join_all;
 use parking_lot::RwLock;

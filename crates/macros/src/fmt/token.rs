@@ -1,7 +1,7 @@
 //! Formatting helpers for [`DynSolValue`]s.
 
-use alloy_primitives::hex;
 use alloy_dyn_abi::DynSolValue;
+use alloy_primitives::hex;
 use std::{fmt, fmt::Write};
 
 /// Wrapper that pretty formats a [DynSolValue]

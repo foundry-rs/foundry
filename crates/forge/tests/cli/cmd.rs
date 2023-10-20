@@ -1,9 +1,9 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use foundry_compilers::remappings::Remapping;
 use foundry_compilers::{
     artifacts::{BytecodeHash, Metadata},
+    remappings::Remapping,
     ConfigurableContractArtifact,
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
