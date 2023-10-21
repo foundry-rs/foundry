@@ -91,7 +91,7 @@ pub enum Subcommands {
         data: Vec<String>,
     },
 
-    /// "Convert binary data into hex data."
+    /// Convert binary data into hex data.
     #[clap(visible_aliases = &["--from-bin", "from-binx", "fb"])]
     FromBin,
 
