@@ -233,44 +233,62 @@ impl SelectorsSubcommands {
 
                 while let Some((contract, artifact)) = artifacts.next() {
                     let abi = artifact.abi.ok_or(eyre::eyre!("Unable to fetch abi"))?;
-                    if abi.abi.functions.is_empty() && 
-                        abi.abi.events.is_empty() && 
-                        abi.abi.errors.is_empty() 
+                    if abi.abi.functions.is_empty() &&
+                        abi.abi.events.is_empty() &&
+                        abi.abi.errors.is_empty()
                     {
                         continue
                     }
-                
+
                     println!("{contract}");
-                
+
                     let mut table = Table::new();
 
-                    table
-                        .set_header(vec!["Type", "Signature", "Selector"]);
-                
+                    table.set_header(vec!["Type", "Signature", "Selector"]);
+
                     for func in abi.abi.functions() {
-                        let sig = func.signature().split(':').next().unwrap_or_default().to_string();
+                        let sig =
+                            func.signature().split(':').next().unwrap_or_default().to_string();
                         let selector = func.short_signature();
                         table.add_row(vec!["Function", &sig, &hex::encode_prefixed(selector)]);
                     }
-                
+
                     for event in abi.abi.events() {
-                        let sig = format!("{}({})", event.name, event.inputs.iter().map(|p| p.kind.to_string()).collect::<Vec<_>>().join(","));
+                        let sig = format!(
+                            "{}({})",
+                            event.name,
+                            event
+                                .inputs
+                                .iter()
+                                .map(|p| p.kind.to_string())
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        );
                         let selector = event.signature();
                         table.add_row(vec!["Event", &sig, &hex::encode_prefixed(selector)]);
                     }
-                
+
                     for error in abi.abi.errors() {
-                        let sig = format!("{}({})", error.name, error.inputs.iter().map(|p| p.kind.to_string()).collect::<Vec<_>>().join(","));
+                        let sig = format!(
+                            "{}({})",
+                            error.name,
+                            error
+                                .inputs
+                                .iter()
+                                .map(|p| p.kind.to_string())
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        );
                         let selector = &error.signature()[0..4];
                         table.add_row(vec!["Error", &sig, &hex::encode_prefixed(selector)]);
                     }
-                
+
                     println!("{table}");
-                
+
                     if artifacts.peek().is_some() {
                         println!()
                     }
-                }                
+                }
             }
         }
         Ok(())
