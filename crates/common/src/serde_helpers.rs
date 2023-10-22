@@ -1,3 +1,5 @@
+//! Misc serde helpers for foundry crates.
+
 use std::str::FromStr;
 
 use alloy_primitives::U256;

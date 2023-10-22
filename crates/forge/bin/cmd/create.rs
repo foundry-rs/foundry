@@ -1,7 +1,7 @@
 use super::{retry::RetryArgs, verify};
 use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Constructor, JsonAbi as Abi};
-use alloy_primitives::{Address, Bytes, U256, U64};
+use alloy_primitives::{Address, Bytes};
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::InvalidOutputType,
@@ -15,7 +15,7 @@ use foundry_cli::{
 };
 use foundry_common::{abi::parse_tokens, compile, estimate_eip1559_fees};
 use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalized};
-use foundry_utils::types::{ToAlloy, ToEthers};
+use foundry_utils::types::ToAlloy;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 
@@ -332,27 +332,16 @@ impl CreateArgs {
             .map(|(input, arg)| (DynSolType::parse(&input.ty).expect("Could not parse types"), arg))
             .collect::<Vec<_>>();
         let params_2 = params.iter().map(|(ty, arg)| (ty, arg.as_str())).collect::<Vec<_>>();
-        parse_tokens(params_2, true)
+        parse_tokens(params_2)
     }
 }
 
 use ethers::{
-    contract::{ContractError, ContractInstance},
-    providers::call_raw::{CallBuilder, RawCall},
-    types::{
-        BlockNumber, Eip1559TransactionRequest, NameOrAddress, TransactionReceipt,
-        TransactionRequest,
-    },
+    contract::ContractError,
+    types::{BlockNumber, Eip1559TransactionRequest, TransactionReceipt, TransactionRequest},
 };
 
 use std::{borrow::Borrow, marker::PhantomData};
-
-/// `ContractDeployer` is a [`ContractDeploymentTx`] object with an
-/// [`Arc`] middleware. This type alias exists to preserve backwards
-/// compatibility with less-abstract Contracts.
-///
-/// For full usage docs, see [`ContractDeploymentTx`].
-pub type ContractDeployer<M, C> = ContractDeploymentTx<Arc<M>, M, C>;
 
 /// `ContractFactory` is a [`DeploymentTxFactory`] object with an
 /// [`Arc`] middleware. This type alias exists to preserve backwards
@@ -392,129 +381,6 @@ impl<B, M, C> From<Deployer<B, M>> for ContractDeploymentTx<B, M, C> {
     }
 }
 
-impl<B, M, C> ContractDeploymentTx<B, M, C>
-where
-    B: Borrow<M> + Clone,
-    M: Middleware,
-    C: From<ContractInstance<B, M>>,
-{
-    /// Create a new instance of this from a deployer.
-    pub fn new(deployer: Deployer<B, M>) -> Self {
-        Self { deployer, _contract: PhantomData }
-    }
-
-    /// Sets the number of confirmations to wait for the contract deployment transaction
-    pub fn confirmations<T: Into<usize>>(mut self, confirmations: T) -> Self {
-        self.deployer.confs = confirmations.into();
-        self
-    }
-
-    /// Sets the block at which RPC requests are made
-    pub fn block<T: Into<BlockNumber>>(mut self, block: T) -> Self {
-        self.deployer.block = block.into();
-        self
-    }
-
-    /// Uses a Legacy transaction instead of an EIP-1559 one to do the deployment
-    pub fn legacy(mut self) -> Self {
-        self.deployer = self.deployer.legacy();
-        self
-    }
-
-    /// Sets the `from` field in the deploy transaction to the provided value
-    pub fn from<T: Into<Address>>(mut self, from: T) -> Self {
-        self.deployer.tx.set_from(from.into().to_ethers());
-        self
-    }
-
-    /// Sets the `to` field in the deploy transaction to the provided value
-    pub fn to<T: Into<NameOrAddress>>(mut self, to: T) -> Self {
-        self.deployer.tx.set_to(to.into());
-        self
-    }
-
-    /// Sets the `gas` field in the deploy transaction to the provided value
-    pub fn gas<T: Into<U256>>(mut self, gas: T) -> Self {
-        self.deployer.tx.set_gas(gas.into().to_ethers());
-        self
-    }
-
-    /// Sets the `gas_price` field in the deploy transaction to the provided value
-    pub fn gas_price<T: Into<U256>>(mut self, gas_price: T) -> Self {
-        self.deployer.tx.set_gas_price(gas_price.into().to_ethers());
-        self
-    }
-
-    /// Sets the `value` field in the deploy transaction to the provided value
-    pub fn value<T: Into<U256>>(mut self, value: T) -> Self {
-        self.deployer.tx.set_value(value.into().to_ethers());
-        self
-    }
-
-    /// Sets the `data` field in the deploy transaction to the provided value
-    pub fn data<T: Into<Bytes>>(mut self, data: T) -> Self {
-        self.deployer.tx.set_data(data.into().0.into());
-        self
-    }
-
-    /// Sets the `nonce` field in the deploy transaction to the provided value
-    pub fn nonce<T: Into<U256>>(mut self, nonce: T) -> Self {
-        self.deployer.tx.set_nonce(nonce.into().to_ethers());
-        self
-    }
-
-    /// Sets the `chain_id` field in the deploy transaction to the provided value
-    pub fn chain_id<T: Into<U64>>(mut self, chain_id: T) -> Self {
-        self.deployer.tx.set_chain_id(chain_id.into().to_ethers());
-        self
-    }
-
-    /// Dry runs the deployment of the contract
-    ///
-    /// Note: this function _does not_ send a transaction from your account
-    pub async fn call(&self) -> Result<(), ContractError<M>> {
-        self.deployer.call().await
-    }
-
-    /// Returns a CallBuilder, which when awaited executes the deployment of this contract via
-    /// `eth_call`. This call resolves to the returned data which would have been stored at the
-    /// destination address had the deploy transaction been executed via `send()`.
-    ///
-    /// Note: this function _does not_ send a transaction from your account
-    pub fn call_raw(&self) -> CallBuilder<'_, M::Provider> {
-        self.deployer.call_raw()
-    }
-
-    /// Broadcasts the contract deployment transaction and after waiting for it to
-    /// be sufficiently confirmed (default: 1), it returns a new instance of the contract type at
-    /// the deployed contract's address.
-    pub async fn send(self) -> Result<Address, ContractError<M>> {
-        let contract = self.deployer.send().await?;
-        Ok(contract)
-    }
-
-    /// Broadcasts the contract deployment transaction and after waiting for it to
-    /// be sufficiently confirmed (default: 1), it returns a new instance of the contract type at
-    /// the deployed contract's address and the corresponding
-    /// [`TransactionReceipt`].
-    pub async fn send_with_receipt(
-        self,
-    ) -> Result<(Address, TransactionReceipt), ContractError<M>> {
-        let (contract, receipt) = self.deployer.send_with_receipt().await?;
-        Ok((contract, receipt))
-    }
-
-    /// Returns a reference to the deployer's ABI
-    pub fn abi(&self) -> &Abi {
-        self.deployer.abi()
-    }
-
-    /// Returns a pointer to the deployer's client
-    pub fn client(&self) -> &M {
-        self.deployer.client()
-    }
-}
-
 /// Helper which manages the deployment transaction of a smart contract
 #[derive(Debug)]
 #[must_use = "Deployer does nothing unless you `send` it"]
@@ -549,18 +415,6 @@ where
     B: Borrow<M> + Clone,
     M: Middleware,
 {
-    /// Sets the number of confirmations to wait for the contract deployment transaction
-    pub fn confirmations<T: Into<usize>>(mut self, confirmations: T) -> Self {
-        self.confs = confirmations.into();
-        self
-    }
-
-    /// Set the block at which requests are made
-    pub fn block<T: Into<BlockNumber>>(mut self, block: T) -> Self {
-        self.block = block.into();
-        self
-    }
-
     /// Uses a Legacy transaction instead of an EIP-1559 one to do the deployment
     pub fn legacy(mut self) -> Self {
         self.tx = match self.tx {
@@ -571,30 +425,6 @@ where
             other => other,
         };
         self
-    }
-
-    /// Dry runs the deployment of the contract
-    ///
-    /// Note: this function _does not_ send a transaction from your account
-    pub async fn call(&self) -> Result<(), ContractError<M>> {
-        unimplemented!()
-    }
-
-    /// Returns a CallBuilder, which when awaited executes the deployment of this contract via
-    /// `eth_call`. This call resolves to the returned data which would have been stored at the
-    /// destination address had the deploy transaction been executed via `send()`.
-    ///
-    /// Note: this function _does not_ send a transaction from your account
-    pub fn call_raw(&self) -> CallBuilder<'_, M::Provider> {
-        self.client.borrow().provider().call_raw(&self.tx).block(self.block.into())
-    }
-
-    /// Broadcasts the contract deployment transaction and after waiting for it to
-    /// be sufficiently confirmed (default: 1), it returns a [`Contract`](crate::Contract)
-    /// struct at the deployed contract's address.
-    pub async fn send(self) -> Result<Address, ContractError<M>> {
-        let (contract, _) = self.send_with_receipt().await?;
-        Ok(contract)
     }
 
     /// Broadcasts the contract deployment transaction and after waiting for it to
@@ -621,16 +451,6 @@ where
         let address = receipt.contract_address.ok_or(ContractError::ContractNotDeployed)?;
 
         Ok((address.to_alloy(), receipt))
-    }
-
-    /// Returns a reference to the deployer's ABI
-    pub fn abi(&self) -> &Abi {
-        &self.abi
-    }
-
-    /// Returns a pointer to the deployer's client
-    pub fn client(&self) -> &M {
-        self.client.borrow()
     }
 }
 
@@ -738,21 +558,6 @@ where
             block: BlockNumber::Latest,
             _m: PhantomData,
         })
-    }
-
-    /// Constructs the deployment transaction based on the provided constructor
-    /// arguments and returns a `Deployer` instance. You must call `send()` in order
-    /// to actually deploy the contract.
-    ///
-    /// Notes:
-    /// 1. If there are no constructor arguments, you should pass `()` as the argument.
-    /// 1. The default poll duration is 7 seconds.
-    /// 1. The default number of confirmations is 1 block.
-    pub fn deploy(
-        self,
-        constructor_args: Vec<DynSolValue>,
-    ) -> Result<Deployer<B, M>, ContractError<M>> {
-        self.deploy_tokens(constructor_args)
     }
 }
 

@@ -2526,7 +2526,6 @@ dependencies = [
  "auto_impl",
  "derive_more",
  "ethers-core",
- "ethers-solc",
  "eyre",
  "forge-fmt",
  "foundry-compilers",
@@ -2576,7 +2575,6 @@ dependencies = [
 name = "foundry-abi"
 version = "0.2.0"
 dependencies = [
- "alloy-sol-types",
  "ethers-contract",
  "ethers-contract-abigen",
  "ethers-core",
@@ -2874,7 +2872,6 @@ version = "0.2.0"
 dependencies = [
  "alloy-primitives",
  "ethers",
- "ethers-solc",
  "eyre",
  "foundry-common",
  "foundry-compilers",
@@ -2900,7 +2897,6 @@ dependencies = [
  "ethers-contract",
  "ethers-core",
  "ethers-providers",
- "ethers-solc",
  "eyre",
  "forge-fmt",
  "foundry-common",

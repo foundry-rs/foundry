@@ -17,7 +17,6 @@ foundry-common.workspace = true
 foundry-utils.workspace = true
 
 ethers.workspace = true
-ethers-solc = { workspace = true, features = ["project-util"] }
 alloy-primitives.workspace = true
 
 foundry-compilers = { workspace = true, features = ["project-util"]}

@@ -16,7 +16,6 @@ ethers-core.workspace = true
 ethers-contract = { workspace = true, features = ["abigen"] }
 ethers-addressbook.workspace = true
 ethers-providers.workspace = true
-ethers-solc.workspace = true
 
 alloy-primitives.workspace = true
 alloy-dyn-abi.workspace = true

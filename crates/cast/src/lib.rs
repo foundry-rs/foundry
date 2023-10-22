@@ -1999,6 +1999,7 @@ fn strip_0x(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::SimpleCast as Cast;
+    use std::fmt::Write;
 
     #[test]
     fn calldata_uint() {
@@ -2068,13 +2069,10 @@ mod tests {
             decoded[1].as_address().unwrap().to_string(),
             decoded[2].as_uint().unwrap().0.to_string(),
             decoded[3].as_uint().unwrap().0.to_string(),
-            decoded[4]
-                .as_bytes()
-                .unwrap()
-                .to_owned()
-                .into_iter()
-                .map(|v| format!("{:02x}", v))
-                .collect::<String>(),
+            decoded[4].as_bytes().unwrap().iter().copied().fold(String::new(), |mut output, v| {
+                let _ = write!(output, "{v:02x}");
+                output
+            }),
         ]
         .into_iter()
         .collect::<Vec<_>>();
