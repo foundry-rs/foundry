@@ -2628,6 +2628,7 @@ dependencies = [
  "ethers",
  "eyre",
  "foundry-common",
+ "foundry-compilers",
  "foundry-config",
  "foundry-macros",
  "foundry-utils",

@@ -1,5 +1,5 @@
 use clap::Parser;
-use ethers::{prelude::Middleware, types::H160};
+use ethers::prelude::Middleware;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     init_progress,

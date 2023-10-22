@@ -364,7 +364,7 @@ async fn main() -> Result<()> {
 
             let sig = match sigs.len() {
                 0 => eyre::bail!("No signatures found"),
-                1 => sigs.get(0).unwrap(),
+                1 => sigs.first().unwrap(),
                 _ => {
                     let i: usize = prompt!("Select a function signature by number: ")?;
                     sigs.get(i - 1).ok_or_else(|| eyre::eyre!("Invalid signature index"))?

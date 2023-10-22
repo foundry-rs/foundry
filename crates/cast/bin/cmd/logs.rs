@@ -12,7 +12,7 @@ use ethers_core::{
 };
 use eyre::{Result, WrapErr};
 use foundry_cli::{opts::EthereumOpts, utils};
-use foundry_common::abi::{get_event, parse_tokens};
+
 use foundry_config::Config;
 use itertools::Itertools;
 
