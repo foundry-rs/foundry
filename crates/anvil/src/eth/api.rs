@@ -805,7 +805,7 @@ impl EthApi {
         node_info!("eth_signTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.get(0).cloned().ok_or(BlockchainError::NoSignerAvailable)
+            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
         })?;
 
         let (nonce, _) = self.request_nonce(&request, from).await?;
@@ -824,7 +824,7 @@ impl EthApi {
         node_info!("eth_sendTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.get(0).cloned().ok_or(BlockchainError::NoSignerAvailable)
+            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
         })?;
 
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
