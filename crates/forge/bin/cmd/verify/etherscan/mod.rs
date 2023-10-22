@@ -263,9 +263,9 @@ impl EtherscanVerificationProvider {
         config: &Config,
     ) -> Result<Client> {
         let etherscan_config = config.get_etherscan_config_with_chain(Some(chain))?;
+        let etherscan_api_url = etherscan_config.as_ref().map(|c| (c.api_url.clone()+"?"));
 
-        let api_url =
-            verifier_url.or_else(|| etherscan_config.as_ref().map(|c| c.api_url.as_str()));
+        let api_url = verifier_url.or_else(|| etherscan_api_url.as_deref());
         let base_url = etherscan_config
             .as_ref()
             .and_then(|c| c.browser_url.as_deref())
