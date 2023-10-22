@@ -1,14 +1,16 @@
+use alloy_primitives::Address;
 use cast::SimpleCast;
 use clap::Parser;
 use ethers::{
     core::rand::thread_rng,
     signers::{LocalWallet, Signer},
-    types::{transaction::eip712::TypedData, Address, Signature},
+    types::{transaction::eip712::TypedData, Signature},
 };
 use eyre::{Context, Result};
 use foundry_cli::opts::{RawWallet, Wallet};
 use foundry_common::fs;
 use foundry_config::Config;
+use foundry_utils::types::{ToAlloy, ToEthers};
 use std::path::Path;
 use yansi::Paint;
 
@@ -140,11 +142,17 @@ impl WalletSubcommands {
                         LocalWallet::new_keystore(&path, &mut rng, password, None)?;
 
                     println!("Created new encrypted keystore file: {}", path.join(uuid).display());
-                    println!("Address: {}", SimpleCast::to_checksum_address(&wallet.address()));
+                    println!(
+                        "Address: {}",
+                        SimpleCast::to_checksum_address(&wallet.address().to_alloy())
+                    );
                 } else {
                     let wallet = LocalWallet::new(&mut rng);
                     println!("Successfully created new keypair.");
-                    println!("Address:     {}", SimpleCast::to_checksum_address(&wallet.address()));
+                    println!(
+                        "Address:     {}",
+                        SimpleCast::to_checksum_address(&wallet.address().to_alloy())
+                    );
                     println!("Private key: 0x{}", hex::encode(wallet.signer().to_bytes()));
                 }
             }
@@ -161,7 +169,7 @@ impl WalletSubcommands {
                     .signer(0)
                     .await?;
                 let addr = wallet.address();
-                println!("{}", SimpleCast::to_checksum_address(&addr));
+                println!("{}", SimpleCast::to_checksum_address(&addr.to_alloy()));
             }
             WalletSubcommands::Sign { message, data, from_file, wallet } => {
                 let wallet = wallet.signer(0).await?;
@@ -180,7 +188,7 @@ impl WalletSubcommands {
                 println!("0x{sig}");
             }
             WalletSubcommands::Verify { message, signature, address } => {
-                match signature.verify(Self::hex_str_to_bytes(&message)?, address) {
+                match signature.verify(Self::hex_str_to_bytes(&message)?, address.to_ethers()) {
                     Ok(_) => {
                         println!("Validation succeeded. Address {address} signed this message.")
                     }

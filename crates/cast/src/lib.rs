@@ -1,7 +1,7 @@
 use crate::rlp_converter::Item;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::Function;
-use alloy_primitives::{I256, U256};
+use alloy_primitives::{Address, I256, U256};
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
@@ -15,7 +15,7 @@ use ethers_core::{
 use ethers_etherscan::{errors::EtherscanError, Client};
 use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
 use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
-use eyre::{Context, Result};
+use eyre::{Context, ContextCompat, Result};
 use foundry_common::{abi::encode_function_args, fmt::*, TransactionReceiptWithRevertReason};
 pub use foundry_evm::*;
 use foundry_utils::types::{ToAlloy, ToEthers};
@@ -178,7 +178,7 @@ where
             let mut s =
                 vec![format!("gas used: {}", access_list.gas_used), "access list:".to_string()];
             for al in access_list.access_list.0 {
-                s.push(format!("- address: {}", SimpleCast::to_checksum_address(&al.address)));
+                s.push(format!("- address: {}", &al.address.to_alloy().to_checksum(None)));
                 if !al.storage_keys.is_empty() {
                     s.push("  keys:".to_string());
                     for key in al.storage_keys {
@@ -583,10 +583,10 @@ where
         let unpacked = if let Some(n) = nonce {
             n
         } else {
-            self.provider.get_transaction_count(address.into(), None).await?.to_alloy()
+            self.provider.get_transaction_count(address.into().to_ethers(), None).await?.to_alloy()
         };
 
-        Ok(get_contract_address(address, unpacked.to_ethers()))
+        Ok(get_contract_address(address.into().to_ethers(), unpacked.to_ethers()).to_alloy())
     }
 
     /// # Example
@@ -1192,7 +1192,7 @@ impl SimpleCast {
     /// # }
     /// ```
     pub fn to_checksum_address(address: &Address) -> String {
-        ethers_core::utils::to_checksum(address, None)
+        address.to_checksum(None)
     }
 
     /// Converts a number into uint256 hex string with 0x prefix
@@ -1265,7 +1265,10 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_unit(value: &str, unit: &str) -> Result<String> {
-        let value = U256::from(LenientTokenizer::tokenize_uint(value)?);
+        let value = DynSolType::coerce_str(&DynSolType::Uint(256), value)?
+            .as_uint()
+            .wrap_err("Could not convert to uint")?
+            .0;
 
         Ok(match unit {
             "eth" | "ether" => foundry_common::units::format_units(value, 18)?
@@ -1487,7 +1490,7 @@ impl SimpleCast {
         let lowercase_address_string = format!("0x{s}");
         let lowercase_address = Address::from_str(&lowercase_address_string)?;
 
-        Ok(ethers_core::utils::to_checksum(&lowercase_address, None))
+        Ok(lowercase_address.to_checksum(None))
     }
 
     /// Decodes abi-encoded hex input or output
@@ -1650,7 +1653,7 @@ impl SimpleCast {
                 let client = Client::new(chain, api_key)?;
 
                 // get the source
-                let source = match client.contract_source_code(address).await {
+                let source = match client.contract_source_code(address.to_ethers()).await {
                     Ok(source) => source,
                     Err(EtherscanError::InvalidApiKey) => {
                         eyre::bail!("Invalid Etherscan API key. Did you set it correctly? You may be using an API key for another Etherscan API chain (e.g. Etherscan API key for Polygonscan).")

@@ -20,7 +20,7 @@ pub fn override_call_strat(
     let contracts_ref = contracts.clone();
 
     let random_contract = any::<prop::sample::Selector>()
-        .prop_map(move |selector| *selector.select(contracts_ref.lock().keys().map(|k| k)));
+        .prop_map(move |selector| *selector.select(contracts_ref.lock().keys()));
     let target = any::<prop::sample::Selector>().prop_map(move |_| *target.read());
 
     proptest::strategy::Union::new_weighted(vec![

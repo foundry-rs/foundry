@@ -168,7 +168,7 @@ impl InspectArgs {
                 if let Some(LosslessAbi { abi, .. }) = &artifact.abi {
                     // Print the signature of all errors
                     for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
-                        let types = er.inputs.iter().map(|p| p.ty).collect::<Vec<_>>();
+                        let types = er.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
                         let sig = format!("{:x}", er.selector());
                         let sig_trimmed = &sig[0..8];
                         out.insert(
@@ -184,7 +184,7 @@ impl InspectArgs {
                 if let Some(LosslessAbi { abi, .. }) = &artifact.abi {
                     // print the signature of all events including anonymous
                     for ev in abi.events.iter().flat_map(|(_, events)| events) {
-                        let types = ev.inputs.iter().map(|p| p.ty).collect::<Vec<_>>();
+                        let types = ev.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
                         out.insert(
                             format!("{}({})", ev.name, types.join(",")),
                             format!("{:?}", ev.signature()).into(),

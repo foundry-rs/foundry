@@ -1,9 +1,11 @@
 use crate::opts::parse_slot;
+use alloy_primitives::{Address, B256, U256};
 use cast::Cast;
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
-use ethers::{abi::ethabi::ethereum_types::BigEndianHash, etherscan::Client, prelude::*};
+use ethers::{abi::ethabi::ethereum_types::BigEndianHash, prelude::BlockId, providers::Middleware};
 use eyre::Result;
+use foundry_block_explorers::Client;
 use foundry_cli::{
     opts::{CoreBuildArgs, EtherscanOpts, RpcOpts},
     utils,
@@ -13,11 +15,12 @@ use foundry_common::{
     compile::{compile, etherscan_project, suppress_compile},
     RetryProvider,
 };
-use foundry_compilers::artifacts::StorageLayout;
+use foundry_compilers::{artifacts::StorageLayout, ConfigurableContractArtifact, Project, Solc};
 use foundry_config::{
     figment::{self, value::Dict, Metadata, Profile},
     impl_figment_convert_cast, Config,
 };
+use foundry_utils::types::ToEthers;
 use futures::future::join_all;
 use semver::Version;
 use std::str::FromStr;
@@ -31,12 +34,12 @@ const MIN_SOLC: Version = Version::new(0, 6, 5);
 #[derive(Debug, Clone, Parser)]
 pub struct StorageArgs {
     /// The contract address.
-    #[clap(value_parser = NameOrAddress::from_str)]
-    address: NameOrAddress,
+    #[clap(value_parser = Address::from_str)]
+    address: Address,
 
     /// The storage slot number.
     #[clap(value_parser = parse_slot)]
-    slot: Option<H256>,
+    slot: Option<B256>,
 
     /// The block height to query at.
     ///
@@ -77,21 +80,18 @@ impl StorageArgs {
         let Self { address, slot, block, build, .. } = self;
 
         let provider = utils::get_provider(&config)?;
-        let address = match address {
-            NameOrAddress::Name(name) => provider.resolve_name(&name).await?,
-            NameOrAddress::Address(address) => address,
-        };
 
         // Slot was provided, perform a simple RPC call
         if let Some(slot) = slot {
             let cast = Cast::new(provider);
-            println!("{}", cast.storage(address, slot, block).await?);
+            println!("{}", cast.storage(address.to_ethers(), slot.to_ethers(), block).await?);
             return Ok(())
         }
 
         // No slot was provided
         // Get deployed bytecode at given address
-        let address_code = provider.get_code(address, block).await?;
+        let address_code: alloy_primitives::Bytes =
+            provider.get_code(address.to_ethers(), block).await?.0.into();
         if address_code.is_empty() {
             eyre::bail!("Provided address has no deployed code and thus no storage");
         }
@@ -204,8 +204,8 @@ async fn fetch_storage_values(
         .storage
         .iter()
         .map(|slot| {
-            let slot_h256 = H256::from_uint(&U256::from_dec_str(&slot.slot)?);
-            Ok(provider.get_storage_at(address, slot_h256, None))
+            let slot_h256 = B256::from(U256::from_str(&slot.slot)?);
+            Ok(provider.get_storage_at(address.to_ethers(), slot_h256.to_ethers(), None))
         })
         .collect::<Result<_>>()?;
 

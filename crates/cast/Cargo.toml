@@ -32,6 +32,9 @@ alloy-primitives.workspace = true
 alloy-json-abi.workspace = true
 alloy-dyn-abi.workspace = true
 
+foundry-compilers.workspace = true
+foundry-block-explorers.workspace = true
+
 
 chrono.workspace = true
 evm-disassembler = "0.2"

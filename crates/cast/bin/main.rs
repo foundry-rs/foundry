@@ -1,11 +1,10 @@
+use alloy_primitives::{keccak256, Address, B256};
 use cast::{Cast, SimpleCast};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use ethers::{
-    core::types::{BlockId, BlockNumber::Latest, H256},
+    core::types::{BlockId, BlockNumber::Latest},
     providers::Middleware,
-    types::Address,
-    utils::keccak256,
 };
 use eyre::{Result, WrapErr};
 use foundry_cli::{handler, prompt, stdin, utils};
@@ -18,6 +17,7 @@ use foundry_common::{
     },
 };
 use foundry_config::Config;
+use foundry_utils::types::{ToAlloy, ToEthers};
 use std::time::Instant;
 
 pub mod cmd;
@@ -45,10 +45,10 @@ async fn main() -> Result<()> {
             println!("{}", SimpleCast::max_int(&r#type)?);
         }
         Subcommands::AddressZero => {
-            println!("{:?}", Address::zero());
+            println!("{:?}", Address::ZERO);
         }
         Subcommands::HashZero => {
-            println!("{:?}", H256::zero());
+            println!("{:?}", B256::ZERO);
         }
 
         // Conversions & transformations
@@ -201,7 +201,7 @@ async fn main() -> Result<()> {
         Subcommands::Balance { block, who, ether, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            let value = Cast::new(provider).balance(who, block).await?;
+            let value = Cast::new(provider).balance(who.to_ethers(), block).await?;
             if ether {
                 println!("{}", SimpleCast::from_wei(&value.to_string(), "eth")?);
             } else {
@@ -249,12 +249,12 @@ async fn main() -> Result<()> {
         Subcommands::Code { block, who, disassemble, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).code(who, block, disassemble).await?);
+            println!("{}", Cast::new(provider).code(who.to_ethers(), block, disassemble).await?);
         }
         Subcommands::Codesize { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).codesize(who, block).await?);
+            println!("{}", Cast::new(provider).codesize(who.to_ethers(), block).await?);
         }
         Subcommands::ComputeAddress { address, nonce, rpc } => {
             let config = Config::from(&rpc);
@@ -279,22 +279,28 @@ async fn main() -> Result<()> {
         Subcommands::Implementation { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).implementation(who, block).await?);
+            println!("{}", Cast::new(provider).implementation(who.to_ethers(), block).await?);
         }
         Subcommands::Admin { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).admin(who, block).await?);
+            println!("{}", Cast::new(provider).admin(who.to_ethers(), block).await?);
         }
         Subcommands::Nonce { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).nonce(who, block).await?);
+            println!("{}", Cast::new(provider).nonce(who.to_ethers(), block).await?);
         }
         Subcommands::Proof { address, slots, rpc, block } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            let value = provider.get_proof(address, slots, block).await?;
+            let value = provider
+                .get_proof(
+                    address.to_ethers(),
+                    slots.into_iter().map(|s| s.to_ethers()).collect(),
+                    block,
+                )
+                .await?;
             println!("{}", serde_json::to_string(&value)?);
         }
         Subcommands::Rpc(cmd) => cmd.run().await?,
@@ -401,9 +407,9 @@ async fn main() -> Result<()> {
             let provider = utils::get_provider(&config)?;
 
             let who = stdin::unwrap_line(who)?;
-            let name = provider.lookup_address(who).await?;
+            let name = provider.lookup_address(who.to_ethers()).await?;
             if verify {
-                let address = provider.resolve_name(&name).await?;
+                let address = provider.resolve_name(&name).await?.to_alloy();
                 eyre::ensure!(
                     address == who,
                     "Forward lookup verification failed: got `{name:?}`, expected `{who:?}`"
@@ -424,7 +430,7 @@ async fn main() -> Result<()> {
                     "forward lookup verification failed. got {name}, expected {who}"
                 );
             }
-            println!("{}", SimpleCast::to_checksum_address(&address));
+            println!("{}", SimpleCast::to_checksum_address(&address.to_alloy()));
         }
 
         // Misc

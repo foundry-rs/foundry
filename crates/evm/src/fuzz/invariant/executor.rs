@@ -22,8 +22,8 @@ use crate::{
 use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::JsonAbi as Abi;
 use alloy_primitives::{Address, FixedBytes};
-use alloy_sol_types::SolValue;
-use eyre::{bail, eyre, ContextCompat, Result};
+
+use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::{FuzzDictionaryConfig, InvariantConfig};
 use parking_lot::{Mutex, RwLock};
@@ -326,14 +326,14 @@ impl<'a> InvariantExecutor<'a> {
                 "targetArtifactSelectors",
                 |v| {
                     if let Some(list) = v.as_tuple() {
-                        list.into_iter()
+                        list.iter()
                             .map(|v| {
                                 if let Some(elements) = v.as_tuple() {
                                     let name = elements[0].as_str().unwrap().to_string();
                                     let selectors = elements[1]
                                         .as_array()
                                         .unwrap()
-                                        .into_iter()
+                                        .iter()
                                         .map(|v| {
                                             FixedBytes::from_slice(v.as_fixed_bytes().unwrap().0)
                                         })
@@ -369,7 +369,7 @@ impl<'a> InvariantExecutor<'a> {
         let [selected_abi, excluded_abi] = ["targetArtifacts", "excludeArtifacts"].map(|method| {
             self.get_list::<String>(invariant_address, abi, method, |v| {
                 if let Some(list) = v.as_array() {
-                    list.into_iter().map(|v| v.as_str().unwrap().to_string()).collect::<Vec<_>>()
+                    list.iter().map(|v| v.as_str().unwrap().to_string()).collect::<Vec<_>>()
                 } else {
                     panic!("targetArtifacts should be an array")
                 }
@@ -453,7 +453,7 @@ impl<'a> InvariantExecutor<'a> {
                 |method| {
                     self.get_list::<Address>(invariant_address, abi, method, |v| {
                         if let Some(list) = v.as_array() {
-                            list.into_iter().map(|v| v.as_address().unwrap()).collect::<Vec<_>>()
+                            list.iter().map(|v| v.as_address().unwrap()).collect::<Vec<_>>()
                         } else {
                             panic!("targetSenders should be an array")
                         }
@@ -502,14 +502,14 @@ impl<'a> InvariantExecutor<'a> {
             "targetInterfaces",
             |v| {
                 if let Some(l) = v.as_array() {
-                    l.into_iter()
+                    l.iter()
                         .map(|v| {
                             if let Some(elements) = v.as_tuple() {
                                 let addr = elements[0].as_address().unwrap();
                                 let interfaces = elements[1]
                                     .as_array()
                                     .unwrap()
-                                    .into_iter()
+                                    .iter()
                                     .map(|v| v.as_str().unwrap().to_string())
                                     .collect::<Vec<_>>();
                                 (addr, interfaces)
@@ -591,14 +591,14 @@ impl<'a> InvariantExecutor<'a> {
         let selectors =
             self.get_list::<(Address, Vec<FixedBytes<4>>)>(address, abi, "targetSelectors", |v| {
                 if let Some(l) = v.as_array() {
-                    l.into_iter()
+                    l.iter()
                         .map(|v| {
                             if let Some(elements) = v.as_tuple() {
                                 let addr = elements[0].as_address().unwrap();
                                 let selectors = elements[1]
                                     .as_array()
                                     .unwrap()
-                                    .into_iter()
+                                    .iter()
                                     .map(|v| FixedBytes::from_slice(v.as_fixed_bytes().unwrap().0))
                                     .collect::<Vec<_>>();
                                 (addr, selectors)

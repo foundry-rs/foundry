@@ -347,7 +347,7 @@ where
 
                             // convert it to revm-style types
                             let (code, code_hash) = if !code.0.is_empty() {
-                                (Some(code.0.clone()), keccak256(&code).into())
+                                (Some(code.0.clone()), keccak256(&code))
                             } else {
                                 (Some(bytes::Bytes::default()), KECCAK_EMPTY)
                             };

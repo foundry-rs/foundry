@@ -149,7 +149,7 @@ impl TransactionWithMetadata {
                             let inputs = constructor
                                 .inputs
                                 .iter()
-                                .map(|p| p.ty)
+                                .map(|p| p.ty.clone())
                                 .collect::<Vec<_>>()
                                 .join(",");
                             let signature = format!("constructor({inputs})");
@@ -157,15 +157,12 @@ impl TransactionWithMetadata {
                             (signature, bytecode)
                         };
 
-                        let params =
-                            constructor.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
-
                         // the constructor args start after bytecode
                         let constructor_args = &creation_code[info.code.len()..];
 
                         let constructor_fn = Function {
                             name: "constructor".to_string(),
-                            inputs: constructor.inputs,
+                            inputs: constructor.inputs.clone(),
                             outputs: vec![],
                             state_mutability: constructor.state_mutability,
                         };

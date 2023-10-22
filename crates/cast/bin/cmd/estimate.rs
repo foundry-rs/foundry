@@ -1,20 +1,21 @@
+use alloy_primitives::{Address, U256};
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::types::{NameOrAddress, U256};
 use eyre::Result;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{self, parse_ether_value},
 };
 use foundry_config::{figment::Figment, Config};
+use foundry_utils::types::ToEthers;
 use std::str::FromStr;
 
 /// CLI arguments for `cast estimate`.
 #[derive(Debug, Parser)]
 pub struct EstimateArgs {
     /// The destination of the transaction.
-    #[clap(value_parser = NameOrAddress::from_str)]
-    to: Option<NameOrAddress>,
+    #[clap(value_parser = Address::from_str)]
+    to: Option<Address>,
 
     /// The signature of the function to call.
     sig: Option<String>,
@@ -26,11 +27,11 @@ pub struct EstimateArgs {
     #[clap(
         short,
         long,
-        value_parser = NameOrAddress::from_str,
+        value_parser = Address::from_str,
         default_value = "0x0000000000000000000000000000000000000000",
         env = "ETH_FROM",
     )]
-    from: NameOrAddress,
+    from: Address,
 
     /// Ether to send in the transaction.
     ///
@@ -85,7 +86,9 @@ impl EstimateArgs {
         let chain = utils::get_chain(config.chain_id, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain));
 
-        let mut builder = TxBuilder::new(&provider, from, to, chain, false).await?;
+        let mut builder =
+            TxBuilder::new(&provider, from.to_ethers(), to.map(|t| t.to_ethers()), chain, false)
+                .await?;
         builder.etherscan_api_key(api_key);
 
         match command {

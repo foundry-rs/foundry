@@ -132,11 +132,11 @@ impl CallArgs {
             TxBuilder::new(&provider, sender, to, chain, tx.legacy).await?;
 
         builder
-            .gas(tx.gas_limit)
+            .gas(tx.gas_limit.map(|g| g.to_alloy()))
             .etherscan_api_key(config.get_etherscan_api_key(Some(chain)))
-            .gas_price(tx.gas_price)
-            .priority_gas_price(tx.priority_gas_price)
-            .nonce(tx.nonce);
+            .gas_price(tx.gas_price.map(|g| g.to_alloy()))
+            .priority_gas_price(tx.priority_gas_price.map(|g| g.to_alloy()))
+            .nonce(tx.nonce.map(|n| n.to_alloy()));
 
         match command {
             Some(CallSubcommands::Create { code, sig, args, value }) => {
@@ -206,7 +206,7 @@ impl CallArgs {
 
         let builder_output: (
             ethers::types::transaction::eip2718::TypedTransaction,
-            Option<ethers::abi::Function>,
+            Option<alloy_json_abi::Function>,
         ) = builder.build();
 
         println!("{}", Cast::new(provider).call(builder_output, block).await?);
@@ -223,7 +223,7 @@ async fn fill_create(
     sig: Option<String>,
     args: Vec<String>,
 ) -> Result<()> {
-    builder.value(value);
+    builder.value(value.map(|v| v.to_alloy()));
 
     let mut data = hex::decode(code)?;
 
@@ -245,7 +245,7 @@ async fn fill_tx(
     args: Vec<String>,
     data: Option<String>,
 ) -> Result<()> {
-    builder.value(value);
+    builder.value(value.map(|v| v.to_alloy()));
 
     if let Some(sig) = sig {
         builder.set_args(sig.as_str(), args).await?;

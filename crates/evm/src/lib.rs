@@ -30,7 +30,6 @@ pub mod fuzz;
 pub mod utils;
 
 // Re-exports
-pub use ethers::types::Address;
 pub use hashbrown;
 use revm::interpreter::{CallScheme, CreateScheme};
 pub use revm::{

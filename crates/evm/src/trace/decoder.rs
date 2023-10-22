@@ -322,7 +322,7 @@ impl CallTraceDecoder {
             }
 
             for event in events {
-                if let Ok(decoded) = event.decode_log(&raw_log, false) {
+                if let Ok(decoded) = event.decode_log(raw_log, false) {
                     *log = RawOrDecodedLog::Decoded(
                         event.name,
                         decoded

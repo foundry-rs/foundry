@@ -9,7 +9,7 @@ pub const MAX_ARRAY_LEN: usize = 256;
 ///
 /// Works with ABI Encoder v2 tuples.
 pub fn fuzz_param(param: &DynSolType) -> SBoxedStrategy<DynSolValue> {
-    return DynSolValue::type_strategy(param)
+    DynSolValue::type_strategy(param)
 }
 
 /// Given a parameter type, returns a strategy for generating values for that type, given some EVM

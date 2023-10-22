@@ -1,10 +1,6 @@
+use alloy_primitives::{keccak256, Address, B256, U256};
 use cast::SimpleCast;
 use clap::Parser;
-use ethers::{
-    core::rand::thread_rng,
-    types::{Address, Bytes, H256, U256},
-    utils::{get_create2_address_from_hash, keccak256},
-};
 use eyre::{Result, WrapErr};
 use rayon::prelude::*;
 use regex::RegexSetBuilder;
@@ -114,7 +110,7 @@ impl Create2Args {
             let init_code_hash_bytes = hex::decode(init_code_hash)?;
             assert!(init_code_hash_bytes.len() == 32, "init code hash should be 32 bytes long");
             a.copy_from_slice(&init_code_hash_bytes);
-            a
+            a.into()
         } else {
             keccak256(hex::decode(init_code)?)
         };
@@ -124,14 +120,9 @@ impl Create2Args {
         let (salt, addr) = std::iter::repeat(())
             .par_bridge()
             .map(|_| {
-                let salt = H256::random_using(&mut thread_rng());
-                let salt = Bytes::from(salt.to_fixed_bytes());
+                let salt = B256::random();
 
-                let addr = SimpleCast::to_checksum_address(&get_create2_address_from_hash(
-                    deployer,
-                    salt.clone(),
-                    init_code_hash,
-                ));
+                let addr = SimpleCast::to_checksum_address(&deployer.create2(salt, init_code_hash));
 
                 (salt, addr)
             })
@@ -142,7 +133,7 @@ impl Create2Args {
             })
             .unwrap();
 
-        let salt = U256::from(salt.to_vec().as_slice());
+        let salt = U256::from_be_bytes(*salt);
         let address = Address::from_str(&addr).unwrap();
 
         println!(
@@ -165,8 +156,6 @@ fn get_regex_hex_string(s: String) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use ethers::{abi::AbiEncode, utils::get_create2_address};
-
     use super::*;
 
     const DEPLOYER: &str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
@@ -304,11 +293,12 @@ mod tests {
     }
 
     fn verify_create2(deployer: Address, salt: U256, init_code: Vec<u8>) -> Address {
-        // let init_code_hash = keccak256(init_code);
-        get_create2_address(deployer, salt.encode(), init_code)
+        let init_code_hash = keccak256(init_code);
+        deployer.create2(salt.to_be_bytes(), init_code_hash)
     }
 
     fn verify_create2_hash(deployer: Address, salt: U256, init_code_hash: Vec<u8>) -> Address {
-        get_create2_address_from_hash(deployer, salt.encode(), init_code_hash)
+        let init_code_hash = B256::from_slice(&init_code_hash);
+        deployer.create2(salt.to_be_bytes(), init_code_hash)
     }
 }

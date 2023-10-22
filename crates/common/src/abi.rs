@@ -1,7 +1,7 @@
 //! ABI related helper functions
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Event, Function};
-use alloy_primitives::{hex, Address, Log, I256, U256};
+use alloy_primitives::{hex, Address, Log, U256};
 use ethers_core::types::Chain;
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_block_explorers::{contract::ContractMetadata, errors::EtherscanError, Client};
@@ -59,52 +59,53 @@ pub fn abi_decode_calldata(
 }
 
 /// Parses string input as Token against the expected ParamType
-// pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
-//     params: I,
-//     lenient: bool,
-// ) -> Result<Vec<Token>> { let mut tokens = Vec::new();
+pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a DynSolType, &'a str)>>(
+    params: I,
+    lenient: bool,
+) -> Result<Vec<DynSolValue>> {
+    let mut tokens = Vec::new();
 
-//     for (param, value) in params.into_iter() {
-//         let mut token = if lenient {
-//             LenientTokenizer::tokenize(param, value)
-//         } else {
-//             StrictTokenizer::tokenize(param, value)
-//         };
-//         if token.is_err() && value.starts_with("0x") {
-//             match param {
-//                 ParamType::FixedBytes(32) => {
-//                     if value.len() < 66 {
-//                         let padded_value = [value, &"0".repeat(66 - value.len())].concat();
-//                         token = if lenient {
-//                             LenientTokenizer::tokenize(param, &padded_value)
-//                         } else {
-//                             StrictTokenizer::tokenize(param, &padded_value)
-//                         };
-//                     }
-//                 }
-//                 ParamType::Uint(_) => {
-//                     // try again if value is hex
-//                     if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
-//                         token = if lenient {
-//                             LenientTokenizer::tokenize(param, &value)
-//                         } else {
-//                             StrictTokenizer::tokenize(param, &value)
-//                         };
-//                     }
-//                 }
-//                 // TODO: Not sure what to do here. Put the no effect in for now, but that is not
-//                 // ideal. We could attempt massage for every value type?
-//                 _ => {}
-//             }
-//         }
+    for (param, value) in params.into_iter() {
+        let mut token = if lenient {
+            DynSolType::coerce_str(param, value)
+        } else {
+            DynSolType::coerce_str(param, value)
+        };
+        if token.is_err() && value.starts_with("0x") {
+            match param {
+                DynSolType::FixedBytes(32) => {
+                    if value.len() < 66 {
+                        let padded_value = [value, &"0".repeat(66 - value.len())].concat();
+                        token = if lenient {
+                            DynSolType::coerce_str(param, &padded_value)
+                        } else {
+                            DynSolType::coerce_str(param, &padded_value)
+                        };
+                    }
+                }
+                DynSolType::Uint(_) => {
+                    // try again if value is hex
+                    if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
+                        token = if lenient {
+                            DynSolType::coerce_str(param, &value)
+                        } else {
+                            DynSolType::coerce_str(param, &value)
+                        };
+                    }
+                }
+                // TODO: Not sure what to do here. Put the no effect in for now, but that is not
+                // ideal. We could attempt massage for every value type?
+                _ => {}
+            }
+        }
 
-//         let token = token.map(sanitize_token).wrap_err_with(|| {
-//             format!("Failed to parse `{value}`, expected value of type: {param}")
-//         })?;
-//         tokens.push(token);
-//     }
-//     Ok(tokens)
-// }
+        let token = token.map(sanitize_token).wrap_err_with(|| {
+            format!("Failed to parse `{value}`, expected value of type: {param}")
+        })?;
+        tokens.push(token);
+    }
+    Ok(tokens)
+}
 
 /// Cleans up potential shortcomings of the ethabi Tokenizer.
 ///

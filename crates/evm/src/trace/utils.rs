@@ -38,8 +38,8 @@ pub(crate) fn decode_cheatcode_inputs(
         "rememberKey" | "addr" | "startBroadcast" | "broadcast" => {
             // these functions accept a private key as uint256, which should not be
             // converted to plain text
-            let expected_type = DynSolType::Uint(256).to_string();
-            if !func.inputs.is_empty() && matches!(&func.inputs[0].ty, expected_type) {
+            let _expected_type = DynSolType::Uint(256).to_string();
+            if !func.inputs.is_empty() && matches!(&func.inputs[0].ty, _expected_type) {
                 // redact private key input
                 Some(vec!["<pk>".to_string()])
             } else {
@@ -49,8 +49,8 @@ pub(crate) fn decode_cheatcode_inputs(
         "sign" => {
             // sign(uint256,bytes32)
             let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
-            let expected_type = DynSolType::Uint(256).to_string();
-            if !decoded.is_empty() && matches!(&func.inputs[0].ty, expected_type) {
+            let _expected_type = DynSolType::Uint(256).to_string();
+            if !decoded.is_empty() && matches!(&func.inputs[0].ty, _expected_type) {
                 decoded[0] = DynSolValue::String("<pk>".to_string());
             }
             Some(decoded.iter().map(format_token).collect())

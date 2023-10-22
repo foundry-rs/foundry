@@ -206,7 +206,7 @@ ethers-solc = { git = "https://github.com/gakonst/ethers-rs" }
 foundry-compilers = {git = "https://github.com/foundry-rs/compilers"}
 foundry-block-explorers = {git = "https://github.com/foundry-rs/block-explorers"}
 
-alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/", branch = "main"}
-alloy-primitives = { git = "https://github.com/alloy-rs/core/", branch = "main"}
-alloy-json-abi = { git = "https://github.com/alloy-rs/core/", branch = "main"}
-alloy-sol-types = { git = "https://github.com/alloy-rs/core/", branch = "main"}
+alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/", branch = "dani/coerce-str"}
+alloy-primitives = { git = "https://github.com/alloy-rs/core/", branch = "dani/coerce-str"}
+alloy-json-abi = { git = "https://github.com/alloy-rs/core/", branch = "dani/coerce-str"}
+alloy-sol-types = { git = "https://github.com/alloy-rs/core/", branch = "dani/coerce-str"}

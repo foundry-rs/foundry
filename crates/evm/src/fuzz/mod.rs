@@ -395,7 +395,7 @@ impl FuzzTestResult {
     /// Returns the average gas use of all test cases
     pub fn mean_gas(&self, with_stipend: bool) -> u64 {
         let mut values =
-            self.gas_values(with_stipend).into_iter().map(|g| U256::from(g)).collect::<Vec<_>>();
+            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
         values.sort_unstable();
         calc::mean(&values).to::<u64>()
     }
@@ -450,7 +450,7 @@ impl FuzzedCases {
     #[inline]
     pub fn mean_gas(&self, with_stipend: bool) -> u64 {
         let mut values =
-            self.gas_values(with_stipend).into_iter().map(|g| U256::from(g)).collect::<Vec<_>>();
+            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
         values.sort_unstable();
         calc::mean(&values).to::<u64>()
     }
