@@ -153,8 +153,8 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address
 
     match event_to_fill_or_check.log {
         Some(ref expected) => {
-            let expected_topic_0 = expected.topics().get(0);
-            let log_topic_0 = log.topics().get(0);
+            let expected_topic_0 = expected.topics().first();
+            let log_topic_0 = log.topics().first();
 
             // same topic0 and equal number of topics should be verified further, others are a no
             // match

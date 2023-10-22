@@ -395,8 +395,8 @@ pub(crate) fn handle_expect_emit(
         return
     };
 
-    let expected_topic_0 = expected.topics().get(0);
-    let log_topic_0 = topics.get(0);
+    let expected_topic_0 = expected.topics().first();
+    let log_topic_0 = topics.first();
 
     if expected_topic_0
         .zip(log_topic_0)
