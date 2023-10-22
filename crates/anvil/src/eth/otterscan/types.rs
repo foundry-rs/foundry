@@ -1,12 +1,13 @@
 use ethers::types::{
-    Action, Address, Block, Bytes, Call, CallType, Create, CreateResult, Res, Suicide, Trace,
-    Transaction, TransactionReceipt, H256, U256,
+    Action, Address, Block, Bytes, CallType, Trace, Transaction, TransactionReceipt, H256, U256,
 };
+use foundry_evm::{executor::InstructionResult, CallKind};
 use futures::future::join_all;
 use serde::{de::DeserializeOwned, Serialize};
+use serde_repr::Serialize_repr;
 
 use crate::eth::{
-    backend::mem::Backend,
+    backend::mem::{storage::MinedTransaction, Backend},
     error::{BlockchainError, Result},
 };
 
@@ -80,12 +81,13 @@ pub struct OtsInternalOperation {
 }
 
 /// Types of internal operations recognized by Otterscan
-#[derive(Serialize, Debug, PartialEq)]
+#[derive(Serialize_repr, Debug, PartialEq)]
+#[repr(u8)]
 pub enum OtsInternalOperationType {
     Transfer = 0,
     SelfDestruct = 1,
     Create = 2,
-    // The spec asks for a Create2 entry as well, but we don't have that info
+    Create2 = 3,
 }
 
 /// Otterscan's representation of a trace
@@ -231,58 +233,43 @@ impl OtsSearchTransactions {
 impl OtsInternalOperation {
     /// Converts a batch of traces into a batch of internal operations, to comply with the spec for
     /// [`ots_getInternalOperations`](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_getinternaloperations)
-    pub fn batch_build(traces: Vec<Trace>) -> Vec<OtsInternalOperation> {
+    pub fn batch_build(traces: MinedTransaction) -> Vec<OtsInternalOperation> {
         traces
+            .info
+            .traces
+            .arena
             .iter()
-            .filter_map(|trace| {
-                match (trace.action.clone(), trace.result.clone()) {
-                    (Action::Call(Call { from, to, value, .. }), _) if !value.is_zero() => {
-                        Some(Self { r#type: OtsInternalOperationType::Transfer, from, to, value })
-                    }
-                    (
-                        Action::Create(Create { from, value, .. }),
-                        Some(Res::Create(CreateResult { address, .. })),
-                    ) => Some(Self {
-                        r#type: OtsInternalOperationType::Create,
-                        from,
-                        to: address,
-                        value,
-                    }),
-                    (Action::Suicide(Suicide { address, .. }), _) => {
-                        // this assumes a suicide trace always has a parent trace
-                        let (from, value) =
-                            Self::find_suicide_caller(&traces, &trace.trace_address).unwrap();
-
-                        Some(Self {
-                            r#type: OtsInternalOperationType::SelfDestruct,
-                            from,
-                            to: address,
-                            value,
-                        })
-                    }
-                    _ => None,
+            .filter_map(|node| match (node.kind(), node.status()) {
+                (CallKind::Call, _) if !node.trace.value.is_zero() => Some(Self {
+                    r#type: OtsInternalOperationType::Transfer,
+                    from: node.trace.caller,
+                    to: node.trace.address,
+                    value: node.trace.value,
+                }),
+                (CallKind::Create, _) => Some(Self {
+                    r#type: OtsInternalOperationType::Create,
+                    from: node.trace.caller,
+                    to: node.trace.address,
+                    value: node.trace.value,
+                }),
+                (CallKind::Create2, _) => Some(Self {
+                    r#type: OtsInternalOperationType::Create2,
+                    from: node.trace.caller,
+                    to: node.trace.address,
+                    value: node.trace.value,
+                }),
+                (_, InstructionResult::SelfDestruct) => {
+                    Some(Self {
+                        r#type: OtsInternalOperationType::SelfDestruct,
+                        from: node.trace.address,
+                        // the foundry CallTraceNode doesn't have a refund address
+                        to: Default::default(),
+                        value: node.trace.value,
+                    })
                 }
+                _ => None,
             })
             .collect()
-    }
-
-    /// finds the trace that parents a given trace_address
-    fn find_suicide_caller(
-        traces: &Vec<Trace>,
-        suicide_address: &Vec<usize>,
-    ) -> Option<(Address, U256)> {
-        traces.iter().find(|t| t.trace_address == suicide_address[..suicide_address.len() - 1]).map(
-            |t| match t.action {
-                Action::Call(Call { from, value, .. }) => (from, value),
-
-                Action::Create(Create { from, value, .. }) => (from, value),
-
-                // we assume here a suicice trace can never be parented by another suicide trace
-                Action::Suicide(_) => Self::find_suicide_caller(traces, &t.trace_address).unwrap(),
-
-                Action::Reward(_) => unreachable!(),
-            },
-        )
     }
 }
 

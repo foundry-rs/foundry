@@ -54,6 +54,7 @@ async-trait = "0.1"
 
 # misc
 flate2 = "1.0"
+serde_repr = "0.1"
 serde_json.workspace = true
 serde.workspace = true
 thiserror = "1"

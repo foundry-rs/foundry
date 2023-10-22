@@ -1813,6 +1813,11 @@ impl Backend {
         self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.parity_traces())
     }
 
+    /// Returns the traces for the given transaction
+    pub(crate) fn mined_transaction(&self, hash: H256) -> Option<MinedTransaction> {
+        self.blockchain.storage.read().transactions.get(&hash).cloned()
+    }
+
     /// Returns the traces for the given block
     pub(crate) fn mined_parity_trace_block(&self, block: u64) -> Option<Vec<Trace>> {
         let block = self.get_block(block)?;
