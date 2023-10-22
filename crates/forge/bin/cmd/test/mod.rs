@@ -218,7 +218,7 @@ impl TestArgs {
             }
             let test_funcs = runner.get_matching_test_functions(&filter);
             // if we debug a fuzz test, we should not collect data on the first run
-            if !test_funcs.get(0).expect("matching function exists").inputs.is_empty() {
+            if !test_funcs.first().expect("matching function exists").inputs.is_empty() {
                 runner_builder = runner_builder.set_debug(false);
                 runner = runner_builder.clone().build(
                     project_root,
