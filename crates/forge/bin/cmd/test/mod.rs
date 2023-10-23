@@ -1,7 +1,6 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use alloy_primitives::U256;
 use clap::Parser;
-
 use eyre::Result;
 use forge::{
     decode::decode_console_logs,

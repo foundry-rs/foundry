@@ -77,7 +77,11 @@ pub fn subscriber() {
 
 /// parse a hex str or decimal str as U256
 pub fn parse_u256(s: &str) -> Result<U256> {
-    Ok(if s.starts_with("0x") { U256::from_str_radix(s, 16)? } else { U256::from_str(s)? })
+    if let Some(s) = s.strip_prefix("0x") {
+        Ok(U256::from_str_radix(s, 16)?)
+    } else {
+        Ok(U256::from_str(s)?)
+    }
 }
 
 /// parse a hex str or decimal str as U256
