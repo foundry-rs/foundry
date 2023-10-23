@@ -15,8 +15,8 @@ pub fn fuzz_param(param: &DynSolType) -> BoxedStrategy<DynSolValue> {
             .prop_map(|x| DynSolValue::Address(Address::from_word(x.into())))
             .boxed(),
         DynSolType::Int(n) => {
-            let strat = super::IntStrategy::new(n.clone(), vec![]);
-            let strat = strat.prop_map(move |x| DynSolValue::Int(x.clone(), n.clone()));
+            let strat = super::IntStrategy::new(n, vec![]);
+            let strat = strat.prop_map(move |x| DynSolValue::Int(x, n));
             strat.boxed()
         }
         DynSolType::Uint(n) => {
@@ -33,7 +33,7 @@ pub fn fuzz_param(param: &DynSolType) -> BoxedStrategy<DynSolValue> {
                 while v.len() < 32 {
                     v.push(0);
                 }
-                DynSolValue::FixedBytes(FixedBytes::from_slice(&v), size.clone())
+                DynSolValue::FixedBytes(FixedBytes::from_slice(&v), size)
             })
             .boxed(),
         DynSolType::String => DynSolValue::type_strategy(&param)
@@ -85,7 +85,7 @@ pub fn fuzz_param_from_state(
         DynSolType::FixedBytes(size) => {
             value
                 .prop_map(move |v| {
-                    let mut v = v.clone();
+                    let mut v = v;
                     // Zero out the unused bytes
                     v[32 - size..].iter_mut().for_each(|x| *x = 0);
                     DynSolValue::FixedBytes(FixedBytes::from_slice(&v), size)
