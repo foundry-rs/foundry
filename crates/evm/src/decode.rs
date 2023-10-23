@@ -3,7 +3,9 @@ use crate::executor::inspector::cheatcodes::util::MAGIC_SKIP_BYTES;
 use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{Bytes, Log as AlloyLog, U256};
-use alloy_sol_types::{sol, sol_data::String as SolString, SolEvent, SolType, abi::token::WordToken};
+use alloy_sol_types::{
+    abi::token::WordToken, sol, sol_data::String as SolString, SolEvent, SolType,
+};
 use ethers::types::Log;
 use eyre::ContextCompat;
 use foundry_common::{abi::format_token, SELECTOR_LEN};
@@ -51,50 +53,134 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
         log.topics.clone().into_iter().map(|h| h.to_alloy()).collect_vec(),
         log.data.clone().0.into(),
     );
-    if let Ok(inner) = log::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    if let Ok(inner) =
+        log::decode_log(raw_log.topics().iter().map(|t| WordToken::from(*t)), &raw_log.data, true)
+    {
         return Some(inner._0)
-    } else if let Ok(inner) = logs::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) =
+        logs::decode_log(raw_log.topics().iter().map(|t| WordToken::from(*t)), &raw_log.data, true)
+    {
         return Some(format!("{}", Bytes::from(inner._0)))
-    } else if let Ok(inner) = log_address::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_address::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(format!("{}", inner._0))
-    } else if let Ok(inner) = log_bytes32::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_bytes32::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(format!("{}", inner._0))
-    } else if let Ok(inner) = log_int::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_int::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(format!("{}", inner._0))
-    } else if let Ok(inner) = log_uint::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_uint::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(format!("{}", inner._0))
-    } else if let Ok(inner) = log_bytes::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_bytes::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(format!("{}", Bytes::from(inner._0)))
-    } else if let Ok(inner) = log_string::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_string::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(inner._0.to_string())
-    } else if let Ok(inner) = log_array_0::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_array_0::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(format!("{:?}", inner.val))
-    } else if let Ok(inner) = log_array_1::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_array_1::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(format!("{:?}", inner.val))
-    } else if let Ok(inner) = log_array_2::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_array_2::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(format!("{:?}", inner.val))
-    } else if let Ok(inner) = log_named_address::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_named_address::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(format!("{}: {}", inner.key, inner.val))
-    } else if let Ok(inner) = log_named_bytes32::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_named_bytes32::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(format!("{}: {}", inner.key, inner.key))
-    } else if let Ok(inner) = log_named_decimal_int::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_named_decimal_int::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(format!("{}: {}{}", inner.key, inner.val, inner.decimals))
-    } else if let Ok(inner) = log_named_decimal_uint::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_named_decimal_uint::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         // TODO: Format units
         return Some(format!("{}: {}{}", inner.key, inner.val, inner.decimals))
-    } else if let Ok(inner) = log_named_int::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_named_int::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(format!("{}: {}", inner.key, inner.val))
-    } else if let Ok(inner) = log_named_uint::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_named_uint::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(format!("{}: {}", inner.key, inner.val))
-    } else if let Ok(inner) = log_named_bytes::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_named_bytes::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(format!("{}: {}", inner.key, Bytes::from(inner.val)))
-    } else if let Ok(inner) = log_named_string::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_named_string::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(format!("{}: {}", inner.key, inner.val))
-    } else if let Ok(inner) = log_named_array_0::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_named_array_0::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(format!("{}: {:?}", inner.key, inner.val))
-    } else if let Ok(inner) = log_named_array_1::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_named_array_1::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(format!("{}: {:?}", inner.key, inner.val))
-    } else if let Ok(inner) = log_named_array_2::decode_log(raw_log.topics().into_iter().map(|t| WordToken::from(*t)).into_iter(), &raw_log.data, true) {
+    } else if let Ok(inner) = log_named_array_2::decode_log(
+        raw_log.topics().iter().map(|t| WordToken::from(*t)),
+        &raw_log.data,
+        true,
+    ) {
         return Some(format!("{}: {:?}", inner.key, inner.val))
     }
 

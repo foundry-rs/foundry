@@ -1,6 +1,6 @@
 use crate::utils::{parse_ether_value, parse_u256};
-use clap::Parser;
 use alloy_primitives::U256;
+use clap::Parser;
 use serde::Serialize;
 
 #[derive(Parser, Debug, Clone, Serialize)]

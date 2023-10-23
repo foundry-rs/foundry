@@ -133,7 +133,8 @@ impl SendTxArgs {
             }
 
             if resend {
-                tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?.to_alloy());
+                tx.nonce =
+                    Some(provider.get_transaction_count(config.sender, None).await?.to_alloy());
             }
 
             cast_send(

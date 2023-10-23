@@ -2003,10 +2003,7 @@ mod tests {
 
     #[test]
     fn simple_selector() {
-        assert_eq!(
-            "0xc2985578",
-            Cast::get_selector("foo()", None).unwrap().0.as_str()
-        )
+        assert_eq!("0xc2985578", Cast::get_selector("foo()", None).unwrap().0.as_str())
     }
 
     #[test]

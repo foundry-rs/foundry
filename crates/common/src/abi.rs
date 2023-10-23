@@ -347,22 +347,16 @@ mod tests {
 
     #[test]
     fn can_sanitize_token() {
-        let token =
-            DynSolValue::Array(
-                vec![DynSolType::coerce_str(&DynSolType::String, "[\"\"]").unwrap()],
-            );
+        let ty = "string[]".parse::<DynSolType>().unwrap();
+        let token = DynSolType::coerce_str(&ty, "[\"\"]").unwrap();
         let sanitized = sanitize_token(token);
         assert_eq!(sanitized, DynSolValue::Array(vec![DynSolValue::String("".to_string())]));
 
-        let token =
-            DynSolValue::Array(vec![DynSolType::coerce_str(&DynSolType::String, "['']").unwrap()]);
+        let token = DynSolType::coerce_str(&ty, "['']").unwrap();
         let sanitized = sanitize_token(token);
         assert_eq!(sanitized, DynSolValue::Array(vec![DynSolValue::String("".to_string())]));
 
-        let token =
-            DynSolValue::Array(vec![
-                DynSolType::coerce_str(&DynSolType::String, "[\"\",\"\"]").unwrap()
-            ]);
+        let token = DynSolType::coerce_str(&ty, "[\"\",\"\"]").unwrap();
         let sanitized = sanitize_token(token);
         assert_eq!(
             sanitized,
@@ -372,10 +366,7 @@ mod tests {
             ])
         );
 
-        let token =
-            DynSolValue::Array(vec![
-                DynSolType::coerce_str(&DynSolType::String, "['','']").unwrap()
-            ]);
+        let token = DynSolType::coerce_str(&ty, "['','']").unwrap();
         let sanitized = sanitize_token(token);
         assert_eq!(
             sanitized,
