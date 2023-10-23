@@ -105,7 +105,7 @@ impl UintStrategy {
         } else {
             U256::MAX
         };
-        let start = if is_min { offset } else { max - offset };
+        let start = if is_min { offset } else { max.saturating_sub(offset) };
         Ok(UintValueTree::new(start, false))
     }
     fn generate_fixtures_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
