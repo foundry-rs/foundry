@@ -32,7 +32,7 @@ pub fn fuzz_param_from_state(
     // Convert the value based on the parameter type
     match param {
         DynSolType::Address => value
-            .prop_map(move |value| DynSolValue::Address(Address::from_slice(&value[12..])))
+            .prop_map(move |value| DynSolValue::Address(Address::from_word(value.into())))
             .boxed(),
         DynSolType::Bytes => value.prop_map(move |value| DynSolValue::Bytes(value.into())).boxed(),
         DynSolType::Int(n) => match n / 8 {

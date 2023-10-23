@@ -14,7 +14,7 @@ pub fn fuzz_calldata(func: Function) -> BoxedStrategy<Bytes> {
     let strats = func
         .inputs
         .iter()
-        .map(|input| fuzz_param(&DynSolType::from_str(&input.ty).unwrap()))
+        .map(|input| fuzz_param(&DynSolType::from_str(&input.selector_type()).unwrap()))
         .collect::<Vec<_>>();
 
     strats

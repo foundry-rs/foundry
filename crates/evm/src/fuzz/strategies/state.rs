@@ -69,7 +69,7 @@ pub fn fuzz_calldata_from_state(
         .inputs
         .iter()
         .map(|input| {
-            fuzz_param_from_state(&DynSolType::from_str(&input.ty).unwrap(), state.clone())
+            fuzz_param_from_state(&DynSolType::from_str(&input.selector_type()).unwrap(), state.clone())
         })
         .collect::<Vec<_>>();
 
