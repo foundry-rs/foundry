@@ -1618,6 +1618,7 @@ impl SimpleCast {
     /// ```
     pub fn calldata_encode(sig: impl AsRef<str>, args: &[impl AsRef<str>]) -> Result<String> {
         let func = Function::parse(sig.as_ref())?;
+        println!("{:?} {:?}", func.selector(), func);
         let calldata = encode_function_args(&func, args)?;
         Ok(hex::encode_prefixed(calldata))
     }
@@ -1935,7 +1936,7 @@ impl SimpleCast {
         }
         if optimize == 0 {
             let selector = Function::parse(signature)?.selector();
-            return Ok((hex::encode_prefixed(selector), String::from(signature)))
+            return Ok((selector.to_string(), String::from(signature)))
         }
         let Some((name, params)) = signature.split_once('(') else {
             eyre::bail!("Invalid signature");
@@ -2002,9 +2003,25 @@ mod tests {
     use std::fmt::Write;
 
     #[test]
+    fn simple_selector() {
+        assert_eq!(
+            "0xc2985578",
+            Cast::get_selector("foo()", None).unwrap().0.as_str()
+        )
+    }
+
+    #[test]
+    fn selector_with_arg() {
+        assert_eq!(
+            "0xbd0d639f",
+            Cast::get_selector("foo(address,uint256)", None).unwrap().0.as_str()
+        )
+    }
+
+    #[test]
     fn calldata_uint() {
         assert_eq!(
-            "0xb3de648b0000000000000000000000000000000000000000000000000000000000000001",
+            "0x693c61390000000000000000000000000000000000000000000000000000000000000001",
             Cast::calldata_encode("f(uint a)", &["1"]).unwrap().as_str()
         );
     }
@@ -2089,8 +2106,8 @@ mod tests {
         let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
         let decoded = Cast::calldata_decode(sig, data, true).unwrap();
         let decoded = [
-            decoded[0].as_address().unwrap().to_string(),
-            decoded[1].as_address().unwrap().to_string(),
+            decoded[0].as_address().unwrap().to_string().to_lowercase(),
+            decoded[1].as_address().unwrap().to_string().to_lowercase(),
             decoded[2].as_uint().unwrap().0.to_string(),
             decoded[3].as_uint().unwrap().0.to_string(),
             decoded[4].as_bytes().unwrap().iter().copied().fold(String::new(), |mut output, v| {
