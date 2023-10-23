@@ -256,6 +256,7 @@ pub fn get_func(sig: &str) -> Result<Function> {
 
 /// Given an event signature string, it tries to parse it as a `Event`
 pub fn get_event(sig: &str) -> Result<Event> {
+    let sig = sig.strip_prefix("event").unwrap_or(sig).trim();
     Ok(Event::parse(sig)?)
 }
 
@@ -406,9 +407,9 @@ mod tests {
         let parsed = event.decode_log(&log, false).unwrap();
 
         assert_eq!(event.inputs.iter().filter(|param| param.indexed).count(), 2);
-        assert_eq!(parsed.body[0], DynSolValue::Address(Address::from_word(param0)));
-        assert_eq!(parsed.body[1], DynSolValue::Uint(U256::from_be_bytes([3; 32]), 256));
-        assert_eq!(parsed.body[2], DynSolValue::Address(Address::from_word(param2)));
+        assert_eq!(parsed.indexed[0], DynSolValue::Address(Address::from_word(param0)));
+        assert_eq!(parsed.body[0], DynSolValue::Uint(U256::from_be_bytes([3; 32]), 256));
+        assert_eq!(parsed.indexed[1], DynSolValue::Address(Address::from_word(param2)));
     }
 
     #[test]
@@ -430,9 +431,9 @@ mod tests {
         assert_eq!(event.inputs.iter().filter(|param| param.indexed).count(), 3);
         let parsed = event.decode_log(&log, false).unwrap();
 
-        assert_eq!(parsed.body[0], DynSolValue::Address(Address::from_word(param0)));
-        assert_eq!(parsed.body[1], DynSolValue::Uint(U256::from_be_bytes([3; 32]), 256));
-        assert_eq!(parsed.body[2], DynSolValue::Address(Address::from_word(param2)));
+        assert_eq!(parsed.indexed[0], DynSolValue::Address(Address::from_word(param0)));
+        assert_eq!(parsed.indexed[1], DynSolValue::Uint(U256::from_be_bytes([3; 32]), 256));
+        assert_eq!(parsed.indexed[2], DynSolValue::Address(Address::from_word(param2)));
     }
 
     #[test]
