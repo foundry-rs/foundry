@@ -5,7 +5,7 @@ use alloy_primitives::{hex, Address, Log, U256};
 use ethers_core::types::Chain;
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_block_explorers::{contract::ContractMetadata, errors::EtherscanError, Client};
-use std::{future::Future, pin::Pin, str::FromStr};
+use std::{future::Future, pin::Pin};
 use yansi::Paint;
 
 use crate::calc::to_exponential_notation;
@@ -67,80 +67,10 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a DynSolType, &'a str)>>(
     let mut tokens = Vec::new();
 
     for (param, value) in params.into_iter() {
-        let mut token = DynSolType::coerce_str(param, value);
-        if token.is_err() && value.starts_with("0x") {
-            match param {
-                DynSolType::FixedBytes(32) => {
-                    if value.len() < 66 {
-                        let padded_value = [value, &"0".repeat(66 - value.len())].concat();
-                        token = DynSolType::coerce_str(param, &padded_value)
-                    }
-                }
-                DynSolType::Uint(_) => {
-                    // try again if value is hex
-                    if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
-                        token = DynSolType::coerce_str(param, &value)
-                    }
-                }
-                // TODO: Not sure what to do here. Put the no effect in for now, but that is not
-                // ideal. We could attempt massage for every value type?
-                _ => {}
-            }
-        }
-
-        let token = token.map(sanitize_token).wrap_err_with(|| {
-            format!("Failed to parse `{value}`, expected value of type: {param}")
-        })?;
+        let token = DynSolType::coerce_str(param, value)?;
         tokens.push(token);
     }
     Ok(tokens)
-}
-
-/// Cleans up potential shortcomings of the ethabi Tokenizer.
-///
-/// For example: parsing a string array with a single empty string: `[""]`, is returned as
-///
-/// ```text
-///     [
-///        String(
-///            "\"\"",
-///        ),
-///    ],
-/// ```
-///
-/// But should just be
-///
-/// ```text
-///     [
-///        String(
-///            "",
-///        ),
-///    ],
-/// ```
-///
-/// This will handle this edge case
-pub fn sanitize_token(token: DynSolValue) -> DynSolValue {
-    match token {
-        DynSolValue::Array(tokens) => {
-            let mut sanitized = Vec::with_capacity(tokens.len());
-            for token in tokens {
-                let token = match token {
-                    DynSolValue::String(val) => {
-                        let val = match val.as_str() {
-                            // this is supposed to be an empty string
-                            "\"\"" | "''" => String::new(),
-                            _ => val,
-                        };
-                        DynSolValue::String(val)
-                    }
-                    _ => sanitize_token(token),
-                };
-                sanitized.push(token)
-            }
-            DynSolValue::Array(sanitized)
-        }
-        _ => token,
-    }
 }
 
 /// Pretty print a slice of tokens.
@@ -342,41 +272,11 @@ pub fn find_source(
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
     use alloy_dyn_abi::EventExt;
     use alloy_primitives::B256;
-
-    #[test]
-    fn can_sanitize_token() {
-        let ty = "string[]".parse::<DynSolType>().unwrap();
-        let token = DynSolType::coerce_str(&ty, "[\"\"]").unwrap();
-        let sanitized = sanitize_token(token);
-        assert_eq!(sanitized, DynSolValue::Array(vec![DynSolValue::String("".to_string())]));
-
-        let token = DynSolType::coerce_str(&ty, "['']").unwrap();
-        let sanitized = sanitize_token(token);
-        assert_eq!(sanitized, DynSolValue::Array(vec![DynSolValue::String("".to_string())]));
-
-        let token = DynSolType::coerce_str(&ty, "[\"\",\"\"]").unwrap();
-        let sanitized = sanitize_token(token);
-        assert_eq!(
-            sanitized,
-            DynSolValue::Array(vec![
-                DynSolValue::String("".to_string()),
-                DynSolValue::String("".to_string())
-            ])
-        );
-
-        let token = DynSolType::coerce_str(&ty, "['','']").unwrap();
-        let sanitized = sanitize_token(token);
-        assert_eq!(
-            sanitized,
-            DynSolValue::Array(vec![
-                DynSolValue::String("".to_string()),
-                DynSolValue::String("".to_string())
-            ])
-        );
-    }
 
     #[test]
     fn parse_hex_uint_tokens() {

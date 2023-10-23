@@ -7,10 +7,7 @@ use alloy_primitives::{Address, B256, U256};
 use clap::{Parser, Subcommand, ValueHint};
 use ethers::types::BlockId;
 use eyre::Result;
-use foundry_cli::{
-    opts::{EtherscanOpts, RpcOpts},
-    utils::parse_u256,
-};
+use foundry_cli::opts::{EtherscanOpts, RpcOpts};
 use foundry_common::serde_helpers::Numeric;
 use std::{path::PathBuf, str::FromStr};
 
@@ -370,7 +367,7 @@ pub enum Subcommands {
         address: Option<String>,
 
         /// The nonce of the deployer address.
-        #[clap(long, value_parser = parse_u256)]
+        #[clap(long)]
         nonce: Option<U256>,
 
         #[clap(flatten)]

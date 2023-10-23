@@ -10,7 +10,6 @@ use std::{
     ops::Mul,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
-    str::FromStr,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tracing_error::ErrorLayer;
@@ -73,21 +72,6 @@ pub fn subscriber() {
         .with(ErrorLayer::default())
         .with(tracing_subscriber::fmt::layer())
         .init()
-}
-
-/// parse a hex str or decimal str as U256
-pub fn parse_u256(s: &str) -> Result<U256> {
-    if let Some(s) = s.strip_prefix("0x") {
-        Ok(U256::from_str_radix(s, 16)?)
-    } else {
-        Ok(U256::from_str(s)?)
-    }
-}
-
-/// parse a hex str or decimal str as U256
-// TODO: rm after alloy transition
-pub fn alloy_parse_u256(s: &str) -> Result<alloy_primitives::U256> {
-    parse_u256(s)
 }
 
 /// Returns a [RetryProvider](foundry_common::RetryProvider) instantiated using [Config]'s RPC URL

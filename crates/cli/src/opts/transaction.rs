@@ -1,4 +1,4 @@
-use crate::utils::{parse_ether_value, parse_u256};
+use crate::utils::parse_ether_value;
 use alloy_primitives::U256;
 use clap::Parser;
 use serde::Serialize;
@@ -7,7 +7,7 @@ use serde::Serialize;
 #[clap(next_help_heading = "Transaction options")]
 pub struct TransactionOpts {
     /// Gas limit for the transaction.
-    #[clap(long, env = "ETH_GAS_LIMIT", value_parser = parse_u256)]
+    #[clap(long, env = "ETH_GAS_LIMIT")]
     pub gas_limit: Option<U256>,
 
     /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
@@ -37,7 +37,7 @@ pub struct TransactionOpts {
     pub value: Option<U256>,
 
     /// Nonce for the transaction.
-    #[clap(long, value_parser = parse_u256)]
+    #[clap(long)]
     pub nonce: Option<U256>,
 
     /// Send a legacy transaction instead of an EIP1559 transaction.
