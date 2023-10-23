@@ -21,9 +21,11 @@ pub fn encode_function_args(func: &Function, args: &[impl AsRef<str>]) -> Result
         .collect::<Vec<_>>();
     let args = params
         .iter()
-        .map(|(_, arg)| DynSolValue::from(arg.to_owned().to_string()))
+        .map(|(ty, arg)| {
+            DynSolType::coerce_str(&DynSolType::parse(ty).unwrap(), arg.to_owned()).unwrap()
+        })
         .collect::<Vec<_>>();
-    Ok(func.abi_encode_input(&args)?)
+    Ok(func.abi_encode_input(args.as_slice())?)
 }
 
 /// Decodes the calldata of the function
