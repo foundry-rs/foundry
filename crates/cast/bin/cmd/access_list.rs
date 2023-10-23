@@ -10,7 +10,6 @@ use foundry_cli::{
     utils,
 };
 use foundry_config::{Chain, Config};
-use foundry_utils::types::ToAlloy;
 use std::str::FromStr;
 
 /// CLI arguments for `cast access-list`.
@@ -89,12 +88,12 @@ where
 {
     let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
     builder
-        .gas(tx.gas_limit.map(|g| g.to_alloy()))
-        .gas_price(tx.gas_price.map(|g| g.to_alloy()))
-        .priority_gas_price(tx.priority_gas_price.map(|p| p.to_alloy()))
-        .nonce(tx.nonce.map(|n| n.to_alloy()));
+        .gas(tx.gas_limit)
+        .gas_price(tx.gas_price)
+        .priority_gas_price(tx.priority_gas_price)
+        .nonce(tx.nonce);
 
-    builder.value(tx.value.map(|v| v.to_alloy()));
+    builder.value(tx.value);
 
     if let Some(sig) = sig {
         builder.set_args(sig.as_str(), args).await?;

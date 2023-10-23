@@ -10,7 +10,7 @@ use foundry_common::runtime_client::RuntimeClient;
 use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{executor::opts::EvmOpts, trace::TracingExecutor};
-use foundry_utils::types::ToAlloy;
+use foundry_utils::types::{ToAlloy, ToEthers};
 use std::str::FromStr;
 
 type Provider = ethers::providers::Provider<RuntimeClient>;
@@ -132,11 +132,11 @@ impl CallArgs {
             TxBuilder::new(&provider, sender, to, chain, tx.legacy).await?;
 
         builder
-            .gas(tx.gas_limit.map(|g| g.to_alloy()))
+            .gas(tx.gas_limit)
             .etherscan_api_key(config.get_etherscan_api_key(Some(chain)))
-            .gas_price(tx.gas_price.map(|g| g.to_alloy()))
-            .priority_gas_price(tx.priority_gas_price.map(|g| g.to_alloy()))
-            .nonce(tx.nonce.map(|n| n.to_alloy()));
+            .gas_price(tx.gas_price)
+            .priority_gas_price(tx.priority_gas_price)
+            .nonce(tx.nonce);
 
         match command {
             Some(CallSubcommands::Create { code, sig, args, value }) => {
@@ -173,7 +173,7 @@ impl CallArgs {
             }
             _ => {
                 // fill first here because we need to use the builder in the conditional
-                fill_tx(&mut builder, tx.value, sig, args, data).await?;
+                fill_tx(&mut builder, tx.value.map(|t| t.to_ethers()), sig, args, data).await?;
 
                 if trace {
                     let figment = Config::figment_with_root(find_project_root_path(None).unwrap())

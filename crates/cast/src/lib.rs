@@ -1618,7 +1618,6 @@ impl SimpleCast {
     /// ```
     pub fn calldata_encode(sig: impl AsRef<str>, args: &[impl AsRef<str>]) -> Result<String> {
         let func = Function::parse(sig.as_ref())?;
-        println!("{:?} {:?}", func.selector(), func);
         let calldata = encode_function_args(&func, args)?;
         Ok(hex::encode_prefixed(calldata))
     }

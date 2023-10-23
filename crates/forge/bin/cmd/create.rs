@@ -15,7 +15,7 @@ use foundry_cli::{
 };
 use foundry_common::{abi::parse_tokens, compile, estimate_eip1559_fees};
 use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalized};
-use foundry_utils::types::ToAlloy;
+use foundry_utils::types::{ToAlloy, ToEthers};
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 
@@ -213,7 +213,7 @@ impl CreateArgs {
 
         // set tx value if specified
         if let Some(value) = self.tx.value {
-            deployer.tx.set_value(value);
+            deployer.tx.set_value(value.to_ethers());
         }
 
         // fill tx first because if you target a lower gas than current base, eth_estimateGas
@@ -225,7 +225,7 @@ impl CreateArgs {
 
         // set gas price if specified
         if let Some(gas_price) = self.tx.gas_price {
-            deployer.tx.set_gas_price(gas_price);
+            deployer.tx.set_gas_price(gas_price.to_ethers());
         } else if !is_legacy {
             // estimate EIP1559 fees
             let (max_fee, max_priority_fee) = estimate_eip1559_fees(&provider, Some(chain))
@@ -233,18 +233,18 @@ impl CreateArgs {
                 .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
             deployer.tx.set_gas_price(max_fee);
             if priority_fee.is_none() {
-                priority_fee = Some(max_priority_fee);
+                priority_fee = Some(max_priority_fee.to_alloy());
             }
         }
 
         // set gas limit if specified
         if let Some(gas_limit) = self.tx.gas_limit {
-            deployer.tx.set_gas(gas_limit);
+            deployer.tx.set_gas(gas_limit.to_ethers());
         }
 
         // set nonce if specified
         if let Some(nonce) = self.tx.nonce {
-            deployer.tx.set_nonce(nonce);
+            deployer.tx.set_nonce(nonce.to_ethers());
         }
 
         // set priority fee if specified
@@ -254,7 +254,7 @@ impl CreateArgs {
             }
             deployer.tx = match deployer.tx {
                 TypedTransaction::Eip1559(eip1559_tx_request) => TypedTransaction::Eip1559(
-                    eip1559_tx_request.max_priority_fee_per_gas(priority_fee),
+                    eip1559_tx_request.max_priority_fee_per_gas(priority_fee.to_ethers()),
                 ),
                 _ => deployer.tx,
             };

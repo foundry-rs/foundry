@@ -133,7 +133,7 @@ impl SendTxArgs {
             }
 
             if resend {
-                tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
+                tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?.to_alloy());
             }
 
             cast_send(
@@ -174,7 +174,7 @@ corresponds to the sender, or let foundry automatically detect it by not specify
             }
 
             if resend {
-                tx.nonce = Some(provider.get_transaction_count(from, None).await?);
+                tx.nonce = Some(provider.get_transaction_count(from, None).await?.to_alloy());
             }
 
             let provider = provider.with_signer(signer);
@@ -219,11 +219,11 @@ where
     let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
     builder
         .etherscan_api_key(etherscan_api_key)
-        .gas(tx.gas_limit.map(|g| g.to_alloy()))
-        .gas_price(tx.gas_price.map(|g| g.to_alloy()))
-        .priority_gas_price(tx.priority_gas_price.map(|p| p.to_alloy()))
-        .value(tx.value.map(|v| v.to_alloy()))
-        .nonce(tx.nonce.map(|n| n.to_alloy()));
+        .gas(tx.gas_limit)
+        .gas_price(tx.gas_price)
+        .priority_gas_price(tx.priority_gas_price)
+        .value(tx.value)
+        .nonce(tx.nonce);
 
     if let Some(code) = code {
         let mut data = hex::decode(code)?;
