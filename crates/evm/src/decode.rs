@@ -2,189 +2,65 @@
 use crate::executor::inspector::cheatcodes::util::MAGIC_SKIP_BYTES;
 use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{Bytes, Log as AlloyLog, U256};
-use alloy_sol_types::{
-    abi::token::WordToken, sol, sol_data::String as SolString, SolEvent, SolType,
-};
-use ethers::types::Log;
+use alloy_primitives::{B256, U256};
+use alloy_sol_types::{sol_data::String as SolString, SolType};
+use ethers::{abi::RawLog, contract::EthLogDecode, types::Log};
 use eyre::ContextCompat;
+use foundry_abi::console::ConsoleEvents::{self, *};
 use foundry_common::{abi::format_token, SELECTOR_LEN};
-use foundry_utils::{error::ERROR_PREFIX, types::ToAlloy};
+use foundry_utils::error::ERROR_PREFIX;
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use revm::interpreter::{return_ok, InstructionResult};
-
-sol! {
-    event log(string);
-    event logs                   (bytes);
-    event log_address            (address);
-    event log_bytes32            (bytes32);
-    event log_int                (int);
-    event log_uint               (uint);
-    event log_bytes              (bytes);
-    event log_string             (string);
-    event log_array              (uint256[] val);
-    event log_array              (int256[] val);
-    event log_array              (address[] val);
-    event log_named_address      (string key, address val);
-    event log_named_bytes32      (string key, bytes32 val);
-    event log_named_decimal_int  (string key, int val, uint decimals);
-    event log_named_decimal_uint (string key, uint val, uint decimals);
-    event log_named_int          (string key, int val);
-    event log_named_uint         (string key, uint val);
-    event log_named_bytes        (string key, bytes val);
-    event log_named_string       (string key, string val);
-    event log_named_array        (string key, uint256[] val);
-    event log_named_array        (string key, int256[] val);
-    event log_named_array        (string key, address[] val);
-}
 
 /// Decode a set of logs, only returning logs from DSTest logging events and Hardhat's `console.log`
 pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
     logs.iter().filter_map(decode_console_log).collect()
 }
-
 /// Decode a single log.
 ///
 /// This function returns [None] if it is not a DSTest log or the result of a Hardhat
 /// `console.log`.
 pub fn decode_console_log(log: &Log) -> Option<String> {
-    let raw_log = AlloyLog::new_unchecked(
-        log.topics.clone().into_iter().map(|h| h.to_alloy()).collect_vec(),
-        log.data.clone().0.into(),
-    );
-    if let Ok(inner) =
-        log::decode_log(raw_log.topics().iter().map(|t| WordToken::from(*t)), &raw_log.data, true)
-    {
-        return Some(inner._0)
-    } else if let Ok(inner) =
-        logs::decode_log(raw_log.topics().iter().map(|t| WordToken::from(*t)), &raw_log.data, true)
-    {
-        return Some(format!("{}", Bytes::from(inner._0)))
-    } else if let Ok(inner) = log_address::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(format!("{}", inner._0))
-    } else if let Ok(inner) = log_bytes32::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(format!("{}", inner._0))
-    } else if let Ok(inner) = log_int::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(format!("{}", inner._0))
-    } else if let Ok(inner) = log_uint::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(format!("{}", inner._0))
-    } else if let Ok(inner) = log_bytes::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(format!("{}", Bytes::from(inner._0)))
-    } else if let Ok(inner) = log_string::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(inner._0.to_string())
-    } else if let Ok(inner) = log_array_0::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(format!("{:?}", inner.val))
-    } else if let Ok(inner) = log_array_1::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(format!("{:?}", inner.val))
-    } else if let Ok(inner) = log_array_2::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(format!("{:?}", inner.val))
-    } else if let Ok(inner) = log_named_address::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(format!("{}: {}", inner.key, inner.val))
-    } else if let Ok(inner) = log_named_bytes32::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(format!("{}: {}", inner.key, inner.key))
-    } else if let Ok(inner) = log_named_decimal_int::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(format!("{}: {}{}", inner.key, inner.val, inner.decimals))
-    } else if let Ok(inner) = log_named_decimal_uint::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        // TODO: Format units
-        return Some(format!("{}: {}{}", inner.key, inner.val, inner.decimals))
-    } else if let Ok(inner) = log_named_int::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(format!("{}: {}", inner.key, inner.val))
-    } else if let Ok(inner) = log_named_uint::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(format!("{}: {}", inner.key, inner.val))
-    } else if let Ok(inner) = log_named_bytes::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(format!("{}: {}", inner.key, Bytes::from(inner.val)))
-    } else if let Ok(inner) = log_named_string::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(format!("{}: {}", inner.key, inner.val))
-    } else if let Ok(inner) = log_named_array_0::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(format!("{}: {:?}", inner.key, inner.val))
-    } else if let Ok(inner) = log_named_array_1::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(format!("{}: {:?}", inner.key, inner.val))
-    } else if let Ok(inner) = log_named_array_2::decode_log(
-        raw_log.topics().iter().map(|t| WordToken::from(*t)),
-        &raw_log.data,
-        true,
-    ) {
-        return Some(format!("{}: {:?}", inner.key, inner.val))
-    }
+    // NOTE: We need to do this conversion because ethers-rs does not
+    // support passing `Log`s
+    let raw_log = RawLog { topics: log.topics.clone(), data: log.data.to_vec() };
+    let decoded = match ConsoleEvents::decode_log(&raw_log).ok()? {
+        LogsFilter(inner) => format!("{}", inner.0),
+        LogBytesFilter(inner) => format!("{}", inner.0),
+        LogNamedAddressFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedBytes32Filter(inner) => {
+            format!("{}: {}", inner.key, B256::new(inner.val))
+        }
+        LogNamedDecimalIntFilter(inner) => {
+            let (sign, val) = inner.val.into_sign_and_abs();
+            format!(
+                "{}: {}{}",
+                inner.key,
+                sign,
+                ethers::utils::format_units(val, inner.decimals.as_u32()).unwrap()
+            )
+        }
+        LogNamedDecimalUintFilter(inner) => {
+            format!(
+                "{}: {}",
+                inner.key,
+                ethers::utils::format_units(inner.val, inner.decimals.as_u32()).unwrap()
+            )
+        }
+        LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedUintFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedBytesFilter(inner) => {
+            format!("{}: {}", inner.key, inner.val)
+        }
+        LogNamedStringFilter(inner) => format!("{}: {}", inner.key, inner.val),
+        LogNamedArray1Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedArray2Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedArray3Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
 
-    None
+        e => e.to_string(),
+    };
+    Some(decoded)
 }
 
 /// Given an ABI encoded error string with the function signature `Error(string)`, it decodes
