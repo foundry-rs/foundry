@@ -2038,13 +2038,37 @@ mod tests {
         let data = "0x0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
         let sig = "safeTransferFrom(address,address,uint256,uint256,bytes)";
         let decoded = Cast::abi_decode(sig, data, true).unwrap();
-        let decoded = decoded.iter().map(|v| v.sol_type_name().unwrap()).collect::<Vec<_>>();
+        let decoded = [
+            decoded[0]
+                .as_address()
+                .unwrap()
+                .to_string()
+                .strip_prefix("0x")
+                .unwrap()
+                .to_owned()
+                .to_lowercase(),
+            decoded[1]
+                .as_address()
+                .unwrap()
+                .to_string()
+                .strip_prefix("0x")
+                .unwrap()
+                .to_owned()
+                .to_lowercase(),
+            decoded[2].as_uint().unwrap().0.to_string(),
+            decoded[3].as_uint().unwrap().0.to_string(),
+            decoded[4].as_bytes().unwrap().iter().copied().fold(String::new(), |mut output, v| {
+                let _ = write!(output, "{v:02x}");
+                output
+            }),
+        ]
+        .to_vec();
         assert_eq!(
             decoded,
             vec![
                 "8dbd1b711dc621e1404633da156fcc779e1c6f3e",
                 "d9f3c9cc99548bf3b44a43e0a2d07399eb918adc",
-                "2a",
+                "42",
                 "1",
                 ""
             ]

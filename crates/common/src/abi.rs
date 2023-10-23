@@ -10,8 +10,8 @@ use yansi::Paint;
 
 use crate::calc::to_exponential_notation;
 
-/// Given a function and a vector of string arguments, it proceeds to convert the args to ethabi
-/// Tokens and then ABI encode them.
+/// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
+/// [DynSolValue]s and then ABI encode them.
 pub fn encode_function_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>> {
     let params = func
         .inputs
