@@ -30,12 +30,9 @@ pub fn fuzz_param(param: &DynSolType) -> SBoxedStrategy<DynSolValue> {
                 )
             })
             .sboxed(),
-        DynSolType::Tuple(params) => params
-            .iter()
-            .map(|p| fuzz_param(p))
-            .collect::<Vec<_>>()
-            .prop_map(DynSolValue::Tuple)
-            .sboxed(),
+        DynSolType::Tuple(params) => {
+            params.iter().map(fuzz_param).collect::<Vec<_>>().prop_map(DynSolValue::Tuple).sboxed()
+        }
         DynSolType::FixedArray(param, size) => {
             let fixed_size = *size;
             proptest::collection::vec(fuzz_param(param), fixed_size)
