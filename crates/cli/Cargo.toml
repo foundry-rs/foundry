@@ -29,6 +29,7 @@ ethers = { workspace = true, features = ["aws", "ledger", "trezor"] }
 # alloy
 alloy-primitives.workspace = true
 alloy-json-abi.workspace = true
+alloy-dyn-abi.workspace = true
 
 async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }

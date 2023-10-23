@@ -1,12 +1,9 @@
-use ethers::{
-    abi::token::{LenientTokenizer, Tokenizer},
-    prelude::TransactionReceipt,
-    providers::Middleware,
-    types::U256,
-    utils::{format_units, to_checksum},
-};
-use eyre::Result;
+use alloy_primitives::U256;
+use ethers::{prelude::TransactionReceipt, providers::Middleware};
+use eyre::{ContextCompat, Result};
+use foundry_common::units::format_units;
 use foundry_config::{Chain, Config};
+use foundry_utils::types::ToAlloy;
 use std::{
     ffi::OsStr,
     future::Future,
@@ -80,14 +77,13 @@ pub fn subscriber() {
 
 /// parse a hex str or decimal str as U256
 pub fn parse_u256(s: &str) -> Result<U256> {
-    Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })
+    Ok(if s.starts_with("0x") { U256::from_str_radix(s, 16)? } else { U256::from_str(s)? })
 }
 
 /// parse a hex str or decimal str as U256
 // TODO: rm after alloy transition
 pub fn alloy_parse_u256(s: &str) -> Result<alloy_primitives::U256> {
-    use foundry_utils::types::ToAlloy;
-    Ok(parse_u256(s)?.to_alloy())
+    Ok(parse_u256(s)?)
 }
 
 /// Returns a [RetryProvider](foundry_common::RetryProvider) instantiated using [Config]'s RPC URL
@@ -134,16 +130,18 @@ where
 /// it is interpreted as wei.
 pub fn parse_ether_value(value: &str) -> Result<U256> {
     Ok(if value.starts_with("0x") {
-        U256::from_str(value)?
+        U256::from_str_radix(value, 16)?
     } else {
-        U256::from(LenientTokenizer::tokenize_uint(value)?)
+        alloy_dyn_abi::DynSolType::coerce_str(&alloy_dyn_abi::DynSolType::Uint(256), value)?
+            .as_uint()
+            .wrap_err("Could not parse ether value from string")?
+            .0
     })
 }
 
 // TODO: rm after alloy transition
 pub fn alloy_parse_ether_value(value: &str) -> Result<alloy_primitives::U256> {
-    use foundry_utils::types::ToAlloy;
-    Ok(parse_ether_value(value)?.to_alloy())
+    Ok(parse_ether_value(value)?)
 }
 
 /// Parses a `Duration` from a &str
@@ -241,7 +239,7 @@ pub fn print_receipt(chain: Chain, receipt: &TransactionReceipt) {
         },
         tx_hash = receipt.transaction_hash,
         caddr = if let Some(addr) = &receipt.contract_address {
-            format!("\nContract Address: {}", to_checksum(addr, None))
+            format!("\nContract Address: {}", addr.to_alloy().to_checksum(None))
         } else {
             String::new()
         },
@@ -249,8 +247,9 @@ pub fn print_receipt(chain: Chain, receipt: &TransactionReceipt) {
         gas = if gas_price.is_zero() {
             format!("Gas Used: {gas_used}")
         } else {
-            let paid = format_units(gas_used.mul(gas_price), 18).unwrap_or_else(|_| "N/A".into());
-            let gas_price = format_units(gas_price, 9).unwrap_or_else(|_| "N/A".into());
+            let paid = format_units(gas_used.mul(gas_price).to_alloy(), 18)
+                .unwrap_or_else(|_| "N/A".into());
+            let gas_price = format_units(gas_price.to_alloy(), 9).unwrap_or_else(|_| "N/A".into());
             format!(
                 "Paid: {} ETH ({gas_used} gas * {} gwei)",
                 paid.trim_end_matches('0'),
