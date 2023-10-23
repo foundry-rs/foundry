@@ -36,6 +36,16 @@ interface Vm {
         RecurrentPrank,
     }
 
+    /// The kind of account access that occurred.
+    enum AccountAccessKind {
+        /// The account was called.
+        Call,
+        /// THe account was created.
+        Create,
+        /// The account was selfdestruct.
+        SelfDestruct,
+    }
+
     /// An Ethereum log. Returned by `getRecordedLogs`.
     struct Log {
         /// The topics of the log, including the signature, if any.
@@ -134,6 +144,38 @@ interface Vm {
         bytes stderr;
     }
 
+    /// The result of a `getRecordedAccountAccess` call.
+    struct AccountAccess {
+        /// The account whose storage was accessed.
+        address account;
+        /// The kind of account access.
+        AccountAccessKind kind;
+        /// If the account is initialized or empty
+        bool initialized;
+        /// Value passed along with the account access
+        uint256 value;
+        /// Input data provided to the CREATE or CALL
+        bytes data;
+        /// If this access was in a reverted context
+        bool reverted;
+    }
+
+    /// The result of a `getRecordedStorageAccess` call.
+    struct StorageAccess {
+        /// The account whose storage was accessed.
+        address account;
+        /// The slot that was accessed.
+        bytes32 slot;
+        /// If the access was a write.
+        bool isWrite;
+        /// The previous value of the slot.
+        bytes32 previousValue;
+        /// The new value of the slot.
+        bytes32 newValue;
+        /// If the access was reverted.
+        bool reverted;
+    }
+
     // ======== EVM ========
 
     /// Gets the address for a given private key.
@@ -165,6 +207,23 @@ interface Vm {
     /// Gets all accessed reads and write slot from a `vm.record` session, for a given address.
     #[cheatcode(group = Evm, safety = Safe)]
     function accesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
+
+    /// Record all account accesses as part of CREATE or CALL opcodes in order,
+    /// along with the context of the calls
+    #[cheatcode(group = Evm, safety = Safe)]
+    function recordAccountAccesses() external;
+
+    /// Returns an ordered array of all account accesses from a `vm.recordAccountAccess` session.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getRecordedAccountAccesses() external returns (AccountAccess[] memory accesses);
+
+    /// Record all storage accesses in order, along with the context of the accesses
+    #[cheatcode(group = Evm, safety = Safe)]
+    function recordStorageAccesses() external;
+
+    /// Returns an ordered array of all storage accesses from a `vm.recordStorageAccess` session.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getRecordedStorageAccesses() external returns (StorageAccess[] memory accesses);
 
     // -------- Recording Map Writes --------
 

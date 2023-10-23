@@ -341,6 +341,36 @@ impl Cheatcode for revertToCall {
     }
 }
 
+impl Cheatcode for recordAccountAccessesCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        state.recorded_account_accesses = Some(Default::default());
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for getRecordedAccountAccessesCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        get_recorded_account_accesses(state)
+    }
+}
+
+impl Cheatcode for recordStorageAccessesCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        state.recorded_storage_accesses = Some(Default::default());
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for getRecordedStorageAccessesCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        get_recorded_storage_accesses(state)
+    }
+}
+
 pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Address) -> Result {
     super::script::correct_sender_nonce(ccx)?;
     let (account, _) = ccx.data.journaled_state.load_account(*address, ccx.data.db)?;
@@ -403,4 +433,38 @@ pub(super) fn journaled_account<'a, DB: DatabaseExt>(
     data.journaled_state.load_account(addr, data.db)?;
     data.journaled_state.touch(&addr);
     Ok(data.journaled_state.state.get_mut(&addr).expect("account is loaded"))
+}
+
+/// Consumes recorded account accesses and returns them as an abi encoded
+/// array of [AccountAccess]. If there are no accounts were
+/// recorded as accessed, an abi encoded empty array is returned.
+///
+/// In the case where `getRecordedAccountAccesses` is called at a lower
+/// depth than `recordAccountAccesses`, multiple `Vec<RecordedAccountAccesses>`
+/// will be flattened, preserving the order of the accesses.
+fn get_recorded_account_accesses(state: &mut Cheatcodes) -> Result {
+    let res = state.recorded_account_accesses
+        .replace(Default::default())
+        .unwrap_or_default()
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    Ok(res.abi_encode())
+}
+
+/// Consumes recorded storage accesses and returns them as an abi encoded
+/// array of [StorageAccess]. If there are no storage accesses recorded,
+/// an abi encoded empty array is returned.
+///
+/// In the case where `getRecordedStorageAccesses` is called at a lower
+/// depth than `recordStorageAccesses`, multiple `Vec<RecordedStorageAccesses>`
+/// will be flattened, preserving the order of the accesses.
+fn get_recorded_storage_accesses(state: &mut Cheatcodes) -> Result {
+    let res = state.recorded_storage_accesses
+        .replace(Default::default())
+        .unwrap_or_default()
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    Ok(res.abi_encode())
 }

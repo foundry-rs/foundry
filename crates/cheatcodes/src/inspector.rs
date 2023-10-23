@@ -13,7 +13,7 @@ use crate::{
     },
     CheatsConfig, CheatsCtxt, Error, Result, Vm,
 };
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U160, U256};
 use alloy_sol_types::{SolInterface, SolValue};
 use ethers_core::types::{
     transaction::eip2718::TypedTransaction, NameOrAddress, TransactionRequest,
@@ -137,6 +137,12 @@ pub struct Cheatcodes {
     /// Recorded storage reads and writes
     pub accesses: Option<RecordAccess>,
 
+    /// Recorded account accesses (calls, creates) by relative call depth
+    pub recorded_account_accesses: Option<Vec<Vec<crate::Vm::AccountAccess>>>,
+
+    /// Recorded storage accesses by relative call depth
+    pub recorded_storage_accesses: Option<Vec<Vec<crate::Vm::StorageAccess>>>,
+
     /// Recorded logs
     pub recorded_logs: Option<Vec<crate::Vm::Log>>,
 
@@ -233,13 +239,7 @@ impl Cheatcodes {
         &self,
         data: &mut EVMData<'_, DB>,
         inputs: &CreateInputs,
-    ) {
-        if data.journaled_state.depth > 1 && !data.db.has_cheatcode_access(inputs.caller) {
-            // we only grant cheat code access for new contracts if the caller also has
-            // cheatcode access and the new contract is created in top most call
-            return
-        }
-
+    ) -> Address {
         let old_nonce = data
             .journaled_state
             .state
@@ -248,7 +248,15 @@ impl Cheatcodes {
             .unwrap_or_default();
         let created_address = get_create_address(inputs, old_nonce);
 
+        if data.journaled_state.depth > 1 && !data.db.has_cheatcode_access(inputs.caller) {
+            // we only grant cheat code access for new contracts if the caller also has
+            // cheatcode access and the new contract is created in top most call
+            return created_address
+        }
+
         data.db.allow_cheatcode_access(created_address);
+
+        created_address
     }
 
     /// Called when there was a revert.
@@ -387,6 +395,119 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         .entry(interpreter.contract().address)
                         .or_default()
                         .push(key);
+                }
+                _ => (),
+            }
+        }
+
+        // Record account access via SELFDESTRUCT if `recordAccountAccesses` has been called
+        if let Some(account_accesses) = &mut self.recorded_account_accesses {
+            if interpreter.current_opcode() == opcode::SELFDESTRUCT {
+                let target = try_or_continue!(interpreter.stack().peek(0));
+                // load balance of this account
+                let balance: U256;
+                if let Ok((account, _)) =
+                    data.journaled_state.load_account(interpreter.contract().address, data.db)
+                {
+                    balance = account.info.balance;
+                } else {
+                    balance = U256::ZERO;
+                }
+                // get initialized status of target account
+                let initialized: bool;
+                if let Ok((account, _)) =
+                    data.journaled_state.load_account(Address::from(U160::from(target)), data.db)
+                {
+                    initialized = account.info.exists();
+                } else {
+                    initialized = false;
+                }
+                // register access for the target account
+                let access = crate::Vm::AccountAccess {
+                    account: Address::from(U160::from(target)),
+                    kind: crate::Vm::AccountAccessKind::SelfDestruct,
+                    initialized,
+                    value: balance,
+                    data: Bytes::new().to_vec(),
+                    reverted: false,
+                };
+                // append access
+                if let Some(last) = &mut account_accesses.last_mut() {
+                    last.push(access);
+                } else {
+                    account_accesses.push(vec![access]);
+                }
+            }
+        }
+
+        // Record granular ordered storage accesses if `recordStorageAccesses` has been called
+        if let Some(recorded_storage_accesses) = &mut self.recorded_storage_accesses {
+            match interpreter.current_opcode() {
+                opcode::SLOAD => {
+                    let key = try_or_continue!(interpreter.stack().peek(0));
+                    let address = interpreter.contract().address;
+
+                    // Try to include present value for informational purposes, otherwise assume
+                    // it's not set (zero value)
+                    let mut present_value = U256::ZERO;
+                    // Try to load the account and the slot's present value
+                    if data.journaled_state.load_account(address, data.db).is_ok() {
+                        if let Ok((previous, _)) = data.journaled_state.sload(address, key, data.db)
+                        {
+                            present_value = previous;
+                        }
+                    }
+
+                    let access = crate::Vm::StorageAccess {
+                        account: interpreter.contract().address,
+                        slot: key.into(),
+                        isWrite: false,
+                        previousValue: present_value.into(),
+                        newValue: present_value.into(),
+                        reverted: false,
+                    };
+
+                    // If there is a "last" entry in the recorded storage accesses, push the current
+                    // access onto it
+                    if let Some(last) = &mut recorded_storage_accesses.last_mut() {
+                        last.push(access);
+                    } else {
+                        // Otherwise, append this access as a one-element vector to the empty 2d
+                        // vector
+                        recorded_storage_accesses.push(vec![access]);
+                    }
+                }
+                opcode::SSTORE => {
+                    let key = try_or_continue!(interpreter.stack().peek(0));
+                    let value = try_or_continue!(interpreter.stack().peek(1));
+                    let address = interpreter.contract().address;
+                    // Try to load the account and the slot's previous value, otherwise, assume it's
+                    // not set (zero value)
+                    let mut previous_value = U256::ZERO;
+                    if data.journaled_state.load_account(address, data.db).is_ok() {
+                        if let Ok((previous, _)) = data.journaled_state.sload(address, key, data.db)
+                        {
+                            previous_value = previous;
+                        }
+                    }
+
+                    let access = crate::Vm::StorageAccess {
+                        account: address,
+                        slot: key.into(),
+                        isWrite: true,
+                        previousValue: previous_value.into(),
+                        newValue: value.into(),
+                        reverted: false,
+                    };
+                    // If there is a "last" entry in the recorded storage accesses, push the current
+                    // access onto it
+                    if let Some(last) = &mut recorded_storage_accesses.last_mut() {
+                        last.push(access);
+                    } else {
+                        // Otherwise, append this access as a one-element vector to the empty 2d
+                        // vector
+                        recorded_storage_accesses.push(vec![access]);
+                    }
                 }
                 _ => (),
             }
@@ -689,6 +810,40 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
+        // Record called accounts if `recordAccountAccesses` has been called
+        if let Some(recorded_account_accesses) = &mut self.recorded_account_accesses {
+            // Determine if account is "initialized," ie, it has a non-zero balance, a non-zero
+            // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
+            let initialized;
+            if let Ok((acc, _)) = data.journaled_state.load_account(call.contract, data.db) {
+                initialized = acc.info.exists();
+            } else {
+                initialized = false;
+            }
+            // Record this call by pushing it to a new pending vector; all subsequent calls at
+            // that depth will be pushed to the same vector. When the call ends, the
+            // RecordedAccountAccess (and all subsequent RecordedAccountAccesses) will be
+            // updated with the revert status of this call, since the EVM does not mark accounts
+            // as "warm" if the call from which they were accessed is reverted
+            recorded_account_accesses.push(vec![crate::Vm::AccountAccess {
+                account: call.contract,
+                kind: crate::Vm::AccountAccessKind::Call,
+                initialized,
+                value: call.transfer.value,
+                data: call.input.to_vec(),
+                reverted: false,
+            }]);
+        }
+
+        if let Some(recorded_storage_accesses) = &mut self.recorded_storage_accesses {
+            // Record this call by pushing it to a new pending vector; all subsequent calls at
+            // that depth will be pushed to the same vector. When the call ends, the
+            // RecordedStorageAccess (and all subsequent RecordedStorageAccesses) will be
+            // updated with the revert status of this call, since the EVM does not mark storage
+            // as "warm" if the call from which it was accessed is reverted
+            recorded_storage_accesses.push(Vec::new());
+        }
+
         (InstructionResult::Continue, gas, Bytes::new())
     }
 
@@ -751,6 +906,50 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         (InstructionResult::Revert, remaining_gas, error.abi_encode().into())
                     }
                     Ok((_, retdata)) => (InstructionResult::Return, remaining_gas, retdata),
+                }
+            }
+        }
+
+        // If `recordAccountAccesses` has been called, update the `reverted` status of the previous
+        // call depth's recorded accesses, if any
+        if let Some(recorded_account_accesses) = &mut self.recorded_account_accesses {
+            // Depending on the depth the cheat was called at, there may not be any pending calls
+            // to update if execution has percolated up to a higher depth
+            if let Some(last_recorded_depth) = &mut recorded_account_accesses.pop() {
+                // Update the reverted status of all deeper calls if this call reverted, in
+                // accordance with EVM behavior
+                if status.is_revert() {
+                    last_recorded_depth.iter_mut().for_each(|element| element.reverted = true)
+                }
+                // Merge the last depth's AccountAccesses into the AccountAccesses at the current
+                // depth, or push them back onto the pending vector if higher depths were not
+                // recorded. This preserves ordering of accesses.
+                if let Some(last) = recorded_account_accesses.last_mut() {
+                    last.append(last_recorded_depth);
+                } else {
+                    recorded_account_accesses.push(last_recorded_depth.to_vec());
+                }
+            }
+        }
+
+        // If `recordStorageAccesses` has been called, update the `reverted` status of the previous
+        // call depth's recorded accesses, if any
+        if let Some(recorded_storage_accesses) = &mut self.recorded_storage_accesses {
+            // Depending on what depth the cheat was called at, there may not be any pending storage
+            // accesses to update if execution has percolated up to a higher depth
+            if let Some(last_depth) = &mut recorded_storage_accesses.pop() {
+                // Update the reverted status of all deeper accesses if this call reverted, in
+                // accordance with EVM behavior
+                if status.is_revert() {
+                    last_depth.iter_mut().for_each(|element| element.reverted = true)
+                }
+                // Merge the last depth's StorageAccesses into the StorageAccesses at the current
+                // depth, or push them back onto the pending vector if higher depths were not
+                // recorded. This preserves ordering of accesses.
+                if let Some(previous_depth) = recorded_storage_accesses.last_mut() {
+                    previous_depth.append(last_depth);
+                } else {
+                    recorded_storage_accesses.push(last_depth.to_vec());
                 }
             }
         }
@@ -897,7 +1096,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let gas = Gas::new(call.gas_limit);
 
         // allow cheatcodes from the address of the new contract
-        self.allow_cheatcodes_on_create(data, call);
+        let address = self.allow_cheatcodes_on_create(data, call);
 
         // Apply our prank
         if let Some(prank) = &self.prank {
@@ -965,6 +1164,28 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
+        // If `recordAccountAccesses` has been called, record the create
+        if let Some(recorded_account_accesses) = &mut self.recorded_account_accesses {
+            // Record the create context as an account access and create a new vector to record all
+            // subsequent account accesses
+            recorded_account_accesses.push(vec![crate::Vm::AccountAccess {
+                account: address,
+                kind: crate::Vm::AccountAccessKind::Create,
+                initialized: true,
+                value: call.value,
+                data: call.init_code.to_vec(),
+                reverted: false,
+            }]);
+        }
+
+        // If `recordStorageAccesses` has been called, push a new vector onto to record
+        // all accesses at the new execution depth
+        if let Some(recorded_storage_accesses) = &mut self.recorded_storage_accesses {
+            // Create a new vector to record all subsequent storage accesses from within the create
+            // context
+            recorded_storage_accesses.push(Vec::new());
+        }
+
         (InstructionResult::Continue, None, gas, Bytes::new())
     }
 
@@ -1017,6 +1238,49 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     Err(err) => {
                         (InstructionResult::Revert, None, remaining_gas, err.abi_encode().into())
                     }
+                }
+            }
+        }
+
+        // If `recordAccountAccesses` has been called, update the `reverted` status of the previous
+        // call depth's recorded accesses, if any
+        if let Some(recorded_account_accesses) = &mut self.recorded_account_accesses {
+            // Depending on what depth the cheat was called at, there may not be any pending calls
+            // to update if execution has percolated up to a higher depth
+            if let Some(last_depth) = &mut recorded_account_accesses.pop() {
+                // Update the reverted status of all deeper calls if this call reverted, in
+                // accordance with EVM behavior
+                if status.is_revert() {
+                    last_depth.iter_mut().for_each(|element| element.reverted = true)
+                }
+                // Merge the last depth's AccountAccesses into the AccountAccesses at the current
+                // depth, or push them back onto the pending vector if higher depths were not
+                // recorded. This preserves ordering of accesses.
+                if let Some(last) = recorded_account_accesses.last_mut() {
+                    last.append(last_depth);
+                } else {
+                    recorded_account_accesses.push(last_depth.to_vec());
+                }
+            }
+        }
+
+        // If `recordStorageAccesses` has been called, update the `reverted` status of the previous
+        if let Some(recorded_storage_accesses) = &mut self.recorded_storage_accesses {
+            // Depending on what depth the cheat was called at, there may not be any pending storage
+            // accesses to update if execution has percolated up to a higher depth
+            if let Some(last_depth) = &mut recorded_storage_accesses.pop() {
+                // Update the reverted status of all deeper accesses if this call reverted, in
+                // accordance with EVM behavior
+                if status.is_revert() {
+                    last_depth.iter_mut().for_each(|element| element.reverted = true)
+                }
+                // Merge the last depth's StorageAccesses into the StorageAccesses at the current
+                // depth, or push them back onto the pending vector if higher depths were not
+                // recorded. This preserves ordering of accesses.
+                if let Some(last) = recorded_storage_accesses.last_mut() {
+                    last.append(last_depth);
+                } else {
+                    recorded_storage_accesses.push(last_depth.to_vec());
                 }
             }
         }

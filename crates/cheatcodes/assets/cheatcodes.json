@@ -33,6 +33,24 @@
           "description": "A recurrent prank triggered by a `vm.startPrank()` call is currently active."
         }
       ]
+    },
+    {
+      "name": "AccountAccessKind",
+      "description": "The kind of account access that occurred.",
+      "variants": [
+        {
+          "name": "Call",
+          "description": "The account was called."
+        },
+        {
+          "name": "Create",
+          "description": "THe account was created."
+        },
+        {
+          "name": "SelfDestruct",
+          "description": "The account was selfdestruct."
+        }
+      ]
     }
   ],
   "structs": [
@@ -240,6 +258,78 @@
           "name": "stderr",
           "ty": "bytes",
           "description": "The `stderr` data."
+        }
+      ]
+    },
+    {
+      "name": "AccountAccess",
+      "description": "The result of a `getRecordedAccountAccess` call.",
+      "fields": [
+        {
+          "name": "account",
+          "ty": "address",
+          "description": "The account whose storage was accessed."
+        },
+        {
+          "name": "kind",
+          "ty": "AccountAccessKind",
+          "description": "The kind of account access."
+        },
+        {
+          "name": "initialized",
+          "ty": "bool",
+          "description": "If the account is initialized or empty"
+        },
+        {
+          "name": "value",
+          "ty": "uint256",
+          "description": "Value passed along with the account access"
+        },
+        {
+          "name": "data",
+          "ty": "bytes",
+          "description": "Input data provided to the CREATE or CALL"
+        },
+        {
+          "name": "reverted",
+          "ty": "bool",
+          "description": "If this access was in a reverted context"
+        }
+      ]
+    },
+    {
+      "name": "StorageAccess",
+      "description": "The result of a `getRecordedStorageAccess` call.",
+      "fields": [
+        {
+          "name": "account",
+          "ty": "address",
+          "description": "The account whose storage was accessed."
+        },
+        {
+          "name": "slot",
+          "ty": "bytes32",
+          "description": "The slot that was accessed."
+        },
+        {
+          "name": "isWrite",
+          "ty": "bool",
+          "description": "If the access was a write."
+        },
+        {
+          "name": "previousValue",
+          "ty": "bytes32",
+          "description": "The previous value of the slot."
+        },
+        {
+          "name": "newValue",
+          "ty": "bytes32",
+          "description": "The new value of the slot."
+        },
+        {
+          "name": "reverted",
+          "ty": "bool",
+          "description": "If the access was reverted."
         }
       ]
     }
@@ -2127,6 +2217,26 @@
     },
     {
       "func": {
+        "id": "getRecordedAccountAccesses",
+        "description": "Returns an ordered array of all account accesses from a `vm.recordAccountAccess` session.",
+        "declaration": "function getRecordedAccountAccesses() external returns (AccountAccess[] memory accesses);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "getRecordedAccountAccesses()",
+        "selector": "0x4452c985",
+        "selectorBytes": [
+          68,
+          82,
+          201,
+          133
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getRecordedLogs",
         "description": "Gets all the recorded logs.",
         "declaration": "function getRecordedLogs() external returns (Log[] memory logs);",
@@ -2139,6 +2249,26 @@
           21,
           83,
           164
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getRecordedStorageAccesses",
+        "description": "Returns an ordered array of all storage accesses from a `vm.recordStorageAccess` session.",
+        "declaration": "function getRecordedStorageAccesses() external returns (StorageAccess[] memory accesses);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "getRecordedStorageAccesses()",
+        "selector": "0x03f1500a",
+        "selectorBytes": [
+          3,
+          241,
+          80,
+          10
         ]
       },
       "group": "evm",
@@ -3187,6 +3317,26 @@
     },
     {
       "func": {
+        "id": "recordAccountAccesses",
+        "description": "Record all account accesses as part of CREATE or CALL opcodes in order,\nalong with the context of the calls",
+        "declaration": "function recordAccountAccesses() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "recordAccountAccesses()",
+        "selector": "0xd9391303",
+        "selectorBytes": [
+          217,
+          57,
+          19,
+          3
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "recordLogs",
         "description": "Record all the transaction logs.",
         "declaration": "function recordLogs() external;",
@@ -3199,6 +3349,26 @@
           175,
           47,
           82
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "recordStorageAccesses",
+        "description": "Record all storage accesses in order, along with the context of the accesses",
+        "declaration": "function recordStorageAccesses() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "recordStorageAccesses()",
+        "selector": "0x71009b87",
+        "selectorBytes": [
+          113,
+          0,
+          155,
+          135
         ]
       },
       "group": "evm",
