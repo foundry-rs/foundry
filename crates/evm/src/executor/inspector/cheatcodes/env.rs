@@ -280,6 +280,122 @@ fn accesses(state: &mut Cheatcodes, address: Address) -> Bytes {
     }
 }
 
+/// The kind of account access that occurred.
+#[derive(Clone, Debug, Copy)]
+pub enum AccountAccessKind {
+    Call,
+    Create,
+    SelfDestruct,
+}
+
+impl From<AccountAccessKind> for U256 {
+    fn from(value: AccountAccessKind) -> Self {
+        U256::from(value as u8)
+    }
+}
+
+/// Recorded account access.
+#[derive(Clone, Debug)]
+pub struct RecordedAccountAccess {
+    pub account: Address,
+    pub kind: AccountAccessKind,
+    pub initialized: bool,
+    pub value: U256,
+    pub data: Bytes,
+    pub reverted: bool,
+}
+
+fn start_record_account_accesses(state: &mut Cheatcodes) {
+    state.recorded_account_accesses = Some(Default::default());
+}
+
+/// Consumes recorded account accesses and returns them as an abi encoded
+/// array of [DynSolValue::Tuple] types. If there are no accounts were
+/// recorded as accessed, an abi encoded empty array is returned.
+///
+/// In the case where `getRecordedAccountAccesses` is called at a lower
+/// depth than `recordAccountAccesses`, multiple `Vec<RecordedAccountAccesses>`
+/// will be flattened, preserving the order of the accesses.
+fn get_recorded_account_accesses(state: &mut Cheatcodes) -> Bytes {
+    if let Some(recorded_account_accesses) = &mut state.recorded_account_accesses {
+        DynSolValue::Array(
+            recorded_account_accesses
+                .iter()
+                .flatten()
+                .map(|access| {
+                    DynSolValue::Tuple(vec![
+                        DynSolValue::Address(access.account),
+                        DynSolValue::Uint(access.kind.into(), 256),
+                        DynSolValue::Bool(access.initialized),
+                        DynSolValue::Uint(access.value, 256),
+                        DynSolValue::Bytes(access.data.to_vec()),
+                        DynSolValue::Bool(access.reverted),
+                    ])
+                })
+                .collect::<Vec<_>>(),
+        )
+        .abi_encode_params()
+        .into()
+    } else {
+        DynSolValue::Array(vec![]).abi_encode_params().into()
+    }
+}
+
+/// Storage access record.
+#[derive(Clone, Debug, Default)]
+pub struct RecordedStorageAccess {
+    /// The account whose storage was accessed.
+    pub account: Address,
+    /// The slot that was accessed.
+    pub slot: U256,
+    /// If the access was a write.
+    pub write: bool,
+    /// The previous value of the slot.
+    pub previous_value: U256,
+    /// The new value of the slot.
+    pub new_value: U256,
+    /// If the access was reverted.
+    pub reverted: bool,
+}
+
+/// Start recording storage accesses.
+/// This will clear any previously recorded storage accesses.
+fn start_record_storage_accesses(state: &mut Cheatcodes) {
+    state.recorded_storage_accesses = Some(Default::default());
+}
+
+/// Consumes recorded storage accesses and returns them as an abi encoded
+/// array of [Token::Tuple] types. If there are no storage accesses recorded,
+/// an abi encoded empty array is returned.
+///
+/// In the case where `getRecordedStorageAccesses` is called at a lower
+/// depth than `recordStorageAccesses`, multiple `Vec<RecordedStorageAccesses>`
+/// will be flattened, preserving the order of the accesses.
+fn get_recorded_storage_accesses(state: &mut Cheatcodes) -> Bytes {
+    if let Some(recorded_storage_accesses) = &mut state.recorded_storage_accesses {
+        DynSolValue::Array(
+            recorded_storage_accesses
+                .iter()
+                .flatten()
+                .map(|access| {
+                    DynSolValue::Tuple(vec![
+                        DynSolValue::Address(access.account),
+                        DynSolValue::FixedBytes(access.slot.into(), 32),
+                        DynSolValue::Bool(access.write),
+                        DynSolValue::Uint(access.previous_value, 256),
+                        DynSolValue::Uint(access.new_value, 256),
+                        DynSolValue::Bool(access.reverted),
+                    ])
+                })
+                .collect::<Vec<_>>(),
+        )
+        .abi_encode_params()
+        .into()
+    } else {
+        DynSolValue::Array(vec![]).abi_encode_params().into()
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct RecordedLogs {
     pub entries: Vec<RecordedLog>,
@@ -514,6 +630,16 @@ pub fn apply<DB: DatabaseExt>(
             start_record_logs(state);
             Bytes::new()
         }
+        HEVMCalls::RecordAccountAccesses(_) => {
+            start_record_account_accesses(state);
+            Bytes::new()
+        }
+        HEVMCalls::GetRecordedAccountAccesses(_) => get_recorded_account_accesses(state),
+        HEVMCalls::RecordStorageAccesses(_) => {
+            start_record_storage_accesses(state);
+            Bytes::new()
+        }
+        HEVMCalls::GetRecordedStorageAccesses(_) => get_recorded_storage_accesses(state),
         HEVMCalls::GetRecordedLogs(_) => get_recorded_logs(state),
         HEVMCalls::SetNonce(inner) => {
             with_journaled_account(

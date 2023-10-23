@@ -11,6 +11,13 @@ interface Vm {
         RecurrentPrank
     }
 
+    // The type of account access for getAccessedAccounts()
+    enum AccountAccessKind {
+        Call,
+        Create,
+        SelfDestruct
+    }
+
     // This allows us to getRecordedLogs()
     struct Log {
         bytes32[] topics;
@@ -69,6 +76,26 @@ interface Vm {
         int32 exit_code;
         bytes stdout;
         bytes stderr;
+    }
+
+    // The account access
+    struct AccountAccess {
+        address account;
+        AccountAccessKind kind;
+        bool initialized;
+        uint256 value;
+        bytes data;
+        bool reverted;
+    }
+
+    // A storage access
+    struct StorageAccess {
+        address account;
+        bytes32 slot;
+        bool isWrite;
+        bytes32 previousValue;
+        bytes32 newValue;
+        bool reverted;
     }
 
     // Set block.timestamp (newTimestamp)
@@ -249,6 +276,19 @@ interface Vm {
 
     // Gets all accessed reads and write slot from a recording session, for a given address
     function accesses(address) external returns (bytes32[] memory reads, bytes32[] memory writes);
+
+    // Record all account accesses as part of CREATE or CALL opcodes in order,
+    // along with the context of the calls
+    function recordAccountAccesses() external;
+
+    // Returns an ordered array of all account accesses
+    function getRecordedAccountAccesses() external returns (AccountAccess[] memory);
+
+    // Record all storage accesses in order, along with the context of the accesses
+    function recordStorageAccesses() external;
+
+    // Returns an ordered array of all storage accesses
+    function getRecordedStorageAccesses() external returns (StorageAccess[] memory);
 
     // Record all the transaction logs
     function recordLogs() external;
