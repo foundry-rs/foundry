@@ -468,7 +468,7 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
     let solc = Solc::find_or_install_svm_version(v)?;
 
     Ok(Project::builder()
-        .solc_config(SolcConfig::builder().build())
+        .solc_config(SolcConfig::builder().settings(settings).build())
         .no_auto_detect()
         .paths(paths)
         .solc(solc)
