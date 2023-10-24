@@ -58,4 +58,4 @@ tempfile = "3.7"
 [features]
 default = ["rustls"]
 rustls = ["ethers/rustls", "rusoto_core/rustls"]
-openssl = ["ethers/openssl"]
+openssl = ["ethers/openssl", "foundry-compilers/openssl"]
