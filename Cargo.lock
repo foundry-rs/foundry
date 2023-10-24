@@ -1033,7 +1033,6 @@ dependencies = [
  "criterion",
  "dirs 5.0.1",
  "ethers",
- "ethers-solc",
  "eyre",
  "forge-fmt",
  "foundry-cli",
@@ -2748,6 +2747,7 @@ name = "foundry-config"
 version = "0.2.0"
 dependencies = [
  "Inflector",
+ "alloy-primitives",
  "dirs-next",
  "ethers-core",
  "eyre",
@@ -2784,7 +2784,6 @@ dependencies = [
  "eyre",
  "foundry-common",
  "foundry-evm",
- "foundry-utils",
  "ratatui",
  "revm",
  "tracing",

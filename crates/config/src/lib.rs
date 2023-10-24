@@ -3,7 +3,8 @@
 #![warn(missing_docs, unused_crate_dependencies)]
 
 use crate::cache::StorageCachingConfig;
-use ethers_core::types::{Address, Chain::Mainnet, H160, H256, U256};
+use alloy_primitives::{address, Address, B256, U256};
+use ethers_core::types::Chain::Mainnet;
 use eyre::{ContextCompat, WrapErr};
 use figment::{
     providers::{Env, Format, Serialized, Toml},
@@ -271,7 +272,7 @@ pub struct Config {
     /// the `block.difficulty` value during EVM execution
     pub block_difficulty: u64,
     /// Before merge the `block.max_hash` after merge it is `block.prevrandao`
-    pub block_prevrandao: H256,
+    pub block_prevrandao: B256,
     /// the `block.gaslimit` value during EVM execution
     pub block_gas_limit: Option<GasLimit>,
     /// The memory limit of the EVM (32 MB by default)
@@ -419,10 +420,7 @@ impl Config {
     /// Default address for tx.origin
     ///
     /// `0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38`
-    pub const DEFAULT_SENDER: H160 = H160([
-        0x18, 0x04, 0xc8, 0xAB, 0x1F, 0x12, 0xE6, 0xbb, 0xF3, 0x89, 0x4D, 0x40, 0x83, 0xF3, 0x3E,
-        0x07, 0x30, 0x9D, 0x1F, 0x38,
-    ]);
+    pub const DEFAULT_SENDER: Address = address!("1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
 
     /// Returns the current `Config`
     ///
@@ -1806,7 +1804,7 @@ impl Default for Config {
             code_size_limit: None,
             gas_price: None,
             block_base_fee_per_gas: 0,
-            block_coinbase: Address::zero(),
+            block_coinbase: Address::ZERO,
             block_timestamp: 1,
             block_difficulty: 0,
             block_prevrandao: Default::default(),
@@ -2529,6 +2527,7 @@ mod tests {
         etherscan::ResolvedEtherscanConfigs,
         fs_permissions::PathPermission,
     };
+    use alloy_primitives::Address;
     use ethers_core::types::Chain::Moonbeam;
     use figment::{error::Kind::InvalidType, value::Value, Figment};
     use foundry_compilers::artifacts::{ModelCheckerEngine, YulDetails};
@@ -2546,7 +2545,7 @@ mod tests {
     fn default_sender() {
         assert_eq!(
             Config::DEFAULT_SENDER,
-            "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38".parse().unwrap()
+            Address::from_str("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38").unwrap()
         );
     }
 
@@ -3445,7 +3444,7 @@ mod tests {
 
             let config = Config::load_with_root(jail.directory());
 
-            assert_eq!(config.fuzz.seed, Some(1000.into()));
+            assert_eq!(config.fuzz.seed, Some(U256::from(1000)));
             assert_eq!(
                 config.remappings,
                 vec![Remapping::from_str("nested/=lib/nested/").unwrap().into()]

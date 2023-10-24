@@ -1,7 +1,7 @@
 //! Tests for invariants
 
 use crate::{config::*, test_helpers::filter::Filter};
-use ethers::types::U256;
+use alloy_primitives::U256;
 use forge::result::{SuiteResult, TestStatus};
 use std::collections::BTreeMap;
 

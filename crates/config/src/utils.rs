@@ -1,7 +1,7 @@
 //! Utility functions
 
 use crate::Config;
-use ethers_core::types::{serde_helpers::Numeric, U256};
+use alloy_primitives::U256;
 use figment::value::Value;
 use foundry_compilers::{
     remappings::{Remapping, RemappingError},
@@ -222,8 +222,7 @@ pub(crate) fn deserialize_stringified_percent<'de, D>(deserializer: D) -> Result
 where
     D: Deserializer<'de>,
 {
-    let num: U256 =
-        Numeric::deserialize(deserializer)?.try_into().map_err(serde::de::Error::custom)?;
+    let num: U256 = Numeric::deserialize(deserializer)?.into();
     let num: u64 = num.try_into().map_err(serde::de::Error::custom)?;
     if num <= 100 {
         num.try_into().map_err(serde::de::Error::custom)
@@ -257,6 +256,39 @@ where
         }
     };
     Ok(num)
+}
+
+/// Helper type to parse both `u64` and `U256`
+#[derive(Copy, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum Numeric {
+    /// A [U256] value.
+    U256(U256),
+    /// A `u64` value.
+    Num(u64),
+}
+
+impl From<Numeric> for U256 {
+    fn from(n: Numeric) -> U256 {
+        match n {
+            Numeric::U256(n) => n,
+            Numeric::Num(n) => U256::from(n),
+        }
+    }
+}
+
+impl FromStr for Numeric {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(val) = s.parse::<u128>() {
+            Ok(Numeric::U256(U256::from(val)))
+        } else if s.starts_with("0x") {
+            U256::from_str_radix(s, 16).map(Numeric::U256).map_err(|err| err.to_string())
+        } else {
+            U256::from_str(s).map(Numeric::U256).map_err(|err| err.to_string())
+        }
+    }
 }
 
 /// Returns the [SpecId] derived from [EvmVersion]

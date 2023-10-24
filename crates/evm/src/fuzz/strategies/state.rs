@@ -2,16 +2,15 @@ use super::fuzz_param_from_state;
 use crate::{
     executor::StateChangeset,
     fuzz::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts},
-    utils,
 };
 use alloy_dyn_abi::{DynSolType, JsonAbiExt};
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use bytes::Bytes;
 use ethers::types::Log;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::FuzzDictionaryConfig;
-use foundry_utils::types::{ToAlloy, ToEthers};
+use foundry_utils::types::ToEthers;
 use hashbrown::HashSet;
 use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
@@ -115,22 +114,16 @@ pub fn build_initial_state<DB: DatabaseRef>(
         if config.include_storage {
             // Insert storage
             for (slot, value) in &account.storage {
-                let slot = slot.to_ethers();
-                let value = value.to_ethers();
-                state.values_mut().insert(utils::u256_to_h256_be(slot).into());
-                state.values_mut().insert(utils::u256_to_h256_be(value).into());
+                state.values_mut().insert(B256::from(*slot).0);
+                state.values_mut().insert(B256::from(*value).0);
                 // also add the value below and above the storage value to the dictionary.
-                if value.to_alloy() != U256::ZERO {
-                    let below_value = value.to_alloy() - U256::from(1);
-                    state
-                        .values_mut()
-                        .insert(utils::u256_to_h256_be(below_value.to_ethers()).into());
+                if *value != U256::ZERO {
+                    let below_value = value - U256::from(1);
+                    state.values_mut().insert(B256::from(below_value).0);
                 }
-                if value.to_alloy() != U256::MAX {
-                    let above_value = value.to_alloy() + U256::from(1);
-                    state
-                        .values_mut()
-                        .insert(utils::u256_to_h256_be(above_value.to_ethers()).into());
+                if *value != U256::MAX {
+                    let above_value = value + U256::from(1);
+                    state.values_mut().insert(B256::from(above_value).0);
                 }
             }
         }
@@ -172,22 +165,17 @@ pub fn collect_state_from_call(
         if config.include_storage && state.state_values.len() < config.max_fuzz_dictionary_values {
             // Insert storage
             for (slot, value) in &account.storage {
-                let slot = slot.to_ethers();
-                let value = value.present_value().to_ethers();
-                state.values_mut().insert(utils::u256_to_h256_be(slot).into());
-                state.values_mut().insert(utils::u256_to_h256_be(value).into());
+                let value = value.present_value;
+                state.values_mut().insert(B256::from(*slot).0);
+                state.values_mut().insert(B256::from(value).0);
                 // also add the value below and above the storage value to the dictionary.
-                if value.to_alloy() != U256::ZERO {
-                    let below_value = value.to_alloy() - U256::from(1);
-                    state
-                        .values_mut()
-                        .insert(utils::u256_to_h256_be(below_value.to_ethers()).into());
+                if value != U256::ZERO {
+                    let below_value = value - U256::from(1);
+                    state.values_mut().insert(B256::from(below_value).0);
                 }
-                if value.to_alloy() != U256::MAX {
-                    let above_value = value.to_alloy() + U256::from(1);
-                    state
-                        .values_mut()
-                        .insert(utils::u256_to_h256_be(above_value.to_ethers()).into());
+                if value != U256::MAX {
+                    let above_value = value + U256::from(1);
+                    state.values_mut().insert(B256::from(above_value).0);
                 }
             }
         } else {

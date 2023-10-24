@@ -1,6 +1,6 @@
 //! Contains various tests for checking forge commands related to config values
 
-use ethers::types::{Address, H256, U256};
+use alloy_primitives::{Address, B256, U256};
 use foundry_compilers::artifacts::{RevertStrings, YulDetails};
 
 use foundry_cli::utils as forge_utils;
@@ -61,7 +61,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         fuzz: FuzzConfig {
             runs: 1000,
             max_test_rejects: 100203,
-            seed: Some(1000.into()),
+            seed: Some(U256::from(1000)),
             ..Default::default()
         },
         invariant: InvariantConfig { runs: 256, ..Default::default() },
@@ -79,7 +79,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         block_coinbase: Address::random(),
         block_timestamp: 10,
         block_difficulty: 10,
-        block_prevrandao: H256::random(),
+        block_prevrandao: B256::random(),
         block_gas_limit: Some(100u64.into()),
         memory_limit: 2u64.pow(25),
         eth_rpc_url: Some("localhost".to_string()),

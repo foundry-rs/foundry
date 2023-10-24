@@ -129,7 +129,7 @@ impl CreateArgs {
         if self.unlocked {
             // Deploy with unlocked account
             let sender = self.eth.wallet.from.expect("required");
-            let provider = provider.with_sender(sender);
+            let provider = provider.with_sender(sender.to_ethers());
             self.deploy(abi, bin, params, provider, chain_id).await
         } else {
             // Deploy with signer

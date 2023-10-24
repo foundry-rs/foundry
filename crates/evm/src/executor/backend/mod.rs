@@ -865,7 +865,7 @@ impl Backend {
         for tx in full_block.transactions.into_iter() {
             // System transactions such as on L2s don't contain any pricing info so we skip them
             // otherwise this would cause reverts
-            if is_known_system_sender(tx.from) ||
+            if is_known_system_sender(tx.from.to_alloy()) ||
                 tx.transaction_type.map(|ty| ty.as_u64()) == Some(SYSTEM_TRANSACTION_TYPE)
             {
                 continue

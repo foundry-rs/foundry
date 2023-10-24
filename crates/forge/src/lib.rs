@@ -1,3 +1,4 @@
+use alloy_primitives::B256;
 use foundry_compilers::ProjectCompileOutput;
 use foundry_config::{
     validate_profiles, Config, FuzzConfig, InlineConfig, InlineConfigError, InlineConfigParser,
@@ -158,9 +159,7 @@ impl TestOptions {
 
         if let Some(ref fuzz_seed) = self.fuzz.seed {
             trace!(target: "forge::test", "building deterministic fuzzer with seed {}", fuzz_seed);
-            let mut bytes: [u8; 32] = [0; 32];
-            fuzz_seed.to_big_endian(&mut bytes);
-            let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
+            let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &B256::from(*fuzz_seed).0);
             TestRunner::new_with_rng(cfg, rng)
         } else {
             trace!(target: "forge::test", "building stochastic fuzzer");

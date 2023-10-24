@@ -25,7 +25,6 @@ use foundry_compilers::{
     Artifact, Project, ProjectCompileOutput,
 };
 use foundry_config::{Config, SolcReq};
-use foundry_utils::types::ToEthers;
 use semver::Version;
 use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel};
 use tracing::trace;
@@ -87,7 +86,7 @@ impl CoverageArgs {
         }
 
         // Set fuzz seed so coverage reports are deterministic
-        config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED).to_ethers());
+        config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
         let (project, output) = self.build(&config)?;
         p_println!(!self.opts.silent => "Analysing contracts...");

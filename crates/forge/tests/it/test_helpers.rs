@@ -66,12 +66,12 @@ pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
     env: Env {
         gas_limit: u64::MAX,
         chain_id: None,
-        tx_origin: Config::DEFAULT_SENDER.to_alloy(),
+        tx_origin: Config::DEFAULT_SENDER,
         block_number: 1,
         block_timestamp: 1,
         ..Default::default()
     },
-    sender: Config::DEFAULT_SENDER.to_alloy(),
+    sender: Config::DEFAULT_SENDER,
     initial_balance: U256::MAX,
     ffi: true,
     memory_limit: 2u64.pow(24),

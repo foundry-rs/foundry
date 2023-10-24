@@ -14,7 +14,6 @@ use foundry_config::{
 use foundry_evm::{
     decode::decode_console_logs, executor::inspector::CheatsConfig, revm::primitives::SpecId,
 };
-use foundry_utils::types::ToAlloy;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -168,7 +167,7 @@ pub async fn runner_with_config(mut config: Config) -> MultiContractRunner {
 
     base_runner()
         .with_cheats_config(CheatsConfig::new(&config, &EVM_OPTS))
-        .sender(config.sender.to_alloy())
+        .sender(config.sender)
         .build(
             &PROJECT.paths.root,
             (*COMPILED).clone(),

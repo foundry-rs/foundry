@@ -12,7 +12,6 @@ repository.workspace = true
 [dependencies]
 foundry-evm.workspace = true
 foundry-common.workspace = true
-foundry-utils.workspace = true
 
 alloy-primitives.workspace = true
 

@@ -4,7 +4,8 @@ use crate::{
     config::*,
     test_helpers::{filter::Filter, PROJECT},
 };
-use ethers::abi::{Address, Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
+use alloy_primitives::Address;
+use ethers::abi::{Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use std::str::FromStr;
 

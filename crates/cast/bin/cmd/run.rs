@@ -99,7 +99,7 @@ impl RunArgs {
             .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         // check if the tx is a system transaction
-        if is_known_system_sender(tx.from) ||
+        if is_known_system_sender(tx.from.to_alloy()) ||
             tx.transaction_type.map(|ty| ty.as_u64()) == Some(SYSTEM_TRANSACTION_TYPE)
         {
             return Err(eyre::eyre!(
@@ -144,7 +144,7 @@ impl RunArgs {
                 for (index, tx) in block.transactions.into_iter().enumerate() {
                     // System transactions such as on L2s don't contain any pricing info so we skip
                     // them otherwise this would cause reverts
-                    if is_known_system_sender(tx.from) ||
+                    if is_known_system_sender(tx.from.to_alloy()) ||
                         tx.transaction_type.map(|ty| ty.as_u64()) ==
                             Some(SYSTEM_TRANSACTION_TYPE)
                     {

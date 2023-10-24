@@ -20,7 +20,7 @@ pub mod coverage;
 pub mod executor;
 
 pub use executor::abi;
-// use trace::trace_types::{ActionType, CallType};
+
 use ethers::types::{ActionType, CallType};
 
 /// Fuzzing wrapper for executors

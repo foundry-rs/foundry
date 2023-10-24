@@ -2016,7 +2016,7 @@ fn strip_0x(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::SimpleCast as Cast;
-    use std::fmt::Write;
+    use alloy_primitives::hex;
 
     #[test]
     fn simple_selector() {
@@ -2087,10 +2087,7 @@ mod tests {
                 .to_lowercase(),
             decoded[2].as_uint().unwrap().0.to_string(),
             decoded[3].as_uint().unwrap().0.to_string(),
-            decoded[4].as_bytes().unwrap().iter().copied().fold(String::new(), |mut output, v| {
-                let _ = write!(output, "{v:02x}");
-                output
-            }),
+            hex::encode(decoded[4].as_bytes().unwrap()),
         ]
         .to_vec();
         assert_eq!(

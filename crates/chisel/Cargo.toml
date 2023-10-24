@@ -30,7 +30,6 @@ foundry-compilers = { workspace = true, default-features = false, features = ["p
 
 # ethers
 ethers.workspace = true
-ethers-solc = { workspace = true, features = ["project-util", "full"] }
 
 # alloy
 alloy-dyn-abi = { workspace = true, features = ["arbitrary"] }

@@ -14,7 +14,7 @@ use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use ethers::signers::{LocalWallet, Signer};
 use foundry_config::Config;
-use foundry_utils::types::{ToAlloy, ToEthers};
+use foundry_utils::types::ToAlloy;
 use revm::{
     primitives::{Bytecode, SpecId, KECCAK_EMPTY},
     Database, EVMData,
@@ -337,7 +337,7 @@ fn add_breakpoint(state: &mut Cheatcodes, caller: Address, inner: &str, add: boo
 
     // add a breakpoint from the interpreter
     if add {
-        state.breakpoints.insert(point, (caller.to_ethers(), state.pc));
+        state.breakpoints.insert(point, (caller, state.pc));
     } else {
         state.breakpoints.remove(&point);
     }
@@ -753,7 +753,7 @@ fn correct_sender_nonce<DB: Database>(
     db: &mut DB,
     state: &mut Cheatcodes,
 ) -> Result<(), DB::Error> {
-    if !state.corrected_nonce && sender.to_ethers() != Config::DEFAULT_SENDER {
+    if !state.corrected_nonce && sender != Config::DEFAULT_SENDER {
         with_journaled_account(journaled_state, db, sender, |account| {
             account.info.nonce = account.info.nonce.saturating_sub(1);
             state.corrected_nonce = true;

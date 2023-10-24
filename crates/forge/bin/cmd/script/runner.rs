@@ -42,7 +42,7 @@ impl ScriptRunner {
         trace!(target: "script", "executing setUP()");
 
         if !is_broadcast {
-            if self.sender == Config::DEFAULT_SENDER.to_alloy() {
+            if self.sender == Config::DEFAULT_SENDER {
                 // We max out their balance so that they can deploy and make calls.
                 self.executor.set_balance(self.sender, U256::MAX)?;
             }

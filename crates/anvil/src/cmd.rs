@@ -188,7 +188,7 @@ impl NodeArgs {
                     .fork_block_number
                     .or_else(|| self.evm_opts.fork_url.as_ref().and_then(|f| f.block)),
             )
-            .with_fork_chain_id(self.evm_opts.fork_chain_id)
+            .with_fork_chain_id(self.evm_opts.fork_chain_id.map(u64::from))
             .fork_request_timeout(self.evm_opts.fork_request_timeout.map(Duration::from_millis))
             .fork_request_retries(self.evm_opts.fork_request_retries)
             .fork_retry_backoff(self.evm_opts.fork_retry_backoff.map(Duration::from_millis))

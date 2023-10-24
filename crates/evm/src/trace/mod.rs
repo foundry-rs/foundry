@@ -26,7 +26,6 @@ pub mod identifier;
 mod decoder;
 mod executor;
 pub mod node;
-pub mod trace_types;
 pub mod utils;
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
