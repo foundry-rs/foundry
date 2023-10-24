@@ -1,4 +1,5 @@
 use alloy_primitives::{Address, U256};
+use ethers::types::NameOrAddress;
 use cast::{Cast, TxBuilder};
 use clap::Parser;
 use eyre::Result;
@@ -14,8 +15,8 @@ use std::str::FromStr;
 #[derive(Debug, Parser)]
 pub struct EstimateArgs {
     /// The destination of the transaction.
-    #[clap(value_parser = Address::from_str)]
-    to: Option<Address>,
+    #[clap(value_parser = NameOrAddress::from_str)]
+    to: Option<NameOrAddress>,
 
     /// The signature of the function to call.
     sig: Option<String>,
@@ -87,7 +88,7 @@ impl EstimateArgs {
         let api_key = config.get_etherscan_api_key(Some(chain));
 
         let mut builder =
-            TxBuilder::new(&provider, from.to_ethers(), to.map(|t| t.to_ethers()), chain, false)
+            TxBuilder::new(&provider, from.to_ethers(), to, chain, false)
                 .await?;
         builder.etherscan_api_key(api_key);
 

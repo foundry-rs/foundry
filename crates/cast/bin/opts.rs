@@ -5,7 +5,7 @@ use crate::cmd::{
 };
 use alloy_primitives::{Address, B256, U256};
 use clap::{Parser, Subcommand, ValueHint};
-use ethers::types::BlockId;
+use ethers::types::{BlockId, NameOrAddress};
 use eyre::Result;
 use foundry_cli::opts::{EtherscanOpts, RpcOpts};
 use foundry_common::serde_helpers::Numeric;
@@ -519,8 +519,8 @@ pub enum Subcommands {
         block: Option<BlockId>,
 
         /// The address to get the nonce for.
-        #[clap(value_parser = Address::from_str)]
-        who: Address,
+        #[clap(value_parser = NameOrAddress::from_str)]
+        who: NameOrAddress,
 
         #[clap(flatten)]
         rpc: RpcOpts,
@@ -536,8 +536,8 @@ pub enum Subcommands {
         block: Option<BlockId>,
 
         /// The address to get the nonce for.
-        #[clap(value_parser = Address::from_str)]
-        who: Address,
+        #[clap(value_parser = NameOrAddress::from_str)]
+        who: NameOrAddress,
 
         #[clap(flatten)]
         rpc: RpcOpts,
@@ -616,8 +616,8 @@ pub enum Subcommands {
         block: Option<BlockId>,
 
         /// The account to query.
-        #[clap(value_parser = Address::from_str)]
-        who: Address,
+        #[clap(value_parser = NameOrAddress::from_str)]
+        who: NameOrAddress,
 
         /// Format the balance in ether.
         #[clap(long, short)]
@@ -649,8 +649,8 @@ pub enum Subcommands {
         block: Option<BlockId>,
 
         /// The contract address.
-        #[clap(value_parser = Address::from_str)]
-        who: Address,
+        #[clap(value_parser = NameOrAddress::from_str)]
+        who: NameOrAddress,
 
         /// Disassemble bytecodes into individual opcodes.
         #[clap(long, short)]
@@ -670,8 +670,8 @@ pub enum Subcommands {
         block: Option<BlockId>,
 
         /// The contract address.
-        #[clap(value_parser = Address::from_str)]
-        who: Address,
+        #[clap(value_parser = NameOrAddress::from_str)]
+        who: NameOrAddress,
 
         #[clap(flatten)]
         rpc: RpcOpts,
@@ -734,8 +734,8 @@ pub enum Subcommands {
     #[clap(visible_alias = "pr")]
     Proof {
         /// The contract address.
-        #[clap(value_parser = Address::from_str)]
-        address: Address,
+        #[clap(value_parser = NameOrAddress::from_str)]
+        address: NameOrAddress,
 
         /// The storage slot numbers (hex or decimal).
         #[clap(value_parser = parse_slot)]
@@ -761,8 +761,8 @@ pub enum Subcommands {
         block: Option<BlockId>,
 
         /// The address to get the nonce for.
-        #[clap(value_parser = Address::from_str)]
-        who: Address,
+        #[clap(value_parser = NameOrAddress::from_str)]
+        who: NameOrAddress,
 
         #[clap(flatten)]
         rpc: RpcOpts,

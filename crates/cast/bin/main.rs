@@ -201,7 +201,7 @@ async fn main() -> Result<()> {
         Subcommands::Balance { block, who, ether, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            let value = Cast::new(provider).balance(who.to_ethers(), block).await?;
+            let value = Cast::new(provider).balance(who, block).await?;
             if ether {
                 println!("{}", SimpleCast::from_wei(&value.to_string(), "eth")?);
             } else {
@@ -249,12 +249,12 @@ async fn main() -> Result<()> {
         Subcommands::Code { block, who, disassemble, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).code(who.to_ethers(), block, disassemble).await?);
+            println!("{}", Cast::new(provider).code(who, block, disassemble).await?);
         }
         Subcommands::Codesize { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).codesize(who.to_ethers(), block).await?);
+            println!("{}", Cast::new(provider).codesize(who, block).await?);
         }
         Subcommands::ComputeAddress { address, nonce, rpc } => {
             let config = Config::from(&rpc);
@@ -279,12 +279,12 @@ async fn main() -> Result<()> {
         Subcommands::Implementation { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).implementation(who.to_ethers(), block).await?);
+            println!("{}", Cast::new(provider).implementation(who, block).await?);
         }
         Subcommands::Admin { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).admin(who.to_ethers(), block).await?);
+            println!("{}", Cast::new(provider).admin(who, block).await?);
         }
         Subcommands::Nonce { block, who, rpc } => {
             let config = Config::from(&rpc);
@@ -296,7 +296,7 @@ async fn main() -> Result<()> {
             let provider = utils::get_provider(&config)?;
             let value = provider
                 .get_proof(
-                    address.to_ethers(),
+                    address,
                     slots.into_iter().map(|s| s.to_ethers()).collect(),
                     block,
                 )

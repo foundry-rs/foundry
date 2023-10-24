@@ -72,7 +72,6 @@ pub fn fuzz_param_from_state(
 
     // Select a value from the state
     let st = arc_state.clone();
-    // TODO: How to reintegrate while already using the proptest traits from [DynSolValue]?
     let value = any::<prop::sample::Index>()
         .prop_map(move |index| index.index(state_len))
         .prop_map(move |index| *st.read().values().iter().nth(index).unwrap());
