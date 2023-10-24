@@ -27,7 +27,8 @@ pub type TxBuilderPeekOutput<'a> = (&'a TypedTransaction, &'a Option<Function>);
 /// Transaction builder
 /// ```
 /// async fn foo() -> eyre::Result<()> {
-///   use ethers_core::types::{Chain, U256};
+///   use ethers_core::types::Chain;
+///   use alloy_primitives::U256;
 ///   use cast::TxBuilder;
 ///   let provider = ethers_providers::test_provider::MAINNET.provider();
 ///   let mut builder = TxBuilder::new(&provider, "a.eth", Some("b.eth"), Chain::Mainnet, false).await?;

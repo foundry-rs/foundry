@@ -206,20 +206,21 @@ where
     ///
     /// ```no_run
     /// use cast::{Cast, TxBuilder};
-    /// use ethers_core::types::{Address, Chain, U256};
+    /// use ethers_core::types::{Chain, Address as eAddress};
+    /// use alloy_primitives::{Address, U256};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let from = "vitalik.eth";
-    /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
+    /// let to = eAddress::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greet(string)()";
     /// let args = vec!["hello".to_owned()];
     /// let gas = U256::from_str("200000").unwrap();
     /// let value = U256::from_str("1").unwrap();
     /// let nonce = U256::from_str("1").unwrap();
-    /// let mut builder = TxBuilder::new(&provider, Address::zero(), Some(to), Chain::Mainnet, false).await?;
+    /// let mut builder = TxBuilder::new(&provider, from, Some(to), Chain::Mainnet, false).await?;
     /// builder
     ///     .set_args(sig, args).await?
     ///     .set_gas(gas)
@@ -275,13 +276,14 @@ where
     ///
     /// ```no_run
     /// use cast::{Cast, TxBuilder};
-    /// use ethers_core::types::{Address, Chain, U256};
+    /// use ethers_core::types::{Address, Chain};
+    /// use alloy_primitives::U256;
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let from = "vitalik.eth";
+    /// let from = Address::from_str("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")?;
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greet(string)()";
     /// let args = vec!["5".to_owned()];
@@ -477,7 +479,7 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use ethers_core::types::Address;
+    /// use alloy_primitives::Address;
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
@@ -489,12 +491,8 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn nonce<T: Into<NameOrAddress> + Send + Sync>(
-        &self,
-        who: T,
-        block: Option<BlockId>,
-    ) -> Result<U256> {
-        Ok(self.provider.get_transaction_count(who, block).await?.to_alloy())
+    pub async fn nonce(&self, who: Address, block: Option<BlockId>) -> Result<U256> {
+        Ok(self.provider.get_transaction_count(who.to_ethers(), block).await?.to_alloy())
     }
 
     /// # Example
@@ -560,14 +558,14 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use ethers_core::types::Address;
+    /// use alloy_primitives::{Address, U256};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
-    /// let nonce = cast.nonce(addr, None).await? + 5;
+    /// let nonce = cast.nonce(addr, None).await? + U256::from(5);
     /// let computed_address = cast.compute_address(addr, Some(nonce)).await?;
     /// println!("Computed address for address {} with nonce {}: {}", addr, nonce, computed_address);
     /// let computed_address_no_nonce = cast.compute_address(addr, None).await?;
@@ -1180,7 +1178,7 @@ impl SimpleCast {
     ///
     /// ```
     /// use cast::SimpleCast as Cast;
-    /// use ethers_core::types::Address;
+    /// use alloy_primitives::Address;
     /// use std::str::FromStr;
     ///
     /// # fn main() -> eyre::Result<()> {
@@ -1501,6 +1499,7 @@ impl SimpleCast {
     ///
     /// ```
     /// use cast::SimpleCast as Cast;
+    /// use hex;
     ///
     /// fn main() -> eyre::Result<()> {
     ///     // Passing `input = false` will decode the data as the output type.
@@ -1508,7 +1507,7 @@ impl SimpleCast {
     ///     // you could also pass `balanceOf()(uint256)` and it'd still work.
     ///     let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
     ///     let sig = "balanceOf(address, uint256)(uint256)";
-    ///     let decoded = Cast::abi_decode(sig, data, false)?[0].to_string();
+    ///     let decoded = Cast::abi_decode(sig, data, false)?[0].as_uint().unwrap().0.to_string();
     ///     assert_eq!(decoded, "1");
     ///
     ///     // Passing `input = true` will decode the data with the input function signature.
@@ -1516,10 +1515,19 @@ impl SimpleCast {
     ///     let data = "0x0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
     ///     let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
     ///     let decoded = Cast::abi_decode(sig, data, true)?;
-    ///     let decoded = decoded.iter().map(ToString::to_string).collect::<Vec<_>>();
+    ///     let decoded = [
+    ///         decoded[0].as_address().unwrap().to_string().to_lowercase(),
+    ///         decoded[1].as_address().unwrap().to_string().to_lowercase(),
+    ///         decoded[2].as_uint().unwrap().0.to_string(),
+    ///         decoded[3].as_uint().unwrap().0.to_string(),
+    ///         hex::encode(decoded[4].as_bytes().unwrap())    
+    ///     ]
+    ///     .into_iter()
+    ///     .collect::<Vec<_>>();
+    ///
     ///     assert_eq!(
     ///         decoded,
-    ///         vec!["8dbd1b711dc621e1404633da156fcc779e1c6f3e", "d9f3c9cc99548bf3b44a43e0a2d07399eb918adc", "2a", "1", ""]
+    ///         vec!["0x8dbd1b711dc621e1404633da156fcc779e1c6f3e", "0xd9f3c9cc99548bf3b44a43e0a2d07399eb918adc", "42", "1", ""]
     ///     );
     ///
     ///
@@ -1538,6 +1546,7 @@ impl SimpleCast {
     ///
     /// ```
     /// use cast::SimpleCast as Cast;
+    /// use hex;
     ///
     /// fn main() -> eyre::Result<()> {
     ///     // Passing `input = false` will decode the data as the output type.
@@ -1545,17 +1554,25 @@ impl SimpleCast {
     ///     // you could also pass `balanceOf()(uint256)` and it'd still work.
     ///     let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
     ///     let sig = "balanceOf(address, uint256)(uint256)";
-    ///     let decoded = Cast::calldata_decode(sig, data, false)?[0].to_string();
+    ///     let decoded = Cast::calldata_decode(sig, data, false)?[0].as_uint().unwrap().0.to_string();
     ///     assert_eq!(decoded, "1");
     ///
     ///     // Passing `input = true` will decode the data with the input function signature.
     ///     let data = "0xf242432a0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
     ///     let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
     ///     let decoded = Cast::calldata_decode(sig, data, true)?;
-    ///     let decoded = decoded.iter().map(ToString::to_string).collect::<Vec<_>>();
+    ///     let decoded = [
+    ///         decoded[0].as_address().unwrap().to_string().to_lowercase(),
+    ///         decoded[1].as_address().unwrap().to_string().to_lowercase(),
+    ///         decoded[2].as_uint().unwrap().0.to_string(),
+    ///         decoded[3].as_uint().unwrap().0.to_string(),
+    ///         hex::encode(decoded[4].as_bytes().unwrap()),
+    ///    ]
+    ///    .into_iter()
+    ///    .collect::<Vec<_>>();
     ///     assert_eq!(
     ///         decoded,
-    ///         vec!["8dbd1b711dc621e1404633da156fcc779e1c6f3e", "d9f3c9cc99548bf3b44a43e0a2d07399eb918adc", "2a", "1", ""]
+    ///         vec!["0x8dbd1b711dc621e1404633da156fcc779e1c6f3e", "0xd9f3c9cc99548bf3b44a43e0a2d07399eb918adc", "42", "1", ""]
     ///     );
     ///
     ///
@@ -1610,7 +1627,7 @@ impl SimpleCast {
     ///
     /// # fn main() -> eyre::Result<()> {
     ///     assert_eq!(
-    ///         "0xb3de648b0000000000000000000000000000000000000000000000000000000000000001",
+    ///         "0x693c61390000000000000000000000000000000000000000000000000000000000000001",
     ///         Cast::calldata_encode("f(uint a)", &["1"]).unwrap().as_str()
     ///     );
     /// #    Ok(())
@@ -2106,10 +2123,7 @@ mod tests {
             decoded[1].as_address().unwrap().to_string().to_lowercase(),
             decoded[2].as_uint().unwrap().0.to_string(),
             decoded[3].as_uint().unwrap().0.to_string(),
-            decoded[4].as_bytes().unwrap().iter().copied().fold(String::new(), |mut output, v| {
-                let _ = write!(output, "{v:02x}");
-                output
-            }),
+            hex::encode(decoded[4].as_bytes().unwrap()),
         ]
         .into_iter()
         .collect::<Vec<_>>();

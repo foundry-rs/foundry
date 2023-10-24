@@ -289,7 +289,7 @@ async fn main() -> Result<()> {
         Subcommands::Nonce { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).nonce(who.to_ethers(), block).await?);
+            println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
         Subcommands::Proof { address, slots, rpc, block } => {
             let config = Config::from(&rpc);
