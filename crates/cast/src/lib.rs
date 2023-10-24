@@ -491,7 +491,11 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn nonce<T: Into<NameOrAddress> + Send + Sync>(&self, who: T, block: Option<BlockId>) -> Result<U256> {
+    pub async fn nonce<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        who: T,
+        block: Option<BlockId>,
+    ) -> Result<U256> {
         Ok(self.provider.get_transaction_count(who, block).await?.to_alloy())
     }
 

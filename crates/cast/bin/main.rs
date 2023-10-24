@@ -295,11 +295,7 @@ async fn main() -> Result<()> {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let value = provider
-                .get_proof(
-                    address,
-                    slots.into_iter().map(|s| s.to_ethers()).collect(),
-                    block,
-                )
+                .get_proof(address, slots.into_iter().map(|s| s.to_ethers()).collect(), block)
                 .await?;
             println!("{}", serde_json::to_string(&value)?);
         }
