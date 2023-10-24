@@ -20,6 +20,7 @@ use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
 use ethers::{
     prelude::Block,
     types::{BlockNumber, Transaction},
+    utils::{keccak256, GenesisAccount},
 };
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use foundry_utils::types::{ToAlloy, ToEthers};
@@ -29,7 +30,7 @@ use revm::{
     precompile::{Precompiles, SpecId},
     primitives::{
         Account, AccountInfo, Bytecode, CreateScheme, Env, HashMap as Map, Log, ResultAndState,
-        TransactTo, KECCAK_EMPTY,
+        StorageSlot, TransactTo, KECCAK_EMPTY,
     },
     Database, DatabaseCommit, Inspector, JournaledState, EVM,
 };
@@ -99,6 +100,15 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         journaled_state: &JournaledState,
         env: &mut Env,
     ) -> Option<JournaledState>;
+
+    /// Loads the account allocs from the given `allocs` map into the passed [JournaledState].
+    ///
+    /// Returns [Ok] if all accounts were successfully inserted into the journal, [Err] otherwise.
+    fn load_allocs(
+        &mut self,
+        allocs: &HashMap<Address, GenesisAccount>,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), DatabaseError>;
 
     /// Creates and also selects a new fork
     ///
@@ -952,6 +962,42 @@ impl DatabaseExt for Backend {
             warn!(target: "backend", "No snapshot to revert for {}", id);
             None
         }
+    }
+
+    fn load_allocs(
+        &mut self,
+        allocs: &HashMap<Address, GenesisAccount>,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), DatabaseError> {
+        // Loop through all of the allocs defined in the map and commit them to the journal.
+        allocs.iter().try_for_each(|(addr, acc)| {
+            // Fetch the account from the journaled state. Will create a new account if it does
+            // not already exist.
+            let (state_acc, _) = journaled_state.load_account(addr.0.into(), self)?;
+            // Set the account's bytecode and code hash, if the `bytecode` field is present.
+            if let Some(bytecode) = acc.code.as_ref() {
+                state_acc.info.code_hash = keccak256(bytecode).into();
+                let bytecode = Bytecode::new_raw(bytecode.clone().0.into());
+                state_acc.info.code = Some(bytecode);
+            }
+            // Set the account's storage, if the `storage` field is present.
+            if let Some(storage) = acc.storage.as_ref() {
+                state_acc.storage = storage
+                    .iter()
+                    .map(|(slot, value)| {
+                        (
+                            U256::from_be_bytes(slot.0),
+                            StorageSlot::new_changed(U256::ZERO, U256::from_be_bytes(value.0)),
+                        )
+                    })
+                    .collect();
+            }
+            // Set the account's nonce and balance.
+            state_acc.info.nonce = acc.nonce.unwrap_or_default();
+            state_acc.info.balance = acc.balance.to_alloy();
+
+            Ok::<_, DatabaseError>(())
+        })
     }
 
     fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<LocalForkId> {

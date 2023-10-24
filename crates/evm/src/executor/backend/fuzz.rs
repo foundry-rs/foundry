@@ -8,12 +8,13 @@ use crate::executor::{
     inspector::cheatcodes::Cheatcodes,
 };
 use alloy_primitives::{Address, B256, U256};
+use ethers::utils::GenesisAccount;
 use revm::{
     db::DatabaseRef,
     primitives::{AccountInfo, Bytecode, Env, ResultAndState},
     Database, Inspector, JournaledState,
 };
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::HashMap};
 
 /// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
 ///
@@ -117,6 +118,14 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         // after the call.
         self.set_snapshot_failure(self.has_snapshot_failure || self.backend.has_snapshot_failure());
         journaled_state
+    }
+
+    fn load_allocs(
+        &mut self,
+        allocs: &HashMap<Address, GenesisAccount>,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), DatabaseError> {
+        self.backend_mut(&Env::default()).load_allocs(allocs, journaled_state)
     }
 
     fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<LocalForkId> {

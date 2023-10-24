@@ -2497,6 +2497,24 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("loadAllocs"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("loadAllocs"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::String,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("makePersistent"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -6391,6 +6409,15 @@ pub mod hevm {
                 .method_hash([102, 127, 157, 112], (p0, p1))
                 .expect("method not found (this should never happen)")
         }
+        ///Calls the contract's `loadAllocs` (0xb3a056d7) function
+        pub fn load_allocs(
+            &self,
+            p0: ::std::string::String,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([179, 160, 86, 215], p0)
+                .expect("method not found (this should never happen)")
+        }
         ///Calls the contract's `makePersistent` (0x57e22dde) function
         pub fn make_persistent_0(
             &self,
@@ -8958,6 +8985,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "load", abi = "load(address,bytes32)")]
     pub struct LoadCall(pub ::ethers_core::types::Address, pub [u8; 32]);
+    ///Container type for all input parameters for the `loadAllocs` function with signature `loadAllocs(string)` and selector `0xb3a056d7`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "loadAllocs", abi = "loadAllocs(string)")]
+    pub struct LoadAllocsCall(pub ::std::string::String);
     ///Container type for all input parameters for the `makePersistent` function with signature `makePersistent(address)` and selector `0x57e22dde`
     #[derive(
         Clone,
@@ -10702,6 +10742,7 @@ pub mod hevm {
         KeyExists(KeyExistsCall),
         Label(LabelCall),
         Load(LoadCall),
+        LoadAllocs(LoadAllocsCall),
         MakePersistent0(MakePersistent0Call),
         MakePersistent2(MakePersistent2Call),
         MakePersistent3(MakePersistent3Call),
@@ -11312,6 +11353,11 @@ pub mod hevm {
                 data,
             ) {
                 return Ok(Self::Load(decoded));
+            }
+            if let Ok(decoded) = <LoadAllocsCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
+                return Ok(Self::LoadAllocs(decoded));
             }
             if let Ok(decoded) = <MakePersistent0Call as ::ethers_core::abi::AbiDecode>::decode(
                 data,
@@ -12112,6 +12158,9 @@ pub mod hevm {
                 }
                 Self::Label(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::Load(element) => ::ethers_core::abi::AbiEncode::encode(element),
+                Self::LoadAllocs(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
                 Self::MakePersistent0(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
@@ -12511,6 +12560,7 @@ pub mod hevm {
                 Self::KeyExists(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Label(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Load(element) => ::core::fmt::Display::fmt(element, f),
+                Self::LoadAllocs(element) => ::core::fmt::Display::fmt(element, f),
                 Self::MakePersistent0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::MakePersistent2(element) => ::core::fmt::Display::fmt(element, f),
                 Self::MakePersistent3(element) => ::core::fmt::Display::fmt(element, f),
@@ -13133,6 +13183,11 @@ pub mod hevm {
     impl ::core::convert::From<LoadCall> for HEVMCalls {
         fn from(value: LoadCall) -> Self {
             Self::Load(value)
+        }
+    }
+    impl ::core::convert::From<LoadAllocsCall> for HEVMCalls {
+        fn from(value: LoadAllocsCall) -> Self {
+            Self::LoadAllocs(value)
         }
     }
     impl ::core::convert::From<MakePersistent0Call> for HEVMCalls {

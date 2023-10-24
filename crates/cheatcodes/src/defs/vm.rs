@@ -297,6 +297,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function revertTo(uint256 snapshotId) external returns (bool success);
 
+    /// Load a genesis JSON file's `allocs` into the in-memory revm state.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function loadAllocs(string calldata pathToAllocsJson) external;
+
     // -------- Forking --------
     // --- Creation and Selection ---
 

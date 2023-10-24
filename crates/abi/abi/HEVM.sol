@@ -166,6 +166,7 @@ parseBool(string)(bool)
 
 snapshot()(uint256)
 revertTo(uint256)(bool)
+loadAllocs(string)
 createFork(string,uint256)(uint256)
 createFork(string,bytes32)(uint256)
 createFork(string)(uint256)

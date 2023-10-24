@@ -503,6 +503,9 @@ interface Vm {
     // This deletes the snapshot and all snapshots taken after the given snapshot id.
     function revertTo(uint256) external returns (bool);
 
+    // Load a genesis JSON file's `allocs` into the revm state.
+    function loadAllocs(string calldata) external;
+
     // Creates a new fork with the given endpoint and block and returns the identifier of the fork
     function createFork(string calldata, uint256) external returns (uint256);
 

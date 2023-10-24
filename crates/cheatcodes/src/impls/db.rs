@@ -1,8 +1,10 @@
 use super::config::EvmOpts;
 use crate::Cheatcodes;
 use alloy_primitives::{Address, B256, U256};
+use ethers::utils::GenesisAccount;
 use itertools::Itertools;
 use revm::{primitives::Env, Database, JournaledState};
+use std::collections::HashMap;
 
 mod error;
 pub use error::{DatabaseError, DatabaseResult};
@@ -98,6 +100,15 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         journaled_state: &JournaledState,
         env: &mut Env,
     ) -> Option<JournaledState>;
+
+    /// Loads the account allocs from the given `allocs` map into the passed [JournaledState].
+    ///
+    /// Returns [Ok] if all accounts were successfully inserted into the journal, [Err] otherwise.
+    fn load_allocs(
+        &mut self,
+        allocs: &HashMap<Address, GenesisAccount>,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), DatabaseError>;
 
     /// Creates and also selects a new fork
     ///

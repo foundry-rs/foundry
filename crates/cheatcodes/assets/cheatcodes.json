@@ -1728,6 +1728,24 @@
     "safety": "safe"
   },
   {
+    "id": "loadAllocs",
+    "declaration": "function loadAllocs(string calldata pathToAllocsJson) external;",
+    "visibility": "external",
+    "mutability": "",
+    "signature": "loadAllocs(string)",
+    "selector": "0xb3a056d7",
+    "selectorBytes": [
+      179,
+      160,
+      86,
+      215
+    ],
+    "description": "Load a genesis JSON file's `allocs` into the in-memory revm state.",
+    "group": "evm",
+    "status": "stable",
+    "safety": "unsafe"
+  },
+  {
     "id": "makePersistent_0",
     "declaration": "function makePersistent(address account) external;",
     "visibility": "external",

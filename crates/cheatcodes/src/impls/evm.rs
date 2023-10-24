@@ -4,13 +4,13 @@ use super::{Cheatcode, CheatsCtxt, DatabaseExt, Result};
 use crate::{Cheatcodes, Vm::*};
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolValue;
-use ethers::signers::Signer;
+use ethers::{signers::Signer, utils::GenesisAccount};
 use foundry_utils::types::ToAlloy;
 use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     EVMData,
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, fs::File};
 
 mod fork;
 pub(crate) mod mapping;
@@ -302,6 +302,19 @@ impl Cheatcode for revertToCall {
             false
         };
         Ok(result.abi_encode())
+    }
+}
+
+impl Cheatcode for loadAllocsCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        // First, load the allocs file from the provided path.
+        let file = File::open(&self.pathToAllocsJson)?;
+        let allocs: HashMap<Address, GenesisAccount> = serde_json::from_reader(file)?;
+
+        // Then, load the allocs into the database.
+        ccx.data.db.load_allocs(&allocs, &mut ccx.data.journaled_state)?;
+
+        Ok(Default::default())
     }
 }
 
