@@ -1,5 +1,5 @@
 use super::{artifacts::ArtifactInfo, ScriptResult};
-use alloy_dyn_abi::{FunctionExt, JsonAbiExt};
+use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256};
 use ethers::{prelude::NameOrAddress, types::transaction::eip2718::TypedTransaction};
@@ -168,7 +168,7 @@ impl TransactionWithMetadata {
                         };
 
                         if let Ok(arguments) =
-                            constructor_fn.abi_decode_output(constructor_args, false)
+                            constructor_fn.abi_decode_input(constructor_args, false)
                         {
                             self.arguments = Some(arguments.iter().map(format_token_raw).collect());
                         } else {
