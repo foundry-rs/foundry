@@ -28,7 +28,7 @@ foundry-utils = { workspace = true, optional = true }
 alloy-dyn-abi = { workspace = true, optional = true }
 alloy-json-abi = { workspace = true, optional = true }
 ethers = { workspace = true, optional = true, features = ["ethers-solc"] }
-foundry-compilers = { workspace = true, optional = true }
+foundry-compilers = { workspace = true, optional = true, default-features = false }
 eyre = { workspace = true, optional = true }
 futures = { version = "0.3", optional = true }
 hex = { workspace = true, optional = true }

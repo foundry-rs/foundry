@@ -204,7 +204,7 @@ ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs" }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs" }
 
 foundry-compilers = {git = "https://github.com/foundry-rs/compilers"}
-foundry-block-explorers = {git = "https://github.com/foundry-rs/block-explorers"}
+foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers"}
 
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/", branch = "dani/coerce-str"}
 alloy-primitives = { git = "https://github.com/alloy-rs/core/", branch = "dani/coerce-str"}

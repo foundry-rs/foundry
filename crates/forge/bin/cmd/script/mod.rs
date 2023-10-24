@@ -71,8 +71,6 @@ mod sequence;
 pub mod transaction;
 mod verify;
 
-pub use transaction::TransactionWithMetadata;
-
 /// List of Chains that support Shanghai.
 static SHANGHAI_ENABLED_CHAINS: &[Chain] = &[
     // Ethereum Mainnet
