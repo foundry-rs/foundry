@@ -20,7 +20,7 @@ ethers-providers.workspace = true
 alloy-primitives.workspace = true
 alloy-dyn-abi.workspace = true
 
-foundry-compilers.workspace = true
+foundry-compilers = { workspace = true, default-features = false }
 
 eyre = { version = "0.6", default-features = false }
 futures = "0.3"
