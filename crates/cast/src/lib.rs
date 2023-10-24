@@ -12,10 +12,10 @@ use ethers_core::{
         parse_units, rlp, Units,
     },
 };
-use ethers_etherscan::{errors::EtherscanError, Client};
 use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
 use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, ContextCompat, Result};
+use foundry_block_explorers::{errors::EtherscanError, Client};
 use foundry_common::{abi::encode_function_args, fmt::*, TransactionReceiptWithRevertReason};
 pub use foundry_evm::*;
 use foundry_utils::types::{ToAlloy, ToEthers};
@@ -1670,7 +1670,7 @@ impl SimpleCast {
                 let client = Client::new(chain, api_key)?;
 
                 // get the source
-                let source = match client.contract_source_code(address.to_ethers()).await {
+                let source = match client.contract_source_code(address).await {
                     Ok(source) => source,
                     Err(EtherscanError::InvalidApiKey) => {
                         eyre::bail!("Invalid Etherscan API key. Did you set it correctly? You may be using an API key for another Etherscan API chain (e.g. Etherscan API key for Polygonscan).")

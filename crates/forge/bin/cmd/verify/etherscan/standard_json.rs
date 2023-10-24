@@ -1,6 +1,6 @@
 use super::{EtherscanSourceProvider, VerifyArgs};
-use ethers::etherscan::verify::CodeFormat;
 use eyre::{Context, Result};
+use foundry_block_explorers::verify::CodeFormat;
 use foundry_compilers::{artifacts::StandardJsonCompilerInput, Project};
 use semver::Version;
 use std::path::Path;
