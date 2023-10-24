@@ -150,6 +150,7 @@ impl IntStrategy {
             x if (128..256).contains(&x) => higher &= (1u128 << (x - 128)) - 1,
             _ => {}
         };
+
         // init I256 from 2 randoms
         let mut inner: [u64; 4] = [0; 4];
         let mask64 = (1 << 65) - 1;

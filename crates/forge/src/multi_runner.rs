@@ -213,7 +213,6 @@ impl MultiContractRunner {
         filter: impl TestFilter,
         test_options: TestOptions,
     ) -> SuiteResult {
-        let libs = libs.iter().map(|l| l.0.clone().into()).collect::<Vec<_>>();
         let runner = ContractRunner::new(
             name,
             executor,
@@ -222,7 +221,7 @@ impl MultiContractRunner {
             self.evm_opts.initial_balance,
             self.sender,
             self.errors.as_ref(),
-            &libs,
+            libs,
             self.debug,
         );
         runner.run_tests(filter, test_options, Some(&self.known_contracts))

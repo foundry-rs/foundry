@@ -114,7 +114,7 @@ pub struct ScriptArgs {
     #[clap(
         long,
         env = "ETH_PRIORITY_GAS_PRICE",
-        value_parser = foundry_cli::utils::alloy_parse_ether_value,
+        value_parser = foundry_cli::utils::parse_ether_value,
         value_name = "PRICE"
     )]
     pub priority_gas_price: Option<U256>,
@@ -191,7 +191,7 @@ pub struct ScriptArgs {
     #[clap(
         long,
         env = "ETH_GAS_PRICE",
-        value_parser = foundry_cli::utils::alloy_parse_ether_value,
+        value_parser = foundry_cli::utils::parse_ether_value,
         value_name = "PRICE",
     )]
     pub with_gas_price: Option<U256>,

@@ -13,26 +13,17 @@ use crate::calc::to_exponential_notation;
 /// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
 /// [DynSolValue]s and then ABI encode them.
 pub fn encode_function_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>> {
-    let params = func
+    let params: Result<Vec<_>> = func
         .inputs
         .iter()
         .zip(args)
-        .map(|(input, arg)| (&input.ty, arg.as_ref()))
-        .collect::<Vec<_>>();
-    let args = params
-        .iter()
-        .map(|(ty, arg)| {
-            DynSolType::coerce_str(&DynSolType::parse(ty).unwrap(), arg.to_owned()).unwrap()
-        })
-        .collect::<Vec<_>>();
-    Ok(func.abi_encode_input(args.as_slice())?)
+        .map(|(input, arg)| (input.selector_type().clone(), arg.as_ref()))
+        .map(|(ty, arg)| coerce_value(&ty, arg))
+        .collect();
+    Ok(func.abi_encode_input(params?.as_slice())?)
 }
 
 /// Decodes the calldata of the function
-///
-/// # Panics
-///
-/// If the `sig` is an invalid function signature
 pub fn abi_decode_calldata(
     sig: &str,
     calldata: &str,
@@ -274,6 +265,12 @@ pub fn find_source(
             }
         }
     })
+}
+
+/// Helper function to coerce a value to a [DynSolValue] given a type string
+fn coerce_value(ty: &str, arg: &str) -> Result<DynSolValue> {
+    let ty = DynSolType::parse(ty)?;
+    Ok(DynSolType::coerce_str(&ty, arg)?)
 }
 
 #[cfg(test)]

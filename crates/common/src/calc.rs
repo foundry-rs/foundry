@@ -1,39 +1,29 @@
 //! commonly used calculations
 
 use alloy_primitives::U256;
-use std::ops::{Add, Div};
+use std::ops::Div;
 
 /// Returns the mean of the slice
 #[inline]
-pub fn mean<T>(values: &[T]) -> U256
-where
-    T: Into<U256> + Copy,
-{
+pub fn mean(values: &[U256]) -> U256 {
     if values.is_empty() {
         return U256::ZERO
     }
 
-    values
-        .iter()
-        .copied()
-        .fold(U256::ZERO, |sum, val| sum + val.into())
-        .div(U256::from(values.len()))
+    values.iter().copied().fold(U256::ZERO, |sum, val| sum + val).div(U256::from(values.len()))
 }
 
 /// Returns the median of a _sorted_ slice
 #[inline]
-pub fn median_sorted<T>(values: &[T]) -> T
-where
-    T: Add<Output = T> + Div<u64, Output = T> + From<u64> + Copy,
-{
+pub fn median_sorted(values: &[U256]) -> U256 {
     if values.is_empty() {
-        return 0u64.into()
+        return U256::ZERO
     }
 
     let len = values.len();
     let mid = len / 2;
     if len % 2 == 0 {
-        (values[mid - 1] + values[mid]) / 2u64
+        (values[mid - 1] + values[mid]) / U256::from(2u64)
     } else {
         values[mid]
     }
@@ -102,25 +92,27 @@ mod tests {
 
     #[test]
     fn calc_median_empty() {
-        let values: Vec<u64> = vec![];
+        let values: Vec<U256> = vec![];
         let m = median_sorted(&values);
-        assert_eq!(m, 0);
+        assert_eq!(m, U256::from(0));
     }
 
     #[test]
     fn calc_median() {
-        let mut values = vec![29, 30, 31, 40, 59, 61, 71];
+        let mut values =
+            vec![29, 30, 31, 40, 59, 61, 71].into_iter().map(U256::from).collect::<Vec<_>>();
         values.sort();
         let m = median_sorted(&values);
-        assert_eq!(m, 40);
+        assert_eq!(m, U256::from(40));
     }
 
     #[test]
     fn calc_median_even() {
-        let mut values = vec![80, 90, 30, 40, 50, 60, 10, 20];
+        let mut values =
+            vec![80, 90, 30, 40, 50, 60, 10, 20].into_iter().map(U256::from).collect::<Vec<_>>();
         values.sort();
         let m = median_sorted(&values);
-        assert_eq!(m, 45);
+        assert_eq!(m, U256::from(45));
     }
 
     #[test]

@@ -150,7 +150,7 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Executes the call from the randomly generated sequence.
                 let call_result = executor
-                    .call_raw(*sender, *address, calldata.0.clone().into(), rU256::ZERO)
+                    .call_raw(*sender, *address, calldata.clone(), rU256::ZERO)
                     .expect("could not make raw evm call");
 
                 // Collect data for fuzzing from the state changeset.

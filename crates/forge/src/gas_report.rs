@@ -107,9 +107,7 @@ impl GasReport {
                     func.min = func.calls.first().copied().unwrap_or_default();
                     func.max = func.calls.last().copied().unwrap_or_default();
                     func.mean = calc::mean(&func.calls);
-                    func.median = U256::from(calc::median_sorted(
-                        func.calls.iter().map(|c| c.to::<u64>()).collect::<Vec<_>>().as_slice(),
-                    ));
+                    func.median = U256::from(calc::median_sorted(func.calls.as_slice()));
                 });
             });
         });

@@ -127,11 +127,6 @@ pub fn parse_ether_value(value: &str) -> Result<U256> {
     })
 }
 
-// TODO: rm after alloy transition
-pub fn alloy_parse_ether_value(value: &str) -> Result<alloy_primitives::U256> {
-    parse_ether_value(value)
-}
-
 /// Parses a `Duration` from a &str
 pub fn parse_delay(delay: &str) -> Result<Duration> {
     let delay = if delay.ends_with("ms") {

@@ -104,8 +104,7 @@ impl<'a> ContractRunner<'a> {
         let mut logs = Vec::new();
         let mut traces = Vec::with_capacity(self.predeploy_libs.len());
         for code in self.predeploy_libs.iter() {
-            match self.executor.deploy(self.sender, code.0.clone().into(), U256::ZERO, self.errors)
-            {
+            match self.executor.deploy(self.sender, code.clone(), U256::ZERO, self.errors) {
                 Ok(d) => {
                     logs.extend(d.logs);
                     traces.extend(d.traces.map(|traces| (TraceKind::Deployment, traces)));
@@ -117,21 +116,17 @@ impl<'a> ContractRunner<'a> {
         }
 
         // Deploy the test contract
-        let address = match self.executor.deploy(
-            self.sender,
-            self.code.0.clone().into(),
-            U256::ZERO,
-            self.errors,
-        ) {
-            Ok(d) => {
-                logs.extend(d.logs);
-                traces.extend(d.traces.map(|traces| (TraceKind::Deployment, traces)));
-                d.address
-            }
-            Err(e) => {
-                return Ok(TestSetup::from_evm_error_with(e, logs, traces, Default::default()))
-            }
-        };
+        let address =
+            match self.executor.deploy(self.sender, self.code.clone(), U256::ZERO, self.errors) {
+                Ok(d) => {
+                    logs.extend(d.logs);
+                    traces.extend(d.traces.map(|traces| (TraceKind::Deployment, traces)));
+                    d.address
+                }
+                Err(e) => {
+                    return Ok(TestSetup::from_evm_error_with(e, logs, traces, Default::default()))
+                }
+            };
 
         // Now we set the contracts initial balance, and we also reset `self.sender`s and `CALLER`s
         // balance to the initial balance we want

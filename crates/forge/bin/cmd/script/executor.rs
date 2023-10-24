@@ -52,11 +52,9 @@ impl ScriptArgs {
 
         ensure_clean_constructor(&abi)?;
 
-        let predeploy_libraries =
-            predeploy_libraries.iter().map(|b| b.0.clone().into()).collect::<Vec<_>>();
         let mut runner = self.prepare_runner(script_config, sender, SimulationStage::Local).await;
         let (address, mut result) = runner.setup(
-            &predeploy_libraries,
+            predeploy_libraries,
             bytecode.0.into(),
             needs_setup(&abi),
             script_config.sender_nonce,

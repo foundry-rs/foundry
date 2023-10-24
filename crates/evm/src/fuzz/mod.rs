@@ -200,7 +200,7 @@ impl<'a> FuzzedExecutor<'a> {
     ) -> Result<FuzzOutcome, TestCaseError> {
         let call = self
             .executor
-            .call_raw(self.sender, address, calldata.0.clone().into(), U256::ZERO)
+            .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|_| TestCaseError::fail(FuzzError::FailedContractCall))?;
         let state_changeset = call
             .state_changeset
@@ -387,9 +387,10 @@ pub struct FuzzTestResult {
 impl FuzzTestResult {
     /// Returns the median gas of all test cases
     pub fn median_gas(&self, with_stipend: bool) -> u64 {
-        let mut values = self.gas_values(with_stipend);
+        let mut values =
+            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
         values.sort_unstable();
-        calc::median_sorted(&values)
+        calc::median_sorted(&values).to::<u64>()
     }
 
     /// Returns the average gas use of all test cases
@@ -441,9 +442,10 @@ impl FuzzedCases {
     /// Returns the median gas of all test cases
     #[inline]
     pub fn median_gas(&self, with_stipend: bool) -> u64 {
-        let mut values = self.gas_values(with_stipend);
+        let mut values =
+            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
         values.sort_unstable();
-        calc::median_sorted(&values)
+        calc::median_sorted(&values).to::<u64>()
     }
 
     /// Returns the average gas use of all test cases

@@ -119,7 +119,7 @@ pub fn replay_run(
     // Replay each call from the sequence until we break the invariant.
     for (sender, (addr, bytes)) in inputs.iter() {
         let call_result = executor
-            .call_raw_committing(*sender, *addr, bytes.0.clone().into(), U256::ZERO)
+            .call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)
             .expect("bad call to evm");
 
         logs.extend(call_result.logs);
