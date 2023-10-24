@@ -210,7 +210,7 @@ fn get_env(key: &str, ty: DynSolType, delim: Option<&str>, default: Option<Strin
 /// Converts a JSON [`Value`] to a [`DynSolValue`].
 ///
 /// The function is designed to run recursively, so that in case of an object
-/// it will call itself to convert each of it's value and encode the whole as a
+/// it will call itself to convert each of its values and encode the whole as a
 /// Tuple
 pub fn value_to_token(value: &Value) -> Result<DynSolValue> {
     match value {
@@ -234,7 +234,7 @@ pub fn value_to_token(value: &Value) -> Result<DynSolValue> {
                 if f.fract() == 0.0 {
                     // Use the string representation of the `serde_json` Number type instead of
                     // calling f.to_string(), because some numbers are wrongly rounded up after
-                    // being convented to f64.
+                    // being converted to f64.
                     // Example: 18446744073709551615 becomes 18446744073709552000 after parsing it
                     // to f64.
                     let s = number.to_string();
@@ -321,9 +321,11 @@ fn parse_json_values(values: Vec<&Value>, key: &str) -> Result<Vec<DynSolValue>>
 }
 
 /// Parses a JSON and returns a single value, an array or an entire JSON object encoded as tuple.
-/// As the JSON object is parsed serially, with the keys ordered alphabetically, they must be
-/// deserialized in the same order. That means that the solidity `struct` should order it's fields
-/// alphabetically and not by efficient packing or some other taxonomy.
+/// As the JSON object is parsed serially, with the keys ordered alphabetically according to the     
+/// Rust BTreeMap crate serialization, they must be deserialized in the same order. That means that 
+/// the solidity `struct` should order its fields not by efficient packing or some other taxonomy
+/// but instead alphabetically, with attention to upper/lower casing since uppercase precedes 
+/// lowercase in BTreeMap lexicographical ordering.
 fn parse_json(json_str: &str, key: &str, coerce: Option<DynSolType>) -> Result {
     trace!(%json_str, %key, ?coerce, "parsing json");
     let json =
@@ -412,7 +414,8 @@ fn parse_json_keys(json_str: &str, key: &str) -> Result {
 /// a new object in itself. The function will return a stringified version of the object, so that
 /// the user can use that as a value to a new invocation of the same function with a new object key.
 /// This enables the user to reuse the same function to crate arbitrarily complex object structures
-/// (JSON).
+/// (JSON). Note that the Rust BTreeMap crate is used to serialize in lexicographical order, meaning
+/// uppercase precedes lowercase. More: https://doc.rust-lang.org/std/collections/struct.BTreeMap.html
 fn serialize_json(
     state: &mut Cheatcodes,
     object_key: &str,
@@ -445,8 +448,8 @@ fn serialize_json(
     Ok(DynSolValue::String(stringified).abi_encode().into())
 }
 
-/// Converts an array to it's stringified version, adding the appropriate quotes around it's
-/// ellements. This is to signify that the elements of the array are string themselves.
+/// Converts an array to its stringified version, adding the appropriate quotes around its
+/// elements. This is to signify that the elements of the array are strings themselves.
 fn array_str_to_str<T: UIfmt>(array: &Vec<T>) -> String {
     format!(
         "[{}]",
@@ -464,7 +467,7 @@ fn array_str_to_str<T: UIfmt>(array: &Vec<T>) -> String {
     )
 }
 
-/// Converts an array to it's stringified version. It will not add quotes around the values of the
+/// Converts an array to its stringified version. It will not add quotes around the values of the
 /// array, enabling serde_json to parse the values of the array as types (e.g numbers, booleans,
 /// etc.)
 fn array_eval_to_str<T: UIfmt>(array: &Vec<T>) -> String {
