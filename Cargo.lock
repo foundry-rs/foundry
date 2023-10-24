@@ -291,7 +291,7 @@ dependencies = [
  "ctrlc",
  "ethereum-forkid",
  "ethers",
- "ethers-solc",
+ "ethers-solc 2.0.4",
  "fdlimit",
  "flate2",
  "foundry-common",
@@ -1050,7 +1050,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serial_test",
- "solang-parser",
+ "solang-parser 0.3.2",
  "strum",
  "time",
  "tokio",
@@ -2031,7 +2031,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#86e3f56bad158c82e297b86ab2de9eb7c51425af"
+source = "git+https://github.com/gakonst/ethers-rs?rev=9754f22d06a2defe5608c4c9b809cc361443a3dc#9754f22d06a2defe5608c4c9b809cc361443a3dc"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -2040,13 +2040,13 @@ dependencies = [
  "ethers-middleware",
  "ethers-providers",
  "ethers-signers",
- "ethers-solc",
+ "ethers-solc 2.0.10",
 ]
 
 [[package]]
 name = "ethers-addressbook"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#86e3f56bad158c82e297b86ab2de9eb7c51425af"
+source = "git+https://github.com/gakonst/ethers-rs?rev=9754f22d06a2defe5608c4c9b809cc361443a3dc#9754f22d06a2defe5608c4c9b809cc361443a3dc"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -2057,7 +2057,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#86e3f56bad158c82e297b86ab2de9eb7c51425af"
+source = "git+https://github.com/gakonst/ethers-rs?rev=9754f22d06a2defe5608c4c9b809cc361443a3dc#9754f22d06a2defe5608c4c9b809cc361443a3dc"
 dependencies = [
  "const-hex",
  "ethers-contract-abigen",
@@ -2075,7 +2075,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#86e3f56bad158c82e297b86ab2de9eb7c51425af"
+source = "git+https://github.com/gakonst/ethers-rs?rev=9754f22d06a2defe5608c4c9b809cc361443a3dc#9754f22d06a2defe5608c4c9b809cc361443a3dc"
 dependencies = [
  "Inflector",
  "const-hex",
@@ -2098,7 +2098,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#86e3f56bad158c82e297b86ab2de9eb7c51425af"
+source = "git+https://github.com/gakonst/ethers-rs?rev=9754f22d06a2defe5608c4c9b809cc361443a3dc#9754f22d06a2defe5608c4c9b809cc361443a3dc"
 dependencies = [
  "Inflector",
  "const-hex",
@@ -2113,7 +2113,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#86e3f56bad158c82e297b86ab2de9eb7c51425af"
+source = "git+https://github.com/gakonst/ethers-rs?rev=9754f22d06a2defe5608c4c9b809cc361443a3dc#9754f22d06a2defe5608c4c9b809cc361443a3dc"
 dependencies = [
  "arrayvec",
  "bytes",
@@ -2142,10 +2142,10 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#86e3f56bad158c82e297b86ab2de9eb7c51425af"
+source = "git+https://github.com/gakonst/ethers-rs?rev=9754f22d06a2defe5608c4c9b809cc361443a3dc#9754f22d06a2defe5608c4c9b809cc361443a3dc"
 dependencies = [
  "ethers-core",
- "ethers-solc",
+ "ethers-solc 2.0.10",
  "reqwest",
  "semver 1.0.20",
  "serde",
@@ -2157,7 +2157,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#86e3f56bad158c82e297b86ab2de9eb7c51425af"
+source = "git+https://github.com/gakonst/ethers-rs?rev=9754f22d06a2defe5608c4c9b809cc361443a3dc#9754f22d06a2defe5608c4c9b809cc361443a3dc"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -2183,7 +2183,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#86e3f56bad158c82e297b86ab2de9eb7c51425af"
+source = "git+https://github.com/gakonst/ethers-rs?rev=9754f22d06a2defe5608c4c9b809cc361443a3dc#9754f22d06a2defe5608c4c9b809cc361443a3dc"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -2221,7 +2221,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#86e3f56bad158c82e297b86ab2de9eb7c51425af"
+source = "git+https://github.com/gakonst/ethers-rs?rev=9754f22d06a2defe5608c4c9b809cc361443a3dc#9754f22d06a2defe5608c4c9b809cc361443a3dc"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -2248,17 +2248,18 @@ dependencies = [
 
 [[package]]
 name = "ethers-solc"
-version = "2.0.10"
-source = "git+https://github.com/gakonst/ethers-rs#86e3f56bad158c82e297b86ab2de9eb7c51425af"
+version = "2.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2284784306de73d8ad1bc792ecc1b87da0268185683698d60fd096d23d168c99"
 dependencies = [
  "cfg-if",
- "const-hex",
- "dirs 5.0.1",
  "dunce",
  "ethers-core",
  "fs_extra",
  "futures-util",
+ "getrandom 0.2.10",
  "glob",
+ "hex",
  "home",
  "md-5 0.10.6",
  "num_cpus",
@@ -2271,10 +2272,44 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.8",
- "solang-parser",
- "svm-rs",
- "svm-rs-builds",
+ "solang-parser 0.2.4",
+ "svm-rs 0.2.23",
+ "svm-rs-builds 0.1.15",
  "tempfile",
+ "thiserror",
+ "tiny-keccak",
+ "tokio",
+ "tracing",
+ "walkdir",
+ "yansi 0.5.1",
+]
+
+[[package]]
+name = "ethers-solc"
+version = "2.0.10"
+source = "git+https://github.com/gakonst/ethers-rs?rev=9754f22d06a2defe5608c4c9b809cc361443a3dc#9754f22d06a2defe5608c4c9b809cc361443a3dc"
+dependencies = [
+ "cfg-if",
+ "const-hex",
+ "dirs 5.0.1",
+ "dunce",
+ "ethers-core",
+ "futures-util",
+ "glob",
+ "home",
+ "md-5 0.10.6",
+ "num_cpus",
+ "once_cell",
+ "path-slash",
+ "rayon",
+ "regex",
+ "semver 1.0.20",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "solang-parser 0.3.2",
+ "svm-rs 0.3.0",
+ "svm-rs-builds 0.2.0",
  "thiserror",
  "tiny-keccak",
  "tokio",
@@ -2291,9 +2326,9 @@ checksum = "0206175f82b8d6bf6652ff7d71a1e27fd2e4efde587fd368662814d6ec1d9ce0"
 
 [[package]]
 name = "evm-disassembler"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "584e7334177d2dc76c4d618967e5ef102be68c35f454ac363d88b72b854db4a9"
+checksum = "7ef8b778f0f7ba24aaa7c1d8fa7ec75db869f8a8508907be49eac899865ea52d"
 dependencies = [
  "eyre",
  "hex",
@@ -2493,9 +2528,9 @@ dependencies = [
  "serde_json",
  "serial_test",
  "similar",
- "solang-parser",
+ "solang-parser 0.3.2",
  "strum",
- "svm-rs",
+ "svm-rs 0.3.0",
  "thiserror",
  "tokio",
  "tracing",
@@ -2524,7 +2559,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "solang-parser",
+ "solang-parser 0.3.2",
  "thiserror",
  "tokio",
  "toml 0.8.4",
@@ -2541,7 +2576,7 @@ dependencies = [
  "foundry-config",
  "itertools 0.11.0",
  "pretty_assertions",
- "solang-parser",
+ "solang-parser 0.3.2",
  "thiserror",
  "toml 0.8.4",
  "tracing",
@@ -2731,9 +2766,9 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.8",
- "solang-parser",
- "svm-rs",
- "svm-rs-builds",
+ "solang-parser 0.3.2",
+ "svm-rs 0.3.0",
+ "svm-rs-builds 0.2.0",
  "tempfile",
  "thiserror",
  "tiny-keccak",
@@ -3651,7 +3686,7 @@ dependencies = [
  "futures-util",
  "http",
  "hyper",
- "rustls 0.21.7",
+ "rustls 0.21.8",
  "tokio",
  "tokio-rustls 0.24.1",
 ]
@@ -4004,6 +4039,28 @@ dependencies = [
 
 [[package]]
 name = "lalrpop"
+version = "0.19.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a1cbf952127589f2851ab2046af368fd20645491bb4b376f04b7f94d7a9837b"
+dependencies = [
+ "ascii-canvas",
+ "bit-set",
+ "diff",
+ "ena",
+ "is-terminal",
+ "itertools 0.10.5",
+ "lalrpop-util 0.19.12",
+ "petgraph",
+ "regex",
+ "regex-syntax 0.6.29",
+ "string_cache",
+ "term",
+ "tiny-keccak",
+ "unicode-xid",
+]
+
+[[package]]
+name = "lalrpop"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da4081d44f4611b66c6dd725e6de3169f9f63905421e8626fcb86b6a898998b8"
@@ -4014,7 +4071,7 @@ dependencies = [
  "ena",
  "is-terminal",
  "itertools 0.10.5",
- "lalrpop-util",
+ "lalrpop-util 0.20.0",
  "petgraph",
  "regex",
  "regex-syntax 0.7.5",
@@ -4022,6 +4079,15 @@ dependencies = [
  "term",
  "tiny-keccak",
  "unicode-xid",
+]
+
+[[package]]
+name = "lalrpop-util"
+version = "0.19.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3c48237b9604c5a4702de6b824e02006c3214327564636aef27c1028a8fa0ed"
+dependencies = [
+ "regex",
 ]
 
 [[package]]
@@ -4877,9 +4943,9 @@ checksum = "9b2a4787296e9989611394c33f193f676704af1686e70b8f8033ab5ba9a35a94"
 
 [[package]]
 name = "pest"
-version = "2.7.4"
+version = "2.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c022f1e7b65d6a24c0dbbd5fb344c66881bc01f3e5ae74a1c8100f2f985d98a4"
+checksum = "ae9cee2a55a544be8b89dc6848072af97a20f2422603c10865be2a42b580fff5"
 dependencies = [
  "memchr",
  "thiserror",
@@ -4888,9 +4954,9 @@ dependencies = [
 
 [[package]]
 name = "pest_derive"
-version = "2.7.4"
+version = "2.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35513f630d46400a977c4cb58f78e1bfbe01434316e60c37d27b9ad6139c66d8"
+checksum = "81d78524685f5ef2a3b3bd1cafbc9fcabb036253d9b1463e726a91cd16e2dfc2"
 dependencies = [
  "pest",
  "pest_generator",
@@ -4898,9 +4964,9 @@ dependencies = [
 
 [[package]]
 name = "pest_generator"
-version = "2.7.4"
+version = "2.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc9fc1b9e7057baba189b5c626e2d6f40681ae5b6eb064dc7c7834101ec8123a"
+checksum = "68bd1206e71118b5356dae5ddc61c8b11e28b09ef6a31acbd15ea48a28e0c227"
 dependencies = [
  "pest",
  "pest_meta",
@@ -4911,9 +4977,9 @@ dependencies = [
 
 [[package]]
 name = "pest_meta"
-version = "2.7.4"
+version = "2.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1df74e9e7ec4053ceb980e7c0c8bd3594e977fde1af91daba9c928e8e8c6708d"
+checksum = "7c747191d4ad9e4a4ab9c8798f1e82a39affe7ef9648390b7e5548d18e099de6"
 dependencies = [
  "once_cell",
  "pest",
@@ -5568,7 +5634,7 @@ dependencies = [
  "once_cell",
  "percent-encoding",
  "pin-project-lite",
- "rustls 0.21.7",
+ "rustls 0.21.8",
  "rustls-native-certs",
  "rustls-pemfile",
  "serde",
@@ -5922,12 +5988,12 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.21.7"
+version = "0.21.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd8d6c9f025a446bc4d18ad9632e69aec8f287aa84499ee335599fabd20c3fd8"
+checksum = "446e14c5cda4f3f30fe71863c34ec70f5ac79d6087097ad0bb433e1be5edf04c"
 dependencies = [
  "log",
- "ring 0.16.20",
+ "ring 0.17.5",
  "rustls-webpki",
  "sct",
 ]
@@ -5955,12 +6021,12 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.101.6"
+version = "0.101.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c7d5dece342910d9ba34d259310cae3e0154b873b35408b787b59bce53d34fe"
+checksum = "8b6275d1ee7a1cd780b64aca7726599a1dbc893b1e64144529e55c3c2f745765"
 dependencies = [
- "ring 0.16.20",
- "untrusted 0.7.1",
+ "ring 0.17.5",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -6516,13 +6582,27 @@ dependencies = [
 
 [[package]]
 name = "solang-parser"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c5ead679f39243782be98c2689e592fc0fc9489ca2e47c9e027bd30f948df31"
+dependencies = [
+ "itertools 0.10.5",
+ "lalrpop 0.19.12",
+ "lalrpop-util 0.19.12",
+ "phf 0.11.2",
+ "thiserror",
+ "unicode-xid",
+]
+
+[[package]]
+name = "solang-parser"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cb9fa2fa2fa6837be8a2495486ff92e3ffe68a99b6eeba288e139efdd842457"
 dependencies = [
  "itertools 0.11.0",
- "lalrpop",
- "lalrpop-util",
+ "lalrpop 0.20.0",
+ "lalrpop-util 0.20.0",
  "phf 0.11.2",
  "thiserror",
  "unicode-xid",
@@ -6637,6 +6717,26 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 
 [[package]]
 name = "svm-rs"
+version = "0.2.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a04fc4f5cd35c700153b233f5575ccb3237e0f941fa5049d9e98254d10bf2fe"
+dependencies = [
+ "fs2",
+ "hex",
+ "home",
+ "once_cell",
+ "reqwest",
+ "semver 1.0.20",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "thiserror",
+ "url",
+ "zip",
+]
+
+[[package]]
+name = "svm-rs"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "597e3a746727984cb7ea2487b6a40726cad0dbe86628e7d429aa6b8c4c153db4"
@@ -6657,6 +6757,19 @@ dependencies = [
 
 [[package]]
 name = "svm-rs-builds"
+version = "0.1.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32deae08684d03d8a4ba99b8a3b0a1575364820339930f6fa2afdfa3a6d98c84"
+dependencies = [
+ "build_const",
+ "hex",
+ "semver 1.0.20",
+ "serde_json",
+ "svm-rs 0.2.23",
+]
+
+[[package]]
+name = "svm-rs-builds"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2271abd7d01895a3e5bfa4b578e32f09155002ce1ec239532e297f82aafad06b"
@@ -6665,7 +6778,7 @@ dependencies = [
  "hex",
  "semver 1.0.20",
  "serde_json",
- "svm-rs",
+ "svm-rs 0.3.0",
 ]
 
 [[package]]
@@ -6974,7 +7087,7 @@ version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c28327cf380ac148141087fbfb9de9d7bd4e84ab5d2c28fbc911d753de8a7081"
 dependencies = [
- "rustls 0.21.7",
+ "rustls 0.21.8",
  "tokio",
 ]
 
@@ -7010,7 +7123,7 @@ dependencies = [
  "futures-util",
  "log",
  "native-tls",
- "rustls 0.21.7",
+ "rustls 0.21.8",
  "tokio",
  "tokio-native-tls",
  "tokio-rustls 0.24.1",
@@ -7327,7 +7440,7 @@ dependencies = [
  "log",
  "native-tls",
  "rand 0.8.5",
- "rustls 0.21.7",
+ "rustls 0.21.8",
  "sha1",
  "thiserror",
  "url",

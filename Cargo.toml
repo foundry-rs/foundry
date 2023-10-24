@@ -192,16 +192,16 @@ color-eyre = "0.6"
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-ethers = { git = "https://github.com/gakonst/ethers-rs" }
-ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs" }
-ethers-core = { git = "https://github.com/gakonst/ethers-rs" }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs" }
-ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs" }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs" }
-ethers-signers = { git = "https://github.com/gakonst/ethers-rs" }
-ethers-middleware = { git = "https://github.com/gakonst/ethers-rs" }
-ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs" }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs" }
+ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
+ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
+ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
+ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
+ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
+ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
+ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
 
 foundry-compilers = { git = "https://github.com/foundry-rs/compilers" }
 foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers"}
