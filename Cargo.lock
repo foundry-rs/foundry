@@ -79,7 +79,7 @@ checksum = "0942ffc6dcaadf03badf6e6a2d0228460359d5e34b57ccdc720b7382dfbd5ec5"
 [[package]]
 name = "alloy-dyn-abi"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/?branch=dani/coerce-str#7630543fdc871656052095cf1be46a7f6b6b045d"
+source = "git+https://github.com/alloy-rs/core/#d10ab51a01534d732ea17c9b93b816c954581dfd"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -99,7 +99,7 @@ dependencies = [
 [[package]]
 name = "alloy-json-abi"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/?branch=dani/coerce-str#7630543fdc871656052095cf1be46a7f6b6b045d"
+source = "git+https://github.com/alloy-rs/core/#d10ab51a01534d732ea17c9b93b816c954581dfd"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-type-parser",
@@ -110,7 +110,7 @@ dependencies = [
 [[package]]
 name = "alloy-primitives"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/?branch=dani/coerce-str#7630543fdc871656052095cf1be46a7f6b6b045d"
+source = "git+https://github.com/alloy-rs/core/#d10ab51a01534d732ea17c9b93b816c954581dfd"
 dependencies = [
  "alloy-rlp",
  "arbitrary",
@@ -156,7 +156,7 @@ dependencies = [
 [[package]]
 name = "alloy-sol-macro"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/?branch=dani/coerce-str#7630543fdc871656052095cf1be46a7f6b6b045d"
+source = "git+https://github.com/alloy-rs/core/#d10ab51a01534d732ea17c9b93b816c954581dfd"
 dependencies = [
  "const-hex",
  "dunce",
@@ -173,7 +173,7 @@ dependencies = [
 [[package]]
 name = "alloy-sol-type-parser"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/?branch=dani/coerce-str#7630543fdc871656052095cf1be46a7f6b6b045d"
+source = "git+https://github.com/alloy-rs/core/#d10ab51a01534d732ea17c9b93b816c954581dfd"
 dependencies = [
  "winnow",
 ]
@@ -181,7 +181,7 @@ dependencies = [
 [[package]]
 name = "alloy-sol-types"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/?branch=dani/coerce-str#7630543fdc871656052095cf1be46a7f6b6b045d"
+source = "git+https://github.com/alloy-rs/core/#d10ab51a01534d732ea17c9b93b816c954581dfd"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-macro",
@@ -6806,7 +6806,7 @@ dependencies = [
 [[package]]
 name = "syn-solidity"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/?branch=dani/coerce-str#7630543fdc871656052095cf1be46a7f6b6b045d"
+source = "git+https://github.com/alloy-rs/core/#d10ab51a01534d732ea17c9b93b816c954581dfd"
 dependencies = [
  "paste",
  "proc-macro2",
