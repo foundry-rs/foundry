@@ -17,7 +17,7 @@ foundry-evm.workspace = true
 foundry-debugger.workspace = true
 foundry-utils.workspace = true
 
-foundry-compilers = { workspace = true, features = ["full"] }
+foundry-compilers = { workspace = true, default-features = false, features = ["full"] }
 
 # aws
 rusoto_core = { version = "0.48", default-features = false }
