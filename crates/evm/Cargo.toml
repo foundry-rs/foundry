@@ -16,7 +16,7 @@ foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-macros.workspace = true
 
-ethers = { workspace = true, features = ["ethers-solc"] }
+ethers = { workspace = true }
 
 foundry-compilers = { workspace = true, default-features = false }
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
