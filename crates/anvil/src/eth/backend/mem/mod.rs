@@ -659,9 +659,7 @@ impl Backend {
             let block =
                 self.block_by_hash(best_block_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
 
-            // Note: In [`TimeManager::compute_next_timestamp`] we ensure that the next timestamp is
-            // always increasing by at least one. By subtracting 1 here, this is mitigated.
-            let reset_time = block.timestamp.as_u64().saturating_sub(1);
+            let reset_time = block.timestamp.as_u64();
             self.time.reset(reset_time);
             self.set_block_number(num.into());
         }

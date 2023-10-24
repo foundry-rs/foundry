@@ -498,3 +498,23 @@ async fn test_set_chain_id() {
     let chain_id = provider.get_chainid().await.unwrap();
     assert_eq!(chain_id, U256::from(1234));
 }
+
+// <https://github.com/foundry-rs/foundry/issues/6096>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_revert_next_block_timestamp() {
+    let (api, _handle) = spawn(fork_config()).await;
+
+    // Mine a new block, and check the new block gas limit
+    api.mine_one().await;
+    let latest_block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
+
+    let snapshot_id = api.evm_snapshot().await.unwrap();
+    api.mine_one().await;
+    api.evm_revert(snapshot_id).await.unwrap();
+    let block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
+    assert_eq!(block, latest_block);
+
+    api.mine_one().await;
+    let block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
+    assert!(block.timestamp > latest_block.timestamp);
+}
