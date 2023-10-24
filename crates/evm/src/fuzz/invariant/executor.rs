@@ -23,6 +23,7 @@ use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::JsonAbi as Abi;
 use alloy_primitives::{Address, FixedBytes};
 
+use bytes::Buf;
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::{FuzzDictionaryConfig, InvariantConfig};
@@ -325,27 +326,25 @@ impl<'a> InvariantExecutor<'a> {
                 abi,
                 "targetArtifactSelectors",
                 |v| {
-                    if let Some(list) = v.as_tuple() {
-                        list.iter()
-                            .map(|v| {
-                                if let Some(elements) = v.as_tuple() {
-                                    let name = elements[0].as_str().unwrap().to_string();
-                                    let selectors = elements[1]
-                                        .as_array()
-                                        .unwrap()
-                                        .iter()
-                                        .map(|v| {
-                                            FixedBytes::from_slice(v.as_fixed_bytes().unwrap().0)
-                                        })
-                                        .collect::<Vec<_>>();
-                                    (name, selectors)
-                                } else {
-                                    panic!("targetArtifactSelectors should be a tuple array")
-                                }
-                            })
-                            .collect::<Vec<_>>()
+                    if let Some(list) = v.as_array() {
+                        list.iter().map(|val| {
+                            if let Some((_, _str, elements)) = val.as_custom_struct() {
+                                let name = elements[0].as_str().unwrap().to_string();
+                                let selectors = elements[1]
+                                    .as_array()
+                                    .unwrap()
+                                    .iter()
+                                    .map(|selector| {
+                                        FixedBytes::<4>::from_slice(&selector.as_fixed_bytes().unwrap().0[0..4])
+                                    })
+                                    .collect::<Vec<_>>();
+                                (name, selectors)
+                            } else {
+                                panic!("Could not decode inner value of targetArtifactSelectors. This is a bug.")
+                            }
+                        }).collect::<Vec<_>>()
                     } else {
-                        panic!("targetArtifactSelectors should be a tuple array")
+                        panic!("Could not decode targetArtifactSelectors as array. This is a bug.")
                     }
                 },
             )
@@ -415,7 +414,6 @@ impl<'a> InvariantExecutor<'a> {
                 self.artifact_filters.targeted.insert(identifier, vec![]);
             }
         }
-
         Ok(())
     }
 
@@ -504,7 +502,7 @@ impl<'a> InvariantExecutor<'a> {
                 if let Some(l) = v.as_array() {
                     l.iter()
                         .map(|v| {
-                            if let Some(elements) = v.as_tuple() {
+                            if let Some((_, _names, elements)) = v.as_custom_struct() {
                                 let addr = elements[0].as_address().unwrap();
                                 let interfaces = elements[1]
                                     .as_array()
@@ -592,18 +590,22 @@ impl<'a> InvariantExecutor<'a> {
             self.get_list::<(Address, Vec<FixedBytes<4>>)>(address, abi, "targetSelectors", |v| {
                 if let Some(l) = v.as_array() {
                     l.iter()
-                        .map(|v| {
-                            if let Some(elements) = v.as_tuple() {
-                                let addr = elements[0].as_address().unwrap();
+                        .map(|val| {
+                            if let Some((_, _str, elements)) = val.as_custom_struct() {
+                                let name = elements[0].as_address().unwrap();
                                 let selectors = elements[1]
                                     .as_array()
                                     .unwrap()
                                     .iter()
-                                    .map(|v| FixedBytes::from_slice(v.as_fixed_bytes().unwrap().0))
+                                    .map(|selector| {
+                                        FixedBytes::<4>::from_slice(
+                                            &selector.as_fixed_bytes().unwrap().0[0..4],
+                                        )
+                                    })
                                     .collect::<Vec<_>>();
-                                (addr, selectors)
+                                (name, selectors)
                             } else {
-                                panic!("targetSelectors should be a tuple array")
+                                panic!("targetSelectors should be a tuple array2")
                             }
                         })
                         .collect::<Vec<_>>()

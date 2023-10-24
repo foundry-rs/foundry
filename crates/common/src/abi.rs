@@ -100,7 +100,13 @@ pub fn format_token(param: &DynSolValue) -> String {
             let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
             format!("({string})")
         }
-        _ => unimplemented!(),
+        DynSolValue::CustomStruct { name: _, prop_names: _, tuple } => {
+            let string = tuple.iter().map(format_token).collect::<Vec<String>>().join(", ");
+            format!("({string})")
+        }
+        DynSolValue::Function(f) => {
+            format!("{}", f.to_address_and_selector().1)
+        }
     }
 }
 

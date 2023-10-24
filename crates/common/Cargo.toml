@@ -22,7 +22,7 @@ foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 
 # alloy
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
-alloy-dyn-abi = { workspace = true, features = ["arbitrary"] }
+alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
 foundry-compilers.workspace = true
 # io

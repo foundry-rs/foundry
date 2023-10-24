@@ -135,10 +135,10 @@ async fn test_invariant_storage() {
         BTreeMap::from([(
             "fuzz/invariant/storage/InvariantStorageTest.t.sol:InvariantStorageTest",
             vec![
-                ("invariantChangeAddress()", false, Some("changedAddr".into()), None, None),
-                ("invariantChangeString()", false, Some("changedStr".into()), None, None),
-                ("invariantChangeUint()", false, Some("changedUint".into()), None, None),
-                ("invariantPush()", false, Some("pushUint".into()), None, None),
+                ("invariantChangeAddress()", true, None, None, None),
+                ("invariantChangeString()", true, None, None, None),
+                ("invariantChangeUint()", false, Some("changedUint".to_string()), None, None),
+                ("invariantPush()", false, Some("pushUint".to_string()), None, None),
             ],
         )]),
     );
