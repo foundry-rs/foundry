@@ -125,8 +125,10 @@ pub fn decode_revert(
             }
         }
         // keccak(Error(string))
-        [8, 195, 121, 160] => SolString::abi_decode(&err[SELECTOR_LEN..], false)
-            .map_err(|_| eyre::eyre!("Bad string decode")),
+        [8, 195, 121, 160] => Ok(DynSolType::abi_decode(&DynSolType::String, &err[SELECTOR_LEN..])
+            .map_err(|_| eyre::eyre!("Bad string decode"))
+            .and_then(|v| v.clone().as_str().map(|s| s.to_owned()).wrap_err("Bad string decode"))?
+            .to_owned()),
         // keccak(expectRevert(bytes))
         [242, 141, 206, 179] => {
             let err_data = &err[SELECTOR_LEN..];
@@ -183,12 +185,26 @@ pub fn decode_revert(
                 }
             }
             // optimistically try to decode as string, unknown selector or `CheatcodeError`
-            SolString::abi_decode(err, false)
-                .ok()
+            let error = DynSolType::abi_decode(&DynSolType::String, err)
+                .map_err(|_| eyre::eyre!("Could not optimisitically decode String"))
+                .and_then(|v| {
+                    v.as_str().map(|s| s.to_owned()).ok_or(eyre::eyre!("Could not decode string"))
+                })
+                .ok();
+
+            let error = error.filter(|err| err.as_str() != "");
+            error
                 .or_else(|| {
                     // try decoding as cheatcode error
                     if err.starts_with(ERROR_PREFIX.as_slice()) {
-                        SolString::abi_decode(&err[ERROR_PREFIX.len()..], false).ok()
+                        DynSolType::abi_decode(&DynSolType::String, &err[ERROR_PREFIX.len()..])
+                            .map_err(|_| eyre::eyre!("Could not decode cheatcode string error"))
+                            .and_then(|v| {
+                                v.as_str()
+                                    .map(|s| s.to_owned())
+                                    .wrap_err("Bad cheatcode string decode")
+                            })
+                            .ok()
                     } else {
                         None
                     }
