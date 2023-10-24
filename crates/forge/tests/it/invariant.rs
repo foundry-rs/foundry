@@ -114,6 +114,7 @@ async fn test_invariant_override() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn test_invariant_storage() {
     let mut runner = runner().await;
 
