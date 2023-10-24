@@ -3,7 +3,7 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Event, Function};
 use alloy_primitives::{hex, Address, Log, U256};
 use ethers_core::types::Chain;
-use eyre::{ContextCompat, Result, WrapErr};
+use eyre::{ContextCompat, Result};
 use foundry_block_explorers::{contract::ContractMetadata, errors::EtherscanError, Client};
 use std::{future::Future, pin::Pin};
 use yansi::Paint;

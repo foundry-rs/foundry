@@ -22,8 +22,6 @@ use crate::{
 use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::JsonAbi as Abi;
 use alloy_primitives::{Address, FixedBytes};
-
-use bytes::Buf;
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::{FuzzDictionaryConfig, InvariantConfig};
