@@ -661,7 +661,20 @@ impl Backend {
 
             let reset_time = block.timestamp.as_u64();
             self.time.reset(reset_time);
-            self.set_block_number(num.into());
+
+            let mut env = self.env.write();
+            env.block = BlockEnv {
+                number: rU256::from(num),
+                timestamp: block.timestamp.to_alloy(),
+                difficulty: block.difficulty.to_alloy(),
+                // ensures prevrandao is set
+                prevrandao: Some(block.mix_hash.unwrap_or_default()).map(|h| h.to_alloy()),
+                gas_limit: block.gas_limit.to_alloy(),
+                // Keep previous `coinbase` and `basefee` value
+                coinbase: env.block.coinbase,
+                basefee: env.block.basefee,
+                ..Default::default()
+            };
         }
         Ok(self.db.write().await.revert(id))
     }
