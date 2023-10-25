@@ -460,7 +460,7 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
     //     [source code]
     let paths = ProjectPathsConfig::builder()
         .sources(sources_path.clone())
-        // .remappings(settings.remappings.clone())
+        .remappings(settings.remappings.clone())
         .build_with_root(sources_path);
 
     let v = metadata.compiler_version()?;
