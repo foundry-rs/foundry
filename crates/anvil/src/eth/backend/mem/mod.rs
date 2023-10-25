@@ -56,6 +56,7 @@ use ethers::{
     utils::{hex, keccak256, rlp},
 };
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+use foundry_common::abi::format_token;
 use foundry_evm::{
     decode::{decode_custom_error_args, decode_revert},
     executor::{
@@ -934,7 +935,7 @@ impl Backend {
                                         Some(token) => {
                                             node_info!(
                                                 "    Error: reverted with custom error: {:?}",
-                                                token
+                                                format_token(&token)
                                             );
                                         }
                                         None => {
