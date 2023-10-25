@@ -1156,7 +1156,7 @@ impl Backend {
                     (halt_to_instruction_result(reason), gas_used, None)
                 },
             };
-            let res = inspector.tracer.unwrap_or_default().traces.geth_trace(gas_used.into(), opts);
+            let res = inspector.tracer.unwrap_or_default().traces.geth_trace(rU256::from(gas_used), opts);
             trace!(target: "backend", "trace call return {:?} out: {:?} gas {} on block {}", exit_reason, out, gas_used, block_number);
             Ok(res)
         })

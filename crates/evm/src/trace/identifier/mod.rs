@@ -7,10 +7,9 @@ pub use etherscan::EtherscanIdentifier;
 mod signatures;
 pub use signatures::{SignaturesIdentifier, SingleSignaturesIdentifier};
 
-use ethers::{
-    abi::{Abi, Address},
-    prelude::ArtifactId,
-};
+use alloy_json_abi::JsonAbi as Abi;
+use alloy_primitives::Address;
+use foundry_compilers::ArtifactId;
 use std::borrow::Cow;
 
 /// An address identity

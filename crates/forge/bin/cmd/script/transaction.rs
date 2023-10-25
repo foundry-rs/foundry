@@ -1,6 +1,8 @@
 use super::{artifacts::ArtifactInfo, ScriptResult};
+use alloy_dyn_abi::JsonAbiExt;
+use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256};
-use ethers::{abi, prelude::NameOrAddress, types::transaction::eip2718::TypedTransaction};
+use ethers::{prelude::NameOrAddress, types::transaction::eip2718::TypedTransaction};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{abi::format_token_raw, RpcUrl, SELECTOR_LEN};
 use foundry_evm::{
@@ -147,7 +149,7 @@ impl TransactionWithMetadata {
                             let inputs = constructor
                                 .inputs
                                 .iter()
-                                .map(|p| p.kind.to_string())
+                                .map(|p| p.ty.clone())
                                 .collect::<Vec<_>>()
                                 .join(",");
                             let signature = format!("constructor({inputs})");
@@ -155,13 +157,19 @@ impl TransactionWithMetadata {
                             (signature, bytecode)
                         };
 
-                        let params =
-                            constructor.inputs.iter().map(|p| p.kind.clone()).collect::<Vec<_>>();
-
                         // the constructor args start after bytecode
                         let constructor_args = &creation_code[info.code.len()..];
 
-                        if let Ok(arguments) = abi::decode(&params, constructor_args) {
+                        let constructor_fn = Function {
+                            name: "constructor".to_string(),
+                            inputs: constructor.inputs.clone(),
+                            outputs: vec![],
+                            state_mutability: constructor.state_mutability,
+                        };
+
+                        if let Ok(arguments) =
+                            constructor_fn.abi_decode_input(constructor_args, false)
+                        {
                             self.arguments = Some(arguments.iter().map(format_token_raw).collect());
                         } else {
                             let (signature, bytecode) = on_err();
@@ -192,12 +200,12 @@ impl TransactionWithMetadata {
                     if let Some(function) = info
                         .abi
                         .functions()
-                        .find(|function| function.short_signature() == data.0[..SELECTOR_LEN])
+                        .find(|function| function.selector() == data.0[..SELECTOR_LEN])
                     {
                         self.function = Some(function.signature());
                         self.arguments = Some(
                             function
-                                .decode_input(&data.0[SELECTOR_LEN..])
+                                .abi_decode_input(&data.0[SELECTOR_LEN..], false)
                                 .map(|tokens| tokens.iter().map(format_token_raw).collect())?,
                         );
                     }
@@ -210,12 +218,12 @@ impl TransactionWithMetadata {
                         .get(&data.0[..SELECTOR_LEN])
                         .map(|functions| functions.first())
                     {
-                        self.contract_name = decoder.contracts.get(&target.to_ethers()).cloned();
+                        self.contract_name = decoder.contracts.get(&target).cloned();
 
                         self.function = Some(function.signature());
                         self.arguments = Some(
                             function
-                                .decode_input(&data.0[SELECTOR_LEN..])
+                                .abi_decode_input(&data.0[SELECTOR_LEN..], false)
                                 .map(|tokens| tokens.iter().map(format_token_raw).collect())?,
                         );
                     }

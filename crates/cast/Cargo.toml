@@ -27,6 +27,15 @@ foundry-common.workspace = true
 ethers-etherscan.workspace = true
 ethers-core.workspace = true
 ethers-providers.workspace = true
+
+alloy-primitives.workspace = true
+alloy-json-abi.workspace = true
+alloy-dyn-abi.workspace = true
+
+foundry-compilers = { workspace = true, default-features = false }
+foundry-block-explorers = { workspace = true }
+
+
 chrono.workspace = true
 evm-disassembler = "0.3"
 eyre.workspace = true

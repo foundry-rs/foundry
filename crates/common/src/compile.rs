@@ -1,15 +1,15 @@
-//! Support for compiling [ethers::solc::Project]
+//! Support for compiling [foundry_compilers::Project]
 use crate::{compact_to_contract, glob::GlobMatcher, term, TestFunctionExt};
 use comfy_table::{presets::ASCII_MARKDOWN, *};
-use ethers_etherscan::contract::Metadata;
-use ethers_solc::{
+use eyre::Result;
+use foundry_block_explorers::contract::Metadata;
+use foundry_compilers::{
     artifacts::{BytecodeObject, ContractBytecodeSome},
     remappings::Remapping,
     report::NoReporter,
     Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
     Solc, SolcConfig,
 };
-use eyre::Result;
 use std::{
     collections::{BTreeMap, HashMap},
     convert::Infallible,
@@ -288,8 +288,8 @@ pub fn compile_with_filter(
 /// compilation was successful or if there was a cache hit.
 /// Doesn't print anything to stdout, thus is "suppressed".
 pub fn suppress_compile(project: &Project) -> Result<ProjectCompileOutput> {
-    let output = ethers_solc::report::with_scoped(
-        &ethers_solc::report::Report::new(NoReporter::default()),
+    let output = foundry_compilers::report::with_scoped(
+        &foundry_compilers::report::Report::new(NoReporter::default()),
         || project.compile(),
     )?;
 
@@ -322,8 +322,8 @@ pub fn suppress_compile_sparse<F: FileFilter + 'static>(
     project: &Project,
     filter: F,
 ) -> Result<ProjectCompileOutput> {
-    let output = ethers_solc::report::with_scoped(
-        &ethers_solc::report::Report::new(NoReporter::default()),
+    let output = foundry_compilers::report::with_scoped(
+        &foundry_compilers::report::Report::new(NoReporter::default()),
         || project.compile_sparse(filter),
     )?;
 
@@ -343,8 +343,8 @@ pub fn compile_files(
     silent: bool,
 ) -> Result<ProjectCompileOutput> {
     let output = if silent {
-        ethers_solc::report::with_scoped(
-            &ethers_solc::report::Report::new(NoReporter::default()),
+        foundry_compilers::report::with_scoped(
+            &foundry_compilers::report::Report::new(NoReporter::default()),
             || project.compile_files(files),
         )
     } else {

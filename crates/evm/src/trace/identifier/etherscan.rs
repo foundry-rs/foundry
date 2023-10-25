@@ -1,11 +1,9 @@
 use super::{AddressIdentity, TraceIdentifier};
 use crate::utils::RuntimeOrHandle;
-use ethers::{
-    abi::Address,
-    etherscan,
-    etherscan::contract::{ContractMetadata, Metadata},
-    prelude::errors::EtherscanError,
-    types::H160,
+use alloy_primitives::Address;
+use foundry_block_explorers::{
+    contract::{ContractMetadata, Metadata},
+    errors::EtherscanError,
 };
 use foundry_common::compile::{self, ContractSources};
 use foundry_config::{Chain, Config};
@@ -30,13 +28,13 @@ use tokio::time::{Duration, Interval};
 #[derive(Default)]
 pub struct EtherscanIdentifier {
     /// The Etherscan client
-    client: Option<Arc<etherscan::Client>>,
+    client: Option<Arc<foundry_block_explorers::Client>>,
     /// Tracks whether the API key provides was marked as invalid
     ///
     /// After the first [EtherscanError::InvalidApiKey] this will get set to true, so we can
     /// prevent any further attempts
     invalid_api_key: Arc<AtomicBool>,
-    pub contracts: BTreeMap<H160, Metadata>,
+    pub contracts: BTreeMap<Address, Metadata>,
     pub sources: BTreeMap<u32, String>,
 }
 
@@ -156,7 +154,7 @@ type EtherscanFuture =
 /// Fetches information about multiple addresses concurrently, while respecting rate limits.
 pub struct EtherscanFetcher {
     /// The Etherscan client
-    client: Arc<etherscan::Client>,
+    client: Arc<foundry_block_explorers::Client>,
     /// The time we wait if we hit the rate limit
     timeout: Duration,
     /// The interval we are currently waiting for before making a new request
@@ -173,7 +171,7 @@ pub struct EtherscanFetcher {
 
 impl EtherscanFetcher {
     pub fn new(
-        client: Arc<etherscan::Client>,
+        client: Arc<foundry_block_explorers::Client>,
         timeout: Duration,
         concurrency: usize,
         invalid_api_key: Arc<AtomicBool>,

@@ -1,6 +1,6 @@
 use super::{ContractId, CoverageItem, CoverageItemKind, SourceLocation};
-use ethers::solc::artifacts::ast::{self, Ast, Node, NodeType};
 use foundry_common::TestFunctionExt;
+use foundry_compilers::artifacts::ast::{self, Ast, Node, NodeType};
 use semver::Version;
 use std::collections::{HashMap, HashSet};
 
@@ -211,7 +211,7 @@ impl<'a> ContractVisitor<'a> {
                 // is virtually impossible to correctly map instructions back to branches that
                 // include more complex logic like conditional logic.
                 self.push_branches(
-                    &ethers::solc::artifacts::ast::LowFidelitySourceLocation {
+                    &foundry_compilers::artifacts::ast::LowFidelitySourceLocation {
                         start: node.src.start,
                         length: true_body
                             .src

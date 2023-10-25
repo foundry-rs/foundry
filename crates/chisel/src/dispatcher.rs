@@ -18,7 +18,6 @@ use foundry_evm::{
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-use foundry_utils::types::ToEthers;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use reqwest::Url;
@@ -953,9 +952,7 @@ impl ChiselDispatcher {
         )?;
 
         let mut decoder = CallTraceDecoderBuilder::new()
-            .with_labels(
-                result.labeled_addresses.iter().map(|(a, s)| ((*a).to_ethers(), s.clone())),
-            )
+            .with_labels(result.labeled_addresses.clone())
             .with_signature_identifier(SignaturesIdentifier::new(
                 Config::foundry_cache_dir(),
                 session_config.foundry_config.offline,

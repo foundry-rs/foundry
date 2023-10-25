@@ -1,10 +1,10 @@
 use clap::Parser;
-use ethers::solc::{
+use eyre::Result;
+use foundry_cli::{opts::ProjectPathsArgs, utils::LoadConfig};
+use foundry_compilers::{
     resolver::{Charset, TreeOptions},
     Graph,
 };
-use eyre::Result;
-use foundry_cli::{opts::ProjectPathsArgs, utils::LoadConfig};
 
 /// CLI arguments for `forge tree`.
 #[derive(Debug, Clone, Parser)]

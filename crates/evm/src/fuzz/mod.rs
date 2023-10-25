@@ -5,16 +5,14 @@ use crate::{
     executor::{Executor, RawCallResult},
     trace::CallTraceArena,
 };
-use alloy_primitives::U256;
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
+use alloy_json_abi::{Function, JsonAbi as Abi};
+use alloy_primitives::{Address, Bytes, U256};
 use error::{FuzzError, ASSUME_MAGIC_RETURN_CODE};
-use ethers::{
-    abi::{Abi, Function, Token},
-    types::{Address, Bytes, Log},
-};
+use ethers::types::Log;
 use eyre::Result;
 use foundry_common::{calc, contracts::ContractsByAddress};
 use foundry_config::FuzzConfig;
-use foundry_utils::types::{ToAlloy, ToEthers};
 pub use proptest::test_runner::Reason;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 use serde::{Deserialize, Serialize};
@@ -152,7 +150,7 @@ impl<'a> FuzzedExecutor<'a> {
             counterexample: None,
             decoded_logs: decode_console_logs(&call.logs),
             logs: call.logs,
-            labeled_addresses: call.labels.into_iter().map(|l| (l.0.to_ethers(), l.1)).collect(),
+            labeled_addresses: call.labels,
             traces: if run_result.is_ok() { traces.into_inner() } else { call.traces.clone() },
             coverage: coverage.into_inner(),
         };
@@ -173,7 +171,8 @@ impl<'a> FuzzedExecutor<'a> {
                 let reason = reason.to_string();
                 result.reason = if reason.is_empty() { None } else { Some(reason) };
 
-                let args = func.decode_input(&calldata.as_ref()[4..]).unwrap_or_default();
+                let args =
+                    func.abi_decode_input(&calldata.as_ref()[4..], false).unwrap_or_default();
                 result.counterexample = Some(CounterExample::Single(BaseCounterExample {
                     sender: None,
                     addr: None,
@@ -197,16 +196,11 @@ impl<'a> FuzzedExecutor<'a> {
         state: &EvmFuzzState,
         address: Address,
         should_fail: bool,
-        calldata: ethers::types::Bytes,
+        calldata: alloy_primitives::Bytes,
     ) -> Result<FuzzOutcome, TestCaseError> {
         let call = self
             .executor
-            .call_raw(
-                self.sender.to_alloy(),
-                address.to_alloy(),
-                calldata.0.clone().into(),
-                U256::ZERO,
-            )
+            .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|_| TestCaseError::fail(FuzzError::FailedContractCall))?;
         let state_changeset = call
             .state_changeset
@@ -231,12 +225,8 @@ impl<'a> FuzzedExecutor<'a> {
             .as_ref()
             .map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
 
-        let success = self.executor.is_success(
-            address.to_alloy(),
-            call.reverted,
-            state_changeset.clone(),
-            should_fail,
-        );
+        let success =
+            self.executor.is_success(address, call.reverted, state_changeset.clone(), should_fail);
 
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
@@ -288,9 +278,8 @@ pub struct BaseCounterExample {
     pub contract_name: Option<String>,
     /// Traces
     pub traces: Option<CallTraceArena>,
-    // Token does not implement Serde (lol), so we just serialize the calldata
     #[serde(skip)]
-    pub args: Vec<Token>,
+    pub args: Vec<DynSolValue>,
 }
 
 impl BaseCounterExample {
@@ -302,11 +291,9 @@ impl BaseCounterExample {
         traces: Option<CallTraceArena>,
     ) -> Self {
         if let Some((name, abi)) = &contracts.get(&addr) {
-            if let Some(func) =
-                abi.functions().find(|f| f.short_signature() == bytes.0.as_ref()[0..4])
-            {
+            if let Some(func) = abi.functions().find(|f| f.selector() == bytes.0.as_ref()[0..4]) {
                 // skip the function selector when decoding
-                if let Ok(args) = func.decode_input(&bytes.0.as_ref()[4..]) {
+                if let Ok(args) = func.abi_decode_input(&bytes.0.as_ref()[4..], false) {
                     return BaseCounterExample {
                         sender: Some(sender),
                         addr: Some(addr),
@@ -400,16 +387,18 @@ pub struct FuzzTestResult {
 impl FuzzTestResult {
     /// Returns the median gas of all test cases
     pub fn median_gas(&self, with_stipend: bool) -> u64 {
-        let mut values = self.gas_values(with_stipend);
+        let mut values =
+            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
         values.sort_unstable();
-        calc::median_sorted(&values)
+        calc::median_sorted(&values).to::<u64>()
     }
 
     /// Returns the average gas use of all test cases
     pub fn mean_gas(&self, with_stipend: bool) -> u64 {
-        let mut values = self.gas_values(with_stipend);
+        let mut values =
+            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
         values.sort_unstable();
-        calc::mean(&values).as_u64()
+        calc::mean(&values).to::<u64>()
     }
 
     fn gas_values(&self, with_stipend: bool) -> Vec<u64> {
@@ -453,17 +442,19 @@ impl FuzzedCases {
     /// Returns the median gas of all test cases
     #[inline]
     pub fn median_gas(&self, with_stipend: bool) -> u64 {
-        let mut values = self.gas_values(with_stipend);
+        let mut values =
+            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
         values.sort_unstable();
-        calc::median_sorted(&values)
+        calc::median_sorted(&values).to::<u64>()
     }
 
     /// Returns the average gas use of all test cases
     #[inline]
     pub fn mean_gas(&self, with_stipend: bool) -> u64 {
-        let mut values = self.gas_values(with_stipend);
+        let mut values =
+            self.gas_values(with_stipend).into_iter().map(U256::from).collect::<Vec<_>>();
         values.sort_unstable();
-        calc::mean(&values).as_u64()
+        calc::mean(&values).to::<u64>()
     }
 
     #[inline]

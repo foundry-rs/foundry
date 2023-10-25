@@ -1,6 +1,6 @@
 use chisel::session_source::{SessionSource, SessionSourceConfig};
 use criterion::{criterion_group, Criterion};
-use ethers_solc::Solc;
+use foundry_compilers::Solc;
 use foundry_config::Config;
 use foundry_evm::executor::opts::EvmOpts;
 use once_cell::sync::Lazy;

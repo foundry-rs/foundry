@@ -11,5 +11,5 @@ pub mod script;
 pub use script::{ScriptOutcome, ScriptTester};
 
 // re-exports for convenience
-pub use ethers_solc;
+pub use foundry_compilers;
 pub use tempfile;

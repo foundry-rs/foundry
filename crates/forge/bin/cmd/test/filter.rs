@@ -1,8 +1,8 @@
 use clap::Parser;
-use ethers::solc::{FileFilter, ProjectPathsConfig};
 use forge::TestFilter;
 use foundry_cli::utils::FoundryPathExt;
 use foundry_common::glob::GlobMatcher;
+use foundry_compilers::{FileFilter, ProjectPathsConfig};
 use foundry_config::Config;
 use std::{fmt, path::Path};
 

@@ -276,8 +276,8 @@ impl ScriptArgs {
                 project,
                 default_known_contracts,
                 Libraries::parse(&deployment_sequence.libraries)?,
-                script_config.config.sender.to_alloy(), // irrelevant, since we're not creating any
-                0,                                      // irrelevant, since we're not creating any
+                script_config.config.sender, // irrelevant, since we're not creating any
+                0,                           // irrelevant, since we're not creating any
             )?;
 
             verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);

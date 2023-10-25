@@ -1,22 +1,21 @@
 //! utilities used within tracing
 
 use crate::decode;
-use ethers::{
-    abi::{Abi, Address, Function, ParamType, Token},
-    core::utils::to_checksum,
-};
+use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
+use alloy_json_abi::{Function, JsonAbi as Abi};
+use alloy_primitives::Address;
 use foundry_common::{abi::format_token, SELECTOR_LEN};
 use std::collections::HashMap;
 
-/// Returns the label for the given `token`
+/// Returns the label for the given [DynSolValue]
 ///
 /// If the `token` is an `Address` then we look abel the label map.
 /// by default the token is formatted using standard formatting
-pub fn label(token: &Token, labels: &HashMap<Address, String>) -> String {
+pub fn label(token: &DynSolValue, labels: &HashMap<Address, String>) -> String {
     match token {
-        Token::Address(addr) => {
+        DynSolValue::Address(addr) => {
             if let Some(label) = labels.get(addr) {
-                format!("{label}: [{}]", to_checksum(addr, None))
+                format!("{label}: [{}]", addr.to_checksum(None))
             } else {
                 format_token(token)
             }
@@ -39,7 +38,8 @@ pub(crate) fn decode_cheatcode_inputs(
         "rememberKey" | "addr" | "startBroadcast" | "broadcast" => {
             // these functions accept a private key as uint256, which should not be
             // converted to plain text
-            if !func.inputs.is_empty() && matches!(&func.inputs[0].kind, ParamType::Uint(_)) {
+            let _expected_type = DynSolType::Uint(256).to_string();
+            if !func.inputs.is_empty() && matches!(&func.inputs[0].ty, _expected_type) {
                 // redact private key input
                 Some(vec!["<pk>".to_string()])
             } else {
@@ -48,9 +48,10 @@ pub(crate) fn decode_cheatcode_inputs(
         }
         "sign" => {
             // sign(uint256,bytes32)
-            let mut decoded = func.decode_input(&data[SELECTOR_LEN..]).ok()?;
-            if !decoded.is_empty() && matches!(&func.inputs[0].kind, ParamType::Uint(_)) {
-                decoded[0] = Token::String("<pk>".to_string());
+            let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
+            let _expected_type = DynSolType::Uint(256).to_string();
+            if !decoded.is_empty() && matches!(&func.inputs[0].ty, _expected_type) {
+                decoded[0] = DynSolValue::String("<pk>".to_string());
             }
             Some(decoded.iter().map(format_token).collect())
         }
@@ -82,14 +83,14 @@ pub(crate) fn decode_cheatcode_inputs(
             if verbosity >= 5 {
                 None
             } else {
-                let mut decoded = func.decode_input(&data[SELECTOR_LEN..]).ok()?;
+                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
                 let token =
                     if func.name.as_str() == "parseJson" || func.name.as_str() == "keyExists" {
                         "<JSON file>"
                     } else {
                         "<stringified JSON>"
                     };
-                decoded[0] = Token::String(token.to_string());
+                decoded[0] = DynSolValue::String(token.to_string());
                 Some(decoded.iter().map(format_token).collect())
             }
         }

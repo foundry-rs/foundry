@@ -1,16 +1,14 @@
 use crate::{
     abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier, CallKind,
 };
+use alloy_primitives::{Address, Bytes, Log as RawLog, B256, U256};
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
-use ethers::{
-    abi::{ethereum_types::BigEndianHash, Address, RawLog},
-    core::utils::to_checksum,
-    types::{Bytes, DefaultFrame, GethDebugTracingOptions, StructLog, H256, U256},
-};
+use ethers::types::{DefaultFrame, GethDebugTracingOptions, StructLog};
 pub use executor::TracingExecutor;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_utils::types::ToEthers;
 use hashbrown::HashMap;
+use itertools::Itertools;
 use node::CallTraceNode;
 use revm::interpreter::{opcode, CallContext, InstructionResult, Memory, Stack};
 use serde::{Deserialize, Serialize};
@@ -97,7 +95,7 @@ impl CallTraceArena {
     // Recursively fill in the geth trace by going through the traces
     fn add_to_geth_trace(
         &self,
-        storage: &mut HashMap<Address, BTreeMap<H256, H256>>,
+        storage: &mut HashMap<Address, BTreeMap<B256, B256>>,
         trace_node: &CallTraceNode,
         struct_logs: &mut Vec<StructLog>,
         opts: &GethDebugTracingOptions,
@@ -111,8 +109,14 @@ impl CallTraceArena {
             if !opts.disable_storage.unwrap_or_default() {
                 let contract_storage = storage.entry(step.contract).or_default();
                 if let Some((key, value)) = step.state_diff {
-                    contract_storage.insert(H256::from_uint(&key), H256::from_uint(&value));
-                    log.storage = Some(contract_storage.clone());
+                    contract_storage.insert(B256::from(key), B256::from(value));
+                    log.storage = Some(
+                        contract_storage
+                            .clone()
+                            .into_iter()
+                            .map(|t| (t.0.to_ethers(), t.1.to_ethers()))
+                            .collect(),
+                    );
                 }
             }
             if opts.disable_stack.unwrap_or_default() {
@@ -170,8 +174,8 @@ impl CallTraceArena {
         let mut acc = DefaultFrame {
             // If the top-level trace succeeded, then it was a success
             failed: !main_trace.success,
-            gas: receipt_gas_used,
-            return_value: main_trace.output.to_bytes(),
+            gas: receipt_gas_used.to_ethers(),
+            return_value: main_trace.output.to_bytes().0.into(),
             ..Default::default()
         };
 
@@ -275,7 +279,7 @@ impl fmt::Display for RawOrDecodedLog {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             RawOrDecodedLog::Raw(log) => {
-                for (i, topic) in log.topics.iter().enumerate() {
+                for (i, topic) in log.topics().iter().enumerate() {
                     writeln!(
                         f,
                         "{:>13}: {}",
@@ -426,7 +430,7 @@ impl From<&CallTraceStep> for StructLog {
             } else {
                 None
             },
-            stack: Some(step.stack.data().iter().copied().map(|s| s.to_ethers()).collect()),
+            stack: Some(step.stack.data().iter().copied().map(|v| v.to_ethers()).collect_vec()),
             // Filled in `CallTraceArena::geth_trace` as a result of compounding all slot changes
             storage: None,
         }
@@ -505,7 +509,7 @@ impl Default for CallTrace {
 
 impl fmt::Display for CallTrace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let address = to_checksum(&self.address, None);
+        let address = self.address.to_checksum(None);
         if self.created() {
             write!(
                 f,
@@ -543,7 +547,7 @@ impl fmt::Display for CallTrace {
                 self.gas_cost,
                 color.paint(self.label.as_ref().unwrap_or(&address)),
                 color.paint(func),
-                if !self.value.is_zero() {
+                if !self.value == U256::ZERO {
                     format!("{{value: {}}}", self.value)
                 } else {
                     "".to_string()
@@ -593,7 +597,7 @@ impl TraceKind {
 
 /// Chooses the color of the trace depending on the destination address and status of the call.
 fn trace_color(trace: &CallTrace) -> Color {
-    if trace.address == CHEATCODE_ADDRESS.to_ethers() {
+    if trace.address == CHEATCODE_ADDRESS {
         Color::Blue
     } else if trace.success {
         Color::Green

@@ -1,5 +1,6 @@
 use super::{AddressIdentity, TraceIdentifier};
-use ethers::abi::{Address, Event};
+use alloy_json_abi::Event;
+use alloy_primitives::Address;
 use foundry_common::contracts::{diff_score, ContractsByArtifact};
 use ordered_float::OrderedFloat;
 use std::borrow::Cow;

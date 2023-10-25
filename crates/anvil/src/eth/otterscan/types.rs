@@ -1,7 +1,9 @@
+use alloy_primitives::U256 as rU256;
 use ethers::types::{
     Action, Address, Block, Bytes, CallType, Trace, Transaction, TransactionReceipt, H256, U256,
 };
 use foundry_evm::{executor::InstructionResult, CallKind};
+use foundry_utils::types::ToEthers;
 use futures::future::join_all;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_repr::Serialize_repr;
@@ -239,35 +241,37 @@ impl OtsInternalOperation {
             .traces
             .arena
             .iter()
-            .filter_map(|node| match (node.kind(), node.status()) {
-                (CallKind::Call, _) if !node.trace.value.is_zero() => Some(Self {
-                    r#type: OtsInternalOperationType::Transfer,
-                    from: node.trace.caller,
-                    to: node.trace.address,
-                    value: node.trace.value,
-                }),
-                (CallKind::Create, _) => Some(Self {
-                    r#type: OtsInternalOperationType::Create,
-                    from: node.trace.caller,
-                    to: node.trace.address,
-                    value: node.trace.value,
-                }),
-                (CallKind::Create2, _) => Some(Self {
-                    r#type: OtsInternalOperationType::Create2,
-                    from: node.trace.caller,
-                    to: node.trace.address,
-                    value: node.trace.value,
-                }),
-                (_, InstructionResult::SelfDestruct) => {
-                    Some(Self {
-                        r#type: OtsInternalOperationType::SelfDestruct,
-                        from: node.trace.address,
-                        // the foundry CallTraceNode doesn't have a refund address
-                        to: Default::default(),
-                        value: node.trace.value,
-                    })
+            .filter_map(|node| {
+                match (node.kind(), node.status()) {
+                    (CallKind::Call, _) if node.trace.value != rU256::ZERO => Some(Self {
+                        r#type: OtsInternalOperationType::Transfer,
+                        from: node.trace.caller.to_ethers(),
+                        to: node.trace.address.to_ethers(),
+                        value: node.trace.value.to_ethers(),
+                    }),
+                    (CallKind::Create, _) => Some(Self {
+                        r#type: OtsInternalOperationType::Create,
+                        from: node.trace.caller.to_ethers(),
+                        to: node.trace.address.to_ethers(),
+                        value: node.trace.value.to_ethers(),
+                    }),
+                    (CallKind::Create2, _) => Some(Self {
+                        r#type: OtsInternalOperationType::Create2,
+                        from: node.trace.caller.to_ethers(),
+                        to: node.trace.address.to_ethers(),
+                        value: node.trace.value.to_ethers(),
+                    }),
+                    (_, InstructionResult::SelfDestruct) => {
+                        Some(Self {
+                            r#type: OtsInternalOperationType::SelfDestruct,
+                            from: node.trace.address.to_ethers(),
+                            // the foundry CallTraceNode doesn't have a refund address
+                            to: Default::default(),
+                            value: node.trace.value.to_ethers(),
+                        })
+                    }
+                    _ => None,
                 }
-                _ => None,
             })
             .collect()
     }

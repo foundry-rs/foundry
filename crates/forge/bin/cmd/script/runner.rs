@@ -42,7 +42,7 @@ impl ScriptRunner {
         trace!(target: "script", "executing setUP()");
 
         if !is_broadcast {
-            if self.sender == Config::DEFAULT_SENDER.to_alloy() {
+            if self.sender == Config::DEFAULT_SENDER {
                 // We max out their balance so that they can deploy and make calls.
                 self.executor.set_balance(self.sender, U256::MAX)?;
             }
@@ -63,7 +63,7 @@ impl ScriptRunner {
             .filter_map(|code| {
                 let DeployResult { traces, .. } = self
                     .executor
-                    .deploy(self.sender, code.0.clone().into(), U256::ZERO, None)
+                    .deploy(self.sender, code.clone(), U256::ZERO, None)
                     .expect("couldn't deploy library");
 
                 traces
@@ -269,7 +269,7 @@ impl ScriptRunner {
         value: U256,
         commit: bool,
     ) -> Result<ScriptResult> {
-        let mut res = self.executor.call_raw(from, to, calldata.0.clone().into(), value)?;
+        let mut res = self.executor.call_raw(from, to, calldata.clone(), value)?;
         let mut gas_used = res.gas_used;
 
         // We should only need to calculate realistic gas costs when preparing to broadcast
@@ -279,7 +279,7 @@ impl ScriptRunner {
         // Otherwise don't re-execute, or some usecases might be broken: https://github.com/foundry-rs/foundry/issues/3921
         if commit {
             gas_used = self.search_optimal_gas_usage(&res, from, to, &calldata, value)?;
-            res = self.executor.call_raw_committing(from, to, calldata.0.into(), value)?;
+            res = self.executor.call_raw_committing(from, to, calldata, value)?;
         }
 
         let RawCallResult {

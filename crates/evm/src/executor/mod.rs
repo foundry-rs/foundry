@@ -13,15 +13,12 @@ pub use abi::{
     patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
     HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
 };
+use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
+use alloy_json_abi::{Function, JsonAbi as Abi};
 /// Reexport commonly used revm types
 pub use alloy_primitives::{Address, Bytes, U256};
 use backend::FuzzBackendWrapper;
-use ethers::{
-    abi::{Abi, Contract, Detokenize, Function, Tokenize},
-    prelude::{decode_function_data, encode_function_data},
-    signers::LocalWallet,
-    types::Log,
-};
+use ethers::{signers::LocalWallet, types::Log};
 use foundry_common::{abi::IntoFunction, evm::Breakpoints};
 use revm::primitives::hex_literal::hex;
 pub use revm::{
@@ -192,16 +189,12 @@ impl Executor {
     ///
     /// Ayn changes made during the setup call to env's block environment are persistent, for
     /// example `vm.chainId()` will change the `block.chainId` for all subsequent test calls.
-    pub fn setup(
-        &mut self,
-        from: Option<Address>,
-        to: Address,
-    ) -> Result<CallResult<()>, EvmError> {
+    pub fn setup(&mut self, from: Option<Address>, to: Address) -> Result<CallResult, EvmError> {
         trace!(?from, ?to, "setting up contract");
 
         let from = from.unwrap_or(CALLER);
         self.backend.set_test_contract(to).set_caller(from);
-        let res = self.call_committing::<(), _, _>(from, to, "setUp()", (), U256::ZERO, None)?;
+        let res = self.call_committing::<_, _>(from, to, "setUp()", vec![], U256::ZERO, None)?;
 
         // record any changes made to the block's environment during setup
         self.env.block = res.env.block.clone();
@@ -239,7 +232,7 @@ impl Executor {
     /// Performs a call to an account on the current state of the VM.
     ///
     /// The state after the call is persisted.
-    pub fn call_committing<D: Detokenize, T: Tokenize, F: IntoFunction>(
+    pub fn call_committing<T: Into<Vec<DynSolValue>>, F: IntoFunction>(
         &mut self,
         from: Address,
         to: Address,
@@ -247,9 +240,9 @@ impl Executor {
         args: T,
         value: U256,
         abi: Option<&Abi>,
-    ) -> Result<CallResult<D>, EvmError> {
+    ) -> Result<CallResult, EvmError> {
         let func = func.into();
-        let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
+        let calldata = Bytes::from(func.abi_encode_input(&args.into())?.to_vec());
         let result = self.call_raw_committing(from, to, calldata, value)?;
         convert_call_result(abi, &func, result)
     }
@@ -271,7 +264,7 @@ impl Executor {
     }
 
     /// Executes the test function call
-    pub fn execute_test<D: Detokenize, T: Tokenize, F: IntoFunction>(
+    pub fn execute_test<T: Into<Vec<DynSolValue>>, F: IntoFunction>(
         &mut self,
         from: Address,
         test_contract: Address,
@@ -279,9 +272,9 @@ impl Executor {
         args: T,
         value: U256,
         abi: Option<&Abi>,
-    ) -> Result<CallResult<D>, EvmError> {
+    ) -> Result<CallResult, EvmError> {
         let func = func.into();
-        let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
+        let calldata = Bytes::from(func.abi_encode_input(&args.into())?.to_vec());
 
         // execute the call
         let env = self.build_test_env(from, TransactTo::Call(test_contract), calldata, value);
@@ -292,7 +285,7 @@ impl Executor {
     /// Performs a call to an account on the current state of the VM.
     ///
     /// The state after the call is not persisted.
-    pub fn call<D: Detokenize, T: Tokenize, F: IntoFunction>(
+    pub fn call<T: Into<Vec<DynSolValue>>, F: IntoFunction>(
         &self,
         from: Address,
         to: Address,
@@ -300,9 +293,9 @@ impl Executor {
         args: T,
         value: U256,
         abi: Option<&Abi>,
-    ) -> Result<CallResult<D>, EvmError> {
+    ) -> Result<CallResult, EvmError> {
         let func = func.into();
-        let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
+        let calldata = Bytes::from(func.abi_encode_input(&args.into())?.to_vec());
         let call_result = self.call_raw(from, to, calldata, value)?;
         convert_call_result(abi, &func, call_result)
     }
@@ -524,16 +517,13 @@ impl Executor {
         let mut success = !reverted;
         if success {
             // Check if a DSTest assertion failed
-            let call = executor.call::<bool, _, _>(
-                CALLER,
-                address,
-                "failed()(bool)",
-                (),
-                U256::ZERO,
-                None,
-            );
+            let call =
+                executor.call::<_, _>(CALLER, address, "failed()(bool)", vec![], U256::ZERO, None);
 
             if let Ok(CallResult { result: failed, .. }) = call {
+                let failed = failed
+                    .as_bool()
+                    .expect("Failed to decode DSTest `failed` variable. This is a bug");
                 success = !failed;
             }
         }
@@ -602,7 +592,7 @@ pub enum EvmError {
     Execution(Box<ExecutionErr>),
     /// Error which occurred during ABI encoding/decoding
     #[error(transparent)]
-    AbiError(#[from] ethers::contract::AbiError),
+    AbiError(#[from] alloy_dyn_abi::Error),
     /// Error caused which occurred due to calling the skip() cheatcode.
     #[error("Skipped")]
     SkipError,
@@ -632,12 +622,12 @@ pub struct DeployResult {
 
 /// The result of a call.
 #[derive(Debug)]
-pub struct CallResult<D: Detokenize> {
+pub struct CallResult {
     pub skipped: bool,
     /// Whether the call reverted or not
     pub reverted: bool,
     /// The decoded result of the call
-    pub result: D,
+    pub result: DynSolValue,
     /// The gas used for the call
     pub gas_used: u64,
     /// The refunded gas for the call
@@ -810,11 +800,11 @@ fn convert_executed_result(
     })
 }
 
-fn convert_call_result<D: Detokenize>(
-    abi: Option<&Contract>,
+fn convert_call_result(
+    abi: Option<&Abi>,
     func: &Function,
     call_result: RawCallResult,
-) -> Result<CallResult<D>, EvmError> {
+) -> Result<CallResult, EvmError> {
     let RawCallResult {
         result,
         exit_reason: status,
@@ -842,10 +832,16 @@ fn convert_call_result<D: Detokenize>(
 
     match status {
         return_ok!() => {
-            let result = decode_function_data(func, result, false)?;
+            let mut result = func.abi_decode_output(&result, false)?;
+            let res = if result.len() == 1 {
+                result.pop().unwrap()
+            } else {
+                // combine results into a tuple
+                DynSolValue::Tuple(result)
+            };
             Ok(CallResult {
                 reverted,
-                result,
+                result: res,
                 gas_used,
                 gas_refunded,
                 stipend,

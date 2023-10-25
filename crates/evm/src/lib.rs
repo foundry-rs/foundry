@@ -19,8 +19,9 @@ pub mod coverage;
 /// Forge test execution backends
 pub mod executor;
 
-use ethers::types::{ActionType, CallType};
 pub use executor::abi;
+
+use ethers::types::{ActionType, CallType};
 
 /// Fuzzing wrapper for executors
 pub mod fuzz;
@@ -29,7 +30,6 @@ pub mod fuzz;
 pub mod utils;
 
 // Re-exports
-pub use ethers::types::Address;
 pub use hashbrown;
 use revm::interpreter::{CallScheme, CreateScheme};
 pub use revm::{

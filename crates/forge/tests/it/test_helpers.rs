@@ -1,10 +1,10 @@
 #![allow(unused)]
 
 use super::*;
-use ethers::{
-    prelude::{artifacts::Settings, Lazy, ProjectCompileOutput, SolcConfig},
-    solc::{artifacts::Libraries, Project, ProjectPathsConfig},
-    types::{Address, U256},
+use alloy_primitives::{Address, U256};
+use foundry_compilers::{
+    artifacts::{Libraries, Settings},
+    Project, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
 };
 use foundry_config::Config;
 use foundry_evm::{
@@ -17,6 +17,7 @@ use foundry_evm::{
     CALLER,
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
+use once_cell::sync::Lazy;
 use std::{path::PathBuf, str::FromStr};
 
 pub static PROJECT: Lazy<Project> = Lazy::new(|| {
@@ -65,13 +66,13 @@ pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
     env: Env {
         gas_limit: u64::MAX,
         chain_id: None,
-        tx_origin: Config::DEFAULT_SENDER.to_alloy(),
+        tx_origin: Config::DEFAULT_SENDER,
         block_number: 1,
         block_timestamp: 1,
         ..Default::default()
     },
-    sender: Config::DEFAULT_SENDER.to_alloy(),
-    initial_balance: U256::MAX.to_alloy(),
+    sender: Config::DEFAULT_SENDER,
+    initial_balance: U256::MAX,
     ffi: true,
     memory_limit: 2u64.pow(24),
     ..Default::default()
@@ -83,7 +84,7 @@ pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor) -> FuzzedExecutor {
     FuzzedExecutor::new(
         executor,
         proptest::test_runner::TestRunner::new(cfg),
-        CALLER.to_ethers(),
+        CALLER,
         config::test_opts().fuzz,
     )
 }

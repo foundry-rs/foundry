@@ -1,9 +1,9 @@
 use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
 use async_trait::async_trait;
-use ethers::solc::ConfigurableContractArtifact;
 use eyre::Result;
 use foundry_cli::utils::{get_cached_entry_by_name, LoadConfig};
 use foundry_common::fs;
+use foundry_compilers::ConfigurableContractArtifact;
 use foundry_utils::Retry;
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};

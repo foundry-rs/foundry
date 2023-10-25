@@ -90,3 +90,12 @@ impl ToEthers for AlloyU256 {
         U256(self.into_limbs())
     }
 }
+
+impl ToEthers for AlloyU64 {
+    type To = U64;
+
+    #[inline(always)]
+    fn to_ethers(self) -> Self::To {
+        U64(self.into_limbs())
+    }
+}

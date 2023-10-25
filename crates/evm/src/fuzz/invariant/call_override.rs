@@ -1,6 +1,6 @@
 use super::BasicTxDetails;
 use crate::executor::Executor;
-use ethers::types::{Address, Bytes};
+use alloy_primitives::{Address, Bytes};
 use parking_lot::{Mutex, RwLock};
 use proptest::{
     option::weighted,

@@ -3,16 +3,12 @@ use crate::cmd::{
     estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
     rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs, wallet::WalletSubcommands,
 };
+use alloy_primitives::{Address, B256, U256};
 use clap::{Parser, Subcommand, ValueHint};
-use ethers::{
-    abi::ethabi::ethereum_types::BigEndianHash,
-    types::{serde_helpers::Numeric, Address, BlockId, NameOrAddress, H256, U256},
-};
+use ethers::types::{BlockId, NameOrAddress};
 use eyre::Result;
-use foundry_cli::{
-    opts::{EtherscanOpts, RpcOpts},
-    utils::parse_u256,
-};
+use foundry_cli::opts::{EtherscanOpts, RpcOpts};
+use foundry_common::serde_helpers::Numeric;
 use std::{path::PathBuf, str::FromStr};
 
 const VERSION_MESSAGE: &str = concat!(
@@ -371,7 +367,7 @@ pub enum Subcommands {
         address: Option<String>,
 
         /// The nonce of the deployer address.
-        #[clap(long, value_parser = parse_u256)]
+        #[clap(long)]
         nonce: Option<U256>,
 
         #[clap(flatten)]
@@ -743,7 +739,7 @@ pub enum Subcommands {
 
         /// The storage slot numbers (hex or decimal).
         #[clap(value_parser = parse_slot)]
-        slots: Vec<H256>,
+        slots: Vec<B256>,
 
         /// The block height to query at.
         ///
@@ -877,10 +873,10 @@ pub struct ToBaseArgs {
     pub base_in: Option<String>,
 }
 
-pub fn parse_slot(s: &str) -> Result<H256> {
-    Numeric::from_str(s)
-        .map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))
-        .map(|n| H256::from_uint(&n.into()))
+pub fn parse_slot(s: &str) -> Result<B256> {
+    let slot = Numeric::from_str(s).map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))?;
+    let slot: U256 = slot.into();
+    Ok(B256::from(slot))
 }
 
 #[cfg(test)]

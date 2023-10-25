@@ -1,7 +1,6 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use alloy_primitives::U256;
 use clap::Parser;
-
 use eyre::Result;
 use forge::{
     decode::decode_console_logs,
@@ -96,7 +95,7 @@ pub struct TestArgs {
     list: bool,
 
     /// Set seed used to generate randomness during your fuzz runs.
-    #[clap(long, value_parser = utils::alloy_parse_u256)]
+    #[clap(long)]
     pub fuzz_seed: Option<U256>,
 
     #[clap(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]

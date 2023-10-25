@@ -15,7 +15,11 @@ use ethers::{
 };
 use foundry_common::get_http_provider;
 use foundry_config::Config;
-use foundry_utils::{rpc, rpc::next_http_rpc_endpoint, types::ToAlloy};
+use foundry_utils::{
+    rpc,
+    rpc::next_http_rpc_endpoint,
+    types::{ToAlloy, ToEthers},
+};
 use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
 
@@ -160,8 +164,8 @@ async fn test_fork_eth_get_nonce() {
     }
 
     let addr = Config::DEFAULT_SENDER;
-    let api_nonce = api.transaction_count(addr, None).await.unwrap();
-    let provider_nonce = provider.get_transaction_count(addr, None).await.unwrap();
+    let api_nonce = api.transaction_count(addr.to_ethers(), None).await.unwrap();
+    let provider_nonce = provider.get_transaction_count(addr.to_ethers(), None).await.unwrap();
     assert_eq!(api_nonce, provider_nonce);
 }
 

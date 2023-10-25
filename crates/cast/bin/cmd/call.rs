@@ -1,18 +1,17 @@
+use alloy_primitives::U256;
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::{
-    solc::EvmVersion,
-    types::{BlockId, NameOrAddress, U256},
-};
+use ethers::types::{BlockId, NameOrAddress};
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
 use foundry_common::runtime_client::RuntimeClient;
+use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{executor::opts::EvmOpts, trace::TracingExecutor};
-use foundry_utils::types::ToAlloy;
+use foundry_utils::types::{ToAlloy, ToEthers};
 use std::str::FromStr;
 
 type Provider = ethers::providers::Provider<RuntimeClient>;
@@ -131,7 +130,7 @@ impl CallArgs {
         let sender = eth.wallet.sender().await;
 
         let mut builder: TxBuilder<'_, Provider> =
-            TxBuilder::new(&provider, sender, to, chain, tx.legacy).await?;
+            TxBuilder::new(&provider, sender.to_ethers(), to, chain, tx.legacy).await?;
 
         builder
             .gas(tx.gas_limit)
@@ -156,9 +155,9 @@ impl CallArgs {
                             .await;
 
                     let trace = match executor.deploy(
-                        sender.to_alloy(),
+                        sender,
                         code.into_bytes().into(),
-                        value.unwrap_or(U256::zero()).to_alloy(),
+                        value.unwrap_or(U256::ZERO),
                         None,
                     ) {
                         Ok(deploy_result) => TraceResult::from(deploy_result),
@@ -193,7 +192,7 @@ impl CallArgs {
                     let (tx, _) = builder.build();
 
                     let trace = TraceResult::from(executor.call_raw_committing(
-                        sender.to_alloy(),
+                        sender,
                         tx.to_addr().copied().expect("an address to be here").to_alloy(),
                         tx.data().cloned().unwrap_or_default().to_vec().into(),
                         tx.value().copied().unwrap_or_default().to_alloy(),
@@ -208,7 +207,7 @@ impl CallArgs {
 
         let builder_output: (
             ethers::types::transaction::eip2718::TypedTransaction,
-            Option<ethers::abi::Function>,
+            Option<alloy_json_abi::Function>,
         ) = builder.build();
 
         println!("{}", Cast::new(provider).call(builder_output, block).await?);

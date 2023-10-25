@@ -16,11 +16,10 @@ use crate::{
     },
     CALLER, TEST_CONTRACT_ADDRESS,
 };
-use alloy_primitives::{b256, Address, B256, U256, U64};
+use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
 use ethers::{
     prelude::Block,
     types::{BlockNumber, Transaction},
-    utils::keccak256,
 };
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use foundry_utils::types::{ToAlloy, ToEthers};
@@ -866,7 +865,7 @@ impl Backend {
         for tx in full_block.transactions.into_iter() {
             // System transactions such as on L2s don't contain any pricing info so we skip them
             // otherwise this would cause reverts
-            if is_known_system_sender(tx.from) ||
+            if is_known_system_sender(tx.from.to_alloy()) ||
                 tx.transaction_type.map(|ty| ty.as_u64()) == Some(SYSTEM_TRANSACTION_TYPE)
             {
                 continue

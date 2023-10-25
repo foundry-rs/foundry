@@ -1,7 +1,7 @@
 use super::{CoverageItem, CoverageItemKind, ItemAnchor, SourceLocation};
 use crate::utils::ICPCMap;
 use alloy_primitives::Bytes;
-use ethers::prelude::sourcemap::{SourceElement, SourceMap};
+use foundry_compilers::sourcemap::{SourceElement, SourceMap};
 use revm::{
     interpreter::opcode::{self, spec_opcode_gas},
     primitives::SpecId,

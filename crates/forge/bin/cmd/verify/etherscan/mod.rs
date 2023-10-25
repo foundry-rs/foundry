@@ -1,21 +1,18 @@
 use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
 use crate::cmd::retry::RETRY_CHECK_ON_VERIFY;
-use ethers::{
-    abi::Function,
-    etherscan::{
-        utils::lookup_compiler_version,
-        verify::{CodeFormat, VerifyContract},
-        Client,
-    },
-    prelude::errors::EtherscanError,
-    solc::{artifacts::CompactContract, cache::CacheEntry, Project, Solc},
-    utils::to_checksum,
-};
+use alloy_json_abi::Function;
 use eyre::{eyre, Context, Result};
+use foundry_block_explorers::{
+    errors::EtherscanError,
+    utils::lookup_compiler_version,
+    verify::{CodeFormat, VerifyContract},
+    Client,
+};
 use foundry_cli::utils::{get_cached_entry_by_name, read_constructor_args_file, LoadConfig};
-use foundry_common::abi::encode_args;
+use foundry_common::abi::encode_function_args;
+use foundry_compilers::{artifacts::CompactContract, cache::CacheEntry, Project, Solc};
 use foundry_config::{Chain, Config, SolcReq};
-use foundry_utils::{types::ToEthers, Retry};
+use foundry_utils::Retry;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -66,7 +63,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             println!(
                 "\nContract [{}] {:?} is already verified. Skipping verification.",
                 verify_args.contract_name,
-                to_checksum(&verify_args.address, None)
+                verify_args.address.to_checksum(None)
             );
 
             return Ok(())
@@ -77,7 +74,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
         let retry: Retry = args.retry.into();
         let resp = retry.run_async(|| {
             async {
-                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, to_checksum(&verify_args.address, None));
+                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, verify_args.address.to_checksum(None));
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await
@@ -119,7 +116,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
         {}",
                 resp.message,
                 resp.result,
-                etherscan.address_url(args.address.to_ethers())
+                etherscan.address_url(args.address)
             );
 
             if args.watch {
@@ -316,7 +313,7 @@ impl EtherscanVerificationProvider {
         let compiler_version = format!("v{}", ensure_solc_build_metadata(compiler_version).await?);
         let constructor_args = self.constructor_args(args, &project)?;
         let mut verify_args =
-            VerifyContract::new(args.address.to_ethers(), contract_name, source, compiler_version)
+            VerifyContract::new(args.address, contract_name, source, compiler_version)
                 .constructor_arguments(constructor_args)
                 .code_format(code_format);
 
@@ -420,10 +417,9 @@ impl EtherscanVerificationProvider {
                 name: "constructor".to_string(),
                 inputs: constructor.inputs.clone(),
                 outputs: vec![],
-                constant: None,
-                state_mutability: Default::default(),
+                state_mutability: alloy_json_abi::StateMutability::NonPayable,
             };
-            let encoded_args = encode_args(
+            let encoded_args = encode_function_args(
                 &func,
                 &read_constructor_args_file(constructor_args_path.to_path_buf())?,
             )?;
@@ -497,7 +493,7 @@ mod tests {
                 &config,
             )
             .unwrap();
-        assert_eq!(client.etherscan_api_url().as_str(), "https://api-testnet.polygonscan.com/");
+        assert_eq!(client.etherscan_api_url().as_str(), "https://api-testnet.polygonscan.com/?/");
 
         assert!(format!("{client:?}").contains("dummykey"));
 
@@ -524,7 +520,7 @@ mod tests {
                 &config,
             )
             .unwrap();
-        assert_eq!(client.etherscan_api_url().as_str(), "https://verifier-url.com/");
+        assert_eq!(client.etherscan_api_url().as_str(), "https://verifier-url.com/?/");
         assert!(format!("{client:?}").contains("dummykey"));
     }
 

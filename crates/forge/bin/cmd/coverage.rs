@@ -1,13 +1,6 @@
 use super::{install, test::FilterArgs};
 use alloy_primitives::{Address, Bytes, U256};
 use clap::{Parser, ValueEnum, ValueHint};
-use ethers::{
-    prelude::{
-        artifacts::{Ast, CompactBytecode, CompactDeployedBytecode},
-        Artifact, Project, ProjectCompileOutput,
-    },
-    solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap},
-};
 use eyre::{Context, Result};
 use forge::{
     coverage::{
@@ -26,8 +19,12 @@ use foundry_cli::{
     utils::{LoadConfig, STATIC_FUZZ_SEED},
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
+use foundry_compilers::{
+    artifacts::{contract::CompactContractBytecode, Ast, CompactBytecode, CompactDeployedBytecode},
+    sourcemap::SourceMap,
+    Artifact, Project, ProjectCompileOutput,
+};
 use foundry_config::{Config, SolcReq};
-use foundry_utils::types::ToEthers;
 use semver::Version;
 use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel};
 use tracing::trace;
@@ -89,7 +86,7 @@ impl CoverageArgs {
         }
 
         // Set fuzz seed so coverage reports are deterministic
-        config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED).to_ethers());
+        config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
         let (project, output) = self.build(&config)?;
         p_println!(!self.opts.silent => "Analysing contracts...");
@@ -389,7 +386,7 @@ fn dummy_link_bytecode(mut obj: CompactBytecode) -> Option<Bytes> {
     let link_references = obj.link_references.clone();
     for (file, libraries) in link_references {
         for library in libraries.keys() {
-            obj.link(&file, library, Address::ZERO.to_ethers());
+            obj.link(&file, library, Address::ZERO);
         }
     }
 

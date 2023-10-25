@@ -1,26 +1,22 @@
 //! Various utilities to decode test results
-use crate::{
-    abi::ConsoleEvents::{self, *},
-    executor::inspector::cheatcodes::util::MAGIC_SKIP_BYTES,
-};
-use alloy_primitives::B256;
-use ethers::{
-    abi::{decode, AbiDecode, Contract as Abi, ParamType, RawLog, Token},
-    contract::EthLogDecode,
-    prelude::U256,
-    types::Log,
-};
+use crate::executor::inspector::cheatcodes::util::MAGIC_SKIP_BYTES;
+use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
+use alloy_json_abi::JsonAbi;
+use alloy_primitives::{B256, U256};
+use alloy_sol_types::{sol_data::String as SolString, SolType};
+use ethers::{abi::RawLog, contract::EthLogDecode, types::Log};
+use foundry_abi::console::ConsoleEvents::{self, *};
 use foundry_common::{abi::format_token, SELECTOR_LEN};
 use foundry_utils::error::ERROR_PREFIX;
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use revm::interpreter::{return_ok, InstructionResult};
+use thiserror::Error;
 
 /// Decode a set of logs, only returning logs from DSTest logging events and Hardhat's `console.log`
 pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
     logs.iter().filter_map(decode_console_log).collect()
 }
-
 /// Decode a single log.
 ///
 /// This function returns [None] if it is not a DSTest log or the result of a Hardhat
@@ -67,20 +63,41 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
     Some(decoded)
 }
 
+/// Possible errors when decoding a revert error string.
+#[derive(Debug, Clone, Error)]
+pub enum RevertDecodingError {
+    #[error("Not enough data to decode")]
+    InsufficientErrorData,
+    #[error("Unsupported solidity builtin panic")]
+    UnsupportedSolidityBuiltinPanic,
+    #[error("Could not decode slice")]
+    SliceDecodingError,
+    #[error("Non-native error and not string")]
+    NonNativeErrorAndNotString,
+    #[error("Unknown Error Selector")]
+    UnknownErrorSelector,
+    #[error("Could not decode cheatcode string")]
+    UnknownCheatcodeErrorString,
+    #[error("Bad String decode")]
+    BadStringDecode,
+    #[error(transparent)]
+    AlloyDecodingError(alloy_dyn_abi::Error),
+}
+
 /// Given an ABI encoded error string with the function signature `Error(string)`, it decodes
 /// it and returns the revert error message.
 pub fn decode_revert(
     err: &[u8],
-    maybe_abi: Option<&Abi>,
+    maybe_abi: Option<&JsonAbi>,
     status: Option<InstructionResult>,
-) -> eyre::Result<String> {
+) -> Result<String, RevertDecodingError> {
     if err.len() < SELECTOR_LEN {
         if let Some(status) = status {
             if !matches!(status, return_ok!()) {
                 return Ok(format!("EvmError: {status:?}"))
             }
         }
-        eyre::bail!("Not enough error data to decode")
+        return Err(RevertDecodingError::InsufficientErrorData)
     }
     match err[..SELECTOR_LEN] {
         // keccak(Panic(uint256))
@@ -123,20 +140,23 @@ pub fn decode_revert(
                     // calling a zero initialized variable of internal function type
                     Ok("Calling a zero initialized variable of internal function type".to_string())
                 }
-                _ => {
-                    eyre::bail!("Unsupported solidity builtin panic")
-                }
+                _ => Err(RevertDecodingError::UnsupportedSolidityBuiltinPanic),
             }
         }
         // keccak(Error(string))
-        [8, 195, 121, 160] => {
-            String::decode(&err[SELECTOR_LEN..]).map_err(|_| eyre::eyre!("Bad string decode"))
-        }
+        [8, 195, 121, 160] => DynSolType::abi_decode(&DynSolType::String, &err[SELECTOR_LEN..])
+            .map_err(RevertDecodingError::AlloyDecodingError)
+            .and_then(|v| {
+                v.clone().as_str().map(|s| s.to_owned()).ok_or(RevertDecodingError::BadStringDecode)
+            })
+            .to_owned(),
         // keccak(expectRevert(bytes))
         [242, 141, 206, 179] => {
             let err_data = &err[SELECTOR_LEN..];
             if err_data.len() > 64 {
-                let len = U256::from(&err_data[32..64]).as_usize();
+                let len = U256::try_from_be_slice(&err_data[32..64])
+                    .ok_or(RevertDecodingError::SliceDecodingError)?
+                    .to::<usize>();
                 if err_data.len() > 64 + len {
                     let actual_err = &err_data[64..64 + len];
                     if let Ok(decoded) = decode_revert(actual_err, maybe_abi, None) {
@@ -148,7 +168,7 @@ pub fn decode_revert(
                     }
                 }
             }
-            eyre::bail!("Non-native error and not string")
+            Err(RevertDecodingError::NonNativeErrorAndNotString)
         }
         // keccak(expectRevert(bytes4))
         [195, 30, 176, 224] => {
@@ -160,7 +180,7 @@ pub fn decode_revert(
                     return Ok(decoded)
                 }
             }
-            eyre::bail!("Unknown error selector")
+            Err(RevertDecodingError::UnknownErrorSelector)
         }
         _ => {
             // See if the revert is caused by a skip() call.
@@ -170,10 +190,11 @@ pub fn decode_revert(
             // try to decode a custom error if provided an abi
             if let Some(abi) = maybe_abi {
                 for abi_error in abi.errors() {
-                    if abi_error.signature()[..SELECTOR_LEN] == err[..SELECTOR_LEN] {
+                    if abi_error.signature()[..SELECTOR_LEN].as_bytes() == &err[..SELECTOR_LEN] {
                         // if we don't decode, don't return an error, try to decode as a
                         // string later
-                        if let Ok(decoded) = abi_error.decode(&err[SELECTOR_LEN..]) {
+                        if let Ok(decoded) = abi_error.abi_decode_input(&err[SELECTOR_LEN..], false)
+                        {
                             let inputs = decoded
                                 .iter()
                                 .map(foundry_common::abi::format_token)
@@ -184,20 +205,35 @@ pub fn decode_revert(
                     }
                 }
             }
+
             // optimistically try to decode as string, unknown selector or `CheatcodeError`
-            String::decode(err)
-                .ok()
+            let error = DynSolType::abi_decode(&DynSolType::String, err)
+                .map_err(|_| RevertDecodingError::BadStringDecode)
+                .and_then(|v| {
+                    v.as_str().map(|s| s.to_owned()).ok_or(RevertDecodingError::BadStringDecode)
+                })
+                .ok();
+
+            let error = error.filter(|err| err.as_str() != "");
+            error
                 .or_else(|| {
                     // try decoding as cheatcode error
                     if err.starts_with(ERROR_PREFIX.as_slice()) {
-                        String::decode(&err[ERROR_PREFIX.len()..]).ok()
+                        DynSolType::abi_decode(&DynSolType::String, &err[ERROR_PREFIX.len()..])
+                            .map_err(|_| RevertDecodingError::UnknownCheatcodeErrorString)
+                            .and_then(|v| {
+                                v.as_str()
+                                    .map(|s| s.to_owned())
+                                    .ok_or(RevertDecodingError::UnknownCheatcodeErrorString)
+                            })
+                            .ok()
                     } else {
                         None
                     }
                 })
                 .or_else(|| {
                     // try decoding as unknown err
-                    String::decode(&err[SELECTOR_LEN..])
+                    SolString::abi_decode(&err[SELECTOR_LEN..], false)
                         .map(|err_str| format!("{}:{err_str}", hex::encode(&err[..SELECTOR_LEN])))
                         .ok()
                 })
@@ -214,49 +250,43 @@ pub fn decode_revert(
                         }
                     })
                 })
-                .ok_or_else(|| eyre::eyre!("Non-native error and not string"))
+                .ok_or_else(|| RevertDecodingError::NonNativeErrorAndNotString)
         }
     }
 }
 
 /// Tries to optimistically decode a custom solc error, with at most 4 arguments
-pub fn decode_custom_error(err: &[u8]) -> Option<Token> {
+pub fn decode_custom_error(err: &[u8]) -> Option<DynSolValue> {
     decode_custom_error_args(err, 4)
 }
 
 /// Tries to optimistically decode a custom solc error with a maximal amount of arguments
 ///
 /// This will brute force decoding of custom errors with up to `args` arguments
-pub fn decode_custom_error_args(err: &[u8], args: usize) -> Option<Token> {
+pub fn decode_custom_error_args(err: &[u8], args: usize) -> Option<DynSolValue> {
     if err.len() <= SELECTOR_LEN {
         return None
     }
 
     let err = &err[SELECTOR_LEN..];
     /// types we check against
-    static TYPES: Lazy<Vec<ParamType>> = Lazy::new(|| {
+    static TYPES: Lazy<Vec<DynSolType>> = Lazy::new(|| {
         vec![
-            ParamType::Address,
-            ParamType::Bool,
-            ParamType::Uint(256),
-            ParamType::Int(256),
-            ParamType::Bytes,
-            ParamType::String,
+            DynSolType::Address,
+            DynSolType::Bool,
+            DynSolType::Uint(256),
+            DynSolType::Int(256),
+            DynSolType::Bytes,
+            DynSolType::String,
         ]
     });
 
-    macro_rules! try_decode {
-        ($ty:ident) => {
-            if let Ok(mut decoded) = decode(&[$ty], err) {
-                return Some(decoded.remove(0))
-            }
-        };
-    }
-
     // check if single param, but only if it's a single word
     if err.len() == 32 {
-        for ty in TYPES.iter().cloned() {
-            try_decode!(ty);
+        for ty in TYPES.iter() {
+            if let Ok(decoded) = ty.abi_decode(err) {
+                return Some(decoded)
+            }
         }
         return None
     }
@@ -264,15 +294,17 @@ pub fn decode_custom_error_args(err: &[u8], args: usize) -> Option<Token> {
     // brute force decode all possible combinations
     for num in (2..=args).rev() {
         for candidate in TYPES.iter().cloned().combinations(num) {
-            if let Ok(decoded) = decode(&candidate, err) {
-                return Some(Token::Tuple(decoded))
+            if let Ok(decoded) = DynSolType::abi_decode(&DynSolType::Tuple(candidate), err) {
+                return Some(decoded)
             }
         }
     }
 
     // try as array
-    for ty in TYPES.iter().cloned().map(|ty| ParamType::Array(Box::new(ty))) {
-        try_decode!(ty);
+    for ty in TYPES.iter().cloned().map(|ty| DynSolType::Array(Box::new(ty))) {
+        if let Ok(decoded) = ty.abi_decode(err) {
+            return Some(decoded)
+        }
     }
 
     None
@@ -281,36 +313,36 @@ pub fn decode_custom_error_args(err: &[u8], args: usize) -> Option<Token> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers::{
-        abi::{AbiEncode, Address},
-        contract::EthError,
-    };
+    use alloy_primitives::{Address, U256};
+    use alloy_sol_types::{sol, SolError};
 
     #[test]
     fn test_decode_custom_error_address() {
-        #[derive(Debug, Clone, EthError)]
-        struct AddressErr(Address);
-        let err = AddressErr(Address::random());
+        sol! {
+            error AddressErr(address addr);
+        }
+        let err = AddressErr { addr: Address::random() };
 
-        let encoded = err.clone().encode();
+        let encoded = err.abi_encode();
         let decoded = decode_custom_error(&encoded).unwrap();
-        assert_eq!(decoded, Token::Address(err.0));
+        assert_eq!(decoded, DynSolValue::Address(err.addr));
     }
 
     #[test]
     fn test_decode_custom_error_args3() {
-        #[derive(Debug, Clone, EthError)]
-        struct MyError(Address, bool, U256);
-        let err = MyError(Address::random(), true, 100u64.into());
+        sol! {
+            error MyError(address addr, bool b, uint256 val);
+        }
+        let err = MyError { addr: Address::random(), b: true, val: U256::from(100u64) };
 
-        let encoded = err.clone().encode();
+        let encoded = err.clone().abi_encode();
         let decoded = decode_custom_error(&encoded).unwrap();
         assert_eq!(
             decoded,
-            Token::Tuple(vec![
-                Token::Address(err.0),
-                Token::Bool(err.1),
-                Token::Uint(100u64.into()),
+            DynSolValue::Tuple(vec![
+                DynSolValue::Address(err.addr),
+                DynSolValue::Bool(err.b),
+                DynSolValue::Uint(U256::from(100u64), 256),
             ])
         );
     }

@@ -7,7 +7,6 @@ use crate::executor::fork::{
     BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend,
 };
 use ethers::{
-    abi::{AbiDecode, AbiEncode, AbiError},
     providers::Provider,
     types::{BlockId, BlockNumber},
 };
@@ -46,18 +45,6 @@ impl fmt::Display for ForkId {
 impl<T: Into<String>> From<T> for ForkId {
     fn from(id: T) -> Self {
         Self(id.into())
-    }
-}
-
-impl AbiEncode for ForkId {
-    fn encode(self) -> Vec<u8> {
-        AbiEncode::encode(self.0)
-    }
-}
-
-impl AbiDecode for ForkId {
-    fn decode(bytes: impl AsRef<[u8]>) -> Result<Self, AbiError> {
-        Ok(Self(String::decode(bytes)?))
     }
 }
 

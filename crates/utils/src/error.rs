@@ -24,8 +24,6 @@ pub trait SolError: std::error::Error {
     }
 
     /// Returns the error as abi-encoded String
-    ///
-    /// See also [`AbiEncode`](ethers::abi::AbiEncode)
     fn encode_string(&self) -> Bytes {
         let err = DynSolValue::from(self.to_string());
         err.abi_encode().into()

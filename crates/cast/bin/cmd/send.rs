@@ -10,6 +10,7 @@ use foundry_cli::{
 };
 use foundry_common::cli_warn;
 use foundry_config::{Chain, Config};
+use foundry_utils::types::{ToAlloy, ToEthers};
 use std::str::FromStr;
 
 /// CLI arguments for `cast send`.
@@ -132,12 +133,17 @@ impl SendTxArgs {
             }
 
             if resend {
-                tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
+                tx.nonce = Some(
+                    provider
+                        .get_transaction_count(config.sender.to_ethers(), None)
+                        .await?
+                        .to_alloy(),
+                );
             }
 
             cast_send(
                 provider,
-                config.sender,
+                config.sender.to_ethers(),
                 to,
                 code,
                 (sig, args),
@@ -161,7 +167,7 @@ impl SendTxArgs {
             // prevent misconfigured hwlib from sending a transaction that defies
             // user-specified --from
             if let Some(specified_from) = eth.wallet.from {
-                if specified_from != from {
+                if specified_from != from.to_alloy() {
                     eyre::bail!(
                         "\
 The specified sender via CLI/env vars does not match the sender configured via
@@ -173,7 +179,7 @@ corresponds to the sender, or let foundry automatically detect it by not specify
             }
 
             if resend {
-                tx.nonce = Some(provider.get_transaction_count(from, None).await?);
+                tx.nonce = Some(provider.get_transaction_count(from, None).await?.to_alloy());
             }
 
             let provider = provider.with_signer(signer);

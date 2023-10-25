@@ -1,4 +1,4 @@
-use ethers::abi::{Event, Function};
+use alloy_json_abi::{Event, Function};
 use foundry_common::{
     abi::{get_event, get_func},
     fs,

@@ -1,5 +1,5 @@
 use super::{remove_whitespaces, INLINE_CONFIG_PREFIX, INLINE_CONFIG_PREFIX_SELECTED_PROFILE};
-use ethers_solc::{
+use foundry_compilers::{
     artifacts::{ast::NodeType, Node},
     ProjectCompileOutput,
 };

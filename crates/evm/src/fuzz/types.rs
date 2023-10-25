@@ -1,5 +1,5 @@
 use crate::{coverage::HitMaps, debug::DebugArena, executor::RawCallResult, trace::CallTraceArena};
-use ethers::types::Bytes;
+use alloy_primitives::Bytes;
 use foundry_common::evm::Breakpoints;
 use revm::interpreter::InstructionResult;
 use serde::{Deserialize, Serialize};
@@ -34,7 +34,7 @@ pub struct CaseOutcome {
 #[derive(Debug)]
 pub struct CounterExampleOutcome {
     /// Minimal reproduction test case for failing test
-    pub counterexample: (ethers::types::Bytes, RawCallResult),
+    pub counterexample: (alloy_primitives::Bytes, RawCallResult),
     /// The status of the call
     pub exit_reason: InstructionResult,
     /// The debug nodes of the call

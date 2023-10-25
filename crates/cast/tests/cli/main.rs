@@ -139,7 +139,7 @@ casttest!(estimate_function_gas, |_: TestProject, mut cmd: TestCommand| {
     let eth_rpc_url = next_http_rpc_endpoint();
     cmd.args([
         "estimate",
-        "vitalik.eth",
+        "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", // vitalik.eth
         "--value",
         "100",
         "deposit()",

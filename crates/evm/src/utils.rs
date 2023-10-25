@@ -1,7 +1,6 @@
-use ethers::{
-    abi::{Abi, FixedBytes, Function},
-    types::{Block, Chain, H256, U256},
-};
+use alloy_json_abi::{Function, JsonAbi as Abi};
+use alloy_primitives::FixedBytes;
+use ethers::types::{Block, Chain, H256, U256};
 use eyre::ContextCompat;
 use foundry_utils::types::ToAlloy;
 use revm::{
@@ -171,17 +170,17 @@ pub fn build_ic_pc_map(spec: SpecId, code: &[u8]) -> ICPCMap {
 /// Given an ABI and selector, it tries to find the respective function.
 pub fn get_function(
     contract_name: &str,
-    selector: &FixedBytes,
+    selector: &FixedBytes<4>,
     abi: &Abi,
 ) -> eyre::Result<Function> {
     abi.functions()
-        .find(|func| func.short_signature().as_slice() == selector.as_slice())
+        .find(|func| func.selector().as_slice() == selector.as_slice())
         .cloned()
         .wrap_err(format!("{contract_name} does not have the selector {selector:?}"))
 }
 
 // TODO: Add this once solc is removed from this crate
-pub use ethers::solc::utils::RuntimeOrHandle;
+pub use foundry_compilers::utils::RuntimeOrHandle;
 
 /*
 use tokio::runtime::{Handle, Runtime};

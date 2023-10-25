@@ -9,8 +9,8 @@ use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_json_abi::EventParam;
 use alloy_primitives::{hex, Address, U256};
 use core::fmt::Debug;
-use ethers_solc::Artifact;
 use eyre::{Result, WrapErr};
+use foundry_compilers::Artifact;
 use foundry_evm::{
     decode::decode_console_logs,
     executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
@@ -1362,7 +1362,7 @@ impl<'a> Iterator for InstructionIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers_solc::{error::SolcError, Solc};
+    use foundry_compilers::{error::SolcError, Solc};
     use std::sync::Mutex;
 
     #[test]

@@ -5,21 +5,19 @@ use super::{
     *,
 };
 use alloy_primitives::{Address, Bytes, U256};
-use ethers::{
-    solc::artifacts::CompactContractBytecode, types::transaction::eip2718::TypedTransaction,
-};
+use ethers::types::transaction::eip2718::TypedTransaction;
 use eyre::Result;
 use forge::{
     executor::{
         inspector::{cheatcodes::util::BroadcastableTransactions, CheatsConfig},
         Backend, ExecutorBuilder,
     },
-    revm::primitives::U256 as rU256,
     trace::{CallTraceDecoder, Traces},
     CallKind,
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{shell, RpcUrl};
+use foundry_compilers::artifacts::CompactContractBytecode;
 use foundry_utils::types::ToEthers;
 use futures::future::join_all;
 use parking_lot::RwLock;
@@ -54,11 +52,9 @@ impl ScriptArgs {
 
         ensure_clean_constructor(&abi)?;
 
-        let predeploy_libraries =
-            predeploy_libraries.iter().map(|b| b.0.clone().into()).collect::<Vec<_>>();
         let mut runner = self.prepare_runner(script_config, sender, SimulationStage::Local).await;
         let (address, mut result) = runner.setup(
-            &predeploy_libraries,
+            predeploy_libraries,
             bytecode.0.into(),
             needs_setup(&abi),
             script_config.sender_nonce,
@@ -135,7 +131,7 @@ impl ScriptArgs {
                         abi,
                         code,
                     };
-                    return Some(((*addr).to_alloy(), info))
+                    return Some((*addr, info))
                 }
                 None
             })
@@ -177,7 +173,7 @@ impl ScriptArgs {
                                     if matches!(node.kind(), CallKind::Create | CallKind::Create2) {
                                         return Some(AdditionalContract {
                                             opcode: node.kind(),
-                                            address: node.trace.address.to_alloy(),
+                                            address: node.trace.address,
                                             init_code: node.trace.data.to_raw(),
                                         })
                                     }
@@ -188,7 +184,7 @@ impl ScriptArgs {
 
                         // Simulate mining the transaction if the user passes `--slow`.
                         if self.slow {
-                            runner.executor.env.block.number += rU256::from(1);
+                            runner.executor.env.block.number += U256::from(1);
                         }
 
                         let is_fixed_gas_limit = tx.gas.is_some();

@@ -5,10 +5,8 @@ use crate::{
     utils::{self, EnvExternalities},
 };
 use anvil::{spawn, NodeConfig};
-use ethers::{
-    solc::{artifacts::BytecodeHash, remappings::Remapping},
-    types::Address,
-};
+use ethers::types::Address;
+use foundry_compilers::{artifacts::BytecodeHash, remappings::Remapping};
 use foundry_config::Config;
 use foundry_test_utils::{
     forgetest, forgetest_async,
