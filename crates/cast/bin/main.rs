@@ -91,7 +91,7 @@ async fn main() -> Result<()> {
         }
         Subcommands::ToCheckSumAddress { address } => {
             let value = stdin::unwrap_line(address)?;
-            println!("{}", SimpleCast::to_checksum_address(&value));
+            println!("{}", value.to_checksum(None));
         }
         Subcommands::ToUint256 { value } => {
             let value = stdin::unwrap_line(value)?;
@@ -262,7 +262,7 @@ async fn main() -> Result<()> {
 
             let address: Address = stdin::unwrap_line(address)?.parse()?;
             let computed = Cast::new(&provider).compute_address(address, nonce).await?;
-            println!("Computed Address: {}", SimpleCast::to_checksum_address(&computed));
+            println!("Computed Address: {}", computed.to_checksum(None));
         }
         Subcommands::Disassemble { bytecode } => {
             println!("{}", SimpleCast::disassemble(&bytecode)?);
@@ -426,7 +426,7 @@ async fn main() -> Result<()> {
                     "forward lookup verification failed. got {name}, expected {who}"
                 );
             }
-            println!("{}", SimpleCast::to_checksum_address(&address.to_alloy()));
+            println!("{}", address.to_alloy().to_checksum(None));
         }
 
         // Misc

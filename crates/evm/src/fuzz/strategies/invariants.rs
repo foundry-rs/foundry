@@ -109,7 +109,6 @@ fn select_random_sender(
     if !senders.targeted.is_empty() {
         any::<prop::sample::Selector>()
             .prop_map(move |selector| *selector.select(&*senders.targeted))
-            .prop_map(|s| s)
             .boxed()
     } else {
         fuzz_strategy

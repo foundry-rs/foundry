@@ -281,9 +281,7 @@ impl FromStr for Numeric {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Ok(val) = s.parse::<u128>() {
-            Ok(Numeric::U256(U256::from(val)))
-        } else if s.starts_with("0x") {
+        if s.starts_with("0x") {
             U256::from_str_radix(s, 16).map(Numeric::U256).map_err(|err| err.to_string())
         } else {
             U256::from_str(s).map(Numeric::U256).map_err(|err| err.to_string())

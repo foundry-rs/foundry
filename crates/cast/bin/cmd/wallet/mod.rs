@@ -1,5 +1,4 @@
 use alloy_primitives::Address;
-use cast::SimpleCast;
 use clap::Parser;
 use ethers::{
     core::rand::thread_rng,
@@ -142,17 +141,11 @@ impl WalletSubcommands {
                         LocalWallet::new_keystore(&path, &mut rng, password, None)?;
 
                     println!("Created new encrypted keystore file: {}", path.join(uuid).display());
-                    println!(
-                        "Address: {}",
-                        SimpleCast::to_checksum_address(&wallet.address().to_alloy())
-                    );
+                    println!("Address: {}", wallet.address().to_alloy().to_checksum(None));
                 } else {
                     let wallet = LocalWallet::new(&mut rng);
                     println!("Successfully created new keypair.");
-                    println!(
-                        "Address:     {}",
-                        SimpleCast::to_checksum_address(&wallet.address().to_alloy())
-                    );
+                    println!("Address:     {}", wallet.address().to_alloy().to_checksum(None));
                     println!("Private key: 0x{}", hex::encode(wallet.signer().to_bytes()));
                 }
             }
@@ -169,7 +162,7 @@ impl WalletSubcommands {
                     .signer(0)
                     .await?;
                 let addr = wallet.address();
-                println!("{}", SimpleCast::to_checksum_address(&addr.to_alloy()));
+                println!("{}", addr.to_alloy().to_checksum(None));
             }
             WalletSubcommands::Sign { message, data, from_file, wallet } => {
                 let wallet = wallet.signer(0).await?;

@@ -1177,28 +1177,6 @@ impl SimpleCast {
         format!("0x{out}")
     }
 
-    /// Converts an Ethereum address to its checksum format
-    /// according to [EIP-55](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-55.md)
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    /// use alloy_primitives::Address;
-    /// use std::str::FromStr;
-    ///
-    /// # fn main() -> eyre::Result<()> {
-    /// let addr = Address::from_str("0xb7e390864a90b7b923c9f9310c6f98aafe43f707")?;
-    /// let addr = Cast::to_checksum_address(&addr);
-    /// assert_eq!(addr, "0xB7e390864a90b7b923C9f9310C6F98aafE43F707");
-    ///
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn to_checksum_address(address: &Address) -> String {
-        address.to_checksum(None)
-    }
-
     /// Converts a number into uint256 hex string with 0x prefix
     ///
     /// # Example

@@ -1,4 +1,3 @@
-use cast::SimpleCast;
 use clap::{builder::TypedValueParser, Parser};
 use ethers::{
     core::{k256::ecdsa::SigningKey, rand::thread_rng},
@@ -118,13 +117,11 @@ impl VanityArgs {
             timer.elapsed().as_secs(),
             if nonce.is_some() { "\nContract address: " } else { "" },
             if nonce.is_some() {
-                SimpleCast::to_checksum_address(
-                    &wallet.address().to_alloy().create(nonce.unwrap().to_alloy().to()),
-                )
+                wallet.address().to_alloy().create(nonce.unwrap()).to_checksum(None)
             } else {
                 String::new()
             },
-            SimpleCast::to_checksum_address(&wallet.address().to_alloy()),
+            wallet.address().to_alloy().to_checksum(None),
             hex::encode(wallet.signer().to_bytes()),
         );
 

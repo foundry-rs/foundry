@@ -5,13 +5,13 @@ use alloy_json_abi::JsonAbi;
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::{sol_data::String as SolString, SolType};
 use ethers::{abi::RawLog, contract::EthLogDecode, types::Log};
-use eyre::ContextCompat;
 use foundry_abi::console::ConsoleEvents::{self, *};
 use foundry_common::{abi::format_token, SELECTOR_LEN};
 use foundry_utils::error::ERROR_PREFIX;
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use revm::interpreter::{return_ok, InstructionResult};
+use thiserror::Error;
 
 /// Decode a set of logs, only returning logs from DSTest logging events and Hardhat's `console.log`
 pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
@@ -63,20 +63,41 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
     Some(decoded)
 }
 
+/// Possible errors when decoding a revert error string.
+#[derive(Debug, Clone, Error)]
+pub enum RevertDecodingError {
+    #[error("Not enough data to decode")]
+    InsufficientErrorData,
+    #[error("Unsupported solidity builtin panic")]
+    UnsupportedSolidityBuiltinPanic,
+    #[error("Could not decode slice")]
+    SliceDecodingError,
+    #[error("Non-native error and not string")]
+    NonNativeErrorAndNotString,
+    #[error("Unknown Error Selector")]
+    UnknownErrorSelector,
+    #[error("Could not decode cheatcode string")]
+    UnknownCheatcodeErrorString,
+    #[error("Bad String decode")]
+    BadStringDecode,
+    #[error(transparent)]
+    AlloyDecodingError(alloy_dyn_abi::Error),
+}
+
 /// Given an ABI encoded error string with the function signature `Error(string)`, it decodes
 /// it and returns the revert error message.
 pub fn decode_revert(
     err: &[u8],
     maybe_abi: Option<&JsonAbi>,
     status: Option<InstructionResult>,
-) -> eyre::Result<String> {
+) -> Result<String, RevertDecodingError> {
     if err.len() < SELECTOR_LEN {
         if let Some(status) = status {
             if !matches!(status, return_ok!()) {
                 return Ok(format!("EvmError: {status:?}"))
             }
         }
-        eyre::bail!("Not enough error data to decode")
+        return Err(RevertDecodingError::InsufficientErrorData)
     }
     match err[..SELECTOR_LEN] {
         // keccak(Panic(uint256))
@@ -119,22 +140,22 @@ pub fn decode_revert(
                     // calling a zero initialized variable of internal function type
                     Ok("Calling a zero initialized variable of internal function type".to_string())
                 }
-                _ => {
-                    eyre::bail!("Unsupported solidity builtin panic")
-                }
+                _ => Err(RevertDecodingError::UnsupportedSolidityBuiltinPanic),
             }
         }
         // keccak(Error(string))
-        [8, 195, 121, 160] => Ok(DynSolType::abi_decode(&DynSolType::String, &err[SELECTOR_LEN..])
-            .map_err(|_| eyre::eyre!("Bad string decode"))
-            .and_then(|v| v.clone().as_str().map(|s| s.to_owned()).wrap_err("Bad string decode"))?
-            .to_owned()),
+        [8, 195, 121, 160] => DynSolType::abi_decode(&DynSolType::String, &err[SELECTOR_LEN..])
+            .map_err(RevertDecodingError::AlloyDecodingError)
+            .and_then(|v| {
+                v.clone().as_str().map(|s| s.to_owned()).ok_or(RevertDecodingError::BadStringDecode)
+            })
+            .to_owned(),
         // keccak(expectRevert(bytes))
         [242, 141, 206, 179] => {
             let err_data = &err[SELECTOR_LEN..];
             if err_data.len() > 64 {
                 let len = U256::try_from_be_slice(&err_data[32..64])
-                    .wrap_err_with(|| "Could not decode slice")?
+                    .ok_or(RevertDecodingError::SliceDecodingError)?
                     .to::<usize>();
                 if err_data.len() > 64 + len {
                     let actual_err = &err_data[64..64 + len];
@@ -147,7 +168,7 @@ pub fn decode_revert(
                     }
                 }
             }
-            eyre::bail!("Non-native error and not string")
+            Err(RevertDecodingError::NonNativeErrorAndNotString)
         }
         // keccak(expectRevert(bytes4))
         [195, 30, 176, 224] => {
@@ -159,7 +180,7 @@ pub fn decode_revert(
                     return Ok(decoded)
                 }
             }
-            eyre::bail!("Unknown error selector")
+            Err(RevertDecodingError::UnknownErrorSelector)
         }
         _ => {
             // See if the revert is caused by a skip() call.
@@ -184,11 +205,12 @@ pub fn decode_revert(
                     }
                 }
             }
+
             // optimistically try to decode as string, unknown selector or `CheatcodeError`
             let error = DynSolType::abi_decode(&DynSolType::String, err)
-                .map_err(|_| eyre::eyre!("Could not optimisitically decode String"))
+                .map_err(|_| RevertDecodingError::BadStringDecode)
                 .and_then(|v| {
-                    v.as_str().map(|s| s.to_owned()).ok_or(eyre::eyre!("Could not decode string"))
+                    v.as_str().map(|s| s.to_owned()).ok_or(RevertDecodingError::BadStringDecode)
                 })
                 .ok();
 
@@ -198,11 +220,11 @@ pub fn decode_revert(
                     // try decoding as cheatcode error
                     if err.starts_with(ERROR_PREFIX.as_slice()) {
                         DynSolType::abi_decode(&DynSolType::String, &err[ERROR_PREFIX.len()..])
-                            .map_err(|_| eyre::eyre!("Could not decode cheatcode string error"))
+                            .map_err(|_| RevertDecodingError::UnknownCheatcodeErrorString)
                             .and_then(|v| {
                                 v.as_str()
                                     .map(|s| s.to_owned())
-                                    .wrap_err("Bad cheatcode string decode")
+                                    .ok_or(RevertDecodingError::UnknownCheatcodeErrorString)
                             })
                             .ok()
                     } else {
@@ -228,7 +250,7 @@ pub fn decode_revert(
                         }
                     })
                 })
-                .ok_or_else(|| eyre::eyre!("Non-native error and not string"))
+                .ok_or_else(|| RevertDecodingError::NonNativeErrorAndNotString)
         }
     }
 }

@@ -1,6 +1,6 @@
 use crate::utils::get_function;
 use alloy_json_abi::{Function, JsonAbi as Abi};
-use alloy_primitives::{Address, FixedBytes};
+use alloy_primitives::{Address, Selector};
 use foundry_compilers::ArtifactId;
 use std::collections::BTreeMap;
 
@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 pub struct ArtifactFilters {
     /// List of `contract_path:contract_name` along with selectors, which are to be targeted. If
     /// list of functions is not empty, target only those.
-    pub targeted: BTreeMap<String, Vec<FixedBytes<4>>>,
+    pub targeted: BTreeMap<String, Vec<Selector>>,
     /// List of `contract_path:contract_name` which are to be excluded.
     pub excluded: Vec<String>,
 }

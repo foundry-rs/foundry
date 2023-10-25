@@ -1,5 +1,4 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
-use cast::SimpleCast;
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use rayon::prelude::*;
@@ -122,7 +121,7 @@ impl Create2Args {
             .map(|_| {
                 let salt = B256::random();
 
-                let addr = SimpleCast::to_checksum_address(&deployer.create2(salt, init_code_hash));
+                let addr = deployer.create2(salt, init_code_hash).to_checksum(None);
 
                 (salt, addr)
             })
