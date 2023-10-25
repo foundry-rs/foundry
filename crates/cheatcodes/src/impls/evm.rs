@@ -312,9 +312,11 @@ impl Cheatcode for loadAllocsCall {
         let allocs: HashMap<Address, GenesisAccount> = serde_json::from_reader(file)?;
 
         // Then, load the allocs into the database.
-        ccx.data.db.load_allocs(&allocs, &mut ccx.data.journaled_state)?;
-
-        Ok(Default::default())
+        ccx.data
+            .db
+            .load_allocs(&allocs, &mut ccx.data.journaled_state)
+            .map(|_| Vec::default())
+            .map_err(|e| fmt_err!("Failed to load allocs: {e}"))
     }
 }
 

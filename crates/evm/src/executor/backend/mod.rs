@@ -20,7 +20,7 @@ use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
 use ethers::{
     prelude::Block,
     types::{BlockNumber, Transaction},
-    utils::{keccak256, GenesisAccount},
+    utils::GenesisAccount,
 };
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use foundry_utils::types::{ToAlloy, ToEthers};
@@ -973,11 +973,11 @@ impl DatabaseExt for Backend {
         allocs.iter().try_for_each(|(addr, acc)| {
             // Fetch the account from the journaled state. Will create a new account if it does
             // not already exist.
-            let (state_acc, _) = journaled_state.load_account(addr.0.into(), self)?;
+            let (state_acc, _) = journaled_state.load_account(*addr, self)?;
             // Set the account's bytecode and code hash, if the `bytecode` field is present.
             if let Some(bytecode) = acc.code.as_ref() {
-                state_acc.info.code_hash = keccak256(bytecode).into();
-                let bytecode = Bytecode::new_raw(bytecode.clone().0.into());
+                state_acc.info.code_hash = keccak256(bytecode);
+                let bytecode = Bytecode::new_raw(bytecode.0.clone().into());
                 state_acc.info.code = Some(bytecode);
             }
             // Set the account's storage, if the `storage` field is present.
@@ -985,9 +985,17 @@ impl DatabaseExt for Backend {
                 state_acc.storage = storage
                     .iter()
                     .map(|(slot, value)| {
+                        let slot = U256::from_be_bytes(slot.0);
                         (
-                            U256::from_be_bytes(slot.0),
-                            StorageSlot::new_changed(U256::ZERO, U256::from_be_bytes(value.0)),
+                            slot,
+                            StorageSlot::new_changed(
+                                state_acc
+                                    .storage
+                                    .get(&slot)
+                                    .map(|s| s.present_value)
+                                    .unwrap_or_default(),
+                                U256::from_be_bytes(value.0),
+                            ),
                         )
                     })
                     .collect();

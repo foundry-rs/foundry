@@ -15,7 +15,7 @@ contract LoadAllocsTest is DSTest {
 
         // Balance should be `0xabcd`
         assertEq(ALLOCD.balance, 0xabcd);
-        
+
         // Code should be a simple store / return, returning `0x42`
         (bool success, bytes memory rd) = ALLOCD.staticcall("");
         assertTrue(success);
