@@ -6,12 +6,16 @@ import "./Vm.sol";
 
 contract LoadAllocsTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
-    string constant ALLOCS_PATH = "./fixtures/Json/test_allocs.json";
+    string allocsPath;
     address constant ALLOCD = address(0x420);
     address constant ALLOCD_B = address(0x421);
 
+    function setUp() public {
+        allocsPath = string.concat(vm.projectRoot(), "/fixtures/Json/test_allocs.json");
+    }
+
     function testLoadAllocsStatic() public {
-        vm.loadAllocs(ALLOCS_PATH);
+        vm.loadAllocs(allocsPath);
 
         // Balance should be `0xabcd`
         assertEq(ALLOCD.balance, 0xabcd);
@@ -40,7 +44,7 @@ contract LoadAllocsTest is DSTest {
         vm.deal(ALLOCD, 0x1234);
         assertEq(ALLOCD.balance, 0x1234);
 
-        vm.loadAllocs(ALLOCS_PATH);
+        vm.loadAllocs(allocsPath);
 
         // Info should have changed.
         assertTrue(keccak256(ALLOCD.code) != keccak256(hex"FF"));
@@ -57,7 +61,7 @@ contract LoadAllocsTest is DSTest {
         vm.deal(ALLOCD_B, 0x1234);
         assertEq(ALLOCD_B.balance, 0x1234);
 
-        vm.loadAllocs(ALLOCS_PATH);
+        vm.loadAllocs(allocsPath);
 
         assertEq(ALLOCD_B.code, hex"FF");
         assertEq(ALLOCD_B.balance, 0);
