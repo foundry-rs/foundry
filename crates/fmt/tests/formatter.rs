@@ -160,6 +160,7 @@ test_directories! {
     ErrorDefinition,
     EventDefinition,
     FunctionDefinition,
+    FunctionDefinitionWithFunctionReturns,
     FunctionType,
     ImportDirective,
     ModifierDefinition,
