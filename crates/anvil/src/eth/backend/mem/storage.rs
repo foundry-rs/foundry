@@ -442,7 +442,7 @@ mod tests {
     use crate::eth::backend::db::Db;
     use ethers::{abi::ethereum_types::BigEndianHash, types::Address};
     use foundry_evm::{
-        executor::backend::MemDb,
+        backend::MemDb,
         revm::{
             db::DatabaseRef,
             primitives::{AccountInfo, U256 as rU256},

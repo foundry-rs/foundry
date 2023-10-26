@@ -18,13 +18,13 @@ use ethers::{
     utils::rlp,
 };
 use foundry_evm::{
-    executor::backend::DatabaseError,
+    backend::DatabaseError,
     revm,
     revm::{
         interpreter::InstructionResult,
         primitives::{BlockEnv, CfgEnv, EVMError, Env, ExecutionResult, Output, SpecId},
     },
-    trace::{node::CallTraceNode, CallTraceArena},
+    traces::{node::CallTraceNode, CallTraceArena},
     utils::{eval_to_instruction_result, halt_to_instruction_result},
 };
 use foundry_utils::types::{ToAlloy, ToEthers};

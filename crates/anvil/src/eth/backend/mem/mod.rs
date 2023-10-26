@@ -58,12 +58,10 @@ use ethers::{
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_common::abi::format_token;
 use foundry_evm::{
+    backend::{DatabaseError, DatabaseResult},
+    constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::{decode_custom_error_args, decode_revert},
-    executor::{
-        backend::{DatabaseError, DatabaseResult},
-        inspector::AccessListTracer,
-        DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
-    },
+    inspectors::AccessListTracer,
     revm::{
         self,
         db::CacheDB,
@@ -103,7 +101,8 @@ pub const MIN_TRANSACTION_GAS: U256 = U256([21_000, 0, 0, 0]);
 // Gas per transaction creating a contract.
 pub const MIN_CREATE_GAS: U256 = U256([53_000, 0, 0, 0]);
 
-pub type State = foundry_evm::HashMap<Address, Account>;
+// TODO: This is the same as foundry_evm::utils::StateChangeset but with ethers H160
+pub type State = foundry_evm::hashbrown::HashMap<Address, Account>;
 
 /// A block request, which includes the Pool Transactions if it's Pending
 #[derive(Debug)]

@@ -1,6 +1,6 @@
 use crate::{
-    executor::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
-    trace::{CallTraceArena, RawOrDecodedCall, TraceKind},
+    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
+    traces::{CallTraceArena, RawOrDecodedCall, TraceKind},
 };
 use alloy_primitives::U256;
 use comfy_table::{presets::ASCII_MARKDOWN, *};
@@ -116,7 +116,7 @@ impl GasReport {
 }
 
 impl Display for GasReport {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         for (name, contract) in self.contracts.iter() {
             if contract.functions.is_empty() {
                 continue

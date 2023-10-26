@@ -7,8 +7,8 @@ use alloy_primitives::{Address, Bytes, U256};
 use ethers::types::Log;
 use eyre::Result;
 use foundry_evm::{
-    executor::{DeployResult, Executor, RawCallResult},
-    trace::{CallTraceArena, TraceKind},
+    executors::{DeployResult, Executor, RawCallResult},
+    traces::{CallTraceArena, TraceKind},
 };
 use revm::interpreter::{return_ok, InstructionResult};
 use std::collections::BTreeMap;

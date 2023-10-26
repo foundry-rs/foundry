@@ -11,18 +11,15 @@ use foundry_common::{
 };
 use foundry_config::{FuzzConfig, InvariantConfig};
 use foundry_evm::{
+    constants::CALLER,
     decode::decode_console_logs,
-    executor::{CallResult, EvmError, ExecutionErr, Executor},
-    fuzz::{
-        invariant::{
-            replay_run, InvariantContract, InvariantExecutor, InvariantFuzzError,
-            InvariantFuzzTestResult,
-        },
-        types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome},
-        CounterExample, FuzzedExecutor,
+    executors::{
+        fuzz::{CaseOutcome, CounterExampleOutcome, FuzzOutcome, FuzzedExecutor},
+        invariant::{replay_run, InvariantExecutor, InvariantFuzzError, InvariantFuzzTestResult},
+        CallResult, EvmError, ExecutionErr, Executor,
     },
-    trace::{load_contracts, TraceKind},
-    CALLER,
+    fuzz::{invariant::InvariantContract, CounterExample},
+    traces::{load_contracts, TraceKind},
 };
 use proptest::test_runner::{TestError, TestRunner};
 use rayon::prelude::*;

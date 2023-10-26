@@ -19,7 +19,7 @@ foundry-utils.workspace = true
 ethers.workspace = true
 alloy-primitives.workspace = true
 
-foundry-compilers = { workspace = true, features = ["project-util"]}
+foundry-compilers = { workspace = true, features = ["project-util"] }
 
 eyre.workspace = true
 once_cell = "1"

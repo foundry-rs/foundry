@@ -26,7 +26,7 @@ foundry-common.workspace = true
 foundry-utils.workspace = true
 forge-fmt.workspace = true
 
-foundry-compilers = { workspace = true, default-features = false, features = ["project-util", "full"]}
+foundry-compilers = { workspace = true, features = ["project-util", "full"] }
 
 # ethers
 ethers.workspace = true

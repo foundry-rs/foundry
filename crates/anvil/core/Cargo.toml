@@ -11,8 +11,8 @@ repository.workspace = true
 
 [dependencies]
 # foundry internal
-foundry-evm = { path = "../../evm" }
-foundry-utils = { path = "../../utils" }
+foundry-evm.workspace = true
+foundry-utils.workspace = true
 revm = { workspace = true, default-features = false, features = ["std", "serde", "memory_limit"] }
 
 alloy-primitives = { workspace = true, features = ["serde"] }

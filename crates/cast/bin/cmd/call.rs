@@ -10,7 +10,7 @@ use foundry_cli::{
 use foundry_common::runtime_client::RuntimeClient;
 use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
-use foundry_evm::{executor::opts::EvmOpts, trace::TracingExecutor};
+use foundry_evm::{executors::TracingExecutor, opts::EvmOpts};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use std::str::FromStr;
 
@@ -151,7 +151,7 @@ impl CallArgs {
                         TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
                     let mut executor =
-                        foundry_evm::trace::TracingExecutor::new(env, fork, evm_version, debug)
+                        foundry_evm::executors::TracingExecutor::new(env, fork, evm_version, debug)
                             .await;
 
                     let trace = match executor.deploy(
@@ -186,7 +186,7 @@ impl CallArgs {
                         TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
                     let mut executor =
-                        foundry_evm::trace::TracingExecutor::new(env, fork, evm_version, debug)
+                        foundry_evm::executors::TracingExecutor::new(env, fork, evm_version, debug)
                             .await;
 
                     let (tx, _) = builder.build();

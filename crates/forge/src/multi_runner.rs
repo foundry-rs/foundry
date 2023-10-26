@@ -8,10 +8,11 @@ use foundry_compilers::{
     ArtifactOutput, ProjectCompileOutput,
 };
 use foundry_evm::{
-    executor::{
-        backend::Backend, fork::CreateFork, inspector::CheatsConfig, opts::EvmOpts, Executor,
-        ExecutorBuilder,
-    },
+    backend::Backend,
+    executors::{Executor, ExecutorBuilder},
+    fork::CreateFork,
+    inspectors::CheatsConfig,
+    opts::EvmOpts,
     revm,
 };
 use foundry_utils::{PostLinkInput, ResolvedDependency};

@@ -3,10 +3,10 @@ use alloy_primitives::{Address, Bytes, U256};
 use ethers::types::NameOrAddress;
 use eyre::Result;
 use forge::{
-    executor::{CallResult, DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
+    constants::CALLER,
+    executors::{CallResult, DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     revm::interpreter::{return_ok, InstructionResult},
-    trace::{TraceKind, Traces},
-    CALLER,
+    traces::{TraceKind, Traces},
 };
 use tracing::log::trace;
 
