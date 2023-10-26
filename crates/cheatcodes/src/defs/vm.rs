@@ -62,14 +62,14 @@ interface Vm {
         bytes32[] topics;
         /// The raw data of the log.
         bytes data;
+        /// The block hash.
+        bytes32 blockHash;
         /// The block number.
-        uint256 blockNumber;
+        uint64 blockNumber;
         /// The transaction hash.
         bytes32 transactionHash;
         /// The transaction index in the block.
-        uint256 transactionIndex;
-        /// The block hash.
-        bytes32 blockHash;
+        uint64 transactionIndex;
         /// The log index.
         uint256 logIndex;
         /// Whether the log was removed.

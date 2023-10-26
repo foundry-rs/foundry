@@ -1,6 +1,6 @@
 use super::{Cheatcode, CheatsCtxt, DatabaseExt, Result};
 use crate::{impls::CreateFork, Cheatcodes, Vm::*};
-use alloy_primitives::{B256, U256};
+use alloy_primitives::B256;
 use alloy_sol_types::SolValue;
 use ethers_core::types::Filter;
 use ethers_providers::Middleware;
@@ -273,10 +273,10 @@ impl Cheatcode for eth_getLogsCall {
                 emitter: log.address.to_alloy(),
                 topics: log.topics.into_iter().map(ToAlloy::to_alloy).collect(),
                 data: log.data.0.into(),
-                blockNumber: U256::from(log.block_number.unwrap_or_default().to_alloy()),
-                transactionHash: log.transaction_hash.unwrap_or_default().to_alloy(),
-                transactionIndex: U256::from(log.transaction_index.unwrap_or_default().to_alloy()),
                 blockHash: log.block_hash.unwrap_or_default().to_alloy(),
+                blockNumber: log.block_number.unwrap_or_default().to_alloy().to(),
+                transactionHash: log.transaction_hash.unwrap_or_default().to_alloy(),
+                transactionIndex: log.transaction_index.unwrap_or_default().to_alloy().to(),
                 logIndex: log.log_index.unwrap_or_default().to_alloy(),
                 removed: log.removed.unwrap_or(false),
             })
