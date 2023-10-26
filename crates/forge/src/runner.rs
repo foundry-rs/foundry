@@ -12,6 +12,7 @@ use foundry_common::{
 use foundry_config::{FuzzConfig, InvariantConfig};
 use foundry_evm::{
     constants::CALLER,
+    coverage::HitMaps,
     decode::decode_console_logs,
     executors::{
         fuzz::{CaseOutcome, CounterExampleOutcome, FuzzOutcome, FuzzedExecutor},
@@ -136,28 +137,30 @@ impl<'a> ContractRunner<'a> {
         // Optionally call the `setUp` function
         let setup = if setup {
             trace!("setting up");
-            let (setup_logs, setup_traces, labeled_addresses, reason) =
-                match self.executor.setup(None, address) {
-                    Ok(CallResult { traces, labels, logs, .. }) => {
-                        trace!(contract = ?address, "successfully setUp test");
-                        (logs, traces, labels, None)
-                    }
-                    Err(EvmError::Execution(err)) => {
-                        let ExecutionErr { traces, labels, logs, reason, .. } = *err;
-                        error!(reason = ?reason, contract = ?address, "setUp failed");
-                        (logs, traces, labels, Some(format!("Setup failed: {reason}")))
-                    }
-                    Err(err) => {
-                        error!(reason=?err, contract= ?address, "setUp failed");
-                        (Vec::new(), None, BTreeMap::new(), Some(format!("Setup failed: {err}")))
-                    }
-                };
+            let (setup_logs, setup_traces, labeled_addresses, reason, coverage) = match self
+                .executor
+                .setup(None, address)
+            {
+                Ok(CallResult { traces, labels, logs, coverage, .. }) => {
+                    trace!(contract = ?address, "successfully setUp test");
+                    (logs, traces, labels, None, coverage)
+                }
+                Err(EvmError::Execution(err)) => {
+                    let ExecutionErr { traces, labels, logs, reason, .. } = *err;
+                    error!(reason = ?reason, contract = ?address, "setUp failed");
+                    (logs, traces, labels, Some(format!("Setup failed: {reason}")), None)
+                }
+                Err(err) => {
+                    error!(reason=?err, contract= ?address, "setUp failed");
+                    (Vec::new(), None, BTreeMap::new(), Some(format!("Setup failed: {err}")), None)
+                }
+            };
             traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
             logs.extend(setup_logs);
 
-            TestSetup { address, logs, traces, labeled_addresses, reason }
+            TestSetup { address, logs, traces, labeled_addresses, reason, coverage }
         } else {
-            TestSetup::success(address, logs, traces, Default::default())
+            TestSetup::success(address, logs, traces, Default::default(), None)
         };
 
         Ok(setup)
@@ -225,7 +228,7 @@ impl<'a> ContractRunner<'a> {
                         logs: setup.logs,
                         kind: TestKind::Standard(0),
                         traces: setup.traces,
-                        coverage: None,
+                        coverage: setup.coverage,
                         labeled_addresses: setup.labeled_addresses,
                         ..Default::default()
                     },
@@ -297,7 +300,9 @@ impl<'a> ContractRunner<'a> {
     /// similar to `eth_call`.
     #[instrument(name = "test", skip_all, fields(name = %func.signature(), %should_fail))]
     pub fn run_test(&self, func: &Function, should_fail: bool, setup: TestSetup) -> TestResult {
-        let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
+        let TestSetup {
+            address, mut logs, mut traces, mut labeled_addresses, mut coverage, ..
+        } = setup;
 
         // Run unit test
         let mut executor = self.executor.clone();
@@ -318,7 +323,7 @@ impl<'a> ContractRunner<'a> {
                     stipend,
                     logs: execution_logs,
                     traces: execution_trace,
-                    coverage,
+                    coverage: execution_coverage,
                     labels: new_labels,
                     state_changeset,
                     debug,
@@ -329,6 +334,8 @@ impl<'a> ContractRunner<'a> {
                     labeled_addresses.extend(new_labels);
                     logs.extend(execution_logs);
                     debug_arena = debug;
+                    coverage = merge_coverages(coverage, execution_coverage);
+
                     (reverted, None, gas, stipend, coverage, state_changeset, breakpoints)
                 }
                 Err(EvmError::Execution(err)) => {
@@ -415,7 +422,7 @@ impl<'a> ContractRunner<'a> {
         trace!(target: "forge::test::fuzz", "executing invariant test for {:?}", func.name);
         let empty = ContractsByArtifact::default();
         let project_contracts = known_contracts.unwrap_or(&empty);
-        let TestSetup { address, logs, traces, labeled_addresses, .. } = setup;
+        let TestSetup { address, logs, traces, labeled_addresses, coverage, .. } = setup;
 
         // First, run the test normally to see if it needs to be skipped.
         if let Err(EvmError::SkipError) = self.executor.clone().execute_test::<_, _>(
@@ -433,6 +440,7 @@ impl<'a> ContractRunner<'a> {
                 traces,
                 labeled_addresses,
                 kind: TestKind::Invariant { runs: 1, calls: 1, reverts: 1 },
+                coverage,
                 ..Default::default()
             }
         };
@@ -472,6 +480,7 @@ impl<'a> ContractRunner<'a> {
         let reason = error
             .as_ref()
             .and_then(|err| (!err.revert_reason.is_empty()).then(|| err.revert_reason.clone()));
+        let mut coverage = coverage.clone();
         match error {
             // If invariants were broken, replay the error to collect logs and traces
             Some(error @ InvariantFuzzError { test_error: TestError::Fail(_, _), .. }) => {
@@ -505,6 +514,7 @@ impl<'a> ContractRunner<'a> {
                     identified_contracts.clone(),
                     &mut logs,
                     &mut traces,
+                    &mut coverage,
                     func.clone(),
                     last_run_inputs.clone(),
                 );
@@ -527,7 +537,7 @@ impl<'a> ContractRunner<'a> {
             decoded_logs: decode_console_logs(&logs),
             logs,
             kind,
-            coverage: None, // TODO ?
+            coverage,
             traces,
             labeled_addresses: labeled_addresses.clone(),
             ..Default::default() // TODO collect debug traces on the last run or error
@@ -543,7 +553,9 @@ impl<'a> ContractRunner<'a> {
         setup: TestSetup,
         fuzz_config: FuzzConfig,
     ) -> TestResult {
-        let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
+        let TestSetup {
+            address, mut logs, mut traces, mut labeled_addresses, mut coverage, ..
+        } = setup;
 
         // Run fuzz test
         let start = Instant::now();
@@ -567,6 +579,7 @@ impl<'a> ContractRunner<'a> {
                 kind: TestKind::Standard(0),
                 debug,
                 breakpoints,
+                coverage,
                 ..Default::default()
             }
         }
@@ -620,6 +633,7 @@ impl<'a> ContractRunner<'a> {
         logs.append(&mut result.logs);
         labeled_addresses.append(&mut result.labeled_addresses);
         traces.extend(result.traces.map(|traces| (TraceKind::Execution, traces)));
+        coverage = merge_coverages(coverage, result.coverage);
 
         // Record test execution time
         debug!(
@@ -638,10 +652,21 @@ impl<'a> ContractRunner<'a> {
             logs,
             kind,
             traces,
-            coverage: result.coverage,
+            coverage,
             labeled_addresses,
             debug,
             breakpoints,
         }
+    }
+}
+
+// Utility function to merge coverage options
+fn merge_coverages(mut coverage: Option<HitMaps>, other: Option<HitMaps>) -> Option<HitMaps> {
+    let old_coverage = std::mem::take(&mut coverage);
+    match (old_coverage, other) {
+        (Some(old_coverage), Some(other)) => Some(old_coverage.merge(other)),
+        (None, Some(other)) => Some(other),
+        (Some(old_coverage), None) => Some(old_coverage),
+        (None, None) => None,
     }
 }
