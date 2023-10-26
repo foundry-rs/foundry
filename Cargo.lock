@@ -2797,8 +2797,6 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-primitives",
- "alloy-sol-types",
- "arbitrary",
  "bytes",
  "const-hex",
  "ethers",
@@ -2825,7 +2823,6 @@ dependencies = [
  "thiserror",
  "tracing",
  "walkdir",
- "yansi 0.5.1",
 ]
 
 [[package]]
@@ -2879,6 +2876,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-primitives",
+ "arbitrary",
  "ethers",
  "eyre",
  "foundry-common",

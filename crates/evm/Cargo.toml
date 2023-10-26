@@ -22,23 +22,10 @@ foundry-evm-traces.workspace = true
 foundry-macros.workspace = true
 foundry-utils.workspace = true
 
-# Encoding/decoding
-serde_json = "1"
-serde = "1"
-hex.workspace = true
-jsonpath_lib = "0.3"
-
-# Error handling
-eyre = "0.6"
-thiserror = "1"
-
-# Logging
-tracing = "0.1"
-
-# Threading/futures
-once_cell = "1"
-
-# EVM
+alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
+alloy-json-abi.workspace = true
+ethers = { workspace = true, features = ["ethers-solc"] }
 hashbrown = { version = "0.14", features = ["serde"] }
 revm = { workspace = true, default-features = false, features = [
     "std",
@@ -49,21 +36,17 @@ revm = { workspace = true, default-features = false, features = [
     "optional_no_base_fee",
     "arbitrary",
 ] }
-alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
-alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
-alloy-json-abi.workspace = true
-alloy-sol-types.workspace = true
 
-# Fuzzer
-arbitrary = "1.3.1"
-proptest = "1"
-
-# Display
-yansi = "0.5"
-ethers = { workspace = true, features = ["ethers-solc"] }
-
-# Misc
 bytes = "1.5"
+eyre = "0.6"
+hex.workspace = true
 itertools.workspace = true
+jsonpath_lib = "0.3"
+once_cell = "1"
 parking_lot = "0.12"
+proptest = "1"
+serde = "1"
+serde_json = "1"
+thiserror = "1"
+tracing = "0.1"
 walkdir = "2"
