@@ -1,4 +1,4 @@
-use crate::{abi::HEVM_ABI, CallKind};
+use crate::{abi::HEVM_ABI, utils::CallKind};
 use alloy_primitives::{Address, U256};
 use revm::interpreter::{Memory, OpCode};
 use serde::{Deserialize, Serialize};

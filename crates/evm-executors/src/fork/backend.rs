@@ -695,9 +695,9 @@ impl DatabaseRef for SharedBackend {
 mod tests {
     use super::*;
     use crate::{
+        backend::Backend,
         fork::{BlockchainDbMeta, CreateFork, JsonBlockCacheDB},
         opts::EvmOpts,
-        Backend,
     };
     use ethers::types::Chain;
     use foundry_common::get_http_provider;

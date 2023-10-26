@@ -9,7 +9,7 @@ use ethers::{
 use foundry_common::RpcUrl;
 use foundry_evm_executors::{
     backend::{DatabaseError, DatabaseExt, DatabaseResult},
-    DEFAULT_CREATE2_DEPLOYER,
+    constants::DEFAULT_CREATE2_DEPLOYER,
 };
 use foundry_utils::types::ToEthers;
 use revm::{interpreter::CreateInputs, primitives::Account, Database, EVMData, JournaledState};

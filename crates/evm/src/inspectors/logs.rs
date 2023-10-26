@@ -4,7 +4,8 @@ use ethers::{
     types::{Bytes as ethersBytes, Log, H256},
 };
 use foundry_evm_executors::{
-    patch_hardhat_console_selector, HardhatConsoleCalls, HARDHAT_CONSOLE_ADDRESS,
+    abi::{patch_hardhat_console_selector, HardhatConsoleCalls},
+    constants::HARDHAT_CONSOLE_ADDRESS,
 };
 use foundry_macros::ConsoleFmt;
 use foundry_utils::types::ToEthers;

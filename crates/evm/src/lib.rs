@@ -8,11 +8,10 @@
 extern crate tracing;
 
 pub mod executors;
-pub use executors::{debug, decode, utils};
-
 pub mod inspectors;
 
 pub use foundry_evm_coverage as coverage;
+pub use foundry_evm_executors::{backend, constants, debug, decode, fork, opts, utils};
 pub use foundry_evm_fuzz as fuzz;
 pub use foundry_evm_traces as traces;
 

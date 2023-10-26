@@ -5,7 +5,7 @@ use alloy_primitives::Address;
 use ethers::types::Log;
 use eyre::Result;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
-use foundry_evm_executors::{decode::decode_revert, CALLER};
+use foundry_evm_executors::{constants::CALLER, decode::decode_revert};
 use foundry_evm_fuzz::{BaseCounterExample, CounterExample, FuzzedCases, Reason};
 use foundry_evm_traces::{load_contracts, CallTraceArena, TraceKind, Traces};
 use parking_lot::RwLock;

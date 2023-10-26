@@ -1,9 +1,9 @@
 use alloy_primitives::{Address, Bytes};
 use foundry_evm_executors::{
     backend::DatabaseExt,
+    constants::CHEATCODE_ADDRESS,
     debug::{DebugArena, DebugNode, DebugStep, Instruction},
-    utils::{gas_used, get_create_address},
-    CallKind, CHEATCODE_ADDRESS,
+    utils::{gas_used, get_create_address, CallKind},
 };
 use foundry_utils::error::SolError;
 use revm::{

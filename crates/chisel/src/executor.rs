@@ -12,8 +12,7 @@ use core::fmt::Debug;
 use eyre::{Result, WrapErr};
 use foundry_compilers::Artifact;
 use foundry_evm::{
-    decode::decode_console_logs,
-    executors::{Backend, ExecutorBuilder},
+    backend::Backend, decode::decode_console_logs, executors::ExecutorBuilder,
     inspectors::CheatsConfig,
 };
 use foundry_utils::types::ToEthers;

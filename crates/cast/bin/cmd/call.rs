@@ -10,7 +10,7 @@ use foundry_cli::{
 use foundry_common::runtime_client::RuntimeClient;
 use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
-use foundry_evm::executors::{opts::EvmOpts, TracingExecutor};
+use foundry_evm::{executors::TracingExecutor, opts::EvmOpts};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use std::str::FromStr;
 

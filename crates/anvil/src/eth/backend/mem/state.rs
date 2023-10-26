@@ -8,7 +8,7 @@ use ethers::{
     utils::{rlp, rlp::RlpStream},
 };
 use foundry_evm::{
-    executors::backend::DatabaseError,
+    backend::DatabaseError,
     hashbrown::HashMap as Map,
     revm::{
         db::{CacheDB, DatabaseRef, DbAccount},

@@ -14,9 +14,14 @@ use ethers::{signers::LocalWallet, types::Log};
 use foundry_common::{abi::IntoFunction, evm::Breakpoints};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_executors::{
-    backend::{DatabaseError, DatabaseExt, DatabaseResult, FuzzBackendWrapper},
+    backend::{Backend, DatabaseError, DatabaseExt, DatabaseResult, FuzzBackendWrapper},
+    constants::{
+        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_CODE,
+    },
     debug::DebugArena,
+    decode,
     utils::{eval_to_instruction_result, halt_to_instruction_result},
+    StateChangeset,
 };
 use foundry_evm_traces::CallTraceArena;
 use revm::{
@@ -39,9 +44,6 @@ pub use invariant::InvariantExecutor;
 
 mod tracing;
 pub use tracing::TracingExecutor;
-
-#[doc(no_inline)]
-pub use foundry_evm_executors::*;
 
 /// A type that can execute calls
 ///

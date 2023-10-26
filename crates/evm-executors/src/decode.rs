@@ -1,6 +1,6 @@
 //! Various utilities to decode test results.
 
-use crate::MAGIC_SKIP_BYTES;
+use crate::constants::MAGIC_SKIP_BYTES;
 use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{B256, U256};

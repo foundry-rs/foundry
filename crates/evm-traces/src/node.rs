@@ -7,7 +7,7 @@ use alloy_json_abi::{Function, JsonAbi as Abi};
 use alloy_primitives::Address;
 use ethers::types::{Action, Call, CallResult, Create, CreateResult, Res, Suicide};
 use foundry_common::SELECTOR_LEN;
-use foundry_evm_executors::{decode, CallKind, CHEATCODE_ADDRESS};
+use foundry_evm_executors::{constants::CHEATCODE_ADDRESS, decode, utils::CallKind};
 use foundry_utils::types::ToEthers;
 use revm::interpreter::InstructionResult;
 use serde::{Deserialize, Serialize};

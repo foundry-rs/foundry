@@ -8,7 +8,8 @@ use alloy_primitives::{Address, Bytes, U256};
 use ethers::types::transaction::eip2718::TypedTransaction;
 use eyre::Result;
 use forge::{
-    executors::{Backend, ExecutorBuilder},
+    backend::Backend,
+    executors::ExecutorBuilder,
     inspectors::{cheatcodes::util::BroadcastableTransactions, CheatsConfig},
     traces::{CallTraceDecoder, Traces},
     utils::CallKind,

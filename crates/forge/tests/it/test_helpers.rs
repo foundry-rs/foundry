@@ -8,11 +8,10 @@ use foundry_compilers::{
 };
 use foundry_config::Config;
 use foundry_evm::{
-    executors::{
-        backend::Backend,
-        opts::{Env, EvmOpts},
-        Executor, ExecutorBuilder, FuzzedExecutor, CALLER,
-    },
+    backend::Backend,
+    constants::CALLER,
+    executors::{Executor, ExecutorBuilder, FuzzedExecutor},
+    opts::{Env, EvmOpts},
     revm::db::DatabaseRef,
 };
 use foundry_utils::types::{ToAlloy, ToEthers};

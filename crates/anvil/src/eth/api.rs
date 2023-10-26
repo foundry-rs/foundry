@@ -59,7 +59,7 @@ use ethers::{
 };
 use foundry_common::ProviderBuilder;
 use foundry_evm::{
-    executors::backend::DatabaseError,
+    backend::DatabaseError,
     revm::{
         db::DatabaseRef,
         interpreter::{return_ok, return_revert, InstructionResult},

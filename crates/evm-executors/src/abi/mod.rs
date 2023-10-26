@@ -1,6 +1,5 @@
 //! Several ABI-related utilities for executors.
 
-use alloy_primitives::Address;
 pub use foundry_abi::{
     console::{self, ConsoleEvents, CONSOLE_ABI},
     hardhat_console::{self, HardhatConsoleCalls, HARDHATCONSOLE_ABI as HARDHAT_CONSOLE_ABI},
@@ -8,23 +7,6 @@ pub use foundry_abi::{
 };
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
-
-/// The cheatcode handler address (0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).
-///
-/// This is the same address as the one used in DappTools's HEVM.
-/// `address(bytes20(uint160(uint256(keccak256('hevm cheat code')))))`
-pub const CHEATCODE_ADDRESS: Address = Address::new([
-    0x71, 0x09, 0x70, 0x9E, 0xcf, 0xa9, 0x1a, 0x80, 0x62, 0x6f, 0xf3, 0x98, 0x9d, 0x68, 0xf6, 0x7f,
-    0x5b, 0x1d, 0xd1, 0x2d,
-]);
-
-/// The Hardhat console address (0x000000000000000000636F6e736F6c652e6c6f67).
-///
-/// See: https://github.com/nomiclabs/hardhat/blob/master/packages/hardhat-core/console.sol
-pub const HARDHAT_CONSOLE_ADDRESS: Address = Address::new([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x6f, 0x6e, 0x73, 0x6f, 0x6c, 0x65,
-    0x2e, 0x6c, 0x6f, 0x67,
-]);
 
 /// If the input starts with a known `hardhat/console.log` `uint` selector, then this will replace
 /// it with the selector `abigen!` bindings expect.

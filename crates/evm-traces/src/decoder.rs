@@ -9,8 +9,11 @@ use alloy_primitives::{Address, FixedBytes, B256};
 use foundry_common::{abi::get_indexed_event, SELECTOR_LEN};
 use foundry_evm_executors::{
     abi::{CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HEVM_ABI},
-    decode, CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
-    TEST_CONTRACT_ADDRESS,
+    constants::{
+        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
+        TEST_CONTRACT_ADDRESS,
+    },
+    decode,
 };
 use foundry_utils::types::ToAlloy;
 use once_cell::sync::OnceCell;

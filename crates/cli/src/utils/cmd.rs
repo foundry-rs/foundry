@@ -14,7 +14,8 @@ use foundry_config::{error::ExtractConfigError, figment::Figment, Chain as Confi
 use foundry_debugger::DebuggerArgs;
 use foundry_evm::{
     debug::DebugArena,
-    executors::{opts::EvmOpts, DeployResult, EvmError, ExecutionErr, RawCallResult},
+    executors::{DeployResult, EvmError, ExecutionErr, RawCallResult},
+    opts::EvmOpts,
     traces::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,

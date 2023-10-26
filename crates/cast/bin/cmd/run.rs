@@ -12,7 +12,8 @@ use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{
-    executors::{opts::EvmOpts, EvmError, TracingExecutor},
+    executors::{EvmError, TracingExecutor},
+    opts::EvmOpts,
     utils::configure_tx_env,
 };
 use foundry_utils::types::ToAlloy;

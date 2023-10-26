@@ -4,7 +4,7 @@ use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use ethers::types::Log;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
-use foundry_evm_executors::CALLER;
+use foundry_evm_executors::constants::CALLER;
 use foundry_evm_fuzz::invariant::{BasicTxDetails, InvariantContract};
 use foundry_evm_traces::{load_contracts, TraceKind, Traces};
 use revm::primitives::U256;

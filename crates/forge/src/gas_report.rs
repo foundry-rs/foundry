@@ -1,5 +1,5 @@
 use crate::{
-    executors::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
+    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
     traces::{CallTraceArena, RawOrDecodedCall, TraceKind},
 };
 use alloy_primitives::U256;

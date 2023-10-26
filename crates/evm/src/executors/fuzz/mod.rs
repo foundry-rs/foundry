@@ -6,8 +6,8 @@ use eyre::Result;
 use foundry_config::FuzzConfig;
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_executors::{
+    constants::ASSUME_MAGIC_RETURN_CODE,
     decode::{self, decode_console_logs},
-    ASSUME_MAGIC_RETURN_CODE,
 };
 use foundry_evm_fuzz::{
     strategies::{

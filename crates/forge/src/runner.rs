@@ -11,11 +11,12 @@ use foundry_common::{
 };
 use foundry_config::{FuzzConfig, InvariantConfig};
 use foundry_evm::{
+    constants::CALLER,
     decode::decode_console_logs,
     executors::{
         fuzz::{CaseOutcome, CounterExampleOutcome, FuzzOutcome, FuzzedExecutor},
         invariant::{replay_run, InvariantExecutor, InvariantFuzzError, InvariantFuzzTestResult},
-        CallResult, EvmError, ExecutionErr, Executor, CALLER,
+        CallResult, EvmError, ExecutionErr, Executor,
     },
     fuzz::{invariant::InvariantContract, CounterExample},
     traces::{load_contracts, TraceKind},

@@ -7,7 +7,7 @@ use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     Config, FuzzConfig, InvariantConfig, OptimizerDetails, SolcReq,
 };
-use foundry_evm::executors::opts::EvmOpts;
+use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
     forgetest, forgetest_init,
     foundry_compilers::{remappings::Remapping, EvmVersion},

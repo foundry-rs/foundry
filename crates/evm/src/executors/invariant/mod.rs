@@ -9,7 +9,9 @@ use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::{FuzzDictionaryConfig, InvariantConfig};
 use foundry_evm_executors::{
-    utils::get_function, StateChangeset, CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS,
+    constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
+    utils::get_function,
+    StateChangeset,
 };
 use foundry_evm_fuzz::{
     invariant::{

@@ -18,7 +18,7 @@ use ethers::{
     utils::rlp,
 };
 use foundry_evm::{
-    executors::backend::DatabaseError,
+    backend::DatabaseError,
     revm,
     revm::{
         interpreter::InstructionResult,

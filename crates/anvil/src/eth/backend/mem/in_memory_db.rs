@@ -10,7 +10,7 @@ use crate::{
     Address, U256,
 };
 use ethers::{prelude::H256, types::BlockId};
-use foundry_evm::executors::{
+use foundry_evm::{
     backend::{DatabaseResult, StateSnapshot},
     fork::BlockchainDb,
 };
@@ -18,7 +18,7 @@ use foundry_utils::types::{ToAlloy, ToEthers};
 use tracing::{trace, warn};
 
 // reexport for convenience
-pub use foundry_evm::{executors::backend::MemDb, revm::db::DatabaseRef};
+pub use foundry_evm::{backend::MemDb, revm::db::DatabaseRef};
 
 impl Db for MemDb {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
@@ -143,7 +143,7 @@ mod tests {
     use alloy_primitives::{Bytes, U256 as rU256};
     use ethers::types::U256;
     use foundry_evm::{
-        executors::backend::MemDb,
+        backend::MemDb,
         revm::primitives::{Bytecode, KECCAK_EMPTY},
     };
     use foundry_utils::types::ToAlloy;

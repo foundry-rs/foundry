@@ -11,7 +11,7 @@ use foundry_compilers::{
     CompilerInput, CompilerOutput, EvmVersion, Solc,
 };
 use foundry_config::{Config, SolcReq};
-use foundry_evm::executors::{opts::EvmOpts, Backend};
+use foundry_evm::{backend::Backend, opts::EvmOpts};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt;

@@ -11,7 +11,6 @@ extern crate tracing;
 
 pub mod abi;
 pub mod backend;
-pub use backend::Backend;
 pub mod constants;
 pub mod debug;
 pub mod decode;
@@ -21,11 +20,3 @@ pub mod snapshot;
 pub mod utils;
 
 pub use revm::primitives::State as StateChangeset;
-
-// TODO: Remove these re-exports
-pub use abi::{
-    patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
-    HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
-};
-pub use constants::*;
-pub use utils::CallKind;

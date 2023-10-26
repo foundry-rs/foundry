@@ -10,10 +10,8 @@ use ethers::{
 };
 use foundry_common::errors::FsPathError;
 use foundry_evm::{
-    executors::{
-        backend::{DatabaseError, DatabaseResult, MemDb, StateSnapshot},
-        fork::BlockchainDb,
-    },
+    backend::{DatabaseError, DatabaseResult, MemDb, StateSnapshot},
+    fork::BlockchainDb,
     hashbrown::HashMap,
     revm::{
         db::{CacheDB, DatabaseRef, DbAccount},

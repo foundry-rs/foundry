@@ -58,11 +58,9 @@ use ethers::{
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_common::abi::format_token;
 use foundry_evm::{
+    backend::{DatabaseError, DatabaseResult},
+    constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::{decode_custom_error_args, decode_revert},
-    executors::{
-        backend::{DatabaseError, DatabaseResult},
-        DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
-    },
     inspectors::AccessListTracer,
     revm::{
         self,

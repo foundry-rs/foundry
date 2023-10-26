@@ -3,9 +3,8 @@ use alloy_primitives::{Address, Bytes, U256};
 use ethers::types::NameOrAddress;
 use eyre::Result;
 use forge::{
-    executors::{
-        CallResult, DeployResult, EvmError, ExecutionErr, Executor, RawCallResult, CALLER,
-    },
+    constants::CALLER,
+    executors::{CallResult, DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     revm::interpreter::{return_ok, InstructionResult},
     traces::{TraceKind, Traces},
 };

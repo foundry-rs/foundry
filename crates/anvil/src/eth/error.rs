@@ -13,7 +13,7 @@ use ethers::{
 };
 use foundry_common::SELECTOR_LEN;
 use foundry_evm::{
-    executors::backend::DatabaseError,
+    backend::DatabaseError,
     revm::{
         self,
         interpreter::InstructionResult,

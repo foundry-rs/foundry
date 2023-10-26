@@ -15,8 +15,8 @@ use foundry_common::evm::Breakpoints;
 use foundry_evm_executors::{
     abi::HEVMCalls,
     backend::{DatabaseExt, RevertDiagnostic},
+    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_SKIP_BYTES},
     utils::get_create_address,
-    CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_SKIP_BYTES,
 };
 use foundry_utils::{error::SolError, types::ToEthers};
 use itertools::Itertools;

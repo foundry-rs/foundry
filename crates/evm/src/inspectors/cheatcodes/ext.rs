@@ -4,7 +4,7 @@ use alloy_primitives::{Address, Bytes, B256, I256, U256};
 use ethers::{abi::JsonAbi, prelude::artifacts::CompactContractBytecode};
 use foundry_common::{fmt::*, fs, get_artifact_path};
 use foundry_config::fs_permissions::FsAccessKind;
-use foundry_evm_executors::{abi::HEVMCalls, MAGIC_SKIP_BYTES};
+use foundry_evm_executors::{abi::HEVMCalls, constants::MAGIC_SKIP_BYTES};
 use foundry_utils::types::ToAlloy;
 use revm::{Database, EVMData};
 use serde::Deserialize;

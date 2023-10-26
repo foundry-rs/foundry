@@ -1,7 +1,7 @@
 use crate::executors::{Executor, ExecutorBuilder};
 use foundry_compilers::EvmVersion;
 use foundry_config::{utils::evm_spec_id, Config};
-use foundry_evm_executors::{fork::CreateFork, opts::EvmOpts, Backend};
+use foundry_evm_executors::{backend::Backend, fork::CreateFork, opts::EvmOpts};
 use revm::primitives::Env;
 use std::ops::{Deref, DerefMut};
 

@@ -10,7 +10,7 @@ use ethers::{
     types::{Address, H256},
 };
 use foundry_evm::{
-    executors::backend::{DatabaseError, DatabaseResult, StateSnapshot},
+    backend::{DatabaseError, DatabaseResult, StateSnapshot},
     revm::{
         db::DatabaseRef,
         primitives::{AccountInfo, Bytecode, KECCAK_EMPTY},

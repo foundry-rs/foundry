@@ -32,10 +32,8 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use foundry_evm::{
-    executors::{
-        fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
-        DEFAULT_CREATE2_DEPLOYER,
-    },
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     revm,
     revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv, U256 as rU256},
     utils::apply_chain_and_block_specific_env_changes,
