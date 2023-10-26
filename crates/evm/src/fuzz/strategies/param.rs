@@ -1,6 +1,7 @@
 use super::state::EvmFuzzState;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{Address, FixedBytes, I256, U256};
+use arbitrary::Unstructured;
 use proptest::prelude::*;
 
 /// The max length of arrays we fuzz for is 256.
@@ -76,21 +77,25 @@ pub fn fuzz_param_from_state(
         .prop_map(move |index| index.index(state_len))
         .prop_map(move |index| *st.read().values().iter().nth(index).unwrap());
     let param = param.to_owned();
+
     // Convert the value based on the parameter type
     match param {
         DynSolType::Address => value
             .prop_map(move |value| DynSolValue::Address(Address::from_word(value.into())))
             .boxed(),
-        DynSolType::FixedBytes(size) => {
-            value
-                .prop_map(move |v| {
-                    let mut v = v;
-                    // Zero out the unused bytes
-                    v[32 - size..].iter_mut().for_each(|x| *x = 0);
-                    DynSolValue::FixedBytes(FixedBytes::from_slice(&v), size)
-                })
-                .boxed()
-        }
+        DynSolType::FixedBytes(size) => value
+            .prop_map(move |v| {
+                let mut buf: [u8; 32] = [0; 32];
+
+                for b in v[..size].iter().enumerate() {
+                    buf[b.0] = *b.1
+                }
+
+                let mut unstructured_v = Unstructured::new(v.as_slice());
+                DynSolValue::arbitrary_from_type(&param, &mut unstructured_v)
+                    .unwrap_or(DynSolValue::FixedBytes(FixedBytes::from_slice(&buf), size))
+            })
+            .boxed(),
         DynSolType::Function | DynSolType::Bool => DynSolValue::type_strategy(&param).boxed(),
         DynSolType::String => DynSolValue::type_strategy(&param)
             .prop_map(move |value| {
