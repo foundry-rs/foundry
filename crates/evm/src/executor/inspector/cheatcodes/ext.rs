@@ -321,10 +321,10 @@ fn parse_json_values(values: Vec<&Value>, key: &str) -> Result<Vec<DynSolValue>>
 }
 
 /// Parses a JSON and returns a single value, an array or an entire JSON object encoded as tuple.
-/// As the JSON object is parsed serially, with the keys ordered alphabetically according to the     
-/// Rust BTreeMap crate serialization, they must be deserialized in the same order. That means that 
+/// As the JSON object is parsed serially, with the keys ordered alphabetically according to the
+/// Rust BTreeMap crate serialization, they must be deserialized in the same order. That means that
 /// the solidity `struct` should order its fields not by efficient packing or some other taxonomy
-/// but instead alphabetically, with attention to upper/lower casing since uppercase precedes 
+/// but instead alphabetically, with attention to upper/lower casing since uppercase precedes
 /// lowercase in BTreeMap lexicographical ordering.
 fn parse_json(json_str: &str, key: &str, coerce: Option<DynSolType>) -> Result {
     trace!(%json_str, %key, ?coerce, "parsing json");
