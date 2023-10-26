@@ -363,11 +363,12 @@ impl<'a> Git<'a> {
     }
 
     pub fn fetch(
+        self,
         shallow: bool,
         remote: impl AsRef<OsStr>,
         branch: Option<impl AsRef<OsStr>>,
     ) -> Result<()> {
-        Self::cmd_no_root()
+        self.cmd()
             .stderr(Stdio::inherit())
             .arg("fetch")
             .args(shallow.then_some("--no-tags"))
