@@ -1080,6 +1080,24 @@
     "safety": "unsafe"
   },
   {
+    "id": "eth_getLogs",
+    "declaration": "function eth_getLogs(uint256 fromBlock, uint256 toBlock, address addr, bytes32[] memory topics) external returns (EthGetLogs[] memory logs);",
+    "visibility": "external",
+    "mutability": "",
+    "signature": "eth_getLogs(uint256,uint256,address,bytes32[])",
+    "selector": "0x35e1349b",
+    "selectorBytes": [
+      53,
+      225,
+      52,
+      155
+    ],
+    "description": "Gets all the logs according to specified filter.",
+    "group": "evm",
+    "status": "stable",
+    "safety": "unsafe"
+  },
+  {
     "id": "exists",
     "declaration": "function exists(string calldata path) external returns (bool result);",
     "visibility": "external",
@@ -2785,6 +2803,24 @@
       123
     ],
     "description": "Updates the given fork to block number of the given transaction and replays all transaction mined before it in the block.",
+    "group": "evm",
+    "status": "stable",
+    "safety": "unsafe"
+  },
+  {
+    "id": "rpc",
+    "declaration": "function rpc(string calldata method, string calldata params) external returns (bytes memory data);",
+    "visibility": "external",
+    "mutability": "",
+    "signature": "rpc(string,string)",
+    "selector": "0x1206c8a8",
+    "selectorBytes": [
+      18,
+      6,
+      200,
+      168
+    ],
+    "description": "Performs an Ethereum JSON-RPC request to the current fork URL.",
     "group": "evm",
     "status": "stable",
     "safety": "unsafe"
