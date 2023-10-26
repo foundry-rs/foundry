@@ -10,17 +10,16 @@ use ethers::{
 };
 use foundry_common::errors::FsPathError;
 use foundry_evm::{
-    executor::{
-        backend::{snapshot::StateSnapshot, DatabaseError, DatabaseResult, MemDb},
+    executors::{
+        backend::{DatabaseError, DatabaseResult, MemDb, StateSnapshot},
         fork::BlockchainDb,
-        DatabaseRef,
     },
+    hashbrown::HashMap,
     revm::{
-        db::{CacheDB, DbAccount},
+        db::{CacheDB, DatabaseRef, DbAccount},
         primitives::{Bytecode, KECCAK_EMPTY},
         Database, DatabaseCommit,
     },
-    HashMap,
 };
 use foundry_utils::types::ToAlloy;
 use hash_db::HashDB;

@@ -13,7 +13,8 @@ use eyre::{Result, WrapErr};
 use foundry_compilers::Artifact;
 use foundry_evm::{
     decode::decode_console_logs,
-    executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
+    executors::{Backend, ExecutorBuilder},
+    inspectors::CheatsConfig,
 };
 use foundry_utils::types::ToEthers;
 use solang_parser::pt::{self, CodeLocation};

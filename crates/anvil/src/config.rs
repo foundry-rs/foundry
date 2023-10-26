@@ -32,9 +32,9 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use foundry_evm::{
-    executor::{
+    executors::{
         fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
-        inspector::DEFAULT_CREATE2_DEPLOYER,
+        DEFAULT_CREATE2_DEPLOYER,
     },
     revm,
     revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv, U256 as rU256},

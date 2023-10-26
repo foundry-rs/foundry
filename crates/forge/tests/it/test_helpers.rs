@@ -8,13 +8,12 @@ use foundry_compilers::{
 };
 use foundry_config::Config;
 use foundry_evm::{
-    executor::{
+    executors::{
         backend::Backend,
         opts::{Env, EvmOpts},
-        DatabaseRef, Executor, ExecutorBuilder,
+        Executor, ExecutorBuilder, FuzzedExecutor, CALLER,
     },
-    fuzz::FuzzedExecutor,
-    CALLER,
+    revm::db::DatabaseRef,
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
 use once_cell::sync::Lazy;

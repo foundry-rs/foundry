@@ -6,9 +6,9 @@ use foundry_common::evm::Breakpoints;
 use foundry_evm::{
     coverage::HitMaps,
     debug::DebugArena,
-    executor::EvmError,
-    fuzz::{types::FuzzCase, CounterExample},
-    trace::{TraceKind, Traces},
+    executors::EvmError,
+    fuzz::{CounterExample, FuzzCase},
+    traces::{TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, time::Duration};

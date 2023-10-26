@@ -7,15 +7,16 @@ use crate::{
     Address, U256,
 };
 use ethers::{prelude::H256, types::BlockId};
-pub use foundry_evm::executor::fork::database::ForkedDatabase;
 use foundry_evm::{
-    executor::{
-        backend::{snapshot::StateSnapshot, DatabaseResult},
+    executors::{
+        backend::{DatabaseResult, StateSnapshot},
         fork::{database::ForkDbSnapshot, BlockchainDb},
     },
     revm::Database,
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
+
+pub use foundry_evm::executors::fork::database::ForkedDatabase;
 
 /// Implement the helper for the fork database
 impl Db for ForkedDatabase {

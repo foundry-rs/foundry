@@ -2,7 +2,7 @@ use alloy_primitives::U256 as rU256;
 use ethers::types::{
     Action, Address, Block, Bytes, CallType, Trace, Transaction, TransactionReceipt, H256, U256,
 };
-use foundry_evm::{executor::InstructionResult, CallKind};
+use foundry_evm::{revm::interpreter::InstructionResult, utils::CallKind};
 use foundry_utils::types::ToEthers;
 use futures::future::join_all;
 use serde::{de::DeserializeOwned, Serialize};

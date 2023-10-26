@@ -1,0 +1,41 @@
+[package]
+name = "foundry-evm-fuzz"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+foundry-common.workspace = true
+foundry-compilers.workspace = true
+foundry-config.workspace = true
+foundry-evm-coverage.workspace = true
+foundry-evm-executors.workspace = true
+foundry-evm-traces.workspace = true
+foundry-utils.workspace = true
+
+alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
+alloy-json-abi = { workspace = true }
+alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+ethers = { workspace = true, features = ["ethers-solc"] }
+revm = { workspace = true, default-features = false, features = [
+    "std",
+    "serde",
+    "memory_limit",
+    "optional_eip3607",
+    "optional_block_gas_limit",
+    "optional_no_base_fee",
+    "arbitrary",
+] }
+
+eyre = "0.6"
+hashbrown = { version = "0.14", features = ["serde"] }
+parking_lot = "0.12"
+proptest = "1"
+serde = "1"
+thiserror = "1"
+tracing = "0.1"

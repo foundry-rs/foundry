@@ -93,7 +93,7 @@ fn test_formatter(filename: &str, config: FormatterConfig, source: &str, expecte
     }
 
     impl std::fmt::Debug for PrettyString {
-        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.write_str(&self.0)
         }
     }

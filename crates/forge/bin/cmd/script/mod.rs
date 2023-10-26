@@ -16,13 +16,13 @@ use eyre::{ContextCompat, Result, WrapErr};
 use forge::{
     debug::DebugArena,
     decode::decode_console_logs,
-    executor::{opts::EvmOpts, Backend},
-    trace::{
+    executors::{opts::EvmOpts, Backend},
+    traces::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
         CallTraceDecoder, CallTraceDecoderBuilder, RawOrDecodedCall, RawOrDecodedReturnData,
         TraceKind, Traces,
     },
-    CallKind,
+    utils::CallKind,
 };
 use foundry_cli::opts::MultiWallet;
 use foundry_common::{
@@ -47,10 +47,8 @@ use foundry_config::{
 };
 use foundry_evm::{
     decode,
-    executor::inspector::{
-        cheatcodes::{util::BroadcastableTransactions, BroadcastableTransaction},
-        DEFAULT_CREATE2_DEPLOYER,
-    },
+    executors::DEFAULT_CREATE2_DEPLOYER,
+    inspectors::cheatcodes::{util::BroadcastableTransactions, BroadcastableTransaction},
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::future;

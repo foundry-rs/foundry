@@ -18,6 +18,7 @@ ethers-addressbook.workspace = true
 ethers-providers.workspace = true
 
 alloy-primitives.workspace = true
+alloy-json-abi.workspace = true
 alloy-dyn-abi.workspace = true
 
 foundry-compilers = { workspace = true, default-features = false }

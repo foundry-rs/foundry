@@ -129,7 +129,7 @@ impl<'a> serde::Deserialize<'a> for Index {
         impl<'a> serde::de::Visitor<'a> for IndexVisitor {
             type Value = Index;
 
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
                 write!(formatter, "hex-encoded or decimal index")
             }
 

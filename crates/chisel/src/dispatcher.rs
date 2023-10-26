@@ -13,7 +13,7 @@ use forge_fmt::FormatterConfig;
 use foundry_config::{Config, RpcEndpoint};
 use foundry_evm::{
     decode::decode_console_logs,
-    trace::{
+    traces::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },

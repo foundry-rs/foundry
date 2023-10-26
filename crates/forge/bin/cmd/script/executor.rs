@@ -8,12 +8,10 @@ use alloy_primitives::{Address, Bytes, U256};
 use ethers::types::transaction::eip2718::TypedTransaction;
 use eyre::Result;
 use forge::{
-    executor::{
-        inspector::{cheatcodes::util::BroadcastableTransactions, CheatsConfig},
-        Backend, ExecutorBuilder,
-    },
-    trace::{CallTraceDecoder, Traces},
-    CallKind,
+    executors::{Backend, ExecutorBuilder},
+    inspectors::{cheatcodes::util::BroadcastableTransactions, CheatsConfig},
+    traces::{CallTraceDecoder, Traces},
+    utils::CallKind,
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{shell, RpcUrl};

@@ -5,7 +5,7 @@ use ethers::types::Log;
 use foundry_evm::{
     call_inspectors,
     decode::decode_console_logs,
-    executor::inspector::{LogCollector, Tracer},
+    inspectors::{LogCollector, Tracer},
     revm,
     revm::{
         interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},

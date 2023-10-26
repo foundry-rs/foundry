@@ -4,10 +4,10 @@ use clap::Parser;
 use eyre::Result;
 use forge::{
     decode::decode_console_logs,
-    executor::inspector::CheatsConfig,
     gas_report::GasReport,
+    inspectors::CheatsConfig,
     result::{SuiteResult, TestResult, TestStatus},
-    trace::{
+    traces::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
         CallTraceDecoderBuilder, TraceKind,
     },
