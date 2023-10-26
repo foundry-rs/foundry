@@ -28,7 +28,7 @@ mod string;
 mod test;
 mod utils;
 
-pub use test::{expect::ExpectedCallTracker, ASSUME_MAGIC_RETURN_CODE, MAGIC_SKIP_BYTES};
+pub use test::expect::ExpectedCallTracker;
 
 /// Cheatcode implementation.
 pub(crate) trait Cheatcode: CheatcodeDef {

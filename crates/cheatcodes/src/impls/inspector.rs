@@ -11,7 +11,7 @@ use super::{
     test::expect::{
         self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit, ExpectedRevert,
     },
-    CheatsCtxt, DatabaseExt, Error, Result, RevertDiagnostic, MAGIC_SKIP_BYTES,
+    CheatsCtxt, DatabaseExt, Error, Result, RevertDiagnostic,
 };
 use crate::{CheatsConfig, Vm};
 use alloy_primitives::{Address, Bytes, B256, U256};
@@ -22,7 +22,7 @@ use ethers_core::types::{
 use ethers_signers::LocalWallet;
 use foundry_common::RpcUrl;
 use foundry_evm_core::constants::{
-    CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
+    CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_SKIP,
 };
 use foundry_utils::types::ToEthers;
 use itertools::Itertools;
@@ -704,7 +704,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             return (
                 InstructionResult::Revert,
                 remaining_gas,
-                super::Error::from(MAGIC_SKIP_BYTES).abi_encode().into(),
+                super::Error::from(MAGIC_SKIP).abi_encode().into(),
             )
         }
 

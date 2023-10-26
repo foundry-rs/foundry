@@ -1,6 +1,6 @@
 //! Various utilities to decode test results.
 
-use crate::constants::MAGIC_SKIP_BYTES;
+use crate::constants::MAGIC_SKIP;
 use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{B256, U256};
@@ -185,7 +185,7 @@ pub fn decode_revert(
         }
         _ => {
             // See if the revert is caused by a skip() call.
-            if err == MAGIC_SKIP_BYTES {
+            if err == MAGIC_SKIP {
                 return Ok("SKIPPED".to_string())
             }
             // try to decode a custom error if provided an abi

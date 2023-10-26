@@ -1,17 +1,12 @@
 //! Implementations of [`Testing`](crate::Group::Testing) cheatcodes.
 
-use super::{Cheatcode, CheatsCtxt, DatabaseExt, Result};
+use super::{Cheatcode, CheatsCtxt, DatabaseExt, Error, Result};
 use crate::{Cheatcodes, Vm::*};
 use alloy_primitives::Address;
 use alloy_sol_types::SolValue;
+use foundry_evm_core::constants::{MAGIC_ASSUME, MAGIC_SKIP};
 
 pub(crate) mod expect;
-
-/// Magic return value returned by the [`assume` cheatcode](assumeCall).
-pub const ASSUME_MAGIC_RETURN_CODE: &[u8] = b"FOUNDRY::ASSUME";
-
-/// Magic return value returned by the [`skip` cheatcode](skipCall).
-pub const MAGIC_SKIP_BYTES: &[u8] = b"FOUNDRY::SKIP";
 
 impl Cheatcode for assumeCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
@@ -19,7 +14,7 @@ impl Cheatcode for assumeCall {
         if *condition {
             Ok(Default::default())
         } else {
-            Err(ASSUME_MAGIC_RETURN_CODE.into())
+            Err(Error::from(MAGIC_ASSUME))
         }
     }
 }
@@ -76,7 +71,7 @@ impl Cheatcode for skipCall {
             // Since we're not returning the magic skip bytes, this will cause a test failure.
             ensure!(ccx.data.journaled_state.depth() <= 1, "`skip` can only be used at test level");
             ccx.state.skip = true;
-            Err(MAGIC_SKIP_BYTES.into())
+            Err(MAGIC_SKIP.into())
         } else {
             Ok(Default::default())
         }
