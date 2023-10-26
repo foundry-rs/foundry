@@ -7,7 +7,7 @@
 // the concrete `Executor` type.
 
 use crate::inspectors::{
-    cheatcodes::util::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStack,
+    cheatcodes::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStack,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi as Abi};

@@ -195,8 +195,7 @@ pub struct Cheatcodes {
     pub pc: usize,
     /// Breakpoints supplied by the `breakpoint` cheatcode.
     /// `char -> pc`
-    // TODO: don't use ethers address
-    pub breakpoints: HashMap<char, (ethers::types::Address, usize)>,
+    pub breakpoints: HashMap<char, (Address, usize)>,
 }
 
 impl Cheatcodes {
@@ -852,7 +851,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // return a better error here
         if status == InstructionResult::Revert {
             if let Some(err) = self.fork_revert_diagnostic.take() {
-                return (status, remaining_gas, Error::encode(err.to_error_msg(self)))
+                return (status, remaining_gas, Error::encode(err.to_error_msg(&self.labels)))
             }
         }
 

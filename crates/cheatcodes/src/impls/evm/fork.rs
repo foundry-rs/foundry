@@ -126,7 +126,7 @@ impl Cheatcode for transact_0Call {
             txHash,
             ccx.data.env,
             &mut ccx.data.journaled_state,
-            Some(ccx.state),
+            ccx.state,
         )?;
         Ok(Default::default())
     }
@@ -140,7 +140,7 @@ impl Cheatcode for transact_1Call {
             txHash,
             ccx.data.env,
             &mut ccx.data.journaled_state,
-            Some(ccx.state),
+            ccx.state,
         )?;
         Ok(Default::default())
     }

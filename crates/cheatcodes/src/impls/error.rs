@@ -284,7 +284,7 @@ impl_from!(
     FsPathError,
     hex::FromHexError,
     eyre::Error,
-    super::db::DatabaseError,
+    super::DatabaseError,
     jsonpath_lib::JsonPathError,
     serde_json::Error,
     SignatureError,

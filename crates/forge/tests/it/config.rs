@@ -166,7 +166,7 @@ pub async fn runner_with_config(mut config: Config) -> MultiContractRunner {
     config.allow_paths.push(manifest_root());
 
     base_runner()
-        .with_cheats_config(CheatsConfig::new(&config, &EVM_OPTS))
+        .with_cheats_config(CheatsConfig::new(&config, EVM_OPTS.clone()))
         .sender(config.sender)
         .build(
             &PROJECT.paths.root,

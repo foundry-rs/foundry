@@ -8,9 +8,9 @@ use revm::EVMData;
 mod error;
 pub use error::{Error, ErrorKind, Result};
 
-mod db;
-pub use db::{
-    CreateFork, DatabaseError, DatabaseExt, DatabaseResult, LocalForkId, RevertDiagnostic,
+pub use foundry_evm_core::{
+    backend::{DatabaseError, DatabaseExt, DatabaseResult, LocalForkId, RevertDiagnostic},
+    fork::CreateFork,
 };
 
 mod config;

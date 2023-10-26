@@ -10,7 +10,7 @@ use eyre::Result;
 use forge::{
     backend::Backend,
     executors::ExecutorBuilder,
-    inspectors::{cheatcodes::util::BroadcastableTransactions, CheatsConfig},
+    inspectors::{cheatcodes::BroadcastableTransactions, CheatsConfig},
     traces::{CallTraceDecoder, Traces},
     utils::CallKind,
 };
@@ -318,7 +318,7 @@ impl ScriptArgs {
         if let SimulationStage::Local = stage {
             builder = builder.inspectors(|stack| {
                 stack.debug(self.debug).cheatcodes(
-                    CheatsConfig::new(&script_config.config, &script_config.evm_opts).into(),
+                    CheatsConfig::new(&script_config.config, script_config.evm_opts.clone()).into(),
                 )
             });
         }

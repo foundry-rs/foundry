@@ -4,7 +4,6 @@ use super::{Cheatcode, CheatsCtxt, DatabaseExt, Result};
 use crate::{Cheatcodes, Vm::*};
 use alloy_primitives::Address;
 use alloy_sol_types::SolValue;
-use foundry_utils::types::ToEthers;
 
 pub(crate) mod expect;
 
@@ -93,7 +92,7 @@ fn breakpoint(state: &mut Cheatcodes, caller: &Address, s: &str, add: bool) -> R
     ensure!(point.is_alphabetic(), "only alphabetic characters are accepted as breakpoints");
 
     if add {
-        state.breakpoints.insert(point, (caller.to_ethers(), state.pc));
+        state.breakpoints.insert(point, (*caller, state.pc));
     } else {
         state.breakpoints.remove(&point);
     }
