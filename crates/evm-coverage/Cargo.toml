@@ -1,5 +1,6 @@
 [package]
 name = "foundry-evm-coverage"
+description = "EVM bytecode coverage analysis"
 
 version.workspace = true
 edition.workspace = true

@@ -1,5 +1,6 @@
 [package]
 name = "foundry-evm-fuzz"
+description = "EVM fuzzing implementation using `proptest`"
 
 version.workspace = true
 edition.workspace = true

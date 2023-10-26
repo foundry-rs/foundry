@@ -1,5 +1,6 @@
 [package]
 name = "foundry-evm-traces"
+description = "EVM trace identifying and decoding"
 
 version.workspace = true
 edition.workspace = true

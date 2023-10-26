@@ -1,5 +1,6 @@
 [package]
 name = "foundry-evm-core"
+description = "Core EVM abstractions"
 
 version.workspace = true
 edition.workspace = true

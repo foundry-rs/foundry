@@ -1,6 +1,6 @@
 //! # foundry-evm-fuzz
 //!
-//! [`proptest`] EVM executor, used for fuzzing.
+//! EVM fuzzing implementation using [`proptest`].
 
 #![warn(unreachable_pub, unused_crate_dependencies, rust_2018_idioms)]
 

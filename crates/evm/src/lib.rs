@@ -1,6 +1,6 @@
 //! # foundry-evm
 //!
-//! EVM executor and inspector implementations.
+//! Main Foundry EVM backend abstractions.
 
 #![warn(unreachable_pub, unused_crate_dependencies, rust_2018_idioms)]
 

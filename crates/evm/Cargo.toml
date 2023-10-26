@@ -1,5 +1,6 @@
 [package]
 name = "foundry-evm"
+description = "Main Foundry EVM backend abstractions"
 
 version.workspace = true
 edition.workspace = true
