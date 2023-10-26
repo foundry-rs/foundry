@@ -2798,6 +2798,7 @@ dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-sol-types",
+ "arbitrary",
  "auto_impl",
  "bytes",
  "const-hex",
