@@ -13,9 +13,7 @@ use super::{
     },
     CheatsCtxt, DatabaseExt, Error, Result, RevertDiagnostic, MAGIC_SKIP_BYTES,
 };
-use crate::{
-    CheatsConfig, Vm, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
-};
+use crate::{CheatsConfig, Vm};
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{SolInterface, SolValue};
 use ethers_core::types::{
@@ -23,6 +21,9 @@ use ethers_core::types::{
 };
 use ethers_signers::LocalWallet;
 use foundry_common::RpcUrl;
+use foundry_evm_core::constants::{
+    CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
+};
 use foundry_utils::types::ToEthers;
 use itertools::Itertools;
 use revm::{

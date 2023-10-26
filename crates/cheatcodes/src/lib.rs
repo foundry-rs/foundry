@@ -9,7 +9,9 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::{address, Address};
+// Silence the "unused crate" warning.
+#[cfg(not(feature = "impls"))]
+use alloy_primitives as _;
 
 mod defs;
 pub use defs::{Cheatcode, CheatcodeDef, Group, Mutability, Safety, Status, Visibility, Vm};
@@ -18,21 +20,6 @@ pub use defs::{Cheatcode, CheatcodeDef, Group, Mutability, Safety, Status, Visib
 pub mod impls;
 #[cfg(feature = "impls")]
 pub use impls::{Cheatcodes, CheatsConfig};
-
-/// The cheatcode handler address.
-///
-/// This is the same address as the one used in DappTools's HEVM.
-/// It is calculated as:
-/// `address(bytes20(uint160(uint256(keccak256('hevm cheat code')))))`
-pub const CHEATCODE_ADDRESS: Address = address!("7109709ECfa91a80626fF3989D68f67F5b1DD12D");
-
-/// The Hardhat console address.
-///
-/// See: <https://github.com/nomiclabs/hardhat/blob/master/packages/hardhat-core/console.sol>
-pub const HARDHAT_CONSOLE_ADDRESS: Address = address!("000000000000000000636F6e736F6c652e6c6f67");
-
-/// Address of the default `CREATE2` deployer.
-pub const DEFAULT_CREATE2_DEPLOYER: Address = address!("4e59b44847b379578588920ca78fbf26c0b4956c");
 
 /// Generates the `cheatcodes.json` file contents.
 pub fn json_cheatcodes() -> String {

@@ -45,17 +45,12 @@ pub struct Cheatcode<'a> {
     pub description: &'a str,
 
     // Manually-specified fields.
-    /// The group this cheatcode belongs to.
-    /// Has to be specified for each cheatcode.
+    /// The group that the cheatcode belongs to.
     pub group: Group,
     /// The current status of the cheatcode. E.g. whether it is stable or experimental, etc.
-    /// Has to be specified for each cheatcode.
     pub status: Status,
     /// Whether the cheatcode is safe to use inside of scripts. E.g. it does not change state in an
     /// unexpected way.
-    ///
-    /// Defaults first to the group's safety if unspecified. If the group is ambiguous, then it
-    /// must be specified manually.
     pub safety: Safety,
 }
 

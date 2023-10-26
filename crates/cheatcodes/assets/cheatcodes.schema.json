@@ -33,7 +33,7 @@
           "type": "string"
         },
         "group": {
-          "description": "The group this cheatcode belongs to. Has to be specified for each cheatcode.",
+          "description": "The group that the cheatcode belongs to.",
           "allOf": [
             {
               "$ref": "#/definitions/Group"
@@ -53,7 +53,7 @@
           ]
         },
         "safety": {
-          "description": "Whether the cheatcode is safe to use inside of scripts. E.g. it does not change state in an unexpected way.\n\nDefaults first to the group's safety if unspecified. If the group is ambiguous, then it must be specified manually.",
+          "description": "Whether the cheatcode is safe to use inside of scripts. E.g. it does not change state in an unexpected way.",
           "allOf": [
             {
               "$ref": "#/definitions/Safety"
@@ -80,7 +80,7 @@
           "type": "string"
         },
         "status": {
-          "description": "The current status of the cheatcode. E.g. whether it is stable or experimental, etc. Has to be specified for each cheatcode.",
+          "description": "The current status of the cheatcode. E.g. whether it is stable or experimental, etc.",
           "allOf": [
             {
               "$ref": "#/definitions/Status"
