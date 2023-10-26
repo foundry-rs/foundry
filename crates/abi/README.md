@@ -1,7 +1,7 @@
 # foundry-abi
 
 > [!WARNING]
-> This crate is obsolete and will be replaced with `foundry-cheatcodes` in the near future.
+> This crate is deprecated and will be replaced with `foundry-cheatcodes` in the near future.
 > Please avoid making any changes in this crate.
 
 Contains automatically-generated Rust bindings from Solidity ABI.

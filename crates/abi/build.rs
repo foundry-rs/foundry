@@ -1,5 +1,5 @@
 //! **WARNING**
-//! This crate is obsolete and will be replaced with `foundry-cheatcodes` in the near future.
+//! This crate is deprecated and will be replaced with `foundry-cheatcodes` in the near future.
 //! Please avoid making any changes in this crate.
 
 use ethers_contract_abigen::MultiAbigen;
