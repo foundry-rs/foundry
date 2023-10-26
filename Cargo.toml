@@ -1,5 +1,31 @@
 [workspace]
-members = ["crates/*"]
+members = [
+    "crates/abi/",
+    "crates/anvil/",
+    "crates/anvil/core/",
+    "crates/anvil/rpc/",
+    "crates/anvil/server/",
+    "crates/binder/",
+    "crates/cast/",
+    "crates/cheatcodes/",
+    "crates/chisel/",
+    "crates/cli/",
+    "crates/common/",
+    "crates/config/",
+    "crates/debugger/",
+    "crates/doc/",
+    "crates/evm/core/",
+    "crates/evm/coverage/",
+    "crates/evm/evm/",
+    "crates/evm/fuzz/",
+    "crates/evm/traces/",
+    "crates/fmt/",
+    "crates/forge/",
+    "crates/macros/",
+    "crates/macros/impl/",
+    "crates/test-utils/",
+    "crates/utils/",
+]
 resolver = "2"
 
 [workspace.package]
@@ -130,11 +156,11 @@ foundry-cli = { path = "crates/cli" }
 foundry-common = { path = "crates/common" }
 foundry-config = { path = "crates/config" }
 foundry-debugger = { path = "crates/debugger" }
-foundry-evm = { path = "crates/evm" }
-foundry-evm-core = { path = "crates/evm-core" }
-foundry-evm-coverage = { path = "crates/evm-coverage" }
-foundry-evm-fuzz = { path = "crates/evm-fuzz" }
-foundry-evm-traces = { path = "crates/evm-traces" }
+foundry-evm = { path = "crates/evm/evm" }
+foundry-evm-core = { path = "crates/evm/core" }
+foundry-evm-coverage = { path = "crates/evm/coverage" }
+foundry-evm-fuzz = { path = "crates/evm/fuzz" }
+foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 foundry-utils = { path = "crates/utils" }

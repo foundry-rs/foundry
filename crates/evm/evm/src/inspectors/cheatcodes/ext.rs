@@ -792,7 +792,7 @@ mod tests {
 
     #[test]
     fn test_artifact_parsing() {
-        let s = include_str!("../../../test-data/solc-obj.json");
+        let s = include_str!("../../../../test-data/solc-obj.json");
         let artifact: ArtifactBytecode = serde_json::from_str(s).unwrap();
         assert!(artifact.into_bytecode().is_some());
 
