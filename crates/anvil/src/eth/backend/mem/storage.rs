@@ -272,6 +272,23 @@ impl BlockchainStorage {
             total_difficulty: Default::default(),
         }
     }
+
+    /// Removes all stored transactions for the given block number
+    pub fn remove_block_transactions_by_number(&mut self, num: u64) {
+        if let Some(hash) = self.hashes.get(&(num.into())).copied() {
+            self.remove_block_transactions(hash);
+        }
+    }
+
+    /// Removes all stored transactions for the given block hash
+    pub fn remove_block_transactions(&mut self, block_hash: H256) {
+        if let Some(block) = self.blocks.get_mut(&block_hash) {
+            for tx in block.transactions.iter() {
+                self.transactions.remove(&tx.hash());
+            }
+            block.transactions.clear();
+        }
+    }
 }
 
 // === impl BlockchainStorage ===
