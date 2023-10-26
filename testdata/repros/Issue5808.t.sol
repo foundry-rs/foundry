@@ -15,7 +15,7 @@ contract Issue5808Test is DSTest {
 
         string memory str2 = '["0xffffffff","0x00000010"]';
         int256[] memory ints2 = vm.parseJsonIntArray(str2, "");
-        assertEq(ints2[0], 4294967295);
-        assertEq(ints2[1], 10);
+        assertEq(ints2[0], 0xffffffff);
+        assertEq(ints2[1], 0x00000010);
     }
 }
