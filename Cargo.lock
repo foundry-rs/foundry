@@ -2610,6 +2610,7 @@ dependencies = [
  "alloy-sol-types",
  "const-hex",
  "ethers-core",
+ "ethers-providers",
  "ethers-signers",
  "eyre",
  "foundry-common",

@@ -379,7 +379,7 @@ fn canonicalize_json_path(path: &str) -> Cow<'_, str> {
 /// The function is designed to run recursively, so that in case of an object
 /// it will call itself to convert each of it's value and encode the whole as a
 /// Tuple
-fn value_to_token(value: &Value) -> Result<DynSolValue> {
+pub(super) fn value_to_token(value: &Value) -> Result<DynSolValue> {
     match value {
         Value::Null => Ok(DynSolValue::FixedBytes(B256::ZERO, 32)),
         Value::Bool(boolean) => Ok(DynSolValue::Bool(*boolean)),

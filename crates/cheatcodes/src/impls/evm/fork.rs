@@ -1,8 +1,12 @@
-use alloy_primitives::B256;
-use alloy_sol_types::SolValue;
-
 use super::{Cheatcode, CheatsCtxt, DatabaseExt, Result};
 use crate::{impls::CreateFork, Cheatcodes, Vm::*};
+use alloy_primitives::{B256, U256};
+use alloy_sol_types::SolValue;
+use ethers_core::types::Filter;
+use ethers_providers::Middleware;
+use foundry_common::ProviderBuilder;
+use foundry_compilers::utils::RuntimeOrHandle;
+use foundry_utils::types::{ToAlloy, ToEthers};
 
 impl Cheatcode for activeForkCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
@@ -209,6 +213,76 @@ impl Cheatcode for isPersistentCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { account } = self;
         Ok(ccx.data.db.is_persistent(account).abi_encode())
+    }
+}
+
+impl Cheatcode for rpcCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { method, params } = self;
+        let url =
+            ccx.data.db.active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
+        let provider = ProviderBuilder::new(url).build()?;
+
+        let params_json: serde_json::Value = serde_json::from_str(params)?;
+        let result = RuntimeOrHandle::new()
+            .block_on(provider.request(method, params_json))
+            .map_err(|err| fmt_err!("{method:?}: {err}"))?;
+
+        let result_as_tokens = crate::impls::json::value_to_token(&result)
+            .map_err(|err| fmt_err!("failed to parse result: {err}"))?;
+
+        Ok(result_as_tokens.abi_encode())
+    }
+}
+
+impl Cheatcode for eth_getLogsCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { fromBlock, toBlock, addr, topics } = self;
+        let (Ok(from_block), Ok(to_block)) = (u64::try_from(fromBlock), u64::try_from(toBlock))
+        else {
+            bail!("blocks in block range must be less than 2^64 - 1")
+        };
+
+        if topics.len() > 4 {
+            bail!("topics array must contain at most 4 elements")
+        }
+
+        let url =
+            ccx.data.db.active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
+        let provider = ProviderBuilder::new(url).build()?;
+        let mut filter =
+            Filter::new().address(addr.to_ethers()).from_block(from_block).to_block(to_block);
+        for (i, topic) in topics.iter().enumerate() {
+            let topic = topic.to_ethers();
+            match i {
+                0 => filter = filter.topic0(topic),
+                1 => filter = filter.topic1(topic),
+                2 => filter = filter.topic2(topic),
+                3 => filter = filter.topic3(topic),
+                _ => unreachable!(),
+            };
+        }
+
+        let logs = RuntimeOrHandle::new()
+            .block_on(provider.get_logs(&filter))
+            .map_err(|e| fmt_err!("eth_getLogs: {e}"))?;
+
+        let eth_logs = logs
+            .into_iter()
+            .map(|log| EthGetLogs {
+                emitter: log.address.to_alloy(),
+                topics: log.topics.into_iter().map(ToAlloy::to_alloy).collect(),
+                data: log.data.0.into(),
+                blockNumber: U256::from(log.block_number.unwrap_or_default().to_alloy()),
+                transactionHash: log.transaction_hash.unwrap_or_default().to_alloy(),
+                transactionIndex: U256::from(log.transaction_index.unwrap_or_default().to_alloy()),
+                blockHash: log.block_hash.unwrap_or_default().to_alloy(),
+                logIndex: log.log_index.unwrap_or_default().to_alloy(),
+                removed: log.removed.unwrap_or(false),
+            })
+            .collect::<Vec<_>>();
+
+        Ok(eth_logs.abi_encode())
     }
 }
 

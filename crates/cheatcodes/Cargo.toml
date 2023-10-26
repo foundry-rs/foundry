@@ -34,6 +34,7 @@ alloy-dyn-abi = { workspace = true, optional = true }
 alloy-json-abi = { workspace = true, optional = true }
 ethers-core = { workspace = true, optional = true }
 ethers-signers = { workspace = true, optional = true }
+ethers-providers = { workspace = true, optional = true }
 
 eyre = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
@@ -54,6 +55,7 @@ impls = [
     "dep:alloy-dyn-abi",
     "dep:alloy-json-abi",
     "dep:ethers-core",
+    "dep:ethers-providers",
     "dep:ethers-signers",
     "dep:eyre",
     "dep:hex",

@@ -54,6 +54,28 @@ interface Vm {
         string url;
     }
 
+    /// An RPC log object. Returned by `eth_getLogs`.
+    struct EthGetLogs {
+        /// The address of the log's emitter.
+        address emitter;
+        /// The topics of the log, including the signature, if any.
+        bytes32[] topics;
+        /// The raw data of the log.
+        bytes data;
+        /// The block number.
+        uint256 blockNumber;
+        /// The transaction hash.
+        bytes32 transactionHash;
+        /// The transaction index in the block.
+        uint256 transactionIndex;
+        /// The block hash.
+        bytes32 blockHash;
+        /// The log index.
+        uint256 logIndex;
+        /// Whether the log was removed.
+        bool removed;
+    }
+
     /// A single entry in a directory listing. Returned by `readDir`.
     struct DirEntry {
         /// The error message, if any.
@@ -351,6 +373,16 @@ interface Vm {
     /// Fetches the given transaction from the given fork and executes it on the current state.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function transact(uint256 forkId, bytes32 txHash) external;
+
+    /// Performs an Ethereum JSON-RPC request to the current fork URL.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function rpc(string calldata method, string calldata params) external returns (bytes memory data);
+
+    /// Gets all the logs according to specified filter.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function eth_getLogs(uint256 fromBlock, uint256 toBlock, address addr, bytes32[] memory topics)
+        external
+        returns (EthGetLogs[] memory logs);
 
     // --- Behavior ---
 
