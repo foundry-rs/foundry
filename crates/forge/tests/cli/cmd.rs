@@ -282,7 +282,8 @@ forgetest!(can_init_with_dir, |prj: TestProject, mut cmd: TestCommand| {
 forgetest!(can_init_with_dir_and_template, |prj: TestProject, mut cmd: TestCommand| {
     cmd.args(["init", "foobar", "--template", "foundry-rs/forge-template"]);
 
-    cmd.assert_success(); cmd.assert_non_empty_stdout();
+    cmd.assert_success();
+    cmd.assert_non_empty_stdout();
     assert!(prj.root().join("foobar/.git").exists());
     assert!(prj.root().join("foobar/foundry.toml").exists());
     assert!(prj.root().join("foobar/lib/forge-std").exists());
@@ -294,9 +295,17 @@ forgetest!(can_init_with_dir_and_template, |prj: TestProject, mut cmd: TestComma
 
 // `forge init foobar --template [template] --branch [branch]` works with dir argument
 forgetest!(can_init_with_dir_and_template_and_branch, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.args(["init", "foobar", "--template", "foundry-rs/forge-template", "--branch", "test/deployments"]);
+    cmd.args([
+        "init",
+        "foobar",
+        "--template",
+        "foundry-rs/forge-template",
+        "--branch",
+        "test/deployments",
+    ]);
 
-    cmd.assert_success(); cmd.assert_non_empty_stdout();
+    cmd.assert_success();
+    cmd.assert_non_empty_stdout();
     assert!(prj.root().join("foobar/.dapprc").exists());
     assert!(prj.root().join("foobar/lib/ds-test").exists());
     // assert that gitmodules were correctly initialized
