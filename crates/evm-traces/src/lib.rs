@@ -122,7 +122,7 @@ impl CallTraceArena {
                     contract_storage.insert(B256::from(key), B256::from(value));
                     log.storage = Some(
                         contract_storage
-                            .into_iter()
+                            .iter_mut()
                             .map(|t| (t.0.to_ethers(), t.1.to_ethers()))
                             .collect(),
                     );
