@@ -278,7 +278,7 @@ forgetest!(can_init_with_dir, |prj: TestProject, mut cmd: TestCommand| {
     assert!(prj.root().join("foobar").exists());
 });
 
-// `forge init foobar` works with dir argument
+// `forge init foobar --template [template]` works with dir argument
 forgetest!(can_init_with_dir_and_template, |prj: TestProject, mut cmd: TestCommand| {
     cmd.args(["init", "foobar", "--template", "foundry-rs/forge-template"]);
 
@@ -292,7 +292,7 @@ forgetest!(can_init_with_dir_and_template, |prj: TestProject, mut cmd: TestComma
     assert!(prj.root().join("foobar/test").exists());
 });
 
-// `forge init foobar` works with dir argument
+// `forge init foobar --template [template] --branch [branch]` works with dir argument
 forgetest!(can_init_with_dir_and_template_and_branch, |prj: TestProject, mut cmd: TestCommand| {
     cmd.args(["init", "foobar", "--template", "foundry-rs/forge-template", "--branch", "test/deployments"]);
 
