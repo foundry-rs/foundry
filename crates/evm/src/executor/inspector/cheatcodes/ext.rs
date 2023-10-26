@@ -414,7 +414,7 @@ fn parse_json_keys(json_str: &str, key: &str) -> Result {
 /// a new object in itself. The function will return a stringified version of the object, so that
 /// the user can use that as a value to a new invocation of the same function with a new object key.
 /// This enables the user to reuse the same function to crate arbitrarily complex object structures
-/// (JSON). Note that the Rust BTreeMap crate is used to serialize in lexicographical order, meaning
+/// (JSON). Note that the `BTreeMap` is used to serialize in lexicographical order, meaning
 /// uppercase precedes lowercase. More: <https://doc.rust-lang.org/std/collections/struct.BTreeMap.html>
 fn serialize_json(
     state: &mut Cheatcodes,
