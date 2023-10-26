@@ -1,3 +1,7 @@
+//! **WARNING**
+//! This crate is obsolete and will be replaced with `foundry-cheatcodes` in the near future.
+//! Please avoid making any changes in this crate.
+
 use ethers_contract_abigen::MultiAbigen;
 
 /// Includes a JSON ABI as a string literal.
