@@ -1,6 +1,6 @@
 use crate::{executors::Executor, inspectors::InspectorStackBuilder};
 use alloy_primitives::U256;
-use foundry_evm_executors::backend::Backend;
+use foundry_evm_core::backend::Backend;
 use revm::primitives::{Env, SpecId};
 
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional

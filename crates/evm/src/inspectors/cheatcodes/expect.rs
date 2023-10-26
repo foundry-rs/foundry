@@ -1,7 +1,7 @@
 use super::{bail, ensure, fmt_err, Cheatcodes, Result};
 use alloy_dyn_abi::DynSolType;
 use alloy_primitives::{Address, Bytes, Log as RawLog, U256};
-use foundry_evm_executors::{abi::HEVMCalls, backend::DatabaseExt};
+use foundry_evm_core::{abi::HEVMCalls, backend::DatabaseExt};
 use foundry_utils::{
     error::{ERROR_PREFIX, REVERT_PREFIX},
     types::ToAlloy,

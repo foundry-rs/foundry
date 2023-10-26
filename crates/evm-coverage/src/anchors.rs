@@ -1,7 +1,7 @@
 use super::{CoverageItem, CoverageItemKind, ItemAnchor, SourceLocation};
 use alloy_primitives::Bytes;
 use foundry_compilers::sourcemap::{SourceElement, SourceMap};
-use foundry_evm_executors::utils::ICPCMap;
+use foundry_evm_core::utils::ICPCMap;
 use revm::{
     interpreter::opcode::{self, spec_opcode_gas},
     primitives::SpecId,

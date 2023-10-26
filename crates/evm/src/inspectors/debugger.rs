@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, Bytes};
-use foundry_evm_executors::{
+use foundry_evm_core::{
     backend::DatabaseExt,
     constants::CHEATCODE_ADDRESS,
     debug::{DebugArena, DebugNode, DebugStep, Instruction},

@@ -6,7 +6,7 @@ use foundry_block_explorers::{
 };
 use foundry_common::compile::{self, ContractSources};
 use foundry_config::{Chain, Config};
-use foundry_evm_executors::utils::RuntimeOrHandle;
+use foundry_evm_core::utils::RuntimeOrHandle;
 use futures::{
     future::{join_all, Future},
     stream::{FuturesUnordered, Stream, StreamExt},

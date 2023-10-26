@@ -125,22 +125,22 @@ forge-doc = { path = "crates/doc" }
 forge-fmt = { path = "crates/fmt" }
 foundry-abi = { path = "crates/abi" }
 foundry-binder = { path = "crates/binder" }
+foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-cli = { path = "crates/cli" }
 foundry-common = { path = "crates/common" }
-foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-config = { path = "crates/config" }
+foundry-debugger = { path = "crates/debugger" }
 foundry-evm = { path = "crates/evm" }
+foundry-evm-core = { path = "crates/evm-core" }
 foundry-evm-coverage = { path = "crates/evm-coverage" }
-foundry-evm-executors = { path = "crates/evm-executors" }
 foundry-evm-fuzz = { path = "crates/evm-fuzz" }
 foundry-evm-traces = { path = "crates/evm-traces" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 foundry-utils = { path = "crates/utils" }
-foundry-debugger = { path = "crates/debugger" }
 
-foundry-compilers = { version = "0.1", default-features = false }
 foundry-block-explorers = { version = "0.1", default-features = false }
+foundry-compilers = { version = "0.1", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg

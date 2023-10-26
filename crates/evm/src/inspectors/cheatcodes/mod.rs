@@ -12,7 +12,7 @@ use ethers::{
     types::{transaction::eip2718::TypedTransaction, NameOrAddress, TransactionRequest},
 };
 use foundry_common::evm::Breakpoints;
-use foundry_evm_executors::{
+use foundry_evm_core::{
     abi::HEVMCalls,
     backend::{DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_SKIP_BYTES},

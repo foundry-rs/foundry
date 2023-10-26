@@ -3,7 +3,7 @@ use crate::{
     RawOrDecodedReturnData,
 };
 use alloy_primitives::{Address, Bytes, Log as RawLog, B256, U256};
-use foundry_evm_executors::{
+use foundry_evm_core::{
     debug::Instruction::OpCode,
     utils::{gas_used, get_create_address, CallKind},
 };

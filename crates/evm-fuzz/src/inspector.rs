@@ -1,6 +1,6 @@
 use crate::{invariant::RandomCallGenerator, strategies::EvmFuzzState};
 use alloy_primitives::Bytes;
-use foundry_evm_executors::utils;
+use foundry_evm_core::utils;
 use foundry_utils::types::ToEthers;
 use revm::{
     interpreter::{CallInputs, CallScheme, Gas, InstructionResult, Interpreter},

@@ -5,7 +5,7 @@ use foundry_config::{
     cache::StorageCachingConfig, fs_permissions::FsAccessKind, Config, FsPermissions,
     ResolvedRpcEndpoints,
 };
-use foundry_evm_executors::opts::EvmOpts;
+use foundry_evm_core::opts::EvmOpts;
 use std::path::{Path, PathBuf};
 
 /// Additional, configurable context the `Cheatcodes` inspector has access to

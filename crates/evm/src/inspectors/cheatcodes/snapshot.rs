@@ -1,6 +1,6 @@
 use super::Result;
 use alloy_dyn_abi::DynSolValue;
-use foundry_evm_executors::{abi::HEVMCalls, backend::DatabaseExt};
+use foundry_evm_core::{abi::HEVMCalls, backend::DatabaseExt};
 use foundry_utils::types::ToAlloy;
 use revm::EVMData;
 

@@ -1,8 +1,8 @@
 use crate::executors::RawCallResult;
 use alloy_primitives::Bytes;
 use foundry_common::evm::Breakpoints;
+use foundry_evm_core::debug::DebugArena;
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_executors::debug::DebugArena;
 use foundry_evm_fuzz::FuzzCase;
 use foundry_evm_traces::CallTraceArena;
 use revm::interpreter::InstructionResult;

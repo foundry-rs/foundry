@@ -4,7 +4,7 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi as Abi};
 use alloy_primitives::Address;
 use foundry_common::{abi::format_token, SELECTOR_LEN};
-use foundry_evm_executors::decode;
+use foundry_evm_core::decode;
 use std::collections::HashMap;
 
 /// Returns the label for the given [DynSolValue]

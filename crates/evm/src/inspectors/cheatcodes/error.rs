@@ -3,7 +3,7 @@ use alloy_primitives::Bytes;
 use ethers::prelude::k256::ecdsa::signature::Error as SignatureError;
 use foundry_common::errors::FsPathError;
 use foundry_config::UnresolvedEnvVarError;
-use foundry_evm_executors::backend::{DatabaseError, NoCheatcodeAccessError};
+use foundry_evm_core::backend::{DatabaseError, NoCheatcodeAccessError};
 use foundry_utils::error::{encode_error, SolError};
 use std::{borrow::Cow, fmt::Arguments};
 

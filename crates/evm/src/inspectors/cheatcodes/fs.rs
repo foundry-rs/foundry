@@ -3,7 +3,7 @@ use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Bytes, U256};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
-use foundry_evm_executors::abi::hevm::{DirEntry, FsMetadata, HEVMCalls};
+use foundry_evm_core::abi::hevm::{DirEntry, FsMetadata, HEVMCalls};
 use foundry_utils::types::ToAlloy;
 use std::{
     io::{BufRead, BufReader, Write},

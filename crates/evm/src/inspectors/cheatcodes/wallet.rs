@@ -20,7 +20,7 @@ use ethers::{
     },
     utils,
 };
-use foundry_evm_executors::abi::HEVMCalls;
+use foundry_evm_core::abi::HEVMCalls;
 use foundry_utils::types::{ToAlloy, ToEthers};
 use revm::{Database, EVMData};
 use std::str::FromStr;

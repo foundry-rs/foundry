@@ -101,7 +101,7 @@ pub const MIN_TRANSACTION_GAS: U256 = U256([21_000, 0, 0, 0]);
 // Gas per transaction creating a contract.
 pub const MIN_CREATE_GAS: U256 = U256([53_000, 0, 0, 0]);
 
-// TODO: This is the same as foundry_evm::executors::StateChangeset but with ethers H160
+// TODO: This is the same as foundry_evm::utils::StateChangeset but with ethers H160
 pub type State = foundry_evm::hashbrown::HashMap<Address, Account>;
 
 /// A block request, which includes the Pool Transactions if it's Pending

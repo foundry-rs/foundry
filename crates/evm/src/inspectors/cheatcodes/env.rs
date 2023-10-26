@@ -8,7 +8,7 @@ use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
 use ethers::signers::{LocalWallet, Signer};
 use foundry_config::Config;
-use foundry_evm_executors::{abi::HEVMCalls, backend::DatabaseExt};
+use foundry_evm_core::{abi::HEVMCalls, backend::DatabaseExt};
 use foundry_utils::types::ToAlloy;
 use revm::{
     primitives::{Bytecode, SpecId, KECCAK_EMPTY},

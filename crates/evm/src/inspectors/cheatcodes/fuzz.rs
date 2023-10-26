@@ -1,6 +1,6 @@
 use super::{Error, Result};
 use alloy_primitives::Bytes;
-use foundry_evm_executors::{abi::HEVMCalls, constants::ASSUME_MAGIC_RETURN_CODE};
+use foundry_evm_core::{abi::HEVMCalls, constants::ASSUME_MAGIC_RETURN_CODE};
 
 #[instrument(level = "error", name = "fuzz", target = "evm::cheatcodes", skip_all)]
 pub fn apply(call: &HEVMCalls) -> Option<Result> {

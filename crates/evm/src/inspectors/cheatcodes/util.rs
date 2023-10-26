@@ -7,7 +7,7 @@ use ethers::{
     types::{transaction::eip2718::TypedTransaction, NameOrAddress},
 };
 use foundry_common::RpcUrl;
-use foundry_evm_executors::{
+use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, DatabaseResult},
     constants::DEFAULT_CREATE2_DEPLOYER,
 };

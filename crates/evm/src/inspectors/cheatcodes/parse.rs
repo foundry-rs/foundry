@@ -1,7 +1,7 @@
 use super::{fmt_err, Cheatcodes, Result};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{FixedBytes, I256, U256};
-use foundry_evm_executors::abi::HEVMCalls;
+use foundry_evm_core::abi::HEVMCalls;
 use foundry_macros::UIfmt;
 use revm::{Database, EVMData};
 

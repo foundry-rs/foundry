@@ -6,7 +6,7 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use ethers::types::Log;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::FuzzDictionaryConfig;
-use foundry_evm_executors::StateChangeset;
+use foundry_evm_core::utils::StateChangeset;
 use foundry_utils::types::ToEthers;
 use hashbrown::HashSet;
 use parking_lot::RwLock;

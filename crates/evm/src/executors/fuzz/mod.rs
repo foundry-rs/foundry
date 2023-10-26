@@ -4,11 +4,11 @@ use alloy_json_abi::{Function, JsonAbi as Abi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_config::FuzzConfig;
-use foundry_evm_coverage::HitMaps;
-use foundry_evm_executors::{
+use foundry_evm_core::{
     constants::ASSUME_MAGIC_RETURN_CODE,
     decode::{self, decode_console_logs},
 };
+use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
     strategies::{
         build_initial_state, collect_state_from_call, fuzz_calldata, fuzz_calldata_from_state,

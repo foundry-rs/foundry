@@ -1,7 +1,9 @@
-//! EVM executors.
+//! EVM executor abstractions, which can execute calls.
+//!
+//! Used for running tests, scripts, and interacting with the inner backend which holds the state.
 
 // TODO: The individual executors in this module should be moved into the respective craits, and the
-// `Executor` struct should be accessed using a trait defined in `foundry-evm-executors` instead of
+// `Executor` struct should be accessed using a trait defined in `foundry-evm-core` instead of
 // the concrete `Executor` type.
 
 use crate::inspectors::{
@@ -12,17 +14,16 @@ use alloy_json_abi::{Function, JsonAbi as Abi};
 use alloy_primitives::{Address, Bytes, U256};
 use ethers::{signers::LocalWallet, types::Log};
 use foundry_common::{abi::IntoFunction, evm::Breakpoints};
-use foundry_evm_coverage::HitMaps;
-use foundry_evm_executors::{
+use foundry_evm_core::{
     backend::{Backend, DatabaseError, DatabaseExt, DatabaseResult, FuzzBackendWrapper},
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_CODE,
     },
     debug::DebugArena,
     decode,
-    utils::{eval_to_instruction_result, halt_to_instruction_result},
-    StateChangeset,
+    utils::{eval_to_instruction_result, halt_to_instruction_result, StateChangeset},
 };
+use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
     db::{DatabaseCommit, DatabaseRef},

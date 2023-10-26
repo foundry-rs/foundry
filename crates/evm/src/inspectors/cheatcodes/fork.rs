@@ -4,7 +4,7 @@ use alloy_primitives::{Bytes, B256, U256};
 use ethers::{providers::Middleware, types::Filter};
 use foundry_abi::hevm::{EthGetLogsCall, RpcCall};
 use foundry_common::ProviderBuilder;
-use foundry_evm_executors::{
+use foundry_evm_core::{
     abi::HEVMCalls, backend::DatabaseExt, fork::CreateFork, utils::RuntimeOrHandle,
 };
 use foundry_utils::types::{ToAlloy, ToEthers};

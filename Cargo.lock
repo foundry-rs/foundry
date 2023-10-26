@@ -2805,8 +2805,8 @@ dependencies = [
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
+ "foundry-evm-core",
  "foundry-evm-coverage",
- "foundry-evm-executors",
  "foundry-evm-fuzz",
  "foundry-evm-traces",
  "foundry-macros",
@@ -2826,21 +2826,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "foundry-evm-coverage"
-version = "0.2.0"
-dependencies = [
- "alloy-primitives",
- "eyre",
- "foundry-common",
- "foundry-compilers",
- "foundry-evm-executors",
- "revm",
- "semver 1.0.20",
- "tracing",
-]
-
-[[package]]
-name = "foundry-evm-executors"
+name = "foundry-evm-core"
 version = "0.2.0"
 dependencies = [
  "alloy-dyn-abi",
@@ -2870,6 +2856,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "foundry-evm-coverage"
+version = "0.2.0"
+dependencies = [
+ "alloy-primitives",
+ "eyre",
+ "foundry-common",
+ "foundry-compilers",
+ "foundry-evm-core",
+ "revm",
+ "semver 1.0.20",
+ "tracing",
+]
+
+[[package]]
 name = "foundry-evm-fuzz"
 version = "0.2.0"
 dependencies = [
@@ -2882,8 +2882,8 @@ dependencies = [
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
+ "foundry-evm-core",
  "foundry-evm-coverage",
- "foundry-evm-executors",
  "foundry-evm-traces",
  "foundry-utils",
  "hashbrown 0.14.2",
@@ -2909,7 +2909,7 @@ dependencies = [
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
- "foundry-evm-executors",
+ "foundry-evm-core",
  "foundry-utils",
  "futures",
  "hashbrown 0.14.2",

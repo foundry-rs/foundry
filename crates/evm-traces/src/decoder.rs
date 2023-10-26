@@ -7,7 +7,7 @@ use alloy_dyn_abi::{DynSolValue, EventExt};
 use alloy_json_abi::{Event, Function, JsonAbi as Abi};
 use alloy_primitives::{Address, FixedBytes, B256};
 use foundry_common::{abi::get_indexed_event, SELECTOR_LEN};
-use foundry_evm_executors::{
+use foundry_evm_core::{
     abi::{CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HEVM_ABI},
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
