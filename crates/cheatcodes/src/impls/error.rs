@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::{Revert, SolError, SolValue};
-use ethers::{core::k256::ecdsa::signature::Error as SignatureError, signers::WalletError};
+use ethers_core::k256::ecdsa::signature::Error as SignatureError;
+use ethers_signers::WalletError;
 use foundry_common::errors::FsPathError;
 use foundry_config::UnresolvedEnvVarError;
 use std::{borrow::Cow, fmt, ptr::NonNull};
@@ -280,7 +281,7 @@ macro_rules! impl_from {
 
 impl_from!(
     alloy_sol_types::Error,
-    ethers::types::SignatureError,
+    ethers_core::types::SignatureError,
     FsPathError,
     hex::FromHexError,
     eyre::Error,

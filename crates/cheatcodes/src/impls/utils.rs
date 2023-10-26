@@ -4,19 +4,17 @@ use super::{Cheatcode, CheatsCtxt, DatabaseExt, Result};
 use crate::{Cheatcodes, Vm::*};
 use alloy_primitives::{keccak256, B256, U256};
 use alloy_sol_types::SolValue;
-use ethers::{
-    core::k256::{
-        ecdsa::SigningKey,
-        elliptic_curve::{sec1::ToEncodedPoint, Curve},
-        Secp256k1,
+use ethers_core::k256::{
+    ecdsa::SigningKey,
+    elliptic_curve::{sec1::ToEncodedPoint, Curve},
+    Secp256k1,
+};
+use ethers_signers::{
+    coins_bip39::{
+        ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
+        Portuguese, Spanish, Wordlist,
     },
-    signers::{
-        coins_bip39::{
-            ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese,
-            Korean, Portuguese, Spanish, Wordlist,
-        },
-        LocalWallet, MnemonicBuilder, Signer,
-    },
+    LocalWallet, MnemonicBuilder, Signer,
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
 
@@ -120,7 +118,7 @@ impl Cheatcode for getLabelCall {
 /// If 'label' is set to 'Some()', assign that label to the associated ETH address in state
 fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes) -> Result {
     let key = parse_private_key(private_key)?;
-    let addr = ethers::utils::secret_key_to_address(&key).0.into();
+    let addr = ethers_core::utils::secret_key_to_address(&key).0.into();
 
     let pub_key = key.verifying_key().as_affine().to_encoded_point(false);
     let pub_key_x = U256::from_be_bytes((*pub_key.x().unwrap()).into());

@@ -4,7 +4,7 @@ use super::{Cheatcode, CheatsCtxt, DatabaseExt, Result};
 use crate::{Cheatcodes, Vm::*};
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolValue;
-use ethers::signers::Signer;
+use ethers_signers::Signer;
 use foundry_utils::types::ToAlloy;
 use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},

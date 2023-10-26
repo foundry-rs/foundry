@@ -3,7 +3,7 @@
 use super::{Cheatcode, CheatsCtxt, DatabaseExt, Result};
 use crate::Vm::*;
 use alloy_primitives::{Address, U256};
-use ethers::signers::Signer;
+use ethers_signers::Signer;
 use foundry_config::Config;
 
 impl Cheatcode for broadcast_0Call {

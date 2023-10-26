@@ -18,10 +18,10 @@ use crate::{
 };
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{SolInterface, SolValue};
-use ethers::{
-    signers::LocalWallet,
-    types::{transaction::eip2718::TypedTransaction, NameOrAddress, TransactionRequest},
+use ethers_core::types::{
+    transaction::eip2718::TypedTransaction, NameOrAddress, TransactionRequest,
 };
+use ethers_signers::LocalWallet;
 use foundry_common::RpcUrl;
 use foundry_utils::types::ToEthers;
 use itertools::Itertools;

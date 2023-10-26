@@ -25,15 +25,16 @@ schemars = { version = "0.8.15", optional = true }
 
 # impls
 foundry-common = { workspace = true, optional = true }
+foundry-compilers = { workspace = true, optional = true }
 foundry-config = { workspace = true, optional = true }
-foundry-evm-core.workspace = true
+foundry-evm-core = { workspace = true, optional = true }
 foundry-utils = { workspace = true, optional = true }
 
 alloy-dyn-abi = { workspace = true, optional = true }
 alloy-json-abi = { workspace = true, optional = true }
+ethers-core = { workspace = true, optional = true }
+ethers-signers = { workspace = true, optional = true }
 
-ethers = { workspace = true, optional = true, features = ["ethers-solc"] }
-foundry-compilers = { workspace = true, optional = true, default-features = false }
 eyre = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
 itertools = { workspace = true, optional = true }
@@ -46,11 +47,14 @@ walkdir = { version = "2", optional = true }
 schema = ["dep:schemars"]
 impls = [
     "dep:foundry-common",
+    "dep:foundry-compilers",
     "dep:foundry-config",
+    "dep:foundry-evm-core",
     "dep:foundry-utils",
     "dep:alloy-dyn-abi",
     "dep:alloy-json-abi",
-    "dep:ethers",
+    "dep:ethers-core",
+    "dep:ethers-signers",
     "dep:eyre",
     "dep:hex",
     "dep:itertools",
