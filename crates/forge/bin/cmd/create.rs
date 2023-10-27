@@ -534,20 +534,24 @@ where
         let data: Bytes = match (self.abi.constructor(), params.is_empty()) {
             (None, false) => return Err(ContractError::ConstructorError),
             (None, true) => self.bytecode.clone(),
-            (Some(constructor), _) => constructor
-                .abi_encode_input(&params)
-                .map_err(|f| ContractError::DetokenizationError(InvalidOutputType(f.to_string())))?
-                .into(),
+            (Some(constructor), _) => {
+                let input: Bytes = constructor
+                    .abi_encode_input(&params)
+                    .map_err(|f| {
+                        ContractError::DetokenizationError(InvalidOutputType(f.to_string()))
+                    })?
+                    .into();
+                // Concatenate the bytecode and abi-encoded constructor call.
+                self.bytecode.iter().copied().chain(input).collect()
+            }
         };
 
         // create the tx object. Since we're deploying a contract, `to` is `None`
-        // We default to EIP-1559 transactions, but the sender can convert it back
-        // to a legacy one
-        #[cfg(feature = "legacy")]
-        let tx = TransactionRequest { to: None, data: Some(data), ..Default::default() };
-        #[cfg(not(feature = "legacy"))]
+        // We default to EIP1559 transactions, but the sender can convert it back
+        // to a legacy one.
         let tx =
             Eip1559TransactionRequest { to: None, data: Some(data.0.into()), ..Default::default() };
+
         let tx = tx.into();
 
         Ok(Deployer {
