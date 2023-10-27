@@ -2957,6 +2957,8 @@ dependencies = [
  "regex",
  "serde_json",
  "tempfile",
+ "tracing",
+ "tracing-subscriber",
  "walkdir",
 ]
 

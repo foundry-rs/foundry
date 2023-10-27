@@ -29,6 +29,8 @@ regex = "1"
 serde_json.workspace = true
 tempfile = "3"
 walkdir = "2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
 
 [features]
 # feature for integration tests that test external projects

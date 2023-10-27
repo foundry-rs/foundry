@@ -1,4 +1,4 @@
-use crate::TestCommand;
+use crate::{init_tracing, TestCommand};
 use alloy_primitives::{Address, U256};
 use ethers::prelude::{Middleware, NameOrAddress};
 use eyre::Result;
@@ -26,6 +26,7 @@ impl ScriptTester {
         project_root: &Path,
         target_contract: &str,
     ) -> Self {
+        init_tracing();
         ScriptTester::copy_testdata(project_root).unwrap();
         cmd.set_current_dir(project_root);
 
@@ -103,7 +104,10 @@ impl ScriptTester {
         Ok(())
     }
 
-    pub async fn load_private_keys(&mut self, keys_indexes: Vec<u32>) -> &mut Self {
+    pub async fn load_private_keys(
+        &mut self,
+        keys_indexes: impl IntoIterator<Item = u32>,
+    ) -> &mut Self {
         for index in keys_indexes {
             self.cmd.args(["--private-keys", &self.accounts_priv[index as usize]]);
 
@@ -170,24 +174,28 @@ impl ScriptTester {
         self.run(expected)
     }
 
-    /// In Vec<(private_key_slot, expected increment)>
-    pub async fn assert_nonce_increment(&mut self, keys_indexes: Vec<(u32, u32)>) -> &mut Self {
+    /// `[(private_key_slot, expected increment)]`
+    pub async fn assert_nonce_increment(
+        &mut self,
+        keys_indexes: impl IntoIterator<Item = (u32, u32)>,
+    ) -> &mut Self {
         for (private_key_slot, expected_increment) in keys_indexes {
+            let addr = self.accounts_pub[private_key_slot as usize];
             let nonce = self
                 .provider
                 .as_ref()
                 .unwrap()
-                .get_transaction_count(
-                    NameOrAddress::Address(
-                        self.accounts_pub[private_key_slot as usize].to_ethers(),
-                    ),
-                    None,
-                )
+                .get_transaction_count(NameOrAddress::Address(addr.to_ethers()), None)
                 .await
                 .unwrap();
             let prev_nonce = self.nonces.get(&private_key_slot).unwrap();
 
-            assert_eq!(nonce, (prev_nonce + U256::from(expected_increment)).to_ethers());
+            assert_eq!(
+                nonce,
+                (prev_nonce + U256::from(expected_increment)).to_ethers(),
+                "nonce not incremented correctly for {addr}: \
+                 {prev_nonce} + {expected_increment} != {nonce}"
+            );
         }
         self
     }
@@ -214,13 +222,15 @@ impl ScriptTester {
 
     pub fn run(&mut self, expected: ScriptOutcome) -> &mut Self {
         let stdout = self.cmd.stdout_lossy();
+        trace!(target: "tests", "STDOUT\n{stdout}");
         let stderr = self.cmd.stderr_lossy();
+        trace!(target: "tests", "STDERR\n{stderr}");
 
         let output = if expected.is_err() { &stderr } else { &stdout };
         if !output.contains(expected.as_str()) {
             let which = if expected.is_err() { "stderr" } else { "stdout" };
             panic!(
-                "--STDOUT--\n{stdout}\n\n--STDERR--\n{stderr}\n\n--EXPECTED--{:?} in {which}",
+                "--STDOUT--\n{stdout}\n\n--STDERR--\n{stderr}\n\n--EXPECTED--\n{:?} in {which}",
                 expected.as_str()
             );
         }

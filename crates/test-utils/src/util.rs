@@ -1,3 +1,4 @@
+use crate::init_tracing;
 use eyre::{Result, WrapErr};
 use foundry_compilers::{
     cache::SolFilesCache,
@@ -228,12 +229,14 @@ impl TestProject {
     /// does not need to be distinct for each invocation, but should correspond
     /// to a logical grouping of tests.
     pub fn new(name: &str, style: PathStyle) -> Self {
+        init_tracing();
         let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
         let project = pretty_err(name, TempProject::with_style(&format!("{name}-{id}"), style));
         Self::with_project(project)
     }
 
     pub fn with_project(project: TempProject) -> Self {
+        init_tracing();
         let root =
             env::current_exe().unwrap().parent().expect("executable's directory").to_path_buf();
         Self { root, inner: Arc::new(project) }
@@ -383,16 +386,13 @@ impl TestProject {
         let forge = self.root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
         let mut cmd = process::Command::new(forge);
         cmd.current_dir(self.inner.root());
-        cmd.env("NO_COLOR", "1");
         cmd
     }
 
     /// Returns the path to the cast executable.
     pub fn cast_bin(&self) -> process::Command {
         let cast = self.root.join(format!("../cast{}", env::consts::EXE_SUFFIX));
-        let mut cmd = process::Command::new(cast);
-        cmd.env("NO_COLOR", "1");
-        cmd
+        process::Command::new(cast)
     }
 
     /// Returns the `Config` as spit out by `forge config`
@@ -567,25 +567,17 @@ impl TestCommand {
 
     /// Runs and captures the stdout of the given command.
     pub fn stdout(&mut self) -> String {
-        let o = self.output();
-        let stdout = String::from_utf8_lossy(&o.stdout);
-        match stdout.parse::<String>() {
-            Ok(t) => t.replace("\r\n", "\n"),
-            Err(err) => {
-                panic!("could not convert from string: {err:?}\n\n{stdout}");
-            }
-        }
+        String::from_utf8_lossy(&self.output().stdout).replace("\r\n", "\n")
     }
 
     /// Returns the `stderr` of the output as `String`.
     pub fn stderr_lossy(&mut self) -> String {
-        let output = self.execute();
-        String::from_utf8_lossy(&output.stderr).to_string().replace("\r\n", "\n")
+        String::from_utf8_lossy(&self.output().stderr).replace("\r\n", "\n")
     }
 
     /// Returns the `stdout` of the output as `String`.
     pub fn stdout_lossy(&mut self) -> String {
-        String::from_utf8_lossy(&self.output().stdout).to_string().replace("\r\n", "\n")
+        String::from_utf8_lossy(&self.output().stdout).replace("\r\n", "\n")
     }
 
     /// Returns the output but does not expect that the command was successful

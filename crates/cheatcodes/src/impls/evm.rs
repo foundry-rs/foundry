@@ -236,6 +236,7 @@ impl Cheatcode for resetNonceCall {
         let empty = account.info.code_hash == KECCAK_EMPTY;
         let nonce = if empty { 0 } else { 1 };
         account.info.nonce = nonce;
+        debug!(target: "cheatcodes", nonce, "reset");
         Ok(Default::default())
     }
 }

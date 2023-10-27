@@ -44,12 +44,28 @@ pub(crate) trait Cheatcode: CheatcodeDef {
         self.apply(ccx.state)
     }
 
-    #[instrument(target = "cheatcodes", name = "apply", level = "trace", skip(ccx), ret)]
+    #[instrument(target = "cheatcodes", name = "apply", level = "trace", skip(ccx))]
     #[inline]
     fn apply_traced<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        debug!("applying {}", Self::CHEATCODE.id);
-        self.apply_full(ccx)
+        trace_call(Self::CHEATCODE.id);
+        let result = self.apply_full(ccx);
+        trace_return(&result);
+        result
     }
+}
+
+fn trace_call(id: &'static str) {
+    debug!(target: "cheatcodes", "applying {id}");
+}
+
+fn trace_return(result: &Result) {
+    trace!(
+        target: "cheatcodes",
+        return = match &result {
+            Ok(b) => hex::encode(b),
+            Err(e) => e.to_string(),
+        }
+    );
 }
 
 /// The cheatcode context, used in [`Cheatcode`].

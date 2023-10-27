@@ -328,6 +328,7 @@ impl Executor {
         if let Some(cheats) = cheatcodes.as_mut() {
             // Clear broadcastable transactions
             cheats.broadcastable_transactions.clear();
+            debug!(target: "evm::executors", "cleared broadcastable transactions");
 
             // corrected_nonce value is needed outside of this context (setUp), so we don't
             // reset it.

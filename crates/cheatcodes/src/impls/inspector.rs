@@ -675,9 +675,12 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             ..Default::default()
                         }),
                     });
+                    debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
                     // call_inner does not increase nonces, so we have to do it ourselves
+                    let prev = account.info.nonce;
                     account.info.nonce += 1;
+                    debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
                 } else if broadcast.single_call {
                     let msg = "`staticcall`s are not allowed after `broadcast`; use vm.startBroadcast instead";
                     return (InstructionResult::Revert, Gas::new(0), Error::encode(msg))
@@ -944,6 +947,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             ..Default::default()
                         }),
                     });
+                    debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable create");
                 }
             }
         }
@@ -1065,12 +1069,13 @@ fn process_create<DB: DatabaseExt>(
 
             // We have to increment the nonce of the user address, since this create2 will be done
             // by the create2_deployer
-            let nonce = account.info.nonce;
+            let prev = account.info.nonce;
             account.info.nonce += 1;
+            debug!(target: "cheatcodes", address=%broadcast_sender, nonce=prev+1, prev, "incremented nonce in create2");
 
             // Proxy deployer requires the data to be `salt ++ init_code`
             let calldata = [&salt.to_be_bytes::<32>()[..], &bytecode[..]].concat();
-            Ok((calldata.into(), Some(DEFAULT_CREATE2_DEPLOYER), nonce))
+            Ok((calldata.into(), Some(DEFAULT_CREATE2_DEPLOYER), prev))
         }
     }
 }

@@ -52,8 +52,10 @@ impl Cheatcode for startBroadcast_2Call {
 impl Cheatcode for stopBroadcastCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        ensure!(ccx.state.broadcast.is_some(), "no broadcast in progress to stop");
-        ccx.state.broadcast = None;
+        let Some(broadcast) = ccx.state.broadcast.take() else {
+            bail!("no broadcast in progress to stop");
+        };
+        debug!(target: "cheatcodes", ?broadcast, "stopped");
         Ok(Default::default())
     }
 }
@@ -86,13 +88,15 @@ fn broadcast<DB: DatabaseExt>(
 
     correct_sender_nonce(ccx)?;
 
-    ccx.state.broadcast = Some(Broadcast {
+    let broadcast = Broadcast {
         new_origin: *new_origin.unwrap_or(&ccx.data.env.tx.caller),
         original_caller: ccx.caller,
         original_origin: ccx.data.env.tx.caller,
         depth: ccx.data.journaled_state.depth(),
         single_call,
-    });
+    };
+    debug!(target: "cheatcodes", ?broadcast, "started");
+    ccx.state.broadcast = Some(broadcast);
     Ok(Default::default())
 }
 
@@ -118,10 +122,12 @@ fn broadcast_key<DB: DatabaseExt>(
 /// That leads to its nonce being incremented by `call_raw`. In a `broadcast` scenario this is
 /// undesirable. Therefore, we make sure to fix the sender's nonce **once**.
 pub(super) fn correct_sender_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) -> Result<()> {
-    let caller = ccx.data.env.tx.caller;
-    if !ccx.state.corrected_nonce && caller != Config::DEFAULT_SENDER {
-        let account = super::evm::journaled_account(ccx.data, caller)?;
-        account.info.nonce = account.info.nonce.saturating_sub(1);
+    let sender = ccx.data.env.tx.caller;
+    if !ccx.state.corrected_nonce && sender != Config::DEFAULT_SENDER {
+        let account = super::evm::journaled_account(ccx.data, sender)?;
+        let prev = account.info.nonce;
+        account.info.nonce = prev.saturating_sub(1);
+        debug!(target: "cheatcodes", %sender, nonce=account.info.nonce, prev, "corrected nonce");
         ccx.state.corrected_nonce = true;
     }
     Ok(())
