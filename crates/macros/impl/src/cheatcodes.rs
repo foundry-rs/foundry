@@ -3,7 +3,7 @@ use quote::{quote, quote_spanned};
 use syn::{Attribute, Data, DataStruct, DeriveInput, Error, Result};
 
 // Skip warnings for these items.
-const ALLOWED_ITEMS: &[&str] = &["CheatCodeError", "VmErrors"];
+const ALLOWED_ITEMS: &[&str] = &["CheatcodeError", "VmErrors"];
 
 pub fn derive_cheatcode(input: &DeriveInput) -> Result<TokenStream> {
     let name = &input.ident;

@@ -126,7 +126,7 @@ impl fmt::Display for ErrorKind<'_> {
 }
 
 impl Error {
-    /// Creates a new error and ABI encodes it as `CheatCodeError(string)`.
+    /// Creates a new error and ABI encodes it as `CheatcodeError(string)`.
     pub fn encode(error: impl Into<Self>) -> Bytes {
         error.into().abi_encode().into()
     }
@@ -144,10 +144,10 @@ impl Error {
         }
     }
 
-    /// ABI-encodes this error as `CheatCodeError(string)`.
+    /// ABI-encodes this error as `CheatcodeError(string)`.
     pub fn abi_encode(&self) -> Vec<u8> {
         match self.kind() {
-            ErrorKind::String(string) => Vm::CheatCodeError { message: string.into() }.abi_encode(),
+            ErrorKind::String(string) => Vm::CheatcodeError { message: string.into() }.abi_encode(),
             ErrorKind::Bytes(bytes) => bytes.into(),
         }
     }
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn encode() {
-        let error = Vm::CheatCodeError { message: "hello".into() }.abi_encode();
+        let error = Vm::CheatcodeError { message: "hello".into() }.abi_encode();
         assert_eq!(Error::from("hello").abi_encode(), error);
         assert_eq!(Error::encode("hello"), error);
 

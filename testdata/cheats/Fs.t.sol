@@ -239,7 +239,7 @@ contract FsTest is DSTest {
             emit log("Error: reading /etc/hosts should revert");
             fail();
         } catch (bytes memory err) {
-            assertEq(err, abi.encodeWithSignature("CheatCodeError", FOUNDRY_READ_ERR));
+            assertEq(err, abi.encodeWithSignature("CheatcodeError(string)", FOUNDRY_READ_ERR));
         }
     }
 

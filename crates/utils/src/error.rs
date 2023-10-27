@@ -5,13 +5,13 @@ use alloy_sol_types::{SolError, SolValue};
 
 /// Solidity revert prefix.
 ///
-/// `keccak256("Error(String)")[..4] == 0x08c379a0`
+/// `keccak256("Error(string)")[..4] == 0x08c379a0`
 pub const REVERT_PREFIX: [u8; 4] = [8, 195, 121, 160];
 
 /// Custom Cheatcode error prefix.
 ///
-/// `keccak256("CheatCodeError")[..4] == 0x0bc44503`
-pub const ERROR_PREFIX: [u8; 4] = [11, 196, 69, 3];
+/// `keccak256("CheatcodeError(string)")[..4] == 0xeeaa9e6f`
+pub const ERROR_PREFIX: [u8; 4] = [238, 170, 158, 111];
 
 /// An extension trait for `std::error::Error` that can ABI-encode itself.
 pub trait ErrorExt: std::error::Error {

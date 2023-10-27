@@ -20,7 +20,7 @@ interface Vm {
     //  ======== Types ========
 
     /// Error thrown by a cheatcode.
-    error CheatCodeError(string message);
+    error CheatcodeError(string message);
 
     /// A modification applied to either `msg.sender` or `tx.origin`. Returned by `readCallers`.
     enum CallerMode {

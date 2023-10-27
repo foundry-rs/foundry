@@ -79,7 +79,7 @@ interface Vm {
     //  ======== Types ========
 
     /// Error thrown by a cheatcode.
-    error CheatCodeError(string message);
+    error CheatcodeError(string message);
 
     // ...
 
