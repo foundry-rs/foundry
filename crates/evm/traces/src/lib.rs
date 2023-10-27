@@ -256,10 +256,13 @@ impl fmt::Display for CallTraceArena {
             write!(writer, "{child}{EDGE}")?;
             write!(writer, "{}", color.paint(RETURN))?;
             if node.trace.created() {
-                if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
-                    writeln!(writer, "{} bytes of code", bytes.len())?;
-                } else {
-                    unreachable!("We should never have decoded calldata for contract creations");
+                match &node.trace.output {
+                    RawOrDecodedReturnData::Raw(bytes) => {
+                        writeln!(writer, "{} bytes of code", bytes.len())?;
+                    }
+                    RawOrDecodedReturnData::Decoded(val) => {
+                        writeln!(writer, "{val}")?;
+                    }
                 }
             } else {
                 writeln!(writer, "{}", node.trace.output)?;
