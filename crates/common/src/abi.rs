@@ -296,6 +296,16 @@ mod tests {
         assert_eq!(func.inputs.len(), 2);
         assert_eq!(func.inputs[0].ty, "uint256");
         assert_eq!(func.inputs[1].ty, "uint256");
+
+        // Stripped down function, which [Function] can parse.
+        let func = get_func("foo(bytes4 a, uint8 b)(bytes4)");
+        assert!(func.is_ok());
+        let func = func.unwrap();
+        assert_eq!(func.name, "foo");
+        assert_eq!(func.inputs.len(), 2);
+        assert_eq!(func.inputs[0].ty, "bytes4");
+        assert_eq!(func.inputs[1].ty, "uint8");
+        assert_eq!(func.outputs[0].ty, "bytes4");
     }
 
     #[test]
