@@ -1046,29 +1046,30 @@ contract ScriptTxOrigin is Script {
 
 contract ContractA {
     function test(address _contractB) public {
-        require(msg.sender == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
-        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        require(msg.sender == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, "sender 1");
+        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, "origin 1");
         ContractB contractB = ContractB(_contractB);
         ContractC contractC = new ContractC();
-        require(msg.sender == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
-        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        require(msg.sender == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, "sender 2");
+        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, "origin 2");
         contractB.method(address(this));
         contractC.method(address(this));
-        require(msg.sender == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
-        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        require(msg.sender == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, "sender 3");
+        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, "origin 3");
     }
 }
 
 contract ContractB {
     function method(address sender) public view {
-        require(msg.sender == sender);
-        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        require(msg.sender == sender, "sender");
+        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, "origin");
     }
 }
+
 contract ContractC {
     function method(address sender) public view {
-        require(msg.sender == sender);
-        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        require(msg.sender == sender, "sender");
+        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, "origin");
     }
 }
    "#,

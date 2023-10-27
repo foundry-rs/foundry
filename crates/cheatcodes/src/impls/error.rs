@@ -126,7 +126,7 @@ impl fmt::Display for ErrorKind<'_> {
 }
 
 impl Error {
-    /// Creates a new error and ABI encodes it.
+    /// Creates a new error and ABI encodes it as `CheatCodeError(string)`.
     pub fn encode(error: impl Into<Self>) -> Bytes {
         error.into().abi_encode().into()
     }

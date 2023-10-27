@@ -693,15 +693,23 @@ impl TestCommand {
         let o = self.execute();
         if !o.status.success() || o.stdout.is_empty() {
             panic!(
-                "\n\n===== {:?} =====\n\
-                 command failed but expected success!\
-                 \n\ncwd: {}\
-                 \n\nstatus: {}\
-                 \n\nstdout: {}\n\nstderr: {}\
-                 \n\n=====\n",
+                "
+===== {:?} =====
+command failed but expected success!
+status: {}
+
+{}
+
+stdout:
+{}
+
+stderr:
+{}
+
+=====\n",
                 self.cmd,
-                self.project.inner.paths(),
                 o.status,
+                self.project.inner.paths(),
                 String::from_utf8_lossy(&o.stdout),
                 String::from_utf8_lossy(&o.stderr)
             );
@@ -743,19 +751,24 @@ impl TestCommand {
                 String::new()
             };
             eyre::bail!(
-                "\n\n==========\n\
-                    command failed but expected success!\
-                    {}\
-                    \n\ncommand: {:?}\
-                    \n\ncwd: {}\
-                    \n\nstatus: {}\
-                    \n\nstdout: {}\
-                    \n\nstderr: {}\
-                    \n\n==========\n",
-                suggest,
+                "
+===== {:?} =====
+command failed but expected success!{suggest}
+
+status: {}
+
+{}
+
+stdout:
+{}
+
+stderr:
+{}
+
+=====\n",
                 self.cmd,
-                self.project.inner.paths(),
                 out.status,
+                self.project.inner.paths(),
                 String::from_utf8_lossy(&out.stdout),
                 String::from_utf8_lossy(&out.stderr)
             );

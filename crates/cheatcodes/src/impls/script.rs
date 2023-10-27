@@ -5,6 +5,7 @@ use crate::Vm::*;
 use alloy_primitives::{Address, U256};
 use ethers_signers::Signer;
 use foundry_config::Config;
+use foundry_utils::types::ToAlloy;
 
 impl Cheatcode for broadcast_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
@@ -87,8 +88,8 @@ fn broadcast<DB: DatabaseExt>(
 
     ccx.state.broadcast = Some(Broadcast {
         new_origin: *new_origin.unwrap_or(&ccx.data.env.tx.caller),
-        original_origin: ccx.caller,
-        original_caller: ccx.data.env.tx.caller,
+        original_caller: ccx.caller,
+        original_origin: ccx.data.env.tx.caller,
         depth: ccx.data.journaled_state.depth(),
         single_call,
     });
@@ -104,7 +105,7 @@ fn broadcast_key<DB: DatabaseExt>(
     single_call: bool,
 ) -> Result {
     let wallet = super::utils::parse_wallet(private_key)?.with_chain_id(ccx.data.env.cfg.chain_id);
-    let new_origin = &wallet.address().0.into();
+    let new_origin = &wallet.address().to_alloy();
 
     let result = broadcast(ccx, Some(new_origin), single_call);
     if result.is_ok() {

@@ -114,14 +114,14 @@ impl ChiselRunner {
         call_res.map(|res| (address, res))
     }
 
-    /// Executes the call
+    /// Executes the call.
     ///
     /// This will commit the changes if `commit` is true.
     ///
     /// This will return _estimated_ gas instead of the precise gas the call would consume, so it
     /// can be used as `gas_limit`.
     ///
-    /// Taken from [Forge's Script Runner](https://github.com/foundry-rs/foundry/blob/master/cli/src/cmd/forge/script/runner.rs)
+    /// Taken from Forge's script runner.
     fn call(
         &mut self,
         from: Address,

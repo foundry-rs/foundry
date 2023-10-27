@@ -54,8 +54,11 @@ pub(crate) trait Cheatcode: CheatcodeDef {
 
 /// The cheatcode context, used in [`Cheatcode`].
 pub(crate) struct CheatsCtxt<'a, 'b, 'c, DB: DatabaseExt> {
+    /// The cheatcodes inspector state.
     pub(crate) state: &'a mut Cheatcodes,
+    /// The EVM data.
     pub(crate) data: &'b mut EVMData<'c, DB>,
+    /// The original `msg.sender`.
     pub(crate) caller: Address,
 }
 

@@ -2,7 +2,7 @@
 
 use super::{Cheatcode, CheatsCtxt, Result};
 use crate::{Cheatcodes, Vm::*};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolValue;
 use ethers_signers::Signer;
 use foundry_evm_core::backend::DatabaseExt;
@@ -220,7 +220,7 @@ impl Cheatcode for etchCall {
         let Self { target, newRuntimeBytecode } = self;
         ensure_not_precompile!(target, ccx);
         ccx.data.journaled_state.load_account(*target, ccx.data.db)?;
-        let bytecode = Bytecode::new_raw(newRuntimeBytecode.clone().into()).to_checked();
+        let bytecode = Bytecode::new_raw(Bytes::copy_from_slice(newRuntimeBytecode)).to_checked();
         ccx.data.journaled_state.set_code(*target, bytecode);
         Ok(Default::default())
     }

@@ -20,10 +20,11 @@ use ethers_core::types::{
     transaction::eip2718::TypedTransaction, NameOrAddress, TransactionRequest,
 };
 use ethers_signers::LocalWallet;
-use foundry_common::RpcUrl;
+use foundry_common::{evm::Breakpoints, RpcUrl};
 use foundry_evm_core::{
-    backend::{DatabaseExt, RevertDiagnostic},
+    backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_SKIP},
+    utils::get_create_address,
 };
 use foundry_utils::types::ToEthers;
 use itertools::Itertools;
@@ -167,14 +168,14 @@ pub struct Cheatcodes {
     /// Test-scoped context holding data that needs to be reset every test run
     pub context: Context,
 
-    /// Commit FS changes such as file creations, writes and deletes.
+    /// Whether to commit FS changes such as file creations, writes and deletes.
     /// Used to prevent duplicate changes file executing non-committing calls.
     pub fs_commit: bool,
 
     /// Serialized JSON values.
     pub serialized_jsons: HashMap<String, HashMap<String, Value>>,
 
-    /// Records all eth deals
+    /// All recorded ETH `deal`s.
     pub eth_deals: Vec<DealRecord>,
 
     /// Holds the stored gas info for when we pause gas metering. It is an `Option<Option<..>>`
@@ -190,14 +191,14 @@ pub struct Cheatcodes {
     /// paused and creating new contracts.
     pub gas_metering_create: Option<Option<Gas>>,
 
-    /// Holds mapping slots info
+    /// Mapping slots.
     pub mapping_slots: Option<HashMap<Address, MappingSlots>>,
 
-    /// current program counter
+    /// The current program counter.
     pub pc: usize,
     /// Breakpoints supplied by the `breakpoint` cheatcode.
-    /// `char -> pc`
-    pub breakpoints: HashMap<char, (Address, usize)>,
+    /// `char -> (address, pc)`
+    pub breakpoints: Breakpoints,
 }
 
 impl Cheatcodes {
@@ -254,7 +255,6 @@ impl Cheatcodes {
     ///
     /// Cleanup any previously applied cheatcodes that altered the state in such a way that revm's
     /// revert would run into issues.
-    #[allow(private_bounds)] // TODO
     pub fn on_revert<DB: DatabaseExt>(&mut self, data: &mut EVMData<'_, DB>) {
         trace!(deals = ?self.eth_deals.len(), "rolling back deals");
 
@@ -584,7 +584,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Handle mocked calls
         if let Some(mocks) = self.mocked_calls.get(&call.contract) {
             let ctx = MockCallDataContext {
-                calldata: call.input.clone().0.into(),
+                calldata: call.input.clone(),
                 value: Some(call.transfer.value),
             };
             if let Some(mock_retdata) = mocks.get(&ctx) {
@@ -647,7 +647,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // because we only need the from, to, value, and data. We can later change this
                 // into 1559, in the cli package, relatively easily once we
                 // know the target chain supports EIP-1559.
-                #[allow(unused)] // TODO
                 if !call.is_static {
                     if let Err(err) =
                         data.journaled_state.load_account(broadcast.new_origin, data.db)
@@ -665,7 +664,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         transaction: TypedTransaction::Legacy(TransactionRequest {
                             from: Some(broadcast.new_origin.to_ethers()),
                             to: Some(NameOrAddress::Address(call.contract.to_ethers())),
-                            value: Some(call.transfer.value).map(|v| v.to_ethers()),
+                            value: Some(call.transfer.value.to_ethers()),
                             data: Some(call.input.clone().0.into()),
                             nonce: Some(account.info.nonce.into()),
                             gas: if is_fixed_gas_limit {
@@ -914,7 +913,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
                 data.env.tx.caller = broadcast.new_origin;
 
-                #[allow(unused)] // TODO
                 if data.journaled_state.depth() == broadcast.depth {
                     let (bytecode, to, nonce) = match process_create(
                         broadcast.new_origin,
@@ -1048,23 +1046,25 @@ fn process_create<DB: DatabaseExt>(
     match call.scheme {
         CreateScheme::Create => {
             call.caller = broadcast_sender;
-
             Ok((bytecode, None, data.journaled_state.account(broadcast_sender).info.nonce))
         }
         CreateScheme::Create2 { salt } => {
             // Sanity checks for our CREATE2 deployer
-            data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, data.db)?;
-
-            let info = &data.journaled_state.account(DEFAULT_CREATE2_DEPLOYER).info;
-            if info.code.is_none() || info.code.as_ref().is_some_and(|code| code.is_empty()) {
-                return Err(DB::Error::MissingCreate2Deployer)
+            let (account, _) =
+                data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, data.db)?;
+            let info = &account.info;
+            match &info.code {
+                Some(code) if code.is_empty() => return Err(DatabaseError::MissingCreate2Deployer),
+                None if data.db.code_by_hash(info.code_hash)?.is_empty() => {
+                    return Err(DatabaseError::MissingCreate2Deployer)
+                }
+                _ => {}
             }
 
             call.caller = DEFAULT_CREATE2_DEPLOYER;
 
             // We have to increment the nonce of the user address, since this create2 will be done
             // by the create2_deployer
-            let account = data.journaled_state.state().get_mut(&broadcast_sender).unwrap();
             let nonce = account.info.nonce;
             account.info.nonce += 1;
 
@@ -1087,13 +1087,4 @@ fn check_if_fixed_gas_limit<DB: DatabaseExt>(data: &EVMData<'_, DB>, call_gas_li
         // Transfers in forge scripts seem to be estimated at 2300 by revm leading to "Intrinsic
         // gas too low" failure when simulated on chain
         && call_gas_limit > 2300
-}
-
-fn get_create_address(inputs: &CreateInputs, nonce: u64) -> Address {
-    match inputs.scheme {
-        CreateScheme::Create => inputs.caller.create(nonce),
-        CreateScheme::Create2 { salt } => {
-            inputs.caller.create2_from_code(salt.to_be_bytes(), &inputs.init_code)
-        }
-    }
 }
