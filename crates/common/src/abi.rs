@@ -172,14 +172,19 @@ impl<'a> IntoFunction for &'a str {
 
 /// Given a function signature string, it tries to parse it as a `Function`
 pub fn get_func(sig: &str) -> Result<Function> {
-    let item = match AbiItem::parse(sig) {
-        Ok(item) => match item {
-            AbiItem::Function(func) => func,
-            _ => return Err(eyre::eyre!("Expected function, got {:?}", item)),
-        },
-        Err(e) => return Err(e.into()),
-    };
-    Ok(item.into_owned().to_owned())
+    if let Ok(func) = Function::parse(sig) {
+        Ok(func)
+    } else {
+        // Try to parse as human readable ABI.
+        let item = match AbiItem::parse(sig) {
+            Ok(item) => match item {
+                AbiItem::Function(func) => func,
+                _ => return Err(eyre::eyre!("Expected function, got {:?}", item)),
+            },
+            Err(e) => return Err(e.into()),
+        };
+        Ok(item.into_owned().to_owned())
+    }
 }
 
 /// Given an event signature string, it tries to parse it as a `Event`
