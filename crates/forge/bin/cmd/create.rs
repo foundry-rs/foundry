@@ -329,8 +329,6 @@ impl CreateArgs {
         constructor: &Constructor,
         constructor_args: &[String],
     ) -> Result<Vec<DynSolValue>> {
-        println!("{}", serde_json::to_string(constructor).unwrap());
-        dbg!(constructor_args);
         let mut params = Vec::with_capacity(constructor.inputs.len());
         for (input, arg) in constructor.inputs.iter().zip(constructor_args) {
             let ty = DynSolType::parse(&input.ty)
@@ -607,6 +605,6 @@ mod tests {
             "[(1,2), (2,3), (3,4)]",
         ]);
         let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_points","type":"tuple[]","internalType":"struct Point[]","components":[{"name":"x","type":"uint256","internalType":"uint256"},{"name":"y","type":"uint256","internalType":"uint256"}]}],"stateMutability":"nonpayable"}"#).unwrap();
-        let params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
+        let _params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
     }
 }
