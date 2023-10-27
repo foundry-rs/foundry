@@ -54,8 +54,8 @@ pub fn initialize(target: impl AsRef<Path>) {
 
     let lock_path = &*TEMPLATE_LOCK;
     let lock_file = pretty_err(
-        &lock_path,
-        fs::OpenOptions::new().read(true).write(true).create(true).open(&lock_path),
+        lock_path,
+        fs::OpenOptions::new().read(true).write(true).create(true).open(lock_path),
     );
     let mut lock = RwLock::new(lock_file);
     let read = lock.read().unwrap();
