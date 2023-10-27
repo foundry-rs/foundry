@@ -119,7 +119,7 @@ fn broadcast_key<DB: DatabaseExt>(
 /// undesirable. Therefore, we make sure to fix the sender's nonce **once**.
 pub(super) fn correct_sender_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) -> Result<()> {
     let caller = ccx.data.env.tx.caller;
-    if !ccx.state.corrected_nonce && caller.0 != Config::DEFAULT_SENDER.0 {
+    if !ccx.state.corrected_nonce && caller != Config::DEFAULT_SENDER {
         let account = super::evm::journaled_account(ccx.data, caller)?;
         account.info.nonce = account.info.nonce.saturating_sub(1);
         ccx.state.corrected_nonce = true;

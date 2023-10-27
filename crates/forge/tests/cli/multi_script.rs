@@ -21,34 +21,34 @@ forgetest_async!(
             .args(vec![handle1.http_endpoint(), handle2.http_endpoint()])
             .broadcast(ScriptOutcome::OkBroadcast);
 
-        assert!(
-            1 == api1
-                .transaction_count(tester.accounts_pub[0].to_ethers(), None)
+        assert_eq!(
+            api1.transaction_count(tester.accounts_pub[0].to_ethers(), None)
                 .await
                 .unwrap()
-                .as_u32()
+                .as_u32(),
+            1
         );
-        assert!(
-            1 == api1
-                .transaction_count(tester.accounts_pub[1].to_ethers(), None)
+        assert_eq!(
+            api1.transaction_count(tester.accounts_pub[1].to_ethers(), None)
                 .await
                 .unwrap()
-                .as_u32()
+                .as_u32(),
+            1
         );
 
-        assert!(
-            2 == api2
-                .transaction_count(tester.accounts_pub[0].to_ethers(), None)
+        assert_eq!(
+            api2.transaction_count(tester.accounts_pub[0].to_ethers(), None)
                 .await
                 .unwrap()
-                .as_u32()
+                .as_u32(),
+            2
         );
-        assert!(
-            3 == api2
-                .transaction_count(tester.accounts_pub[1].to_ethers(), None)
+        assert_eq!(
+            api2.transaction_count(tester.accounts_pub[1].to_ethers(), None)
                 .await
                 .unwrap()
-                .as_u32()
+                .as_u32(),
+            3
         );
     }
 );
