@@ -1,6 +1,5 @@
 use eyre::{EyreHandler, Result};
 use std::error::Error;
-use tracing::error;
 use yansi::Paint;
 
 /// A custom context type for Foundry specific error reporting via `eyre`
@@ -53,7 +52,9 @@ pub fn install() -> Result<()> {
     let debug_enabled = std::env::var("FOUNDRY_DEBUG").is_ok();
 
     if debug_enabled {
-        color_eyre::install()?;
+        if let Err(e) = color_eyre::install() {
+            debug!("failed to install color eyre error hook: {e}");
+        }
     } else {
         let (panic_hook, _) = color_eyre::config::HookBuilder::default()
             .panic_section(
@@ -61,13 +62,8 @@ pub fn install() -> Result<()> {
             )
             .into_hooks();
         panic_hook.install();
-        // see <https://github.com/foundry-rs/foundry/issues/3050>
-        if cfg!(windows) {
-            if let Err(err) = eyre::set_hook(Box::new(move |_| Box::new(Handler))) {
-                error!(?err, "failed to install panic hook");
-            }
-        } else {
-            eyre::set_hook(Box::new(move |_| Box::new(Handler)))?;
+        if let Err(e) = eyre::set_hook(Box::new(move |_| Box::new(Handler))) {
+            debug!("failed to install eyre error hook: {e}");
         }
     }
 

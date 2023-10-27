@@ -22,7 +22,6 @@ use foundry_evm::{
     },
 };
 use std::{fmt::Write, path::PathBuf, str::FromStr};
-use tracing::trace;
 use yansi::Paint;
 
 /// Given a `Project`'s output, removes the matching ABI, Bytecode and
