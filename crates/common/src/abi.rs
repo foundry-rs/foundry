@@ -283,6 +283,17 @@ mod tests {
     use alloy_primitives::B256;
 
     #[test]
+    fn test_get_func() {
+        let func = get_func("function foo(uint256 a, uint256 b) returns (uint256)");
+        assert!(func.is_ok());
+        let func = func.unwrap();
+        assert_eq!(func.name, "foo");
+        assert_eq!(func.inputs.len(), 2);
+        assert_eq!(func.inputs[0].ty, "uint256");
+        assert_eq!(func.inputs[1].ty, "uint256");
+    }
+
+    #[test]
     fn parse_hex_uint_tokens() {
         let param = DynSolType::Uint(256);
 
