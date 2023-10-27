@@ -5,8 +5,12 @@ use alloy_primitives::{Address, Bytes};
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::InvalidOutputType,
+    contract::ContractError,
     prelude::{Middleware, MiddlewareBuilder},
-    types::{transaction::eip2718::TypedTransaction, Chain},
+    types::{
+        transaction::eip2718::TypedTransaction, BlockNumber, Chain, Eip1559TransactionRequest,
+        TransactionReceipt, TransactionRequest,
+    },
 };
 use eyre::{Context, Result};
 use foundry_cli::{
@@ -17,7 +21,7 @@ use foundry_common::{abi::parse_tokens, compile, estimate_eip1559_fees};
 use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalized};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use serde_json::json;
-use std::{path::PathBuf, sync::Arc};
+use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc};
 
 /// CLI arguments for `forge create`.
 #[derive(Debug, Clone, Parser)]
@@ -325,23 +329,18 @@ impl CreateArgs {
         constructor: &Constructor,
         constructor_args: &[String],
     ) -> Result<Vec<DynSolValue>> {
-        let params = constructor
-            .inputs
-            .iter()
-            .zip(constructor_args)
-            .map(|(input, arg)| (DynSolType::parse(&input.ty).expect("Could not parse types"), arg))
-            .collect::<Vec<_>>();
-        let params_2 = params.iter().map(|(ty, arg)| (ty, arg.as_str())).collect::<Vec<_>>();
-        parse_tokens(params_2)
+        println!("{}", serde_json::to_string(constructor).unwrap());
+        dbg!(constructor_args);
+        let mut params = Vec::with_capacity(constructor.inputs.len());
+        for (input, arg) in constructor.inputs.iter().zip(constructor_args) {
+            let ty = DynSolType::parse(&input.ty)
+                .wrap_err_with(|| format!("Could not parse constructor arg: input={input}"))?;
+            params.push((ty, arg));
+        }
+        let params = params.iter().map(|(ty, arg)| (ty, arg.as_str()));
+        parse_tokens(params)
     }
 }
-
-use ethers::{
-    contract::ContractError,
-    types::{BlockNumber, Eip1559TransactionRequest, TransactionReceipt, TransactionRequest},
-};
-
-use std::{borrow::Borrow, marker::PhantomData};
 
 /// `ContractFactory` is a [`DeploymentTxFactory`] object with an
 /// [`Arc`] middleware. This type alias exists to preserve backwards
@@ -597,5 +596,17 @@ mod tests {
             "9999",
         ]);
         assert_eq!(args.chain_id(), Some(9999));
+    }
+
+    #[test]
+    fn test_parse_constructor_args() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--constructor-args",
+            "[(1,2), (2,3), (3,4)]",
+        ]);
+        let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_points","type":"tuple[]","internalType":"struct Point[]","components":[{"name":"x","type":"uint256","internalType":"uint256"},{"name":"y","type":"uint256","internalType":"uint256"}]}],"stateMutability":"nonpayable"}"#).unwrap();
+        let params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
     }
 }

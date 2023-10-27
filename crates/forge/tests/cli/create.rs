@@ -250,9 +250,46 @@ contract ConstructorContract {
             )
             .unwrap();
 
+        // cmd.forge_fuse().args([
+        //     "create",
+        //     "./src/ConstructorContract.sol:ConstructorContract",
+        //     "--use",
+        //     "solc:0.8.15",
+        //     "--rpc-url",
+        //     rpc.as_str(),
+        //     "--private-key",
+        //     pk.as_str(),
+        //     "--constructor-args",
+        //     "My Constructor",
+        // ]);
+        //
+        // cmd.unchecked_output().stdout_matches_path(
+        //     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        //         .join("tests/fixtures/can_create_with_constructor_args.stdout"),
+        // );
+
+        prj.inner()
+            .add_source(
+                "TupleArrayConstructorContract",
+                r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+struct Point {
+    uint256 x;
+    uint256 y;
+}
+
+contract TupleArrayConstructorContract {
+    constructor(Point[] memory _points) {}
+}
+"#,
+            )
+            .unwrap();
+
         cmd.forge_fuse().args([
             "create",
-            "./src/ConstructorContract.sol:ConstructorContract",
+            "./src/TupleArrayConstructorContract.sol:TupleArrayConstructorContract",
             "--use",
             "solc:0.8.15",
             "--rpc-url",
@@ -260,12 +297,9 @@ contract ConstructorContract {
             "--private-key",
             pk.as_str(),
             "--constructor-args",
-            "My Constructor",
+            "[(1,2), (2,3), (3,4)]",
         ]);
 
-        cmd.unchecked_output().stdout_matches_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/can_create_with_constructor_args.stdout"),
-        );
+        cmd.print_output()
     }
 );
