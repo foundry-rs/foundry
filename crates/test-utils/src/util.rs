@@ -386,13 +386,18 @@ impl TestProject {
         let forge = self.root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
         let mut cmd = process::Command::new(forge);
         cmd.current_dir(self.inner.root());
+        // disable color output for comparisons
+        cmd.env("NO_COLOR", "1");
         cmd
     }
 
     /// Returns the path to the cast executable.
     pub fn cast_bin(&self) -> process::Command {
         let cast = self.root.join(format!("../cast{}", env::consts::EXE_SUFFIX));
-        process::Command::new(cast)
+        let mut cmd = process::Command::new(cast);
+        // disable color output for comparisons
+        cmd.env("NO_COLOR", "1");
+        cmd
     }
 
     /// Returns the `Config` as spit out by `forge config`
@@ -476,22 +481,23 @@ impl TestCommand {
         &mut self.cmd
     }
 
-    /// replaces the command
+    /// Replaces the underlying command.
     pub fn set_cmd(&mut self, cmd: Command) -> &mut TestCommand {
         self.cmd = cmd;
         self
     }
 
-    /// Resets the command
+    /// Resets the command to the default `forge` command.
     pub fn forge_fuse(&mut self) -> &mut TestCommand {
         self.set_cmd(self.project.forge_bin())
     }
 
+    /// Resets the command to the default `cast` command.
     pub fn cast_fuse(&mut self) -> &mut TestCommand {
         self.set_cmd(self.project.cast_bin())
     }
 
-    /// Sets the current working directory
+    /// Sets the current working directory.
     pub fn set_current_dir(&mut self, p: impl AsRef<Path>) {
         drop(self.current_dir_lock.take());
         let lock = CURRENT_DIR_LOCK.lock();
