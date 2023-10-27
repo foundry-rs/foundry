@@ -1,6 +1,6 @@
 //! ABI related helper functions
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
-use alloy_json_abi::{Event, Function};
+use alloy_json_abi::{Event, Function, AbiItem};
 use alloy_primitives::{hex, Address, Log, U256};
 use ethers_core::types::Chain;
 use eyre::{ContextCompat, Result};
@@ -172,13 +172,14 @@ impl<'a> IntoFunction for &'a str {
 
 /// Given a function signature string, it tries to parse it as a `Function`
 pub fn get_func(sig: &str) -> Result<Function> {
-    Ok(match Function::parse(sig) {
-        Ok(func) => func,
-        Err(err) => {
-            // we return the `Function` parse error as this case is more likely
-            return Err(err.into())
+    let item = match AbiItem::parse(sig) {
+        Ok(item) => match item {
+            AbiItem::Function(func) => func,
+            _ => return Err(eyre::eyre!("Expected function, got {:?}", item)),
         }
-    })
+        Err(e) => return Err(e.into())
+    };
+    Ok(item.into_owned().to_owned())
 }
 
 /// Given an event signature string, it tries to parse it as a `Event`
