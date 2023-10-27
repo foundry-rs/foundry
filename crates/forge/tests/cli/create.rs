@@ -250,23 +250,23 @@ contract ConstructorContract {
             )
             .unwrap();
 
-        // cmd.forge_fuse().args([
-        //     "create",
-        //     "./src/ConstructorContract.sol:ConstructorContract",
-        //     "--use",
-        //     "solc:0.8.15",
-        //     "--rpc-url",
-        //     rpc.as_str(),
-        //     "--private-key",
-        //     pk.as_str(),
-        //     "--constructor-args",
-        //     "My Constructor",
-        // ]);
-        //
-        // cmd.unchecked_output().stdout_matches_path(
-        //     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        //         .join("tests/fixtures/can_create_with_constructor_args.stdout"),
-        // );
+        cmd.forge_fuse().args([
+            "create",
+            "./src/ConstructorContract.sol:ConstructorContract",
+            "--use",
+            "solc:0.8.15",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--constructor-args",
+            "My Constructor",
+        ]);
+
+        cmd.unchecked_output().stdout_matches_path(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/can_create_with_constructor_args.stdout"),
+        );
 
         prj.inner()
             .add_source(
@@ -300,6 +300,9 @@ contract TupleArrayConstructorContract {
             "[(1,2), (2,3), (3,4)]",
         ]);
 
-        cmd.print_output()
+        cmd.unchecked_output().stdout_matches_path(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/can_create_with_tuple_constructor_args.stdout"),
+        );
     }
 );

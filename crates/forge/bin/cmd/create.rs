@@ -1,5 +1,5 @@
 use super::{retry::RetryArgs, verify};
-use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt, ResolveSolType};
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt, ResolveSolType};
 use alloy_json_abi::{Constructor, JsonAbi as Abi};
 use alloy_primitives::{Address, Bytes};
 use clap::{Parser, ValueHint};
@@ -324,6 +324,10 @@ impl CreateArgs {
         verify.run().await
     }
 
+    /// Parses the given constructor arguments into a vector of `DynSolValue`s, by matching them
+    /// against the constructor's input params.
+    ///
+    /// Returns a list of parsed values that match the constructor's input params.
     fn parse_constructor_args(
         &self,
         constructor: &Constructor,
@@ -331,10 +335,10 @@ impl CreateArgs {
     ) -> Result<Vec<DynSolValue>> {
         let mut params = Vec::with_capacity(constructor.inputs.len());
         for (input, arg) in constructor.inputs.iter().zip(constructor_args) {
+            // resolve the input type directly
             let ty = input
-                .ty
                 .resolve()
-                .wrap_err_with(|| format!("Could not parse constructor arg: input={input}"))?;
+                .wrap_err_with(|| format!("Could not resolve constructor arg: input={input}"))?;
             params.push((ty, arg));
         }
         let params = params.iter().map(|(ty, arg)| (ty, arg.as_str()));
@@ -600,6 +604,19 @@ mod tests {
 
     #[test]
     fn test_parse_constructor_args() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--constructor-args",
+            "Hello",
+        ]);
+        let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_name","type":"string","internalType":"string"}],"stateMutability":"nonpayable"}"#).unwrap();
+        let params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
+        assert_eq!(params, vec![DynSolValue::String("Hello".to_string())]);
+    }
+
+    #[test]
+    fn test_parse_tuple_constructor_args() {
         let args: CreateArgs = CreateArgs::parse_from([
             "foundry-cli",
             "src/Domains.sol:Domains",
