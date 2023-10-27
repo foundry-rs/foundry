@@ -213,12 +213,18 @@ impl ScriptTester {
     }
 
     pub fn run(&mut self, expected: ScriptOutcome) -> &mut Self {
-        let output =
-            if expected.is_err() { self.cmd.stderr_lossy() } else { self.cmd.stdout_lossy() };
+        let stdout = self.cmd.stdout_lossy();
+        let stderr = self.cmd.stderr_lossy();
 
+        let output = if expected.is_err() { &stderr } else { &stdout };
         if !output.contains(expected.as_str()) {
-            panic!("OUTPUT: {output}\n\nEXPECTED: {}", expected.as_str());
+            let which = if expected.is_err() { "stderr" } else { "stdout" };
+            panic!(
+                "--STDOUT--\n{stdout}\n\n--STDERR--\n{stderr}\n\n--EXPECTED--{:?} in {which}",
+                expected.as_str()
+            );
         }
+
         self
     }
 
