@@ -404,7 +404,7 @@ impl TestProject {
         let mut cmd = self.forge_bin();
         cmd.arg("config").arg("--root").arg(self.root()).args(args).arg("--json");
         let output = cmd.output().unwrap();
-        let c = String::from_utf8_lossy(&output.stdout);
+        let c = lossy_string(&output.stdout);
         let config: Config = serde_json::from_str(c.as_ref()).unwrap();
         config.sanitized()
     }
@@ -551,7 +551,7 @@ impl TestCommand {
     pub fn config(&mut self) -> Config {
         self.cmd.args(["config", "--json"]);
         let output = self.output();
-        let c = String::from_utf8_lossy(&output.stdout);
+        let c = lossy_string(&output.stdout);
         let config = serde_json::from_str(c.as_ref()).unwrap();
         self.forge_fuse();
         config
@@ -565,19 +565,10 @@ impl TestCommand {
         self.expect_success(output)
     }
 
-    /// Runs and captures the stdout of the given command.
-    pub fn stdout(&mut self) -> String {
-        String::from_utf8_lossy(&self.output().stdout).replace("\r\n", "\n")
-    }
-
-    /// Returns the `stderr` of the output as `String`.
-    pub fn stderr_lossy(&mut self) -> String {
-        String::from_utf8_lossy(&self.output().stderr).replace("\r\n", "\n")
-    }
-
-    /// Returns the `stdout` of the output as `String`.
-    pub fn stdout_lossy(&mut self) -> String {
-        String::from_utf8_lossy(&self.output().stdout).replace("\r\n", "\n")
+    /// Executes the command and returns the `(stdout, stderr)` of the output as lossy `String`s.
+    pub fn output_lossy(&mut self) -> (String, String) {
+        let output = self.output();
+        (lossy_string(&output.stdout), lossy_string(&output.stderr))
     }
 
     /// Returns the output but does not expect that the command was successful
@@ -602,6 +593,7 @@ impl TestCommand {
     }
 
     pub fn try_execute(&mut self) -> std::io::Result<process::Output> {
+        eprintln!("Executing {:?}", self.cmd);
         let mut child =
             self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::piped()).spawn()?;
         if let Some(fun) = self.stdin_fun.take() {
@@ -622,8 +614,8 @@ impl TestCommand {
     /// The full command would be: cargo test -- --nocapture
     pub fn print_output(&mut self) {
         let output = self.execute();
-        println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
-        println!("stderr: {}", String::from_utf8_lossy(&output.stderr));
+        println!("stdout: {}", lossy_string(&output.stdout));
+        println!("stderr: {}", lossy_string(&output.stderr));
     }
 
     /// Writes the content of the output to new fixture files
@@ -652,8 +644,8 @@ impl TestCommand {
                 self.cmd,
                 self.project.inner.paths(),
                 o.status,
-                String::from_utf8_lossy(&o.stdout),
-                String::from_utf8_lossy(&o.stderr)
+                lossy_string(&o.stdout),
+                lossy_string(&o.stderr)
             );
         }
     }
@@ -673,8 +665,8 @@ impl TestCommand {
                 self.cmd,
                 self.project.inner.paths(),
                 o.status,
-                String::from_utf8_lossy(&o.stdout),
-                String::from_utf8_lossy(&o.stderr)
+                lossy_string(&o.stdout),
+                lossy_string(&o.stderr)
             );
         }
     }
@@ -702,8 +694,8 @@ stderr:
                 self.cmd,
                 o.status,
                 self.project.inner.paths(),
-                String::from_utf8_lossy(&o.stdout),
-                String::from_utf8_lossy(&o.stderr)
+                lossy_string(&o.stdout),
+                lossy_string(&o.stderr)
             );
         }
     }
@@ -723,8 +715,8 @@ stderr:
                 self.cmd,
                 self.project.inner.paths(),
                 o.status,
-                String::from_utf8_lossy(&o.stdout),
-                String::from_utf8_lossy(&o.stderr)
+                lossy_string(&o.stdout),
+                lossy_string(&o.stderr)
             );
         }
     }
@@ -761,8 +753,8 @@ stderr:
                 self.cmd,
                 out.status,
                 self.project.inner.paths(),
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
+                lossy_string(&out.stdout),
+                lossy_string(&out.stderr)
             );
         }
         Ok(out)
@@ -794,7 +786,7 @@ impl OutputExt for process::Output {
     fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
         let expected = fs::read_to_string(expected_path).unwrap();
         let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "").replace('\\', "/");
-        let stdout = String::from_utf8_lossy(&self.stdout);
+        let stdout = lossy_string(&self.stdout);
         let out = IGNORE_IN_FIXTURES.replace_all(&stdout, "").replace('\\', "/");
 
         pretty_assertions::assert_eq!(expected, out);
@@ -806,7 +798,7 @@ impl OutputExt for process::Output {
     fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
         let expected = fs::read_to_string(expected_path).unwrap();
         let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "").replace('\\', "/");
-        let stderr = String::from_utf8_lossy(&self.stderr);
+        let stderr = lossy_string(&self.stderr);
         let out = IGNORE_IN_FIXTURES.replace_all(&stderr, "").replace('\\', "/");
 
         pretty_assertions::assert_eq!(expected, out);
@@ -838,6 +830,10 @@ pub fn dir_list<P: AsRef<Path>>(dir: P) -> Vec<String> {
         .into_iter()
         .map(|result| result.unwrap().path().to_string_lossy().into_owned())
         .collect()
+}
+
+fn lossy_string(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).replace("\r\n", "\n")
 }
 
 #[cfg(test)]

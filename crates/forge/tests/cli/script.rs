@@ -178,7 +178,7 @@ contract DeployScript is Script {
             "--unlocked",
         ]);
 
-        let output = cmd.stdout_lossy();
+        let (output, _) = cmd.output_lossy();
         assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
         assert!(output.contains("Gas limit was set in script to 500000"));
     }
@@ -238,7 +238,7 @@ contract DeployScript is Script {
             &private_key,
         ]);
 
-        let output = cmd.stdout_lossy();
+        let (output, _) = cmd.output_lossy();
         assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
         assert!(output.contains("Gas limit was set in script to 500000"));
     }
@@ -358,7 +358,7 @@ contract DeployScript is Script {
             &private_key,
         ]);
 
-        let output = cmd.stdout_lossy();
+        let (output, _) = cmd.output_lossy();
 
         assert!(output.contains("SKIPPING ON CHAIN SIMULATION"));
         assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
@@ -414,7 +414,7 @@ contract RunScript is Script {
             &private_key,
         ]);
 
-        let output = cmd.stdout_lossy();
+        let (output, _) = cmd.output_lossy();
         assert!(output.contains("SKIPPING ON CHAIN SIMULATION"));
         assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
     }
@@ -849,7 +849,7 @@ contract Script0 is Script {
             handle.http_endpoint().as_str(),
         ]);
 
-        assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE"));
+        assert!(cmd.output_lossy().0.contains("SIMULATION COMPLETE"));
 
         let run_latest = foundry_common::fs::json_files(prj.root().join("broadcast"))
             .into_iter()
@@ -940,7 +940,7 @@ contract Script0 is Script {
             handle.http_endpoint().as_str(),
         ]);
 
-        assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE"));
+        assert!(cmd.output_lossy().0.contains("SIMULATION COMPLETE"));
 
         let run_latest = foundry_common::fs::json_files(prj.root().join("broadcast"))
             .into_iter()
@@ -1077,7 +1077,7 @@ contract ContractC {
             .unwrap();
 
         cmd.arg("script").arg(script).args(["--tc", "ScriptTxOrigin"]);
-        assert!(cmd.stdout_lossy().contains("Script ran successfully."));
+        assert!(cmd.output_lossy().0.contains("Script ran successfully."));
     }
 );
 
@@ -1129,6 +1129,6 @@ contract NestedCreateFail is Script {
             .unwrap();
 
         cmd.arg("script").arg(script).args(["--tc", "NestedCreateFail"]);
-        assert!(cmd.stdout_lossy().contains("Script ran successfully."));
+        assert!(cmd.output_lossy().0.contains("Script ran successfully."));
     }
 );

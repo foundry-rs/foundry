@@ -129,7 +129,7 @@ forgetest!(
         cmd.arg("config");
         let expected =
             Config::load_with_root(prj.root()).to_string_pretty().unwrap().trim().to_string();
-        assert_eq!(expected, cmd.stdout().trim().to_string());
+        assert_eq!(expected, cmd.output_lossy().0.trim().to_string());
     }
 );
 
@@ -160,7 +160,7 @@ forgetest_init!(
 
         cmd.arg("config");
         let expected = profile.to_string_pretty().unwrap();
-        pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+        pretty_eq!(expected.trim().to_string(), cmd.output_lossy().0.trim().to_string());
 
         // remappings work
         let remappings_txt =
@@ -208,7 +208,7 @@ forgetest_init!(
 
         cmd.set_cmd(prj.forge_bin()).args(["config", "--basic"]);
         let expected = profile.into_basic().to_string_pretty().unwrap();
-        pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+        pretty_eq!(expected.trim().to_string(), cmd.output_lossy().0.trim().to_string());
     }
 );
 
@@ -234,7 +234,7 @@ forgetest_init!(
 
         cmd.arg("config");
         let expected = profile.to_string_pretty().unwrap();
-        pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+        pretty_eq!(expected.trim().to_string(), cmd.output_lossy().0.trim().to_string());
 
         let install = |cmd: &mut TestCommand, dep: &str| {
             cmd.forge_fuse().args(["install", dep, "--no-commit"]);
@@ -267,7 +267,7 @@ forgetest_init!(
 
         cmd.set_cmd(prj.forge_bin()).args(["config", "--basic"]);
         let expected = profile.into_basic().to_string_pretty().unwrap();
-        pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+        pretty_eq!(expected.trim().to_string(), cmd.output_lossy().0.trim().to_string());
     }
 );
 
@@ -337,7 +337,7 @@ contract Greeter {}
 
     cmd.arg("build");
 
-    assert!(cmd.stdout_lossy().ends_with(
+    assert!(cmd.output_lossy().0.ends_with(
         "
 Compiler run successful!
 ",
@@ -359,7 +359,7 @@ contract Foo {}
 
     cmd.args(["build", "--use", "0.7.1"]);
 
-    let stdout = cmd.stdout_lossy();
+    let stdout = cmd.output_lossy().0;
     assert!(stdout.contains("Compiler run successful"));
 
     cmd.forge_fuse().args(["build", "--force", "--use", "solc:0.7.1"]).root_arg();
@@ -368,7 +368,7 @@ contract Foo {}
 
     // fails to use solc that does not exist
     cmd.forge_fuse().args(["build", "--use", "this/solc/does/not/exist"]);
-    assert!(cmd.stderr_lossy().contains("this/solc/does/not/exist does not exist"));
+    assert!(cmd.output_lossy().1.contains("this/solc/does/not/exist does not exist"));
 
     // 0.7.1 was installed in previous step, so we can use the path to this directly
     let local_solc = foundry_compilers::Solc::find_svm_installed_version("0.7.1")
@@ -410,7 +410,7 @@ contract Foo {
     };
     prj.write_config(config);
 
-    assert!(cmd.stdout_lossy().ends_with(
+    assert!(cmd.output_lossy().0.ends_with(
         "
 Compiler run successful!
 ",

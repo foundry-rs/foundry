@@ -550,7 +550,7 @@ contract Greeter {
 
     cmd.arg("build");
 
-    let output = cmd.stdout_lossy();
+    let (output, _) = cmd.output_lossy();
     assert!(output.contains(
         "
 Compiler run successful with warnings:
@@ -618,7 +618,7 @@ library FooLib {
 
     cmd.arg("build");
 
-    assert!(cmd.stdout_lossy().ends_with(
+    assert!(cmd.output_lossy().0.ends_with(
         "
 Compiler run successful!
 "
@@ -660,11 +660,11 @@ contract Foo {
     };
 
     cmd.arg("inspect").arg(contract_name).arg("bytecode");
-    check_output(cmd.stdout_lossy());
+    check_output(cmd.output_lossy().0);
 
     let info = format!("src/{}:{}", path.file_name().unwrap().to_string_lossy(), contract_name);
     cmd.forge_fuse().arg("inspect").arg(info).arg("bytecode");
-    check_output(cmd.stdout_lossy());
+    check_output(cmd.output_lossy().0);
 });
 
 // test that `forge snapshot` commands work
@@ -722,7 +722,7 @@ contract A {
         .unwrap();
 
     cmd.args(["build", "--force"]);
-    let out = cmd.stdout();
+    let out = cmd.output_lossy().0;
     // no warnings
     assert!(out.trim().contains("Compiler run successful!"));
     assert!(!out.trim().contains("Compiler run successful with warnings:"));
@@ -730,7 +730,7 @@ contract A {
     // don't ignore errors
     let config = Config { ignored_error_codes: vec![], ..Default::default() };
     prj.write_config(config);
-    let out = cmd.stdout();
+    let out = cmd.output_lossy().0;
 
     assert!(out.trim().contains("Compiler run successful with warnings:"));
     assert!(
@@ -758,7 +758,7 @@ contract A {
         .unwrap();
 
     cmd.args(["build", "--force"]);
-    let out = cmd.stdout();
+    let out = cmd.output_lossy().0;
     // there are no errors
     assert!(out.trim().contains("Compiler run successful"));
     assert!(out.trim().contains("Compiler run successful with warnings:"));
@@ -775,7 +775,7 @@ contract A {
         ..Default::default()
     };
     prj.write_config(config);
-    let out = cmd.stdout();
+    let out = cmd.output_lossy().0;
 
     assert!(out.trim().contains("Compiler run successful!"));
     assert!(!out.trim().contains("Compiler run successful with warnings:"));
@@ -1033,7 +1033,7 @@ forgetest!(
 
         install(&mut cmd);
         cmd.forge_fuse().args(["update", "lib/issue-2264-repro"]);
-        cmd.stdout_lossy();
+        cmd.output_lossy().0;
 
         prj.inner()
             .add_source(
@@ -1049,7 +1049,7 @@ contract MyTokenCopy is MyToken {
             .unwrap();
 
         cmd.forge_fuse().args(["build"]);
-        let output = cmd.stdout_lossy();
+        let (output, _) = cmd.output_lossy();
 
         assert!(output.contains("Compiler run successful",));
     }
@@ -1155,21 +1155,21 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    let first_out = cmd.arg("test").arg("--gas-report").output_lossy().0;
     assert!(first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 
     cmd.forge_fuse();
     prj.write_config(Config { gas_reports: (vec![]), ..Default::default() });
     cmd.forge_fuse();
-    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    let second_out = cmd.arg("test").arg("--gas-report").output_lossy().0;
     assert!(second_out.contains("foo") && second_out.contains("bar") && second_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 
     cmd.forge_fuse();
     prj.write_config(Config { gas_reports: (vec!["*".to_string()]), ..Default::default() });
     cmd.forge_fuse();
-    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    let third_out = cmd.arg("test").arg("--gas-report").output_lossy().0;
     assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 
@@ -1183,7 +1183,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let fourth_out = cmd.arg("test").arg("--gas-report").stdout();
+    let fourth_out = cmd.arg("test").arg("--gas-report").output_lossy().0;
     assert!(fourth_out.contains("foo") && fourth_out.contains("bar") && fourth_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 });
@@ -1288,7 +1288,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    let first_out = cmd.arg("test").arg("--gas-report").output_lossy().0;
     assert!(first_out.contains("foo") && !first_out.contains("bar") && !first_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 
@@ -1299,7 +1299,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    let second_out = cmd.arg("test").arg("--gas-report").output_lossy().0;
     assert!(
         !second_out.contains("foo") && second_out.contains("bar") && !second_out.contains("baz")
     );
@@ -1312,7 +1312,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    let third_out = cmd.arg("test").arg("--gas-report").output_lossy().0;
     assert!(!third_out.contains("foo") && !third_out.contains("bar") && third_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 });
@@ -1417,7 +1417,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    let first_out = cmd.arg("test").arg("--gas-report").output_lossy().0;
     assert!(!first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 
@@ -1429,7 +1429,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    let second_out = cmd.arg("test").arg("--gas-report").output_lossy().0;
     assert!(
         second_out.contains("foo") && !second_out.contains("bar") && second_out.contains("baz")
     );
@@ -1447,7 +1447,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    let third_out = cmd.arg("test").arg("--gas-report").output_lossy().0;
     assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
 });
 
@@ -1497,7 +1497,7 @@ forgetest_init!(can_use_absolute_imports, |prj: TestProject, mut cmd: TestComman
         .unwrap();
 
     cmd.arg("build");
-    let stdout = cmd.stdout_lossy();
+    let stdout = cmd.output_lossy().0;
     assert!(stdout.contains("Compiler run successful"));
 });
 
@@ -1552,7 +1552,7 @@ forgetest_init!(
             .unwrap();
 
         cmd.arg("build");
-        let stdout = cmd.stdout_lossy();
+        let stdout = cmd.output_lossy().0;
         assert!(stdout.contains("Compiler run successful"));
     }
 );
@@ -1577,7 +1577,7 @@ forgetest_init!(can_install_missing_deps_test, |prj: TestProject, mut cmd: TestC
 
     cmd.arg("test");
 
-    let output = cmd.stdout_lossy();
+    let (output, _) = cmd.output_lossy();
     assert!(output.contains("Missing dependencies found. Installing now"), "{}", output);
     assert!(output.contains("[PASS]"), "{}", output);
 });
@@ -1590,7 +1590,7 @@ forgetest_init!(can_install_missing_deps_build, |prj: TestProject, mut cmd: Test
 
     cmd.arg("build");
 
-    let output = cmd.stdout_lossy();
+    let (output, _) = cmd.output_lossy();
     assert!(output.contains("Missing dependencies found. Installing now"), "{}", output);
     assert!(output.contains("Compiler run successful"), "{}", output);
 });
@@ -1609,7 +1609,7 @@ forgetest_init!(can_build_skip_contracts, |prj: TestProject, mut cmd: TestComman
             .join("tests/fixtures/can_build_skip_contracts.stdout"),
     );
     // re-run command
-    let out = cmd.stdout();
+    let out = cmd.output_lossy().0;
 
     // unchanged
     assert!(out.trim().contains("No files changed, compilation skipped"), "{}", out);
@@ -1641,7 +1641,7 @@ function test_run() external {}
 // checks that build --sizes includes all contracts even if unchanged
 forgetest_init!(can_build_sizes_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
     cmd.args(["build", "--sizes"]);
-    let out = cmd.stdout();
+    let out = cmd.output_lossy().0;
 
     // contains: Counter    ┆ 0.247     ┆ 24.329
     assert!(out.contains(TEMPLATE_CONTRACT));
@@ -1649,20 +1649,20 @@ forgetest_init!(can_build_sizes_repeatedly, |_prj: TestProject, mut cmd: TestCom
     // get the entire table
     let table = out.split("Compiler run successful!").nth(1).unwrap().trim();
 
-    let unchanged = cmd.stdout();
+    let unchanged = cmd.output_lossy().0;
     assert!(unchanged.contains(table), "{}", table);
 });
 
 // checks that build --names includes all contracts even if unchanged
 forgetest_init!(can_build_names_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
     cmd.args(["build", "--names"]);
-    let out = cmd.stdout();
+    let out = cmd.output_lossy().0;
 
     assert!(out.contains(TEMPLATE_CONTRACT));
 
     // get the entire list
     let list = out.split("Compiler run successful!").nth(1).unwrap().trim();
 
-    let unchanged = cmd.stdout();
+    let unchanged = cmd.output_lossy().0;
     assert!(unchanged.contains(list), "{}", list);
 });

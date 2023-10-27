@@ -58,5 +58,5 @@ contract CounterTest is Test {{
     "#
     );
     prj.inner().add_test("Counter", src).unwrap();
-    cmd.arg("test").stdout().contains("[PASS]")
+    cmd.arg("test").output_lossy().0.contains("[PASS]")
 });
