@@ -2,6 +2,7 @@
 
 use crate::Config;
 use alloy_primitives::U256;
+use eyre::WrapErr;
 use figment::value::Value;
 use foundry_compilers::{
     remappings::{Remapping, RemappingError},
@@ -33,10 +34,14 @@ pub fn load_config_with_root(root: Option<PathBuf>) -> Config {
 /// Returns the path of the top-level directory of the working git tree. If there is no working
 /// tree, an error is returned.
 pub fn find_git_root_path(relative_to: impl AsRef<Path>) -> eyre::Result<PathBuf> {
+    let path = relative_to.as_ref();
     let path = std::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
-        .current_dir(relative_to.as_ref())
-        .output()?
+        .current_dir(path)
+        .output()
+        .wrap_err_with(|| {
+            format!("Failed detect git root path in current dir: {}", path.display())
+        })?
         .stdout;
     let path = std::str::from_utf8(&path)?.trim_end_matches('\n');
     Ok(PathBuf::from(path))
