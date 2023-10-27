@@ -191,7 +191,7 @@ pub fn decode_revert(
             // try to decode a custom error if provided an abi
             if let Some(abi) = maybe_abi {
                 for abi_error in abi.errors() {
-                    if abi_error.signature()[..SELECTOR_LEN].as_bytes() == &err[..SELECTOR_LEN] {
+                    if abi_error.selector() == err[..SELECTOR_LEN] {
                         // if we don't decode, don't return an error, try to decode as a
                         // string later
                         if let Ok(decoded) = abi_error.abi_decode_input(&err[SELECTOR_LEN..], false)
