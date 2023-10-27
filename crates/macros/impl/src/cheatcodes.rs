@@ -137,7 +137,10 @@ fn derive_enum(name: &Ident, input: &syn::DataEnum) -> Result<TokenStream> {
 
         #[cfg(feature = "impls")]
         impl #name {
-            pub(crate) fn apply<DB: crate::impls::DatabaseExt>(&self, ccx: &mut crate::impls::CheatsCtxt<DB>) -> crate::impls::Result {
+            pub(crate) fn apply<DB: foundry_evm_core::backend::DatabaseExt>(
+                &self,
+                ccx: &mut crate::impls::CheatsCtxt<DB>
+            ) -> crate::impls::Result {
                 match self {
                     #(Self::#variants_names(c) => crate::impls::Cheatcode::apply_traced(c, ccx),)*
                 }

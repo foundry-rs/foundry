@@ -2,16 +2,12 @@
 
 use crate::CheatcodeDef;
 use alloy_primitives::Address;
+use foundry_evm_core::backend::DatabaseExt;
 use revm::EVMData;
 
 #[macro_use]
 mod error;
 pub use error::{Error, ErrorKind, Result};
-
-pub use foundry_evm_core::{
-    backend::{DatabaseError, DatabaseExt, DatabaseResult, LocalForkId, RevertDiagnostic},
-    fork::CreateFork,
-};
 
 mod config;
 pub use config::CheatsConfig;

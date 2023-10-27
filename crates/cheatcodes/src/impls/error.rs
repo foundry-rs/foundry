@@ -1,12 +1,12 @@
+use crate::Vm;
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolError;
 use ethers_core::k256::ecdsa::signature::Error as SignatureError;
 use ethers_signers::WalletError;
 use foundry_common::errors::FsPathError;
 use foundry_config::UnresolvedEnvVarError;
+use foundry_evm_core::backend::DatabaseError;
 use std::{borrow::Cow, fmt, ptr::NonNull};
-
-use crate::Vm;
 
 /// Cheatcode result type.
 ///
@@ -282,7 +282,7 @@ impl_from!(
     FsPathError,
     hex::FromHexError,
     eyre::Error,
-    super::DatabaseError,
+    DatabaseError,
     jsonpath_lib::JsonPathError,
     serde_json::Error,
     SignatureError,

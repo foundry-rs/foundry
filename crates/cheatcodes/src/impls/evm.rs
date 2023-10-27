@@ -1,10 +1,11 @@
 //! Implementations of [`Evm`](crate::Group::Evm) cheatcodes.
 
-use super::{Cheatcode, CheatsCtxt, DatabaseExt, Result};
+use super::{Cheatcode, CheatsCtxt, Result};
 use crate::{Cheatcodes, Vm::*};
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolValue;
 use ethers_signers::Signer;
+use foundry_evm_core::backend::DatabaseExt;
 use foundry_utils::types::ToAlloy;
 use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},

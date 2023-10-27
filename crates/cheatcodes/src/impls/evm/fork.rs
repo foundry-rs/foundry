@@ -1,11 +1,12 @@
 use super::{Cheatcode, CheatsCtxt, DatabaseExt, Result};
-use crate::{impls::CreateFork, Cheatcodes, Vm::*};
+use crate::{Cheatcodes, Vm::*};
 use alloy_primitives::B256;
 use alloy_sol_types::SolValue;
 use ethers_core::types::Filter;
 use ethers_providers::Middleware;
 use foundry_common::ProviderBuilder;
 use foundry_compilers::utils::RuntimeOrHandle;
+use foundry_evm_core::fork::CreateFork;
 use foundry_utils::types::{ToAlloy, ToEthers};
 
 impl Cheatcode for activeForkCall {
