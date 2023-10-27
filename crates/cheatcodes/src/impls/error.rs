@@ -1,10 +1,12 @@
 use alloy_primitives::{Address, Bytes};
-use alloy_sol_types::{Revert, SolError, SolValue};
+use alloy_sol_types::SolError;
 use ethers_core::k256::ecdsa::signature::Error as SignatureError;
 use ethers_signers::WalletError;
 use foundry_common::errors::FsPathError;
 use foundry_config::UnresolvedEnvVarError;
 use std::{borrow::Cow, fmt, ptr::NonNull};
+
+use crate::Vm;
 
 /// Cheatcode result type.
 ///
@@ -142,17 +144,12 @@ impl Error {
         }
     }
 
-    /// ABI-encodes this error.
+    /// ABI-encodes this error as `CheatCodeError(string)`.
     pub fn abi_encode(&self) -> Vec<u8> {
         match self.kind() {
-            ErrorKind::String(string) => Revert::from(string).abi_encode(),
+            ErrorKind::String(string) => Vm::CheatCodeError { message: string.into() }.abi_encode(),
             ErrorKind::Bytes(bytes) => bytes.into(),
         }
-    }
-
-    /// ABI-encodes this error as `bytes`.
-    pub fn abi_encode_bytes(&self) -> Vec<u8> {
-        self.data().abi_encode()
     }
 
     /// Returns the kind of this error.
@@ -303,9 +300,9 @@ mod tests {
 
     #[test]
     fn encode() {
-        let revert = Revert::from("hello").abi_encode();
-        assert_eq!(Error::from("hello").abi_encode(), revert);
-        assert_eq!(Error::encode("hello"), revert);
+        let error = Vm::CheatCodeError { message: "hello".into() }.abi_encode();
+        assert_eq!(Error::from("hello").abi_encode(), error);
+        assert_eq!(Error::encode("hello"), error);
 
         assert_eq!(Error::from(b"hello").abi_encode(), b"hello");
         assert_eq!(Error::encode(b"hello"), b"hello"[..]);
