@@ -1,6 +1,6 @@
 //! ABI related helper functions
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
-use alloy_json_abi::{Event, Function, AbiItem};
+use alloy_json_abi::{AbiItem, Event, Function};
 use alloy_primitives::{hex, Address, Log, U256};
 use ethers_core::types::Chain;
 use eyre::{ContextCompat, Result};
@@ -176,8 +176,8 @@ pub fn get_func(sig: &str) -> Result<Function> {
         Ok(item) => match item {
             AbiItem::Function(func) => func,
             _ => return Err(eyre::eyre!("Expected function, got {:?}", item)),
-        }
-        Err(e) => return Err(e.into())
+        },
+        Err(e) => return Err(e.into()),
     };
     Ok(item.into_owned().to_owned())
 }
