@@ -146,7 +146,7 @@ impl Error {
     pub fn abi_encode(&self) -> Vec<u8> {
         match self.kind() {
             ErrorKind::String(string) => Revert::from(string).abi_encode(),
-            ErrorKind::Bytes(bytes) => bytes.abi_encode(),
+            ErrorKind::Bytes(bytes) => bytes.into(),
         }
     }
 
@@ -296,3 +296,18 @@ impl_from!(
     UnresolvedEnvVarError,
     WalletError,
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encode() {
+        let revert = Revert::from("hello").abi_encode();
+        assert_eq!(Error::from("hello").abi_encode(), revert);
+        assert_eq!(Error::encode("hello"), revert);
+
+        assert_eq!(Error::from(b"hello").abi_encode(), b"hello");
+        assert_eq!(Error::encode(b"hello"), b"hello"[..]);
+    }
+}
