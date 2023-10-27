@@ -1,5 +1,5 @@
 use super::{retry::RetryArgs, verify};
-use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
+use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt, ResolveSolType};
 use alloy_json_abi::{Constructor, JsonAbi as Abi};
 use alloy_primitives::{Address, Bytes};
 use clap::{Parser, ValueHint};
@@ -331,7 +331,9 @@ impl CreateArgs {
     ) -> Result<Vec<DynSolValue>> {
         let mut params = Vec::with_capacity(constructor.inputs.len());
         for (input, arg) in constructor.inputs.iter().zip(constructor_args) {
-            let ty = DynSolType::parse(&input.ty)
+            let ty = input
+                .ty
+                .resolve()
                 .wrap_err_with(|| format!("Could not parse constructor arg: input={input}"))?;
             params.push((ty, arg));
         }
