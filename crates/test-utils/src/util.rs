@@ -1,5 +1,6 @@
 use crate::init_tracing;
 use eyre::{Result, WrapErr};
+use fd_lock::RwLock;
 use foundry_compilers::{
     cache::SolFilesCache,
     project_util::{copy_dir, TempProject},
@@ -36,20 +37,43 @@ static PRE_INSTALL_SOLC_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false)
 // This stores `true` if the current terminal is a tty
 pub static IS_TTY: Lazy<bool> = Lazy::new(|| std::io::stdout().is_terminal());
 
-/// Contains a `forge init` initialized project
-pub static FORGE_INITIALIZED: Lazy<TestProject> = Lazy::new(|| {
-    let (prj, mut cmd) = setup_forge("init-template", PathStyle::Dapptools);
-    cmd.args(["init", "--force"]);
-    cmd.assert_non_empty_stdout();
-    prj
-});
+static TEMPLATE_PATH: Lazy<PathBuf> =
+    Lazy::new(|| env::temp_dir().join("foundry-forge-test-template"));
+
+static TEMPLATE_LOCK: Lazy<PathBuf> =
+    Lazy::new(|| env::temp_dir().join("foundry-forge-test-template.lock"));
 
 // identifier for tests
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// Copies an initialized project to the given path
 pub fn initialize(target: impl AsRef<Path>) {
-    FORGE_INITIALIZED.copy_to(target)
+    let target = target.as_ref();
+    let tpath = &*TEMPLATE_PATH;
+    pretty_err(tpath, fs::create_dir_all(tpath));
+
+    let lock_path = &*TEMPLATE_LOCK;
+    let lock_file = pretty_err(
+        &lock_path,
+        fs::OpenOptions::new().read(true).write(true).create(true).open(&lock_path),
+    );
+    let mut lock = RwLock::new(lock_file);
+    let read = lock.read().unwrap();
+    if fs::read_to_string(lock_path).unwrap() != "1" {
+        eprintln!("initializing template dir");
+
+        drop(read);
+        let mut write = lock.write().unwrap();
+        write.write_all(b"1").unwrap();
+
+        let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
+        cmd.args(["init", "--force"]).assert_success();
+        pretty_err(tpath, fs::remove_dir_all(tpath));
+        pretty_err(tpath, copy_dir(prj.root(), tpath));
+    } else {
+        pretty_err(target, fs::create_dir_all(target));
+        pretty_err(target, copy_dir(tpath, target));
+    }
 }
 
 /// Clones a remote repository into the specified directory.
@@ -229,7 +253,6 @@ impl TestProject {
     /// does not need to be distinct for each invocation, but should correspond
     /// to a logical grouping of tests.
     pub fn new(name: &str, style: PathStyle) -> Self {
-        init_tracing();
         let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
         let project = pretty_err(name, TempProject::with_style(&format!("{name}-{id}"), style));
         Self::with_project(project)
@@ -575,6 +598,20 @@ impl TestCommand {
     pub fn output_lossy(&mut self) -> (String, String) {
         let output = self.output();
         (lossy_string(&output.stdout), lossy_string(&output.stderr))
+    }
+
+    /// Executes the command and returns the stderr as lossy `String`.
+    ///
+    /// **Note**: This function checks whether the command was successful.
+    pub fn stdout_lossy(&mut self) -> String {
+        lossy_string(&self.output().stdout)
+    }
+
+    /// Executes the command and returns the stderr as lossy `String`.
+    ///
+    /// **Note**: This function does **not** check whether the command was successful.
+    pub fn stderr_lossy(&mut self) -> String {
+        lossy_string(&self.unchecked_output().stderr)
     }
 
     /// Returns the output but does not expect that the command was successful

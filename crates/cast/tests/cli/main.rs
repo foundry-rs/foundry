@@ -19,13 +19,13 @@ casttest!(latest_block, |_: TestProject, mut cmd: TestCommand| {
 
     // Call `cast find-block`
     cmd.args(["block", "latest", "--rpc-url", eth_rpc_url.as_str()]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
     assert!(output.contains("transactions:"));
     assert!(output.contains("gasUsed"));
 
     // <https://etherscan.io/block/15007840>
     cmd.cast_fuse().args(["block", "15007840", "-f", "hash", "--rpc-url", eth_rpc_url.as_str()]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
     assert_eq!(output.trim(), "0x950091817a57e22b6c1f3b951a15f52d41ac89b299cc8f9c89bb6d185f80c415")
 });
 
@@ -37,7 +37,7 @@ casttest!(finds_block, |_: TestProject, mut cmd: TestCommand| {
 
     // Call `cast find-block`
     cmd.args(["find-block", "--rpc-url", eth_rpc_url.as_str(), &timestamp]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
     println!("{output}");
 
     // Expect successful block query
@@ -50,7 +50,7 @@ casttest!(finds_block, |_: TestProject, mut cmd: TestCommand| {
 // tests that we can create a new wallet with keystore
 casttest!(new_wallet_keystore_with_password, |_: TestProject, mut cmd: TestCommand| {
     cmd.args(["wallet", "new", ".", "--unsafe-password", "test"]);
-    let (out, _) = cmd.output_lossy();
+    let out = cmd.stdout_lossy();
     assert!(out.contains("Created new encrypted keystore file"));
     assert!(out.contains("Address"));
 });
@@ -70,7 +70,7 @@ casttest!(wallet_address_keystore_with_password_file, |_: TestProject, mut cmd: 
         "--password-file",
         keystore_dir.join("password-ec554").to_str().unwrap(),
     ]);
-    let (out, _) = cmd.output_lossy();
+    let out = cmd.stdout_lossy();
     assert!(out.contains("0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2"));
 });
 
@@ -83,7 +83,7 @@ casttest!(cast_wallet_sign_message_utf8_data, |_: TestProject, mut cmd: TestComm
         "0x0000000000000000000000000000000000000000000000000000000000000001",
         "test",
     ]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
     assert_eq!(output.trim(), "0xfe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c");
 });
 
@@ -96,7 +96,7 @@ casttest!(cast_wallet_sign_message_hex_data, |_: TestProject, mut cmd: TestComma
         "0x0000000000000000000000000000000000000000000000000000000000000001",
         "0x0000000000000000000000000000000000000000000000000000000000000000",
     ]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
     assert_eq!(output.trim(), "0x23a42ca5616ee730ff3735890c32fc7b9491a9f633faca9434797f2c845f5abf4d9ba23bd7edb8577acebaa3644dc5a4995296db420522bb40060f1693c33c9b1c");
 });
 
@@ -110,7 +110,7 @@ casttest!(cast_wallet_sign_typed_data_string, |_: TestProject, mut cmd: TestComm
         "--data",
         "{\"types\": {\"EIP712Domain\": [{\"name\": \"name\",\"type\": \"string\"},{\"name\": \"version\",\"type\": \"string\"},{\"name\": \"chainId\",\"type\": \"uint256\"},{\"name\": \"verifyingContract\",\"type\": \"address\"}],\"Message\": [{\"name\": \"data\",\"type\": \"string\"}]},\"primaryType\": \"Message\",\"domain\": {\"name\": \"example.metamask.io\",\"version\": \"1\",\"chainId\": \"1\",\"verifyingContract\": \"0x0000000000000000000000000000000000000000\"},\"message\": {\"data\": \"Hello!\"}}",
     ]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
     assert_eq!(output.trim(), "0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b");
 });
 
@@ -130,7 +130,7 @@ casttest!(cast_wallet_sign_typed_data_file, |_: TestProject, mut cmd: TestComman
             .unwrap()
             .as_str(),
     ]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
     assert_eq!(output.trim(), "0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b");
 });
 
@@ -146,7 +146,7 @@ casttest!(estimate_function_gas, |_: TestProject, mut cmd: TestCommand| {
         "--rpc-url",
         eth_rpc_url.as_str(),
     ]);
-    let out: u32 = cmd.output_lossy().0.trim().parse().unwrap();
+    let out: u32 = cmd.stdout_lossy().trim().parse().unwrap();
     // ensure we get a positive non-error value for gas estimate
     assert!(out.ge(&0));
 });
@@ -168,7 +168,7 @@ casttest!(estimate_contract_deploy_gas, |_: TestProject, mut cmd: TestCommand| {
         "TST",
     ]);
 
-    let gas: u32 = cmd.output_lossy().0.trim().parse().unwrap();
+    let gas: u32 = cmd.stdout_lossy().trim().parse().unwrap();
     // ensure we get a positive non-error value for gas estimate
     assert!(gas > 0);
 });
@@ -177,13 +177,13 @@ casttest!(estimate_contract_deploy_gas, |_: TestProject, mut cmd: TestCommand| {
 casttest!(upload_signatures, |_: TestProject, mut cmd: TestCommand| {
     // test no prefix is accepted as function
     cmd.args(["upload-signature", "transfer(address,uint256)"]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
 
     assert!(output.contains("Function transfer(address,uint256): 0xa9059cbb"), "{}", output);
 
     // test event prefix
     cmd.args(["upload-signature", "event Transfer(address,uint256)"]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
 
     assert!(output.contains("Event Transfer(address,uint256): 0x69ca02dd4edd7bf0a4abb9ed3b7af3f14778db5d61921c7dc7cd545266326de2"), "{}", output);
 
@@ -194,7 +194,7 @@ casttest!(upload_signatures, |_: TestProject, mut cmd: TestCommand| {
         "transfer(address,uint256)",
         "approve(address,uint256)",
     ]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
 
     assert!(output.contains("Event Transfer(address,uint256): 0x69ca02dd4edd7bf0a4abb9ed3b7af3f14778db5d61921c7dc7cd545266326de2"), "{}", output);
     assert!(output.contains("Function transfer(address,uint256): 0xa9059cbb"), "{}", output);
@@ -212,7 +212,7 @@ casttest!(upload_signatures, |_: TestProject, mut cmd: TestCommand| {
             .unwrap()
             .as_str(),
     ]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
 
     assert!(output.contains("Event Transfer(address,uint256): 0x69ca02dd4edd7bf0a4abb9ed3b7af3f14778db5d61921c7dc7cd545266326de2"), "{}", output);
     assert!(output.contains("Function transfer(address,uint256): 0xa9059cbb"), "{}", output);
@@ -224,12 +224,12 @@ casttest!(upload_signatures, |_: TestProject, mut cmd: TestCommand| {
 // tests that the `cast to-rlp` and `cast from-rlp` commands work correctly
 casttest!(cast_rlp, |_: TestProject, mut cmd: TestCommand| {
     cmd.args(["--to-rlp", "[\"0xaa\", [[\"bb\"]], \"0xcc\"]"]);
-    let (out, _) = cmd.output_lossy();
+    let out = cmd.stdout_lossy();
     assert!(out.contains("0xc881aac3c281bb81cc"), "{}", out);
 
     cmd.cast_fuse();
     cmd.args(["--from-rlp", "0xcbc58455556666c0c0c2c1c0"]);
-    let (out, _) = cmd.output_lossy();
+    let out = cmd.stdout_lossy();
     assert!(out.contains("[[\"0x55556666\"],[],[],[[[]]]]"), "{}", out);
 });
 
@@ -239,7 +239,7 @@ casttest!(cast_rpc_no_args, |_: TestProject, mut cmd: TestCommand| {
 
     // Call `cast rpc eth_chainId`
     cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_chainId"]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
     assert_eq!(output.trim_end(), r#""0x1""#);
 });
 
@@ -249,7 +249,7 @@ casttest!(cast_ws_rpc_no_args, |_: TestProject, mut cmd: TestCommand| {
 
     // Call `cast rpc eth_chainId`
     cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_chainId"]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
     assert_eq!(output.trim_end(), r#""0x1""#);
 });
 
@@ -259,7 +259,7 @@ casttest!(cast_rpc_with_args, |_: TestProject, mut cmd: TestCommand| {
 
     // Call `cast rpc eth_getBlockByNumber 0x123 false`
     cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_getBlockByNumber", "0x123", "false"]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
     assert!(output.contains(r#""number":"0x123""#), "{}", output);
 });
 
@@ -276,7 +276,7 @@ casttest!(cast_rpc_raw_params, |_: TestProject, mut cmd: TestCommand| {
         "--raw",
         r#"["0x123", false]"#,
     ]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
     assert!(output.contains(r#""number":"0x123""#), "{}", output);
 });
 
@@ -290,14 +290,14 @@ casttest!(cast_rpc_raw_params_stdin, |_: TestProject, mut cmd: TestCommand| {
             stdin.write_all(b"\n[\n\"0x123\",\nfalse\n]\n").unwrap();
         },
     );
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
     assert!(output.contains(r#""number":"0x123""#), "{}", output);
 });
 
 // checks `cast calldata` can handle arrays
 casttest!(calldata_array, |_: TestProject, mut cmd: TestCommand| {
     cmd.args(["calldata", "propose(string[])", "[\"\"]"]);
-    let (out, _) = cmd.output_lossy();
+    let out = cmd.stdout_lossy();
     assert_eq!(out.trim(),"0xcde2baba0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000"
     );
 });
@@ -313,7 +313,7 @@ casttest!(cast_run_succeeds, |_: TestProject, mut cmd: TestCommand| {
         "--rpc-url",
         rpc.as_str(),
     ]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
     assert!(output.contains("Transaction successfully executed"));
     assert!(!output.contains("Revert"));
 });
@@ -336,11 +336,11 @@ casttest!(cast_to_base, |_: TestProject, mut cmd: TestCommand| {
             if subcmd == "--to-base" {
                 for base in ["bin", "oct", "dec", "hex"] {
                     cmd.cast_fuse().args([subcmd, value, base]);
-                    assert!(!cmd.output_lossy().0.trim().is_empty());
+                    assert!(!cmd.stdout_lossy().trim().is_empty());
                 }
             } else {
                 cmd.cast_fuse().args([subcmd, value]);
-                assert!(!cmd.output_lossy().0.trim().is_empty());
+                assert!(!cmd.stdout_lossy().trim().is_empty());
             }
         }
     }
@@ -357,7 +357,7 @@ casttest!(cast_receipt_revert_reason, |_: TestProject, mut cmd: TestCommand| {
         "--rpc-url",
         rpc.as_str(),
     ]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
     assert!(!output.contains("revertReason"));
 
     // <https://etherscan.io/tx/0x0e07d8b53ed3d91314c80e53cf25bcde02084939395845cbb625b029d568135c>
@@ -367,7 +367,7 @@ casttest!(cast_receipt_revert_reason, |_: TestProject, mut cmd: TestCommand| {
         "--rpc-url",
         rpc.as_str(),
     ]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
     assert!(output.contains("revertReason"));
     assert!(output.contains("Transaction too old"));
 });
@@ -378,7 +378,7 @@ casttest!(parse_bytes32_address, |_: TestProject, mut cmd: TestCommand| {
         "--parse-bytes32-address",
         "0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045",
     ]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
     assert_eq!(output.trim(), "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 });
 
@@ -395,7 +395,7 @@ casttest!(cast_access_list, |_: TestProject, mut cmd: TestCommand| {
         "100000",
     ]);
 
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
     assert!(output.contains("address: 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"));
     assert!(output.contains("0x0d2a19d3ac39dc6cc6fd07423195495e18679bd8c7dd610aa1db7cd784a683a8"));
     assert!(output.contains("0x7fba2702a7d6e85ac783a88eacdc48e51310443458071f6db9ac66f8ca7068b8"));
@@ -492,7 +492,7 @@ casttest!(cast_tx_raw, |_: TestProject, mut cmd: TestCommand| {
         "--rpc-url",
         rpc.as_str(),
     ]);
-    let (output, _) = cmd.output_lossy();
+    let output = cmd.stdout_lossy();
 
     // <https://etherscan.io/getRawTx?tx=0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
     assert_eq!(
@@ -507,6 +507,6 @@ casttest!(cast_tx_raw, |_: TestProject, mut cmd: TestCommand| {
         "--rpc-url",
         rpc.as_str(),
     ]);
-    let output2 = cmd.output_lossy().0;
+    let output2 = cmd.stdout_lossy();
     assert_eq!(output, output2);
 });

@@ -2351,6 +2351,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fd-lock"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b0377f1edc77dbd1118507bc7a66e4ab64d2b90c66f90726dc801e73a8c68f9"
+dependencies = [
+ "cfg-if",
+ "rustix",
+ "windows-sys 0.48.0",
+]
+
+[[package]]
 name = "fdlimit"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2947,6 +2958,7 @@ dependencies = [
  "alloy-primitives",
  "ethers",
  "eyre",
+ "fd-lock 4.0.0",
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
@@ -6080,7 +6092,7 @@ dependencies = [
  "bitflags 2.4.1",
  "cfg-if",
  "clipboard-win",
- "fd-lock",
+ "fd-lock 3.0.13",
  "home",
  "libc",
  "log",

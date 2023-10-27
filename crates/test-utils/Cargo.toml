@@ -31,6 +31,7 @@ tempfile = "3"
 walkdir = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+fd-lock = "4.0.0"
 
 [features]
 # feature for integration tests that test external projects

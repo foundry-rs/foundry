@@ -72,7 +72,7 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
         let contract_path = "src/Verify.sol:Verify";
         cmd.arg("create").args(info.create_args()).arg(contract_path);
 
-        let (out, _) = cmd.output_lossy();
+        let out = cmd.stdout_lossy();
         let address = utils::parse_deployed_address(out.as_str())
             .unwrap_or_else(|| panic!("Failed to parse deployer {out}"));
 

@@ -132,7 +132,7 @@ contract ATest is DSTest {
         .unwrap();
 
     cmd.arg("test");
-    cmd.output_lossy().0.contains("[PASS]")
+    cmd.stdout_lossy().contains("[PASS]")
 });
 
 // tests that `bytecode_hash` will be sanitized
@@ -157,7 +157,7 @@ contract ATest is DSTest {
         .unwrap();
 
     cmd.arg("test");
-    cmd.output_lossy().0.contains("[PASS]")
+    cmd.stdout_lossy().contains("[PASS]")
 });
 
 // tests that using the --match-path option only runs files matching the path
@@ -197,7 +197,7 @@ contract FailTest is DSTest {
         .unwrap();
 
     cmd.args(["test", "--match-path", "*src/ATest.t.sol"]);
-    cmd.output_lossy().0.contains("[PASS]") && !cmd.output_lossy().0.contains("[FAIL]")
+    cmd.stdout_lossy().contains("[PASS]") && !cmd.stdout_lossy().contains("[FAIL]")
 });
 
 // tests that `forge test` will pick up tests that are stored in the `test = <path>` config value
@@ -301,7 +301,7 @@ forgetest_init!(
         // execute in subdir
         cmd.cmd().current_dir(forge_std_dir);
         cmd.args(["test", "--root", "."]);
-        let stdout = cmd.output_lossy().0;
+        let stdout = cmd.stdout_lossy();
         assert!(stdout.contains("[PASS]"), "No tests passed:\n{stdout}");
         assert!(!stdout.contains("[FAIL]"), "Tests failed:\n{stdout}");
     }
