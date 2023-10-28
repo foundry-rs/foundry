@@ -885,6 +885,26 @@ mod tests {
 
     #[test]
     fn test_custom_reset() {
+        let s = r#"{"method": "anvil_reset", "params": [{"forking": {"jsonRpcUrl": "https://ethereumpublicnode.com",
+        "blockNumber": "18441649"
+      }
+    }]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Reset(forking) => {
+                let forking = forking.and_then(|f| f.params);
+                assert_eq!(
+                    forking,
+                    Some(Forking {
+                        json_rpc_url: Some("https://ethereumpublicnode.com".into()),
+                        block_number: Some(18441649)
+                    })
+                )
+            }
+            _ => unreachable!(),
+        }
+
         let s = r#"{"method": "anvil_reset", "params": [ { "forking": {
                 "jsonRpcUrl": "https://eth-mainnet.alchemyapi.io/v2/<key>",
                 "blockNumber": 11095000
@@ -946,6 +966,20 @@ mod tests {
         }
 
         let s = r#"{"method":"anvil_reset","params":[{ "blockNumber": 14000000}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Reset(forking) => {
+                let forking = forking.and_then(|f| f.params);
+                assert_eq!(
+                    forking,
+                    Some(Forking { json_rpc_url: None, block_number: Some(14000000) })
+                )
+            }
+            _ => unreachable!(),
+        }
+
+        let s = r#"{"method":"anvil_reset","params":[{ "blockNumber": "14000000"}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let req = serde_json::from_value::<EthRequest>(value).unwrap();
         match req {

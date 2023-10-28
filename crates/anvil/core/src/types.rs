@@ -23,6 +23,10 @@ impl<'de> serde::Deserialize<'de> for Forking {
         #[serde(rename_all = "camelCase")]
         struct ForkOpts {
             pub json_rpc_url: Option<String>,
+            #[serde(
+                default,
+                deserialize_with = "ethers_core::types::serde_helpers::deserialize_stringified_u64_opt"
+            )]
             pub block_number: Option<u64>,
         }
 
@@ -198,4 +202,25 @@ pub struct NodeForkConfig {
     pub fork_url: Option<String>,
     pub fork_block_number: Option<u64>,
     pub fork_retry_backoff: Option<u128>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serde_forking() {
+        let s = r#"{"forking": {"jsonRpcUrl": "https://ethereumpublicnode.com",
+        "blockNumber": "18441649"
+      }
+    }"#;
+        let f: Forking = serde_json::from_str(s).unwrap();
+        assert_eq!(
+            f,
+            Forking {
+                json_rpc_url: Some("https://ethereumpublicnode.com".into()),
+                block_number: Some(18441649)
+            }
+        );
+    }
 }
