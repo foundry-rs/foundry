@@ -158,7 +158,7 @@ impl WalletSubcommands {
                                 "path": path.join(uuid).display(),
                             }));
                         } else {
-                            println!("Successfully created new keystore file.");
+                            println!("Created new encrypted keystore file: {}", path.join(uuid).display());
                             println!("Address: {}", wallet.address().to_alloy().to_checksum(None));
                         }
                     }
