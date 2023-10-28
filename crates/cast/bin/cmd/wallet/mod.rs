@@ -11,6 +11,7 @@ use foundry_common::fs;
 use foundry_config::Config;
 use foundry_utils::types::{ToAlloy, ToEthers};
 use std::path::Path;
+use serde_json::json;
 use yansi::Paint;
 
 pub mod vanity;
@@ -36,6 +37,14 @@ pub enum WalletSubcommands {
         /// This is UNSAFE to use and we recommend using the --password.
         #[clap(long, requires = "path", env = "CAST_PASSWORD", value_name = "PASSWORD")]
         unsafe_password: Option<String>,
+
+        /// Number wallet generation
+        #[clap(long, short, default_value = "1")]
+        number: u32,
+
+        /// Json output
+        #[clap(long, short, deafult_value = "false")]
+        json: bool,
     },
 
     /// Generate a vanity address.
@@ -120,9 +129,10 @@ pub enum WalletSubcommands {
 impl WalletSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
-            WalletSubcommands::New { path, unsafe_password, .. } => {
+            WalletSubcommands::New { path, unsafe_password, number, json, .. } => {
                 let mut rng = thread_rng();
 
+                let mut json_values = if json { Some(vec![] )} else { None };
                 if let Some(path) = path {
                     let path = dunce::canonicalize(path)?;
                     if !path.is_dir() {
@@ -137,16 +147,45 @@ impl WalletSubcommands {
                         rpassword::prompt_password("Enter secret: ")?
                     };
 
-                    let (wallet, uuid) =
-                        LocalWallet::new_keystore(&path, &mut rng, password, None)?;
 
-                    println!("Created new encrypted keystore file: {}", path.join(uuid).display());
-                    println!("Address: {}", wallet.address().to_alloy().to_checksum(None));
+                    for _ in 0..number {
+                        let (wallet, uuid) =
+                            LocalWallet::new_keystore(&path, &mut rng, password.clone(), None)?;
+
+                        if json {
+                            json_values.unwrap().push(json!({
+                                "address": wallet.address().to_alloy().to_checksum(None),
+                                "path": path.join(uuid).display(),
+                            }));
+                        } else {
+                            println!("Successfully created new keystore file.");
+                            println!("Address: {}", wallet.address().to_alloy().to_checksum(None));
+                        }
+                    }
+
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&json_values.unwrap())?);
+                    }
                 } else {
-                    let wallet = LocalWallet::new(&mut rng);
-                    println!("Successfully created new keypair.");
-                    println!("Address:     {}", wallet.address().to_alloy().to_checksum(None));
-                    println!("Private key: 0x{}", hex::encode(wallet.signer().to_bytes()));
+                    let mut json_values = if json { Some(vec![] )} else { None };
+                    for _ in 0..number {
+                        let wallet = LocalWallet::new(&mut rng);
+
+                        if json {
+                            json_values.unwrap().push(json!({
+                                "address": wallet.address().to_alloy().to_checksum(None),
+                                "private_key": format!("0x{}", hex::encode(wallet.private_key())),
+                            }));
+                        } else {
+                            println!("Successfully created new keypair.");
+                            println!("Address:     {}", wallet.address().to_alloy().to_checksum(None));
+                            println!("Private key: 0x{}", hex::encode(wallet.signer().to_bytes()));
+                        }
+                    }
+
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&json_values.unwrap())?);
+                    }
                 }
             }
             WalletSubcommands::Vanity(cmd) => {
