@@ -5,6 +5,7 @@ use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::{
     compact_to_contract,
     compile::{self, ContractSources},
+    fs,
 };
 use foundry_compilers::{
     artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome, Libraries},
@@ -14,7 +15,7 @@ use foundry_compilers::{
     ArtifactId, Project, ProjectCompileOutput,
 };
 use foundry_utils::{PostLinkInput, ResolvedDependency};
-use std::{collections::BTreeMap, fs, str::FromStr};
+use std::{collections::BTreeMap, str::FromStr};
 use tracing::{trace, warn};
 
 impl ScriptArgs {
@@ -42,7 +43,9 @@ impl ScriptArgs {
                         .ast
                         .ok_or(eyre::eyre!("Source from artifact has no AST."))?
                         .absolute_path;
-                    let source_code = fs::read_to_string(abs_path)?;
+                    let source_code = fs::read_to_string(abs_path).wrap_err_with(|| {
+                        format!("Failed to read artifact source file for `{}`", id.identifier())
+                    })?;
                     let contract = artifact.clone().into_contract_bytecode();
                     let source_contract = compact_to_contract(contract)?;
                     sources
