@@ -587,6 +587,7 @@ impl TestCommand {
     }
 
     /// Runs `git init` inside the project's dir
+    #[track_caller]
     pub fn git_init(&self) -> process::Output {
         let mut cmd = Command::new("git");
         cmd.arg("init").current_dir(self.project.root());
@@ -595,6 +596,7 @@ impl TestCommand {
     }
 
     /// Executes the command and returns the `(stdout, stderr)` of the output as lossy `String`s.
+    #[track_caller]
     pub fn output_lossy(&mut self) -> (String, String) {
         let output = self.output();
         (lossy_string(&output.stdout), lossy_string(&output.stderr))
@@ -603,6 +605,7 @@ impl TestCommand {
     /// Executes the command and returns the stderr as lossy `String`.
     ///
     /// **Note**: This function checks whether the command was successful.
+    #[track_caller]
     pub fn stdout_lossy(&mut self) -> String {
         lossy_string(&self.output().stdout)
     }
@@ -610,31 +613,37 @@ impl TestCommand {
     /// Executes the command and returns the stderr as lossy `String`.
     ///
     /// **Note**: This function does **not** check whether the command was successful.
+    #[track_caller]
     pub fn stderr_lossy(&mut self) -> String {
         lossy_string(&self.unchecked_output().stderr)
     }
 
     /// Returns the output but does not expect that the command was successful
+    #[track_caller]
     pub fn unchecked_output(&mut self) -> process::Output {
         self.execute()
     }
 
     /// Gets the output of a command. If the command failed, then this panics.
+    #[track_caller]
     pub fn output(&mut self) -> process::Output {
         let output = self.execute();
         self.expect_success(output)
     }
 
     /// Runs the command and asserts that it resulted in success
+    #[track_caller]
     pub fn assert_success(&mut self) {
         self.output();
     }
 
     /// Executes command, applies stdin function and returns output
+    #[track_caller]
     pub fn execute(&mut self) -> process::Output {
         self.try_execute().unwrap()
     }
 
+    #[track_caller]
     pub fn try_execute(&mut self) -> std::io::Result<process::Output> {
         eprintln!("Executing {:?}", self.cmd);
         let mut child =
@@ -655,6 +664,7 @@ impl TestCommand {
     /// Runs the command and prints its output
     /// You have to pass --nocapture to cargo test or the print won't be displayed.
     /// The full command would be: cargo test -- --nocapture
+    #[track_caller]
     pub fn print_output(&mut self) {
         let output = self.execute();
         println!("stdout: {}", lossy_string(&output.stdout));
@@ -662,6 +672,7 @@ impl TestCommand {
     }
 
     /// Writes the content of the output to new fixture files
+    #[track_caller]
     pub fn write_fixtures(&mut self, name: impl AsRef<Path>) {
         let name = name.as_ref();
         if let Some(parent) = name.parent() {

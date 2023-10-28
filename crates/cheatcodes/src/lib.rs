@@ -45,6 +45,7 @@ mod tests {
     const JSON_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/cheatcodes.json");
     #[cfg(feature = "schema")]
     const SCHEMA_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/cheatcodes.schema.json");
+    const IFACE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/cheats/Vm.sol");
 
     #[test]
     fn defs_up_to_date() {
@@ -55,6 +56,11 @@ mod tests {
     #[cfg(feature = "schema")]
     fn schema_up_to_date() {
         ensure_file_contents(Path::new(SCHEMA_PATH), &json_schema());
+    }
+
+    #[test]
+    fn iface_up_to_date() {
+        ensure_file_contents(Path::new(IFACE_PATH), defs::VM_IFACE);
     }
 
     /// Checks that the `file` has the specified `contents`. If that is not the

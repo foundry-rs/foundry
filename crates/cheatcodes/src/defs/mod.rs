@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 mod vm;
 pub use vm::Vm;
+#[cfg(test)]
+pub(crate) use vm::VM_IFACE;
 
 /// Cheatcode definition trait. Implemented by all [`Vm`] functions.
 pub trait CheatcodeDef: std::fmt::Debug + Clone + SolCall {
