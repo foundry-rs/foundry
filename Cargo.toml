@@ -194,6 +194,9 @@ syn-solidity = "0.4.1"
 
 solang-parser = "=0.3.2"
 
+## Vyper
+vyper-rs = "1.0.0"
+
 ## misc
 toml = "0.8"
 itertools = "0.11"
