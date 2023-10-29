@@ -45,6 +45,7 @@ impls = [
     "dep:foundry-common",
     "dep:foundry-config",
     "dep:foundry-utils",
+    "dep:foundry-compilers",
     "dep:alloy-dyn-abi",
     "dep:alloy-json-abi",
     "dep:ethers",
