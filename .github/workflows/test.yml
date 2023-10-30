@@ -163,7 +163,7 @@ jobs:
               with:
                   cache-on-failure: true
             - name: forge fmt
-              run: cargo run --bin forge -- fmt --check testdata/
+              run: cargo run --bin forge -- fmt --check --root ./testdata
 
     feature-checks:
         name: feature checks
