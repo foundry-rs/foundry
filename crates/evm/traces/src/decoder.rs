@@ -347,7 +347,6 @@ impl CallTraceDecoder {
                             })
                             .collect(),
                     );
-                    println!("got log {log:?}");
                     break
                 }
             }
