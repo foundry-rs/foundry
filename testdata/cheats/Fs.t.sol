@@ -7,9 +7,9 @@ import "./Vm.sol";
 contract FsTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     bytes constant FOUNDRY_TOML_ACCESS_ERR = "access to foundry.toml is not allowed";
-    bytes constant FOUNDRY_READ_ERR = "the path \"/etc/hosts\" is not allowed to be accessed for read operations";
-    bytes constant FOUNDRY_READ_DIR_ERR = "the path \"/etc\" is not allowed to be accessed for read operations";
-    bytes constant FOUNDRY_WRITE_ERR = "the path \"/etc/hosts\" is not allowed to be accessed for write operations";
+    bytes constant FOUNDRY_READ_ERR = "the path /etc/hosts is not allowed to be accessed for read operations";
+    bytes constant FOUNDRY_READ_DIR_ERR = "the path /etc is not allowed to be accessed for read operations";
+    bytes constant FOUNDRY_WRITE_ERR = "the path /etc/hosts is not allowed to be accessed for write operations";
 
     function assertEntry(Vm.DirEntry memory entry, uint64 depth, bool dir) private {
         assertEq(entry.errorMessage, "");
