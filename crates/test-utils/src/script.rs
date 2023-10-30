@@ -271,10 +271,10 @@ impl ScriptOutcome {
             ScriptOutcome::WarnSpecifyDeployer => "You have more than one deployer who could predeploy libraries. Using `--sender` instead.",
             ScriptOutcome::MissingSender => "You seem to be using Foundry's default sender. Be sure to set your own --sender",
             ScriptOutcome::MissingWallet => "No associated wallet",
-            ScriptOutcome::StaticCallNotAllowed => "Staticcalls are not allowed after vm.broadcast. Either remove it, or use vm.startBroadcast instead.",
+            ScriptOutcome::StaticCallNotAllowed => "staticcall`s are not allowed after `broadcast`; use vm.startBroadcast instead",
             ScriptOutcome::FailedScript => "Script failed.",
             ScriptOutcome::UnsupportedLibraries => "Multi chain deployment does not support library linking at the moment.",
-            ScriptOutcome::ErrorSelectForkOnBroadcast => "You need to stop broadcasting before you can select forks."
+            ScriptOutcome::ErrorSelectForkOnBroadcast => "cannot select forks during a broadcast"
         }
     }
 
