@@ -252,6 +252,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function store(address target, bytes32 slot, bytes32 value) external;
 
+    /// Marks the slots of an account and the account address as cold.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function cool(address target) external;
+
     // -------- Call Manipulation --------
     // --- Mocks ---
 

@@ -252,6 +252,24 @@
     "safety": "unsafe"
   },
   {
+    "id": "cool",
+    "declaration": "function cool(address target) external;",
+    "visibility": "external",
+    "mutability": "",
+    "signature": "cool(address)",
+    "selector": "0x40ff9f21",
+    "selectorBytes": [
+      64,
+      255,
+      159,
+      33
+    ],
+    "description": "Marks the slots of an account and the account address as cold.",
+    "group": "evm",
+    "status": "stable",
+    "safety": "unsafe"
+  },
+  {
     "id": "copyFile",
     "declaration": "function copyFile(string calldata from, string calldata to) external returns (uint64 copied);",
     "visibility": "external",

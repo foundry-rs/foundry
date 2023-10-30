@@ -277,6 +277,17 @@ impl Cheatcode for storeCall {
     }
 }
 
+impl Cheatcode for coolCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { target } = self;
+        if let Some(account) = ccx.data.journaled_state.state.get_mut(target) {
+            account.unmark_touch();
+            account.storage.clear();
+        }
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for readCallersCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
