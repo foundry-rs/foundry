@@ -163,7 +163,12 @@ jobs:
               with:
                   cache-on-failure: true
             - name: forge fmt
-              run: cargo run --bin forge -- fmt --check --root ./testdata
+              shell: bash
+              # We have to ignore at shell level because testdata/ is not a valid Foundry project,
+              # so running `forge fmt` with `--root testdata` won't actually check anything
+              run: |
+                  shopt -s extglob
+                  cargo run --bin forge -- fmt --check testdata/**/!(Vm).sol
 
     feature-checks:
         name: feature checks
