@@ -108,6 +108,10 @@ impl SendTxArgs {
             None
         };
 
+        if code.is_none() && to.is_none() {
+            eyre::bail!("Must specify a destination or contract code to deploy");
+        }
+
         // Case 1:
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
         // This should be the only way this RPC method is used as it requires a local node
