@@ -682,7 +682,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     account.info.nonce += 1;
                     debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
                 } else if broadcast.single_call {
-                    let msg = "`staticcall`s are not allowed after `broadcast`; use vm.startBroadcast instead";
+                    let msg = "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
                     return (InstructionResult::Revert, Gas::new(0), Error::encode(msg))
                 }
             }
