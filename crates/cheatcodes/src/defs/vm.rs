@@ -4,7 +4,7 @@
 
 use crate::{Cheatcode, CheatcodeDef, Group, Mutability, Safety, Status, Visibility};
 use alloy_sol_types::sol;
-use foundry_macros::{vm, Cheatcode};
+use foundry_macros::Cheatcode;
 
 sol! {
 // Cheatcodes are marked as view/pure/none using the following rules:
@@ -16,7 +16,7 @@ sol! {
 
 /// Foundry cheatcodes interface.
 #[derive(Debug, Cheatcode)] // Keep this list small to avoid unnecessary bloat.
-#[vm]
+#[cfg_attr(test, foundry_macros::vm)] // Generates the Solidity test Vm interface.
 interface Vm {
     //  ======== Types ========
 

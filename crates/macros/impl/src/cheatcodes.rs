@@ -20,7 +20,6 @@ pub fn vm_attr(item: Item) -> Result<Option<TokenStream>> {
             Ok(Some(quote! {
                 #m
 
-                #[cfg(test)]
                 #[allow(warnings, clippy::all)]
                 pub const VM_IFACE: &str = #contents;
             }))
