@@ -161,15 +161,13 @@ contract ParseJsonTest is DSTest {
         keys = vm.parseJsonKeys(jsonString, ".some_key_to_object");
         assertEq(abi.encode(keys), abi.encode(["key1", "key2"]));
 
-        vm.expectRevert("You can only get keys for JSON-object. The key '.some_key_to_array' does not return an object");
+        vm.expectRevert("JSON value at \".some_key_to_array\" is not an object");
         vm.parseJsonKeys(jsonString, ".some_key_to_array");
 
-        vm.expectRevert("You can only get keys for JSON-object. The key '.some_key_to_value' does not return an object");
+        vm.expectRevert("JSON value at \".some_key_to_value\" is not an object");
         vm.parseJsonKeys(jsonString, ".some_key_to_value");
 
-        vm.expectRevert(
-            "You can only get keys for a single JSON-object. The key '.*' returns a value or an array of JSON-objects"
-        );
+        vm.expectRevert("JSON value at \".*\" is not an object");
         vm.parseJsonKeys(jsonString, ".*");
     }
 }
