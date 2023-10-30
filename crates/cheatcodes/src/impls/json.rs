@@ -479,7 +479,7 @@ fn serialize_json(
         map.insert(value_key.into(), parsed_value);
     } else {
         *map = serde_json::from_str(value)
-            .map_err(|err| fmt_err!("Failed to parse JSON object: {err}"))?;
+            .map_err(|err| fmt_err!("failed to parse JSON object: {err}"))?;
     }
     let stringified = serde_json::to_string(map).unwrap();
     Ok(stringified.abi_encode())
