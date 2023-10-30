@@ -43,7 +43,7 @@ pub enum WalletSubcommands {
         number: u32,
 
         /// Json output
-        #[clap(long, short, deafult_value = "false")]
+        #[clap(long, short, default_value = "false")]
         json: bool,
     },
 
@@ -153,9 +153,9 @@ impl WalletSubcommands {
                             LocalWallet::new_keystore(&path, &mut rng, password.clone(), None)?;
 
                         if json {
-                            json_values.unwrap().push(json!({
+                            json_values.as_mut().unwrap().push(json!({
                                 "address": wallet.address().to_alloy().to_checksum(None),
-                                "path": path.join(uuid).display(),
+                                "path": format!("{}", path.join(uuid).display()),
                             }));
                         } else {
                             println!("Created new encrypted keystore file: {}", path.join(uuid).display());
@@ -172,9 +172,9 @@ impl WalletSubcommands {
                         let wallet = LocalWallet::new(&mut rng);
 
                         if json {
-                            json_values.unwrap().push(json!({
+                            json_values.as_mut().unwrap().push(json!({
                                 "address": wallet.address().to_alloy().to_checksum(None),
-                                "private_key": format!("0x{}", hex::encode(wallet.private_key())),
+                                "private_key": format!("0x{}", hex::encode(wallet.signer().to_bytes())),
                             }));
                         } else {
                             println!("Successfully created new keypair.");
