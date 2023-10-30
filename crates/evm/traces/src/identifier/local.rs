@@ -34,7 +34,10 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
                     .iter()
                     .filter_map(|(id, (abi, known_code))| {
                         let score = diff_score(known_code, code);
-                        if score < 0.1 {
+                        // Note: the diff score can be inaccurate for small contracts so we're using
+                        // a relatively high threshold here to avoid filtering out too many
+                        // contracts.
+                        if score < 0.85 {
                             Some((OrderedFloat(score), id, abi))
                         } else {
                             None

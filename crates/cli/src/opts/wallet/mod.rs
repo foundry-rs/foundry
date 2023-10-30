@@ -27,7 +27,6 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-use tracing::{instrument, trace};
 
 pub mod multi_wallet;
 pub use multi_wallet::*;

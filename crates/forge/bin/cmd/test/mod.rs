@@ -675,7 +675,7 @@ async fn test(
     let handle =
         tokio::task::spawn(async move { runner.test(filter, Some(tx), test_options).await });
 
-    let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
+    let mut results = BTreeMap::new();
     let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
     let sig_identifier = SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
 
@@ -807,7 +807,7 @@ async fn test(
         }
     }
 
-    // reattach the thread
+    // reattach the task
     let _results = handle.await?;
 
     trace!(target: "forge::test", "received {} results", results.len());

@@ -1,6 +1,6 @@
 //! ABI related helper functions
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
-use alloy_json_abi::{Event, Function};
+use alloy_json_abi::{AbiItem, Event, Function};
 use alloy_primitives::{hex, Address, Log, U256};
 use ethers_core::types::Chain;
 use eyre::{ContextCompat, Result};
@@ -172,13 +172,19 @@ impl<'a> IntoFunction for &'a str {
 
 /// Given a function signature string, it tries to parse it as a `Function`
 pub fn get_func(sig: &str) -> Result<Function> {
-    Ok(match Function::parse(sig) {
-        Ok(func) => func,
-        Err(err) => {
-            // we return the `Function` parse error as this case is more likely
-            return Err(err.into())
-        }
-    })
+    if let Ok(func) = Function::parse(sig) {
+        Ok(func)
+    } else {
+        // Try to parse as human readable ABI.
+        let item = match AbiItem::parse(sig) {
+            Ok(item) => match item {
+                AbiItem::Function(func) => func,
+                _ => return Err(eyre::eyre!("Expected function, got {:?}", item)),
+            },
+            Err(e) => return Err(e.into()),
+        };
+        Ok(item.into_owned().to_owned())
+    }
 }
 
 /// Given an event signature string, it tries to parse it as a `Event`
@@ -280,6 +286,27 @@ mod tests {
     use super::*;
     use alloy_dyn_abi::EventExt;
     use alloy_primitives::B256;
+
+    #[test]
+    fn test_get_func() {
+        let func = get_func("function foo(uint256 a, uint256 b) returns (uint256)");
+        assert!(func.is_ok());
+        let func = func.unwrap();
+        assert_eq!(func.name, "foo");
+        assert_eq!(func.inputs.len(), 2);
+        assert_eq!(func.inputs[0].ty, "uint256");
+        assert_eq!(func.inputs[1].ty, "uint256");
+
+        // Stripped down function, which [Function] can parse.
+        let func = get_func("foo(bytes4 a, uint8 b)(bytes4)");
+        assert!(func.is_ok());
+        let func = func.unwrap();
+        assert_eq!(func.name, "foo");
+        assert_eq!(func.inputs.len(), 2);
+        assert_eq!(func.inputs[0].ty, "bytes4");
+        assert_eq!(func.inputs[1].ty, "uint8");
+        assert_eq!(func.outputs[0].ty, "bytes4");
+    }
 
     #[test]
     fn parse_hex_uint_tokens() {
