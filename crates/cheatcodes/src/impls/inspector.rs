@@ -35,7 +35,7 @@ use revm::{
 };
 use serde_json::Value;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     fs::File,
     io::BufReader,
     ops::Range,
@@ -173,7 +173,8 @@ pub struct Cheatcodes {
     pub fs_commit: bool,
 
     /// Serialized JSON values.
-    pub serialized_jsons: HashMap<String, HashMap<String, Value>>,
+    // **Note**: this must a BTreeMap to ensure the order of the keys is deterministic.
+    pub serialized_jsons: BTreeMap<String, BTreeMap<String, Value>>,
 
     /// All recorded ETH `deal`s.
     pub eth_deals: Vec<DealRecord>,
