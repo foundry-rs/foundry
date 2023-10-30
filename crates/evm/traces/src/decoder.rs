@@ -3,7 +3,7 @@ use crate::{
     node::CallTraceNode,
     utils, CallTraceArena, RawOrDecodedCall, RawOrDecodedLog, RawOrDecodedReturnData,
 };
-use alloy_dyn_abi::{DynSolValue, EventExt};
+use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt};
 use alloy_json_abi::{Event, Function, JsonAbi as Abi};
 use alloy_primitives::{Address, FixedBytes, B256};
 use foundry_common::{abi::get_indexed_event, SELECTOR_LEN};
@@ -334,10 +334,10 @@ impl CallTraceDecoder {
 
             for event in events {
                 if let Ok(decoded) = event.decode_log(raw_log, false) {
+                    let params = reconstruct_params(&event, &decoded);
                     *log = RawOrDecodedLog::Decoded(
                         event.name,
-                        decoded
-                            .body
+                        params
                             .into_iter()
                             .zip(event.inputs.iter())
                             .map(|(param, input)| {
@@ -347,6 +347,7 @@ impl CallTraceDecoder {
                             })
                             .collect(),
                     );
+                    println!("got log {log:?}");
                     break
                 }
             }
@@ -356,6 +357,25 @@ impl CallTraceDecoder {
     fn apply_label(&self, token: &DynSolValue) -> String {
         utils::label(token, &self.labels)
     }
+}
+
+/// Restore the order of the params of a decoded event,
+/// as Alloy returns the indexed and unindexed params separately.
+fn reconstruct_params(event: &Event, decoded: &DecodedEvent) -> Vec<DynSolValue> {
+    let mut indexed = 0;
+    let mut unindexed = 0;
+    let mut inputs = vec![];
+    for input in event.inputs.iter() {
+        if input.indexed {
+            inputs.push(decoded.indexed[indexed].clone());
+            indexed += 1;
+        } else {
+            inputs.push(decoded.body[unindexed].clone());
+            unindexed += 1;
+        }
+    }
+
+    inputs
 }
 
 fn indexed_inputs(event: &Event) -> usize {
