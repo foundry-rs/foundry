@@ -75,7 +75,7 @@ macro_rules! ensure_not_precompile {
 
 #[cold]
 pub(crate) fn precompile_error(id: &'static str, address: &Address) -> Error {
-    fmt_err!("cannot call {id} on precompile {address}")
+    fmt_err!("cannot call `{id}` on precompile {address}")
 }
 
 /// Error thrown by cheatcodes.
