@@ -833,7 +833,15 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // If the depth is 0, then this is the root call terminating
         if data.journaled_state.depth() == 0 {
-            // Match expected calls
+            // If we already have a revert, we shouldn't run the below logic as it can obfuscate an
+            // earlier error that happened first with unrelated information about
+            // another error when using cheatcodes.
+            if status == InstructionResult::Revert {
+                return (status, remaining_gas, retdata)
+            }
+
+            // If there's not a revert, we can continue on to run the last logic for expect*
+            // cheatcodes. Match expected calls
             for (address, calldatas) in &self.expected_calls {
                 // Loop over each address, and for each address, loop over each calldata it expects.
                 for (calldata, (expected, actual_count)) in calldatas {
@@ -914,18 +922,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     InstructionResult::Revert,
                     remaining_gas,
                     DynSolValue::String(failure_message.to_string()).abi_encode().into(),
-                )
-            }
-        }
-
-        // if there's a revert and a previous call was diagnosed as fork related revert then we can
-        // return a better error here
-        if status == InstructionResult::Revert {
-            if let Some(err) = self.fork_revert_diagnostic.take() {
-                return (
-                    status,
-                    remaining_gas,
-                    DynSolValue::String(err.to_error_msg(&self.labels)).abi_encode().into(),
                 )
             }
         }
