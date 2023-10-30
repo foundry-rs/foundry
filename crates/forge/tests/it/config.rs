@@ -165,15 +165,14 @@ pub async fn runner_with_config(mut config: Config) -> MultiContractRunner {
     config.rpc_endpoints = rpc_endpoints();
     config.allow_paths.push(manifest_root());
 
+    let root = &PROJECT.paths.root;
+    let opts = &*EVM_OPTS;
+    let env = opts.evm_env().await.expect("could not instantiate fork environment");
+    let output = COMPILED.clone();
     base_runner()
-        .with_cheats_config(CheatsConfig::new(&config, EVM_OPTS.clone()))
+        .with_cheats_config(CheatsConfig::new(&config, opts.clone()))
         .sender(config.sender)
-        .build(
-            &PROJECT.paths.root,
-            (*COMPILED).clone(),
-            EVM_OPTS.evm_env().await.expect("Could not instantiate fork environment"),
-            EVM_OPTS.clone(),
-        )
+        .build(root, output, env, opts.clone())
         .unwrap()
 }
 
