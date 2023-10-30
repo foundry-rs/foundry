@@ -596,9 +596,11 @@ impl TestCommand {
     }
 
     /// Executes the command and returns the `(stdout, stderr)` of the output as lossy `String`s.
+    ///
+    /// Does not expect the command to be successful.
     #[track_caller]
     pub fn output_lossy(&mut self) -> (String, String) {
-        let output = self.output();
+        let output = self.unchecked_output();
         (lossy_string(&output.stdout), lossy_string(&output.stderr))
     }
 
@@ -645,11 +647,11 @@ impl TestCommand {
 
     #[track_caller]
     pub fn try_execute(&mut self) -> std::io::Result<process::Output> {
-        eprintln!("Executing {:?}", self.cmd);
+        eprintln!("Executing {:?}\n", self.cmd);
         let mut child =
             self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::piped()).spawn()?;
         if let Some(fun) = self.stdin_fun.take() {
-            fun(child.stdin.take().unwrap())
+            fun(child.stdin.take().unwrap());
         }
         child.wait_with_output()
     }

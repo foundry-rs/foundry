@@ -1033,7 +1033,7 @@ forgetest!(
 
         install(&mut cmd);
         cmd.forge_fuse().args(["update", "lib/issue-2264-repro"]);
-        cmd.output_lossy();
+        cmd.stdout_lossy();
 
         prj.inner()
             .add_source(
