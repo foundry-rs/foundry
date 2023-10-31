@@ -510,3 +510,17 @@ casttest!(cast_tx_raw, |_: TestProject, mut cmd: TestCommand| {
     let output2 = cmd.stdout_lossy();
     assert_eq!(output, output2);
 });
+
+// ensure receipt or code is required
+casttest!(cast_send_requires_to, |_: TestProject, mut cmd: TestCommand| {
+    cmd.args([
+        "send",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+    ]);
+    let output = cmd.stderr_lossy();
+    assert_eq!(
+        output.trim(),
+        "Error: \nMust specify a recipient address or contract code to deploy"
+    );
+});
