@@ -1039,7 +1039,7 @@ fn disallowed_mem_write(
 fn mstore_revert_string(interpreter: &mut Interpreter, bytes: &[u8]) {
     let starting_offset = interpreter.memory.len();
     interpreter.memory.resize(starting_offset + bytes.len());
-    interpreter.memory.set_data(starting_offset, 0, bytes.len(), &bytes);
+    interpreter.memory.set_data(starting_offset, 0, bytes.len(), bytes);
     interpreter.return_offset = starting_offset;
     interpreter.return_len = interpreter.memory.len() - starting_offset
 }
