@@ -66,11 +66,11 @@ fn trace_span<T: Cheatcode>(cheat: &T) -> tracing::Span {
 }
 
 fn trace_call() {
-    debug!(target: "cheatcodes", "applying");
+    trace!(target: "cheatcodes", "applying");
 }
 
 fn trace_return(result: &Result) {
-    debug!(
+    trace!(
         target: "cheatcodes",
         return = match result {
             Ok(b) => hex::encode(b),
