@@ -791,9 +791,43 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
+        // this will ensure we don't have false positives when trying to diagnose reverts in fork
+        // mode
+        let diag = self.fork_revert_diagnostic.take();
+
+        // if there's a revert and a previous call was diagnosed as fork related revert then we can
+        // return a better error here
+        if status == InstructionResult::Revert {
+            if let Some(err) = diag {
+                return (status, remaining_gas, Error::encode(err.to_error_msg(&self.labels)))
+            }
+        }
+
+        // try to diagnose reverts in multi-fork mode where a call is made to an address that does
+        // not exist
+        if let TransactTo::Call(test_contract) = data.env.tx.transact_to {
+            // if a call to a different contract than the original test contract returned with
+            // `Stop` we check if the contract actually exists on the active fork
+            if data.db.is_forked_mode() &&
+                status == InstructionResult::Stop &&
+                call.contract != test_contract
+            {
+                self.fork_revert_diagnostic =
+                    data.db.diagnose_revert(call.contract, &data.journaled_state);
+            }
+        }
+
         // If the depth is 0, then this is the root call terminating
         if data.journaled_state.depth() == 0 {
-            // Match expected calls
+            // If we already have a revert, we shouldn't run the below logic as it can obfuscate an
+            // earlier error that happened first with unrelated information about
+            // another error when using cheatcodes.
+            if status == InstructionResult::Revert {
+                return (status, remaining_gas, retdata)
+            }
+
+            // If there's not a revert, we can continue on to run the last logic for expect*
+            // cheatcodes. Match expected calls
             for (address, calldatas) in &self.expected_calls {
                 // Loop over each address, and for each address, loop over each calldata it expects.
                 for (calldata, (expected, actual_count)) in calldatas {
@@ -852,32 +886,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                      ensure you're testing the happy path when using `expectEmit`"
                 };
                 return (InstructionResult::Revert, remaining_gas, Error::encode(msg))
-            }
-        }
-
-        // if there's a revert and a previous call was diagnosed as fork related revert then we can
-        // return a better error here
-        if status == InstructionResult::Revert {
-            if let Some(err) = self.fork_revert_diagnostic.take() {
-                return (status, remaining_gas, Error::encode(err.to_error_msg(&self.labels)))
-            }
-        }
-
-        // this will ensure we don't have false positives when trying to diagnose reverts in fork
-        // mode
-        let _ = self.fork_revert_diagnostic.take();
-
-        // try to diagnose reverts in multi-fork mode where a call is made to an address that does
-        // not exist
-        if let TransactTo::Call(test_contract) = data.env.tx.transact_to {
-            // if a call to a different contract than the original test contract returned with
-            // `Stop` we check if the contract actually exists on the active fork
-            if data.db.is_forked_mode() &&
-                status == InstructionResult::Stop &&
-                call.contract != test_contract
-            {
-                self.fork_revert_diagnostic =
-                    data.db.diagnose_revert(call.contract, &data.journaled_state);
             }
         }
 

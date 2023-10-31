@@ -89,12 +89,8 @@ impl SendTxArgs {
             command,
             unlocked,
         } = self;
-        let config = Config::from(&eth);
-        let provider = utils::get_provider(&config)?;
-        let chain = utils::get_chain(config.chain_id, &provider).await?;
-        let api_key = config.get_etherscan_api_key(Some(chain));
-        let mut sig = sig.unwrap_or_default();
 
+        let mut sig = sig.unwrap_or_default();
         let code = if let Some(SendTxSubcommands::Create {
             code,
             sig: constructor_sig,
@@ -107,6 +103,16 @@ impl SendTxArgs {
         } else {
             None
         };
+
+        // ensure mandatory fields are provided
+        if code.is_none() && to.is_none() {
+            eyre::bail!("Must specify a recipient address or contract code to deploy");
+        }
+
+        let config = Config::from(&eth);
+        let provider = utils::get_provider(&config)?;
+        let chain = utils::get_chain(config.chain_id, &provider).await?;
+        let api_key = config.get_etherscan_api_key(Some(chain));
 
         // Case 1:
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
