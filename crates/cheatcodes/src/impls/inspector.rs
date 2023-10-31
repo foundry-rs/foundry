@@ -142,7 +142,8 @@ pub struct Cheatcodes {
     pub recorded_logs: Option<Vec<crate::Vm::Log>>,
 
     /// Mocked calls
-    pub mocked_calls: HashMap<Address, HashMap<MockCallDataContext, MockCallReturnData>>,
+    // **Note**: inner must a BTreeMap because of special `Ord` impl for `MockCallDataContext`
+    pub mocked_calls: HashMap<Address, BTreeMap<MockCallDataContext, MockCallReturnData>>,
 
     /// Expected calls
     pub expected_calls: ExpectedCallTracker,
@@ -173,7 +174,7 @@ pub struct Cheatcodes {
     pub fs_commit: bool,
 
     /// Serialized JSON values.
-    // **Note**: this must a BTreeMap to ensure the order of the keys is deterministic.
+    // **Note**: both must a BTreeMap to ensure the order of the keys is deterministic.
     pub serialized_jsons: BTreeMap<String, BTreeMap<String, Value>>,
 
     /// All recorded ETH `deal`s.
@@ -588,14 +589,16 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 calldata: call.input.clone(),
                 value: Some(call.transfer.value),
             };
-            if let Some(mock_retdata) = mocks.get(&ctx) {
-                return (mock_retdata.ret_type, gas, Bytes(mock_retdata.data.clone().0))
-            } else if let Some((_, mock_retdata)) = mocks.iter().find(|(mock, _)| {
-                mock.calldata.len() <= call.input.len() &&
-                    *mock.calldata == call.input[..mock.calldata.len()] &&
-                    mock.value.map_or(true, |value| value == call.transfer.value)
+            if let Some(return_data) = mocks.get(&ctx).or_else(|| {
+                mocks
+                    .iter()
+                    .find(|(mock, _)| {
+                        call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..]) &&
+                            mock.value.map_or(true, |value| value == call.transfer.value)
+                    })
+                    .map(|(_, v)| v)
             }) {
-                return (mock_retdata.ret_type, gas, Bytes(mock_retdata.data.0.clone()))
+                return (return_data.ret_type, gas, return_data.data.clone())
             }
         }
 
@@ -1027,14 +1030,13 @@ fn disallowed_mem_write(
         size,
         ranges.iter().map(|r| format!("(0x{:02X}, 0x{:02X}]", r.start, r.end)).join(" ∪ ")
     )
-    .abi_encode()
-    .into();
-    mstore_revert_string(revert_string, interpreter);
+    .abi_encode();
+    mstore_revert_string(interpreter, &revert_string);
 }
 
 /// Expands memory, stores a revert string, and sets the return range to the revert
 /// string's location in memory.
-fn mstore_revert_string(bytes: Bytes, interpreter: &mut Interpreter) {
+fn mstore_revert_string(interpreter: &mut Interpreter, bytes: &[u8]) {
     let starting_offset = interpreter.memory.len();
     interpreter.memory.resize(starting_offset + bytes.len());
     interpreter.memory.set_data(starting_offset, 0, bytes.len(), &bytes);
