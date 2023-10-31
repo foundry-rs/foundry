@@ -59,6 +59,12 @@ impl fmt::Display for Cheatcodes<'_> {
     }
 }
 
+impl Default for Cheatcodes<'static> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Cheatcodes<'static> {
     /// Returns the default cheatcodes.
     pub fn new() -> Self {
