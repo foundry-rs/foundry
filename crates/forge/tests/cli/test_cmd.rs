@@ -300,18 +300,12 @@ forgetest_init!(
         let mut lock = template_lock();
         let write = lock.write().unwrap();
         let forge_std_dir = prj.root().join("lib/forge-std");
-        // TODO: https://github.com/foundry-rs/forge-std/pull/473
-        // let out = Command::new("git")
-        //     .current_dir(&forge_std_dir)
-        //     .args(["checkout", "origin", "master"])
-        //     .status()
-        //     .unwrap();
-        let out = Command::new("git")
+        let status = Command::new("git")
             .current_dir(&forge_std_dir)
-            .args(["pull", "https://github.com/danipopes/forge-std", "foundry-cheats-update"])
-            .output()
+            .args(["pull", "origin", "master"])
+            .status()
             .unwrap();
-        if !out.status.success() {
+        if !status.success() {
             panic!("failed to update forge-std");
         }
         drop(write);
