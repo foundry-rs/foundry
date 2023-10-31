@@ -123,6 +123,8 @@ pub struct NodeConfig {
     pub eth_rpc_url: Option<String>,
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
+    /// headers to use with `eth_rpc_url`
+    pub fork_headers: Vec<String>,
     /// specifies chain id for cache to skip fetching from remote in offline-start mode
     pub fork_chain_id: Option<U256>,
     /// The generator used to generate the dev accounts
@@ -392,6 +394,7 @@ impl Default for NodeConfig {
             config_out: None,
             genesis: None,
             fork_request_timeout: REQUEST_TIMEOUT,
+            fork_headers: vec![],
             fork_request_retries: 5,
             fork_retry_backoff: Duration::from_millis(1_000),
             fork_chain_id: None,
@@ -659,6 +662,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the `fork_headers` to use with `eth_rpc_url`
+    #[must_use]
+    pub fn with_fork_headers(mut self, headers: Vec<String>) -> Self {
+        self.fork_headers = headers;
+        self
+    }
+
     /// Sets the `fork_request_timeout` to use for requests
     #[must_use]
     pub fn fork_request_timeout(mut self, fork_request_timeout: Option<Duration>) -> Self {
@@ -756,7 +766,7 @@ impl NodeConfig {
             .expect("Failed writing json");
         }
         if self.silent {
-            return
+            return;
         }
 
         println!("{}", self.as_string(fork))
@@ -767,7 +777,7 @@ impl NodeConfig {
     /// See also [ Config::foundry_block_cache_file()]
     pub fn block_cache_path(&self, block: u64) -> Option<PathBuf> {
         if self.no_storage_caching || self.eth_rpc_url.is_none() {
-            return None
+            return None;
         }
         let chain_id = self.get_chain_id();
 
@@ -901,6 +911,7 @@ impl NodeConfig {
                 .compute_units_per_second(self.compute_units_per_second)
                 .max_retry(10)
                 .initial_backoff(1000)
+                .headers(self.fork_headers.clone())
                 .build()
                 .expect("Failed to establish provider to fork url"),
         );
@@ -1178,7 +1189,7 @@ async fn find_latest_fork_block<M: Middleware>(provider: M) -> Result<u64, M::Er
     for _ in 0..2 {
         if let Some(block) = provider.get_block(num).await? {
             if block.hash.is_some() {
-                break
+                break;
             }
         }
         // block not actually finalized, so we try the block before

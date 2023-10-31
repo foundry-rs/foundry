@@ -188,6 +188,7 @@ impl NodeArgs {
                     .fork_block_number
                     .or_else(|| self.evm_opts.fork_url.as_ref().and_then(|f| f.block)),
             )
+            .with_fork_headers(self.evm_opts.fork_headers)
             .with_fork_chain_id(self.evm_opts.fork_chain_id.map(u64::from))
             .fork_request_timeout(self.evm_opts.fork_request_timeout.map(Duration::from_millis))
             .fork_request_retries(self.evm_opts.fork_request_retries)
@@ -327,6 +328,17 @@ pub struct AnvilEvmArgs {
         help_heading = "Fork config"
     )]
     pub fork_url: Option<ForkUrl>,
+
+    /// Pass headers to fork-url.
+    ///
+    /// See --fork-url.
+    #[clap(
+        long = "fork-header",
+        value_name = "HEADERS",
+        help_heading = "Fork config",
+        requires = "fork_url"
+    )]
+    pub fork_headers: Vec<String>,
 
     /// Timeout in ms for requests sent to remote JSON-RPC server in forking mode.
     ///
@@ -527,7 +539,7 @@ impl Future for PeriodicStateDumper {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
         if this.dump_state.is_none() {
-            return Poll::Pending
+            return Poll::Pending;
         }
 
         loop {
@@ -538,7 +550,7 @@ impl Future for PeriodicStateDumper {
                     }
                     Poll::Pending => {
                         this.in_progress_dump = Some(flush);
-                        return Poll::Pending
+                        return Poll::Pending;
                     }
                 }
             }
@@ -548,7 +560,7 @@ impl Future for PeriodicStateDumper {
                 let path = this.dump_state.clone().expect("exists; see above");
                 this.in_progress_dump = Some(Box::pin(PeriodicStateDumper::dump_state(api, path)));
             } else {
-                break
+                break;
             }
         }
 
@@ -573,7 +585,7 @@ impl StateFile {
         }
         let mut state = Self { path, state: None };
         if !state.path.exists() {
-            return Ok(state)
+            return Ok(state);
         }
 
         state.state = Some(SerializableState::load(&state.path).map_err(|err| err.to_string())?);
@@ -608,14 +620,14 @@ impl FromStr for ForkUrl {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some((url, block)) = s.rsplit_once('@') {
             if block == "latest" {
-                return Ok(ForkUrl { url: url.to_string(), block: None })
+                return Ok(ForkUrl { url: url.to_string(), block: None });
             }
             // this will prevent false positives for auths `user:password@example.com`
             if !block.is_empty() && !block.contains(':') && !block.contains('.') {
                 let block: u64 = block
                     .parse()
                     .map_err(|_| format!("Failed to parse block number: `{block}`"))?;
-                return Ok(ForkUrl { url: url.to_string(), block: Some(block) })
+                return Ok(ForkUrl { url: url.to_string(), block: Some(block) });
             }
         }
         Ok(ForkUrl { url: s.to_string(), block: None })
@@ -662,6 +674,23 @@ mod tests {
     fn can_parse_hardfork() {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--hardfork", "berlin"]);
         assert_eq!(args.hardfork, Some(Hardfork::Berlin));
+    }
+
+    #[test]
+    fn can_parse_fork_headers() {
+        let args: NodeArgs = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http,://localhost:8545",
+            "--fork-header",
+            "User-Agent: test-agent",
+            "--fork-header",
+            "Referrer: example.com",
+        ]);
+        assert_eq!(
+            args.evm_opts.fork_headers,
+            vec!["User-Agent: test-agent", "Referrer: example.com"]
+        );
     }
 
     #[test]

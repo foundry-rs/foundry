@@ -7,7 +7,10 @@ use ethers_providers::{
     JsonRpcError, JwtAuth, JwtKey, ProviderError, PubsubClient, RetryClient, RetryClientBuilder,
     RpcError, Ws,
 };
-use reqwest::{header::HeaderValue, Url};
+use reqwest::{
+    header::{HeaderName, HeaderValue},
+    Url,
+};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{fmt::Debug, path::PathBuf, sync::Arc, time::Duration};
 use thiserror::Error;
@@ -82,6 +85,7 @@ pub struct RuntimeClient {
     /// available CUPS
     compute_units_per_second: u64,
     jwt: Option<String>,
+    headers: Vec<String>,
 }
 
 impl ::core::fmt::Display for RuntimeClient {
@@ -113,6 +117,7 @@ impl RuntimeClient {
         timeout: Duration,
         compute_units_per_second: u64,
         jwt: Option<String>,
+        headers: Vec<String>,
     ) -> Self {
         Self {
             client: Arc::new(RwLock::new(None)),
@@ -123,6 +128,7 @@ impl RuntimeClient {
             timeout,
             compute_units_per_second,
             jwt,
+            headers,
         }
     }
 
@@ -130,6 +136,7 @@ impl RuntimeClient {
         match self.url.scheme() {
             "http" | "https" => {
                 let mut client_builder = reqwest::Client::builder().timeout(self.timeout);
+                let mut headers = reqwest::header::HeaderMap::new();
 
                 if let Some(jwt) = self.jwt.as_ref() {
                     let auth = build_auth(jwt.clone()).map_err(|err| {
@@ -142,16 +149,28 @@ impl RuntimeClient {
                         .expect("Header should be valid string");
                     auth_value.set_sensitive(true);
 
-                    let mut headers = reqwest::header::HeaderMap::new();
                     headers.insert(reqwest::header::AUTHORIZATION, auth_value);
-
-                    client_builder = client_builder.default_headers(headers);
                 };
+
+                for header in self.headers.iter() {
+                    let err_message = format!("Invalid header {}", &header);
+                    let parts: Vec<_> = header.split(':').map(|s| s.trim()).collect();
+
+                    let key = parts.get(0).expect(&err_message);
+                    let val = parts.get(1).expect(&err_message);
+
+                    headers.insert(
+                        HeaderName::from_lowercase(key.to_lowercase().as_bytes())
+                            .expect(&err_message),
+                        HeaderValue::from_str(val).expect(&err_message),
+                    );
+                }
+
+                client_builder = client_builder.default_headers(headers);
 
                 let client = client_builder
                     .build()
                     .map_err(|e| RuntimeClientError::ProviderError(e.into()))?;
-
                 let provider = Http::new_with_client(self.url.clone(), client);
 
                 #[allow(clippy::box_default)]
@@ -199,7 +218,7 @@ fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
     if url_str.starts_with(PREFIX) {
         let pipe_name = &url_str[PREFIX.len()..];
         let pipe_path = format!(r"\\.\pipe\{}", pipe_name);
-        return Ok(PathBuf::from(pipe_path))
+        return Ok(PathBuf::from(pipe_path));
     }
 
     url.to_file_path()

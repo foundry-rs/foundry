@@ -58,6 +58,7 @@ pub struct ProviderBuilder {
     compute_units_per_second: u64,
     /// JWT Secret
     jwt: Option<String>,
+    headers: Vec<String>,
 }
 
 // === impl ProviderBuilder ===
@@ -69,7 +70,7 @@ impl ProviderBuilder {
         if url_str.starts_with("localhost:") {
             // invalid url: non-prefixed URL scheme is not allowed, so we prepend the default http
             // prefix
-            return Self::new(format!("http://{url_str}"))
+            return Self::new(format!("http://{url_str}"));
         }
 
         let url = Url::parse(url_str)
@@ -103,6 +104,7 @@ impl ProviderBuilder {
             // alchemy max cpus <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
             jwt: None,
+            headers: vec![],
         }
     }
 
@@ -174,6 +176,13 @@ impl ProviderBuilder {
         self
     }
 
+    /// Sets http headers
+    pub fn headers(mut self, headers: Vec<String>) -> Self {
+        self.headers = headers;
+
+        self
+    }
+
     /// Same as [`Self:build()`] but also retrieves the `chainId` in order to derive an appropriate
     /// interval
     pub async fn connect(self) -> eyre::Result<RetryProvider> {
@@ -197,6 +206,7 @@ impl ProviderBuilder {
             timeout,
             compute_units_per_second,
             jwt,
+            headers,
         } = self;
         let url = url?;
 
@@ -208,6 +218,7 @@ impl ProviderBuilder {
             timeout,
             compute_units_per_second,
             jwt,
+            headers,
         ));
 
         let is_local = is_local_endpoint(url.as_str());
@@ -269,7 +280,7 @@ where
         match chain {
             Chain::Polygon | Chain::PolygonMumbai => {
                 let estimator = Polygon::new(chain)?.category(GasCategory::Standard);
-                return Ok(estimator.estimate_eip1559_fees().await?)
+                return Ok(estimator.estimate_eip1559_fees().await?);
             }
             _ => {}
         }
