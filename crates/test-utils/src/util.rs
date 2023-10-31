@@ -37,14 +37,26 @@ static PRE_INSTALL_SOLC_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false)
 // This stores `true` if the current terminal is a tty
 pub static IS_TTY: Lazy<bool> = Lazy::new(|| std::io::stdout().is_terminal());
 
-static TEMPLATE_PATH: Lazy<PathBuf> =
+/// Global default template path.
+pub static TEMPLATE_PATH: Lazy<PathBuf> =
     Lazy::new(|| env::temp_dir().join("foundry-forge-test-template"));
 
-static TEMPLATE_LOCK: Lazy<PathBuf> =
+/// Global default template lock.
+pub static TEMPLATE_LOCK: Lazy<PathBuf> =
     Lazy::new(|| env::temp_dir().join("foundry-forge-test-template.lock"));
 
 // identifier for tests
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+
+/// Acquires a lock on the global template dir.
+pub fn template_lock() -> RwLock<File> {
+    let lock_path = &*TEMPLATE_LOCK;
+    let lock_file = pretty_err(
+        lock_path,
+        fs::OpenOptions::new().read(true).write(true).create(true).open(lock_path),
+    );
+    RwLock::new(lock_file)
+}
 
 /// Copies an initialized project to the given path
 pub fn initialize(target: impl AsRef<Path>) {
@@ -52,14 +64,9 @@ pub fn initialize(target: impl AsRef<Path>) {
     let tpath = &*TEMPLATE_PATH;
     pretty_err(tpath, fs::create_dir_all(tpath));
 
-    let lock_path = &*TEMPLATE_LOCK;
-    let lock_file = pretty_err(
-        lock_path,
-        fs::OpenOptions::new().read(true).write(true).create(true).open(lock_path),
-    );
-    let mut lock = RwLock::new(lock_file);
+    let mut lock = template_lock();
     let read = lock.read().unwrap();
-    if fs::read_to_string(lock_path).unwrap() != "1" {
+    if fs::read_to_string(&*TEMPLATE_LOCK).unwrap() != "1" {
         eprintln!("initializing template dir");
 
         drop(read);

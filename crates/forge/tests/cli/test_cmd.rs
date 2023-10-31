@@ -2,10 +2,10 @@
 use foundry_config::Config;
 use foundry_test_utils::{
     forgetest, forgetest_init,
-    util::{OutputExt, TestCommand, TestProject},
+    util::{template_lock, OutputExt, TestCommand, TestProject},
 };
 use foundry_utils::rpc;
-use std::{path::PathBuf, str::FromStr};
+use std::{path::PathBuf, process::Command, str::FromStr};
 
 // tests that test filters are handled correctly
 forgetest!(can_set_filter_values, |prj: TestProject, mut cmd: TestCommand| {
@@ -297,7 +297,25 @@ forgetest_init!(
     #[serial_test::serial]
     can_test_forge_std,
     |prj: TestProject, mut cmd: TestCommand| {
+        let mut lock = template_lock();
+        let write = lock.write().unwrap();
         let forge_std_dir = prj.root().join("lib/forge-std");
+        // TODO: https://github.com/foundry-rs/forge-std/pull/473
+        // let out = Command::new("git")
+        //     .current_dir(&forge_std_dir)
+        //     .args(["checkout", "origin", "master"])
+        //     .status()
+        //     .unwrap();
+        let out = Command::new("git")
+            .current_dir(&forge_std_dir)
+            .args(["pull", "https://github.com/danipopes/forge-std", "foundry-cheats-update"])
+            .output()
+            .unwrap();
+        if !out.status.success() {
+            panic!("failed to update forge-std");
+        }
+        drop(write);
+
         // execute in subdir
         cmd.cmd().current_dir(forge_std_dir);
         cmd.args(["test", "--root", "."]);
