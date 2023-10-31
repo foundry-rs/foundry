@@ -95,6 +95,7 @@ impl std::error::Error for Error {}
 
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Error::")?;
         self.kind().fmt(f)
     }
 }
@@ -110,9 +111,9 @@ impl fmt::Display for Error {
 /// Constructed by [`Error::kind`].
 #[derive(Debug)]
 pub enum ErrorKind<'a> {
-    /// A string error, encoded as `Error(string)`.
+    /// A string error, ABI-encoded as `CheatcodeError(string)`.
     String(&'a str),
-    /// A bytes error, encoded directly as just `bytes`.
+    /// A raw bytes error. Does not get encoded.
     Bytes(&'a [u8]),
 }
 

@@ -27,14 +27,13 @@ pub struct TestConfig {
     pub opts: TestOptions,
 }
 
-// === impl TestConfig ===
-
 impl TestConfig {
     pub fn new(runner: MultiContractRunner) -> Self {
         Self::with_filter(runner, Filter::matches_all())
     }
 
     pub fn with_filter(runner: MultiContractRunner, filter: Filter) -> Self {
+        init_tracing();
         Self { runner, should_fail: false, filter, opts: test_opts() }
     }
 
