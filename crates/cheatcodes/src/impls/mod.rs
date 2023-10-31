@@ -34,7 +34,7 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     /// Implement this function if you don't need access to the EVM data.
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let _ = state;
-        unimplemented!("{}", Self::CHEATCODE.id)
+        unimplemented!("{}", Self::CHEATCODE.func.id)
     }
 
     /// Applies this cheatcode to the given context.
@@ -61,7 +61,7 @@ fn trace_span<T: Cheatcode>(cheat: &T) -> tracing::Span {
     if enabled!(Level::TRACE) {
         trace_span!(target: "cheatcodes", "apply", cheat=?cheat)
     } else {
-        debug_span!(target: "cheatcodes", "apply", id=%T::CHEATCODE.id)
+        debug_span!(target: "cheatcodes", "apply", id=%T::CHEATCODE.func.id)
     }
 }
 

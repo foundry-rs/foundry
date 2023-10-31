@@ -13,29 +13,13 @@ extern crate tracing;
 #[cfg(not(feature = "impls"))]
 use alloy_primitives as _;
 
-mod defs;
-pub use defs::{Cheatcode, CheatcodeDef, Group, Mutability, Safety, Status, Visibility, Vm};
+pub mod defs;
+pub use defs::{Cheatcode, CheatcodeDef, Vm};
 
 #[cfg(feature = "impls")]
 pub mod impls;
 #[cfg(feature = "impls")]
 pub use impls::{Cheatcodes, CheatsConfig};
-
-/// Generates the `cheatcodes.json` file contents.
-pub fn json_cheatcodes() -> String {
-    serde_json::to_string_pretty(Vm::CHEATCODES).unwrap()
-}
-
-/// Generates the [cheatcodes](json_cheatcodes) JSON schema.
-#[cfg(feature = "schema")]
-pub fn json_schema() -> String {
-    // use a custom type to add a title and description to the schema
-    /// Foundry cheatcodes. Learn more: <https://book.getfoundry.sh/cheatcodes/>
-    #[derive(schemars::JsonSchema)]
-    struct Cheatcodes([Cheatcode<'static>]);
-
-    serde_json::to_string_pretty(&schemars::schema_for!(Cheatcodes)).unwrap()
-}
 
 #[cfg(test)]
 mod tests {
@@ -46,6 +30,17 @@ mod tests {
     #[cfg(feature = "schema")]
     const SCHEMA_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/cheatcodes.schema.json");
     const IFACE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/cheats/Vm.sol");
+
+    /// Generates the `cheatcodes.json` file contents.
+    fn json_cheatcodes() -> String {
+        serde_json::to_string_pretty(&defs::Cheatcodes::new()).unwrap()
+    }
+
+    /// Generates the [cheatcodes](json_cheatcodes) JSON schema.
+    #[cfg(feature = "schema")]
+    fn json_schema() -> String {
+        serde_json::to_string_pretty(&schemars::schema_for!(defs::Cheatcodes)).unwrap()
+    }
 
     #[test]
     fn defs_up_to_date() {

@@ -66,7 +66,7 @@ macro_rules! ensure_not_precompile {
     ($address:expr, $ctxt:expr) => {
         if $ctxt.is_precompile($address) {
             return Err($crate::impls::error::precompile_error(
-                <Self as $crate::CheatcodeDef>::CHEATCODE.id,
+                <Self as $crate::CheatcodeDef>::CHEATCODE.func.id,
                 $address,
             ))
         }

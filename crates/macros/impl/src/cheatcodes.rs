@@ -5,6 +5,7 @@ use syn::{Attribute, Data, DataStruct, DeriveInput, Error, Item, Result};
 // Skip warnings for these items.
 const ALLOWED_ITEMS: &[&str] = &["CheatcodeError", "VmErrors"];
 
+// We need a separate macro for the module because `derive`s aren't allowed in modules.
 pub fn vm_attr(item: Item) -> Result<Option<TokenStream>> {
     match item {
         Item::Mod(m) => {
@@ -32,8 +33,8 @@ pub fn derive_cheatcode(input: &DeriveInput) -> Result<TokenStream> {
     let name = &input.ident;
     let name_s = name.to_string();
     match &input.data {
-        Data::Struct(s) if name_s.ends_with("Call") => return derive_struct(name, s, &input.attrs),
-        Data::Enum(e) if name_s.ends_with("Calls") => return derive_enum(name, e),
+        Data::Struct(s) if name_s.ends_with("Call") => return derive_call(name, s, &input.attrs),
+        Data::Enum(e) if name_s.ends_with("Calls") => return derive_calls_enum(name, e),
         _ => {}
     }
 
@@ -67,8 +68,8 @@ pub fn derive_cheatcode(input: &DeriveInput) -> Result<TokenStream> {
     Ok(TokenStream::new())
 }
 
-/// Implements `CheatcodeDef` for a struct.
-fn derive_struct(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<TokenStream> {
+/// Implements `CheatcodeDef` for a function call struct.
+fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<TokenStream> {
     let mut group = None::<Ident>;
     let mut status = None::<Ident>;
     let mut safety = None::<Ident>;
@@ -123,14 +124,16 @@ fn derive_struct(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result
     Ok(quote! {
         impl CheatcodeDef for #name {
             const CHEATCODE: &'static Cheatcode<'static> = &Cheatcode {
-                id: #id,
-                declaration: #declaration,
-                visibility: Visibility::#visibility,
-                mutability: Mutability::#mutability,
-                signature: #signature,
-                selector: #selector,
-                selector_bytes: <Self as ::alloy_sol_types::SolCall>::SELECTOR,
-                description: #description,
+                func: Function {
+                    id: #id,
+                    description: #description,
+                    declaration: #declaration,
+                    visibility: Visibility::#visibility,
+                    mutability: Mutability::#mutability,
+                    signature: #signature,
+                    selector: #selector,
+                    selector_bytes: <Self as ::alloy_sol_types::SolCall>::SELECTOR,
+                },
                 group: Group::#group,
                 status: Status::#status,
                 safety: #safety,
@@ -140,7 +143,7 @@ fn derive_struct(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result
 }
 
 /// Generates the `CHEATCODES` constant and implements `CheatcodeImpl` dispatch for an enum.
-fn derive_enum(name: &Ident, input: &syn::DataEnum) -> Result<TokenStream> {
+fn derive_calls_enum(name: &Ident, input: &syn::DataEnum) -> Result<TokenStream> {
     if input.variants.iter().any(|v| v.fields.len() != 1) {
         return Err(syn::Error::new(name.span(), "expected all variants to have a single field"))
     }
