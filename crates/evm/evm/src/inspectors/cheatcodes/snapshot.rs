@@ -1,5 +1,7 @@
-use super::Result;
+use super::{fmt_err, Result};
 use alloy_dyn_abi::DynSolValue;
+use alloy_primitives::Address;
+use ethers::utils::GenesisAccount;
 use foundry_evm_core::{abi::HEVMCalls, backend::DatabaseExt};
 use foundry_utils::types::ToAlloy;
 use revm::EVMData;
@@ -34,7 +36,7 @@ pub fn apply<DB: DatabaseExt>(data: &mut EVMData<'_, DB>, call: &HEVMCalls) -> O
             let Ok(allocs): Result<HashMap<Address, GenesisAccount>, _> =
                 serde_json::from_reader(file)
             else {
-                return Some(Err(fmt_err!("Failed to parse allocs JSON at path \"{}\"", &path.0)))
+                return Some(Err(fmt_err!("Failed to parse allocs JSON at path \"{}\"", &path.0)));
             };
 
             // Loop through all of the allocs defined in the map and commit them to the journal.
