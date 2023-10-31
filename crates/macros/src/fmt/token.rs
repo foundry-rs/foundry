@@ -8,7 +8,7 @@ use std::{fmt, fmt::Write};
 pub struct TokenDisplay<'a>(pub &'a DynSolValue);
 
 impl fmt::Display for TokenDisplay<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt_token(f, self.0)
     }
 }

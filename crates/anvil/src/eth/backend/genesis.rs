@@ -10,11 +10,11 @@ use ethers::{
     types::{Address, H256},
 };
 use foundry_evm::{
-    executor::{
-        backend::{snapshot::StateSnapshot, DatabaseError, DatabaseResult},
-        DatabaseRef,
+    backend::{DatabaseError, DatabaseResult, StateSnapshot},
+    revm::{
+        db::DatabaseRef,
+        primitives::{AccountInfo, Bytecode, KECCAK_EMPTY},
     },
-    revm::primitives::{AccountInfo, Bytecode, KECCAK_EMPTY},
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::Mutex;

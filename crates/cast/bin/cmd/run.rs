@@ -1,3 +1,4 @@
+use alloy_primitives::U256;
 use clap::Parser;
 use ethers::prelude::Middleware;
 use eyre::{Result, WrapErr};
@@ -11,9 +12,9 @@ use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{
-    executor::{inspector::cheatcodes::util::configure_tx_env, opts::EvmOpts, EvmError},
-    revm::primitives::U256 as rU256,
-    trace::TracingExecutor,
+    executors::{EvmError, TracingExecutor},
+    opts::EvmOpts,
+    utils::configure_tx_env,
 };
 use foundry_utils::types::ToAlloy;
 use tracing::trace;
@@ -121,7 +122,7 @@ impl RunArgs {
         let mut executor =
             TracingExecutor::new(env.clone(), fork, self.evm_version, self.debug).await;
 
-        env.block.number = rU256::from(tx_block_number);
+        env.block.number = U256::from(tx_block_number);
 
         let block = provider.get_block_with_txs(tx_block_number).await?;
         if let Some(ref block) = block {

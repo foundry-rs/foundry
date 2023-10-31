@@ -13,8 +13,7 @@ use eyre::Result;
 use foundry_common::{compile::ContractSources, evm::Breakpoints};
 use foundry_evm::{
     debug::{DebugStep, Instruction},
-    utils::{build_pc_ic_map, PCICMap},
-    CallKind,
+    utils::{build_pc_ic_map, CallKind, PCICMap},
 };
 use ratatui::{
     backend::{Backend, CrosstermBackend},

@@ -12,7 +12,7 @@ use foundry_config::{
     InvariantConfig, RpcEndpoint, RpcEndpoints,
 };
 use foundry_evm::{
-    decode::decode_console_logs, executor::inspector::CheatsConfig, revm::primitives::SpecId,
+    decode::decode_console_logs, inspectors::CheatsConfig, revm::primitives::SpecId,
 };
 use std::{
     collections::BTreeMap,

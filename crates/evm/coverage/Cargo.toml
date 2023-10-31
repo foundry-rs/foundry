@@ -1,0 +1,22 @@
+[package]
+name = "foundry-evm-coverage"
+description = "EVM bytecode coverage analysis"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+foundry-common.workspace = true
+foundry-compilers.workspace = true
+foundry-evm-core.workspace = true
+
+alloy-primitives.workspace = true
+eyre = "0.6"
+revm.workspace = true
+semver = "1"
+tracing = "0.1"

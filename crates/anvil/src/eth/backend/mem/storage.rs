@@ -272,6 +272,23 @@ impl BlockchainStorage {
             total_difficulty: Default::default(),
         }
     }
+
+    /// Removes all stored transactions for the given block number
+    pub fn remove_block_transactions_by_number(&mut self, num: u64) {
+        if let Some(hash) = self.hashes.get(&(num.into())).copied() {
+            self.remove_block_transactions(hash);
+        }
+    }
+
+    /// Removes all stored transactions for the given block hash
+    pub fn remove_block_transactions(&mut self, block_hash: H256) {
+        if let Some(block) = self.blocks.get_mut(&block_hash) {
+            for tx in block.transactions.iter() {
+                self.transactions.remove(&tx.hash());
+            }
+            block.transactions.clear();
+        }
+    }
 }
 
 // === impl BlockchainStorage ===
@@ -425,7 +442,7 @@ mod tests {
     use crate::eth::backend::db::Db;
     use ethers::{abi::ethereum_types::BigEndianHash, types::Address};
     use foundry_evm::{
-        executor::backend::MemDb,
+        backend::MemDb,
         revm::{
             db::DatabaseRef,
             primitives::{AccountInfo, U256 as rU256},

@@ -68,7 +68,7 @@ impl InitArgs {
 
             // fetch the template - always fetch shallow for templates since git history will be
             // collapsed. gitmodules will be initialized after the template is fetched
-            Git::fetch(true, &template, branch)?;
+            git.fetch(true, &template, branch)?;
             // reset git history to the head of the template
             // first get the commit hash that was fetched
             let commit_hash = git.commit_hash(true, "FETCH_HEAD")?;

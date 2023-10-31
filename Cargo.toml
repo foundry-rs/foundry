@@ -1,5 +1,31 @@
 [workspace]
-members = ["crates/*"]
+members = [
+    "crates/abi/",
+    "crates/anvil/",
+    "crates/anvil/core/",
+    "crates/anvil/rpc/",
+    "crates/anvil/server/",
+    "crates/binder/",
+    "crates/cast/",
+    "crates/cheatcodes/",
+    "crates/chisel/",
+    "crates/cli/",
+    "crates/common/",
+    "crates/config/",
+    "crates/debugger/",
+    "crates/doc/",
+    "crates/evm/core/",
+    "crates/evm/coverage/",
+    "crates/evm/evm/",
+    "crates/evm/fuzz/",
+    "crates/evm/traces/",
+    "crates/fmt/",
+    "crates/forge/",
+    "crates/macros/",
+    "crates/macros/impl/",
+    "crates/test-utils/",
+    "crates/utils/",
+]
 resolver = "2"
 
 [workspace.package]
@@ -125,15 +151,22 @@ forge-doc = { path = "crates/doc" }
 forge-fmt = { path = "crates/fmt" }
 foundry-abi = { path = "crates/abi" }
 foundry-binder = { path = "crates/binder" }
+foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-cli = { path = "crates/cli" }
 foundry-common = { path = "crates/common" }
-foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-config = { path = "crates/config" }
-foundry-evm = { path = "crates/evm" }
+foundry-debugger = { path = "crates/debugger" }
+foundry-evm = { path = "crates/evm/evm" }
+foundry-evm-core = { path = "crates/evm/core" }
+foundry-evm-coverage = { path = "crates/evm/coverage" }
+foundry-evm-fuzz = { path = "crates/evm/fuzz" }
+foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 foundry-utils = { path = "crates/utils" }
-foundry-debugger = { path = "crates/debugger" }
+
+foundry-block-explorers = { version = "0.1", default-features = false }
+foundry-compilers = { version = "0.1", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
@@ -158,11 +191,6 @@ alloy-dyn-abi = "0.4.1"
 alloy-json-abi = "0.4.1"
 alloy-sol-types = "0.4.1"
 syn-solidity = "0.4.1"
-
-# solc utils
-foundry-compilers = { version = "0.1", default-features = false }
-# block explorer utils
-foundry-block-explorers = { version = "0.1", default-features = false }
 
 solang-parser = "=0.3.2"
 
@@ -204,7 +232,7 @@ ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f2
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
 
 foundry-compilers = { git = "https://github.com/foundry-rs/compilers" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers"}
+foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers" }
 
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/" }
 alloy-primitives = { git = "https://github.com/alloy-rs/core/" }

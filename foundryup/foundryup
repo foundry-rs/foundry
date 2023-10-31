@@ -81,16 +81,7 @@ main() {
     FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
 
     # Normalize versions (handle channels, versions without v prefix
-    if [[ "$FOUNDRYUP_VERSION" == "nightly" ]]; then
-      # Locate real nightly tag
-      SHA=$(ensure curl -sSf "https://api.github.com/repos/$FOUNDRYUP_REPO/git/refs/tags/nightly" \
-        | grep -Eo '"sha"[^,]*' \
-        | grep -Eo '[^:]*$' \
-        | tr -d '"' \
-        | tr -d ' ' \
-        | cut -d ':' -f2 )
-      FOUNDRYUP_TAG="nightly-${SHA}"
-    elif [[ "$FOUNDRYUP_VERSION" == nightly* ]]; then
+    if [[ "$FOUNDRYUP_VERSION" =~ ^nightly ]]; then
       FOUNDRYUP_VERSION="nightly"
     elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
       # Add v prefix

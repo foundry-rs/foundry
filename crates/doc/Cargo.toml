@@ -16,10 +16,10 @@ forge-fmt.workspace = true
 foundry-config.workspace = true
 foundry-utils.workspace = true
 
+foundry-compilers = { workspace = true, features = ["async"] }
+
 # ethers
 ethers-core.workspace = true
-
-foundry-compilers = { workspace = true, features = ["async"] }
 
 # tracing
 tracing.workspace = true

@@ -1,7 +1,7 @@
 use chisel::session::ChiselSession;
 use foundry_compilers::EvmVersion;
 use foundry_config::Config;
-use foundry_evm::executor::opts::EvmOpts;
+use foundry_evm::opts::EvmOpts;
 use serial_test::serial;
 use std::path::Path;
 

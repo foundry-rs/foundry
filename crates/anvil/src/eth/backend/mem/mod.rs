@@ -56,13 +56,12 @@ use ethers::{
     utils::{hex, keccak256, rlp},
 };
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+use foundry_common::abi::format_token;
 use foundry_evm::{
+    backend::{DatabaseError, DatabaseResult},
+    constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::{decode_custom_error_args, decode_revert},
-    executor::{
-        backend::{DatabaseError, DatabaseResult},
-        inspector::AccessListTracer,
-        DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
-    },
+    inspectors::AccessListTracer,
     revm::{
         self,
         db::CacheDB,
@@ -102,7 +101,8 @@ pub const MIN_TRANSACTION_GAS: U256 = U256([21_000, 0, 0, 0]);
 // Gas per transaction creating a contract.
 pub const MIN_CREATE_GAS: U256 = U256([53_000, 0, 0, 0]);
 
-pub type State = foundry_evm::HashMap<Address, Account>;
+// TODO: This is the same as foundry_evm::utils::StateChangeset but with ethers H160
+pub type State = foundry_evm::hashbrown::HashMap<Address, Account>;
 
 /// A block request, which includes the Pool Transactions if it's Pending
 #[derive(Debug)]
@@ -934,7 +934,7 @@ impl Backend {
                                         Some(token) => {
                                             node_info!(
                                                 "    Error: reverted with custom error: {:?}",
-                                                token
+                                                format_token(&token)
                                             );
                                         }
                                         None => {
@@ -968,19 +968,13 @@ impl Backend {
                 storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
             }
 
+            // remove old transactions that exceed the transaction block keeper
             if let Some(transaction_block_keeper) = self.transaction_block_keeper {
                 if storage.blocks.len() > transaction_block_keeper {
-                    let n: U64 = block_number
+                    let to_clear = block_number
                         .as_u64()
-                        .saturating_sub(transaction_block_keeper.try_into().unwrap())
-                        .into();
-                    if let Some(hash) = storage.hashes.get(&n) {
-                        if let Some(block) = storage.blocks.get(hash) {
-                            for tx in block.clone().transactions {
-                                let _ = storage.transactions.remove(&tx.hash());
-                            }
-                        }
-                    }
+                        .saturating_sub(transaction_block_keeper.try_into().unwrap());
+                    storage.remove_block_transactions_by_number(to_clear)
                 }
             }
 

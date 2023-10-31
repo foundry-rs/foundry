@@ -203,7 +203,7 @@ impl SizeReport {
 }
 
 impl Display for SizeReport {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         let mut table = Table::new();
         table.load_preset(ASCII_MARKDOWN);
         table.set_header(vec![

@@ -2,7 +2,7 @@
 
 use crate::{config::*, test_helpers::filter::Filter};
 use forge::result::SuiteResult;
-use foundry_evm::trace::TraceKind;
+use foundry_evm::traces::TraceKind;
 use std::{collections::BTreeMap, env};
 
 #[tokio::test(flavor = "multi_thread")]
