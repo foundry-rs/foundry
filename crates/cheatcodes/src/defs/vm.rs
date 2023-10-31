@@ -16,7 +16,6 @@ sol! {
 
 /// Foundry cheatcodes interface.
 #[derive(Debug, Cheatcode)] // Keep this list small to avoid unnecessary bloat.
-#[cfg_attr(test, foundry_macros::vm)] // Generates the Solidity test Vm interface.
 interface Vm {
     //  ======== Types ========
 

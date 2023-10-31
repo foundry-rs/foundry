@@ -42,6 +42,20 @@ mod tests {
         serde_json::to_string_pretty(&schemars::schema_for!(defs::Cheatcodes)).unwrap()
     }
 
+    fn sol_iface() -> String {
+        let cheats = defs::Cheatcodes::new().to_string().trim().replace('\n', "\n    ");
+        format!(
+            "\
+// Automatically generated from `foundry-cheatcodes` Vm definitions. Do not modify manually.
+// This interface is just for internal testing purposes. Use `forge-std` instead.
+
+interface Vm {{
+    {cheats}
+}}
+"
+        )
+    }
+
     #[test]
     fn defs_up_to_date() {
         ensure_file_contents(Path::new(JSON_PATH), &json_cheatcodes());
@@ -55,7 +69,7 @@ mod tests {
 
     #[test]
     fn iface_up_to_date() {
-        ensure_file_contents(Path::new(IFACE_PATH), defs::VM_IFACE);
+        ensure_file_contents(Path::new(IFACE_PATH), &sol_iface());
     }
 
     /// Checks that the `file` has the specified `contents`. If that is not the

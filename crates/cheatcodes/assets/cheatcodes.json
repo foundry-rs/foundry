@@ -1,8 +1,249 @@
 {
-  "structs": [],
-  "enums": [],
-  "errors": [],
+  "errors": [
+    {
+      "name": "CheatcodeError",
+      "description": "Error thrown by cheatcodes.",
+      "declaration": "error CheatcodeError(string message);"
+    }
+  ],
   "events": [],
+  "enums": [
+    {
+      "name": "CallerMode",
+      "description": "A modification applied to either `msg.sender` or `tx.origin`. Returned by `readCallers`.",
+      "variants": [
+        {
+          "name": "None",
+          "description": "No caller modification is currently active."
+        },
+        {
+          "name": "Broadcast",
+          "description": "A one time broadcast triggered by a `vm.broadcast()` call is currently active."
+        },
+        {
+          "name": "RecurrentBroadcast",
+          "description": "A recurrent broadcast triggered by a `vm.startBroadcast()` call is currently active."
+        },
+        {
+          "name": "Prank",
+          "description": "A one time prank triggered by a `vm.prank()` call is currently active."
+        },
+        {
+          "name": "RecurrentPrank",
+          "description": "A recurrent prank triggered by a `vm.startPrank()` call is currently active."
+        }
+      ]
+    }
+  ],
+  "structs": [
+    {
+      "name": "Log",
+      "description": "An Ethereum log. Returned by `getRecordedLogs`.",
+      "fields": [
+        {
+          "name": "topics",
+          "ty": "bytes32[]",
+          "description": "The topics of the log, including the signature, if any."
+        },
+        {
+          "name": "data",
+          "ty": "bytes",
+          "description": "The raw data of the log."
+        },
+        {
+          "name": "emitter",
+          "ty": "address",
+          "description": "The address of the log's emitter."
+        }
+      ]
+    },
+    {
+      "name": "Rpc",
+      "description": "An RPC URL and its alias. Returned by `rpcUrlStructs`.",
+      "fields": [
+        {
+          "name": "key",
+          "ty": "string",
+          "description": "The alias of the RPC URL."
+        },
+        {
+          "name": "url",
+          "ty": "string",
+          "description": "The RPC URL."
+        }
+      ]
+    },
+    {
+      "name": "EthGetLogs",
+      "description": "An RPC log object. Returned by `eth_getLogs`.",
+      "fields": [
+        {
+          "name": "emitter",
+          "ty": "address",
+          "description": "The address of the log's emitter."
+        },
+        {
+          "name": "topics",
+          "ty": "bytes32[]",
+          "description": "The topics of the log, including the signature, if any."
+        },
+        {
+          "name": "data",
+          "ty": "bytes",
+          "description": "The raw data of the log."
+        },
+        {
+          "name": "blockHash",
+          "ty": "bytes32",
+          "description": "The block hash."
+        },
+        {
+          "name": "blockNumber",
+          "ty": "uint64",
+          "description": "The block number."
+        },
+        {
+          "name": "transactionHash",
+          "ty": "bytes32",
+          "description": "The transaction hash."
+        },
+        {
+          "name": "transactionIndex",
+          "ty": "uint64",
+          "description": "The transaction index in the block."
+        },
+        {
+          "name": "logIndex",
+          "ty": "uint256",
+          "description": "The log index."
+        },
+        {
+          "name": "removed",
+          "ty": "bool",
+          "description": "Whether the log was removed."
+        }
+      ]
+    },
+    {
+      "name": "DirEntry",
+      "description": "A single entry in a directory listing. Returned by `readDir`.",
+      "fields": [
+        {
+          "name": "errorMessage",
+          "ty": "string",
+          "description": "The error message, if any."
+        },
+        {
+          "name": "path",
+          "ty": "string",
+          "description": "The path of the entry."
+        },
+        {
+          "name": "depth",
+          "ty": "uint64",
+          "description": "The depth of the entry."
+        },
+        {
+          "name": "isDir",
+          "ty": "bool",
+          "description": "Whether the entry is a directory."
+        },
+        {
+          "name": "isSymlink",
+          "ty": "bool",
+          "description": "Whether the entry is a symlink."
+        }
+      ]
+    },
+    {
+      "name": "FsMetadata",
+      "description": "Metadata information about a file.\n This structure is returned from the [`fsMetadata`] function and represents known\n metadata about a file such as its permissions, size, modification\n times, etc.",
+      "fields": [
+        {
+          "name": "isDir",
+          "ty": "bool",
+          "description": "True if this metadata is for a directory."
+        },
+        {
+          "name": "isSymlink",
+          "ty": "bool",
+          "description": "True if this metadata is for a symlink."
+        },
+        {
+          "name": "length",
+          "ty": "uint256",
+          "description": "The size of the file, in bytes, this metadata is for."
+        },
+        {
+          "name": "readOnly",
+          "ty": "bool",
+          "description": "True if this metadata is for a readonly (unwritable) file."
+        },
+        {
+          "name": "modified",
+          "ty": "uint256",
+          "description": "The last modification time listed in this metadata."
+        },
+        {
+          "name": "accessed",
+          "ty": "uint256",
+          "description": "The last access time of this metadata."
+        },
+        {
+          "name": "created",
+          "ty": "uint256",
+          "description": "The creation time listed in this metadata."
+        }
+      ]
+    },
+    {
+      "name": "Wallet",
+      "description": "A wallet with a public and private key.",
+      "fields": [
+        {
+          "name": "addr",
+          "ty": "address",
+          "description": "The wallet's address."
+        },
+        {
+          "name": "publicKeyX",
+          "ty": "uint256",
+          "description": "The wallet's public key `X`."
+        },
+        {
+          "name": "publicKeyY",
+          "ty": "uint256",
+          "description": "The wallet's public key `Y`."
+        },
+        {
+          "name": "privateKey",
+          "ty": "uint256",
+          "description": "The wallet's private key."
+        }
+      ]
+    },
+    {
+      "name": "FfiResult",
+      "description": "The result of a [`tryFfi`](tryFfiCall) call.",
+      "fields": [
+        {
+          "name": "exitCode",
+          "ty": "int32",
+          "description": "The exit code of the call."
+        },
+        {
+          "name": "stdout",
+          "ty": "bytes",
+          "description": "The optionally hex-decoded `stdout` data."
+        },
+        {
+          "name": "stderr",
+          "ty": "bytes",
+          "description": "The `stderr` data."
+        }
+      ]
+    }
+  ],
   "cheatcodes": [
     {
       "func": {

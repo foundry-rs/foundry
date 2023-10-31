@@ -10,17 +10,6 @@ use syn::{parse_macro_input, DeriveInput, Error};
 mod cheatcodes;
 mod console_fmt;
 
-#[proc_macro_attribute]
-pub fn vm(_attrs: TokenStream, input: TokenStream) -> TokenStream {
-    let clone = input.clone();
-    let item = parse_macro_input!(input);
-    match cheatcodes::vm_attr(item) {
-        Ok(Some(tts)) => tts.into(),
-        Ok(None) => clone,
-        Err(e) => e.to_compile_error().into(),
-    }
-}
-
 #[proc_macro_derive(ConsoleFmt)]
 pub fn console_fmt(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

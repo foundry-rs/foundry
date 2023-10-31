@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// Solidity function.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -32,6 +33,12 @@ pub struct Function<'a> {
     pub selector_bytes: [u8; 4],
 }
 
+impl fmt::Display for Function<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.declaration)
+    }
+}
+
 /// Solidity function visibility attribute. See the [Solidity docs] for more information.
 ///
 /// [Solidity docs]: https://docs.soliditylang.org/en/latest/contracts.html#function-visibility
@@ -47,6 +54,12 @@ pub enum Visibility {
     Internal,
     /// Only visible in the current contract
     Private,
+}
+
+impl fmt::Display for Visibility {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 impl Visibility {
@@ -76,6 +89,12 @@ pub enum Mutability {
     /// Allows modification of state.
     #[serde(rename = "")]
     None,
+}
+
+impl fmt::Display for Mutability {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 impl Mutability {
