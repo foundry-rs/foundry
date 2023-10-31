@@ -265,16 +265,16 @@ pub enum ScriptOutcome {
 impl ScriptOutcome {
     pub fn as_str(&self) -> &'static str {
         match self {
-            ScriptOutcome::OkNoEndpoint => "If you wish to simulate on-chain transactions pass a RPC URL.",
-            ScriptOutcome::OkSimulation => "SIMULATION COMPLETE. To broadcast these",
-            ScriptOutcome::OkBroadcast => "ONCHAIN EXECUTION COMPLETE & SUCCESSFUL",
-            ScriptOutcome::WarnSpecifyDeployer => "You have more than one deployer who could predeploy libraries. Using `--sender` instead.",
-            ScriptOutcome::MissingSender => "You seem to be using Foundry's default sender. Be sure to set your own --sender",
-            ScriptOutcome::MissingWallet => "No associated wallet",
-            ScriptOutcome::StaticCallNotAllowed => "staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead",
-            ScriptOutcome::FailedScript => "Script failed.",
-            ScriptOutcome::UnsupportedLibraries => "Multi chain deployment does not support library linking at the moment.",
-            ScriptOutcome::ErrorSelectForkOnBroadcast => "cannot select forks during a broadcast"
+            Self::OkNoEndpoint => "If you wish to simulate on-chain transactions pass a RPC URL.",
+            Self::OkSimulation => "SIMULATION COMPLETE. To broadcast these",
+            Self::OkBroadcast => "ONCHAIN EXECUTION COMPLETE & SUCCESSFUL",
+            Self::WarnSpecifyDeployer => "You have more than one deployer who could predeploy libraries. Using `--sender` instead.",
+            Self::MissingSender => "You seem to be using Foundry's default sender. Be sure to set your own --sender",
+            Self::MissingWallet => "No associated wallet",
+            Self::StaticCallNotAllowed => "staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead",
+            Self::FailedScript => "Script failed.",
+            Self::UnsupportedLibraries => "Multi chain deployment does not support library linking at the moment.",
+            Self::ErrorSelectForkOnBroadcast => "cannot select forks during a broadcast",
         }
     }
 

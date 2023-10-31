@@ -681,7 +681,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
-                    // call_inner does not increase nonces, so we have to do it ourselves
                     let prev = account.info.nonce;
                     account.info.nonce += 1;
                     debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
@@ -959,7 +958,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             ..Default::default()
                         }),
                     });
-                    debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable create");
+                    let kind = match call.scheme {
+                        CreateScheme::Create => "create",
+                        CreateScheme::Create2 { .. } => "create2",
+                    };
+                    debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable {kind}");
                 }
             }
         }
@@ -1065,9 +1068,8 @@ fn process_create<DB: DatabaseExt>(
         }
         CreateScheme::Create2 { salt } => {
             // Sanity checks for our CREATE2 deployer
-            let (account, _) =
-                data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, data.db)?;
-            let info = &account.info;
+            let info =
+                &data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, data.db)?.0.info;
             match &info.code {
                 Some(code) if code.is_empty() => return Err(DatabaseError::MissingCreate2Deployer),
                 None if data.db.code_by_hash(info.code_hash)?.is_empty() => {
@@ -1080,6 +1082,7 @@ fn process_create<DB: DatabaseExt>(
 
             // We have to increment the nonce of the user address, since this create2 will be done
             // by the create2_deployer
+            let account = data.journaled_state.state().get_mut(&broadcast_sender).unwrap();
             let prev = account.info.nonce;
             account.info.nonce += 1;
             debug!(target: "cheatcodes", address=%broadcast_sender, nonce=prev+1, prev, "incremented nonce in create2");
