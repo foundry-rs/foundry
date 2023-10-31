@@ -168,7 +168,7 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         transaction: B256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: I,
+        inspector: &mut I,
     ) -> eyre::Result<()> {
         trace!(?id, ?transaction, "fuzz: execute transaction");
         self.backend_mut(env).transact(id, transaction, env, journaled_state, inspector)

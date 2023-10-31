@@ -24,10 +24,10 @@ pub const CALLER: Address = address!("1804c8AB1F12E6bbf3894d4083f33e07309d1f38")
 pub const TEST_CONTRACT_ADDRESS: Address = address!("b4c79daB8f259C7Aee6E5b2Aa729821864227e84");
 
 /// Magic return value returned by the `assume` cheatcode.
-pub const ASSUME_MAGIC_RETURN_CODE: &[u8] = b"FOUNDRY::ASSUME";
+pub const MAGIC_ASSUME: &[u8] = b"FOUNDRY::ASSUME";
 
 /// Magic return value returned by the `skip` cheatcode.
-pub const MAGIC_SKIP_BYTES: &[u8] = b"FOUNDRY::SKIP";
+pub const MAGIC_SKIP: &[u8] = b"FOUNDRY::SKIP";
 
 /// The default CREATE2 deployer.
 pub const DEFAULT_CREATE2_DEPLOYER: Address = address!("4e59b44847b379578588920ca78fbf26c0b4956c");

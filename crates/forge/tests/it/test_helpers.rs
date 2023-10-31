@@ -16,17 +16,20 @@ use foundry_evm::{
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
 use once_cell::sync::Lazy;
-use std::{path::PathBuf, str::FromStr};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
+
+const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata");
 
 pub static PROJECT: Lazy<Project> = Lazy::new(|| {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata");
-    let paths = ProjectPathsConfig::builder().root(root.clone()).sources(root).build().unwrap();
+    let paths = ProjectPathsConfig::builder().root(TESTDATA).sources(TESTDATA).build().unwrap();
     Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap()
 });
 
 pub static LIBS_PROJECT: Lazy<Project> = Lazy::new(|| {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata");
-    let paths = ProjectPathsConfig::builder().root(root.clone()).sources(root).build().unwrap();
+    let paths = ProjectPathsConfig::builder().root(TESTDATA).sources(TESTDATA).build().unwrap();
     let libs =
         ["fork/Fork.t.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string()];
 
@@ -72,7 +75,7 @@ pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
     sender: Config::DEFAULT_SENDER,
     initial_balance: U256::MAX,
     ffi: true,
-    memory_limit: 2u64.pow(24),
+    memory_limit: 1 << 24,
     ..Default::default()
 });
 

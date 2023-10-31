@@ -1,10 +1,11 @@
 //! Implementations of [`Evm`](crate::Group::Evm) cheatcodes.
 
-use super::{Cheatcode, CheatsCtxt, DatabaseExt, Result};
+use super::{Cheatcode, CheatsCtxt, Result};
 use crate::{Cheatcodes, Vm::*};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolValue;
-use ethers::signers::Signer;
+use ethers_signers::Signer;
+use foundry_evm_core::backend::DatabaseExt;
 use foundry_utils::types::ToAlloy;
 use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
@@ -219,7 +220,7 @@ impl Cheatcode for etchCall {
         let Self { target, newRuntimeBytecode } = self;
         ensure_not_precompile!(target, ccx);
         ccx.data.journaled_state.load_account(*target, ccx.data.db)?;
-        let bytecode = Bytecode::new_raw(newRuntimeBytecode.clone().into()).to_checked();
+        let bytecode = Bytecode::new_raw(Bytes::copy_from_slice(newRuntimeBytecode)).to_checked();
         ccx.data.journaled_state.set_code(*target, bytecode);
         Ok(Default::default())
     }
@@ -235,6 +236,7 @@ impl Cheatcode for resetNonceCall {
         let empty = account.info.code_hash == KECCAK_EMPTY;
         let nonce = if empty { 0 } else { 1 };
         account.info.nonce = nonce;
+        debug!(target: "cheatcodes", nonce, "reset");
         Ok(Default::default())
     }
 }
@@ -271,6 +273,17 @@ impl Cheatcode for storeCall {
         // ensure the account is touched
         let _ = journaled_account(ccx.data, target)?;
         ccx.data.journaled_state.sstore(target, slot.into(), value.into(), ccx.data.db)?;
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for coolCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { target } = self;
+        if let Some(account) = ccx.data.journaled_state.state.get_mut(target) {
+            account.unmark_touch();
+            account.storage.clear();
+        }
         Ok(Default::default())
     }
 }

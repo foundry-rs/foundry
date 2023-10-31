@@ -1,7 +1,7 @@
 use super::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result};
 use crate::Vm::*;
 use alloy_primitives::{Address, Bytes, U256};
-use revm::interpreter::InstructionResult;
+use revm::{interpreter::InstructionResult, primitives::Bytecode};
 use std::cmp::Ordering;
 
 /// Mocked call data.
@@ -50,7 +50,16 @@ impl Cheatcode for clearMockedCallsCall {
 impl Cheatcode for mockCall_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { callee, data, returnData } = self;
-        ccx.data.journaled_state.load_account(*callee, ccx.data.db)?;
+        let (acc, _) = ccx.data.journaled_state.load_account(*callee, ccx.data.db)?;
+
+        // Etches a single byte onto the account if it is empty to circumvent the `extcodesize`
+        // check Solidity might perform.
+        let empty_bytecode = acc.info.code.as_ref().map_or(true, Bytecode::is_empty);
+        if empty_bytecode {
+            let code = Bytecode::new_raw(Bytes::from_static(&[0u8])).to_checked();
+            ccx.data.journaled_state.set_code(*callee, code);
+        }
+
         mock_call(ccx.state, callee, data, None, returnData, InstructionResult::Return);
         Ok(Default::default())
     }
@@ -68,7 +77,7 @@ impl Cheatcode for mockCall_1Call {
 impl Cheatcode for mockCallRevert_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { callee, data, revertData } = self;
-        mock_call(state, callee, data, None, revertData, InstructionResult::Return);
+        mock_call(state, callee, data, None, revertData, InstructionResult::Revert);
         Ok(Default::default())
     }
 }
@@ -76,7 +85,7 @@ impl Cheatcode for mockCallRevert_0Call {
 impl Cheatcode for mockCallRevert_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { callee, msgValue, data, revertData } = self;
-        mock_call(state, callee, data, Some(msgValue), revertData, InstructionResult::Return);
+        mock_call(state, callee, data, Some(msgValue), revertData, InstructionResult::Revert);
         Ok(Default::default())
     }
 }
@@ -91,7 +100,7 @@ fn mock_call(
     ret_type: InstructionResult,
 ) {
     state.mocked_calls.entry(*callee).or_default().insert(
-        MockCallDataContext { calldata: Bytes::copy_from_slice(cdata), value: value.cloned() },
+        MockCallDataContext { calldata: Bytes::copy_from_slice(cdata), value: value.copied() },
         MockCallReturnData { ret_type, data: Bytes::copy_from_slice(rdata) },
     );
 }

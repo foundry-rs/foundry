@@ -1,6 +1,6 @@
 //! Various utilities to decode test results.
 
-use crate::constants::MAGIC_SKIP_BYTES;
+use crate::constants::MAGIC_SKIP;
 use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{B256, U256};
@@ -8,7 +8,7 @@ use alloy_sol_types::{sol_data::String as SolString, SolType};
 use ethers::{abi::RawLog, contract::EthLogDecode, types::Log};
 use foundry_abi::console::ConsoleEvents::{self, *};
 use foundry_common::{abi::format_token, SELECTOR_LEN};
-use foundry_utils::error::ERROR_PREFIX;
+use foundry_utils::error::{ERROR_PREFIX, REVERT_PREFIX};
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use revm::interpreter::{return_ok, InstructionResult};
@@ -18,6 +18,7 @@ use thiserror::Error;
 pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
     logs.iter().filter_map(decode_console_log).collect()
 }
+
 /// Decode a single log.
 ///
 /// This function returns [None] if it is not a DSTest log or the result of a Hardhat
@@ -100,7 +101,8 @@ pub fn decode_revert(
         }
         return Err(RevertDecodingError::InsufficientErrorData)
     }
-    match err[..SELECTOR_LEN] {
+
+    match <[u8; SELECTOR_LEN]>::try_from(&err[..SELECTOR_LEN]).unwrap() {
         // keccak(Panic(uint256))
         [78, 72, 123, 113] => {
             // ref: https://soliditydeveloper.com/solidity-0.8
@@ -144,13 +146,18 @@ pub fn decode_revert(
                 _ => Err(RevertDecodingError::UnsupportedSolidityBuiltinPanic),
             }
         }
-        // keccak(Error(string))
-        [8, 195, 121, 160] => DynSolType::abi_decode(&DynSolType::String, &err[SELECTOR_LEN..])
-            .map_err(RevertDecodingError::AlloyDecodingError)
-            .and_then(|v| {
-                v.clone().as_str().map(|s| s.to_owned()).ok_or(RevertDecodingError::BadStringDecode)
-            })
-            .to_owned(),
+        // keccak(Error(string)) | keccak(CheatcodeError(string))
+        REVERT_PREFIX | ERROR_PREFIX => {
+            DynSolType::abi_decode(&DynSolType::String, &err[SELECTOR_LEN..])
+                .map_err(RevertDecodingError::AlloyDecodingError)
+                .and_then(|v| {
+                    v.clone()
+                        .as_str()
+                        .map(|s| s.to_owned())
+                        .ok_or(RevertDecodingError::BadStringDecode)
+                })
+                .to_owned()
+        }
         // keccak(expectRevert(bytes))
         [242, 141, 206, 179] => {
             let err_data = &err[SELECTOR_LEN..];
@@ -185,7 +192,7 @@ pub fn decode_revert(
         }
         _ => {
             // See if the revert is caused by a skip() call.
-            if err == MAGIC_SKIP_BYTES {
+            if err == MAGIC_SKIP {
                 return Ok("SKIPPED".to_string())
             }
             // try to decode a custom error if provided an abi
@@ -217,21 +224,6 @@ pub fn decode_revert(
 
             let error = error.filter(|err| err.as_str() != "");
             error
-                .or_else(|| {
-                    // try decoding as cheatcode error
-                    if err.starts_with(ERROR_PREFIX.as_slice()) {
-                        DynSolType::abi_decode(&DynSolType::String, &err[ERROR_PREFIX.len()..])
-                            .map_err(|_| RevertDecodingError::UnknownCheatcodeErrorString)
-                            .and_then(|v| {
-                                v.as_str()
-                                    .map(|s| s.to_owned())
-                                    .ok_or(RevertDecodingError::UnknownCheatcodeErrorString)
-                            })
-                            .ok()
-                    } else {
-                        None
-                    }
-                })
                 .or_else(|| {
                     // try decoding as unknown err
                     SolString::abi_decode(&err[SELECTOR_LEN..], false)

@@ -2,50 +2,23 @@ use proc_macro2::{Ident, Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Attribute, Data, DataStruct, DeriveInput, Error, Result};
 
-// Skip warnings for these items.
-const ALLOWED_ITEMS: &[&str] = &["CheatCodeError", "VmErrors"];
-
 pub fn derive_cheatcode(input: &DeriveInput) -> Result<TokenStream> {
     let name = &input.ident;
     let name_s = name.to_string();
     match &input.data {
-        Data::Struct(s) if name_s.ends_with("Call") => return derive_struct(name, s, &input.attrs),
-        Data::Enum(e) if name_s.ends_with("Calls") => return derive_enum(name, e),
-        _ => {}
+        Data::Struct(s) if name_s.ends_with("Call") => derive_call(name, s, &input.attrs),
+        Data::Struct(_) if name_s.ends_with("Return") => Ok(TokenStream::new()),
+        Data::Struct(s) => derive_struct(name, s, &input.attrs),
+        Data::Enum(e) if name_s.ends_with("Calls") => derive_calls_enum(name, e),
+        Data::Enum(e) if name_s.ends_with("Errors") => derive_errors_events_enum(name, e, false),
+        Data::Enum(e) if name_s.ends_with("Events") => derive_errors_events_enum(name, e, true),
+        Data::Enum(e) => derive_enum(name, e, &input.attrs),
+        Data::Union(_) => Err(Error::new(name.span(), "unions are not supported")),
     }
-
-    if name_s.ends_with("Return") || ALLOWED_ITEMS.contains(&name_s.as_str()) {
-        if let Data::Struct(data) = &input.data {
-            check_named_fields(data, name);
-        }
-        return Ok(TokenStream::new())
-    }
-
-    if get_docstring(&input.attrs).trim().is_empty() {
-        emit_warning!(input.ident, "missing documentation for an item");
-    }
-    match &input.data {
-        Data::Struct(s) => {
-            for field in s.fields.iter() {
-                if get_docstring(&field.attrs).trim().is_empty() {
-                    emit_warning!(field.ident, "missing documentation for a field");
-                }
-            }
-        }
-        Data::Enum(e) => {
-            for variant in e.variants.iter() {
-                if get_docstring(&variant.attrs).trim().is_empty() {
-                    emit_warning!(variant.ident, "missing documentation for a variant");
-                }
-            }
-        }
-        _ => {}
-    }
-    Ok(TokenStream::new())
 }
 
-/// Implements `CheatcodeDef` for a struct.
-fn derive_struct(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<TokenStream> {
+/// Implements `CheatcodeDef` for a function call struct.
+fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<TokenStream> {
     let mut group = None::<Ident>;
     let mut status = None::<Ident>;
     let mut safety = None::<Ident>;
@@ -100,14 +73,16 @@ fn derive_struct(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result
     Ok(quote! {
         impl CheatcodeDef for #name {
             const CHEATCODE: &'static Cheatcode<'static> = &Cheatcode {
-                id: #id,
-                declaration: #declaration,
-                visibility: Visibility::#visibility,
-                mutability: Mutability::#mutability,
-                signature: #signature,
-                selector: #selector,
-                selector_bytes: <Self as ::alloy_sol_types::SolCall>::SELECTOR,
-                description: #description,
+                func: Function {
+                    id: #id,
+                    description: #description,
+                    declaration: #declaration,
+                    visibility: Visibility::#visibility,
+                    mutability: Mutability::#mutability,
+                    signature: #signature,
+                    selector: #selector,
+                    selector_bytes: <Self as ::alloy_sol_types::SolCall>::SELECTOR,
+                },
                 group: Group::#group,
                 status: Status::#status,
                 safety: #safety,
@@ -117,7 +92,7 @@ fn derive_struct(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result
 }
 
 /// Generates the `CHEATCODES` constant and implements `CheatcodeImpl` dispatch for an enum.
-fn derive_enum(name: &Ident, input: &syn::DataEnum) -> Result<TokenStream> {
+fn derive_calls_enum(name: &Ident, input: &syn::DataEnum) -> Result<TokenStream> {
     if input.variants.iter().any(|v| v.fields.len() != 1) {
         return Err(syn::Error::new(name.span(), "expected all variants to have a single field"))
     }
@@ -137,11 +112,197 @@ fn derive_enum(name: &Ident, input: &syn::DataEnum) -> Result<TokenStream> {
 
         #[cfg(feature = "impls")]
         impl #name {
-            pub(crate) fn apply<DB: crate::impls::DatabaseExt>(&self, ccx: &mut crate::impls::CheatsCtxt<DB>) -> crate::impls::Result {
+            pub(crate) fn apply<DB: foundry_evm_core::backend::DatabaseExt>(
+                &self,
+                ccx: &mut crate::impls::CheatsCtxt<DB>
+            ) -> crate::impls::Result {
                 match self {
                     #(Self::#variants_names(c) => crate::impls::Cheatcode::apply_traced(c, ccx),)*
                 }
             }
+        }
+    })
+}
+
+fn derive_errors_events_enum(
+    name: &Ident,
+    input: &syn::DataEnum,
+    events: bool,
+) -> Result<TokenStream> {
+    if input.variants.iter().any(|v| v.fields.len() != 1) {
+        return Err(syn::Error::new(name.span(), "expected all variants to have a single field"))
+    }
+
+    let (ident, ty_assoc_name, ty, doc) = if events {
+        ("VM_EVENTS", "EVENT", "Event", "events")
+    } else {
+        ("VM_ERRORS", "ERROR", "Error", "custom errors")
+    };
+    let ident = Ident::new(ident, Span::call_site());
+    let ty_assoc_name = Ident::new(ty_assoc_name, Span::call_site());
+    let ty = Ident::new(ty, Span::call_site());
+    let doc = format!("All the {doc} in [this contract](self).");
+
+    let mut variants = input.variants.iter().collect::<Vec<_>>();
+    variants.sort_by(|a, b| a.ident.cmp(&b.ident));
+    let variant_tys = variants.iter().map(|v| {
+        assert_eq!(v.fields.len(), 1);
+        &v.fields.iter().next().unwrap().ty
+    });
+    Ok(quote! {
+        #[doc = #doc]
+        pub const #ident: &'static [&'static #ty<'static>] = &[#(#variant_tys::#ty_assoc_name,)*];
+    })
+}
+
+fn derive_struct(
+    name: &Ident,
+    input: &syn::DataStruct,
+    attrs: &[Attribute],
+) -> Result<TokenStream> {
+    let name_s = name.to_string();
+
+    let doc = get_docstring(attrs);
+    let doc = doc.trim();
+    let kind = match () {
+        () if doc.contains("Custom error ") => StructKind::Error,
+        () if doc.contains("Event ") => StructKind::Event,
+        _ => StructKind::Struct,
+    };
+
+    let (doc, def) = doc.split_once("```solidity\n").expect("bad docstring");
+    let mut doc = doc.trim_end();
+    let def_end = def.rfind("```").expect("bad docstring");
+    let def = def[..def_end].trim();
+
+    match kind {
+        StructKind::Error => doc = &doc[..doc.find("Custom error ").expect("bad doc")],
+        StructKind::Event => doc = &doc[..doc.find("Event ").expect("bad doc")],
+        StructKind::Struct => {}
+    }
+    let doc = doc.trim();
+
+    if doc.is_empty() {
+        let n = match kind {
+            StructKind::Error => "n",
+            StructKind::Event => "n",
+            StructKind::Struct => "",
+        };
+        emit_warning!(name.span(), "missing documentation for a{n} {}", kind.as_str());
+    }
+
+    if kind == StructKind::Struct {
+        check_named_fields(input, name);
+    }
+
+    let def = match kind {
+        StructKind::Struct => {
+            let fields = input.fields.iter().map(|f| {
+                let name = f.ident.as_ref().expect("field has no name").to_string();
+
+                let to_find = format!("{name};");
+                let ty_end = def.find(&to_find).expect("field not found in def");
+                let ty = &def[..ty_end];
+                let ty_start = ty.rfind(';').or_else(|| ty.find('{')).expect("bad struct def") + 1;
+                let ty = ty[ty_start..].trim();
+                if ty.is_empty() {
+                    panic!("bad struct def: {def:?}")
+                }
+
+                let doc = get_docstring(&f.attrs);
+                let doc = doc.trim();
+                quote! {
+                    StructField {
+                        name: #name,
+                        ty: #ty,
+                        description: #doc,
+                    }
+                }
+            });
+            quote! {
+                /// The struct definition.
+                pub const STRUCT: &'static Struct<'static> = &Struct {
+                    name: #name_s,
+                    description: #doc,
+                    fields: Cow::Borrowed(&[#(#fields),*]),
+                };
+            }
+        }
+        StructKind::Error => {
+            quote! {
+                /// The custom error definition.
+                pub const ERROR: &'static Error<'static> = &Error {
+                    name: #name_s,
+                    description: #doc,
+                    declaration: #def,
+                };
+            }
+        }
+        StructKind::Event => {
+            quote! {
+                /// The event definition.
+                pub const EVENT: &'static Event<'static> = &Event {
+                    name: #name_s,
+                    description: #doc,
+                    declaration: #def,
+                };
+            }
+        }
+    };
+    Ok(quote! {
+        impl #name {
+            #def
+        }
+    })
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StructKind {
+    Struct,
+    Error,
+    Event,
+}
+
+impl StructKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Struct => "struct",
+            Self::Error => "error",
+            Self::Event => "event",
+        }
+    }
+}
+
+fn derive_enum(name: &Ident, input: &syn::DataEnum, attrs: &[Attribute]) -> Result<TokenStream> {
+    let name_s = name.to_string();
+    let doc = get_docstring(attrs);
+    let doc_end = doc.find("```solidity").expect("bad docstring");
+    let doc = doc[..doc_end].trim();
+    if doc.is_empty() {
+        emit_warning!(name.span(), "missing documentation for an enum");
+    }
+    let variants = input.variants.iter().filter(|v| v.discriminant.is_none()).map(|v| {
+        let name = v.ident.to_string();
+        let doc = get_docstring(&v.attrs);
+        let doc = doc.trim();
+        if doc.is_empty() {
+            emit_warning!(v.ident.span(), "missing documentation for a variant");
+        }
+        quote! {
+            EnumVariant {
+                name: #name,
+                description: #doc,
+            }
+        }
+    });
+    Ok(quote! {
+        impl #name {
+            /// The enum definition.
+            pub const ENUM: &'static Enum<'static> = &Enum {
+                name: #name_s,
+                description: #doc,
+                variants: Cow::Borrowed(&[#(#variants),*]),
+            };
         }
     })
 }
@@ -155,7 +316,7 @@ fn check_named_fields(data: &DataStruct, ident: &Ident) {
 }
 
 /// Flattens all the `#[doc = "..."]` attributes into a single string.
-fn get_docstring(attrs: &[syn::Attribute]) -> String {
+fn get_docstring(attrs: &[Attribute]) -> String {
     let mut doc = String::new();
     for attr in attrs {
         if !attr.path().is_ident("doc") {

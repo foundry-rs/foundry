@@ -1,8 +1,11 @@
+use crate::Vm;
 use alloy_primitives::{Address, Bytes};
-use alloy_sol_types::{Revert, SolError, SolValue};
-use ethers::{core::k256::ecdsa::signature::Error as SignatureError, signers::WalletError};
+use alloy_sol_types::SolError;
+use ethers_core::k256::ecdsa::signature::Error as SignatureError;
+use ethers_signers::WalletError;
 use foundry_common::errors::FsPathError;
 use foundry_config::UnresolvedEnvVarError;
+use foundry_evm_core::backend::DatabaseError;
 use std::{borrow::Cow, fmt, ptr::NonNull};
 
 /// Cheatcode result type.
@@ -63,7 +66,7 @@ macro_rules! ensure_not_precompile {
     ($address:expr, $ctxt:expr) => {
         if $ctxt.is_precompile($address) {
             return Err($crate::impls::error::precompile_error(
-                <Self as $crate::CheatcodeDef>::CHEATCODE.id,
+                <Self as $crate::CheatcodeDef>::CHEATCODE.func.id,
                 $address,
             ))
         }
@@ -72,7 +75,7 @@ macro_rules! ensure_not_precompile {
 
 #[cold]
 pub(crate) fn precompile_error(id: &'static str, address: &Address) -> Error {
-    fmt_err!("cannot call {id} on precompile {address}")
+    fmt_err!("cannot call `{id}` on precompile {address}")
 }
 
 /// Error thrown by cheatcodes.
@@ -92,6 +95,7 @@ impl std::error::Error for Error {}
 
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Error::")?;
         self.kind().fmt(f)
     }
 }
@@ -107,9 +111,9 @@ impl fmt::Display for Error {
 /// Constructed by [`Error::kind`].
 #[derive(Debug)]
 pub enum ErrorKind<'a> {
-    /// A string error, encoded as `Error(string)`.
+    /// A string error, ABI-encoded as `CheatcodeError(string)`.
     String(&'a str),
-    /// A bytes error, encoded directly as just `bytes`.
+    /// A raw bytes error. Does not get encoded.
     Bytes(&'a [u8]),
 }
 
@@ -123,7 +127,7 @@ impl fmt::Display for ErrorKind<'_> {
 }
 
 impl Error {
-    /// Creates a new error and ABI encodes it.
+    /// Creates a new error and ABI encodes it as `CheatcodeError(string)`.
     pub fn encode(error: impl Into<Self>) -> Bytes {
         error.into().abi_encode().into()
     }
@@ -141,17 +145,12 @@ impl Error {
         }
     }
 
-    /// ABI-encodes this error.
+    /// ABI-encodes this error as `CheatcodeError(string)`.
     pub fn abi_encode(&self) -> Vec<u8> {
         match self.kind() {
-            ErrorKind::String(string) => Revert::from(string).abi_encode(),
-            ErrorKind::Bytes(bytes) => bytes.abi_encode(),
+            ErrorKind::String(string) => Vm::CheatcodeError { message: string.into() }.abi_encode(),
+            ErrorKind::Bytes(bytes) => bytes.into(),
         }
-    }
-
-    /// ABI-encodes this error as `bytes`.
-    pub fn abi_encode_bytes(&self) -> Vec<u8> {
-        self.data().abi_encode()
     }
 
     /// Returns the kind of this error.
@@ -280,11 +279,11 @@ macro_rules! impl_from {
 
 impl_from!(
     alloy_sol_types::Error,
-    ethers::types::SignatureError,
+    ethers_core::types::SignatureError,
     FsPathError,
     hex::FromHexError,
     eyre::Error,
-    super::db::DatabaseError,
+    DatabaseError,
     jsonpath_lib::JsonPathError,
     serde_json::Error,
     SignatureError,
@@ -295,3 +294,18 @@ impl_from!(
     UnresolvedEnvVarError,
     WalletError,
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encode() {
+        let error = Vm::CheatcodeError { message: "hello".into() }.abi_encode();
+        assert_eq!(Error::from("hello").abi_encode(), error);
+        assert_eq!(Error::encode("hello"), error);
+
+        assert_eq!(Error::from(b"hello").abi_encode(), b"hello");
+        assert_eq!(Error::encode(b"hello"), b"hello"[..]);
+    }
+}
