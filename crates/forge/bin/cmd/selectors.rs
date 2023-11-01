@@ -56,12 +56,8 @@ pub enum SelectorsSubcommands {
     #[clap(visible_alias = "ls")]
     List {
         /// The name of the contract to list selectors for.
-        #[clap(required_unless_present = "all")]
+        #[clap(help = "The name of the contract to list selectors for.")]
         contract: Option<String>,
-
-        /// List selectors for all contracts in the project.
-        #[clap(long, required_unless_present = "contract")]
-        all: bool,
 
         #[clap(flatten)]
         project_paths: ProjectPathsArgs,
@@ -191,7 +187,7 @@ impl SelectorsSubcommands {
                     println!("{table}");
                 }
             }
-            SelectorsSubcommands::List { contract, all, project_paths } => {
+            SelectorsSubcommands::List { contract, project_paths } => {
                 println!("Listing selectors for contracts in the project...");
                 let build_args = CoreBuildArgs {
                     project_paths: project_paths.clone(),
@@ -202,9 +198,29 @@ impl SelectorsSubcommands {
                     ..Default::default()
                 };
 
+                // compile the project to get the artifacts/abis
                 let project = build_args.project()?;
                 let outcome = compile::suppress_compile(&project)?;
-                let artifacts = if all {
+                let artifacts = if let Some(contract) = contract {
+                    let found_artifact = outcome.find_first(&contract);
+                    let artifact = found_artifact
+                        .ok_or_else(|| {
+                            let candidates = outcome
+                                .artifacts()
+                                .map(|(name, _,)| name)
+                                .collect::<Vec<_>>();
+                            let suggestion = if let Some(suggestion) = foundry_cli::utils::did_you_mean(&contract, candidates).pop() {
+                                format!("\nDid you mean `{suggestion}`?")
+                            } else {
+                                "".to_string()
+                            };
+                            eyre::eyre!(
+                                "Could not find artifact `{contract}` in the compiled artifacts{suggestion}",
+                            )
+                        })?
+                        .clone();
+                    vec![(contract, artifact)]
+                } else {
                     outcome
                         .into_artifacts_with_files()
                         .filter(|(file, _, _)| {
@@ -216,17 +232,6 @@ impl SelectorsSubcommands {
                         })
                         .map(|(_, contract, artifact)| (contract, artifact))
                         .collect()
-                } else {
-                    let contract = contract.unwrap();
-                    let found_artifact = outcome.find_first(&contract);
-                    let artifact = found_artifact
-                        .ok_or_else(|| {
-                            eyre::eyre!(
-                                "Could not find artifact `{contract}` in the compiled artifacts"
-                            )
-                        })?
-                        .clone();
-                    vec![(contract, artifact)]
                 };
 
                 let mut artifacts = artifacts.into_iter().peekable();
@@ -247,39 +252,20 @@ impl SelectorsSubcommands {
                     table.set_header(vec!["Type", "Signature", "Selector"]);
 
                     for func in abi.abi.functions() {
-                        let sig =
-                            func.signature().split(':').next().unwrap_or_default().to_string();
-                        let selector = func.short_signature();
+                        let sig = func.signature();
+                        let selector = func.selector();
                         table.add_row(vec!["Function", &sig, &hex::encode_prefixed(selector)]);
                     }
 
                     for event in abi.abi.events() {
-                        let sig = format!(
-                            "{}({})",
-                            event.name,
-                            event
-                                .inputs
-                                .iter()
-                                .map(|p| p.kind.to_string())
-                                .collect::<Vec<_>>()
-                                .join(",")
-                        );
-                        let selector = event.signature();
+                        let sig = event.signature();
+                        let selector = event.selector();
                         table.add_row(vec!["Event", &sig, &hex::encode_prefixed(selector)]);
                     }
 
                     for error in abi.abi.errors() {
-                        let sig = format!(
-                            "{}({})",
-                            error.name,
-                            error
-                                .inputs
-                                .iter()
-                                .map(|p| p.kind.to_string())
-                                .collect::<Vec<_>>()
-                                .join(",")
-                        );
-                        let selector = &error.signature()[0..4];
+                        let sig = error.signature();
+                        let selector = error.selector();
                         table.add_row(vec!["Error", &sig, &hex::encode_prefixed(selector)]);
                     }
 
