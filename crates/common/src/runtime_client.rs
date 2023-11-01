@@ -88,6 +88,19 @@ pub struct RuntimeClient {
     headers: Vec<String>,
 }
 
+/// Builder for RuntimeClient
+pub struct RuntimeClientBuilder {
+    url: Url,
+    max_retry: u32,
+    timeout_retry: u32,
+    initial_backoff: u64,
+    timeout: Duration,
+    /// available CUPS
+    compute_units_per_second: u64,
+    jwt: Option<String>,
+    headers: Vec<String>,
+}
+
 impl ::core::fmt::Display for RuntimeClient {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         write!(f, "RuntimeClient")
@@ -108,30 +121,6 @@ fn build_auth(jwt: String) -> eyre::Result<Authorization> {
 }
 
 impl RuntimeClient {
-    /// Creates a new dynamic provider from a URL
-    pub fn new(
-        url: Url,
-        max_retry: u32,
-        timeout_retry: u32,
-        initial_backoff: u64,
-        timeout: Duration,
-        compute_units_per_second: u64,
-        jwt: Option<String>,
-        headers: Vec<String>,
-    ) -> Self {
-        Self {
-            client: Arc::new(RwLock::new(None)),
-            url,
-            max_retry,
-            timeout_retry,
-            initial_backoff,
-            timeout,
-            compute_units_per_second,
-            jwt,
-            headers,
-        }
-    }
-
     async fn connect(&self) -> Result<InnerClient, RuntimeClientError> {
         match self.url.scheme() {
             "http" | "https" => {
@@ -156,7 +145,7 @@ impl RuntimeClient {
                     let err_message = format!("Invalid header {}", &header);
                     let parts: Vec<_> = header.split(':').map(|s| s.trim()).collect();
 
-                    let key = parts.get(0).expect(&err_message);
+                    let key = parts.first().expect(&err_message);
                     let val = parts.get(1).expect(&err_message);
 
                     headers.insert(
@@ -205,6 +194,59 @@ impl RuntimeClient {
                 Ok(InnerClient::Ipc(client))
             }
             _ => Err(RuntimeClientError::BadScheme(self.url.to_string())),
+        }
+    }
+}
+
+impl RuntimeClientBuilder {
+    /// Create new RuntimeClientBuilder
+    pub fn new(
+        url: Url,
+        max_retry: u32,
+        timeout_retry: u32,
+        initial_backoff: u64,
+        timeout: Duration,
+        compute_units_per_second: u64,
+    ) -> Self {
+        Self {
+            url,
+            max_retry,
+            timeout,
+            timeout_retry,
+            initial_backoff,
+            compute_units_per_second,
+            jwt: None,
+            headers: vec![],
+        }
+    }
+
+    /// Set jwt to use with RuntimeClient
+    pub fn with_jwt(mut self, jwt: String) -> Self {
+        self.jwt = Some(jwt);
+
+        self
+    }
+
+    /// Set http headers to use with RuntimeClient
+    /// Only works with http/https schemas
+    pub fn with_headers(mut self, headers: Vec<String>) -> Self {
+        self.headers = headers;
+
+        self
+    }
+
+    /// Builds RuntimeClient instance
+    pub fn build(self) -> RuntimeClient {
+        RuntimeClient {
+            client: Arc::new(RwLock::new(None)),
+            url: self.url,
+            max_retry: self.max_retry,
+            timeout_retry: self.timeout_retry,
+            initial_backoff: self.initial_backoff,
+            timeout: self.timeout,
+            compute_units_per_second: self.compute_units_per_second,
+            jwt: self.jwt,
+            headers: self.headers,
         }
     }
 }

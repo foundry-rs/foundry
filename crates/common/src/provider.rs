@@ -1,6 +1,9 @@
 //! Commonly used helpers to construct `Provider`s
 
-use crate::{runtime_client::RuntimeClient, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
+use crate::{
+    runtime_client::{RuntimeClient, RuntimeClientBuilder},
+    ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
+};
 use ethers_core::types::{Chain, U256};
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use ethers_providers::{is_local_endpoint, Middleware, Provider, DEFAULT_LOCAL_POLL_INTERVAL};
@@ -210,16 +213,21 @@ impl ProviderBuilder {
         } = self;
         let url = url?;
 
-        let mut provider = Provider::new(RuntimeClient::new(
+        let mut client_builder = RuntimeClientBuilder::new(
             url.clone(),
             max_retry,
             timeout_retry,
             initial_backoff,
             timeout,
             compute_units_per_second,
-            jwt,
-            headers,
-        ));
+        )
+        .with_headers(headers);
+
+        if let Some(jwt) = jwt {
+            client_builder = client_builder.with_jwt(jwt);
+        }
+
+        let mut provider = Provider::new(client_builder.build());
 
         let is_local = is_local_endpoint(url.as_str());
 
