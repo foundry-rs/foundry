@@ -660,7 +660,7 @@ impl<'a> ContractRunner<'a> {
     }
 }
 
-// Utility function to merge coverage options
+/// Utility function to merge coverage options
 fn merge_coverages(mut coverage: Option<HitMaps>, other: Option<HitMaps>) -> Option<HitMaps> {
     let old_coverage = std::mem::take(&mut coverage);
     match (old_coverage, other) {
