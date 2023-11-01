@@ -79,7 +79,7 @@ checksum = "0942ffc6dcaadf03badf6e6a2d0228460359d5e34b57ccdc720b7382dfbd5ec5"
 [[package]]
 name = "alloy-dyn-abi"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#caa4be1d252e7287020f5f2c119e5d31b9d5e069"
+source = "git+https://github.com/alloy-rs/core/#919a338fd452f6fbbf83193a1ba240961efd12c5"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -99,7 +99,7 @@ dependencies = [
 [[package]]
 name = "alloy-json-abi"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#caa4be1d252e7287020f5f2c119e5d31b9d5e069"
+source = "git+https://github.com/alloy-rs/core/#919a338fd452f6fbbf83193a1ba240961efd12c5"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-type-parser",
@@ -110,7 +110,7 @@ dependencies = [
 [[package]]
 name = "alloy-primitives"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#caa4be1d252e7287020f5f2c119e5d31b9d5e069"
+source = "git+https://github.com/alloy-rs/core/#919a338fd452f6fbbf83193a1ba240961efd12c5"
 dependencies = [
  "alloy-rlp",
  "arbitrary",
@@ -156,7 +156,7 @@ dependencies = [
 [[package]]
 name = "alloy-sol-macro"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#caa4be1d252e7287020f5f2c119e5d31b9d5e069"
+source = "git+https://github.com/alloy-rs/core/#919a338fd452f6fbbf83193a1ba240961efd12c5"
 dependencies = [
  "const-hex",
  "dunce",
@@ -173,7 +173,7 @@ dependencies = [
 [[package]]
 name = "alloy-sol-type-parser"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#caa4be1d252e7287020f5f2c119e5d31b9d5e069"
+source = "git+https://github.com/alloy-rs/core/#919a338fd452f6fbbf83193a1ba240961efd12c5"
 dependencies = [
  "winnow",
 ]
@@ -181,7 +181,7 @@ dependencies = [
 [[package]]
 name = "alloy-sol-types"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#caa4be1d252e7287020f5f2c119e5d31b9d5e069"
+source = "git+https://github.com/alloy-rs/core/#919a338fd452f6fbbf83193a1ba240961efd12c5"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-macro",
@@ -6807,7 +6807,7 @@ dependencies = [
 [[package]]
 name = "syn-solidity"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#caa4be1d252e7287020f5f2c119e5d31b9d5e069"
+source = "git+https://github.com/alloy-rs/core/#919a338fd452f6fbbf83193a1ba240961efd12c5"
 dependencies = [
  "paste",
  "proc-macro2",
