@@ -1009,7 +1009,6 @@ forgetest!(can_install_latest_release_tag, |prj: TestProject, mut cmd: TestComma
 // Tests that forge update doesn't break a working dependency by recursively updating nested
 // dependencies
 forgetest!(
-    #[ignore]
     can_update_library_with_outdated_nested_dependency,
     |prj: TestProject, mut cmd: TestCommand| {
         cmd.git_init();
@@ -1018,39 +1017,63 @@ forgetest!(
         let git_mod = prj.root().join(".git/modules/lib");
         let git_mod_file = prj.root().join(".gitmodules");
 
-        let package = libs.join("issue-2264-repro");
-        let package_mod = git_mod.join("issue-2264-repro");
+        // get paths to check inside install fn
+        let package = libs.join("forge-5980-test");
+        let package_mod = git_mod.join("forge-5980-test");
 
         let install = |cmd: &mut TestCommand| {
-            cmd.forge_fuse().args(["install", "foundry-rs/issue-2264-repro", "--no-commit"]);
+            // install main dependency
+            cmd.forge_fuse().args(["install", "evalir/forge-5980-test", "--no-commit"]);
             cmd.assert_non_empty_stdout();
+
+            // assert pathbufs exist
             assert!(package.exists());
             assert!(package_mod.exists());
 
             let submods = read_string(&git_mod_file);
-            assert!(submods.contains("https://github.com/foundry-rs/issue-2264-repro"));
+            assert!(submods.contains("https://github.com/evalir/forge-5980-test"));
         };
 
         install(&mut cmd);
-        cmd.forge_fuse().args(["update", "lib/issue-2264-repro"]);
+        // try to update the top-level dependency; there should be no update for this dependency,
+        // but its sub-dependency has upstream (breaking) changes; forge should not attempt to
+        // update the sub-dependency
+        cmd.forge_fuse().args(["update", "lib/forge-5980-test"]);
         cmd.stdout_lossy();
 
+        // add explicit remappings for test file
+        let config = Config {
+            remappings: vec![
+                Remapping::from_str("forge-5980-test/=lib/forge-5980-test/src/").unwrap().into(),
+                // explicit remapping for sub-dependendy seems necessary for some reason
+                Remapping::from_str(
+                    "forge-5980-test-dep/=lib/forge-5980-test/lib/forge-5980-test-dep/src/",
+                )
+                .unwrap()
+                .into(),
+            ],
+            ..Default::default()
+        };
+        prj.write_config(config);
+
+        // create test file that uses the top-level dependency; if the sub-dependency is updated,
+        // compilation will fail
         prj.inner()
             .add_source(
-                "MyTokenCopy",
+                "CounterCopy",
                 r#"
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.6.0;
-import "issue-2264-repro/MyToken.sol";
-contract MyTokenCopy is MyToken {
+pragma solidity ^0.8.0;
+import "forge-5980-test/Counter.sol";
+contract CounterCopy is Counter {
 }
    "#,
             )
             .unwrap();
 
-        cmd.forge_fuse().args(["build"]);
+        // build and check output
+        cmd.forge_fuse().arg("build");
         let output = cmd.stdout_lossy();
-
         assert!(output.contains("Compiler run successful",));
     }
 );
