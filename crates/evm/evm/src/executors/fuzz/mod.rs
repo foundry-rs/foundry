@@ -5,7 +5,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
-    constants::ASSUME_MAGIC_RETURN_CODE,
+    constants::MAGIC_ASSUME,
     decode::{self, decode_console_logs},
 };
 use foundry_evm_coverage::HitMaps;
@@ -210,8 +210,8 @@ impl<'a> FuzzedExecutor<'a> {
             &self.config.dictionary,
         );
 
-        // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
-        if call.result.as_ref() == ASSUME_MAGIC_RETURN_CODE {
+        // When the `assume` cheatcode is called it returns a special string
+        if call.result.as_ref() == MAGIC_ASSUME {
             return Err(TestCaseError::reject(FuzzError::AssumeReject))
         }
 

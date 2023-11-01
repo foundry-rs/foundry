@@ -1,24 +1,12 @@
 //! EVM inspectors.
 
+pub use foundry_cheatcodes::{impls as cheatcodes, Cheatcodes, CheatsConfig};
 pub use foundry_evm_coverage::CoverageCollector;
 pub use foundry_evm_fuzz::Fuzzer;
 pub use foundry_evm_traces::Tracer;
 
-macro_rules! try_or_continue {
-    ($e:expr) => {
-        match $e {
-            Ok(v) => v,
-            Err(_) => return InstructionResult::Continue,
-        }
-    };
-}
-
 mod access_list;
 pub use access_list::AccessListTracer;
-
-#[allow(unreachable_pub)]
-pub mod cheatcodes;
-pub use cheatcodes::{Cheatcodes, CheatsConfig};
 
 mod chisel_state;
 pub use chisel_state::ChiselState;

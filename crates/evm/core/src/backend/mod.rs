@@ -35,7 +35,7 @@ mod diagnostic;
 pub use diagnostic::RevertDiagnostic;
 
 mod error;
-pub use error::{DatabaseError, DatabaseResult, NoCheatcodeAccessError};
+pub use error::{DatabaseError, DatabaseResult};
 
 mod fuzz;
 pub use fuzz::FuzzBackendWrapper;
@@ -187,7 +187,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         transaction: B256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: I,
+        inspector: &mut I,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -287,19 +287,16 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// Ensures that `account` is allowed to execute cheatcodes
     ///
     /// Returns an error if [`Self::has_cheatcode_access`] returns `false`
-    fn ensure_cheatcode_access(&self, account: Address) -> Result<(), NoCheatcodeAccessError> {
+    fn ensure_cheatcode_access(&self, account: Address) -> Result<(), DatabaseError> {
         if !self.has_cheatcode_access(account) {
-            return Err(NoCheatcodeAccessError(account))
+            return Err(DatabaseError::NoCheats(account))
         }
         Ok(())
     }
 
     /// Same as [`Self::ensure_cheatcode_access()`] but only enforces it if the backend is currently
     /// in forking mode
-    fn ensure_cheatcode_access_forking_mode(
-        &self,
-        account: Address,
-    ) -> Result<(), NoCheatcodeAccessError> {
+    fn ensure_cheatcode_access_forking_mode(&self, account: Address) -> Result<(), DatabaseError> {
         if self.is_forked_mode() {
             return self.ensure_cheatcode_access(account)
         }
@@ -1176,7 +1173,7 @@ impl DatabaseExt for Backend {
         transaction: B256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: I,
+        inspector: &mut I,
     ) -> eyre::Result<()> {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let id = self.ensure_fork(maybe_id)?;

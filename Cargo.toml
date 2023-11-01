@@ -46,21 +46,23 @@ debug = 0
 # Speed up tests and dev build
 [profile.dev.package]
 # solc
-ethers-solc.opt-level = 3
+foundry-compilers.opt-level = 3
 solang-parser.opt-level = 3
 serde_json.opt-level = 3
 
 # evm
-revm.opt-level = 3
-revm-primitives.opt-level = 3
+alloy-primitives.opt-level = 3
+alloy-sol-types.opt-level = 3
+hashbrown.opt-level = 3
+keccak.opt-level = 3
 revm-interpreter.opt-level = 3
 revm-precompile.opt-level = 3
-tiny-keccak.opt-level = 3
+revm-primitives.opt-level = 3
+revm.opt-level = 3
+ruint.opt-level = 3
 sha2.opt-level = 3
 sha3.opt-level = 3
-keccak.opt-level = 3
-ruint.opt-level = 3
-hashbrown.opt-level = 3
+tiny-keccak.opt-level = 3
 
 # keystores
 scrypt.opt-level = 3
@@ -68,13 +70,13 @@ scrypt.opt-level = 3
 # forking
 axum.opt-level = 3
 
-# Optimized release profile
-[profile.release]
-opt-level = "s"
-lto = "fat"
+# Local "release" mode, more optimized than dev but much faster to compile than release
+[profile.local]
+inherits = "dev"
+opt-level = 1
 strip = true
 panic = "abort"
-codegen-units = 1
+codegen-units = 16
 
 # Like release, but with full debug symbols and with stack unwinds. Useful for e.g. `perf`.
 [profile.debug-fast]
@@ -84,13 +86,16 @@ strip = "none"
 panic = "unwind"
 incremental = false
 
+# Optimized release profile
+[profile.release]
+opt-level = 3
+lto = "fat"
+strip = true
+panic = "abort"
+codegen-units = 1
+
+# Override packages which aren't perf-sensitive for faster compilation speed
 [profile.release.package]
-# Optimize all non-workspace packages for speed
-"*".opt-level = 3
-
-# Package overrides
-foundry-evm.opt-level = 3
-
 foundry-abi.opt-level = 1
 mdbook.opt-level = 1
 protobuf.opt-level = 1
@@ -99,47 +104,6 @@ rusoto_credential.opt-level = 1
 rusoto_kms.opt-level = 1
 toml_edit.opt-level = 1
 trezor-client.opt-level = 1
-
-# Given that the `"*"` above takes precedence over the defaults for build scripts and macros, we
-# have to override all of them to reduce compile times
-syn.opt-level = 0
-prettyplease.opt-level = 0
-lalrpop.opt-level = 0
-
-ethers-contract-abigen.opt-level = 0
-ethers-contract-derive.opt-level = 0
-async-recursion.opt-level = 0
-miette-derive.opt-level = 0
-strum_macros.opt-level = 0
-enumn.opt-level = 0
-clap_derive.opt-level = 0
-serde_derive.opt-level = 0
-pear_codegen.opt-level = 0
-num_enum_derive.opt-level = 0
-scale-info-derive.opt-level = 0
-parity-scale-codec-derive.opt-level = 0
-time-macros.opt-level = 0
-phf_macros.opt-level = 0
-pin-project-internal.opt-level = 0
-auto_impl.opt-level = 0
-derive_more.opt-level = 0
-rlp-derive.opt-level = 0
-impl-trait-for-tuples.opt-level = 0
-async-trait.opt-level = 0
-tokio-macros.opt-level = 0
-tracing-attributes.opt-level = 0
-futures-macro.opt-level = 0
-thiserror-impl.opt-level = 0
-wasm-bindgen-macro-support.opt-level = 0
-wasm-bindgen-backend.opt-level = 0
-
-# Local "release" mode, more optimized than dev but much faster to compile than release
-[profile.local]
-inherits = "dev"
-opt-level = 1
-strip = true
-panic = "abort"
-codegen-units = 16
 
 [workspace.dependencies]
 anvil = { path = "crates/anvil" }
@@ -192,7 +156,7 @@ alloy-json-abi = "0.4.1"
 alloy-sol-types = "0.4.1"
 syn-solidity = "0.4.1"
 
-solang-parser = "=0.3.2"
+solang-parser = "=0.3.3"
 
 ## Vyper
 vyper-rs = "1.0.0"
@@ -223,16 +187,16 @@ color-eyre = "0.6"
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
-ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
-ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
-ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
-ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
-ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "9754f22d06a2defe5608c4c9b809cc361443a3dc" }
+ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "efdc8d43318b818178c93a19a42b2b7e49e678eb" }
+ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", rev = "efdc8d43318b818178c93a19a42b2b7e49e678eb" }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "efdc8d43318b818178c93a19a42b2b7e49e678eb" }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "efdc8d43318b818178c93a19a42b2b7e49e678eb" }
+ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "efdc8d43318b818178c93a19a42b2b7e49e678eb" }
+ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "efdc8d43318b818178c93a19a42b2b7e49e678eb" }
+ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "efdc8d43318b818178c93a19a42b2b7e49e678eb" }
+ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "efdc8d43318b818178c93a19a42b2b7e49e678eb" }
+ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "efdc8d43318b818178c93a19a42b2b7e49e678eb" }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "efdc8d43318b818178c93a19a42b2b7e49e678eb" }
 
 foundry-compilers = { git = "https://github.com/foundry-rs/compilers" }
 foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers" }

@@ -49,7 +49,7 @@ use foundry_config::{
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     decode,
-    inspectors::cheatcodes::{util::BroadcastableTransactions, BroadcastableTransaction},
+    inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::future;

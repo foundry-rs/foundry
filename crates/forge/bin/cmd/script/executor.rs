@@ -10,7 +10,7 @@ use eyre::Result;
 use forge::{
     backend::Backend,
     executors::ExecutorBuilder,
-    inspectors::{cheatcodes::util::BroadcastableTransactions, CheatsConfig},
+    inspectors::{cheatcodes::BroadcastableTransactions, CheatsConfig},
     traces::{CallTraceDecoder, Traces},
     utils::CallKind,
 };
@@ -227,8 +227,8 @@ impl ScriptArgs {
                 // Identify all contracts created during the call.
                 if traces.is_empty() {
                     eyre::bail!(
-                        "Forge script requires tracing enabled to collect created contracts."
-                    )
+                        "forge script requires tracing enabled to collect created contracts"
+                    );
                 }
 
                 for (_kind, trace) in &mut traces {
@@ -256,7 +256,9 @@ impl ScriptArgs {
         let sender = script_config.evm_opts.sender;
 
         if !shell::verbosity().is_silent() {
-            eprintln!("\n## Setting up ({}) EVMs.", script_config.total_rpcs.len());
+            let n = script_config.total_rpcs.len();
+            let s = if n != 1 { "s" } else { "" };
+            println!("\n## Setting up {n} EVM{s}.");
         }
 
         let futs = script_config
@@ -318,7 +320,7 @@ impl ScriptArgs {
         if let SimulationStage::Local = stage {
             builder = builder.inspectors(|stack| {
                 stack.debug(self.debug).cheatcodes(
-                    CheatsConfig::new(&script_config.config, &script_config.evm_opts).into(),
+                    CheatsConfig::new(&script_config.config, script_config.evm_opts.clone()).into(),
                 )
             });
         }

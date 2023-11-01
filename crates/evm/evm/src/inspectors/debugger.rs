@@ -5,7 +5,7 @@ use foundry_evm_core::{
     debug::{DebugArena, DebugNode, DebugStep, Instruction},
     utils::{gas_used, get_create_address, CallKind},
 };
-use foundry_utils::error::SolError;
+use foundry_utils::error::ErrorExt;
 use revm::{
     interpreter::{
         opcode::{self, spec_opcode_gas},
