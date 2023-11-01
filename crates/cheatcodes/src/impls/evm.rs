@@ -206,7 +206,6 @@ impl Cheatcode for warpCall {
 impl Cheatcode for dealCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { account: address, newBalance: new_balance } = *self;
-        ensure_not_precompile!(&address, ccx);
         let account = journaled_account(ccx.data, address)?;
         let old_balance = std::mem::replace(&mut account.info.balance, new_balance);
         let record = DealRecord { address, old_balance, new_balance };
