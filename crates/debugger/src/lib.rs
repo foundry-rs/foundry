@@ -13,10 +13,8 @@ use eyre::Result;
 use foundry_common::{compile::ContractSources, evm::Breakpoints};
 use foundry_evm::{
     debug::{DebugStep, Instruction},
-    utils::{build_pc_ic_map, PCICMap},
-    CallKind,
+    utils::{build_pc_ic_map, CallKind, PCICMap},
 };
-use foundry_utils::types::ToAlloy;
 use ratatui::{
     backend::{Backend, CrosstermBackend},
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -1105,7 +1103,7 @@ impl Ui for Tui {
                     // address with this pc)
                     if let Some((caller, pc)) = self.breakpoints.get(&c) {
                         for (i, (_caller, debug_steps, _)) in debug_call.iter().enumerate() {
-                            if _caller == &caller.to_alloy() {
+                            if _caller == caller {
                                 if let Some(step) =
                                     debug_steps.iter().position(|step| step.pc == *pc)
                                 {

@@ -287,7 +287,7 @@ fn expect_call(
     let expecteds = state.expected_calls.entry(*target).or_default();
 
     if let Some(val) = value {
-        if *val >= U256::ZERO {
+        if *val > U256::ZERO {
             // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
             // to ensure that the basic fallback function can be called.
             let positive_value_cost_stipend = 2300;
@@ -395,8 +395,8 @@ pub(crate) fn handle_expect_emit(
         return
     };
 
-    let expected_topic_0 = expected.topics().get(0);
-    let log_topic_0 = topics.get(0);
+    let expected_topic_0 = expected.topics().first();
+    let log_topic_0 = topics.first();
 
     if expected_topic_0
         .zip(log_topic_0)

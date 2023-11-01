@@ -12,9 +12,8 @@ use foundry_config::{
     InvariantConfig, RpcEndpoint, RpcEndpoints,
 };
 use foundry_evm::{
-    decode::decode_console_logs, executor::inspector::CheatsConfig, revm::primitives::SpecId,
+    decode::decode_console_logs, inspectors::CheatsConfig, revm::primitives::SpecId,
 };
-use foundry_utils::types::ToAlloy;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -28,14 +27,13 @@ pub struct TestConfig {
     pub opts: TestOptions,
 }
 
-// === impl TestConfig ===
-
 impl TestConfig {
     pub fn new(runner: MultiContractRunner) -> Self {
         Self::with_filter(runner, Filter::matches_all())
     }
 
     pub fn with_filter(runner: MultiContractRunner, filter: Filter) -> Self {
+        init_tracing();
         Self { runner, should_fail: false, filter, opts: test_opts() }
     }
 
@@ -166,15 +164,14 @@ pub async fn runner_with_config(mut config: Config) -> MultiContractRunner {
     config.rpc_endpoints = rpc_endpoints();
     config.allow_paths.push(manifest_root());
 
+    let root = &PROJECT.paths.root;
+    let opts = &*EVM_OPTS;
+    let env = opts.evm_env().await.expect("could not instantiate fork environment");
+    let output = COMPILED.clone();
     base_runner()
-        .with_cheats_config(CheatsConfig::new(&config, &EVM_OPTS))
-        .sender(config.sender.to_alloy())
-        .build(
-            &PROJECT.paths.root,
-            (*COMPILED).clone(),
-            EVM_OPTS.evm_env().await.expect("Could not instantiate fork environment"),
-            EVM_OPTS.clone(),
-        )
+        .with_cheats_config(CheatsConfig::new(&config, opts.clone()))
+        .sender(config.sender)
+        .build(root, output, env, opts.clone())
         .unwrap()
 }
 

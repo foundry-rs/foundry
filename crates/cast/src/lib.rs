@@ -1,23 +1,24 @@
 use crate::rlp_converter::Item;
+use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
+use alloy_json_abi::Function;
+use alloy_primitives::{Address, I256, U256};
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
-    abi::{
-        token::{LenientTokenizer, Tokenizer},
-        Function, HumanReadableParser, ParamType, RawAbi, Token,
-    },
+    abi::RawAbi,
     types::{transaction::eip2718::TypedTransaction, Chain, *},
     utils::{
         format_bytes32_string, format_units, get_contract_address, keccak256, parse_bytes32_string,
         parse_units, rlp, Units,
     },
 };
-use ethers_etherscan::{errors::EtherscanError, Client};
 use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
 use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
-use eyre::{Context, Result};
-use foundry_common::{abi::encode_args, fmt::*, TransactionReceiptWithRevertReason};
+use eyre::{Context, ContextCompat, Result};
+use foundry_block_explorers::{errors::EtherscanError, Client};
+use foundry_common::{abi::encode_function_args, fmt::*, TransactionReceiptWithRevertReason};
 pub use foundry_evm::*;
+use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
 pub use rusoto_core::{
@@ -105,7 +106,7 @@ where
 
         if let Some(func) = func {
             // decode args into tokens
-            decoded = match func.decode_output(res.as_ref()) {
+            decoded = match func.abi_decode_output(res.as_ref(), false) {
                 Ok(decoded) => decoded,
                 Err(err) => {
                     // ensure the address is a contract
@@ -177,7 +178,7 @@ where
             let mut s =
                 vec![format!("gas used: {}", access_list.gas_used), "access list:".to_string()];
             for al in access_list.access_list.0 {
-                s.push(format!("- address: {}", SimpleCast::to_checksum_address(&al.address)));
+                s.push(format!("- address: {}", &al.address.to_alloy().to_checksum(None)));
                 if !al.storage_keys.is_empty() {
                     s.push("  keys:".to_string());
                     for key in al.storage_keys {
@@ -196,7 +197,7 @@ where
         who: T,
         block: Option<BlockId>,
     ) -> Result<U256> {
-        Ok(self.provider.get_balance(who, block).await?)
+        Ok(self.provider.get_balance(who, block).await?.to_alloy())
     }
 
     /// Sends a transaction to the specified address
@@ -205,20 +206,21 @@ where
     ///
     /// ```no_run
     /// use cast::{Cast, TxBuilder};
-    /// use ethers_core::types::{Address, Chain, U256};
+    /// use ethers_core::types::{Chain, Address as eAddress};
+    /// use alloy_primitives::{Address, U256};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let from = "vitalik.eth";
-    /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
+    /// let to = eAddress::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greet(string)()";
     /// let args = vec!["hello".to_owned()];
     /// let gas = U256::from_str("200000").unwrap();
     /// let value = U256::from_str("1").unwrap();
     /// let nonce = U256::from_str("1").unwrap();
-    /// let mut builder = TxBuilder::new(&provider, Address::zero(), Some(to), Chain::Mainnet, false).await?;
+    /// let mut builder = TxBuilder::new(&provider, from, Some(to), Chain::Mainnet, false).await?;
     /// builder
     ///     .set_args(sig, args).await?
     ///     .set_gas(gas)
@@ -274,13 +276,14 @@ where
     ///
     /// ```no_run
     /// use cast::{Cast, TxBuilder};
-    /// use ethers_core::types::{Address, Chain, U256};
+    /// use ethers_core::types::{Address, Chain};
+    /// use alloy_primitives::U256;
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let from = "vitalik.eth";
+    /// let from = Address::from_str("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")?;
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greet(string)()";
     /// let args = vec!["5".to_owned()];
@@ -301,7 +304,7 @@ where
 
         let res = self.provider.estimate_gas(tx, None).await?;
 
-        Ok::<_, eyre::Error>(res)
+        Ok::<_, eyre::Error>(res.to_alloy())
     }
 
     /// # Example
@@ -460,7 +463,7 @@ where
     }
 
     pub async fn chain_id(&self) -> Result<U256> {
-        Ok(self.provider.get_chainid().await?)
+        Ok(self.provider.get_chainid().await?.to_alloy())
     }
 
     pub async fn block_number(&self) -> Result<U64> {
@@ -468,7 +471,7 @@ where
     }
 
     pub async fn gas_price(&self) -> Result<U256> {
-        Ok(self.provider.get_gas_price().await?)
+        Ok(self.provider.get_gas_price().await?.to_alloy())
     }
 
     /// # Example
@@ -476,13 +479,13 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use ethers_core::types::Address;
+    /// use ethers::types::NameOrAddress;
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
-    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let addr = NameOrAddress::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let nonce = cast.nonce(addr, None).await?;
     /// println!("{}", nonce);
     /// # Ok(())
@@ -493,7 +496,7 @@ where
         who: T,
         block: Option<BlockId>,
     ) -> Result<U256> {
-        Ok(self.provider.get_transaction_count(who, block).await?)
+        Ok(self.provider.get_transaction_count(who, block).await?.to_alloy())
     }
 
     /// # Example
@@ -559,14 +562,16 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use ethers_core::types::Address;
+    /// use ethers::types::NameOrAddress;
+    /// use alloy_primitives::{Address, U256};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
-    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
-    /// let nonce = cast.nonce(addr, None).await? + 5;
+    /// let nonce_addr = NameOrAddress::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let addr = Address::from_str("7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let nonce = cast.nonce(nonce_addr, None).await? + U256::from(5);
     /// let computed_address = cast.compute_address(addr, Some(nonce)).await?;
     /// println!("Computed address for address {} with nonce {}: {}", addr, nonce, computed_address);
     /// let computed_address_no_nonce = cast.compute_address(addr, None).await?;
@@ -582,10 +587,10 @@ where
         let unpacked = if let Some(n) = nonce {
             n
         } else {
-            self.provider.get_transaction_count(address.into(), None).await?
+            self.provider.get_transaction_count(address.into().to_ethers(), None).await?.to_alloy()
         };
 
-        Ok(get_contract_address(address, unpacked))
+        Ok(get_contract_address(address.into().to_ethers(), unpacked.to_ethers()).to_alloy())
     }
 
     /// # Example
@@ -1011,24 +1016,23 @@ impl SimpleCast {
     }
 
     fn max_min_int<const MAX: bool>(s: &str) -> Result<String> {
-        let ty = HumanReadableParser::parse_type(s)
-            .wrap_err("Invalid type, expected `(u)int<bit size>`")?;
+        let ty = DynSolType::parse(s).wrap_err("Invalid type, expected `(u)int<bit size>`")?;
         match ty {
-            ParamType::Int(n) => {
-                let mask = U256::one() << U256::from(n - 1);
-                let max = (U256::MAX & mask) - 1;
+            DynSolType::Int(n) => {
+                let mask = U256::from(1).wrapping_shl(n - 1);
+                let max = (U256::MAX & mask).saturating_sub(U256::from(1));
                 if MAX {
                     Ok(max.to_string())
                 } else {
-                    let min = I256::from_raw(max).wrapping_neg() + I256::minus_one();
+                    let min = I256::from_raw(max).wrapping_neg() + I256::MINUS_ONE;
                     Ok(min.to_string())
                 }
             }
-            ParamType::Uint(n) => {
+            DynSolType::Uint(n) => {
                 if MAX {
                     let mut max = U256::MAX;
                     if n < 255 {
-                        max &= U256::one() << U256::from(n);
+                        max &= U256::from(1).wrapping_shl(n);
                     }
                     Ok(max.to_string())
                 } else {
@@ -1173,28 +1177,6 @@ impl SimpleCast {
         format!("0x{out}")
     }
 
-    /// Converts an Ethereum address to its checksum format
-    /// according to [EIP-55](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-55.md)
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    /// use ethers_core::types::Address;
-    /// use std::str::FromStr;
-    ///
-    /// # fn main() -> eyre::Result<()> {
-    /// let addr = Address::from_str("0xb7e390864a90b7b923c9f9310c6f98aafe43f707")?;
-    /// let addr = Cast::to_checksum_address(&addr);
-    /// assert_eq!(addr, "0xB7e390864a90b7b923C9f9310C6F98aafE43F707");
-    ///
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn to_checksum_address(address: &Address) -> String {
-        ethers_core::utils::to_checksum(address, None)
-    }
-
     /// Converts a number into uint256 hex string with 0x prefix
     ///
     /// # Example
@@ -1265,28 +1247,33 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_unit(value: &str, unit: &str) -> Result<String> {
-        let value = U256::from(LenientTokenizer::tokenize_uint(value)?);
+        let value = DynSolType::coerce_str(&DynSolType::Uint(256), value)?
+            .as_uint()
+            .wrap_err("Could not convert to uint")?
+            .0;
 
         Ok(match unit {
-            "eth" | "ether" => ethers_core::utils::format_units(value, 18)?
+            "eth" | "ether" => foundry_common::units::format_units(value, 18)?
                 .trim_end_matches(".000000000000000000")
                 .to_string(),
-            "milli" | "milliether" => ethers_core::utils::format_units(value, 15)?
+            "milli" | "milliether" => foundry_common::units::format_units(value, 15)?
                 .trim_end_matches(".000000000000000")
                 .to_string(),
-            "micro" | "microether" => ethers_core::utils::format_units(value, 12)?
+            "micro" | "microether" => foundry_common::units::format_units(value, 12)?
                 .trim_end_matches(".000000000000")
                 .to_string(),
-            "gwei" | "nano" | "nanoether" => ethers_core::utils::format_units(value, 9)?
+            "gwei" | "nano" | "nanoether" => foundry_common::units::format_units(value, 9)?
                 .trim_end_matches(".000000000")
                 .to_string(),
-            "mwei" | "mega" | "megaether" => {
-                ethers_core::utils::format_units(value, 6)?.trim_end_matches(".000000").to_string()
-            }
+            "mwei" | "mega" | "megaether" => foundry_common::units::format_units(value, 6)?
+                .trim_end_matches(".000000")
+                .to_string(),
             "kwei" | "kilo" | "kiloether" => {
-                ethers_core::utils::format_units(value, 3)?.trim_end_matches(".000").to_string()
+                foundry_common::units::format_units(value, 3)?.trim_end_matches(".000").to_string()
             }
-            "wei" => ethers_core::utils::format_units(value, 0)?.trim_end_matches(".0").to_string(),
+            "wei" => {
+                foundry_common::units::format_units(value, 0)?.trim_end_matches(".0").to_string()
+            }
             _ => eyre::bail!("invalid unit: \"{}\"", unit),
         })
     }
@@ -1485,7 +1472,7 @@ impl SimpleCast {
         let lowercase_address_string = format!("0x{s}");
         let lowercase_address = Address::from_str(&lowercase_address_string)?;
 
-        Ok(ethers_core::utils::to_checksum(&lowercase_address, None))
+        Ok(lowercase_address.to_checksum(None))
     }
 
     /// Decodes abi-encoded hex input or output
@@ -1496,6 +1483,7 @@ impl SimpleCast {
     ///
     /// ```
     /// use cast::SimpleCast as Cast;
+    /// use hex;
     ///
     /// fn main() -> eyre::Result<()> {
     ///     // Passing `input = false` will decode the data as the output type.
@@ -1503,7 +1491,7 @@ impl SimpleCast {
     ///     // you could also pass `balanceOf()(uint256)` and it'd still work.
     ///     let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
     ///     let sig = "balanceOf(address, uint256)(uint256)";
-    ///     let decoded = Cast::abi_decode(sig, data, false)?[0].to_string();
+    ///     let decoded = Cast::abi_decode(sig, data, false)?[0].as_uint().unwrap().0.to_string();
     ///     assert_eq!(decoded, "1");
     ///
     ///     // Passing `input = true` will decode the data with the input function signature.
@@ -1511,18 +1499,27 @@ impl SimpleCast {
     ///     let data = "0x0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
     ///     let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
     ///     let decoded = Cast::abi_decode(sig, data, true)?;
-    ///     let decoded = decoded.iter().map(ToString::to_string).collect::<Vec<_>>();
+    ///     let decoded = [
+    ///         decoded[0].as_address().unwrap().to_string().to_lowercase(),
+    ///         decoded[1].as_address().unwrap().to_string().to_lowercase(),
+    ///         decoded[2].as_uint().unwrap().0.to_string(),
+    ///         decoded[3].as_uint().unwrap().0.to_string(),
+    ///         hex::encode(decoded[4].as_bytes().unwrap())    
+    ///     ]
+    ///     .into_iter()
+    ///     .collect::<Vec<_>>();
+    ///
     ///     assert_eq!(
     ///         decoded,
-    ///         vec!["8dbd1b711dc621e1404633da156fcc779e1c6f3e", "d9f3c9cc99548bf3b44a43e0a2d07399eb918adc", "2a", "1", ""]
+    ///         vec!["0x8dbd1b711dc621e1404633da156fcc779e1c6f3e", "0xd9f3c9cc99548bf3b44a43e0a2d07399eb918adc", "42", "1", ""]
     ///     );
     ///
     ///
     ///     # Ok(())
     /// }
     /// ```
-    pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
-        foundry_common::abi::abi_decode(sig, calldata, input, false)
+    pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<DynSolValue>> {
+        foundry_common::abi::abi_decode_calldata(sig, calldata, input, false)
     }
 
     /// Decodes calldata-encoded hex input or output
@@ -1533,6 +1530,7 @@ impl SimpleCast {
     ///
     /// ```
     /// use cast::SimpleCast as Cast;
+    /// use hex;
     ///
     /// fn main() -> eyre::Result<()> {
     ///     // Passing `input = false` will decode the data as the output type.
@@ -1540,25 +1538,33 @@ impl SimpleCast {
     ///     // you could also pass `balanceOf()(uint256)` and it'd still work.
     ///     let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
     ///     let sig = "balanceOf(address, uint256)(uint256)";
-    ///     let decoded = Cast::calldata_decode(sig, data, false)?[0].to_string();
+    ///     let decoded = Cast::calldata_decode(sig, data, false)?[0].as_uint().unwrap().0.to_string();
     ///     assert_eq!(decoded, "1");
     ///
     ///     // Passing `input = true` will decode the data with the input function signature.
     ///     let data = "0xf242432a0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
     ///     let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
     ///     let decoded = Cast::calldata_decode(sig, data, true)?;
-    ///     let decoded = decoded.iter().map(ToString::to_string).collect::<Vec<_>>();
+    ///     let decoded = [
+    ///         decoded[0].as_address().unwrap().to_string().to_lowercase(),
+    ///         decoded[1].as_address().unwrap().to_string().to_lowercase(),
+    ///         decoded[2].as_uint().unwrap().0.to_string(),
+    ///         decoded[3].as_uint().unwrap().0.to_string(),
+    ///         hex::encode(decoded[4].as_bytes().unwrap()),
+    ///    ]
+    ///    .into_iter()
+    ///    .collect::<Vec<_>>();
     ///     assert_eq!(
     ///         decoded,
-    ///         vec!["8dbd1b711dc621e1404633da156fcc779e1c6f3e", "d9f3c9cc99548bf3b44a43e0a2d07399eb918adc", "2a", "1", ""]
+    ///         vec!["0x8dbd1b711dc621e1404633da156fcc779e1c6f3e", "0xd9f3c9cc99548bf3b44a43e0a2d07399eb918adc", "42", "1", ""]
     ///     );
     ///
     ///
     ///     # Ok(())
     /// }
     /// ```
-    pub fn calldata_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
-        foundry_common::abi::abi_decode(sig, calldata, input, true)
+    pub fn calldata_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<DynSolValue>> {
+        foundry_common::abi::abi_decode_calldata(sig, calldata, input, true)
     }
 
     /// Performs ABI encoding based off of the function signature. Does not include
@@ -1582,28 +1588,13 @@ impl SimpleCast {
     /// # }
     /// ```
     pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = match HumanReadableParser::parse_function(sig) {
+        let func = match Function::parse(sig) {
             Ok(func) => func,
             Err(err) => {
-                if let Ok(constructor) = HumanReadableParser::parse_constructor(sig) {
-                    #[allow(deprecated)]
-                    Function {
-                        name: "constructor".to_string(),
-                        inputs: constructor.inputs,
-                        outputs: vec![],
-                        constant: None,
-                        state_mutability: Default::default(),
-                    }
-                } else {
-                    // we return the `Function` parse error as this case is more likely
-                    eyre::bail!("Could not process human-readable ABI. Please check if you've left the parenthesis unclosed or if some type is incomplete.\nError:\n{}", err)
-                    // return Err(err.into()).wrap_err("Could not process human-readable ABI. Please
-                    // check if you've left the parenthesis unclosed or if some type is
-                    // incomplete.")
-                }
+                eyre::bail!("Could not process human-readable ABI. Please check if you've left the parenthesis unclosed or if some type is incomplete.\nError:\n{}", err)
             }
         };
-        let calldata = match encode_args(&func, args) {
+        let calldata = match encode_function_args(&func, args) {
             Ok(res) => hex::encode(res),
             Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
         };
@@ -1620,15 +1611,15 @@ impl SimpleCast {
     ///
     /// # fn main() -> eyre::Result<()> {
     ///     assert_eq!(
-    ///         "0xb3de648b0000000000000000000000000000000000000000000000000000000000000001",
+    ///         "0x693c61390000000000000000000000000000000000000000000000000000000000000001",
     ///         Cast::calldata_encode("f(uint a)", &["1"]).unwrap().as_str()
     ///     );
     /// #    Ok(())
     /// # }
     /// ```
     pub fn calldata_encode(sig: impl AsRef<str>, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = HumanReadableParser::parse_function(sig.as_ref())?;
-        let calldata = encode_args(&func, args)?;
+        let func = Function::parse(sig.as_ref())?;
+        let calldata = encode_function_args(&func, args)?;
         Ok(hex::encode_prefixed(calldata))
     }
 
@@ -1944,8 +1935,8 @@ impl SimpleCast {
             eyre::bail!("Number of leading zeroes must not be greater than 4");
         }
         if optimize == 0 {
-            let selector = HumanReadableParser::parse_function(signature)?.short_signature();
-            return Ok((hex::encode_prefixed(selector), String::from(signature)))
+            let selector = Function::parse(signature)?.selector();
+            return Ok((selector.to_string(), String::from(signature)))
         }
         let Some((name, params)) = signature.split_once('(') else {
             eyre::bail!("Invalid signature");
@@ -2009,11 +2000,25 @@ fn strip_0x(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::SimpleCast as Cast;
+    use alloy_primitives::hex;
+
+    #[test]
+    fn simple_selector() {
+        assert_eq!("0xc2985578", Cast::get_selector("foo()", None).unwrap().0.as_str())
+    }
+
+    #[test]
+    fn selector_with_arg() {
+        assert_eq!(
+            "0xbd0d639f",
+            Cast::get_selector("foo(address,uint256)", None).unwrap().0.as_str()
+        )
+    }
 
     #[test]
     fn calldata_uint() {
         assert_eq!(
-            "0xb3de648b0000000000000000000000000000000000000000000000000000000000000001",
+            "0x693c61390000000000000000000000000000000000000000000000000000000000000001",
             Cast::calldata_encode("f(uint a)", &["1"]).unwrap().as_str()
         );
     }
@@ -2039,18 +2044,42 @@ mod tests {
     fn abi_decode() {
         let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
         let sig = "balanceOf(address, uint256)(uint256)";
-        assert_eq!("1", Cast::abi_decode(sig, data, false).unwrap()[0].to_string());
+        assert_eq!(
+            "1",
+            Cast::abi_decode(sig, data, false).unwrap()[0].as_uint().unwrap().0.to_string()
+        );
 
         let data = "0x0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
         let sig = "safeTransferFrom(address,address,uint256,uint256,bytes)";
         let decoded = Cast::abi_decode(sig, data, true).unwrap();
-        let decoded = decoded.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let decoded = [
+            decoded[0]
+                .as_address()
+                .unwrap()
+                .to_string()
+                .strip_prefix("0x")
+                .unwrap()
+                .to_owned()
+                .to_lowercase(),
+            decoded[1]
+                .as_address()
+                .unwrap()
+                .to_string()
+                .strip_prefix("0x")
+                .unwrap()
+                .to_owned()
+                .to_lowercase(),
+            decoded[2].as_uint().unwrap().0.to_string(),
+            decoded[3].as_uint().unwrap().0.to_string(),
+            hex::encode(decoded[4].as_bytes().unwrap()),
+        ]
+        .to_vec();
         assert_eq!(
             decoded,
             vec![
                 "8dbd1b711dc621e1404633da156fcc779e1c6f3e",
                 "d9f3c9cc99548bf3b44a43e0a2d07399eb918adc",
-                "2a",
+                "42",
                 "1",
                 ""
             ]
@@ -2061,7 +2090,8 @@ mod tests {
     fn calldata_decode() {
         let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
         let sig = "balanceOf(address, uint256)(uint256)";
-        let decoded = Cast::calldata_decode(sig, data, false).unwrap()[0].to_string();
+        let decoded =
+            Cast::calldata_decode(sig, data, false).unwrap()[0].as_uint().unwrap().0.to_string();
         assert_eq!(decoded, "1");
 
         // Passing `input = true` will decode the data with the input function signature.
@@ -2069,13 +2099,21 @@ mod tests {
         let data = "0xf242432a0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
         let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
         let decoded = Cast::calldata_decode(sig, data, true).unwrap();
-        let decoded = decoded.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let decoded = [
+            decoded[0].as_address().unwrap().to_string().to_lowercase(),
+            decoded[1].as_address().unwrap().to_string().to_lowercase(),
+            decoded[2].as_uint().unwrap().0.to_string(),
+            decoded[3].as_uint().unwrap().0.to_string(),
+            hex::encode(decoded[4].as_bytes().unwrap()),
+        ]
+        .into_iter()
+        .collect::<Vec<_>>();
         assert_eq!(
             decoded,
             vec![
-                "8dbd1b711dc621e1404633da156fcc779e1c6f3e",
-                "d9f3c9cc99548bf3b44a43e0a2d07399eb918adc",
-                "2a",
+                "0x8dbd1b711dc621e1404633da156fcc779e1c6f3e",
+                "0xd9f3c9cc99548bf3b44a43e0a2d07399eb918adc",
+                "42",
                 "1",
                 ""
             ]

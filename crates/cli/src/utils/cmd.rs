@@ -1,28 +1,27 @@
-use ethers::{
-    abi::Abi,
-    core::types::Chain,
-    solc::{
-        artifacts::{CompactBytecode, CompactDeployedBytecode},
-        cache::{CacheEntry, SolFilesCache},
-        info::ContractInfo,
-        utils::read_json_file,
-        Artifact, ProjectCompileOutput,
-    },
-};
+use alloy_json_abi::JsonAbi as Abi;
+use alloy_primitives::Address;
+use ethers::core::types::Chain;
 use eyre::{Result, WrapErr};
 use foundry_common::{cli_warn, fs, TestFunctionExt};
+use foundry_compilers::{
+    artifacts::{CompactBytecode, CompactDeployedBytecode},
+    cache::{CacheEntry, SolFilesCache},
+    info::ContractInfo,
+    utils::read_json_file,
+    Artifact, ProjectCompileOutput,
+};
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain as ConfigChain, Config};
 use foundry_debugger::DebuggerArgs;
 use foundry_evm::{
     debug::DebugArena,
-    executor::{opts::EvmOpts, DeployResult, EvmError, ExecutionErr, RawCallResult},
-    trace::{
+    executors::{DeployResult, EvmError, ExecutionErr, RawCallResult},
+    opts::EvmOpts,
+    traces::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
 use std::{fmt::Write, path::PathBuf, str::FromStr};
-use tracing::trace;
 use yansi::Paint;
 
 /// Given a `Project`'s output, removes the matching ABI, Bytecode and
@@ -369,9 +368,7 @@ pub async fn handle_traces(
         let mut iter = label_str.split(':');
 
         if let Some(addr) = iter.next() {
-            if let (Ok(address), Some(label)) =
-                (ethers::types::Address::from_str(addr), iter.next())
-            {
+            if let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next()) {
                 return Some((address, label.to_string()))
             }
         }

@@ -1,33 +1,35 @@
 #![allow(unused)]
 
 use super::*;
-use ethers::{
-    prelude::{artifacts::Settings, Lazy, ProjectCompileOutput, SolcConfig},
-    solc::{artifacts::Libraries, Project, ProjectPathsConfig},
-    types::{Address, U256},
+use alloy_primitives::{Address, U256};
+use foundry_compilers::{
+    artifacts::{Libraries, Settings},
+    Project, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
 };
 use foundry_config::Config;
 use foundry_evm::{
-    executor::{
-        backend::Backend,
-        opts::{Env, EvmOpts},
-        DatabaseRef, Executor, ExecutorBuilder,
-    },
-    fuzz::FuzzedExecutor,
-    CALLER,
+    backend::Backend,
+    constants::CALLER,
+    executors::{Executor, ExecutorBuilder, FuzzedExecutor},
+    opts::{Env, EvmOpts},
+    revm::db::DatabaseRef,
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
-use std::{path::PathBuf, str::FromStr};
+use once_cell::sync::Lazy;
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
+
+const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata");
 
 pub static PROJECT: Lazy<Project> = Lazy::new(|| {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata");
-    let paths = ProjectPathsConfig::builder().root(root.clone()).sources(root).build().unwrap();
+    let paths = ProjectPathsConfig::builder().root(TESTDATA).sources(TESTDATA).build().unwrap();
     Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap()
 });
 
 pub static LIBS_PROJECT: Lazy<Project> = Lazy::new(|| {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata");
-    let paths = ProjectPathsConfig::builder().root(root.clone()).sources(root).build().unwrap();
+    let paths = ProjectPathsConfig::builder().root(TESTDATA).sources(TESTDATA).build().unwrap();
     let libs =
         ["fork/Fork.t.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string()];
 
@@ -65,15 +67,15 @@ pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
     env: Env {
         gas_limit: u64::MAX,
         chain_id: None,
-        tx_origin: Config::DEFAULT_SENDER.to_alloy(),
+        tx_origin: Config::DEFAULT_SENDER,
         block_number: 1,
         block_timestamp: 1,
         ..Default::default()
     },
-    sender: Config::DEFAULT_SENDER.to_alloy(),
-    initial_balance: U256::MAX.to_alloy(),
+    sender: Config::DEFAULT_SENDER,
+    initial_balance: U256::MAX,
     ffi: true,
-    memory_limit: 2u64.pow(24),
+    memory_limit: 1 << 24,
     ..Default::default()
 });
 
@@ -83,7 +85,7 @@ pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor) -> FuzzedExecutor {
     FuzzedExecutor::new(
         executor,
         proptest::test_runner::TestRunner::new(cfg),
-        CALLER.to_ethers(),
+        CALLER,
         config::test_opts().fuzz,
     )
 }

@@ -9,11 +9,11 @@ use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_json_abi::EventParam;
 use alloy_primitives::{hex, Address, U256};
 use core::fmt::Debug;
-use ethers_solc::Artifact;
 use eyre::{Result, WrapErr};
+use foundry_compilers::Artifact;
 use foundry_evm::{
-    decode::decode_console_logs,
-    executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
+    backend::Backend, decode::decode_console_logs, executors::ExecutorBuilder,
+    inspectors::CheatsConfig,
 };
 use foundry_utils::types::ToEthers;
 use solang_parser::pt::{self, CodeLocation};
@@ -292,7 +292,8 @@ impl SessionSource {
         let executor = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack.chisel_state(final_pc).trace(true).cheatcodes(
-                    CheatsConfig::new(&self.config.foundry_config, &self.config.evm_opts).into(),
+                    CheatsConfig::new(&self.config.foundry_config, self.config.evm_opts.clone())
+                        .into(),
                 )
             })
             .gas_limit(self.config.evm_opts.gas_limit())
@@ -1362,7 +1363,7 @@ impl<'a> Iterator for InstructionIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers_solc::{error::SolcError, Solc};
+    use foundry_compilers::{error::SolcError, Solc};
     use std::sync::Mutex;
 
     #[test]

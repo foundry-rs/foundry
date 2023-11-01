@@ -1,19 +1,17 @@
 //! Contains various tests for checking forge commands related to config values
 
-use ethers::{
-    prelude::artifacts::YulDetails,
-    solc::artifacts::RevertStrings,
-    types::{Address, H256, U256},
-};
+use alloy_primitives::{Address, B256, U256};
 use foundry_cli::utils as forge_utils;
+use foundry_compilers::artifacts::{RevertStrings, YulDetails};
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     Config, FuzzConfig, InvariantConfig, OptimizerDetails, SolcReq,
 };
-use foundry_evm::executor::opts::EvmOpts;
+use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
-    ethers_solc::{remappings::Remapping, EvmVersion},
-    forgetest, forgetest_init, pretty_eq,
+    forgetest, forgetest_init,
+    foundry_compilers::{remappings::Remapping, EvmVersion},
+    pretty_eq,
     util::{pretty_err, OutputExt, TestCommand, TestProject},
 };
 use path_slash::PathBufExt;
@@ -62,7 +60,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         fuzz: FuzzConfig {
             runs: 1000,
             max_test_rejects: 100203,
-            seed: Some(1000.into()),
+            seed: Some(U256::from(1000)),
             ..Default::default()
         },
         invariant: InvariantConfig { runs: 256, ..Default::default() },
@@ -80,7 +78,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         block_coinbase: Address::random(),
         block_timestamp: 10,
         block_difficulty: 10,
-        block_prevrandao: H256::random(),
+        block_prevrandao: B256::random(),
         block_gas_limit: Some(100u64.into()),
         memory_limit: 2u64.pow(25),
         eth_rpc_url: Some("localhost".to_string()),
@@ -131,7 +129,7 @@ forgetest!(
         cmd.arg("config");
         let expected =
             Config::load_with_root(prj.root()).to_string_pretty().unwrap().trim().to_string();
-        assert_eq!(expected, cmd.stdout().trim().to_string());
+        assert_eq!(expected, cmd.stdout_lossy().trim().to_string());
     }
 );
 
@@ -162,7 +160,7 @@ forgetest_init!(
 
         cmd.arg("config");
         let expected = profile.to_string_pretty().unwrap();
-        pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+        pretty_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
 
         // remappings work
         let remappings_txt =
@@ -210,7 +208,7 @@ forgetest_init!(
 
         cmd.set_cmd(prj.forge_bin()).args(["config", "--basic"]);
         let expected = profile.into_basic().to_string_pretty().unwrap();
-        pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+        pretty_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
     }
 );
 
@@ -236,7 +234,7 @@ forgetest_init!(
 
         cmd.arg("config");
         let expected = profile.to_string_pretty().unwrap();
-        pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+        pretty_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
 
         let install = |cmd: &mut TestCommand, dep: &str| {
             cmd.forge_fuse().args(["install", dep, "--no-commit"]);
@@ -269,7 +267,7 @@ forgetest_init!(
 
         cmd.set_cmd(prj.forge_bin()).args(["config", "--basic"]);
         let expected = profile.into_basic().to_string_pretty().unwrap();
-        pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+        pretty_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
     }
 );
 
@@ -373,7 +371,7 @@ contract Foo {}
     assert!(cmd.stderr_lossy().contains("this/solc/does/not/exist does not exist"));
 
     // 0.7.1 was installed in previous step, so we can use the path to this directly
-    let local_solc = ethers::solc::Solc::find_svm_installed_version("0.7.1")
+    let local_solc = foundry_compilers::Solc::find_svm_installed_version("0.7.1")
         .unwrap()
         .expect("solc 0.7.1 is installed");
     cmd.forge_fuse().args(["build", "--force", "--use"]).arg(local_solc.solc).root_arg();

@@ -1,16 +1,15 @@
 //! test outcomes
 
-use crate::Address;
+use alloy_primitives::Address;
 use ethers::prelude::Log;
 use foundry_common::evm::Breakpoints;
 use foundry_evm::{
     coverage::HitMaps,
     debug::DebugArena,
-    executor::EvmError,
-    fuzz::{types::FuzzCase, CounterExample},
-    trace::{TraceKind, Traces},
+    executors::EvmError,
+    fuzz::{CounterExample, FuzzCase},
+    traces::{TraceKind, Traces},
 };
-use foundry_utils::types::ToEthers;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, time::Duration};
 
@@ -245,7 +244,7 @@ impl TestSetup {
                 // force the tracekind to be setup so a trace is shown.
                 traces.extend(err.traces.map(|traces| (TraceKind::Setup, traces)));
                 logs.extend(err.logs);
-                labeled_addresses.extend(err.labels.into_iter().map(|l| (l.0.to_ethers(), l.1)));
+                labeled_addresses.extend(err.labels);
                 Self::failed_with(logs, traces, labeled_addresses, err.reason)
             }
             e => Self::failed_with(
@@ -272,7 +271,7 @@ impl TestSetup {
         labeled_addresses: BTreeMap<Address, String>,
         reason: String,
     ) -> Self {
-        Self { address: Address::zero(), logs, traces, labeled_addresses, reason: Some(reason) }
+        Self { address: Address::ZERO, logs, traces, labeled_addresses, reason: Some(reason) }
     }
 
     pub fn failed(reason: String) -> Self {

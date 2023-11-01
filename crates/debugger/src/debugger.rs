@@ -1,7 +1,6 @@
 use crate::{TUIExitReason, Tui, Ui};
 use foundry_common::{compile::ContractSources, evm::Breakpoints, get_contract_name};
-use foundry_evm::{debug::DebugArena, trace::CallTraceDecoder};
-use foundry_utils::types::ToAlloy;
+use foundry_evm::{debug::DebugArena, traces::CallTraceDecoder};
 use tracing::{error, trace};
 
 /// Standardized way of firing up the debugger
@@ -33,9 +32,7 @@ impl DebuggerArgs<'_> {
             .decoder
             .contracts
             .iter()
-            .map(|(addr, identifier)| {
-                ((*addr).to_alloy(), get_contract_name(identifier).to_string())
-            })
+            .map(|(addr, identifier)| ((*addr), get_contract_name(identifier).to_string()))
             .collect();
 
         let tui = Tui::new(

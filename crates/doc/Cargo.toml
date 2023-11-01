@@ -16,8 +16,9 @@ forge-fmt.workspace = true
 foundry-config.workspace = true
 foundry-utils.workspace = true
 
+foundry-compilers = { workspace = true, features = ["async"] }
+
 # ethers
-ethers-solc = { workspace = true, features = ["async"] }
 ethers-core.workspace = true
 
 # tracing

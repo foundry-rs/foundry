@@ -1,22 +1,20 @@
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
-use ethers::{
-    abi::RawAbi,
-    prelude::{
-        artifacts::output_selection::{
-            BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
-            EvmOutputSelection, EwasmOutputSelection,
-        },
-        info::ContractInfo,
-    },
-    solc::{
-        artifacts::{LosslessAbi, StorageLayout},
-        utils::canonicalize,
-    },
-};
+use ethers::abi::RawAbi;
 use eyre::Result;
 use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
 use foundry_common::compile;
+use foundry_compilers::{
+    artifacts::{
+        output_selection::{
+            BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
+            EvmOutputSelection, EwasmOutputSelection,
+        },
+        LosslessAbi, StorageLayout,
+    },
+    info::ContractInfo,
+    utils::canonicalize,
+};
 use serde_json::{to_value, Value};
 use std::fmt;
 use tracing::trace;
@@ -170,9 +168,8 @@ impl InspectArgs {
                 if let Some(LosslessAbi { abi, .. }) = &artifact.abi {
                     // Print the signature of all errors
                     for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
-                        let types =
-                            er.inputs.iter().map(|p| p.kind.to_string()).collect::<Vec<_>>();
-                        let sig = format!("{:x}", er.signature());
+                        let types = er.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
+                        let sig = format!("{:x}", er.selector());
                         let sig_trimmed = &sig[0..8];
                         out.insert(
                             format!("{}({})", er.name, types.join(",")),
@@ -187,8 +184,7 @@ impl InspectArgs {
                 if let Some(LosslessAbi { abi, .. }) = &artifact.abi {
                     // print the signature of all events including anonymous
                     for ev in abi.events.iter().flat_map(|(_, events)| events) {
-                        let types =
-                            ev.inputs.iter().map(|p| p.kind.to_string()).collect::<Vec<_>>();
+                        let types = ev.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
                         out.insert(
                             format!("{}({})", ev.name, types.join(",")),
                             format!("{:?}", ev.signature()).into(),

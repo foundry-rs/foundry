@@ -16,10 +16,12 @@ ethers-core.workspace = true
 ethers-contract = { workspace = true, features = ["abigen"] }
 ethers-addressbook.workspace = true
 ethers-providers.workspace = true
-ethers-solc.workspace = true
 
+alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
-alloy-dyn-abi.workspace = true
+alloy-sol-types.workspace = true
+
+foundry-compilers = { workspace = true, default-features = false }
 
 eyre = { version = "0.6", default-features = false }
 futures = "0.3"

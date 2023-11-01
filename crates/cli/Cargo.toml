@@ -17,6 +17,8 @@ foundry-evm.workspace = true
 foundry-debugger.workspace = true
 foundry-utils.workspace = true
 
+foundry-compilers = { workspace = true, features = ["full"] }
+
 # aws
 rusoto_core = { version = "0.48", default-features = false }
 rusoto_kms = { version = "0.48", default-features = false }
@@ -26,6 +28,8 @@ ethers = { workspace = true, features = ["aws", "ledger", "trezor"] }
 
 # alloy
 alloy-primitives.workspace = true
+alloy-json-abi.workspace = true
+alloy-dyn-abi.workspace = true
 
 async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
@@ -54,4 +58,4 @@ tempfile = "3.7"
 [features]
 default = ["rustls"]
 rustls = ["ethers/rustls", "rusoto_core/rustls"]
-openssl = ["ethers/openssl"]
+openssl = ["ethers/openssl", "foundry-compilers/openssl"]

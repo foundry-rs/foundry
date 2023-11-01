@@ -10,6 +10,7 @@ use foundry_cli::{
     utils,
 };
 use foundry_config::{Chain, Config};
+use foundry_utils::types::ToEthers;
 use std::str::FromStr;
 
 /// CLI arguments for `cast access-list`.
@@ -65,7 +66,8 @@ impl AccessListArgs {
         let chain = utils::get_chain(config.chain_id, &provider).await?;
         let sender = eth.wallet.sender().await;
 
-        access_list(&provider, sender, to, sig, args, data, tx, chain, block, to_json).await?;
+        access_list(&provider, sender.to_ethers(), to, sig, args, data, tx, chain, block, to_json)
+            .await?;
         Ok(())
     }
 }

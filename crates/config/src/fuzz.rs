@@ -1,6 +1,6 @@
 //! Configuration for fuzz testing
 
-use ethers_core::types::U256;
+use alloy_primitives::U256;
 use serde::{Deserialize, Serialize};
 
 use crate::inline::{
@@ -19,9 +19,6 @@ pub struct FuzzConfig {
     /// `prop_filter`.
     pub max_test_rejects: u32,
     /// Optional seed for the fuzzing RNG algorithm
-    #[serde(
-        deserialize_with = "ethers_core::types::serde_helpers::deserialize_stringified_numeric_opt"
-    )]
     pub seed: Option<U256>,
     /// The fuzz dictionary configuration
     #[serde(flatten)]

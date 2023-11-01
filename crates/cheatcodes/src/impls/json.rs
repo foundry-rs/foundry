@@ -207,42 +207,42 @@ impl Cheatcode for serializeBytes_0Call {
 impl Cheatcode for serializeBool_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
-        serialize_json(state, objectKey, Some(valueKey), &array_str(values))
+        serialize_json(state, objectKey, Some(valueKey), &array_str(values, false))
     }
 }
 
 impl Cheatcode for serializeUint_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
-        serialize_json(state, objectKey, Some(valueKey), &array_str(values))
+        serialize_json(state, objectKey, Some(valueKey), &array_str(values, false))
     }
 }
 
 impl Cheatcode for serializeInt_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
-        serialize_json(state, objectKey, Some(valueKey), &array_str(values))
+        serialize_json(state, objectKey, Some(valueKey), &array_str(values, false))
     }
 }
 
 impl Cheatcode for serializeAddress_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
-        serialize_json(state, objectKey, Some(valueKey), &array_str(values))
+        serialize_json(state, objectKey, Some(valueKey), &array_str(values, true))
     }
 }
 
 impl Cheatcode for serializeBytes32_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
-        serialize_json(state, objectKey, Some(valueKey), &array_str(values))
+        serialize_json(state, objectKey, Some(valueKey), &array_str(values, true))
     }
 }
 
 impl Cheatcode for serializeString_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
-        serialize_json(state, objectKey, Some(valueKey), &array_str(values))
+        serialize_json(state, objectKey, Some(valueKey), &array_str(values, true))
     }
 }
 
@@ -250,7 +250,7 @@ impl Cheatcode for serializeBytes_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
         let values = values.iter().map(hex::encode_prefixed);
-        serialize_json(state, objectKey, Some(valueKey), &array_str(values))
+        serialize_json(state, objectKey, Some(valueKey), &array_str(values, true))
     }
 }
 
@@ -379,7 +379,8 @@ fn canonicalize_json_path(path: &str) -> Cow<'_, str> {
 /// The function is designed to run recursively, so that in case of an object
 /// it will call itself to convert each of it's value and encode the whole as a
 /// Tuple
-fn value_to_token(value: &Value) -> Result<DynSolValue> {
+#[instrument(target = "cheatcodes", level = "trace", err, ret)]
+pub(super) fn value_to_token(value: &Value) -> Result<DynSolValue> {
     match value {
         Value::Null => Ok(DynSolValue::FixedBytes(B256::ZERO, 32)),
         Value::Bool(boolean) => Ok(DynSolValue::Bool(*boolean)),
@@ -479,13 +480,13 @@ fn serialize_json(
         map.insert(value_key.into(), parsed_value);
     } else {
         *map = serde_json::from_str(value)
-            .map_err(|err| fmt_err!("Failed to parse JSON object: {err}"))?;
+            .map_err(|err| fmt_err!("failed to parse JSON object: {err}"))?;
     }
     let stringified = serde_json::to_string(map).unwrap();
     Ok(stringified.abi_encode())
 }
 
-fn array_str<I, T>(values: I) -> String
+fn array_str<I, T>(values: I, quoted: bool) -> String
 where
     I: IntoIterator,
     I::IntoIter: ExactSizeIterator<Item = T>,
@@ -498,7 +499,14 @@ where
         if i > 0 {
             s.push(',');
         }
+
+        if quoted {
+            s.push('"');
+        }
         write!(s, "{item}").unwrap();
+        if quoted {
+            s.push('"');
+        }
     }
     s.push(']');
     s

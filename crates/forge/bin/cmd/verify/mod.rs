@@ -1,9 +1,9 @@
 use super::retry::RetryArgs;
 use alloy_primitives::Address;
 use clap::{Parser, ValueHint};
-use ethers::solc::info::ContractInfo;
 use eyre::Result;
 use foundry_cli::{opts::EtherscanOpts, utils::LoadConfig};
+use foundry_compilers::info::ContractInfo;
 use foundry_config::{figment, impl_figment_convert, impl_figment_convert_cast, Config};
 use provider::VerificationProviderType;
 use reqwest::Url;

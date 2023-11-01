@@ -1,20 +1,21 @@
 use crate::{result::SuiteResult, ContractRunner, TestFilter, TestOptions};
+use alloy_json_abi::{Function, JsonAbi as Abi};
 use alloy_primitives::{Address, Bytes, U256};
-use ethers::{
-    abi::{Abi, Function},
-    prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
-    solc::{contracts::ArtifactContracts, Artifact, ProjectCompileOutput},
-};
 use eyre::Result;
 use foundry_common::{ContractsByArtifact, TestFunctionExt};
+use foundry_compilers::{
+    artifacts::CompactContractBytecode, contracts::ArtifactContracts, Artifact, ArtifactId,
+    ArtifactOutput, ProjectCompileOutput,
+};
 use foundry_evm::{
-    executor::{
-        backend::Backend, fork::CreateFork, inspector::CheatsConfig, opts::EvmOpts, Executor,
-        ExecutorBuilder,
-    },
+    backend::Backend,
+    executors::{Executor, ExecutorBuilder},
+    fork::CreateFork,
+    inspectors::CheatsConfig,
+    opts::EvmOpts,
     revm,
 };
-use foundry_utils::{types::ToEthers, PostLinkInput, ResolvedDependency};
+use foundry_utils::{PostLinkInput, ResolvedDependency};
 use rayon::prelude::*;
 use revm::primitives::SpecId;
 use std::{
@@ -213,16 +214,15 @@ impl MultiContractRunner {
         filter: impl TestFilter,
         test_options: TestOptions,
     ) -> SuiteResult {
-        let libs = libs.iter().map(|l| l.0.clone().into()).collect::<Vec<_>>();
         let runner = ContractRunner::new(
             name,
             executor,
             contract,
             deploy_code.0.into(),
-            self.evm_opts.initial_balance.to_ethers(),
-            self.sender.map(|a| a.to_ethers()),
+            self.evm_opts.initial_balance,
+            self.sender,
             self.errors.as_ref(),
-            &libs,
+            libs,
             self.debug,
         );
         runner.run_tests(filter, test_options, Some(&self.known_contracts))

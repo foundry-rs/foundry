@@ -4,14 +4,14 @@
 //! the REPL contract's source code. It provides simple compilation, parsing, and
 //! execution helpers.
 
-use ethers_solc::{
+use eyre::Result;
+use forge_fmt::solang_ext::SafeUnwrap;
+use foundry_compilers::{
     artifacts::{Source, Sources},
     CompilerInput, CompilerOutput, EvmVersion, Solc,
 };
-use eyre::Result;
-use forge_fmt::solang_ext::SafeUnwrap;
 use foundry_config::{Config, SolcReq};
-use foundry_evm::executor::{opts::EvmOpts, Backend};
+use foundry_evm::{backend::Backend, opts::EvmOpts};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt;
@@ -304,7 +304,7 @@ impl SessionSource {
         self
     }
 
-    /// Generates and ethers_solc::CompilerInput from the source
+    /// Generates and foundry_compilers::CompilerInput from the source
     ///
     /// ### Returns
     ///

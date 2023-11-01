@@ -3,8 +3,9 @@
 use super::{Cheatcode, CheatsCtxt, DatabaseExt, Result};
 use crate::Vm::*;
 use alloy_primitives::{Address, U256};
-use ethers::signers::Signer;
+use ethers_signers::Signer;
 use foundry_config::Config;
+use foundry_utils::types::ToAlloy;
 
 impl Cheatcode for broadcast_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
@@ -51,8 +52,10 @@ impl Cheatcode for startBroadcast_2Call {
 impl Cheatcode for stopBroadcastCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        ensure!(ccx.state.broadcast.is_some(), "no broadcast in progress to stop");
-        ccx.state.broadcast = None;
+        let Some(broadcast) = ccx.state.broadcast.take() else {
+            bail!("no broadcast in progress to stop");
+        };
+        debug!(target: "cheatcodes", ?broadcast, "stopped");
         Ok(Default::default())
     }
 }
@@ -85,13 +88,15 @@ fn broadcast<DB: DatabaseExt>(
 
     correct_sender_nonce(ccx)?;
 
-    ccx.state.broadcast = Some(Broadcast {
+    let broadcast = Broadcast {
         new_origin: *new_origin.unwrap_or(&ccx.data.env.tx.caller),
-        original_origin: ccx.caller,
-        original_caller: ccx.data.env.tx.caller,
+        original_caller: ccx.caller,
+        original_origin: ccx.data.env.tx.caller,
         depth: ccx.data.journaled_state.depth(),
         single_call,
-    });
+    };
+    debug!(target: "cheatcodes", ?broadcast, "started");
+    ccx.state.broadcast = Some(broadcast);
     Ok(Default::default())
 }
 
@@ -104,7 +109,7 @@ fn broadcast_key<DB: DatabaseExt>(
     single_call: bool,
 ) -> Result {
     let wallet = super::utils::parse_wallet(private_key)?.with_chain_id(ccx.data.env.cfg.chain_id);
-    let new_origin = &wallet.address().0.into();
+    let new_origin = &wallet.address().to_alloy();
 
     let result = broadcast(ccx, Some(new_origin), single_call);
     if result.is_ok() {
@@ -117,10 +122,12 @@ fn broadcast_key<DB: DatabaseExt>(
 /// That leads to its nonce being incremented by `call_raw`. In a `broadcast` scenario this is
 /// undesirable. Therefore, we make sure to fix the sender's nonce **once**.
 pub(super) fn correct_sender_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) -> Result<()> {
-    let caller = ccx.data.env.tx.caller;
-    if !ccx.state.corrected_nonce && caller.0 != Config::DEFAULT_SENDER.0 {
-        let account = super::evm::journaled_account(ccx.data, caller)?;
-        account.info.nonce = account.info.nonce.saturating_sub(1);
+    let sender = ccx.data.env.tx.caller;
+    if !ccx.state.corrected_nonce && sender != Config::DEFAULT_SENDER {
+        let account = super::evm::journaled_account(ccx.data, sender)?;
+        let prev = account.info.nonce;
+        account.info.nonce = prev.saturating_sub(1);
+        debug!(target: "cheatcodes", %sender, nonce=account.info.nonce, prev, "corrected nonce");
         ccx.state.corrected_nonce = true;
     }
     Ok(())

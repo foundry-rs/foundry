@@ -56,13 +56,12 @@ use ethers::{
     utils::{hex, keccak256, rlp},
 };
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+use foundry_common::abi::format_token;
 use foundry_evm::{
+    backend::{DatabaseError, DatabaseResult},
+    constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::{decode_custom_error_args, decode_revert},
-    executor::{
-        backend::{DatabaseError, DatabaseResult},
-        inspector::AccessListTracer,
-        DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
-    },
+    inspectors::AccessListTracer,
     revm::{
         self,
         db::CacheDB,
@@ -102,7 +101,8 @@ pub const MIN_TRANSACTION_GAS: U256 = U256([21_000, 0, 0, 0]);
 // Gas per transaction creating a contract.
 pub const MIN_CREATE_GAS: U256 = U256([53_000, 0, 0, 0]);
 
-pub type State = foundry_evm::HashMap<Address, Account>;
+// TODO: This is the same as foundry_evm::utils::StateChangeset but with ethers H160
+pub type State = foundry_evm::hashbrown::HashMap<Address, Account>;
 
 /// A block request, which includes the Pool Transactions if it's Pending
 #[derive(Debug)]
@@ -659,11 +659,22 @@ impl Backend {
             let block =
                 self.block_by_hash(best_block_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
 
-            // Note: In [`TimeManager::compute_next_timestamp`] we ensure that the next timestamp is
-            // always increasing by at least one. By subtracting 1 here, this is mitigated.
-            let reset_time = block.timestamp.as_u64().saturating_sub(1);
+            let reset_time = block.timestamp.as_u64();
             self.time.reset(reset_time);
-            self.set_block_number(num.into());
+
+            let mut env = self.env.write();
+            env.block = BlockEnv {
+                number: rU256::from(num),
+                timestamp: block.timestamp.to_alloy(),
+                difficulty: block.difficulty.to_alloy(),
+                // ensures prevrandao is set
+                prevrandao: Some(block.mix_hash.unwrap_or_default()).map(|h| h.to_alloy()),
+                gas_limit: block.gas_limit.to_alloy(),
+                // Keep previous `coinbase` and `basefee` value
+                coinbase: env.block.coinbase,
+                basefee: env.block.basefee,
+                ..Default::default()
+            };
         }
         Ok(self.db.write().await.revert(id))
     }
@@ -923,7 +934,7 @@ impl Backend {
                                         Some(token) => {
                                             node_info!(
                                                 "    Error: reverted with custom error: {:?}",
-                                                token
+                                                format_token(&token)
                                             );
                                         }
                                         None => {
@@ -957,19 +968,13 @@ impl Backend {
                 storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
             }
 
+            // remove old transactions that exceed the transaction block keeper
             if let Some(transaction_block_keeper) = self.transaction_block_keeper {
                 if storage.blocks.len() > transaction_block_keeper {
-                    let n: U64 = block_number
+                    let to_clear = block_number
                         .as_u64()
-                        .saturating_sub(transaction_block_keeper.try_into().unwrap())
-                        .into();
-                    if let Some(hash) = storage.hashes.get(&n) {
-                        if let Some(block) = storage.blocks.get(hash) {
-                            for tx in block.clone().transactions {
-                                let _ = storage.transactions.remove(&tx.hash());
-                            }
-                        }
-                    }
+                        .saturating_sub(transaction_block_keeper.try_into().unwrap());
+                    storage.remove_block_transactions_by_number(to_clear)
                 }
             }
 
@@ -1158,7 +1163,7 @@ impl Backend {
                     (halt_to_instruction_result(reason), gas_used, None)
                 },
             };
-            let res = inspector.tracer.unwrap_or_default().traces.geth_trace(gas_used.into(), opts);
+            let res = inspector.tracer.unwrap_or_default().traces.geth_trace(rU256::from(gas_used), opts);
             trace!(target: "backend", "trace call return {:?} out: {:?} gas {} on block {}", exit_reason, out, gas_used, block_number);
             Ok(res)
         })
@@ -1811,6 +1816,11 @@ impl Backend {
     /// Returns the traces for the given transaction
     pub(crate) fn mined_parity_trace_transaction(&self, hash: H256) -> Option<Vec<Trace>> {
         self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.parity_traces())
+    }
+
+    /// Returns the traces for the given transaction
+    pub(crate) fn mined_transaction(&self, hash: H256) -> Option<MinedTransaction> {
+        self.blockchain.storage.read().transactions.get(&hash).cloned()
     }
 
     /// Returns the traces for the given block

@@ -1,6 +1,6 @@
 use clap::{Parser, ValueHint};
-use ethers::solc::remappings::Remapping;
 use eyre::Result;
+use foundry_compilers::remappings::Remapping;
 use foundry_config::{
     figment,
     figment::{

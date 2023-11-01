@@ -7,8 +7,8 @@ use alloy_primitives::{Address, Bytes, U256};
 use ethers::types::Log;
 use eyre::Result;
 use foundry_evm::{
-    executor::{DeployResult, Executor, RawCallResult},
-    trace::{CallTraceArena, TraceKind},
+    executors::{DeployResult, Executor, RawCallResult},
+    traces::{CallTraceArena, TraceKind},
 };
 use revm::interpreter::{return_ok, InstructionResult};
 use std::collections::BTreeMap;
@@ -114,14 +114,14 @@ impl ChiselRunner {
         call_res.map(|res| (address, res))
     }
 
-    /// Executes the call
+    /// Executes the call.
     ///
     /// This will commit the changes if `commit` is true.
     ///
     /// This will return _estimated_ gas instead of the precise gas the call would consume, so it
     /// can be used as `gas_limit`.
     ///
-    /// Taken from [Forge's Script Runner](https://github.com/foundry-rs/foundry/blob/master/cli/src/cmd/forge/script/runner.rs)
+    /// Taken from Forge's script runner.
     fn call(
         &mut self,
         from: Address,
@@ -138,7 +138,7 @@ impl ChiselRunner {
             false
         };
 
-        let mut res = self.executor.call_raw(from, to, calldata.0.clone().into(), value)?;
+        let mut res = self.executor.call_raw(from, to, calldata.clone(), value)?;
         let mut gas_used = res.gas_used;
         if matches!(res.exit_reason, return_ok!()) {
             // store the current gas limit and reset it later
@@ -154,7 +154,7 @@ impl ChiselRunner {
             while (highest_gas_limit - lowest_gas_limit) > 1 {
                 let mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
                 self.executor.env.tx.gas_limit = mid_gas_limit;
-                let res = self.executor.call_raw(from, to, calldata.0.clone().into(), value)?;
+                let res = self.executor.call_raw(from, to, calldata.clone(), value)?;
                 match res.exit_reason {
                     InstructionResult::Revert |
                     InstructionResult::OutOfGas |
@@ -189,12 +189,12 @@ impl ChiselRunner {
                 cheatcodes.fs_commit = !cheatcodes.fs_commit;
             }
 
-            res = self.executor.call_raw(from, to, calldata.0.clone().into(), value)?;
+            res = self.executor.call_raw(from, to, calldata.clone(), value)?;
         }
 
         if commit {
             // if explicitly requested we can now commit the call
-            res = self.executor.call_raw_committing(from, to, calldata.0.clone().into(), value)?;
+            res = self.executor.call_raw_committing(from, to, calldata, value)?;
         }
 
         let RawCallResult { result, reverted, logs, traces, labels, chisel_state, .. } = res;

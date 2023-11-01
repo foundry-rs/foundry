@@ -23,7 +23,7 @@
 ///
 /// ```no_run
 /// use foundry_test_utils::*;
-/// use foundry_test_utils::ethers_solc::PathStyle;
+/// use foundry_test_utils::foundry_compilers::PathStyle;
 /// forgetest!(can_clean_hardhat, PathStyle::HardHat, |prj: TestProject, mut cmd: TestCommand| {
 ///     prj.assert_create_dirs_exists();
 ///     prj.assert_style_paths_exist(PathStyle::HardHat);
@@ -34,7 +34,7 @@
 #[macro_export]
 macro_rules! forgetest {
     ($(#[$meta:meta])* $test:ident, $fun:expr) => {
-        $crate::forgetest!($(#[$meta])* $test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+        $crate::forgetest!($(#[$meta])* $test, $crate::foundry_compilers::PathStyle::Dapptools, $fun);
     };
     ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
         #[test]
@@ -50,7 +50,7 @@ macro_rules! forgetest {
 #[macro_export]
 macro_rules! forgetest_async {
     ($(#[$meta:meta])* $test:ident, $fun:expr) => {
-        $crate::forgetest_async!($(#[$meta])* $test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+        $crate::forgetest_async!($(#[$meta])* $test, $crate::foundry_compilers::PathStyle::Dapptools, $fun);
     };
     ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
         #[tokio::test(flavor = "multi_thread")]
@@ -66,7 +66,7 @@ macro_rules! forgetest_async {
 #[macro_export]
 macro_rules! casttest {
     ($(#[$meta:meta])* $test:ident, $fun:expr) => {
-        $crate::casttest!($(#[$meta])* $test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+        $crate::casttest!($(#[$meta])* $test, $crate::foundry_compilers::PathStyle::Dapptools, $fun);
     };
     ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
         #[test]
@@ -83,7 +83,7 @@ macro_rules! casttest {
 #[macro_export]
 macro_rules! forgetest_init {
     ($(#[$meta:meta])* $test:ident, $fun:expr) => {
-        $crate::forgetest_init!($(#[$meta])* $test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+        $crate::forgetest_init!($(#[$meta])* $test, $crate::foundry_compilers::PathStyle::Dapptools, $fun);
     };
     ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
         #[test]
@@ -112,7 +112,7 @@ macro_rules! forgetest_external {
             $(#[$meta])*
             $test,
             $repo,
-            $crate::ethers_solc::PathStyle::Dapptools,
+            $crate::foundry_compilers::PathStyle::Dapptools,
             $fork_block,
             Vec::<String>::new()
         );
@@ -127,7 +127,7 @@ macro_rules! forgetest_external {
             $(#[$meta])*
             $test,
             $repo,
-            $crate::ethers_solc::PathStyle::Dapptools,
+            $crate::foundry_compilers::PathStyle::Dapptools,
             $fork_block,
             $forge_opts
         );

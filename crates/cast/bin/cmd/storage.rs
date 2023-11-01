@@ -1,12 +1,15 @@
 use crate::opts::parse_slot;
+use alloy_primitives::{B256, U256};
 use cast::Cast;
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
 use ethers::{
-    abi::ethabi::ethereum_types::BigEndianHash, etherscan::Client, prelude::*,
-    solc::artifacts::StorageLayout,
+    abi::ethabi::ethereum_types::BigEndianHash,
+    prelude::{BlockId, NameOrAddress},
+    providers::Middleware,
 };
 use eyre::Result;
+use foundry_block_explorers::Client;
 use foundry_cli::{
     opts::{CoreBuildArgs, EtherscanOpts, RpcOpts},
     utils,
@@ -16,9 +19,14 @@ use foundry_common::{
     compile::{compile, etherscan_project, suppress_compile},
     RetryProvider,
 };
+use foundry_compilers::{artifacts::StorageLayout, ConfigurableContractArtifact, Project, Solc};
 use foundry_config::{
     figment::{self, value::Dict, Metadata, Profile},
     impl_figment_convert_cast, Config,
+};
+use foundry_utils::{
+    resolve_addr,
+    types::{ToAlloy, ToEthers},
 };
 use futures::future::join_all;
 use semver::Version;
@@ -38,7 +46,7 @@ pub struct StorageArgs {
 
     /// The storage slot number.
     #[clap(value_parser = parse_slot)]
-    slot: Option<H256>,
+    slot: Option<B256>,
 
     /// The block height to query at.
     ///
@@ -79,21 +87,18 @@ impl StorageArgs {
         let Self { address, slot, block, build, .. } = self;
 
         let provider = utils::get_provider(&config)?;
-        let address = match address {
-            NameOrAddress::Name(name) => provider.resolve_name(&name).await?,
-            NameOrAddress::Address(address) => address,
-        };
 
         // Slot was provided, perform a simple RPC call
         if let Some(slot) = slot {
             let cast = Cast::new(provider);
-            println!("{}", cast.storage(address, slot, block).await?);
+            println!("{}", cast.storage(address, slot.to_ethers(), block).await?);
             return Ok(())
         }
 
         // No slot was provided
         // Get deployed bytecode at given address
-        let address_code = provider.get_code(address, block).await?;
+        let address_code: alloy_primitives::Bytes =
+            provider.get_code(address.clone(), block).await?.0.into();
         if address_code.is_empty() {
             eyre::bail!("Provided address has no deployed code and thus no storage");
         }
@@ -112,7 +117,7 @@ impl StorageArgs {
             let artifact =
                 out.artifacts().find(|(_, artifact)| match_code(artifact).unwrap_or_default());
             if let Some((_, artifact)) = artifact {
-                return fetch_and_print_storage(provider, address, artifact, true).await
+                return fetch_and_print_storage(provider, address.clone(), artifact, true).await
             }
         }
 
@@ -127,7 +132,9 @@ impl StorageArgs {
         let chain = utils::get_chain(config.chain_id, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
         let client = Client::new(chain.named()?, api_key)?;
-        let source = find_source(client, address).await?;
+        let addr = resolve_addr(address.clone(), Some(chain.named()?))?;
+        let addr = addr.as_address().ok_or(eyre::eyre!("Could not resolve address"))?.to_alloy();
+        let source = find_source(client, addr).await?;
         let metadata = source.items.first().unwrap();
         if metadata.is_vyper() {
             eyre::bail!("Contract at provided address is not a valid Solidity contract")
@@ -180,7 +187,7 @@ impl StorageArgs {
 
 async fn fetch_and_print_storage(
     provider: RetryProvider,
-    address: Address,
+    address: NameOrAddress,
     artifact: &ConfigurableContractArtifact,
     pretty: bool,
 ) -> Result<()> {
@@ -198,7 +205,7 @@ async fn fetch_and_print_storage(
 /// structures.
 async fn fetch_storage_values(
     provider: RetryProvider,
-    address: Address,
+    address: NameOrAddress,
     layout: &StorageLayout,
 ) -> Result<Vec<String>> {
     // TODO: Batch request; handle array values
@@ -206,8 +213,8 @@ async fn fetch_storage_values(
         .storage
         .iter()
         .map(|slot| {
-            let slot_h256 = H256::from_uint(&U256::from_dec_str(&slot.slot)?);
-            Ok(provider.get_storage_at(address, slot_h256, None))
+            let slot_h256 = B256::from(U256::from_str(&slot.slot)?);
+            Ok(provider.get_storage_at(address.clone(), slot_h256.to_ethers(), None))
         })
         .collect::<Result<_>>()?;
 

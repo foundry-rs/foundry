@@ -1,5 +1,6 @@
 use crate::U256;
-use ethers_core::types::{Chain as NamedChain, U64};
+use alloy_primitives::U64;
+use ethers_core::types::Chain as NamedChain;
 use eyre::Result;
 use open_fastrlp::{Decodable, Encodable};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -76,7 +77,7 @@ impl From<u64> for Chain {
 
 impl From<U256> for Chain {
     fn from(id: U256) -> Self {
-        id.as_u64().into()
+        id.to::<u64>().into()
     }
 }
 
@@ -91,13 +92,13 @@ impl From<Chain> for u64 {
 
 impl From<Chain> for U64 {
     fn from(c: Chain) -> Self {
-        u64::from(c).into()
+        U64::from(u64::from(c))
     }
 }
 
 impl From<Chain> for U256 {
     fn from(c: Chain) -> Self {
-        u64::from(c).into()
+        U256::from(u64::from(c))
     }
 }
 

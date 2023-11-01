@@ -2,7 +2,7 @@
 // module. Instead, we emit custom diagnostics in `#[derive(Cheatcode)]`.
 #![allow(missing_docs)]
 
-use crate::{Cheatcode, CheatcodeDef, Group, Mutability, Safety, Status, Visibility};
+use super::*;
 use alloy_sol_types::sol;
 use foundry_macros::Cheatcode;
 
@@ -19,8 +19,8 @@ sol! {
 interface Vm {
     //  ======== Types ========
 
-    /// Error thrown by a cheatcode.
-    error CheatCodeError(string message);
+    /// Error thrown by cheatcodes.
+    error CheatcodeError(string message);
 
     /// A modification applied to either `msg.sender` or `tx.origin`. Returned by `readCallers`.
     enum CallerMode {
@@ -52,6 +52,28 @@ interface Vm {
         string key;
         /// The RPC URL.
         string url;
+    }
+
+    /// An RPC log object. Returned by `eth_getLogs`.
+    struct EthGetLogs {
+        /// The address of the log's emitter.
+        address emitter;
+        /// The topics of the log, including the signature, if any.
+        bytes32[] topics;
+        /// The raw data of the log.
+        bytes data;
+        /// The block hash.
+        bytes32 blockHash;
+        /// The block number.
+        uint64 blockNumber;
+        /// The transaction hash.
+        bytes32 transactionHash;
+        /// The transaction index in the block.
+        uint64 transactionIndex;
+        /// The log index.
+        uint256 logIndex;
+        /// Whether the log was removed.
+        bool removed;
     }
 
     /// A single entry in a directory listing. Returned by `readDir`.
@@ -229,6 +251,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function store(address target, bytes32 slot, bytes32 value) external;
 
+    /// Marks the slots of an account and the account address as cold.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function cool(address target) external;
+
     // -------- Call Manipulation --------
     // --- Mocks ---
 
@@ -351,6 +377,16 @@ interface Vm {
     /// Fetches the given transaction from the given fork and executes it on the current state.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function transact(uint256 forkId, bytes32 txHash) external;
+
+    /// Performs an Ethereum JSON-RPC request to the current fork URL.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function rpc(string calldata method, string calldata params) external returns (bytes memory data);
+
+    /// Gets all the logs according to specified filter.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function eth_getLogs(uint256 fromBlock, uint256 toBlock, address addr, bytes32[] memory topics)
+        external
+        returns (EthGetLogs[] memory logs);
 
     // --- Behavior ---
 

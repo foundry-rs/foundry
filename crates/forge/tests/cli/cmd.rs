@@ -1,17 +1,15 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use ethers::{
-    prelude::remappings::Remapping,
-    solc::{
-        artifacts::{BytecodeHash, Metadata},
-        ConfigurableContractArtifact,
-    },
+use foundry_compilers::{
+    artifacts::{BytecodeHash, Metadata},
+    remappings::Remapping,
+    ConfigurableContractArtifact,
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use foundry_test_utils::{
-    ethers_solc::PathStyle,
     forgetest, forgetest_init,
+    foundry_compilers::PathStyle,
     util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},
 };
 use semver::Version;
@@ -280,6 +278,42 @@ forgetest!(can_init_with_dir, |prj: TestProject, mut cmd: TestCommand| {
     assert!(prj.root().join("foobar").exists());
 });
 
+// `forge init foobar --template [template]` works with dir argument
+forgetest!(can_init_with_dir_and_template, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.args(["init", "foobar", "--template", "foundry-rs/forge-template"]);
+
+    cmd.assert_success();
+    cmd.assert_non_empty_stdout();
+    assert!(prj.root().join("foobar/.git").exists());
+    assert!(prj.root().join("foobar/foundry.toml").exists());
+    assert!(prj.root().join("foobar/lib/forge-std").exists());
+    // assert that gitmodules were correctly initialized
+    assert!(prj.root().join("foobar/.git/modules").exists());
+    assert!(prj.root().join("foobar/src").exists());
+    assert!(prj.root().join("foobar/test").exists());
+});
+
+// `forge init foobar --template [template] --branch [branch]` works with dir argument
+forgetest!(can_init_with_dir_and_template_and_branch, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.args([
+        "init",
+        "foobar",
+        "--template",
+        "foundry-rs/forge-template",
+        "--branch",
+        "test/deployments",
+    ]);
+
+    cmd.assert_success();
+    cmd.assert_non_empty_stdout();
+    assert!(prj.root().join("foobar/.dapprc").exists());
+    assert!(prj.root().join("foobar/lib/ds-test").exists());
+    // assert that gitmodules were correctly initialized
+    assert!(prj.root().join("foobar/.git/modules").exists());
+    assert!(prj.root().join("foobar/src").exists());
+    assert!(prj.root().join("foobar/scripts").exists());
+});
+
 // `forge init --force` works on non-empty dirs
 forgetest!(can_init_non_empty, |prj: TestProject, mut cmd: TestCommand| {
     prj.create_file("README.md", "non-empty dir");
@@ -355,7 +389,7 @@ forgetest!(can_init_vscode, |prj: TestProject, mut cmd: TestCommand| {
 
     let settings = prj.root().join(".vscode/settings.json");
     assert!(settings.is_file());
-    let settings: serde_json::Value = ethers::solc::utils::read_json_file(&settings).unwrap();
+    let settings: serde_json::Value = foundry_compilers::utils::read_json_file(&settings).unwrap();
     assert_eq!(
         settings,
         serde_json::json!({
@@ -447,7 +481,7 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
 
     let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
-        ethers::solc::utils::read_json_file(artifact_path).unwrap();
+        foundry_compilers::utils::read_json_file(artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
 
     cmd.forge_fuse().args(["build", "--extra-output-files", "metadata", "--force"]).root_arg();
@@ -455,7 +489,7 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
 
     let metadata_path =
         prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.metadata.json"));
-    let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
+    let _artifact: Metadata = foundry_compilers::utils::read_json_file(metadata_path).unwrap();
 });
 
 // checks that extra output works
@@ -465,7 +499,7 @@ forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: Test
 
     let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
-        ethers::solc::utils::read_json_file(artifact_path).unwrap();
+        foundry_compilers::utils::read_json_file(artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
     assert!(artifact.ir.is_some());
     assert!(artifact.ir_optimized.is_some());
@@ -484,7 +518,7 @@ forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: Test
 
     let metadata_path =
         prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.metadata.json"));
-    let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
+    let _artifact: Metadata = foundry_compilers::utils::read_json_file(metadata_path).unwrap();
 
     let iropt = prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.iropt"));
     std::fs::read_to_string(iropt).unwrap();
@@ -688,7 +722,7 @@ contract A {
         .unwrap();
 
     cmd.args(["build", "--force"]);
-    let out = cmd.stdout();
+    let out = cmd.stdout_lossy();
     // no warnings
     assert!(out.trim().contains("Compiler run successful!"));
     assert!(!out.trim().contains("Compiler run successful with warnings:"));
@@ -696,7 +730,7 @@ contract A {
     // don't ignore errors
     let config = Config { ignored_error_codes: vec![], ..Default::default() };
     prj.write_config(config);
-    let out = cmd.stdout();
+    let out = cmd.stdout_lossy();
 
     assert!(out.trim().contains("Compiler run successful with warnings:"));
     assert!(
@@ -724,7 +758,7 @@ contract A {
         .unwrap();
 
     cmd.args(["build", "--force"]);
-    let out = cmd.stdout();
+    let out = cmd.stdout_lossy();
     // there are no errors
     assert!(out.trim().contains("Compiler run successful"));
     assert!(out.trim().contains("Compiler run successful with warnings:"));
@@ -741,7 +775,7 @@ contract A {
         ..Default::default()
     };
     prj.write_config(config);
-    let out = cmd.stdout();
+    let out = cmd.stdout_lossy();
 
     assert!(out.trim().contains("Compiler run successful!"));
     assert!(!out.trim().contains("Compiler run successful with warnings:"));
@@ -1121,21 +1155,21 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 
     cmd.forge_fuse();
     prj.write_config(Config { gas_reports: (vec![]), ..Default::default() });
     cmd.forge_fuse();
-    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    let second_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(second_out.contains("foo") && second_out.contains("bar") && second_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 
     cmd.forge_fuse();
     prj.write_config(Config { gas_reports: (vec!["*".to_string()]), ..Default::default() });
     cmd.forge_fuse();
-    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    let third_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 
@@ -1149,7 +1183,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let fourth_out = cmd.arg("test").arg("--gas-report").stdout();
+    let fourth_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(fourth_out.contains("foo") && fourth_out.contains("bar") && fourth_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 });
@@ -1254,7 +1288,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(first_out.contains("foo") && !first_out.contains("bar") && !first_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 
@@ -1265,7 +1299,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    let second_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(
         !second_out.contains("foo") && second_out.contains("bar") && !second_out.contains("baz")
     );
@@ -1278,7 +1312,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    let third_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(!third_out.contains("foo") && !third_out.contains("bar") && third_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 });
@@ -1383,7 +1417,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(!first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 
@@ -1395,7 +1429,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    let second_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(
         second_out.contains("foo") && !second_out.contains("bar") && second_out.contains("baz")
     );
@@ -1413,7 +1447,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    let third_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
 });
 
@@ -1575,7 +1609,7 @@ forgetest_init!(can_build_skip_contracts, |prj: TestProject, mut cmd: TestComman
             .join("tests/fixtures/can_build_skip_contracts.stdout"),
     );
     // re-run command
-    let out = cmd.stdout();
+    let out = cmd.stdout_lossy();
 
     // unchanged
     assert!(out.trim().contains("No files changed, compilation skipped"), "{}", out);
@@ -1607,7 +1641,7 @@ function test_run() external {}
 // checks that build --sizes includes all contracts even if unchanged
 forgetest_init!(can_build_sizes_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
     cmd.args(["build", "--sizes"]);
-    let out = cmd.stdout();
+    let out = cmd.stdout_lossy();
 
     // contains: Counter    ┆ 0.247     ┆ 24.329
     assert!(out.contains(TEMPLATE_CONTRACT));
@@ -1615,20 +1649,20 @@ forgetest_init!(can_build_sizes_repeatedly, |_prj: TestProject, mut cmd: TestCom
     // get the entire table
     let table = out.split("Compiler run successful!").nth(1).unwrap().trim();
 
-    let unchanged = cmd.stdout();
+    let unchanged = cmd.stdout_lossy();
     assert!(unchanged.contains(table), "{}", table);
 });
 
 // checks that build --names includes all contracts even if unchanged
 forgetest_init!(can_build_names_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
     cmd.args(["build", "--names"]);
-    let out = cmd.stdout();
+    let out = cmd.stdout_lossy();
 
     assert!(out.contains(TEMPLATE_CONTRACT));
 
     // get the entire list
     let list = out.split("Compiler run successful!").nth(1).unwrap().trim();
 
-    let unchanged = cmd.stdout();
+    let unchanged = cmd.stdout_lossy();
     assert!(unchanged.contains(list), "{}", list);
 });

@@ -8,12 +8,12 @@ use ethers::{
     utils::{rlp, rlp::RlpStream},
 };
 use foundry_evm::{
-    executor::{backend::DatabaseError, DatabaseRef},
+    backend::DatabaseError,
+    hashbrown::HashMap as Map,
     revm::{
-        db::{CacheDB, DbAccount},
+        db::{CacheDB, DatabaseRef, DbAccount},
         primitives::{AccountInfo, Bytecode, Log},
     },
-    HashMap as Map,
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
 use memory_db::HashKey;

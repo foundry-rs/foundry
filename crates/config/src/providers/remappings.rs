@@ -1,9 +1,9 @@
 use crate::{foundry_toml_dirs, remappings_from_env_var, remappings_from_newline, Config};
-use ethers_solc::remappings::{RelativeRemapping, Remapping};
 use figment::{
     value::{Dict, Map},
     Error, Metadata, Profile, Provider,
 };
+use foundry_compilers::remappings::{RelativeRemapping, Remapping};
 use std::{
     borrow::Cow,
     collections::{btree_map::Entry, BTreeMap, HashSet},

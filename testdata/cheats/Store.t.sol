@@ -30,9 +30,7 @@ contract StoreTest is DSTest {
         assertEq(store.slot0(), 10, "initial value for slot 0 is incorrect");
         assertEq(store.slot1(), 20, "initial value for slot 1 is incorrect");
 
-        vm.expectRevert(
-            bytes("Store cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead")
-        );
+        vm.expectRevert(bytes("cannot call `store` on precompile 0x0000000000000000000000000000000000000001"));
         this._store(address(1), bytes32(0), bytes32(uint256(1)));
     }
 

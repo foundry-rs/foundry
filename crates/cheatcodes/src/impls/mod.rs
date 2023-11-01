@@ -2,16 +2,13 @@
 
 use crate::CheatcodeDef;
 use alloy_primitives::Address;
+use foundry_evm_core::backend::DatabaseExt;
 use revm::EVMData;
+use tracing::Level;
 
 #[macro_use]
 mod error;
 pub use error::{Error, ErrorKind, Result};
-
-mod db;
-pub use db::{
-    CreateFork, DatabaseError, DatabaseExt, DatabaseResult, LocalForkId, RevertDiagnostic,
-};
 
 mod config;
 pub use config::CheatsConfig;
@@ -28,7 +25,7 @@ mod string;
 mod test;
 mod utils;
 
-pub use test::{expect::ExpectedCallTracker, ASSUME_MAGIC_RETURN_CODE, MAGIC_SKIP_BYTES};
+pub use test::expect::ExpectedCallTracker;
 
 /// Cheatcode implementation.
 pub(crate) trait Cheatcode: CheatcodeDef {
@@ -37,7 +34,7 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     /// Implement this function if you don't need access to the EVM data.
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let _ = state;
-        unimplemented!("{}", Self::CHEATCODE.id)
+        unimplemented!("{}", Self::CHEATCODE.func.id)
     }
 
     /// Applies this cheatcode to the given context.
@@ -48,18 +45,47 @@ pub(crate) trait Cheatcode: CheatcodeDef {
         self.apply(ccx.state)
     }
 
-    #[instrument(target = "cheatcodes", name = "apply", level = "trace", skip(ccx), ret)]
     #[inline]
     fn apply_traced<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        debug!("applying {}", Self::CHEATCODE.id);
-        self.apply_full(ccx)
+        let span = trace_span(self);
+        let _enter = span.enter();
+        trace_call();
+        let result = self.apply_full(ccx);
+        trace_return(&result);
+        result
     }
+}
+
+// Separate functions to avoid inline and monomorphization bloat.
+fn trace_span<T: Cheatcode>(cheat: &T) -> tracing::Span {
+    if enabled!(Level::TRACE) {
+        trace_span!(target: "cheatcodes", "apply", cheat=?cheat)
+    } else {
+        debug_span!(target: "cheatcodes", "apply", id=%T::CHEATCODE.func.id)
+    }
+}
+
+fn trace_call() {
+    trace!(target: "cheatcodes", "applying");
+}
+
+fn trace_return(result: &Result) {
+    trace!(
+        target: "cheatcodes",
+        return = match result {
+            Ok(b) => hex::encode(b),
+            Err(e) => e.to_string(),
+        }
+    );
 }
 
 /// The cheatcode context, used in [`Cheatcode`].
 pub(crate) struct CheatsCtxt<'a, 'b, 'c, DB: DatabaseExt> {
+    /// The cheatcodes inspector state.
     pub(crate) state: &'a mut Cheatcodes,
+    /// The EVM data.
     pub(crate) data: &'b mut EVMData<'c, DB>,
+    /// The original `msg.sender`.
     pub(crate) caller: Address,
 }
 

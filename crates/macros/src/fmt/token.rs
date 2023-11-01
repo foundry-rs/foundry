@@ -1,30 +1,31 @@
-//! Formatting helpers for [`Token`]s.
+//! Formatting helpers for [`DynSolValue`]s.
 
-use ethers_core::{abi::Token, types::I256, utils, utils::hex};
+use alloy_dyn_abi::DynSolValue;
+use alloy_primitives::hex;
 use std::{fmt, fmt::Write};
 
-/// Wrapper that pretty formats a token
-pub struct TokenDisplay<'a>(pub &'a Token);
+/// Wrapper that pretty formats a [DynSolValue]
+pub struct TokenDisplay<'a>(pub &'a DynSolValue);
 
 impl fmt::Display for TokenDisplay<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt_token(f, self.0)
     }
 }
 
 /// Recursively formats an ABI token.
-fn fmt_token(f: &mut fmt::Formatter, item: &Token) -> fmt::Result {
+fn fmt_token(f: &mut fmt::Formatter, item: &DynSolValue) -> fmt::Result {
     match item {
-        Token::Address(inner) => {
-            write!(f, "{}", utils::to_checksum(inner, None))
+        DynSolValue::Address(inner) => {
+            write!(f, "{}", inner.to_checksum(None))
         }
         // add 0x
-        Token::Bytes(inner) => f.write_str(&hex::encode_prefixed(inner)),
-        Token::FixedBytes(inner) => f.write_str(&hex::encode_prefixed(inner)),
+        DynSolValue::Bytes(inner) => f.write_str(&hex::encode_prefixed(inner)),
+        DynSolValue::FixedBytes(inner, _) => f.write_str(&hex::encode_prefixed(inner)),
         // print as decimal
-        Token::Uint(inner) => write!(f, "{inner}"),
-        Token::Int(inner) => write!(f, "{}", I256::from_raw(*inner)),
-        Token::Array(tokens) | Token::FixedArray(tokens) => {
+        DynSolValue::Uint(inner, _) => write!(f, "{inner}"),
+        DynSolValue::Int(inner, _) => write!(f, "{}", *inner),
+        DynSolValue::Array(tokens) | DynSolValue::FixedArray(tokens) => {
             f.write_char('[')?;
             let mut tokens = tokens.iter().peekable();
             while let Some(token) = tokens.next() {
@@ -35,7 +36,7 @@ fn fmt_token(f: &mut fmt::Formatter, item: &Token) -> fmt::Result {
             }
             f.write_char(']')
         }
-        Token::Tuple(tokens) => {
+        DynSolValue::Tuple(tokens) => {
             f.write_char('(')?;
             let mut tokens = tokens.iter().peekable();
             while let Some(token) = tokens.next() {
@@ -46,6 +47,8 @@ fn fmt_token(f: &mut fmt::Formatter, item: &Token) -> fmt::Result {
             }
             f.write_char(')')
         }
-        _ => write!(f, "{item}"),
+        DynSolValue::String(inner) => write!(f, "{:?}", inner),
+        DynSolValue::Bool(inner) => write!(f, "{}", inner),
+        _ => write!(f, "{item:?}"),
     }
 }

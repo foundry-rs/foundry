@@ -8,7 +8,10 @@ use foundry_test_utils::{
     util::{OutputExt, TestCommand, TestProject},
     ScriptOutcome, ScriptTester,
 };
-use foundry_utils::{rpc, types::ToAlloy};
+use foundry_utils::{
+    rpc,
+    types::{ToAlloy, ToEthers},
+};
 use regex::Regex;
 use serde_json::Value;
 use std::{env, path::PathBuf, str::FromStr};
@@ -425,12 +428,12 @@ forgetest_async!(can_deploy_script_without_lib, |prj: TestProject, cmd: TestComm
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
-        .load_private_keys(vec![0, 1])
+        .load_private_keys([0, 1])
         .await
         .add_sig("BroadcastTestNoLinking", "deployDoesntPanic()")
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment(vec![(0, 1), (1, 2)])
+        .assert_nonce_increment([(0, 1), (1, 2)])
         .await;
 });
 
@@ -439,12 +442,12 @@ forgetest_async!(can_deploy_script_with_lib, |prj: TestProject, cmd: TestCommand
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
-        .load_private_keys(vec![0, 1])
+        .load_private_keys([0, 1])
         .await
         .add_sig("BroadcastTest", "deploy()")
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment(vec![(0, 2), (1, 1)])
+        .assert_nonce_increment([(0, 2), (1, 1)])
         .await;
 });
 
@@ -527,7 +530,7 @@ forgetest_async!(
             .simulate(ScriptOutcome::OkSimulation)
             .resume(ScriptOutcome::MissingWallet)
             // load missing wallet
-            .load_private_keys(vec![0])
+            .load_private_keys([0])
             .await
             .run(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment_addresses(vec![(
@@ -535,7 +538,7 @@ forgetest_async!(
                 1,
             )])
             .await
-            .assert_nonce_increment(vec![(0, 2)])
+            .assert_nonce_increment([(0, 2)])
             .await;
     }
 );
@@ -545,16 +548,16 @@ forgetest_async!(can_resume_script, |prj: TestProject, cmd: TestCommand| async m
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
-        .load_private_keys(vec![0])
+        .load_private_keys([0])
         .await
         .add_sig("BroadcastTest", "deploy()")
         .simulate(ScriptOutcome::OkSimulation)
         .resume(ScriptOutcome::MissingWallet)
         // load missing wallet
-        .load_private_keys(vec![1])
+        .load_private_keys([1])
         .await
         .run(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment(vec![(0, 2), (1, 1)])
+        .assert_nonce_increment([(0, 2), (1, 1)])
         .await;
 });
 
@@ -564,12 +567,12 @@ forgetest_async!(can_deploy_broadcast_wrap, |prj: TestProject, cmd: TestCommand|
 
     tester
         .add_deployer(2)
-        .load_private_keys(vec![0, 1, 2])
+        .load_private_keys([0, 1, 2])
         .await
         .add_sig("BroadcastTest", "deployOther()")
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment(vec![(0, 4), (1, 4), (2, 1)])
+        .assert_nonce_increment([(0, 4), (1, 4), (2, 1)])
         .await;
 });
 
@@ -578,7 +581,7 @@ forgetest_async!(panic_no_deployer_set, |prj: TestProject, cmd: TestCommand| asy
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
-        .load_private_keys(vec![0, 1])
+        .load_private_keys([0, 1])
         .await
         .add_sig("BroadcastTest", "deployOther()")
         .simulate(ScriptOutcome::WarnSpecifyDeployer)
@@ -591,12 +594,12 @@ forgetest_async!(can_deploy_no_arg_broadcast, |prj: TestProject, cmd: TestComman
 
     tester
         .add_deployer(0)
-        .load_private_keys(vec![0])
+        .load_private_keys([0])
         .await
         .add_sig("BroadcastTest", "deployNoArgs()")
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment(vec![(0, 3)])
+        .assert_nonce_increment([(0, 3)])
         .await;
 });
 
@@ -605,18 +608,23 @@ forgetest_async!(can_deploy_with_create2, |prj: TestProject, cmd: TestCommand| a
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     // Prepare CREATE2 Deployer
-    let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
-    let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
-    api.anvil_set_code(addr, code).await.unwrap();
+    api.anvil_set_code(
+        foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER.to_ethers(),
+        ethers::types::Bytes::from_static(
+            foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
+        ),
+    )
+    .await
+    .unwrap();
 
     tester
         .add_deployer(0)
-        .load_private_keys(vec![0])
+        .load_private_keys([0])
         .await
         .add_sig("BroadcastTestNoLinking", "deployCreate2()")
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment(vec![(0, 2)])
+        .assert_nonce_increment([(0, 2)])
         .await
         // Running again results in error, since we're repeating the salt passed to CREATE2
         .run(ScriptOutcome::FailedScript);
@@ -630,12 +638,12 @@ forgetest_async!(
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
-            .load_private_keys(vec![0])
+            .load_private_keys([0])
             .await
             .add_sig("BroadcastTestNoLinking", "deployMany()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(vec![(0, 25)])
+            .assert_nonce_increment([(0, 25)])
             .await;
     }
 );
@@ -648,12 +656,12 @@ forgetest_async!(
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
-            .load_private_keys(vec![0])
+            .load_private_keys([0])
             .await
             .add_sig("BroadcastMix", "deployMix()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(vec![(0, 15)])
+            .assert_nonce_increment([(0, 15)])
             .await;
     }
 );
@@ -663,12 +671,12 @@ forgetest_async!(deploy_with_setup, |prj: TestProject, cmd: TestCommand| async m
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
-        .load_private_keys(vec![0])
+        .load_private_keys([0])
         .await
         .add_sig("BroadcastTestSetup", "run()")
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment(vec![(0, 6)])
+        .assert_nonce_increment([(0, 6)])
         .await;
 });
 
@@ -677,7 +685,7 @@ forgetest_async!(fail_broadcast_staticcall, |prj: TestProject, cmd: TestCommand|
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
-        .load_private_keys(vec![0])
+        .load_private_keys([0])
         .await
         .add_sig("BroadcastTestNoLinking", "errorStaticCall()")
         .simulate(ScriptOutcome::StaticCallNotAllowed);
@@ -696,12 +704,12 @@ forgetest_async!(
         api.anvil_set_code(addr, code).await.unwrap();
 
         tester
-            .load_private_keys(vec![0])
+            .load_private_keys([0])
             .await
             .add_sig("BroadcastTestSetup", "run()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(vec![(0, 6)])
+            .assert_nonce_increment([(0, 6)])
             .await;
 
         // Uncomment to recreate the broadcast log
@@ -1046,29 +1054,30 @@ contract ScriptTxOrigin is Script {
 
 contract ContractA {
     function test(address _contractB) public {
-        require(msg.sender == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
-        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        require(msg.sender == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, "sender 1");
+        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, "origin 1");
         ContractB contractB = ContractB(_contractB);
         ContractC contractC = new ContractC();
-        require(msg.sender == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
-        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        require(msg.sender == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, "sender 2");
+        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, "origin 2");
         contractB.method(address(this));
         contractC.method(address(this));
-        require(msg.sender == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
-        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        require(msg.sender == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, "sender 3");
+        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, "origin 3");
     }
 }
 
 contract ContractB {
     function method(address sender) public view {
-        require(msg.sender == sender);
-        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        require(msg.sender == sender, "sender");
+        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, "origin");
     }
 }
+
 contract ContractC {
     function method(address sender) public view {
-        require(msg.sender == sender);
-        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        require(msg.sender == sender, "sender");
+        require(tx.origin == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, "origin");
     }
 }
    "#,
