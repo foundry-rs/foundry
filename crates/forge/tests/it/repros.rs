@@ -319,3 +319,9 @@ async fn test_issue_6170() {
     assert_eq!(test.status, TestStatus::Failure);
     assert_eq!(test.reason, Some("log != expected log".to_string()));
 }
+
+// <https://github.com/foundry-rs/foundry/issues/6180>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_issue_6180() {
+    test_repro!("Issue6180");
+}
