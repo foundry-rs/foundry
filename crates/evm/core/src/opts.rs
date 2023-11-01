@@ -24,6 +24,9 @@ pub struct EvmOpts {
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
 
+    /// The number of retries
+    pub fork_retries: Option<u32>,
+
     /// initial retry backoff
     pub fork_retry_backoff: Option<u64>,
 

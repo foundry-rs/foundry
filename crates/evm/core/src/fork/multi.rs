@@ -198,12 +198,6 @@ pub struct MultiForkHandler {
     /// All created Forks in order to reuse them
     forks: HashMap<ForkId, CreatedFork>,
 
-    /// The retries to allow for new providers
-    retries: u32,
-
-    /// Initial backoff delay for requests
-    backoff: u64,
-
     /// Optional periodic interval to flush rpc cache
     flush_cache_interval: Option<tokio::time::Interval>,
 }
@@ -217,9 +211,6 @@ impl MultiForkHandler {
             handlers: Default::default(),
             pending_tasks: Default::default(),
             forks: Default::default(),
-            retries: 8,
-            // 800ms
-            backoff: 800,
             flush_cache_interval: None,
         }
     }
@@ -258,10 +249,8 @@ impl MultiForkHandler {
                 return
             }
 
-            let retries = self.retries;
-            let backoff = self.backoff;
             // need to create a new fork
-            let task = Box::pin(create_fork(fork, retries, backoff));
+            let task = Box::pin(create_fork(fork));
             self.pending_tasks.push(ForkTask::Create(task, fork_id, sender, Vec::new()));
         }
     }
@@ -459,15 +448,11 @@ fn create_fork_id(url: &str, num: Option<u64>) -> ForkId {
 /// Creates a new fork
 ///
 /// This will establish a new `Provider` to the endpoint and return the Fork Backend
-async fn create_fork(
-    mut fork: CreateFork,
-    retries: u32,
-    backoff: u64,
-) -> eyre::Result<(CreatedFork, Handler)> {
+async fn create_fork(mut fork: CreateFork) -> eyre::Result<(CreatedFork, Handler)> {
     let provider = Arc::new(
         ProviderBuilder::new(fork.url.as_str())
-            .max_retry(retries)
-            .initial_backoff(backoff)
+            .maybe_max_retry(fork.evm_opts.fork_retries)
+            .maybe_initial_backoff(fork.evm_opts.fork_retry_backoff)
             .compute_units_per_second(fork.evm_opts.get_compute_units_per_second())
             .build()?,
     );

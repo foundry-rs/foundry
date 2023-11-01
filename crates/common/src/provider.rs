@@ -131,6 +131,19 @@ impl ProviderBuilder {
         self
     }
 
+    /// How often to retry a failed request. If `None`, defaults to the already-set value.
+    pub fn maybe_max_retry(mut self, max_retry: Option<u32>) -> Self {
+        self.max_retry = max_retry.unwrap_or(self.max_retry);
+        self
+    }
+
+    /// The starting backoff delay to use after the first failed request. If `None`, defaults to
+    /// the already-set value.
+    pub fn maybe_initial_backoff(mut self, initial_backoff: Option<u64>) -> Self {
+        self.initial_backoff = initial_backoff.unwrap_or(self.initial_backoff);
+        self
+    }
+
     /// How often to retry a failed request due to connection issues
     pub fn timeout_retry(mut self, timeout_retry: u32) -> Self {
         self.timeout_retry = timeout_retry;
