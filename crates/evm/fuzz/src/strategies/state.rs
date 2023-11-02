@@ -253,22 +253,16 @@ pub fn collect_created_contracts(
     project_contracts: &ContractsByArtifact,
     setup_contracts: &ContractsByAddress,
     artifact_filters: &ArtifactFilters,
-    targeted_contracts: FuzzRunIdentifiedContracts,
     created_contracts: &mut Vec<Address>,
 ) -> eyre::Result<()> {
-    let mut writable_targeted = targeted_contracts.lock();
     for (address, account) in state_changeset {
         if !setup_contracts.contains_key(address) {
             if let (true, Some(code)) = (&account.is_touched(), &account.info.code) {
                 if !code.is_empty() {
                     if let Some((artifact, (abi, _))) = project_contracts.find_by_code(code.bytes())
                     {
-                        if let Some(functions) =
-                            artifact_filters.get_targeted_functions(artifact, abi)?
-                        {
+                        if let Some(_) = artifact_filters.get_targeted_functions(artifact, abi)? {
                             created_contracts.push(*address);
-                            writable_targeted
-                                .insert(*address, (artifact.name.clone(), abi.clone(), functions));
                         }
                     }
                 }

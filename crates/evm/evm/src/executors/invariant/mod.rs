@@ -174,7 +174,6 @@ impl<'a> InvariantExecutor<'a> {
                     self.project_contracts,
                     self.setup_contracts,
                     &self.artifact_filters,
-                    targeted_contracts.clone(),
                     &mut created_contracts,
                 ) {
                     warn!(target: "forge::test", "{error}");
