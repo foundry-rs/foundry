@@ -61,9 +61,11 @@ pub struct NodeArgs {
     pub mnemonic_random: Option<usize>,
 
     /// Generates a BIP39 mnemonic phrase from a given seed
-    /// CAREFUL: this is obviously NOT SAFE and should only be used for testing
     /// Cannot be used with other `mnemonic` options
-    #[clap(long, conflicts_with_all = &["mnemonic", "mnemonic_random"])]
+    ///
+    /// CAREFUL: this is NOT SAFE and should only be used for testing.
+    /// Never use the private keys generated in production.
+    #[clap(long = "mnemonic-seed-unsafe", conflicts_with_all = &["mnemonic", "mnemonic_random"])]
     pub mnemonic_seed: Option<u64>,
 
     /// Sets the derivation path of the child key to be derived.

@@ -6,8 +6,9 @@ use ethers::{
         coins_bip39::{English, Mnemonic},
         LocalWallet, MnemonicBuilder, Signer,
     },
-    types::{transaction::eip712::TypedData, Address, Signature},
+    types::{transaction::eip712::TypedData, Signature},
 };
+use ethers_core::utils::to_checksum;
 use eyre::{Context, Result};
 use foundry_cli::opts::{RawWallet, Wallet};
 use foundry_common::fs;
@@ -181,12 +182,12 @@ impl WalletSubcommands {
                     })
                     .collect::<Vec<_>>();
 
-                println!("Successfully generated a new mnemonic.");
+                println!("{}", Paint::green("Successfully generated a new mnemonic."));
                 println!("Phrase:\n{phrase}");
                 println!("\nAccounts:");
                 for (i, wallet) in wallets.iter().enumerate() {
                     println!("- Account {i}:");
-                    println!("Address:     {}", SimpleCast::to_checksum_address(&wallet.address()));
+                    println!("Address:     {}", to_checksum(&wallet.address(), None));
                     println!("Private key: 0x{}\n", hex::encode(wallet.signer().to_bytes()));
                 }
             }
