@@ -11,7 +11,7 @@ use revm::primitives::U256;
 
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
 /// external `invariant_failures.failed_invariant` map and returns a generic error.
-/// Returns the mapping of (Invariant Function Name -> Call Result).
+/// Either returns the call result if successful, or nothing if there was an error.
 pub fn assert_invariants(
     invariant_contract: &InvariantContract<'_>,
     executor: &Executor,
