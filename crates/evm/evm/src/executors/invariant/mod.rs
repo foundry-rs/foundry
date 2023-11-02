@@ -115,6 +115,13 @@ impl<'a> InvariantExecutor<'a> {
         // Stores data related to reverts or failed assertions of the test.
         let failures = RefCell::new(InvariantFailures::new());
 
+        // Stores the calldata in the last run.
+        let last_run_calldata: RefCell<Vec<BasicTxDetails>> = RefCell::new(vec![]);
+
+        // Let's make sure the invariant is sound before actually starting the run:
+        // We'll assert the invariant in its initial state, and if it fails, we'll
+        // already know if we can early exit the invariant run.
+        // This does not count as a fuzz run. It will just register the revert.
         let last_call_results = RefCell::new(assert_invariants(
             &invariant_contract,
             &self.executor,
@@ -122,8 +129,7 @@ impl<'a> InvariantExecutor<'a> {
             &mut failures.borrow_mut(),
             self.config.shrink_sequence,
         ));
-        let last_run_calldata: RefCell<Vec<BasicTxDetails>> = RefCell::new(vec![]);
-        // Make sure invariants are sound even before starting to fuzz
+
         if last_call_results.borrow().is_none() {
             fuzz_cases.borrow_mut().push(FuzzedCases::new(vec![]));
         }
@@ -134,8 +140,8 @@ impl<'a> InvariantExecutor<'a> {
         // values.
         let branch_runner = RefCell::new(self.runner.clone());
         let _ = self.runner.run(&strat, |mut inputs| {
-            // Scenarios where we want to fail as soon as possible.
-            if self.config.fail_on_revert && failures.borrow().reverts == 1 {
+            // We stop the run immediately if we have reverted, and `fail_on_revert` is set.
+            if self.config.fail_on_revert && failures.borrow().reverts > 0 {
                 return Err(TestCaseError::fail("Revert occurred."))
             }
 
@@ -745,10 +751,9 @@ fn can_continue(
             return RichInvariantResults::new(false, None)
         }
     } else {
+        // Increase the amount of reverts.
         failures.reverts += 1;
-
-        // The user might want to stop all execution if a revert happens to
-        // better bound their testing space.
+        // If fail on revert is set, we must return inmediately.
         if fail_on_revert {
             let error = InvariantFuzzError::new(
                 invariant_contract,
@@ -760,6 +765,7 @@ fn can_continue(
             );
 
             failures.revert_reason = Some(error.revert_reason.clone());
+            failures.error = Some(error);
 
             return RichInvariantResults::new(false, None)
         }
