@@ -10,8 +10,8 @@ use foundry_cli::opts::{RawWallet, Wallet};
 use foundry_common::fs;
 use foundry_config::Config;
 use foundry_utils::types::{ToAlloy, ToEthers};
-use std::path::Path;
 use serde_json::json;
+use std::path::Path;
 use yansi::Paint;
 
 pub mod vanity;
@@ -132,7 +132,7 @@ impl WalletSubcommands {
             WalletSubcommands::New { path, unsafe_password, number, json, .. } => {
                 let mut rng = thread_rng();
 
-                let mut json_values = if json { Some(vec![] )} else { None };
+                let mut json_values = if json { Some(vec![]) } else { None };
                 if let Some(path) = path {
                     let path = dunce::canonicalize(path)?;
                     if !path.is_dir() {
@@ -147,44 +147,49 @@ impl WalletSubcommands {
                         rpassword::prompt_password("Enter secret: ")?
                     };
 
-
                     for _ in 0..number {
                         let (wallet, uuid) =
                             LocalWallet::new_keystore(&path, &mut rng, password.clone(), None)?;
 
-                        if json {
-                            json_values.as_mut().unwrap().push(json!({
+                        if let Some(json) = json_values.as_mut() {
+                            json.push(json!({
                                 "address": wallet.address().to_alloy().to_checksum(None),
                                 "path": format!("{}", path.join(uuid).display()),
-                            }));
+                            }
+                            ));
                         } else {
-                            println!("Created new encrypted keystore file: {}", path.join(uuid).display());
+                            println!(
+                                "Created new encrypted keystore file: {}",
+                                path.join(uuid).display()
+                            );
                             println!("Address: {}", wallet.address().to_alloy().to_checksum(None));
                         }
                     }
 
-                    if json {
-                        println!("{}", serde_json::to_string_pretty(&json_values.unwrap())?);
+                    if let Some(json) = json_values.as_ref() {
+                        println!("{}", serde_json::to_string_pretty(json)?);
                     }
                 } else {
-                    let mut json_values = if json { Some(vec![] )} else { None };
                     for _ in 0..number {
                         let wallet = LocalWallet::new(&mut rng);
 
-                        if json {
-                            json_values.as_mut().unwrap().push(json!({
+                        if let Some(json) = json_values.as_mut() {
+                            json.push(json!({
                                 "address": wallet.address().to_alloy().to_checksum(None),
                                 "private_key": format!("0x{}", hex::encode(wallet.signer().to_bytes())),
-                            }));
+                            }))
                         } else {
                             println!("Successfully created new keypair.");
-                            println!("Address:     {}", wallet.address().to_alloy().to_checksum(None));
+                            println!(
+                                "Address:     {}",
+                                wallet.address().to_alloy().to_checksum(None)
+                            );
                             println!("Private key: 0x{}", hex::encode(wallet.signer().to_bytes()));
                         }
                     }
 
-                    if json {
-                        println!("{}", serde_json::to_string_pretty(&json_values.unwrap())?);
+                    if let Some(json) = json_values.as_ref() {
+                        println!("{}", serde_json::to_string_pretty(json)?);
                     }
                 }
             }
