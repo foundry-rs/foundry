@@ -241,12 +241,17 @@ impl SignEthClient {
     /// Pretty print calldata and if available, fetch possible function signatures
     ///
     /// ```no_run
-    /// 
     /// use foundry_common::selectors::SignEthClient;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    ///   let pretty_data = SignEthClient::new()?.pretty_calldata("0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5".to_string(), false).await?;
-    ///   println!("{}",pretty_data);
+    /// let pretty_data = SignEthClient::new()?
+    ///     .pretty_calldata(
+    ///         "0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5"
+    ///             .to_string(),
+    ///         false,
+    ///     )
+    ///     .await?;
+    /// println!("{}", pretty_data);
     /// # Ok(())
     /// # }
     /// ```
@@ -388,12 +393,15 @@ pub async fn decode_event_topic(topic: &str) -> eyre::Result<Vec<String>> {
 /// Pretty print calldata and if available, fetch possible function signatures
 ///
 /// ```no_run
-/// 
 /// use foundry_common::selectors::pretty_calldata;
 ///
 /// # async fn foo() -> eyre::Result<()> {
-///   let pretty_data = pretty_calldata("0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5".to_string(), false).await?;
-///   println!("{}",pretty_data);
+/// let pretty_data = pretty_calldata(
+///     "0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5".to_string(),
+///     false,
+/// )
+/// .await?;
+/// println!("{}", pretty_data);
 /// # Ok(())
 /// # }
 /// ```

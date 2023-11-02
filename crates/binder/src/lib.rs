@@ -40,23 +40,21 @@ impl Binder {
     ///
     /// # Example
     ///
-    /// ## Local repository
+    /// Local repository:
     ///
     /// ```
-    /// # use foundry_binder::Binder;
-    /// # fn new() {
-    ///  let binder = Binder::new("./aave-v3-core");
-    /// # }
-    /// ```
-    ///
-    /// ## Remote repository with default branch
-    ///
-    /// ```
-    /// # use url::Url;
     /// use foundry_binder::Binder;
-    /// # fn new() {
-    ///  let binder = Binder::new(Url::parse("https://github.com/aave/aave-v3-core").unwrap());
-    /// # }
+    ///
+    /// let binder = Binder::new("./aave-v3-core");
+    /// ```
+    ///
+    /// Remote repository with default branch:
+    ///
+    /// ```
+    /// use foundry_binder::Binder;
+    /// use url::Url;
+    ///
+    /// let binder = Binder::new(Url::parse("https://github.com/aave/aave-v3-core").unwrap());
     /// ```
     pub fn new(location: impl Into<SourceLocation>) -> Self {
         Self {
@@ -76,14 +74,14 @@ impl Binder {
     /// Add a `yarn install` command
     ///
     /// ```
-    /// # use url::Url;
     /// use foundry_binder::{Binder, RepositoryBuilder};
-    /// # fn new() {
+    /// use url::Url;
+    ///
     /// let binder = Binder::new(
     ///     RepositoryBuilder::new(Url::parse("https://github.com/aave/aave-v3-core").unwrap())
     ///         .tag("v1.16.0"),
-    /// ).command(["yarn", "install"]);
-    /// # }
+    /// )
+    /// .command(["yarn", "install"]);
     /// ```
     #[must_use]
     pub fn command<I, S>(mut self, cmd: I) -> Self
@@ -122,20 +120,15 @@ impl Binder {
     /// ## Example
     ///
     /// ```
-    /// # use url::Url;
     /// use foundry_binder::{Binder, Config, RepositoryBuilder};
-    /// # fn new() {
+    /// use url::Url;
+    ///
     /// let binder = Binder::new(
     ///     RepositoryBuilder::new(Url::parse("https://github.com/aave/aave-v3-core").unwrap())
     ///         .tag("v1.16.0"),
     /// )
     /// .command(["yarn", "install"])
-    /// .config(Config {
-    ///     src: "src".into(),
-    ///     out: "artifacts".into(),
-    ///     ..Default::default()
-    /// });
-    /// # }
+    /// .config(Config { src: "src".into(), out: "artifacts".into(), ..Default::default() });
     /// ```
     #[must_use]
     pub fn config(mut self, config: Config) -> Self {

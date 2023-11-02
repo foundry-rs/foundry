@@ -121,10 +121,11 @@ macro_rules! impl_figment_convert {
 /// Merge several nested `Provider` together with the type itself
 ///
 /// ```rust
+/// use foundry_config::{
+///     figment::{value::*, *},
+///     impl_figment_convert, merge_impl_figment_convert, Config,
+/// };
 /// use std::path::PathBuf;
-/// use foundry_config::{Config, merge_impl_figment_convert, impl_figment_convert};
-/// use foundry_config::figment::*;
-/// use foundry_config::figment::value::*;
 ///
 /// #[derive(Default)]
 /// struct MyArgs {
@@ -137,7 +138,7 @@ macro_rules! impl_figment_convert {
 ///     }
 ///
 ///     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-///        todo!()
+///         todo!()
 ///     }
 /// }
 ///
@@ -146,7 +147,7 @@ macro_rules! impl_figment_convert {
 /// #[derive(Default)]
 /// struct OuterArgs {
 ///     value: u64,
-///     inner: MyArgs
+///     inner: MyArgs,
 /// }
 ///
 /// impl Provider for OuterArgs {
@@ -155,7 +156,7 @@ macro_rules! impl_figment_convert {
 ///     }
 ///
 ///     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-///             todo!()
+///         todo!()
 ///     }
 /// }
 ///

@@ -722,7 +722,7 @@ contract A {
         .unwrap();
 
     cmd.args(["build", "--force"]);
-    let out = cmd.stdout();
+    let out = cmd.stdout_lossy();
     // no warnings
     assert!(out.trim().contains("Compiler run successful!"));
     assert!(!out.trim().contains("Compiler run successful with warnings:"));
@@ -730,7 +730,7 @@ contract A {
     // don't ignore errors
     let config = Config { ignored_error_codes: vec![], ..Default::default() };
     prj.write_config(config);
-    let out = cmd.stdout();
+    let out = cmd.stdout_lossy();
 
     assert!(out.trim().contains("Compiler run successful with warnings:"));
     assert!(
@@ -758,7 +758,7 @@ contract A {
         .unwrap();
 
     cmd.args(["build", "--force"]);
-    let out = cmd.stdout();
+    let out = cmd.stdout_lossy();
     // there are no errors
     assert!(out.trim().contains("Compiler run successful"));
     assert!(out.trim().contains("Compiler run successful with warnings:"));
@@ -775,7 +775,7 @@ contract A {
         ..Default::default()
     };
     prj.write_config(config);
-    let out = cmd.stdout();
+    let out = cmd.stdout_lossy();
 
     assert!(out.trim().contains("Compiler run successful!"));
     assert!(!out.trim().contains("Compiler run successful with warnings:"));
@@ -1009,7 +1009,6 @@ forgetest!(can_install_latest_release_tag, |prj: TestProject, mut cmd: TestComma
 // Tests that forge update doesn't break a working dependency by recursively updating nested
 // dependencies
 forgetest!(
-    #[ignore]
     can_update_library_with_outdated_nested_dependency,
     |prj: TestProject, mut cmd: TestCommand| {
         cmd.git_init();
@@ -1018,39 +1017,63 @@ forgetest!(
         let git_mod = prj.root().join(".git/modules/lib");
         let git_mod_file = prj.root().join(".gitmodules");
 
-        let package = libs.join("issue-2264-repro");
-        let package_mod = git_mod.join("issue-2264-repro");
+        // get paths to check inside install fn
+        let package = libs.join("forge-5980-test");
+        let package_mod = git_mod.join("forge-5980-test");
 
         let install = |cmd: &mut TestCommand| {
-            cmd.forge_fuse().args(["install", "foundry-rs/issue-2264-repro", "--no-commit"]);
+            // install main dependency
+            cmd.forge_fuse().args(["install", "evalir/forge-5980-test", "--no-commit"]);
             cmd.assert_non_empty_stdout();
+
+            // assert pathbufs exist
             assert!(package.exists());
             assert!(package_mod.exists());
 
             let submods = read_string(&git_mod_file);
-            assert!(submods.contains("https://github.com/foundry-rs/issue-2264-repro"));
+            assert!(submods.contains("https://github.com/evalir/forge-5980-test"));
         };
 
         install(&mut cmd);
-        cmd.forge_fuse().args(["update", "lib/issue-2264-repro"]);
+        // try to update the top-level dependency; there should be no update for this dependency,
+        // but its sub-dependency has upstream (breaking) changes; forge should not attempt to
+        // update the sub-dependency
+        cmd.forge_fuse().args(["update", "lib/forge-5980-test"]);
         cmd.stdout_lossy();
 
+        // add explicit remappings for test file
+        let config = Config {
+            remappings: vec![
+                Remapping::from_str("forge-5980-test/=lib/forge-5980-test/src/").unwrap().into(),
+                // explicit remapping for sub-dependendy seems necessary for some reason
+                Remapping::from_str(
+                    "forge-5980-test-dep/=lib/forge-5980-test/lib/forge-5980-test-dep/src/",
+                )
+                .unwrap()
+                .into(),
+            ],
+            ..Default::default()
+        };
+        prj.write_config(config);
+
+        // create test file that uses the top-level dependency; if the sub-dependency is updated,
+        // compilation will fail
         prj.inner()
             .add_source(
-                "MyTokenCopy",
+                "CounterCopy",
                 r#"
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.6.0;
-import "issue-2264-repro/MyToken.sol";
-contract MyTokenCopy is MyToken {
+pragma solidity ^0.8.0;
+import "forge-5980-test/Counter.sol";
+contract CounterCopy is Counter {
 }
    "#,
             )
             .unwrap();
 
-        cmd.forge_fuse().args(["build"]);
+        // build and check output
+        cmd.forge_fuse().arg("build");
         let output = cmd.stdout_lossy();
-
         assert!(output.contains("Compiler run successful",));
     }
 );
@@ -1155,21 +1178,21 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 
     cmd.forge_fuse();
     prj.write_config(Config { gas_reports: (vec![]), ..Default::default() });
     cmd.forge_fuse();
-    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    let second_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(second_out.contains("foo") && second_out.contains("bar") && second_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 
     cmd.forge_fuse();
     prj.write_config(Config { gas_reports: (vec!["*".to_string()]), ..Default::default() });
     cmd.forge_fuse();
-    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    let third_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 
@@ -1183,7 +1206,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let fourth_out = cmd.arg("test").arg("--gas-report").stdout();
+    let fourth_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(fourth_out.contains("foo") && fourth_out.contains("bar") && fourth_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 });
@@ -1288,7 +1311,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(first_out.contains("foo") && !first_out.contains("bar") && !first_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 
@@ -1299,7 +1322,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    let second_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(
         !second_out.contains("foo") && second_out.contains("bar") && !second_out.contains("baz")
     );
@@ -1312,7 +1335,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    let third_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(!third_out.contains("foo") && !third_out.contains("bar") && third_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 });
@@ -1417,7 +1440,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(!first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
     // cmd.arg("test").arg("--gas-report").print_output();
 
@@ -1429,7 +1452,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    let second_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(
         second_out.contains("foo") && !second_out.contains("bar") && second_out.contains("baz")
     );
@@ -1447,7 +1470,7 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    let third_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
 });
 
@@ -1609,7 +1632,7 @@ forgetest_init!(can_build_skip_contracts, |prj: TestProject, mut cmd: TestComman
             .join("tests/fixtures/can_build_skip_contracts.stdout"),
     );
     // re-run command
-    let out = cmd.stdout();
+    let out = cmd.stdout_lossy();
 
     // unchanged
     assert!(out.trim().contains("No files changed, compilation skipped"), "{}", out);
@@ -1641,7 +1664,7 @@ function test_run() external {}
 // checks that build --sizes includes all contracts even if unchanged
 forgetest_init!(can_build_sizes_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
     cmd.args(["build", "--sizes"]);
-    let out = cmd.stdout();
+    let out = cmd.stdout_lossy();
 
     // contains: Counter    ┆ 0.247     ┆ 24.329
     assert!(out.contains(TEMPLATE_CONTRACT));
@@ -1649,20 +1672,20 @@ forgetest_init!(can_build_sizes_repeatedly, |_prj: TestProject, mut cmd: TestCom
     // get the entire table
     let table = out.split("Compiler run successful!").nth(1).unwrap().trim();
 
-    let unchanged = cmd.stdout();
+    let unchanged = cmd.stdout_lossy();
     assert!(unchanged.contains(table), "{}", table);
 });
 
 // checks that build --names includes all contracts even if unchanged
 forgetest_init!(can_build_names_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
     cmd.args(["build", "--names"]);
-    let out = cmd.stdout();
+    let out = cmd.stdout_lossy();
 
     assert!(out.contains(TEMPLATE_CONTRACT));
 
     // get the entire list
     let list = out.split("Compiler run successful!").nth(1).unwrap().trim();
 
-    let unchanged = cmd.stdout();
+    let unchanged = cmd.stdout_lossy();
     assert!(unchanged.contains(list), "{}", list);
 });

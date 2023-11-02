@@ -9,46 +9,17 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::{address, Address};
+// Silence the "unused crate" warning.
+#[cfg(not(feature = "impls"))]
+use alloy_primitives as _;
 
-mod defs;
-pub use defs::{Cheatcode, CheatcodeDef, Group, Mutability, Safety, Status, Visibility, Vm};
+pub mod defs;
+pub use defs::{Cheatcode, CheatcodeDef, Vm};
 
 #[cfg(feature = "impls")]
 pub mod impls;
 #[cfg(feature = "impls")]
 pub use impls::{Cheatcodes, CheatsConfig};
-
-/// The cheatcode handler address.
-///
-/// This is the same address as the one used in DappTools's HEVM.
-/// It is calculated as:
-/// `address(bytes20(uint160(uint256(keccak256('hevm cheat code')))))`
-pub const CHEATCODE_ADDRESS: Address = address!("7109709ECfa91a80626fF3989D68f67F5b1DD12D");
-
-/// The Hardhat console address.
-///
-/// See: <https://github.com/nomiclabs/hardhat/blob/master/packages/hardhat-core/console.sol>
-pub const HARDHAT_CONSOLE_ADDRESS: Address = address!("000000000000000000636F6e736F6c652e6c6f67");
-
-/// Address of the default `CREATE2` deployer.
-pub const DEFAULT_CREATE2_DEPLOYER: Address = address!("4e59b44847b379578588920ca78fbf26c0b4956c");
-
-/// Generates the `cheatcodes.json` file contents.
-pub fn json_cheatcodes() -> String {
-    serde_json::to_string_pretty(Vm::CHEATCODES).unwrap()
-}
-
-/// Generates the [cheatcodes](json_cheatcodes) JSON schema.
-#[cfg(feature = "schema")]
-pub fn json_schema() -> String {
-    // use a custom type to add a title and description to the schema
-    /// Foundry cheatcodes. Learn more: <https://book.getfoundry.sh/cheatcodes/>
-    #[derive(schemars::JsonSchema)]
-    struct Cheatcodes([Cheatcode<'static>]);
-
-    serde_json::to_string_pretty(&schemars::schema_for!(Cheatcodes)).unwrap()
-}
 
 #[cfg(test)]
 mod tests {
@@ -58,6 +29,32 @@ mod tests {
     const JSON_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/cheatcodes.json");
     #[cfg(feature = "schema")]
     const SCHEMA_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/cheatcodes.schema.json");
+    const IFACE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/cheats/Vm.sol");
+
+    /// Generates the `cheatcodes.json` file contents.
+    fn json_cheatcodes() -> String {
+        serde_json::to_string_pretty(&defs::Cheatcodes::new()).unwrap()
+    }
+
+    /// Generates the [cheatcodes](json_cheatcodes) JSON schema.
+    #[cfg(feature = "schema")]
+    fn json_schema() -> String {
+        serde_json::to_string_pretty(&schemars::schema_for!(defs::Cheatcodes)).unwrap()
+    }
+
+    fn sol_iface() -> String {
+        let cheats = defs::Cheatcodes::new().to_string().trim().replace('\n', "\n    ");
+        format!(
+            "\
+// Automatically generated from `foundry-cheatcodes` Vm definitions. Do not modify manually.
+// This interface is just for internal testing purposes. Use `forge-std` instead.
+
+interface Vm {{
+    {cheats}
+}}
+"
+        )
+    }
 
     #[test]
     fn defs_up_to_date() {
@@ -68,6 +65,11 @@ mod tests {
     #[cfg(feature = "schema")]
     fn schema_up_to_date() {
         ensure_file_contents(Path::new(SCHEMA_PATH), &json_schema());
+    }
+
+    #[test]
+    fn iface_up_to_date() {
+        ensure_file_contents(Path::new(IFACE_PATH), &sol_iface());
     }
 
     /// Checks that the `file` has the specified `contents`. If that is not the

@@ -17,7 +17,7 @@ use foundry_cli::{
     opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
-use foundry_common::{abi::parse_tokens, compile, estimate_eip1559_fees};
+use foundry_common::{compile, estimate_eip1559_fees, fmt::parse_tokens};
 use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalized};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use serde_json::json;

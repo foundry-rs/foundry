@@ -266,24 +266,22 @@ impl NodeHandle {
         self.config.get_ipc_path()
     }
 
-    /// Returns a Provider for the http endpoint
+    /// Constructs a [`RetryProvider`] for this handle's HTTP endpoint.
     pub fn http_provider(&self) -> RetryProvider {
-        ProviderBuilder::new(self.http_endpoint())
+        ProviderBuilder::new(&self.http_endpoint())
             .build()
-            .expect("Failed to connect using http provider")
+            .expect("failed to build HTTP provider")
             .interval(Duration::from_millis(500))
     }
 
-    /// Connects to the websocket Provider of the node
-    pub async fn ws_provider(&self) -> RetryProvider {
-        ProviderBuilder::new(self.ws_endpoint())
-            .build()
-            .expect("Failed to connect to node's websocket")
+    /// Constructs a [`RetryProvider`] for this handle's WS endpoint.
+    pub fn ws_provider(&self) -> RetryProvider {
+        ProviderBuilder::new(&self.ws_endpoint()).build().expect("failed to build WS provider")
     }
 
-    /// Connects to the ipc endpoint of the node, if spawned
-    pub async fn ipc_provider(&self) -> Option<RetryProvider> {
-        ProviderBuilder::new(self.config.get_ipc_path()?).build().ok()
+    /// Constructs a [`RetryProvider`] for this handle's IPC endpoint, if any.
+    pub fn ipc_provider(&self) -> Option<RetryProvider> {
+        ProviderBuilder::new(&self.config.get_ipc_path()?).build().ok()
     }
 
     /// Signer accounts that can sign messages/transactions from the EVM node

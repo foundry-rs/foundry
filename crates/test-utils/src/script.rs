@@ -1,4 +1,4 @@
-use crate::TestCommand;
+use crate::{init_tracing, TestCommand};
 use alloy_primitives::{Address, U256};
 use ethers::prelude::{Middleware, NameOrAddress};
 use eyre::Result;
@@ -26,6 +26,7 @@ impl ScriptTester {
         project_root: &Path,
         target_contract: &str,
     ) -> Self {
+        init_tracing();
         ScriptTester::copy_testdata(project_root).unwrap();
         cmd.set_current_dir(project_root);
 
@@ -103,7 +104,10 @@ impl ScriptTester {
         Ok(())
     }
 
-    pub async fn load_private_keys(&mut self, keys_indexes: Vec<u32>) -> &mut Self {
+    pub async fn load_private_keys(
+        &mut self,
+        keys_indexes: impl IntoIterator<Item = u32>,
+    ) -> &mut Self {
         for index in keys_indexes {
             self.cmd.args(["--private-keys", &self.accounts_priv[index as usize]]);
 
@@ -170,24 +174,28 @@ impl ScriptTester {
         self.run(expected)
     }
 
-    /// In Vec<(private_key_slot, expected increment)>
-    pub async fn assert_nonce_increment(&mut self, keys_indexes: Vec<(u32, u32)>) -> &mut Self {
+    /// `[(private_key_slot, expected increment)]`
+    pub async fn assert_nonce_increment(
+        &mut self,
+        keys_indexes: impl IntoIterator<Item = (u32, u32)>,
+    ) -> &mut Self {
         for (private_key_slot, expected_increment) in keys_indexes {
+            let addr = self.accounts_pub[private_key_slot as usize];
             let nonce = self
                 .provider
                 .as_ref()
                 .unwrap()
-                .get_transaction_count(
-                    NameOrAddress::Address(
-                        self.accounts_pub[private_key_slot as usize].to_ethers(),
-                    ),
-                    None,
-                )
+                .get_transaction_count(NameOrAddress::Address(addr.to_ethers()), None)
                 .await
                 .unwrap();
             let prev_nonce = self.nonces.get(&private_key_slot).unwrap();
 
-            assert_eq!(nonce, (prev_nonce + U256::from(expected_increment)).to_ethers());
+            assert_eq!(
+                nonce,
+                (prev_nonce + U256::from(expected_increment)).to_ethers(),
+                "nonce not incremented correctly for {addr}: \
+                 {prev_nonce} + {expected_increment} != {nonce}"
+            );
         }
         self
     }
@@ -213,12 +221,18 @@ impl ScriptTester {
     }
 
     pub fn run(&mut self, expected: ScriptOutcome) -> &mut Self {
-        let output =
-            if expected.is_err() { self.cmd.stderr_lossy() } else { self.cmd.stdout_lossy() };
+        let (stdout, stderr) = self.cmd.unchecked_output_lossy();
+        trace!(target: "tests", "STDOUT\n{stdout}\n\nSTDERR\n{stderr}");
 
+        let output = if expected.is_err() { &stderr } else { &stdout };
         if !output.contains(expected.as_str()) {
-            panic!("OUTPUT: {output}\n\nEXPECTED: {}", expected.as_str());
+            let which = if expected.is_err() { "stderr" } else { "stdout" };
+            panic!(
+                "--STDOUT--\n{stdout}\n\n--STDERR--\n{stderr}\n\n--EXPECTED--\n{:?} in {which}",
+                expected.as_str()
+            );
         }
+
         self
     }
 
@@ -251,16 +265,16 @@ pub enum ScriptOutcome {
 impl ScriptOutcome {
     pub fn as_str(&self) -> &'static str {
         match self {
-            ScriptOutcome::OkNoEndpoint => "If you wish to simulate on-chain transactions pass a RPC URL.",
-            ScriptOutcome::OkSimulation => "SIMULATION COMPLETE. To broadcast these",
-            ScriptOutcome::OkBroadcast => "ONCHAIN EXECUTION COMPLETE & SUCCESSFUL",
-            ScriptOutcome::WarnSpecifyDeployer => "You have more than one deployer who could predeploy libraries. Using `--sender` instead.",
-            ScriptOutcome::MissingSender => "You seem to be using Foundry's default sender. Be sure to set your own --sender",
-            ScriptOutcome::MissingWallet => "No associated wallet",
-            ScriptOutcome::StaticCallNotAllowed => "Staticcalls are not allowed after vm.broadcast. Either remove it, or use vm.startBroadcast instead.",
-            ScriptOutcome::FailedScript => "Script failed.",
-            ScriptOutcome::UnsupportedLibraries => "Multi chain deployment does not support library linking at the moment.",
-            ScriptOutcome::ErrorSelectForkOnBroadcast => "You need to stop broadcasting before you can select forks."
+            Self::OkNoEndpoint => "If you wish to simulate on-chain transactions pass a RPC URL.",
+            Self::OkSimulation => "SIMULATION COMPLETE. To broadcast these",
+            Self::OkBroadcast => "ONCHAIN EXECUTION COMPLETE & SUCCESSFUL",
+            Self::WarnSpecifyDeployer => "You have more than one deployer who could predeploy libraries. Using `--sender` instead.",
+            Self::MissingSender => "You seem to be using Foundry's default sender. Be sure to set your own --sender",
+            Self::MissingWallet => "No associated wallet",
+            Self::StaticCallNotAllowed => "staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead",
+            Self::FailedScript => "Script failed.",
+            Self::UnsupportedLibraries => "Multi chain deployment does not support library linking at the moment.",
+            Self::ErrorSelectForkOnBroadcast => "cannot select forks during a broadcast",
         }
     }
 

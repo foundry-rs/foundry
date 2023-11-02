@@ -27,10 +27,11 @@ use forge::{
 };
 use foundry_cli::opts::MultiWallet;
 use foundry_common::{
-    abi::{encode_function_args, format_token},
+    abi::encode_function_args,
     contracts::get_contract_name,
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
+    fmt::format_token,
     shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::{
@@ -49,7 +50,7 @@ use foundry_config::{
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     decode,
-    inspectors::cheatcodes::{util::BroadcastableTransactions, BroadcastableTransaction},
+    inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::future;

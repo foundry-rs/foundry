@@ -17,9 +17,9 @@ ethers-contract = { workspace = true, features = ["abigen"] }
 ethers-addressbook.workspace = true
 ethers-providers.workspace = true
 
-alloy-primitives.workspace = true
 alloy-json-abi.workspace = true
-alloy-dyn-abi.workspace = true
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
 
 foundry-compilers = { workspace = true, default-features = false }
 

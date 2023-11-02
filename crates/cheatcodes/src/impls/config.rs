@@ -6,30 +6,8 @@ use foundry_config::{
     cache::StorageCachingConfig, fs_permissions::FsAccessKind, Config, FsPermissions,
     ResolvedRpcEndpoints,
 };
+use foundry_evm_core::opts::EvmOpts;
 use std::path::{Path, PathBuf};
-
-// TODO
-#[derive(Clone, Debug, Default)]
-pub struct EvmOpts {
-    pub ffi: bool,
-    pub fork_block_number: Option<u64>,
-}
-
-impl EvmOpts {
-    pub fn get_compute_units_per_second(&self) -> u64 {
-        unimplemented!()
-    }
-
-    pub async fn fork_evm_env(
-        &self,
-        _x: &str,
-    ) -> Result<
-        (revm::primitives::Env, ethers::types::Block<ethers::types::H256>),
-        core::convert::Infallible,
-    > {
-        unimplemented!()
-    }
-}
 
 /// Additional, configurable context the `Cheatcodes` inspector has access to
 ///

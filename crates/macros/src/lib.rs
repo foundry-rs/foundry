@@ -7,7 +7,7 @@
 extern crate self as foundry_macros;
 
 pub mod fmt;
-pub use fmt::{console_format, ConsoleFmt, FormatSpec, TokenDisplay, UIfmt};
+pub use fmt::{console_format, ConsoleFmt, FormatSpec, UIfmt};
 
 #[doc(inline)]
 pub use foundry_macros_impl::{Cheatcode, ConsoleFmt};

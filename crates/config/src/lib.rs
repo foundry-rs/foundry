@@ -374,13 +374,10 @@ pub struct Config {
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
     ///
-    /// ```rust
+    /// ```ignore
     /// use foundry_config::Config;
     ///
-    /// let config = Config {
-    ///     src: "other".into(),
-    ///     ..Default::default()
-    /// };
+    /// let config = Config { src: "other".into(), ..Default::default() };
     /// ```
     #[doc(hidden)]
     #[serde(skip)]
@@ -448,13 +445,12 @@ impl Config {
     /// # Example
     ///
     /// ```no_run
+    /// use figment::providers::{Env, Format, Toml};
     /// use foundry_config::Config;
-    /// use figment::providers::{Toml, Format, Env};
     ///
     /// // Use foundry's default `Figment`, but allow values from `other.toml`
     /// // to supersede its values.
-    /// let figment = Config::figment()
-    ///     .merge(Toml::file("other.toml").nested());
+    /// let figment = Config::figment().merge(Toml::file("other.toml").nested());
     ///
     /// let config = Config::from_provider(figment);
     /// ```
@@ -469,13 +465,12 @@ impl Config {
     /// # Example
     ///
     /// ```rust
+    /// use figment::providers::{Env, Format, Toml};
     /// use foundry_config::Config;
-    /// use figment::providers::{Toml, Format, Env};
     ///
     /// // Use foundry's default `Figment`, but allow values from `other.toml`
     /// // to supersede its values.
-    /// let figment = Config::figment()
-    ///     .merge(Toml::file("other.toml").nested());
+    /// let figment = Config::figment().merge(Toml::file("other.toml").nested());
     ///
     /// let config = Config::try_from(figment);
     /// ```
@@ -777,11 +772,10 @@ impl Config {
     /// # Example
     ///
     /// ```
-    /// 
     /// use foundry_config::Config;
     /// # fn t() {
-    ///     let config = Config::with_root("./");
-    ///     let rpc_jwt = config.get_rpc_jwt_secret().unwrap().unwrap();
+    /// let config = Config::with_root("./");
+    /// let rpc_jwt = config.get_rpc_jwt_secret().unwrap().unwrap();
     /// # }
     /// ```
     pub fn get_rpc_jwt_secret(&self) -> Result<Option<Cow<str>>, UnresolvedEnvVarError> {
@@ -797,11 +791,10 @@ impl Config {
     /// # Example
     ///
     /// ```
-    /// 
     /// use foundry_config::Config;
     /// # fn t() {
-    ///     let config = Config::with_root("./");
-    ///     let rpc_url = config.get_rpc_url().unwrap().unwrap();
+    /// let config = Config::with_root("./");
+    /// let rpc_url = config.get_rpc_url().unwrap().unwrap();
     /// # }
     /// ```
     pub fn get_rpc_url(&self) -> Option<Result<Cow<str>, UnresolvedEnvVarError>> {
@@ -822,11 +815,10 @@ impl Config {
     /// # Example
     ///
     /// ```
-    /// 
     /// use foundry_config::Config;
     /// # fn t() {
-    ///     let config = Config::with_root("./");
-    ///     let rpc_url = config.get_rpc_url_with_alias("mainnet").unwrap().unwrap();
+    /// let config = Config::with_root("./");
+    /// let rpc_url = config.get_rpc_url_with_alias("mainnet").unwrap().unwrap();
     /// # }
     /// ```
     pub fn get_rpc_url_with_alias(
@@ -842,11 +834,10 @@ impl Config {
     /// # Example
     ///
     /// ```
-    /// 
     /// use foundry_config::Config;
     /// # fn t() {
-    ///     let config = Config::with_root("./");
-    ///     let rpc_url = config.get_rpc_url_or("http://localhost:8545").unwrap();
+    /// let config = Config::with_root("./");
+    /// let rpc_url = config.get_rpc_url_or("http://localhost:8545").unwrap();
     /// # }
     /// ```
     pub fn get_rpc_url_or<'a>(
@@ -865,11 +856,10 @@ impl Config {
     /// # Example
     ///
     /// ```
-    /// 
     /// use foundry_config::Config;
     /// # fn t() {
-    ///     let config = Config::with_root("./");
-    ///     let rpc_url = config.get_rpc_url_or_localhost_http().unwrap();
+    /// let config = Config::with_root("./");
+    /// let rpc_url = config.get_rpc_url_or_localhost_http().unwrap();
     /// # }
     /// ```
     pub fn get_rpc_url_or_localhost_http(&self) -> Result<Cow<str>, UnresolvedEnvVarError> {
@@ -886,12 +876,11 @@ impl Config {
     /// # Example
     ///
     /// ```
-    /// 
     /// use foundry_config::Config;
     /// # fn t() {
-    ///     let config = Config::with_root("./");
-    ///     let etherscan_config = config.get_etherscan_config().unwrap().unwrap();
-    ///     let client = etherscan_config.into_client().unwrap();
+    /// let config = Config::with_root("./");
+    /// let etherscan_config = config.get_etherscan_config().unwrap().unwrap();
+    /// let client = etherscan_config.into_client().unwrap();
     /// # }
     /// ```
     pub fn get_etherscan_config(
@@ -2453,7 +2442,7 @@ impl<P: Provider> ProviderExt for P {}
 /// # Example
 ///
 /// ```rust
-/// use foundry_config::{Config, BasicConfig};
+/// use foundry_config::{BasicConfig, Config};
 /// use serde::Deserialize;
 ///
 /// let my_config = Config::figment().extract::<BasicConfig>();

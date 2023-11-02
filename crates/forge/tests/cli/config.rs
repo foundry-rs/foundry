@@ -129,7 +129,7 @@ forgetest!(
         cmd.arg("config");
         let expected =
             Config::load_with_root(prj.root()).to_string_pretty().unwrap().trim().to_string();
-        assert_eq!(expected, cmd.stdout().trim().to_string());
+        assert_eq!(expected, cmd.stdout_lossy().trim().to_string());
     }
 );
 
@@ -160,7 +160,7 @@ forgetest_init!(
 
         cmd.arg("config");
         let expected = profile.to_string_pretty().unwrap();
-        pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+        pretty_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
 
         // remappings work
         let remappings_txt =
@@ -208,7 +208,7 @@ forgetest_init!(
 
         cmd.set_cmd(prj.forge_bin()).args(["config", "--basic"]);
         let expected = profile.into_basic().to_string_pretty().unwrap();
-        pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+        pretty_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
     }
 );
 
@@ -234,7 +234,7 @@ forgetest_init!(
 
         cmd.arg("config");
         let expected = profile.to_string_pretty().unwrap();
-        pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+        pretty_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
 
         let install = |cmd: &mut TestCommand, dep: &str| {
             cmd.forge_fuse().args(["install", dep, "--no-commit"]);
@@ -267,7 +267,7 @@ forgetest_init!(
 
         cmd.set_cmd(prj.forge_bin()).args(["config", "--basic"]);
         let expected = profile.into_basic().to_string_pretty().unwrap();
-        pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+        pretty_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
     }
 );
 

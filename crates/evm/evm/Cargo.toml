@@ -11,8 +11,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-foundry-abi.workspace = true
-# foundry-cheatcodes.workspace = true
+foundry-cheatcodes = { workspace = true, features = ["impls"] }
 foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
@@ -38,16 +37,9 @@ revm = { workspace = true, default-features = false, features = [
     "arbitrary",
 ] }
 
-bytes = "1.5"
 eyre = "0.6"
 hex.workspace = true
-itertools.workspace = true
-jsonpath_lib = "0.3"
-once_cell = "1"
 parking_lot = "0.12"
 proptest = "1"
-serde = "1"
-serde_json = "1"
 thiserror = "1"
 tracing = "0.1"
-walkdir = "2"
