@@ -4,7 +4,7 @@ use crate::{calc::to_exp_notation, TransactionReceiptWithRevertReason};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{hex, U256};
 use eyre::Result;
-use std::fmt::{self, Debug, Display};
+use std::fmt::{self, Display};
 use yansi::Paint;
 
 pub use foundry_macros::fmt::*;
@@ -36,7 +36,7 @@ impl DynValueFormatter {
                 f.write_str("]")
             }
             DynSolValue::Tuple(values) => self.tuple(values, f),
-            DynSolValue::String(inner) => Debug::fmt(inner, f),
+            DynSolValue::String(inner) => f.write_str(inner),
             DynSolValue::Bool(inner) => Display::fmt(inner, f),
             DynSolValue::CustomStruct { name, prop_names, tuple } => {
                 if self.raw {
