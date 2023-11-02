@@ -1,26 +1,24 @@
-//! ABI related helper functions
+//! ABI related helper functions.
+
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{AbiItem, Event, Function};
-use alloy_primitives::{hex, Address, Log, U256};
+use alloy_primitives::{hex, Address, Log};
 use ethers_core::types::Chain;
 use eyre::{ContextCompat, Result};
 use foundry_block_explorers::{contract::ContractMetadata, errors::EtherscanError, Client};
 use std::{future::Future, pin::Pin};
-use yansi::Paint;
-
-use crate::calc::to_exponential_notation;
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
 /// [DynSolValue]s and then ABI encode them.
-pub fn encode_function_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>> {
-    let params: Result<Vec<_>> = func
-        .inputs
-        .iter()
-        .zip(args)
-        .map(|(input, arg)| (input.selector_type().clone(), arg.as_ref()))
-        .map(|(ty, arg)| coerce_value(&ty, arg))
-        .collect();
-    Ok(func.abi_encode_input(params?.as_slice())?)
+pub fn encode_function_args<I, S>(func: &Function, args: I) -> Result<Vec<u8>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let params = std::iter::zip(&func.inputs, args)
+        .map(|(input, arg)| coerce_value(&input.selector_type(), arg.as_ref()))
+        .collect::<Result<Vec<_>>>()?;
+    func.abi_encode_input(params.as_slice()).map_err(Into::into)
 }
 
 /// Decodes the calldata of the function
@@ -32,16 +30,18 @@ pub fn abi_decode_calldata(
 ) -> Result<Vec<DynSolValue>> {
     let func = Function::parse(sig)?;
     let calldata = hex::decode(calldata)?;
+
+    let mut calldata = calldata.as_slice();
+    // If function selector is prefixed in "calldata", remove it (first 4 bytes)
+    if input && fn_selector && calldata.len() >= 4 {
+        calldata = &calldata[4..];
+    }
+
     let res = if input {
-        // If function selector is prefixed in "calldata", remove it (first 4 bytes)
-        if fn_selector {
-            func.abi_decode_input(&calldata[4..], false)?
-        } else {
-            func.abi_decode_input(&calldata, false)?
-        }
+        func.abi_decode_input(calldata, false)
     } else {
-        func.abi_decode_output(&calldata, false)?
-    };
+        func.abi_decode_output(calldata, false)
+    }?;
 
     // in case the decoding worked but nothing was decoded
     if res.is_empty() {
@@ -49,95 +49,6 @@ pub fn abi_decode_calldata(
     }
 
     Ok(res)
-}
-
-/// Parses string input as Token against the expected ParamType
-pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a DynSolType, &'a str)>>(
-    params: I,
-) -> Result<Vec<DynSolValue>> {
-    let mut tokens = Vec::new();
-
-    for (param, value) in params.into_iter() {
-        let token = DynSolType::coerce_str(param, value)?;
-        tokens.push(token);
-    }
-    Ok(tokens)
-}
-
-/// Pretty print a slice of tokens.
-pub fn format_tokens(tokens: &[DynSolValue]) -> impl Iterator<Item = String> + '_ {
-    tokens.iter().map(format_token)
-}
-
-/// Gets pretty print strings for tokens
-pub fn format_token(param: &DynSolValue) -> String {
-    match param {
-        DynSolValue::Address(addr) => addr.to_checksum(None),
-        DynSolValue::FixedBytes(bytes, _) => hex::encode_prefixed(bytes),
-        DynSolValue::Bytes(bytes) => hex::encode_prefixed(bytes),
-        DynSolValue::Int(num, _) => format!("{}", num),
-        DynSolValue::Uint(num, _) => format_uint_with_exponential_notation_hint(*num),
-        DynSolValue::Bool(b) => format!("{b}"),
-        DynSolValue::String(s) => s.to_string(),
-        DynSolValue::FixedArray(tokens) => {
-            let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
-            format!("[{string}]")
-        }
-        DynSolValue::Array(tokens) => {
-            let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
-            format!("[{string}]")
-        }
-        DynSolValue::Tuple(tokens) => {
-            let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
-            format!("({string})")
-        }
-        DynSolValue::CustomStruct { name: _, prop_names: _, tuple } => {
-            let string = tuple.iter().map(format_token).collect::<Vec<String>>().join(", ");
-            format!("({string})")
-        }
-        DynSolValue::Function(f) => {
-            format!("{}", f.to_address_and_selector().1)
-        }
-    }
-}
-
-/// Gets pretty print strings for tokens, without adding
-/// exponential notation hints for large numbers (e.g. [1e7] for 10000000)
-pub fn format_token_raw(param: &DynSolValue) -> String {
-    match param {
-        DynSolValue::Uint(num, _) => format!("{}", num),
-        DynSolValue::FixedArray(tokens) | DynSolValue::Array(tokens) => {
-            let string = tokens.iter().map(format_token_raw).collect::<Vec<String>>().join(", ");
-            format!("[{string}]")
-        }
-        DynSolValue::Tuple(tokens) => {
-            let string = tokens.iter().map(format_token_raw).collect::<Vec<String>>().join(", ");
-            format!("({string})")
-        }
-        _ => format_token(param),
-    }
-}
-
-/// Formats a U256 number to string, adding an exponential notation _hint_ if it
-/// is larger than `10_000`, with a precision of `4` figures, and trimming the
-/// trailing zeros.
-///
-/// Examples:
-///
-/// ```text
-///   0 -> "0"
-///   1234 -> "1234"
-///   1234567890 -> "1234567890 [1.234e9]"
-///   1000000000000000000 -> "1000000000000000000 [1e18]"
-///   10000000000000000000000 -> "10000000000000000000000 [1e22]"
-/// ```
-pub fn format_uint_with_exponential_notation_hint(num: U256) -> String {
-    if num.lt(&U256::from(10_000)) {
-        return num.to_string()
-    }
-
-    let exp = to_exponential_notation(num, 4, true);
-    format!("{} {}", num, Paint::default(format!("[{}]", exp)).dimmed())
 }
 
 /// Helper trait for converting types to Functions. Helpful for allowing the `call`
@@ -281,11 +192,9 @@ fn coerce_value(ty: &str, arg: &str) -> Result<DynSolValue> {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
     use super::*;
     use alloy_dyn_abi::EventExt;
-    use alloy_primitives::B256;
+    use alloy_primitives::{B256, U256};
 
     #[test]
     fn test_get_func() {
@@ -306,19 +215,6 @@ mod tests {
         assert_eq!(func.inputs[0].ty, "bytes4");
         assert_eq!(func.inputs[1].ty, "uint8");
         assert_eq!(func.outputs[0].ty, "bytes4");
-    }
-
-    #[test]
-    fn parse_hex_uint_tokens() {
-        let param = DynSolType::Uint(256);
-
-        let tokens = parse_tokens(std::iter::once((&param, "100"))).unwrap();
-        assert_eq!(tokens, vec![DynSolValue::Uint(U256::from(100), 256)]);
-
-        let val: U256 = U256::from(100u64);
-        let hex_val = format!("0x{val:x}");
-        let tokens = parse_tokens(std::iter::once((&param, hex_val.as_str()))).unwrap();
-        assert_eq!(tokens, vec![DynSolValue::Uint(U256::from(100), 256)]);
     }
 
     #[test]
@@ -364,24 +260,5 @@ mod tests {
         assert_eq!(parsed.indexed[0], DynSolValue::Address(Address::from_word(param0)));
         assert_eq!(parsed.indexed[1], DynSolValue::Uint(U256::from_be_bytes([3; 32]), 256));
         assert_eq!(parsed.indexed[2], DynSolValue::Address(Address::from_word(param2)));
-    }
-
-    #[test]
-    fn test_format_token_addr() {
-        // copied from testcases in https://github.com/ethereum/EIPs/blob/master/EIPS/eip-55.md
-        let eip55 = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
-        assert_eq!(
-            format_token(&DynSolValue::Address(Address::from_str(&eip55.to_lowercase()).unwrap())),
-            eip55.to_string()
-        );
-
-        // copied from testcases in https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1191.md
-        let eip1191 = "0xFb6916095cA1Df60bb79ce92cE3EA74c37c5d359";
-        assert_ne!(
-            format_token(&DynSolValue::Address(
-                Address::from_str(&eip1191.to_lowercase()).unwrap()
-            )),
-            eip1191.to_string()
-        );
     }
 }

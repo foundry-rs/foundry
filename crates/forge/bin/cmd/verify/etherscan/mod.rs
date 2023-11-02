@@ -421,7 +421,7 @@ impl EtherscanVerificationProvider {
             };
             let encoded_args = encode_function_args(
                 &func,
-                &read_constructor_args_file(constructor_args_path.to_path_buf())?,
+                read_constructor_args_file(constructor_args_path.to_path_buf())?,
             )?;
             let encoded_args = hex::encode(encoded_args);
             return Ok(Some(encoded_args[8..].into()))

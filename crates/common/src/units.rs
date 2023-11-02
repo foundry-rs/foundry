@@ -1,7 +1,7 @@
 //! Unit conversion utilities.
 
 use alloy_primitives::{Address, ParseSignedError, I256, U256};
-use std::{convert::TryFrom, fmt, str::FromStr};
+use std::{fmt, str::FromStr};
 use thiserror::Error;
 
 /// I256 overflows for numbers wider than 77 units.

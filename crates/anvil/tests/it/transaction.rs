@@ -357,7 +357,7 @@ async fn can_call_greeter_historic() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_greeter_ws() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider().await;
+    let provider = handle.ws_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
@@ -382,7 +382,7 @@ async fn can_deploy_greeter_ws() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_get_code() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider().await;
+    let provider = handle.ws_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
@@ -496,7 +496,7 @@ async fn call_past_state() {
 async fn can_handle_multiple_concurrent_transfers_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
-    let provider = handle.ws_provider().await;
+    let provider = handle.ws_provider();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
@@ -526,7 +526,7 @@ async fn can_handle_multiple_concurrent_transfers_with_same_nonce() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider().await;
+    let provider = handle.ws_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
     let from = wallet.address();
@@ -560,7 +560,7 @@ async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider().await;
+    let provider = handle.ws_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
     let from = wallet.address();
@@ -778,7 +778,7 @@ async fn can_stream_pending_transactions() {
         spawn(NodeConfig::test().with_blocktime(Some(Duration::from_secs(2)))).await;
     let num_txs = 5;
     let provider = handle.http_provider();
-    let ws_provider = handle.ws_provider().await;
+    let ws_provider = handle.ws_provider();
 
     let accounts = provider.get_accounts().await.unwrap();
     let tx = TransactionRequest::new().from(accounts[0]).to(accounts[0]).value(1e18 as u64);
