@@ -124,15 +124,15 @@ async fn main() -> Result<()> {
         }
         Subcommands::ToHex(ToBaseArgs { value, base_in }) => {
             let value = stdin::unwrap_line(value)?;
-            println!("{}", SimpleCast::to_base(&value, base_in, "hex")?);
+            println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), "hex")?);
         }
         Subcommands::ToDec(ToBaseArgs { value, base_in }) => {
             let value = stdin::unwrap_line(value)?;
-            println!("{}", SimpleCast::to_base(&value, base_in, "dec")?);
+            println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), "dec")?);
         }
         Subcommands::ToBase { base: ToBaseArgs { value, base_in }, base_out } => {
             let (value, base_out) = stdin::unwrap2(value, base_out)?;
-            println!("{}", SimpleCast::to_base(&value, base_in, &base_out)?);
+            println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), &base_out)?);
         }
         Subcommands::ToBytes32 { bytes } => {
             let value = stdin::unwrap_line(bytes)?;
@@ -454,10 +454,10 @@ async fn main() -> Result<()> {
             println!("{:?}", parsed_event.signature());
         }
         Subcommands::LeftShift { value, bits, base_in, base_out } => {
-            println!("{}", SimpleCast::left_shift(&value, &bits, base_in, &base_out)?);
+            println!("{}", SimpleCast::left_shift(&value, &bits, base_in.as_deref(), &base_out)?);
         }
         Subcommands::RightShift { value, bits, base_in, base_out } => {
-            println!("{}", SimpleCast::right_shift(&value, &bits, base_in, &base_out)?);
+            println!("{}", SimpleCast::right_shift(&value, &bits, base_in.as_deref(), &base_out)?);
         }
         Subcommands::EtherscanSource { address, directory, etherscan } => {
             let config = Config::from(&etherscan);

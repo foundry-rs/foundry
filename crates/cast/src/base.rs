@@ -5,7 +5,7 @@ use ethers_core::{
 };
 use eyre::Result;
 use std::{
-    convert::{Infallible, TryFrom, TryInto},
+    convert::Infallible,
     fmt::{Binary, Debug, Display, Formatter, LowerHex, Octal, Result as FmtResult, UpperHex},
     iter::FromIterator,
     num::IntErrorKind,
@@ -118,9 +118,9 @@ impl From<Base> for String {
 }
 
 impl Base {
-    pub fn unwrap_or_detect(base: Option<String>, s: impl AsRef<str>) -> Result<Self> {
+    pub fn unwrap_or_detect(base: Option<&str>, s: impl AsRef<str>) -> Result<Self> {
         match base {
-            Some(base) => base.try_into(),
+            Some(base) => base.parse(),
             None => Self::detect(s),
         }
     }
@@ -355,7 +355,7 @@ impl NumberWithBase {
 
     /// Parses a string slice into a signed integer. If base is None then it tries to determine base
     /// from the prefix, otherwise defaults to Decimal.
-    pub fn parse_int(s: &str, base: Option<String>) -> Result<Self> {
+    pub fn parse_int(s: &str, base: Option<&str>) -> Result<Self> {
         let base = Base::unwrap_or_detect(base, s)?;
         let (number, is_nonnegative) = Self::_parse_int(s, base)?;
         Ok(Self { number, is_nonnegative, base })
@@ -363,7 +363,7 @@ impl NumberWithBase {
 
     /// Parses a string slice into an unsigned integer. If base is None then it tries to determine
     /// base from the prefix, otherwise defaults to Decimal.
-    pub fn parse_uint(s: &str, base: Option<String>) -> Result<Self> {
+    pub fn parse_uint(s: &str, base: Option<&str>) -> Result<Self> {
         let base = Base::unwrap_or_detect(base, s)?;
         let number = Self::_parse_uint(s, base)?;
         Ok(Self { number, is_nonnegative: true, base })
