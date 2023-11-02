@@ -96,9 +96,9 @@ impl ProviderBuilder {
         Self {
             url,
             chain: Chain::Mainnet,
-            max_retry: 100,
-            timeout_retry: 5,
-            initial_backoff: 100,
+            max_retry: 8,
+            timeout_retry: 8,
+            initial_backoff: 800,
             timeout: REQUEST_TIMEOUT,
             // alchemy max cpus <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
