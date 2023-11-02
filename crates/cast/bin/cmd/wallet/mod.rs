@@ -42,7 +42,7 @@ pub enum WalletSubcommands {
         #[clap(long, short, default_value = "1")]
         number: u32,
 
-        /// Json output
+        /// Output generated wallets as JSON.
         #[clap(long, short, default_value = "false")]
         json: bool,
     },
