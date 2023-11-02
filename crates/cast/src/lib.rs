@@ -57,7 +57,7 @@ where
     ///
     /// ```
     /// use cast::Cast;
-    /// use ethers_providers::{Provider, Http};
+    /// use ethers_providers::{Http, Provider};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -76,17 +76,17 @@ where
     /// ```no_run
     /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
-    /// use ethers_providers::{Provider, Http};
-    /// use std::{str::FromStr};
+    /// use ethers_providers::{Http, Provider};
+    /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greeting(uint256 i) public returns (string)";
     /// let args = vec!["5".to_owned()];
-    /// let mut builder = TxBuilder::new(&provider, Address::zero(), Some(to), Chain::Mainnet, false).await?;
-    /// builder
-    ///     .set_args(sig, args).await?;
+    /// let mut builder =
+    ///     TxBuilder::new(&provider, Address::zero(), Some(to), Chain::Mainnet, false).await?;
+    /// builder.set_args(sig, args).await?;
     /// let builder_output = builder.build();
     /// let cast = Cast::new(provider);
     /// let data = cast.call(builder_output, None).await?;
@@ -143,17 +143,17 @@ where
     /// ```no_run
     /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
-    /// use ethers_providers::{Provider, Http};
-    /// use std::{str::FromStr};
+    /// use ethers_providers::{Http, Provider};
+    /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greeting(uint256)(string)";
     /// let args = vec!["5".to_owned()];
-    /// let mut builder = TxBuilder::new(&provider, Address::zero(), Some(to), Chain::Mainnet, false).await?;
-    /// builder
-    ///     .set_args(sig, args).await?;
+    /// let mut builder =
+    ///     TxBuilder::new(&provider, Address::zero(), Some(to), Chain::Mainnet, false).await?;
+    /// builder.set_args(sig, args).await?;
     /// let builder_output = builder.peek();
     /// let cast = Cast::new(&provider);
     /// let access_list = cast.access_list(builder_output, None, false).await?;
@@ -202,11 +202,11 @@ where
     /// # Example
     ///
     /// ```no_run
-    /// use cast::{Cast, TxBuilder};
-    /// use ethers_core::types::{Chain, Address as eAddress};
     /// use alloy_primitives::{Address, U256};
-    /// use ethers_providers::{Provider, Http};
-    /// use std::{str::FromStr};
+    /// use cast::{Cast, TxBuilder};
+    /// use ethers_core::types::{Address as eAddress, Chain};
+    /// use ethers_providers::{Http, Provider};
+    /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -218,11 +218,7 @@ where
     /// let value = U256::from_str("1").unwrap();
     /// let nonce = U256::from_str("1").unwrap();
     /// let mut builder = TxBuilder::new(&provider, from, Some(to), Chain::Mainnet, false).await?;
-    /// builder
-    ///     .set_args(sig, args).await?
-    ///     .set_gas(gas)
-    ///     .set_value(value)
-    ///     .set_nonce(nonce);
+    /// builder.set_args(sig, args).await?.set_gas(gas).set_value(value).set_nonce(nonce);
     /// let builder_output = builder.build();
     /// let cast = Cast::new(provider);
     /// let data = cast.send(builder_output).await?;
@@ -246,7 +242,7 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_providers::{Provider, Http};
+    /// use ethers_providers::{Http, Provider};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -272,11 +268,11 @@ where
     /// # Example
     ///
     /// ```no_run
+    /// use alloy_primitives::U256;
     /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
-    /// use alloy_primitives::U256;
-    /// use ethers_providers::{Provider, Http};
-    /// use std::{str::FromStr};
+    /// use ethers_providers::{Http, Provider};
+    /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -286,9 +282,7 @@ where
     /// let args = vec!["5".to_owned()];
     /// let value = U256::from_str("1").unwrap();
     /// let mut builder = TxBuilder::new(&provider, from, Some(to), Chain::Mainnet, false).await?;
-    /// builder
-    ///     .set_value(value)
-    ///     .set_args(sig, args).await?;
+    /// builder.set_value(value).set_args(sig, args).await?;
     /// let builder_output = builder.peek();
     /// let cast = Cast::new(&provider);
     /// let data = cast.estimate(builder_output).await?;
@@ -308,7 +302,7 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_providers::{Provider, Http};
+    /// use ethers_providers::{Http, Provider};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -475,9 +469,9 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_providers::{Provider, Http};
     /// use ethers::types::NameOrAddress;
-    /// use std::{str::FromStr};
+    /// use ethers_providers::{Http, Provider};
+    /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -500,9 +494,9 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_providers::{Provider, Http};
     /// use ethers_core::types::Address;
-    /// use std::{str::FromStr};
+    /// use ethers_providers::{Http, Provider};
+    /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -529,9 +523,9 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_providers::{Provider, Http};
     /// use ethers_core::types::Address;
-    /// use std::{str::FromStr};
+    /// use ethers_providers::{Http, Provider};
+    /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -557,11 +551,11 @@ where
     /// # Example
     ///
     /// ```no_run
-    /// use cast::Cast;
-    /// use ethers_providers::{Provider, Http};
-    /// use ethers::types::NameOrAddress;
     /// use alloy_primitives::{Address, U256};
-    /// use std::{str::FromStr};
+    /// use cast::Cast;
+    /// use ethers::types::NameOrAddress;
+    /// use ethers_providers::{Http, Provider};
+    /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -572,7 +566,10 @@ where
     /// let computed_address = cast.compute_address(addr, Some(nonce)).await?;
     /// println!("Computed address for address {} with nonce {}: {}", addr, nonce, computed_address);
     /// let computed_address_no_nonce = cast.compute_address(addr, None).await?;
-    /// println!("Computed address for address {} with nonce {}: {}", addr, nonce, computed_address_no_nonce);
+    /// println!(
+    ///     "Computed address for address {} with nonce {}: {}",
+    ///     addr, nonce, computed_address_no_nonce
+    /// );
     /// # Ok(())
     /// # }
     /// ```
@@ -594,9 +591,9 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_providers::{Provider, Http};
     /// use ethers_core::types::Address;
-    /// use std::{str::FromStr};
+    /// use ethers_providers::{Http, Provider};
+    /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -625,9 +622,9 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_providers::{Provider, Http};
     /// use ethers_core::types::Address;
-    /// use std::{str::FromStr};
+    /// use ethers_providers::{Http, Provider};
+    /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -651,7 +648,7 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_providers::{Provider, Http};
+    /// use ethers_providers::{Http, Provider};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -693,7 +690,7 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_providers::{Provider, Http};
+    /// use ethers_providers::{Http, Provider};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -755,12 +752,13 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_providers::{Provider, Http};
+    /// use ethers_providers::{Http, Provider};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
-    /// let result = cast.rpc("eth_getBalance", &["0xc94770007dda54cF92009BFF0dE90c06F603a09f", "latest"])
+    /// let result = cast
+    ///     .rpc("eth_getBalance", &["0xc94770007dda54cF92009BFF0dE90c06F603a09f", "latest"])
     ///     .await?;
     /// println!("{}", result);
     /// # Ok(())
@@ -780,9 +778,9 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_providers::{Provider, Http};
     /// use ethers_core::types::{Address, H256};
-    /// use std::{str::FromStr};
+    /// use ethers_providers::{Http, Provider};
+    /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -832,18 +830,20 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_providers::{Provider, Http};
     /// use ethers_core::types::{BlockId, BlockNumber};
+    /// use ethers_providers::{Http, Provider};
     /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
     ///
-    /// let block_number = cast.convert_block_number(Some(BlockId::Number(BlockNumber::from(5)))).await?;
+    /// let block_number =
+    ///     cast.convert_block_number(Some(BlockId::Number(BlockNumber::from(5)))).await?;
     /// assert_eq!(block_number, Some(BlockNumber::from(5)));
     ///
-    /// let block_number = cast.convert_block_number(Some(BlockId::Hash("0x1234".parse().unwrap()))).await?;
+    /// let block_number =
+    ///     cast.convert_block_number(Some(BlockId::Hash("0x1234".parse().unwrap()))).await?;
     /// assert_eq!(block_number, Some(BlockNumber::from(1234)));
     ///
     /// let block_number = cast.convert_block_number(None).await?;
@@ -873,17 +873,16 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_core::abi::Address;
+    /// use ethers_core::{abi::Address, types::Filter};
     /// use ethers_providers::{Provider, Ws};
-    /// use ethers_core::types::Filter;
-    /// use std::{str::FromStr};
-    /// use std::io;
+    /// use std::{io, str::FromStr};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::new(Ws::connect("wss://localhost:8545").await?);
     /// let cast = Cast::new(provider);
     ///
-    /// let filter = Filter::new().address(Address::from_str("0x00000000006c3852cbEf3e08E8dF289169EdE581")?);
+    /// let filter =
+    ///     Filter::new().address(Address::from_str("0x00000000006c3852cbEf3e08E8dF289169EdE581")?);
     /// let mut output = io::stdout();
     /// cast.subscribe(filter, &mut output, false).await?;
     /// # Ok(())
@@ -1049,9 +1048,9 @@ impl SimpleCast {
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    ///     assert_eq!(Cast::from_utf8("yo"), "0x796f");
-    ///     assert_eq!(Cast::from_utf8("Hello, World!"), "0x48656c6c6f2c20576f726c6421");
-    ///     assert_eq!(Cast::from_utf8("TurboDappTools"), "0x547572626f44617070546f6f6c73");
+    /// assert_eq!(Cast::from_utf8("yo"), "0x796f");
+    /// assert_eq!(Cast::from_utf8("Hello, World!"), "0x48656c6c6f2c20576f726c6421");
+    /// assert_eq!(Cast::from_utf8("TurboDappTools"), "0x547572626f44617070546f6f6c73");
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_utf8(s: &str) -> String {
@@ -1065,9 +1064,9 @@ impl SimpleCast {
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    ///     assert_eq!(Cast::to_ascii("0x796f")?, "yo");
-    ///     assert_eq!(Cast::to_ascii("48656c6c6f2c20576f726c6421")?, "Hello, World!");
-    ///     assert_eq!(Cast::to_ascii("0x547572626f44617070546f6f6c73")?, "TurboDappTools");
+    /// assert_eq!(Cast::to_ascii("0x796f")?, "yo");
+    /// assert_eq!(Cast::to_ascii("48656c6c6f2c20576f726c6421")?, "Hello, World!");
+    /// assert_eq!(Cast::to_ascii("0x547572626f44617070546f6f6c73")?, "TurboDappTools");
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_ascii(hex: &str) -> Result<String> {
@@ -1083,10 +1082,10 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     /// use ethers_core::types::U256;
     ///
-    ///     assert_eq!(Cast::from_fixed_point("10", "0")?, "10");
-    ///     assert_eq!(Cast::from_fixed_point("1.0", "1")?, "10");
-    ///     assert_eq!(Cast::from_fixed_point("0.10", "2")?, "10");
-    ///     assert_eq!(Cast::from_fixed_point("0.010", "3")?, "10");
+    /// assert_eq!(Cast::from_fixed_point("10", "0")?, "10");
+    /// assert_eq!(Cast::from_fixed_point("1.0", "1")?, "10");
+    /// assert_eq!(Cast::from_fixed_point("0.10", "2")?, "10");
+    /// assert_eq!(Cast::from_fixed_point("0.010", "3")?, "10");
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_fixed_point(value: &str, decimals: &str) -> Result<String> {
@@ -1107,15 +1106,15 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     /// use ethers_core::types::U256;
     ///
-    ///     assert_eq!(Cast::to_fixed_point("10", "0")?, "10.");
-    ///     assert_eq!(Cast::to_fixed_point("10", "1")?, "1.0");
-    ///     assert_eq!(Cast::to_fixed_point("10", "2")?, "0.10");
-    ///     assert_eq!(Cast::to_fixed_point("10", "3")?, "0.010");
+    /// assert_eq!(Cast::to_fixed_point("10", "0")?, "10.");
+    /// assert_eq!(Cast::to_fixed_point("10", "1")?, "1.0");
+    /// assert_eq!(Cast::to_fixed_point("10", "2")?, "0.10");
+    /// assert_eq!(Cast::to_fixed_point("10", "3")?, "0.010");
     ///
-    ///     assert_eq!(Cast::to_fixed_point("-10", "0")?, "-10.");
-    ///     assert_eq!(Cast::to_fixed_point("-10", "1")?, "-1.0");
-    ///     assert_eq!(Cast::to_fixed_point("-10", "2")?, "-0.10");
-    ///     assert_eq!(Cast::to_fixed_point("-10", "3")?, "-0.010");
+    /// assert_eq!(Cast::to_fixed_point("-10", "0")?, "-10.");
+    /// assert_eq!(Cast::to_fixed_point("-10", "1")?, "-1.0");
+    /// assert_eq!(Cast::to_fixed_point("-10", "2")?, "-0.10");
+    /// assert_eq!(Cast::to_fixed_point("-10", "3")?, "-0.010");
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_fixed_point(value: &str, decimals: &str) -> Result<String> {
@@ -1148,8 +1147,8 @@ impl SimpleCast {
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    ///     assert_eq!(Cast::concat_hex(["0x00", "0x01"]), "0x0001");
-    ///     assert_eq!(Cast::concat_hex(["1", "2"]), "0x12");
+    /// assert_eq!(Cast::concat_hex(["0x00", "0x01"]), "0x0001");
+    /// assert_eq!(Cast::concat_hex(["1", "2"]), "0x12");
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn concat_hex<T: AsRef<str>>(values: impl IntoIterator<Item = T>) -> String {
@@ -1168,12 +1167,20 @@ impl SimpleCast {
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    ///     assert_eq!(Cast::to_uint256("100")?, "0x0000000000000000000000000000000000000000000000000000000000000064");
-    ///     assert_eq!(Cast::to_uint256("192038293923")?, "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3");
-    ///     assert_eq!(
-    ///         Cast::to_uint256("115792089237316195423570985008687907853269984665640564039457584007913129639935")?,
-    ///         "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-    ///     );
+    /// assert_eq!(
+    ///     Cast::to_uint256("100")?,
+    ///     "0x0000000000000000000000000000000000000000000000000000000000000064"
+    /// );
+    /// assert_eq!(
+    ///     Cast::to_uint256("192038293923")?,
+    ///     "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3"
+    /// );
+    /// assert_eq!(
+    ///     Cast::to_uint256(
+    ///         "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ///     )?,
+    ///     "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    /// );
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_uint256(value: &str) -> Result<String> {
@@ -1188,19 +1195,38 @@ impl SimpleCast {
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    ///     assert_eq!(Cast::to_int256("0")?, "0x0000000000000000000000000000000000000000000000000000000000000000");
-    ///     assert_eq!(Cast::to_int256("100")?, "0x0000000000000000000000000000000000000000000000000000000000000064");
-    ///     assert_eq!(Cast::to_int256("-100")?, "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff9c");
-    ///     assert_eq!(Cast::to_int256("192038293923")?, "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3");
-    ///     assert_eq!(Cast::to_int256("-192038293923")?, "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffd349a02e5d");
-    ///     assert_eq!(
-    ///         Cast::to_int256("57896044618658097711785492504343953926634992332820282019728792003956564819967")?,
-    ///         "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-    ///     );
-    ///     assert_eq!(
-    ///         Cast::to_int256("-57896044618658097711785492504343953926634992332820282019728792003956564819968")?,
-    ///         "0x8000000000000000000000000000000000000000000000000000000000000000"
-    ///     );
+    /// assert_eq!(
+    ///     Cast::to_int256("0")?,
+    ///     "0x0000000000000000000000000000000000000000000000000000000000000000"
+    /// );
+    /// assert_eq!(
+    ///     Cast::to_int256("100")?,
+    ///     "0x0000000000000000000000000000000000000000000000000000000000000064"
+    /// );
+    /// assert_eq!(
+    ///     Cast::to_int256("-100")?,
+    ///     "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff9c"
+    /// );
+    /// assert_eq!(
+    ///     Cast::to_int256("192038293923")?,
+    ///     "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3"
+    /// );
+    /// assert_eq!(
+    ///     Cast::to_int256("-192038293923")?,
+    ///     "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffd349a02e5d"
+    /// );
+    /// assert_eq!(
+    ///     Cast::to_int256(
+    ///         "57896044618658097711785492504343953926634992332820282019728792003956564819967"
+    ///     )?,
+    ///     "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    /// );
+    /// assert_eq!(
+    ///     Cast::to_int256(
+    ///         "-57896044618658097711785492504343953926634992332820282019728792003956564819968"
+    ///     )?,
+    ///     "0x8000000000000000000000000000000000000000000000000000000000000000"
+    /// );
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_int256(value: &str) -> Result<String> {
@@ -1215,10 +1241,10 @@ impl SimpleCast {
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    ///     assert_eq!(Cast::to_unit("1 wei", "wei")?, "1");
-    ///     assert_eq!(Cast::to_unit("1", "wei")?, "1");
-    ///     assert_eq!(Cast::to_unit("1ether", "wei")?, "1000000000000000000");
-    ///     assert_eq!(Cast::to_unit("100 gwei", "gwei")?, "100");
+    /// assert_eq!(Cast::to_unit("1 wei", "wei")?, "1");
+    /// assert_eq!(Cast::to_unit("1", "wei")?, "1");
+    /// assert_eq!(Cast::to_unit("1ether", "wei")?, "1000000000000000000");
+    /// assert_eq!(Cast::to_unit("100 gwei", "gwei")?, "100");
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_unit(value: &str, unit: &str) -> Result<String> {
@@ -1260,11 +1286,11 @@ impl SimpleCast {
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    ///     assert_eq!(Cast::from_wei("1", "gwei")?, "0.000000001");
-    ///     assert_eq!(Cast::from_wei("12340000005", "gwei")?, "12.340000005");
-    ///     assert_eq!(Cast::from_wei("10", "ether")?, "0.000000000000000010");
-    ///     assert_eq!(Cast::from_wei("100", "eth")?, "0.000000000000000100");
-    ///     assert_eq!(Cast::from_wei("17", "")?, "0.000000000000000017");
+    /// assert_eq!(Cast::from_wei("1", "gwei")?, "0.000000001");
+    /// assert_eq!(Cast::from_wei("12340000005", "gwei")?, "12.340000005");
+    /// assert_eq!(Cast::from_wei("10", "ether")?, "0.000000000000000010");
+    /// assert_eq!(Cast::from_wei("100", "eth")?, "0.000000000000000100");
+    /// assert_eq!(Cast::from_wei("17", "")?, "0.000000000000000017");
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_wei(value: &str, unit: &str) -> Result<String> {
@@ -1283,12 +1309,12 @@ impl SimpleCast {
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    ///     assert_eq!(Cast::to_wei("1", "")?, "1000000000000000000");
-    ///     assert_eq!(Cast::to_wei("100", "gwei")?, "100000000000");
-    ///     assert_eq!(Cast::to_wei("100", "eth")?, "100000000000000000000");
-    ///     assert_eq!(Cast::to_wei("1000", "ether")?, "1000000000000000000000");
+    /// assert_eq!(Cast::to_wei("1", "")?, "1000000000000000000");
+    /// assert_eq!(Cast::to_wei("100", "gwei")?, "100000000000");
+    /// assert_eq!(Cast::to_wei("100", "eth")?, "100000000000000000000");
+    /// assert_eq!(Cast::to_wei("1000", "ether")?, "1000000000000000000000");
     ///
-    ///     Ok(())
+    /// Ok(())
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_wei(value: &str, unit: &str) -> Result<String> {
@@ -1306,12 +1332,12 @@ impl SimpleCast {
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    ///     assert_eq!(Cast::from_rlp("0xc0".to_string()).unwrap(), "[]");
-    ///     assert_eq!(Cast::from_rlp("0x0f".to_string()).unwrap(), "\"0x0f\"");
-    ///     assert_eq!(Cast::from_rlp("0x33".to_string()).unwrap(), "\"0x33\"");
-    ///     assert_eq!(Cast::from_rlp("0xc161".to_string()).unwrap(), "[\"0x61\"]");
-    ///     assert_eq!(Cast::from_rlp("0xc26162".to_string()).unwrap(), "[\"0x61\",\"0x62\"]");
-    ///     Ok(())
+    /// assert_eq!(Cast::from_rlp("0xc0".to_string()).unwrap(), "[]");
+    /// assert_eq!(Cast::from_rlp("0x0f".to_string()).unwrap(), "\"0x0f\"");
+    /// assert_eq!(Cast::from_rlp("0x33".to_string()).unwrap(), "\"0x33\"");
+    /// assert_eq!(Cast::from_rlp("0xc161".to_string()).unwrap(), "[\"0x61\"]");
+    /// assert_eq!(Cast::from_rlp("0xc26162".to_string()).unwrap(), "[\"0x61\",\"0x62\"]");
+    /// Ok(())
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_rlp(value: impl AsRef<str>) -> Result<String> {
@@ -1327,11 +1353,11 @@ impl SimpleCast {
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    ///     assert_eq!(Cast::to_rlp("[]").unwrap(),"0xc0".to_string());
-    ///     assert_eq!(Cast::to_rlp("0x22").unwrap(),"0x22".to_string());
-    ///     assert_eq!(Cast::to_rlp("[\"0x61\"]",).unwrap(), "0xc161".to_string());
-    ///     assert_eq!(Cast::to_rlp( "[\"0xf1\",\"f2\"]").unwrap(), "0xc481f181f2".to_string());
-    ///     Ok(())
+    /// assert_eq!(Cast::to_rlp("[]").unwrap(), "0xc0".to_string());
+    /// assert_eq!(Cast::to_rlp("0x22").unwrap(), "0x22".to_string());
+    /// assert_eq!(Cast::to_rlp("[\"0x61\"]",).unwrap(), "0xc161".to_string());
+    /// assert_eq!(Cast::to_rlp("[\"0xf1\",\"f2\"]").unwrap(), "0xc481f181f2".to_string());
+    /// Ok(())
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_rlp(value: &str) -> Result<String> {
@@ -1349,14 +1375,24 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     /// use ethers_core::types::{I256, U256};
     ///
-    ///     assert_eq!(Cast::to_base("100", Some("10"), "16")?, "0x64");
-    ///     assert_eq!(Cast::to_base("100", Some("10"), "oct")?, "0o144");
-    ///     assert_eq!(Cast::to_base("100", Some("10"), "binary")?, "0b1100100");
+    /// assert_eq!(Cast::to_base("100", Some("10"), "16")?, "0x64");
+    /// assert_eq!(Cast::to_base("100", Some("10"), "oct")?, "0o144");
+    /// assert_eq!(Cast::to_base("100", Some("10"), "binary")?, "0b1100100");
     ///
-    ///     assert_eq!(Cast::to_base("0xffffffffffffffff", None, "10")?, u64::MAX.to_string());
-    ///     assert_eq!(Cast::to_base("0xffffffffffffffffffffffffffffffff", None, "dec")?, u128::MAX.to_string());
-    ///     // U256::MAX overflows as internally it is being parsed as I256
-    ///     assert_eq!(Cast::to_base("0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", None, "decimal")?, I256::MAX.to_string());
+    /// assert_eq!(Cast::to_base("0xffffffffffffffff", None, "10")?, u64::MAX.to_string());
+    /// assert_eq!(
+    ///     Cast::to_base("0xffffffffffffffffffffffffffffffff", None, "dec")?,
+    ///     u128::MAX.to_string()
+    /// );
+    /// // U256::MAX overflows as internally it is being parsed as I256
+    /// assert_eq!(
+    ///     Cast::to_base(
+    ///         "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    ///         None,
+    ///         "decimal"
+    ///     )?,
+    ///     I256::MAX.to_string()
+    /// );
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_base(value: &str, base_in: Option<&str>, base_out: &str) -> Result<String> {
@@ -1577,14 +1613,11 @@ impl SimpleCast {
     /// Etherscan. It returns a vector of [`InterfaceSource`] structs that contain the source of the
     /// interface and their name.
     /// ```no_run
-    /// use cast::SimpleCast as Cast;
-    /// use cast::AbiPath;
+    /// use cast::{AbiPath, SimpleCast as Cast};
     /// # async fn foo() -> eyre::Result<()> {
-    /// let path = AbiPath::Local {
-    ///     path: "utils/testdata/interfaceTestABI.json".to_owned(),
-    ///     name: None,
-    /// };
-    /// let interfaces= Cast::generate_interface(path).await?;
+    /// let path =
+    ///     AbiPath::Local { path: "utils/testdata/interfaceTestABI.json".to_owned(), name: None };
+    /// let interfaces = Cast::generate_interface(path).await?;
     /// println!("interface {} {{\n {}\n}}", interfaces[0].name, interfaces[0].source);
     /// # Ok(())
     /// # }
@@ -1652,8 +1685,14 @@ impl SimpleCast {
     /// ```
     /// # use cast::SimpleCast as Cast;
     ///
-    /// assert_eq!(Cast::index("address", "0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5" ,"2").unwrap().as_str(),"0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb");
-    /// assert_eq!(Cast::index("uint256","42" ,"6").unwrap().as_str(),"0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1");
+    /// assert_eq!(
+    ///     Cast::index("address", "0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5", "2").unwrap().as_str(),
+    ///     "0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb"
+    /// );
+    /// assert_eq!(
+    ///     Cast::index("uint256", "42", "6").unwrap().as_str(),
+    ///     "0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1"
+    /// );
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn index(from_type: &str, from_value: &str, slot_number: &str) -> Result<String> {
@@ -1672,10 +1711,22 @@ impl SimpleCast {
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    /// assert_eq!(Cast::namehash("")?, "0x0000000000000000000000000000000000000000000000000000000000000000");
-    /// assert_eq!(Cast::namehash("eth")?, "0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae");
-    /// assert_eq!(Cast::namehash("foo.eth")?, "0xde9b09fd7c5f901e23a3f19fecc54828e9c848539801e86591bd9801b019f84f");
-    /// assert_eq!(Cast::namehash("sub.foo.eth")?, "0x500d86f9e663479e5aaa6e99276e55fc139c597211ee47d17e1e92da16a83402");
+    /// assert_eq!(
+    ///     Cast::namehash("")?,
+    ///     "0x0000000000000000000000000000000000000000000000000000000000000000"
+    /// );
+    /// assert_eq!(
+    ///     Cast::namehash("eth")?,
+    ///     "0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae"
+    /// );
+    /// assert_eq!(
+    ///     Cast::namehash("foo.eth")?,
+    ///     "0xde9b09fd7c5f901e23a3f19fecc54828e9c848539801e86591bd9801b019f84f"
+    /// );
+    /// assert_eq!(
+    ///     Cast::namehash("sub.foo.eth")?,
+    ///     "0x500d86f9e663479e5aaa6e99276e55fc139c597211ee47d17e1e92da16a83402"
+    /// );
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn namehash(ens: &str) -> Result<String> {
@@ -1705,10 +1756,22 @@ impl SimpleCast {
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    /// assert_eq!(Cast::keccak("foo")?, "0x41b1a0649752af1b28b3dc29a1556eee781e4a4c3a1f7f53f90fa834de098c4d");
-    /// assert_eq!(Cast::keccak("123abc")?, "0xb1f1c74a1ba56f07a892ea1110a39349d40f66ca01d245e704621033cb7046a4");
-    /// assert_eq!(Cast::keccak("0x12")?, "0x5fa2358263196dbbf23d1ca7a509451f7a2f64c15837bfbb81298b1e3e24e4fa");
-    /// assert_eq!(Cast::keccak("12")?, "0x7f8b6b088b6d74c2852fc86c796dca07b44eed6fb3daf5e6b59f7c364db14528");
+    /// assert_eq!(
+    ///     Cast::keccak("foo")?,
+    ///     "0x41b1a0649752af1b28b3dc29a1556eee781e4a4c3a1f7f53f90fa834de098c4d"
+    /// );
+    /// assert_eq!(
+    ///     Cast::keccak("123abc")?,
+    ///     "0xb1f1c74a1ba56f07a892ea1110a39349d40f66ca01d245e704621033cb7046a4"
+    /// );
+    /// assert_eq!(
+    ///     Cast::keccak("0x12")?,
+    ///     "0x5fa2358263196dbbf23d1ca7a509451f7a2f64c15837bfbb81298b1e3e24e4fa"
+    /// );
+    /// assert_eq!(
+    ///     Cast::keccak("12")?,
+    ///     "0x7f8b6b088b6d74c2852fc86c796dca07b44eed6fb3daf5e6b59f7c364db14528"
+    /// );
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn keccak(data: &str) -> Result<String> {
@@ -1756,9 +1819,9 @@ impl SimpleCast {
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    ///     assert_eq!(Cast::right_shift("0x4000", "10", None, "dec")?, "16");
-    ///     assert_eq!(Cast::right_shift("16711680", "16", Some("10".to_string()), "hex")?, "0xff");
-    ///     assert_eq!(Cast::right_shift("0xff0000", "16", None, "hex")?, "0xff");
+    /// assert_eq!(Cast::right_shift("0x4000", "10", None, "dec")?, "16");
+    /// assert_eq!(Cast::right_shift("16711680", "16", Some("10".to_string()), "hex")?, "0xff");
+    /// assert_eq!(Cast::right_shift("0xff0000", "16", None, "hex")?, "0xff");
     /// # Ok::<(), eyre::Report>(())
     /// ```
     pub fn right_shift(
@@ -1785,12 +1848,19 @@ impl SimpleCast {
     /// # use ethers_core::types::Chain;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    ///     assert_eq!(
-    ///             "/*
+    /// assert_eq!(
+    ///     "/*
     ///             - Bytecode Verification performed was compared on second iteration -
     ///             This file is part of the DAO.....",
-    ///         Cast::etherscan_source(Chain::Mainnet, "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(), "<etherscan_api_key>".to_string()).await.unwrap().as_str()
-    ///     );
+    ///     Cast::etherscan_source(
+    ///         Chain::Mainnet,
+    ///         "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(),
+    ///         "<etherscan_api_key>".to_string()
+    ///     )
+    ///     .await
+    ///     .unwrap()
+    ///     .as_str()
+    /// );
     /// #    Ok(())
     /// # }
     /// ```
@@ -1815,7 +1885,13 @@ impl SimpleCast {
     /// # use std::path::PathBuf;
     ///
     /// # async fn expand() -> eyre::Result<()> {
-    ///      Cast::expand_etherscan_source_to_directory(Chain::Mainnet, "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(), "<etherscan_api_key>".to_string(), PathBuf::from("output_dir")).await?;
+    /// Cast::expand_etherscan_source_to_directory(
+    ///     Chain::Mainnet,
+    ///     "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(),
+    ///     "<etherscan_api_key>".to_string(),
+    ///     PathBuf::from("output_dir"),
+    /// )
+    /// .await?;
     /// #    Ok(())
     /// # }
     /// ```
