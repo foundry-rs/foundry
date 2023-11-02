@@ -58,7 +58,7 @@ pub struct EvmArgs {
     /// Number of retries.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork_url", value_name= "RETRIES")]
+    #[clap(long, requires = "fork_url", value_name = "RETRIES")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retries: Option<u32>,
 
