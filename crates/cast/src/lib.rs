@@ -1926,17 +1926,16 @@ impl SimpleCast {
     ///     Ok(())
     /// }
     /// ```
-    pub fn get_selector(signature: &str, optimize: Option<usize>) -> Result<(String, String)> {
-        let optimize = optimize.unwrap_or(0);
+    pub fn get_selector(signature: &str, optimize: usize) -> Result<(String, String)> {
         if optimize > 4 {
-            eyre::bail!("Number of leading zeroes must not be greater than 4");
+            eyre::bail!("number of leading zeroes must not be greater than 4");
         }
         if optimize == 0 {
             let selector = Function::parse(signature)?.selector();
             return Ok((selector.to_string(), String::from(signature)))
         }
         let Some((name, params)) = signature.split_once('(') else {
-            eyre::bail!("Invalid signature");
+            eyre::bail!("invalid function signature");
         };
 
         let num_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
@@ -2001,15 +2000,12 @@ mod tests {
 
     #[test]
     fn simple_selector() {
-        assert_eq!("0xc2985578", Cast::get_selector("foo()", None).unwrap().0.as_str())
+        assert_eq!("0xc2985578", Cast::get_selector("foo()", 0).unwrap().0.as_str())
     }
 
     #[test]
     fn selector_with_arg() {
-        assert_eq!(
-            "0xbd0d639f",
-            Cast::get_selector("foo(address,uint256)", None).unwrap().0.as_str()
-        )
+        assert_eq!("0xbd0d639f", Cast::get_selector("foo(address,uint256)", 0).unwrap().0.as_str())
     }
 
     #[test]

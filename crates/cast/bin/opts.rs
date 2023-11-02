@@ -921,7 +921,7 @@ mod tests {
                     "__$_$__$$$$$__$$_$$$_$$__$$___$$(address,address,uint256)".to_string()
                 );
 
-                let selector = SimpleCast::get_selector(&sig, None).unwrap();
+                let selector = SimpleCast::get_selector(&sig, 0).unwrap();
                 assert_eq!(selector.0, "0x23b872dd".to_string());
             }
             _ => unreachable!(),
