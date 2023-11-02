@@ -114,6 +114,39 @@ async fn test_invariant_override() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_fail_on_revert() {
+    let mut runner = runner().await;
+
+    let mut opts = test_opts();
+    opts.invariant.fail_on_revert = true;
+    opts.invariant.runs = 1;
+    opts.invariant.depth = 10;
+    runner.test_options = opts.clone();
+
+    let results = runner
+        .test(
+            &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantHandlerFailure.t.sol"),
+            None,
+            opts,
+        )
+        .await;
+
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "fuzz/invariant/common/InvariantHandlerFailure.t.sol:InvariantHandlerFailure",
+            vec![(
+                "statefulFuzz_BrokenInvariant()",
+                false,
+                Some("failed on revert".into()),
+                None,
+                None,
+            )],
+        )]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn test_invariant_storage() {
     let mut runner = runner().await;
