@@ -1313,8 +1313,6 @@ impl SimpleCast {
     /// assert_eq!(Cast::to_wei("100", "gwei")?, "100000000000");
     /// assert_eq!(Cast::to_wei("100", "eth")?, "100000000000000000000");
     /// assert_eq!(Cast::to_wei("1000", "ether")?, "1000000000000000000000");
-    ///
-    /// Ok(())
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_wei(value: &str, unit: &str) -> Result<String> {
@@ -1332,12 +1330,11 @@ impl SimpleCast {
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    /// assert_eq!(Cast::from_rlp("0xc0".to_string()).unwrap(), "[]");
-    /// assert_eq!(Cast::from_rlp("0x0f".to_string()).unwrap(), "\"0x0f\"");
-    /// assert_eq!(Cast::from_rlp("0x33".to_string()).unwrap(), "\"0x33\"");
-    /// assert_eq!(Cast::from_rlp("0xc161".to_string()).unwrap(), "[\"0x61\"]");
-    /// assert_eq!(Cast::from_rlp("0xc26162".to_string()).unwrap(), "[\"0x61\",\"0x62\"]");
-    /// Ok(())
+    /// assert_eq!(Cast::from_rlp("0xc0").unwrap(), "[]");
+    /// assert_eq!(Cast::from_rlp("0x0f").unwrap(), "\"0x0f\"");
+    /// assert_eq!(Cast::from_rlp("0x33").unwrap(), "\"0x33\"");
+    /// assert_eq!(Cast::from_rlp("0xc161").unwrap(), "[\"0x61\"]");
+    /// assert_eq!(Cast::from_rlp("0xc26162").unwrap(), "[\"0x61\",\"0x62\"]");
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_rlp(value: impl AsRef<str>) -> Result<String> {
@@ -1357,7 +1354,6 @@ impl SimpleCast {
     /// assert_eq!(Cast::to_rlp("0x22").unwrap(), "0x22".to_string());
     /// assert_eq!(Cast::to_rlp("[\"0x61\"]",).unwrap(), "0xc161".to_string());
     /// assert_eq!(Cast::to_rlp("[\"0xf1\",\"f2\"]").unwrap(), "0xc481f181f2".to_string());
-    /// Ok(())
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_rlp(value: &str) -> Result<String> {
@@ -1820,7 +1816,7 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// assert_eq!(Cast::right_shift("0x4000", "10", None, "dec")?, "16");
-    /// assert_eq!(Cast::right_shift("16711680", "16", Some("10".to_string()), "hex")?, "0xff");
+    /// assert_eq!(Cast::right_shift("16711680", "16", Some("10"), "hex")?, "0xff");
     /// assert_eq!(Cast::right_shift("0xff0000", "16", None, "hex")?, "0xff");
     /// # Ok::<(), eyre::Report>(())
     /// ```
@@ -1861,7 +1857,7 @@ impl SimpleCast {
     ///     .unwrap()
     ///     .as_str()
     /// );
-    /// #    Ok(())
+    /// # Ok(())
     /// # }
     /// ```
     pub async fn etherscan_source(
@@ -1892,7 +1888,7 @@ impl SimpleCast {
     ///     PathBuf::from("output_dir"),
     /// )
     /// .await?;
-    /// #    Ok(())
+    /// # Ok(())
     /// # }
     /// ```
     pub async fn expand_etherscan_source_to_directory(
