@@ -21,6 +21,10 @@ async fn test_invariant() {
         &results,
         BTreeMap::from([
             (
+                "fuzz/invariant/common/InvariantHandlerFailure.t.sol:InvariantHandlerFailure",
+                vec![("statefulFuzz_BrokenInvariant()", true, None, None, None)],
+            ),
+            (
                 "fuzz/invariant/common/InvariantInnerContract.t.sol:InvariantInnerContract",
                 vec![("invariantHideJesus()", false, Some("jesus betrayed.".into()), None, None)],
             ),
