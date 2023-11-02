@@ -72,7 +72,7 @@ contract Contract {
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider().await;
+    let provider = handle.ws_provider();
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
@@ -119,7 +119,7 @@ contract Contract {
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider().await;
+    let provider = handle.ws_provider();
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 

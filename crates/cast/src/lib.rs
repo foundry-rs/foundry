@@ -113,29 +113,26 @@ where
                     if res.is_empty() {
                         // check that the recipient is a contract that can be called
                         if let Some(NameOrAddress::Address(addr)) = tx.to() {
-                            let code = self.provider.get_code(*addr, block).await?;
-                            if code.is_empty() {
-                                eyre::bail!("Contract {:?} does not exist", addr)
+                            if let Ok(code) = self.provider.get_code(*addr, block).await {
+                                if code.is_empty() {
+                                    eyre::bail!("contract {addr:?} does not exist")
+                                }
                             }
                         }
                     }
                     return Err(err).wrap_err(
-                        "could not decode output. did you specify the wrong function return data type perhaps?"
+                        "could not decode output; did you specify the wrong function return data type?"
                     );
                 }
             };
         }
+
         // handle case when return type is not specified
         Ok(if decoded.is_empty() {
             format!("{res}\n")
         } else {
             // seth compatible user-friendly return type conversions
-            decoded
-                .iter()
-                .map(TokenDisplay)
-                .map(|token| token.to_string())
-                .collect::<Vec<_>>()
-                .join("\n")
+            decoded.iter().map(format_token).collect::<Vec<_>>().join("\n")
         })
     }
 

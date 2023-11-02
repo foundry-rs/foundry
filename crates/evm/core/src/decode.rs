@@ -7,7 +7,7 @@ use alloy_primitives::{B256, U256};
 use alloy_sol_types::{sol_data::String as SolString, SolType};
 use ethers::{abi::RawLog, contract::EthLogDecode, types::Log};
 use foundry_abi::console::ConsoleEvents::{self, *};
-use foundry_common::{abi::format_token, SELECTOR_LEN};
+use foundry_common::{fmt::format_token, SELECTOR_LEN};
 use foundry_utils::error::{ERROR_PREFIX, REVERT_PREFIX};
 use itertools::Itertools;
 use once_cell::sync::Lazy;
@@ -205,7 +205,7 @@ pub fn decode_revert(
                         {
                             let inputs = decoded
                                 .iter()
-                                .map(foundry_common::abi::format_token)
+                                .map(foundry_common::fmt::format_token)
                                 .collect::<Vec<_>>()
                                 .join(", ");
                             return Ok(format!("{}({inputs})", abi_error.name))

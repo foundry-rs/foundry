@@ -222,7 +222,7 @@ impl Cheatcode for rpcCall {
         let Self { method, params } = self;
         let url =
             ccx.data.db.active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
-        let provider = ProviderBuilder::new(url).build()?;
+        let provider = ProviderBuilder::new(&url).build()?;
 
         let params_json: serde_json::Value = serde_json::from_str(params)?;
         let result = RuntimeOrHandle::new()
@@ -250,7 +250,7 @@ impl Cheatcode for eth_getLogsCall {
 
         let url =
             ccx.data.db.active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
-        let provider = ProviderBuilder::new(url).build()?;
+        let provider = ProviderBuilder::new(&url).build()?;
         let mut filter =
             Filter::new().address(addr.to_ethers()).from_block(from_block).to_block(to_block);
         for (i, topic) in topics.iter().enumerate() {

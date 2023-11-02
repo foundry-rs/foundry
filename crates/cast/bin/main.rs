@@ -9,7 +9,8 @@ use ethers::{
 use eyre::{Result, WrapErr};
 use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
-    abi::{format_tokens, get_event},
+    abi::get_event,
+    fmt::format_tokens,
     fs,
     selectors::{
         decode_calldata, decode_event_topic, decode_function_selector, import_selectors,
