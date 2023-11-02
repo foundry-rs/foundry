@@ -35,14 +35,14 @@ impl DynValueFormatter {
                 self.list(values, f)?;
                 f.write_str("]")
             }
-            DynSolValue::Tuple(values) => {
-                f.write_str("(")?;
-                self.list(values, f)?;
-                f.write_str(")")
-            }
+            DynSolValue::Tuple(values) => self.tuple(values, f),
             DynSolValue::String(inner) => Debug::fmt(inner, f),
             DynSolValue::Bool(inner) => Display::fmt(inner, f),
             DynSolValue::CustomStruct { name, prop_names, tuple } => {
+                if self.raw {
+                    return self.tuple(tuple, f);
+                }
+
                 f.write_str(name)?;
                 f.write_str(" { ")?;
 
@@ -69,6 +69,13 @@ impl DynValueFormatter {
             self.value(value, f)?;
         }
         Ok(())
+    }
+
+    /// Formats the given values as a tuple.
+    fn tuple(&self, values: &[DynSolValue], f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("(")?;
+        self.list(values, f)?;
+        f.write_str(")")
     }
 }
 
@@ -107,18 +114,21 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a DynSolType, &'a str)>>(
     Ok(tokens)
 }
 
-/// Pretty-prints a slice of tokens.
+/// Pretty-prints a slice of tokens using [`format_token`].
 pub fn format_tokens(tokens: &[DynSolValue]) -> impl Iterator<Item = String> + '_ {
     tokens.iter().map(format_token)
 }
 
-/// Pretty-prints the given value into a string.
+/// Pretty-prints the given value into a string suitable for user output.
 pub fn format_token(value: &DynSolValue) -> String {
     DynValueDisplay::new(value, false).to_string()
 }
 
-/// Pretty-prints the given value into a string, without adding exponential notation hints for large
-/// numbers (e.g. [1e7] for 10000000).
+/// Pretty-prints the given value into a string suitable for re-parsing as values later.
+///
+/// This means:
+/// - integers are not formatted with exponential notation hints
+/// - structs are formatted as tuples, losing the struct and property names
 pub fn format_token_raw(value: &DynSolValue) -> String {
     DynValueDisplay::new(value, true).to_string()
 }
