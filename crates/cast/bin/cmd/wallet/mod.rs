@@ -38,7 +38,7 @@ pub enum WalletSubcommands {
         #[clap(long, requires = "path", env = "CAST_PASSWORD", value_name = "PASSWORD")]
         unsafe_password: Option<String>,
 
-        /// Number wallet generation
+        /// Number of wallets to generate.
         #[clap(long, short, default_value = "1")]
         number: u32,
 
