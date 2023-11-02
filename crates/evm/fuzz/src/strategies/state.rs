@@ -1,5 +1,5 @@
 use super::fuzz_param_from_state;
-use crate::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts};
+use crate::invariant::ArtifactFilters;
 use alloy_dyn_abi::{DynSolType, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, B256, U256};
@@ -261,7 +261,7 @@ pub fn collect_created_contracts(
                 if !code.is_empty() {
                     if let Some((artifact, (abi, _))) = project_contracts.find_by_code(code.bytes())
                     {
-                        if let Some(_) = artifact_filters.get_targeted_functions(artifact, abi)? {
+                        if artifact_filters.get_targeted_functions(artifact, abi)?.is_some() {
                             created_contracts.push(*address);
                         }
                     }
