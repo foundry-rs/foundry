@@ -487,12 +487,6 @@ impl<'a> ContractRunner<'a> {
                         error!(?err, "Failed to replay invariant error")
                     }
                 };
-
-                logs.extend(error.logs);
-
-                if let Some(error_traces) = error.traces {
-                    traces.push((TraceKind::Execution, error_traces));
-                }
             }
 
             // If invariants ran successfully, replay the last run to collect logs and

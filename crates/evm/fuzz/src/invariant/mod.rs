@@ -20,7 +20,7 @@ pub type BasicTxDetails = (Address, (Address, Bytes));
 pub struct InvariantContract<'a> {
     /// Address of the test contract.
     pub address: Address,
-    /// Invariant functions present in the test contract.
+    /// Invariant function present in the test contract.
     pub invariant_function: &'a Function,
     /// Abi of the test contract.
     pub abi: &'a Abi,
