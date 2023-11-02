@@ -97,9 +97,9 @@ impl ProviderBuilder {
         Self {
             url,
             chain: Chain::Mainnet,
-            max_retry: 100,
-            timeout_retry: 5,
-            initial_backoff: 100,
+            max_retry: 8,
+            timeout_retry: 8,
+            initial_backoff: 800,
             timeout: REQUEST_TIMEOUT,
             // alchemy max cpus <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
@@ -129,6 +129,19 @@ impl ProviderBuilder {
     /// How often to retry a failed request
     pub fn max_retry(mut self, max_retry: u32) -> Self {
         self.max_retry = max_retry;
+        self
+    }
+
+    /// How often to retry a failed request. If `None`, defaults to the already-set value.
+    pub fn maybe_max_retry(mut self, max_retry: Option<u32>) -> Self {
+        self.max_retry = max_retry.unwrap_or(self.max_retry);
+        self
+    }
+
+    /// The starting backoff delay to use after the first failed request. If `None`, defaults to
+    /// the already-set value.
+    pub fn maybe_initial_backoff(mut self, initial_backoff: Option<u64>) -> Self {
+        self.initial_backoff = initial_backoff.unwrap_or(self.initial_backoff);
         self
     }
 
