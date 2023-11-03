@@ -1,5 +1,4 @@
-use super::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result};
-use crate::Vm::*;
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::Address;
 
 /// Prank information.

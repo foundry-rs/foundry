@@ -1,5 +1,5 @@
 use super::Result;
-use crate::Vm::Rpc;
+use foundry_cheatcodes_defs::Vm::Rpc;
 use foundry_common::fs::normalize_path;
 use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
 use foundry_config::{

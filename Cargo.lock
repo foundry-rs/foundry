@@ -2626,20 +2626,29 @@ dependencies = [
  "ethers-providers",
  "ethers-signers",
  "eyre",
+ "foundry-cheatcodes-defs",
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
  "foundry-evm-core",
- "foundry-macros",
  "foundry-utils",
  "itertools 0.11.0",
  "jsonpath_lib",
  "revm",
- "schemars",
- "serde",
  "serde_json",
  "tracing",
  "walkdir",
+]
+
+[[package]]
+name = "foundry-cheatcodes-defs"
+version = "0.2.0"
+dependencies = [
+ "alloy-sol-types",
+ "foundry-macros",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

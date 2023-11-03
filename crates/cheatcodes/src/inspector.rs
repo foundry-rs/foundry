@@ -1,6 +1,6 @@
 //! Cheatcode EVM [Inspector].
 
-use super::{
+use crate::{
     evm::{
         mapping::{self, MappingSlots},
         mock::{MockCallDataContext, MockCallReturnData},
@@ -11,9 +11,8 @@ use super::{
     test::expect::{
         self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit, ExpectedRevert,
     },
-    CheatsCtxt, Error, Result,
+    CheatsConfig, CheatsCtxt, Error, Result, Vm,
 };
-use crate::{CheatsConfig, Vm};
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{SolInterface, SolValue};
 use ethers_core::types::{
@@ -223,8 +222,12 @@ impl Cheatcodes {
         // but only if the backend is in forking mode
         data.db.ensure_cheatcode_access_forking_mode(caller)?;
 
-        // apply the cheatcode to the current state
-        decoded.apply(&mut CheatsCtxt { state: self, data, caller })
+        // TODO
+        let _ = decoded;
+        let _ = CheatsCtxt { state: self, data, caller };
+        // // apply the cheatcode to the current state
+        // decoded.apply(&mut CheatsCtxt { state: self, data, caller })
+        todo!()
     }
 
     /// Determines the address of the contract and marks it as allowed

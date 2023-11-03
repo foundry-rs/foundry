@@ -1,7 +1,6 @@
 //! Implementations of [`String`](crate::Group::String) cheatcodes.
 
-use super::{Cheatcode, Result};
-use crate::{Cheatcodes, Vm::*};
+use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_primitives::{Address, Bytes, B256, I256, U256};
 use alloy_sol_types::{SolType, SolValue};
 

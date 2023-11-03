@@ -1,5 +1,4 @@
-use super::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result};
-use crate::Vm::*;
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_dyn_abi::DynSolType;
 use alloy_primitives::{Address, Bytes, Log as RawLog, B256, U256};
 use foundry_utils::error::{ERROR_PREFIX, REVERT_PREFIX};

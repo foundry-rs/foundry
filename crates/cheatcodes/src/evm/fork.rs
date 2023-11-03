@@ -1,5 +1,4 @@
-use super::{Cheatcode, CheatsCtxt, DatabaseExt, Result};
-use crate::{Cheatcodes, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::B256;
 use alloy_sol_types::SolValue;
 use ethers_core::types::Filter;
@@ -229,7 +228,7 @@ impl Cheatcode for rpcCall {
             .block_on(provider.request(method, params_json))
             .map_err(|err| fmt_err!("{method:?}: {err}"))?;
 
-        let result_as_tokens = crate::impls::json::value_to_token(&result)
+        let result_as_tokens = crate::json::value_to_token(&result)
             .map_err(|err| fmt_err!("failed to parse result: {err}"))?;
 
         Ok(result_as_tokens.abi_encode())

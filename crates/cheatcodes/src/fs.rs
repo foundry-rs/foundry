@@ -1,7 +1,6 @@
 //! Implementations of [`Filesystem`](crate::Group::Filesystem) cheatcodes.
 
-use super::{Cheatcode, Result};
-use crate::{Cheatcodes, Vm::*};
+use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_json_abi::ContractObject;
 use alloy_primitives::U256;
 use alloy_sol_types::SolValue;
@@ -406,7 +405,7 @@ mod tests {
 
     #[test]
     fn test_artifact_parsing() {
-        let s = include_str!("../../../evm/test-data/solc-obj.json");
+        let s = include_str!("../../evm/test-data/solc-obj.json");
         let artifact: ContractObject = serde_json::from_str(s).unwrap();
         assert!(artifact.bytecode.is_some());
 

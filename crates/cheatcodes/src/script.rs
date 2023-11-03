@@ -1,7 +1,6 @@
 //! Implementations of [`Scripting`](crate::Group::Scripting) cheatcodes.
 
-use super::{Cheatcode, CheatsCtxt, DatabaseExt, Result};
-use crate::Vm::*;
+use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{Address, U256};
 use ethers_signers::Signer;
 use foundry_config::Config;

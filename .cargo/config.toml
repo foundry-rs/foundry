@@ -1,5 +1,5 @@
 [alias]
-cheats = "test -p foundry-cheatcodes --features schema tests::"
+cheats = "test -p foundry-cheatcodes-defs --features schema tests::"
 
 [target.x86_64-pc-windows-msvc]
 rustflags = [

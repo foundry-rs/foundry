@@ -1,7 +1,6 @@
 //! Implementations of [`Json`](crate::Group::Json) cheatcodes.
 
-use super::{string, Cheatcode, Result};
-use crate::{Cheatcodes, Vm::*};
+use crate::{string, Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, Bytes, B256, I256, U256};
 use alloy_sol_types::SolValue;

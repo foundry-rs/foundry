@@ -1,6 +1,6 @@
 //! EVM inspectors.
 
-pub use foundry_cheatcodes::{impls as cheatcodes, Cheatcodes, CheatsConfig};
+pub use foundry_cheatcodes::{self as cheatcodes, Cheatcodes, CheatsConfig};
 pub use foundry_evm_coverage::CoverageCollector;
 pub use foundry_evm_fuzz::Fuzzer;
 pub use foundry_evm_traces::Tracer;
