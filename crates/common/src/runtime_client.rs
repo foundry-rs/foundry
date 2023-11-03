@@ -42,6 +42,10 @@ pub enum RuntimeClientError {
     #[error("URL scheme is not supported: {0}")]
     BadScheme(String),
 
+    /// Invalid HTTP header
+    #[error("Invalid HTTP header: {0}")]
+    BadHeader(String),
+
     /// Invalid file path
     #[error("Invalid IPC file path: {0}")]
     BadPath(String),
@@ -142,16 +146,15 @@ impl RuntimeClient {
                 };
 
                 for header in self.headers.iter() {
-                    let err_message = format!("Invalid header {}", &header);
-                    let parts: Vec<_> = header.split(':').map(|s| s.trim()).collect();
+                    let make_err = || RuntimeClientError::BadHeader(header.to_owned());
 
-                    let key = parts.first().expect(&err_message);
-                    let val = parts.get(1).expect(&err_message);
+                    let parts: Vec<_> = header.split(':').map(|s| s.trim()).collect();
+                    let key = parts.first().ok_or(make_err())?;
+                    let val = parts.get(1).ok_or(make_err())?;
 
                     headers.insert(
-                        HeaderName::from_lowercase(key.to_lowercase().as_bytes())
-                            .expect(&err_message),
-                        HeaderValue::from_str(val).expect(&err_message),
+                        HeaderName::from_bytes(key.as_bytes()).map_err(|_| make_err())?,
+                        HeaderValue::from_str(val).map_err(|_| make_err())?,
                     );
                 }
 
