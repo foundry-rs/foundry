@@ -192,11 +192,11 @@ fn coerce_value(ty: &str, arg: &str) -> Result<DynSolValue> {
 
 /// Sanitizes arguments for encoding function arguments.
 /// If it's an empty sequence, it returns "0x00" to avoid encoding errors.
-fn sanitize_arg<'a>(arg: &'a str) -> &'a str {
+fn sanitize_arg(arg: &str) -> &str {
     if arg == "0x" {
-        return "0x00"
+        "0x00"
     } else {
-        return arg
+        arg
     }
 }
 
