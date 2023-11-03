@@ -64,7 +64,7 @@ use foundry_evm::{
     revm::{
         self,
         db::CacheDB,
-        interpreter::InstructionResult,
+        interpreter::{return_ok, InstructionResult},
         primitives::{
             Account, BlockEnv, CreateScheme, EVMError, Env, ExecutionResult, InvalidHeader, Output,
             SpecId, TransactTo, TxEnv, KECCAK_EMPTY,
@@ -76,7 +76,6 @@ use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
-use revm::interpreter::return_ok;
 use std::{
     collections::HashMap,
     io::{Read, Write},
