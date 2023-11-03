@@ -172,15 +172,10 @@ impl WalletSubcommands {
                 let builder = MnemonicBuilder::<English>::default().phrase(phrase.as_str());
                 let derivation_path = "m/44'/60'/0'/0/";
                 let wallets = (0..accounts)
-                    .map(|i| {
-                        builder
-                            .clone()
-                            .derivation_path(&format!("{derivation_path}{i}"))
-                            .unwrap()
-                            .build()
-                            .unwrap()
-                    })
-                    .collect::<Vec<_>>();
+                    .map(|i| builder.clone().derivation_path(&format!("{derivation_path}{i}")))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let wallets =
+                    wallets.into_iter().map(|b| b.build()).collect::<Result<Vec<_>, _>>()?;
 
                 println!("{}", Paint::green("Successfully generated a new mnemonic."));
                 println!("Phrase:\n{phrase}");
