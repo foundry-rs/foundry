@@ -136,36 +136,49 @@ impl Create2Args {
         let mut handles = Vec::with_capacity(n_threads);
         let found = Arc::new(AtomicBool::new(false));
         let timer = Instant::now();
+
+        // Loops through all possible salts in parallel until a result is found.
+        // Each thread iterates over `(i..).step_by(n_threads)`.
         for i in 0..n_threads {
+            // Create local copies for the thread.
             let increment = n_threads;
-            let start = i;
             let regex = regex.clone();
             let regex_len = regex.patterns().len();
             let found = Arc::clone(&found);
             handles.push(std::thread::spawn(move || {
+                // Read the first bytes of the salt as a usize to be able to increment it.
                 struct B256Aligned(B256, [usize; 0]);
                 let mut salt = B256Aligned(B256::ZERO, []);
+                // SAFETY: B256 is aligned to `usize`.
                 let salt_word = unsafe { &mut *salt.0.as_mut_ptr().cast::<usize>() };
-                *salt_word = start;
+
+                // Important: set the salt to the start value, otherwise all threads loop over the
+                // same values.
+                *salt_word = i;
+
                 let mut checksum = [0; 42];
                 loop {
-                    // stop if found elsewhere
+                    // Stop if a result was found in another thread.
                     if found.load(Ordering::Relaxed) {
                         break None;
                     }
 
-                    // do the thing
+                    // Calculate the `CREATE2` address.
                     #[allow(clippy::needless_borrows_for_generic_args)]
                     let addr = deployer.create2(&salt.0, init_code_hash);
 
-                    // check if it matches
-                    // need to strip 0x prefix
+                    // Check if the the regex matches the calculated address' checksum.
                     let _ = addr.to_checksum_raw(&mut checksum, None);
+                    // SAFETY: stripping 2 ASCII bytes ("0x") off of an already valid UTF-8 string
+                    // is safe.
                     let s = unsafe { std::str::from_utf8_unchecked(checksum.get_unchecked(2..)) };
                     if regex.matches(s).into_iter().count() == regex_len {
+                        // Notify other threads that we found a result.
                         found.store(true, Ordering::Relaxed);
                         break Some((salt.0, addr));
                     }
+
+                    // Increment the salt for the next iteration.
                     *salt_word += increment;
                 }
             }));
