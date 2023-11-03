@@ -3,7 +3,7 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolValue;
-use ethers_core::utils::GenesisAccount;
+use ethers_core::utils::{Genesis, GenesisAccount};
 use ethers_signers::Signer;
 use foundry_common::fs::read_json_file;
 use foundry_evm_core::backend::DatabaseExt;
@@ -70,7 +70,16 @@ impl Cheatcode for loadAllocsCall {
 
         let path = Path::new(pathToAllocsJson);
         ensure!(path.exists(), "allocs file does not exist: {pathToAllocsJson}");
-        let allocs: HashMap<Address, GenesisAccount> = read_json_file(path)?;
+
+        // Let's first assume we're reading a genesis.json file.
+        let allocs: HashMap<Address, GenesisAccount> = match read_json_file::<Genesis>(path) {
+            Ok(genesis) => genesis.alloc.into_iter().map(|(k, g)| (k.to_alloy(), g)).collect(),
+            Err(_) => {
+                // If that fails, let's try reading a genesis_accounts.json file.
+                let allocs: HashMap<Address, GenesisAccount> = read_json_file(path)?;
+                allocs.into()
+            }
+        };
 
         // Then, load the allocs into the database.
         ccx.data
