@@ -1,9 +1,14 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use clap::Parser;
 use eyre::{Result, WrapErr};
-use rayon::prelude::*;
 use regex::RegexSetBuilder;
-use std::{str::FromStr, time::Instant};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Instant,
+};
 
 /// CLI arguments for `cast create2`.
 #[derive(Debug, Clone, Parser)]
@@ -45,12 +50,16 @@ pub struct Create2Args {
     /// Init code hash of the contract to be deployed.
     #[clap(alias = "ch", long, value_name = "HASH")]
     init_code_hash: Option<String>,
+
+    /// Number of threads to use. Defaults to and caps at the number of logical cores.
+    #[clap(short, long)]
+    jobs: Option<usize>,
 }
 
 #[allow(dead_code)]
 pub struct Create2Output {
     pub address: Address,
-    pub salt: U256,
+    pub salt: B256,
 }
 
 impl Create2Args {
@@ -63,6 +72,7 @@ impl Create2Args {
             deployer,
             init_code,
             init_code_hash,
+            jobs,
         } = self;
 
         let mut regexs = vec![];
@@ -114,34 +124,62 @@ impl Create2Args {
             keccak256(hex::decode(init_code)?)
         };
 
+        let mut n_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+        if let Some(jobs) = jobs {
+            n_threads = n_threads.min(jobs);
+        }
+        if cfg!(test) {
+            n_threads = n_threads.min(2);
+        }
+
         println!("Starting to generate deterministic contract address...");
+        let mut handles = Vec::with_capacity(n_threads);
+        let found = Arc::new(AtomicBool::new(false));
         let timer = Instant::now();
-        let (salt, addr) = std::iter::repeat(())
-            .par_bridge()
-            .map(|_| {
-                let salt = B256::random();
+        for i in 0..n_threads {
+            let increment = n_threads;
+            let start = i;
+            let regex = regex.clone();
+            let regex_len = regex.patterns().len();
+            let found = Arc::clone(&found);
+            handles.push(std::thread::spawn(move || {
+                struct B256Aligned(B256, [usize; 0]);
+                let mut salt = B256Aligned(B256::ZERO, []);
+                let salt_word = unsafe { &mut *salt.0.as_mut_ptr().cast::<usize>() };
+                *salt_word = start;
+                let mut checksum = [0; 42];
+                loop {
+                    // stop if found elsewhere
+                    if found.load(Ordering::Relaxed) {
+                        break None;
+                    }
 
-                let addr = deployer.create2(salt, init_code_hash).to_checksum(None);
+                    // do the thing
+                    let addr = deployer.create2(&salt.0, init_code_hash);
 
-                (salt, addr)
-            })
-            .find_any(move |(_, addr)| {
-                let addr = addr.to_string();
-                let addr = addr.strip_prefix("0x").unwrap();
-                regex.matches(addr).into_iter().count() == regex.patterns().len()
-            })
-            .unwrap();
+                    // check if it matches
+                    // need to strip 0x prefix
+                    let _ = addr.to_checksum_raw(&mut checksum, None);
+                    let s = unsafe { std::str::from_utf8_unchecked(checksum.get_unchecked(2..)) };
+                    if regex.matches(s).into_iter().count() == regex_len {
+                        found.store(true, Ordering::Relaxed);
+                        break Some((salt.0, addr));
+                    }
+                    *salt_word += increment;
+                }
+            }));
+        }
 
-        let salt = U256::from_be_bytes(*salt);
-        let address = Address::from_str(&addr).unwrap();
+        let results = handles.into_iter().filter_map(|h| h.join().unwrap()).collect::<Vec<_>>();
+        println!("Successfully found contract address(es) in {:?}", timer.elapsed());
+        for (i, (salt, address)) in results.iter().enumerate() {
+            if i > 0 {
+                println!("---");
+            }
+            println!("Address: {address}\nSalt: {salt} ({})", U256::from_be_bytes(salt.0));
+        }
 
-        println!(
-            "Successfully found contract address in {} seconds.\nAddress: {}\nSalt: {}",
-            timer.elapsed().as_secs(),
-            addr,
-            salt
-        );
-
+        let (salt, address) = results.into_iter().next().unwrap();
         Ok(Create2Output { address, salt })
     }
 }
@@ -156,6 +194,7 @@ fn get_regex_hex_string(s: String) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     const DEPLOYER: &str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
 
@@ -164,42 +203,30 @@ mod tests {
         // even hex chars
         let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "aa"]);
         let create2_out = args.run().unwrap();
-        let address = create2_out.address;
-        let address = format!("{address:x}");
+        assert!(format!("{:x}", create2_out.address).starts_with("aa"));
 
-        assert!(address.starts_with("aa"));
+        let args = Create2Args::parse_from(["foundry-cli", "--ends-with", "bb"]);
+        let create2_out = args.run().unwrap();
+        assert!(format!("{:x}", create2_out.address).ends_with("bb"));
 
         // odd hex chars
         let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "aaa"]);
         let create2_out = args.run().unwrap();
-        let address = create2_out.address;
-        let address = format!("{address:x}");
+        assert!(format!("{:x}", create2_out.address).starts_with("aaa"));
 
-        assert!(address.starts_with("aaa"));
+        let args = Create2Args::parse_from(["foundry-cli", "--ends-with", "bbb"]);
+        let create2_out = args.run().unwrap();
+        assert!(format!("{:x}", create2_out.address).ends_with("bbb"));
 
         // even hex chars with 0x prefix
         let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "0xaa"]);
         let create2_out = args.run().unwrap();
-        let address = create2_out.address;
-        let address = format!("{address:x}");
-
-        assert!(address.starts_with("aa"));
+        assert!(format!("{:x}", create2_out.address).starts_with("aa"));
 
         // odd hex chars with 0x prefix
         let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "0xaaa"]);
         let create2_out = args.run().unwrap();
-        let address = create2_out.address;
-        let address = format!("{address:x}");
-
-        assert!(address.starts_with("aaa"));
-
-        // odd hex chars with 0x suffix
-        let args = Create2Args::parse_from(["foundry-cli", "--ends-with", "bb"]);
-        let create2_out = args.run().unwrap();
-        let address = create2_out.address;
-        let address = format!("{address:x}");
-
-        assert!(address.ends_with("bb"));
+        assert!(format!("{:x}", create2_out.address).starts_with("aaa"));
 
         // check fails on wrong chars
         let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "0xerr"]);
@@ -221,9 +248,7 @@ mod tests {
         ]);
         let create2_out = args.run().unwrap();
         let address = create2_out.address;
-        let address = format!("{address:x}");
-
-        assert!(address.starts_with("bb"));
+        assert!(format!("{address:x}").starts_with("bb"));
     }
 
     #[test]
@@ -238,12 +263,10 @@ mod tests {
         ]);
         let create2_out = args.run().unwrap();
         let address = create2_out.address;
-        let address_str = format!("{address:x}");
+        assert!(format!("{address:x}").starts_with("cc"));
         let salt = create2_out.salt;
         let deployer = Address::from_str(DEPLOYER).unwrap();
-
-        assert!(address_str.starts_with("cc"));
-        assert_eq!(address, verify_create2(deployer, salt, hex::decode(init_code).unwrap()));
+        assert_eq!(address, deployer.create2_from_code(salt, hex::decode(init_code).unwrap()));
     }
 
     #[test]
@@ -258,46 +281,15 @@ mod tests {
         ]);
         let create2_out = args.run().unwrap();
         let address = create2_out.address;
-        let address_str = format!("{address:x}");
+        assert!(format!("{address:x}").starts_with("dd"));
+
         let salt = create2_out.salt;
         let deployer = Address::from_str(DEPLOYER).unwrap();
 
-        assert!(address_str.starts_with("dd"));
         assert_eq!(
             address,
-            verify_create2_hash(deployer, salt, hex::decode(init_code_hash).unwrap())
+            deployer
+                .create2(salt, B256::from_slice(hex::decode(init_code_hash).unwrap().as_slice()))
         );
-    }
-
-    #[test]
-    fn verify_helpers() {
-        // https://eips.ethereum.org/EIPS/eip-1014
-        let eip_address = Address::from_str("0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38").unwrap();
-
-        let deployer = Address::from_str("0x0000000000000000000000000000000000000000").unwrap();
-        let salt =
-            U256::from_str("0x0000000000000000000000000000000000000000000000000000000000000000")
-                .unwrap();
-        let init_code = hex::decode("00").unwrap();
-        let address = verify_create2(deployer, salt, init_code);
-
-        assert_eq!(address, eip_address);
-
-        let init_code_hash =
-            hex::decode("bc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a")
-                .unwrap();
-        let address = verify_create2_hash(deployer, salt, init_code_hash);
-
-        assert_eq!(address, eip_address);
-    }
-
-    fn verify_create2(deployer: Address, salt: U256, init_code: Vec<u8>) -> Address {
-        let init_code_hash = keccak256(init_code);
-        deployer.create2(salt.to_be_bytes(), init_code_hash)
-    }
-
-    fn verify_create2_hash(deployer: Address, salt: U256, init_code_hash: Vec<u8>) -> Address {
-        let init_code_hash = B256::from_slice(&init_code_hash);
-        deployer.create2(salt.to_be_bytes(), init_code_hash)
     }
 }
