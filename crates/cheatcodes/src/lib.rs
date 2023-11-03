@@ -6,6 +6,8 @@
 #![allow(elided_lifetimes_in_paths)] // Cheats context uses 3 lifetimes
 
 #[macro_use]
+pub extern crate foundry_cheatcodes_defs as defs;
+#[macro_use]
 extern crate tracing;
 
 use alloy_primitives::Address;
@@ -13,7 +15,7 @@ use foundry_evm_core::backend::DatabaseExt;
 use revm::EVMData;
 use tracing::Level;
 
-pub use foundry_cheatcodes_defs::{self as defs, CheatcodeDef, Vm};
+pub use defs::{CheatcodeDef, Vm};
 
 #[macro_use]
 mod error;
@@ -61,31 +63,31 @@ pub(crate) trait Cheatcode: CheatcodeDef {
         trace_call();
         let result = self.apply_full(ccx);
         trace_return(&result);
-        result
-    }
-}
+        return result;
 
-// Separate functions to avoid inline and monomorphization bloat.
-fn trace_span<T: Cheatcode>(cheat: &T) -> tracing::Span {
-    if enabled!(Level::TRACE) {
-        trace_span!(target: "cheatcodes", "apply", cheat=?cheat)
-    } else {
-        debug_span!(target: "cheatcodes", "apply", id=%T::CHEATCODE.func.id)
-    }
-}
-
-fn trace_call() {
-    trace!(target: "cheatcodes", "applying");
-}
-
-fn trace_return(result: &Result) {
-    trace!(
-        target: "cheatcodes",
-        return = match result {
-            Ok(b) => hex::encode(b),
-            Err(e) => e.to_string(),
+        // Separate functions to avoid inline and monomorphization bloat.
+        fn trace_span<T: Cheatcode>(cheat: &T) -> tracing::Span {
+            if enabled!(Level::TRACE) {
+                trace_span!(target: "cheatcodes", "apply", cheat=?cheat)
+            } else {
+                debug_span!(target: "cheatcodes", "apply", id=%T::CHEATCODE.func.id)
+            }
         }
-    );
+
+        fn trace_call() {
+            trace!(target: "cheatcodes", "applying");
+        }
+
+        fn trace_return(result: &Result) {
+            trace!(
+                target: "cheatcodes",
+                return = match result {
+                    Ok(b) => hex::encode(b),
+                    Err(e) => e.to_string(),
+                }
+            );
+        }
+    }
 }
 
 /// The cheatcode context, used in [`Cheatcode`].
