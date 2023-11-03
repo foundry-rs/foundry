@@ -98,10 +98,12 @@ mod tests {
     use super::*;
     use std::{fs, path::Path};
 
-    const JSON_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/cheatcodes.json");
+    const JSON_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/cheatcodes.json");
     #[cfg(feature = "schema")]
-    const SCHEMA_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/cheatcodes.schema.json");
-    const IFACE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/cheats/Vm.sol");
+    const SCHEMA_PATH: &str =
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/cheatcodes.schema.json");
+    const IFACE_PATH: &str =
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../../testdata/cheats/Vm.sol");
 
     /// Generates the `cheatcodes.json` file contents.
     fn json_cheatcodes() -> String {
@@ -120,6 +122,9 @@ mod tests {
             "\
 // Automatically generated from `foundry-cheatcodes` Vm definitions. Do not modify manually.
 // This interface is just for internal testing purposes. Use `forge-std` instead.
+
+// SPDX-License-Identifier: MIT OR Apache-2.0
+pragma solidity ^0.8.4;
 
 interface Vm {{
     {cheats}
