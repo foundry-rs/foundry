@@ -110,9 +110,9 @@ impl From<TypedTransactionRequest> for EthersTypedTransactionRequest {
                         nonce: Some(0.into()),
                         chain_id: None,
                     },
-                    source_hash: Some(source_hash),
+                    source_hash: source_hash,
                     mint: Some(mint),
-                    is_system_tx: Some(is_system_tx),
+                    is_system_tx: is_system_tx,
                 })
             }
         }
@@ -145,9 +145,9 @@ fn to_ethers_transaction_with_hash_and_sender(
             s: t.signature.s,
             access_list: None,
             transaction_type: None,
-            source_hash: None,
+            source_hash: H256::zero(),
             mint: None,
-            is_system_tx: None,
+            is_system_tx: false,
             other: Default::default(),
         },
         TypedTransaction::EIP2930(t) => EthersTransaction {
@@ -170,9 +170,9 @@ fn to_ethers_transaction_with_hash_and_sender(
             s: U256::from(t.s.as_bytes()),
             access_list: Some(t.access_list),
             transaction_type: Some(1u64.into()),
-            source_hash: None,
+            source_hash: H256::zero(),
             mint: None,
-            is_system_tx: None,
+            is_system_tx: false,
             other: Default::default(),
         },
         TypedTransaction::EIP1559(t) => EthersTransaction {
@@ -195,9 +195,9 @@ fn to_ethers_transaction_with_hash_and_sender(
             s: U256::from(t.s.as_bytes()),
             access_list: Some(t.access_list),
             transaction_type: Some(2u64.into()),
-            source_hash: None,
+            source_hash: H256::zero(),
             mint: None,
-            is_system_tx: None,
+            is_system_tx: false,
             other: Default::default(),
         },
         TypedTransaction::Deposit(t) => EthersTransaction {
@@ -220,9 +220,9 @@ fn to_ethers_transaction_with_hash_and_sender(
             s: 0.into(),
             access_list: None,
             transaction_type: Some(126u64.into()),
-            source_hash: Some(t.source_hash),
+            source_hash: t.source_hash,
             mint: Some(t.mint),
-            is_system_tx: Some(t.is_system_tx),
+            is_system_tx: t.is_system_tx,
             other: Default::default(),
         },
     }
