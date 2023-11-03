@@ -6,7 +6,7 @@ Foundry cheatcodes definitions and implementations.
 
 - [`assets/`](./assets/): JSON interface and specification
 - [`defs/`](./defs/src/lib.rs): Defines common traits and structs
-- [`src/`](./src/lib.rs): Rust implementations of the cheatcodes.
+- [`src/`](./src/lib.rs): Rust implementations of the cheatcodes
 
 ## Overview
 
