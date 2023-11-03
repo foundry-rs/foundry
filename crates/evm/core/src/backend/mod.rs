@@ -1282,16 +1282,18 @@ impl DatabaseExt for Backend {
         journaled_state: &mut JournaledState,
     ) -> Result<(), DatabaseError> {
         // Loop through all of the allocs defined in the map and commit them to the journal.
-        allocs.iter().try_for_each(|(addr, acc)| {
+        for (addr, acc) in allocs.iter() {
             // Fetch the account from the journaled state. Will create a new account if it does
             // not already exist.
             let (state_acc, _) = journaled_state.load_account(*addr, self)?;
+
             // Set the account's bytecode and code hash, if the `bytecode` field is present.
             if let Some(bytecode) = acc.code.as_ref() {
                 state_acc.info.code_hash = keccak256(bytecode);
                 let bytecode = Bytecode::new_raw(bytecode.0.clone().into());
                 state_acc.info.code = Some(bytecode);
             }
+
             // Set the account's storage, if the `storage` field is present.
             if let Some(storage) = acc.storage.as_ref() {
                 state_acc.storage = storage
@@ -1315,9 +1317,9 @@ impl DatabaseExt for Backend {
             // Set the account's nonce and balance.
             state_acc.info.nonce = acc.nonce.unwrap_or_default();
             state_acc.info.balance = acc.balance.to_alloy();
+        }
 
-            Ok::<_, DatabaseError>(())
-        })
+        Ok(())
     }
 
     fn is_persistent(&self, acc: &Address) -> bool {

@@ -5,13 +5,14 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolValue;
 use ethers_core::utils::GenesisAccount;
 use ethers_signers::Signer;
+use foundry_common::fs::read_json_file;
 use foundry_evm_core::backend::DatabaseExt;
 use foundry_utils::types::ToAlloy;
 use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     EVMData,
 };
-use std::{collections::HashMap, fs::File};
+use std::{collections::HashMap, path::Path};
 
 mod fork;
 pub(crate) mod mapping;
@@ -67,9 +68,9 @@ impl Cheatcode for loadAllocsCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { pathToAllocsJson } = self;
 
-        // First, load the allocs file from the provided path.
-        let file = File::open(pathToAllocsJson)?;
-        let allocs: HashMap<Address, GenesisAccount> = serde_json::from_reader(file)?;
+        let path = Path::new(pathToAllocsJson);
+        ensure!(path.exists(), "allocs file does not exist: {pathToAllocsJson}");
+        let allocs: HashMap<Address, GenesisAccount> = read_json_file(path)?;
 
         // Then, load the allocs into the database.
         ccx.data
