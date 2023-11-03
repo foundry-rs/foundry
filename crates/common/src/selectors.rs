@@ -304,9 +304,7 @@ impl SignEthClient {
                     .flat_map(|abi| {
                         abi.abi
                             .functions()
-                            .map(|func| {
-                                func.signature().split(':').next().unwrap_or("").to_string()
-                            })
+                            .map(|func| func.signature())
                             .chain(abi.abi.errors().map(|error| error.signature()))
                             .collect::<Vec<_>>()
                     })
