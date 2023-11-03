@@ -31,7 +31,7 @@ The [`evm`](../../crates/evm/evm/) crate has a variety of inspectors for differe
 - debugger
 - logging
 
-## [Cheatcode inspector](../../crates/cheatcodes/src/impls/inspector.rs)
+## [Cheatcode inspector](../../crates/cheatcodes/src/inspector.rs)
 
 The concept of cheatcodes and cheatcode inspector is very simple.
 
@@ -70,7 +70,7 @@ through the use of a custom internal derive procedural macro.
 
 ## Cheatcodes implementation
 
-All the cheatcodes are defined in a large [`sol!`] macro call in [`cheatcodes/src/defs/mod.rs`](../../crates/cheatcodes/src/defs/mod.rs):
+All the cheatcodes are defined in a large [`sol!`] macro call in [`cheatcodes/defs/src/vm.rs`](../../crates/cheatcodes/defs/src/vm.rs):
 
 ```rust
 sol! {
@@ -144,8 +144,8 @@ There are two methods that can be implemented:
 
 Only one of these methods can be implemented.
 
-This trait is implemented manually for each cheatcode in the [`impls`](../../crates/cheatcodes/src/impls/)
-module on the `sol!`-generated function call structs.
+This trait is implemented manually for each cheatcode in the [`foundry-cheatcodes`](../../crates/cheatcodes/)
+crate on the `sol!`-generated function call structs.
 
 ### [JSON interface](../../crates/cheatcodes/assets/cheatcodes.json)
 
@@ -159,11 +159,11 @@ update of the files.
 
 ### Adding a new cheatcode
 
-1. Add its Solidity definition(s) in [`src/defs/vm.rs`]. Ensure that all structs and functions are documented, and that all function parameters are named. This will initially fail to compile because of the automatically generated `match { ... }` expression. This is expected, and will be fixed in the next step
-2. Implement the cheatcode in [`src/impls/`](src/impls/) in its category's respective module. Follow the existing implementations as a guide.
+1. Add its Solidity definition(s) in [`defs/src/vm.rs`]. Ensure that all structs and functions are documented, and that all function parameters are named. This will initially fail to compile because of the automatically generated `match { ... }` expression. This is expected, and will be fixed in the next step
+2. Implement the cheatcode in [`cheatcodes`](cheatcodes) in its category's respective module. Follow the existing implementations as a guide.
 3. Update the JSON interface by running `cargo cheats` twice. This is expected to fail the first time that this is run after adding a new cheatcode; see [JSON interface](#json-interface)
 4. Write an integration test for the cheatcode in [`testdata/cheats/`](../../testdata/cheats/)
 5. Submit a PR to [`forge-std`](https://github.com/foundry-rs/forge-std) updating the Solidity interfaces as necessary. Note that this step won't be necessary once the Solidity interfaces are generated using the JSON interface
 
 [`sol!`]: https://docs.rs/alloy-sol-macro/latest/alloy_sol_macro/macro.sol.html
-[`src/defs/vm.rs`]: ./src/defs/vm.rs
+[`defs/src/vm.rs`]: ./defs/src/vm.rs
