@@ -329,7 +329,7 @@ pub struct AnvilEvmArgs {
     )]
     pub fork_url: Option<ForkUrl>,
 
-    /// Pass headers to fork-url.
+    /// Headers to use for the rpc client, e.g. "User-Agent: test-agent"
     ///
     /// See --fork-url.
     #[clap(

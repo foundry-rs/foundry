@@ -12,7 +12,7 @@ use reqwest::{
     Url,
 };
 use serde::{de::DeserializeOwned, Serialize};
-use std::{fmt::Debug, path::PathBuf, sync::Arc, time::Duration};
+use std::{fmt::Debug, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::sync::RwLock;
 
@@ -146,15 +146,13 @@ impl RuntimeClient {
                 };
 
                 for header in self.headers.iter() {
-                    let make_err = || RuntimeClientError::BadHeader(header.to_owned());
+                    let make_err = || RuntimeClientError::BadHeader(header.to_string());
 
-                    let parts: Vec<_> = header.split(':').map(|s| s.trim()).collect();
-                    let key = parts.first().ok_or(make_err())?;
-                    let val = parts.get(1).ok_or(make_err())?;
+                    let (key, val) = header.split_once(':').ok_or_else(make_err)?;
 
                     headers.insert(
-                        HeaderName::from_bytes(key.as_bytes()).map_err(|_| make_err())?,
-                        HeaderValue::from_str(val).map_err(|_| make_err())?,
+                        HeaderName::from_str(key.trim()).map_err(|_| make_err())?,
+                        HeaderValue::from_str(val.trim()).map_err(|_| make_err())?,
                     );
                 }
 
@@ -224,9 +222,8 @@ impl RuntimeClientBuilder {
     }
 
     /// Set jwt to use with RuntimeClient
-    pub fn with_jwt(mut self, jwt: String) -> Self {
-        self.jwt = Some(jwt);
-
+    pub fn with_jwt(mut self, jwt: Option<String>) -> Self {
+        self.jwt = jwt;
         self
     }
 
@@ -234,7 +231,6 @@ impl RuntimeClientBuilder {
     /// Only works with http/https schemas
     pub fn with_headers(mut self, headers: Vec<String>) -> Self {
         self.headers = headers;
-
         self
     }
 

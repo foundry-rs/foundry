@@ -214,7 +214,7 @@ impl ProviderBuilder {
         } = self;
         let url = url?;
 
-        let mut client_builder = RuntimeClientBuilder::new(
+        let client_builder = RuntimeClientBuilder::new(
             url.clone(),
             max_retry,
             timeout_retry,
@@ -222,11 +222,8 @@ impl ProviderBuilder {
             timeout,
             compute_units_per_second,
         )
-        .with_headers(headers);
-
-        if let Some(jwt) = jwt {
-            client_builder = client_builder.with_jwt(jwt);
-        }
+        .with_headers(headers)
+        .with_jwt(jwt);
 
         let mut provider = Provider::new(client_builder.build());
 
