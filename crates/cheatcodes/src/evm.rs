@@ -74,11 +74,8 @@ impl Cheatcode for loadAllocsCall {
         // Let's first assume we're reading a genesis.json file.
         let allocs: HashMap<Address, GenesisAccount> = match read_json_file::<Genesis>(path) {
             Ok(genesis) => genesis.alloc.into_iter().map(|(k, g)| (k.to_alloy(), g)).collect(),
-            Err(_) => {
-                // If that fails, let's try reading a genesis_accounts.json file.
-                let allocs: HashMap<Address, GenesisAccount> = read_json_file(path)?;
-                allocs.into()
-            }
+            // If that fails, let's try reading a file with just the genesis accounts.
+            Err(_) => read_json_file(path)?,
         };
 
         // Then, load the allocs into the database.
