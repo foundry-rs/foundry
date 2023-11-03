@@ -1,7 +1,6 @@
 //! Implementations of [`Testing`](crate::Group::Testing) cheatcodes.
 
-use super::{Cheatcode, CheatsCtxt, DatabaseExt, Error, Result};
-use crate::{Cheatcodes, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Error, Result, Vm::*};
 use alloy_primitives::Address;
 use alloy_sol_types::SolValue;
 use foundry_evm_core::constants::{MAGIC_ASSUME, MAGIC_SKIP};

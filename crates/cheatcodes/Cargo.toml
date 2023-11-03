@@ -12,56 +12,26 @@ repository.workspace = true
 exclude.workspace = true
 
 [dependencies]
-foundry-macros.workspace = true
+foundry-cheatcodes-defs.workspace = true
+foundry-common.workspace = true
+foundry-compilers.workspace = true
+foundry-config.workspace = true
+foundry-evm-core.workspace = true
+foundry-utils.workspace = true
 
+alloy-dyn-abi.workspace = true
+alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+ethers-core.workspace = true
+ethers-providers.workspace = true
+ethers-signers.workspace = true
 
-serde.workspace = true
+eyre.workspace = true
+hex.workspace = true
+itertools.workspace = true
+jsonpath_lib.workspace = true
+revm.workspace = true
 serde_json.workspace = true
-
-# schema
-schemars = { version = "0.8.15", optional = true }
-
-# impls
-foundry-common = { workspace = true, optional = true }
-foundry-compilers = { workspace = true, optional = true }
-foundry-config = { workspace = true, optional = true }
-foundry-evm-core = { workspace = true, optional = true }
-foundry-utils = { workspace = true, optional = true }
-
-alloy-dyn-abi = { workspace = true, optional = true }
-alloy-json-abi = { workspace = true, optional = true }
-ethers-core = { workspace = true, optional = true }
-ethers-signers = { workspace = true, optional = true }
-ethers-providers = { workspace = true, optional = true }
-
-eyre = { workspace = true, optional = true }
-hex = { workspace = true, optional = true }
-itertools = { workspace = true, optional = true }
-jsonpath_lib = { workspace = true, optional = true }
-revm = { workspace = true, optional = true }
-tracing = { workspace = true, optional = true }
-walkdir = { version = "2", optional = true }
-
-[features]
-schema = ["dep:schemars"]
-impls = [
-    "dep:foundry-common",
-    "dep:foundry-compilers",
-    "dep:foundry-config",
-    "dep:foundry-evm-core",
-    "dep:foundry-utils",
-    "dep:alloy-dyn-abi",
-    "dep:alloy-json-abi",
-    "dep:ethers-core",
-    "dep:ethers-providers",
-    "dep:ethers-signers",
-    "dep:eyre",
-    "dep:hex",
-    "dep:itertools",
-    "dep:jsonpath_lib",
-    "dep:revm",
-    "dep:tracing",
-    "dep:walkdir",
-]
+tracing.workspace = true
+walkdir = "2"

@@ -1,5 +1,4 @@
-use super::{Cheatcode, Result};
-use crate::{Cheatcodes, Vm::*};
+use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_sol_types::SolValue;
 use revm::interpreter::{opcode, Interpreter};

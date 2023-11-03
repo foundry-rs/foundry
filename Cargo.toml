@@ -8,6 +8,7 @@ members = [
     "crates/binder/",
     "crates/cast/",
     "crates/cheatcodes/",
+    "crates/cheatcodes/defs/",
     "crates/chisel/",
     "crates/cli/",
     "crates/common/",
@@ -116,6 +117,7 @@ forge-fmt = { path = "crates/fmt" }
 foundry-abi = { path = "crates/abi" }
 foundry-binder = { path = "crates/binder" }
 foundry-cheatcodes = { path = "crates/cheatcodes" }
+foundry-cheatcodes-defs = { path = "crates/cheatcodes/defs" }
 foundry-cli = { path = "crates/cli" }
 foundry-common = { path = "crates/common" }
 foundry-config = { path = "crates/config" }

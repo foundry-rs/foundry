@@ -1,7 +1,6 @@
 //! Implementations of [`Evm`](crate::Group::Evm) cheatcodes.
 
-use super::{Cheatcode, CheatsCtxt, Result};
-use crate::{Cheatcodes, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolValue;
 use ethers_signers::Signer;
