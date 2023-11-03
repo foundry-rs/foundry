@@ -94,7 +94,7 @@ impl Executor {
         let create2_deployer_account = self
             .backend
             .basic(DEFAULT_CREATE2_DEPLOYER)?
-            .ok_or(DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
+            .ok_or_else(|| DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
         // if the deployer is not currently deployed, deploy the default one
         if create2_deployer_account.code.map_or(true, |code| code.is_empty()) {
@@ -396,8 +396,7 @@ impl Executor {
                 }
             }
             _ => {
-                let reason = decode::decode_revert(result.as_ref(), abi, Some(exit_reason))
-                    .unwrap_or_else(|_| format!("{exit_reason:?}"));
+                let reason = decode::decode_revert(result.as_ref(), abi, Some(exit_reason));
                 return Err(EvmError::Execution(Box::new(ExecutionErr {
                     reverted: true,
                     reason,
@@ -838,8 +837,7 @@ fn convert_call_result(
             })
         }
         _ => {
-            let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
-                .unwrap_or_else(|_| format!("{status:?}"));
+            let reason = decode::decode_revert(result.as_ref(), abi, Some(status));
             if reason == "SKIPPED" {
                 return Err(EvmError::SkipError)
             }

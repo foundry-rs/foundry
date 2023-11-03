@@ -83,16 +83,17 @@ impl GasReport {
                             contract_info.size = U256::from(bytes.len());
                         }
                     }
-                    RawOrDecodedCall::Decoded(func, sig, _) => {
+                    RawOrDecodedCall::Decoded { signature, .. } => {
+                        let name = signature.split_once('(').unwrap().0;
                         // ignore any test/setup functions
                         let should_include =
-                            !(func.is_test() || func.is_invariant_test() || func.is_setup());
+                            !(name.is_test() || name.is_invariant_test() || name.is_setup());
                         if should_include {
                             let gas_info = contract_info
                                 .functions
-                                .entry(func.clone())
+                                .entry(name.into())
                                 .or_default()
-                                .entry(sig.clone())
+                                .entry(signature.clone())
                                 .or_default();
                             gas_info.calls.push(U256::from(trace.gas_cost));
                         }

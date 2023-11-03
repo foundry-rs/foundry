@@ -76,7 +76,7 @@ impl CallTraceNode {
                     to: self.trace.address.to_ethers(),
                     value: self.trace.value.to_ethers(),
                     gas: self.trace.gas_cost.into(),
-                    input: self.trace.data.to_raw().into(),
+                    input: self.trace.data.as_bytes().to_vec().into(),
                     call_type: self.kind().into(),
                 })
             }
@@ -84,7 +84,7 @@ impl CallTraceNode {
                 from: self.trace.caller.to_ethers(),
                 value: self.trace.value.to_ethers(),
                 gas: self.trace.gas_cost.into(),
-                init: self.trace.data.to_raw().into(),
+                init: self.trace.data.as_bytes().to_vec().into(),
             }),
         }
     }
@@ -105,7 +105,7 @@ impl CallTraceNode {
         let func = &funcs[0];
 
         if let RawOrDecodedCall::Raw(ref bytes) = self.trace.data {
-            let inputs = if bytes.len() >= SELECTOR_LEN {
+            let args = if bytes.len() >= SELECTOR_LEN {
                 if self.trace.address == CHEATCODE_ADDRESS {
                     // Try to decode cheatcode inputs in a more custom way
                     utils::decode_cheatcode_inputs(func, bytes, errors, verbosity).unwrap_or_else(
@@ -128,8 +128,7 @@ impl CallTraceNode {
             };
 
             // add signature to decoded calls for better calls filtering
-            self.trace.data =
-                RawOrDecodedCall::Decoded(func.name.clone(), func.signature(), inputs);
+            self.trace.data = RawOrDecodedCall::Decoded { signature: func.signature(), args };
 
             if let RawOrDecodedReturnData::Raw(bytes) = &self.trace.output {
                 if !bytes.is_empty() && self.trace.success {
@@ -158,11 +157,12 @@ impl CallTraceNode {
                             );
                         }
                     }
-                } else if let Ok(decoded_error) =
-                    decode::decode_revert(bytes, Some(errors), Some(self.trace.status))
-                {
-                    self.trace.output =
-                        RawOrDecodedReturnData::Decoded(format!(r#""{decoded_error}""#));
+                } else {
+                    self.trace.output = RawOrDecodedReturnData::Decoded(decode::decode_revert(
+                        bytes,
+                        Some(errors),
+                        Some(self.trace.status),
+                    ));
                 }
             }
         }
@@ -176,14 +176,13 @@ impl CallTraceNode {
     ) {
         if let RawOrDecodedCall::Raw(ref bytes) = self.trace.data {
             self.trace.label = Some("PRECOMPILE".to_string());
-            self.trace.data = RawOrDecodedCall::Decoded(
-                precompile_fn.name.clone(),
-                precompile_fn.signature(),
-                precompile_fn.abi_decode_input(bytes, false).map_or_else(
+            self.trace.data = RawOrDecodedCall::Decoded {
+                signature: precompile_fn.signature(),
+                args: precompile_fn.abi_decode_input(bytes, false).map_or_else(
                     |_| vec![hex::encode(bytes)],
                     |tokens| tokens.iter().map(|token| utils::label(token, labels)).collect(),
                 ),
-            );
+            };
 
             if let RawOrDecodedReturnData::Raw(ref bytes) = self.trace.output {
                 self.trace.output = RawOrDecodedReturnData::Decoded(

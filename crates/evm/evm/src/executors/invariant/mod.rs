@@ -29,7 +29,7 @@ use proptest::{
     test_runner::{TestCaseError, TestRunner},
 };
 use revm::{
-    primitives::{Address as rAddress, HashMap, U256 as rU256},
+    primitives::{Address as aAddress, HashMap, U256 as rU256},
     DatabaseCommit,
 };
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
@@ -693,7 +693,7 @@ impl<'a> InvariantExecutor<'a> {
 /// before inserting it into the dictionary. Otherwise, we flood the dictionary with
 /// randomly generated addresses.
 fn collect_data(
-    state_changeset: &mut HashMap<rAddress, revm::primitives::Account>,
+    state_changeset: &mut HashMap<aAddress, revm::primitives::Account>,
     sender: &Address,
     call_result: &RawCallResult,
     fuzz_state: EvmFuzzState,

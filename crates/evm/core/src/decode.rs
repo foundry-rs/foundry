@@ -1,16 +1,14 @@
 //! Various utilities to decode test results.
 
-use crate::constants::MAGIC_SKIP;
 use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{B256, U256};
-use alloy_sol_types::{sol_data::String as SolString, SolType};
+use alloy_primitives::B256;
+use alloy_sol_types::SolCall;
 use ethers::{abi::RawLog, contract::EthLogDecode, types::Log};
 use foundry_abi::console::ConsoleEvents::{self, *};
-use foundry_common::{fmt::format_token, SELECTOR_LEN};
-use foundry_utils::error::{ERROR_PREFIX, REVERT_PREFIX};
+use foundry_cheatcodes_defs::Vm;
+use foundry_common::SELECTOR_LEN;
 use itertools::Itertools;
-use once_cell::sync::Lazy;
 use revm::interpreter::{return_ok, InstructionResult};
 use thiserror::Error;
 
@@ -92,159 +90,62 @@ pub fn decode_revert(
     err: &[u8],
     maybe_abi: Option<&JsonAbi>,
     status: Option<InstructionResult>,
-) -> Result<String, RevertDecodingError> {
+) -> String {
     if err.len() < SELECTOR_LEN {
         if let Some(status) = status {
             if !matches!(status, return_ok!()) {
-                return Ok(format!("EvmError: {status:?}"))
+                return format!("EvmError: {status:?}")
             }
         }
-        return Err(RevertDecodingError::InsufficientErrorData)
     }
 
-    match <[u8; SELECTOR_LEN]>::try_from(&err[..SELECTOR_LEN]).unwrap() {
-        // keccak(Panic(uint256))
-        [78, 72, 123, 113] => {
-            // ref: https://soliditydeveloper.com/solidity-0.8
-            match err[err.len() - 1] {
-                1 => {
-                    // assert
-                    Ok("Assertion violated".to_string())
-                }
-                17 => {
-                    // safemath over/underflow
-                    Ok("Arithmetic over/underflow".to_string())
-                }
-                18 => {
-                    // divide by 0
-                    Ok("Division or modulo by 0".to_string())
-                }
-                33 => {
-                    // conversion into non-existent enum type
-                    Ok("Conversion into non-existent enum type".to_string())
-                }
-                34 => {
-                    // incorrectly encoded storage byte array
-                    Ok("Incorrectly encoded storage byte array".to_string())
-                }
-                49 => {
-                    // pop() on empty array
-                    Ok("`pop()` on empty array".to_string())
-                }
-                50 => {
-                    // index out of bounds
-                    Ok("Index out of bounds".to_string())
-                }
-                65 => {
-                    // allocating too much memory or creating too large array
-                    Ok("Memory allocation overflow".to_string())
-                }
-                81 => {
-                    // calling a zero initialized variable of internal function type
-                    Ok("Calling a zero initialized variable of internal function type".to_string())
-                }
-                _ => Err(RevertDecodingError::UnsupportedSolidityBuiltinPanic),
-            }
-        }
-        // keccak(Error(string)) | keccak(CheatcodeError(string))
-        REVERT_PREFIX | ERROR_PREFIX => {
-            DynSolType::abi_decode(&DynSolType::String, &err[SELECTOR_LEN..])
-                .map_err(RevertDecodingError::AlloyDecodingError)
-                .and_then(|v| {
-                    v.clone()
-                        .as_str()
-                        .map(|s| s.to_owned())
-                        .ok_or(RevertDecodingError::BadStringDecode)
-                })
-                .to_owned()
-        }
-        // keccak(expectRevert(bytes))
-        [242, 141, 206, 179] => {
-            let err_data = &err[SELECTOR_LEN..];
-            if err_data.len() > 64 {
-                let len = U256::try_from_be_slice(&err_data[32..64])
-                    .ok_or(RevertDecodingError::SliceDecodingError)?
-                    .to::<usize>();
-                if err_data.len() > 64 + len {
-                    let actual_err = &err_data[64..64 + len];
-                    if let Ok(decoded) = decode_revert(actual_err, maybe_abi, None) {
-                        // check if it's a builtin
-                        return Ok(decoded)
-                    } else if let Ok(as_str) = String::from_utf8(actual_err.to_vec()) {
-                        // check if it's a true string
-                        return Ok(as_str)
-                    }
-                }
-            }
-            Err(RevertDecodingError::NonNativeErrorAndNotString)
-        }
-        // keccak(expectRevert(bytes4))
-        [195, 30, 176, 224] => {
-            let err_data = &err[SELECTOR_LEN..];
-            if err_data.len() == 32 {
-                let actual_err = &err_data[..SELECTOR_LEN];
-                if let Ok(decoded) = decode_revert(actual_err, maybe_abi, None) {
-                    // it's a known selector
-                    return Ok(decoded)
-                }
-            }
-            Err(RevertDecodingError::UnknownErrorSelector)
-        }
-        _ => {
-            // See if the revert is caused by a skip() call.
-            if err == MAGIC_SKIP {
-                return Ok("SKIPPED".to_string())
-            }
-            // try to decode a custom error if provided an abi
-            if let Some(abi) = maybe_abi {
-                for abi_error in abi.errors() {
-                    if abi_error.selector() == err[..SELECTOR_LEN] {
-                        // if we don't decode, don't return an error, try to decode as a
-                        // string later
-                        if let Ok(decoded) = abi_error.abi_decode_input(&err[SELECTOR_LEN..], false)
-                        {
-                            let inputs = decoded
-                                .iter()
-                                .map(foundry_common::fmt::format_token)
-                                .collect::<Vec<_>>()
-                                .join(", ");
-                            return Ok(format!("{}({inputs})", abi_error.name))
-                        }
-                    }
-                }
-            }
+    // `expectRevert(bytes)`
+    if let Ok(e) = Vm::expectRevert_2Call::abi_decode(err, true) {
+        return decode_revert(&e.revertData[..], maybe_abi, status)
+    }
 
-            // optimistically try to decode as string, unknown selector or `CheatcodeError`
-            let error = DynSolType::abi_decode(&DynSolType::String, err)
-                .map_err(|_| RevertDecodingError::BadStringDecode)
-                .and_then(|v| {
-                    v.as_str().map(|s| s.to_owned()).ok_or(RevertDecodingError::BadStringDecode)
-                })
-                .ok();
+    // `expectRevert(bytes4)`
+    if let Ok(e) = Vm::expectRevert_1Call::abi_decode(err, true) {
+        return decode_revert(&e.revertData[..], maybe_abi, status)
+    }
 
-            let error = error.filter(|err| err.as_str() != "");
-            error
-                .or_else(|| {
-                    // try decoding as unknown err
-                    SolString::abi_decode(&err[SELECTOR_LEN..], false)
-                        .map(|err_str| format!("{}:{err_str}", hex::encode(&err[..SELECTOR_LEN])))
-                        .ok()
-                })
-                .or_else(|| {
-                    // try to decode possible variations of custom error types
-                    decode_custom_error(err).map(|token| {
-                        let s = format!("Custom Error {}:", hex::encode(&err[..SELECTOR_LEN]));
-
-                        let err_str = format_token(&token);
-                        if err_str.starts_with('(') {
-                            format!("{s}{err_str}")
-                        } else {
-                            format!("{s}({err_str})")
-                        }
-                    })
-                })
-                .ok_or_else(|| RevertDecodingError::NonNativeErrorAndNotString)
+    // try to decode a custom error if provided an abi
+    if let Some(abi) = maybe_abi {
+        for abi_error in abi.errors() {
+            if abi_error.selector()[..SELECTOR_LEN] == err[..SELECTOR_LEN] {
+                // if we don't decode, don't return an error, try to decode as a string later
+                if let Ok(decoded) = abi_error.abi_decode_input(&err[SELECTOR_LEN..], false) {
+                    let inputs = decoded
+                        .iter()
+                        .map(foundry_common::fmt::format_token)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return format!("{}({inputs})", abi_error.name)
+                }
+            }
         }
+    }
+
+    // `string`
+    if let Ok(s) = std::str::from_utf8(err) {
+        return s.to_string()
+    }
+
+    // Generic custom error
+    let (selector, err) = err.split_at(SELECTOR_LEN);
+    format!(
+        "Custom error {}:{}",
+        hex::encode(selector),
+        std::str::from_utf8(err).map_or_else(|_| trimmed_hex(err), String::from)
+    )
+}
+
+fn trimmed_hex(s: &[u8]) -> String {
+    let s = hex::encode(s);
+    if s.len() <= 32 {
+        s
+    } else {
+        format!("{}…{} ({} bytes)", &s[..16], &s[s.len() - 16..], s.len())
     }
 }
 
@@ -263,16 +164,14 @@ pub fn decode_custom_error_args(err: &[u8], args: usize) -> Option<DynSolValue> 
 
     let err = &err[SELECTOR_LEN..];
     /// types we check against
-    static TYPES: Lazy<Vec<DynSolType>> = Lazy::new(|| {
-        vec![
-            DynSolType::Address,
-            DynSolType::Bool,
-            DynSolType::Uint(256),
-            DynSolType::Int(256),
-            DynSolType::Bytes,
-            DynSolType::String,
-        ]
-    });
+    static TYPES: &[DynSolType] = &[
+        DynSolType::Address,
+        DynSolType::Bool,
+        DynSolType::Uint(256),
+        DynSolType::Int(256),
+        DynSolType::Bytes,
+        DynSolType::String,
+    ];
 
     // check if single param, but only if it's a single word
     if err.len() == 32 {

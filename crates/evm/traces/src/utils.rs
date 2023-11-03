@@ -32,9 +32,7 @@ pub(crate) fn decode_cheatcode_inputs(
     verbosity: u8,
 ) -> Option<Vec<String>> {
     match func.name.as_str() {
-        "expectRevert" => {
-            decode::decode_revert(data, Some(errors), None).ok().map(|decoded| vec![decoded])
-        }
+        "expectRevert" => Some(vec![decode::decode_revert(data, Some(errors), None)]),
         "rememberKey" | "addr" | "startBroadcast" | "broadcast" => {
             // these functions accept a private key as uint256, which should not be
             // converted to plain text

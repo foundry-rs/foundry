@@ -328,29 +328,29 @@ pub enum LogCallOrder {
 /// Raw or decoded calldata.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum RawOrDecodedCall {
-    /// Raw calldata
+    /// Raw calldata bytes.
     Raw(Bytes),
     /// Decoded calldata.
-    ///
-    /// The first element in the tuple is the function name, second is the function signature and
-    /// the third element is a vector of decoded parameters.
-    Decoded(String, String, Vec<String>),
-}
-
-impl RawOrDecodedCall {
-    pub fn to_raw(&self) -> Vec<u8> {
-        match self {
-            RawOrDecodedCall::Raw(raw) => raw.to_vec(),
-            RawOrDecodedCall::Decoded(_, _, _) => {
-                vec![]
-            }
-        }
-    }
+    Decoded {
+        /// The function signature.
+        signature: String,
+        /// The function arguments.
+        args: Vec<String>,
+    },
 }
 
 impl Default for RawOrDecodedCall {
     fn default() -> Self {
-        RawOrDecodedCall::Raw(Default::default())
+        Self::Raw(Bytes::new())
+    }
+}
+
+impl RawOrDecodedCall {
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            RawOrDecodedCall::Raw(raw) => raw,
+            RawOrDecodedCall::Decoded { .. } => &[],
+        }
     }
 }
 
@@ -361,6 +361,12 @@ pub enum RawOrDecodedReturnData {
     Raw(Bytes),
     /// Decoded return data
     Decoded(String),
+}
+
+impl Default for RawOrDecodedReturnData {
+    fn default() -> Self {
+        Self::Raw(Bytes::new())
+    }
 }
 
 impl RawOrDecodedReturnData {
@@ -374,12 +380,6 @@ impl RawOrDecodedReturnData {
 
     pub fn to_raw(&self) -> Vec<u8> {
         self.to_bytes().to_vec()
-    }
-}
-
-impl Default for RawOrDecodedReturnData {
-    fn default() -> Self {
-        RawOrDecodedReturnData::Raw(Default::default())
     }
 }
 
@@ -529,9 +529,9 @@ impl fmt::Display for CallTrace {
                 self.gas_cost,
                 Paint::yellow(CALL),
                 Paint::yellow("new"),
-                self.label.as_ref().unwrap_or(&"<Unknown>".to_string()),
+                self.label.as_deref().unwrap_or("<Unknown>"),
                 address
-            )?;
+            )
         } else {
             let (func, inputs) = match &self.data {
                 RawOrDecodedCall::Raw(bytes) => {
@@ -540,7 +540,9 @@ impl fmt::Display for CallTrace {
                     assert!(bytes.len() >= 4);
                     (hex::encode(&bytes[0..4]), hex::encode(&bytes[4..]))
                 }
-                RawOrDecodedCall::Decoded(func, _, inputs) => (func.clone(), inputs.join(", ")),
+                RawOrDecodedCall::Decoded { signature, args } => {
+                    (signature.clone(), args.join(", "))
+                }
             };
 
             let action = match self.kind {
@@ -549,7 +551,7 @@ impl fmt::Display for CallTrace {
                 CallKind::StaticCall => "[staticcall]",
                 CallKind::CallCode => "[callcode]",
                 CallKind::DelegateCall => "[delegatecall]",
-                _ => unreachable!(),
+                CallKind::Create | CallKind::Create2 => unreachable!(),
             };
 
             let color = trace_color(self);
@@ -562,14 +564,12 @@ impl fmt::Display for CallTrace {
                 if !self.value == U256::ZERO {
                     format!("{{value: {}}}", self.value)
                 } else {
-                    "".to_string()
+                    String::new()
                 },
                 inputs,
                 Paint::yellow(action),
-            )?;
+            )
         }
-
-        Ok(())
     }
 }
 

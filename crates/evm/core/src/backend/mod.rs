@@ -68,7 +68,6 @@ const GLOBAL_FAILURE_SLOT: B256 =
     b256!("6661696c65640000000000000000000000000000000000000000000000000000");
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
-#[auto_impl::auto_impl(&mut, Box)]
 pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// Creates a new snapshot at the current point of execution.
     ///

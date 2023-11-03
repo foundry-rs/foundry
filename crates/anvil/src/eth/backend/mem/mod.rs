@@ -53,19 +53,18 @@ use ethers::{
         DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, OtherFields,
         Trace, Transaction, TransactionReceipt, H160,
     },
-    utils::{hex, keccak256, rlp},
+    utils::{keccak256, rlp},
 };
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-use foundry_common::fmt::format_token;
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
-    decode::{decode_custom_error_args, decode_revert},
+    decode::decode_revert,
     inspectors::AccessListTracer,
     revm::{
         self,
         db::CacheDB,
-        interpreter::{return_ok, InstructionResult},
+        interpreter::InstructionResult,
         primitives::{
             Account, BlockEnv, CreateScheme, EVMError, Env, ExecutionResult, InvalidHeader, Output,
             SpecId, TransactTo, TxEnv, KECCAK_EMPTY,
@@ -77,6 +76,7 @@ use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
+use revm::interpreter::return_ok;
 use std::{
     collections::HashMap,
     io::{Read, Write},
@@ -285,7 +285,7 @@ impl Backend {
             fork_genesis_infos.clear();
 
             for res in genesis_accounts {
-                let (address, mut info) = res??;
+                let (address, mut info) = res.map_err(DatabaseError::display)??;
                 info.balance = self.genesis.balance;
                 db.insert_account(address, info.clone());
 
@@ -925,26 +925,11 @@ impl Backend {
                             node_info!("    Error: reverted with call too deep");
                         }
                         InstructionResult::Revert => {
-                            if let Some(ref r) = info.out {
-                                if let Ok(reason) = decode_revert(r.as_ref(), None, None) {
-                                    node_info!("    Error: reverted with '{}'", reason);
-                                } else {
-                                    match decode_custom_error_args(r, 5) {
-                                        // assuming max 5 args
-                                        Some(token) => {
-                                            node_info!(
-                                                "    Error: reverted with custom error: {:?}",
-                                                format_token(&token)
-                                            );
-                                        }
-                                        None => {
-                                            node_info!(
-                                                "    Error: reverted with custom error: {}",
-                                                hex::encode(r)
-                                            );
-                                        }
-                                    }
-                                }
+                            if let Some(r) = &info.out {
+                                node_info!(
+                                    "    Error: reverted with '{}'",
+                                    decode_revert(r, None, None)
+                                );
                             } else {
                                 node_info!("    Error: reverted without a reason");
                             }
