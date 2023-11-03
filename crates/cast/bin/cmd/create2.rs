@@ -155,6 +155,7 @@ impl Create2Args {
                     }
 
                     // do the thing
+                    #[allow(clippy::needless_borrows_for_generic_args)]
                     let addr = deployer.create2(&salt.0, init_code_hash);
 
                     // check if it matches
