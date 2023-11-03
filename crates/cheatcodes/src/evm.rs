@@ -3,14 +3,16 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolValue;
+use ethers_core::utils::{Genesis, GenesisAccount};
 use ethers_signers::Signer;
+use foundry_common::fs::read_json_file;
 use foundry_evm_core::backend::DatabaseExt;
 use foundry_utils::types::ToAlloy;
 use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     EVMData,
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
 mod fork;
 pub(crate) mod mapping;
@@ -59,6 +61,29 @@ impl Cheatcode for loadCall {
         ccx.data.journaled_state.load_account(target, ccx.data.db)?;
         let (val, _) = ccx.data.journaled_state.sload(target, slot.into(), ccx.data.db)?;
         Ok(val.abi_encode())
+    }
+}
+
+impl Cheatcode for loadAllocsCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { pathToAllocsJson } = self;
+
+        let path = Path::new(pathToAllocsJson);
+        ensure!(path.exists(), "allocs file does not exist: {pathToAllocsJson}");
+
+        // Let's first assume we're reading a genesis.json file.
+        let allocs: HashMap<Address, GenesisAccount> = match read_json_file::<Genesis>(path) {
+            Ok(genesis) => genesis.alloc.into_iter().map(|(k, g)| (k.to_alloy(), g)).collect(),
+            // If that fails, let's try reading a file with just the genesis accounts.
+            Err(_) => read_json_file(path)?,
+        };
+
+        // Then, load the allocs into the database.
+        ccx.data
+            .db
+            .load_allocs(&allocs, &mut ccx.data.journaled_state)
+            .map(|_| Vec::default())
+            .map_err(|e| fmt_err!("failed to load allocs: {e}"))
     }
 }
 
