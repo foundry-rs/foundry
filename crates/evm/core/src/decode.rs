@@ -1,9 +1,9 @@
 //! Various utilities to decode test results.
 
-use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
+use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::B256;
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolCall, SolInterface};
 use ethers::{abi::RawLog, contract::EthLogDecode, types::Log};
 use foundry_abi::console::ConsoleEvents::{self, *};
 use foundry_cheatcodes_defs::Vm;
@@ -84,8 +84,10 @@ pub enum RevertDecodingError {
     AlloyDecodingError(alloy_dyn_abi::Error),
 }
 
-/// Given an ABI encoded error string with the function signature `Error(string)`, it decodes
-/// it and returns the revert error message.
+/// Tries to decode an error message from the given revert bytes.
+///
+/// Note that this is just a best-effort guess, and should not be relied upon for anything other
+/// than user output.
 pub fn decode_revert(
     err: &[u8],
     maybe_abi: Option<&JsonAbi>,
@@ -97,54 +99,63 @@ pub fn decode_revert(
                 return format!("EvmError: {status:?}")
             }
         }
+        return format!("custom error {}", hex::encode(err))
     }
 
+    // Solidity's `Error(string)` or `Panic(uint256)`
+    if let Ok(e) = alloy_sol_types::GenericContractError::abi_decode(err, false) {
+        return e.to_string()
+    }
+
+    let (selector, data) = err.split_at(SELECTOR_LEN);
+
     // `expectRevert(bytes)`
-    if let Ok(e) = Vm::expectRevert_2Call::abi_decode(err, true) {
-        return decode_revert(&e.revertData[..], maybe_abi, status)
+    if selector == Vm::expectRevert_2Call::SELECTOR {
+        if let Ok(e) = Vm::expectRevert_2Call::abi_decode_raw(data, false) {
+            return decode_revert(&e.revertData[..], maybe_abi, status)
+        }
     }
 
     // `expectRevert(bytes4)`
-    if let Ok(e) = Vm::expectRevert_1Call::abi_decode(err, true) {
-        return decode_revert(&e.revertData[..], maybe_abi, status)
+    if selector == Vm::expectRevert_1Call::SELECTOR {
+        if let Ok(e) = Vm::expectRevert_1Call::abi_decode_raw(err, false) {
+            return decode_revert(&e.revertData[..], maybe_abi, status)
+        }
     }
 
-    // try to decode a custom error if provided an abi
+    // Custom error from the given ABI
     if let Some(abi) = maybe_abi {
-        for abi_error in abi.errors() {
-            if abi_error.selector()[..SELECTOR_LEN] == err[..SELECTOR_LEN] {
-                // if we don't decode, don't return an error, try to decode as a string later
-                if let Ok(decoded) = abi_error.abi_decode_input(&err[SELECTOR_LEN..], false) {
-                    let inputs = decoded
-                        .iter()
-                        .map(foundry_common::fmt::format_token)
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    return format!("{}({inputs})", abi_error.name)
-                }
+        if let Some(abi_error) = abi.errors().find(|e| selector == e.selector()) {
+            // if we don't decode, don't return an error, try to decode as a string later
+            if let Ok(decoded) = abi_error.abi_decode_input(data, false) {
+                return format!(
+                    "{}({})",
+                    abi_error.name,
+                    decoded.iter().map(foundry_common::fmt::format_token).format(", ")
+                )
             }
         }
     }
 
-    // `string`
+    // UTF-8-encoded string
     if let Ok(s) = std::str::from_utf8(err) {
         return s.to_string()
     }
 
     // Generic custom error
-    let (selector, err) = err.split_at(SELECTOR_LEN);
     format!(
-        "Custom error {}:{}",
+        "custom error {}:{}",
         hex::encode(selector),
-        std::str::from_utf8(err).map_or_else(|_| trimmed_hex(err), String::from)
+        std::str::from_utf8(data).map_or_else(|_| trimmed_hex(err), String::from)
     )
 }
 
 fn trimmed_hex(s: &[u8]) -> String {
     let s = hex::encode(s);
-    if s.len() <= 32 {
+    let n = 32 * 2;
+    if s.len() <= n {
         s
     } else {
-        format!("{}…{} ({} bytes)", &s[..16], &s[s.len() - 16..], s.len())
+        format!("{}…{} ({} bytes)", &s[..n / 2], &s[s.len() - n / 2..], s.len())
     }
 }
