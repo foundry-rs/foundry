@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt};
 use alloy_json_abi::{Event, Function, JsonAbi as Abi};
-use alloy_primitives::{Address, FixedBytes, B256};
+use alloy_primitives::{Address, Selector, B256};
 use foundry_common::{abi::get_indexed_event, SELECTOR_LEN};
 use foundry_evm_core::{
     abi::{CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HEVM_ABI},
@@ -94,7 +94,7 @@ pub struct CallTraceDecoder {
     /// Information whether the contract address has a receive function
     pub receive_contracts: HashMap<Address, bool>,
     /// A mapping of signatures to their known functions
-    pub functions: BTreeMap<FixedBytes<4>, Vec<Function>>,
+    pub functions: BTreeMap<Selector, Vec<Function>>,
     /// All known events
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
     /// All known errors
@@ -206,6 +206,7 @@ impl CallTraceDecoder {
         }
     }
 
+    /// Decodes all nodes in the specified call trace.
     pub async fn decode(&self, traces: &mut CallTraceArena) {
         for node in &mut traces.arena {
             // Set contract name
@@ -218,13 +219,17 @@ impl CallTraceDecoder {
                 node.trace.label = Some(label.clone());
             }
 
+            // Decode events
+            self.decode_events(node).await;
+
             // Decode call
-            if precompiles::decode(&mut node.trace) {
+            // TODO: chain ID argument
+            if precompiles::decode(&mut node.trace, 1) {
                 return
             }
 
             if let RawOrDecodedCall::Raw(bytes) = &node.trace.data {
-                if bytes.len() >= 4 {
+                if bytes.len() >= SELECTOR_LEN {
                     if let Some(funcs) = self.functions.get(&bytes[..SELECTOR_LEN]) {
                         node.decode_function(funcs, &self.labels, &self.errors, self.verbosity);
                     } else if node.trace.address == DEFAULT_CREATE2_DEPLOYER {
@@ -264,9 +269,6 @@ impl CallTraceDecoder {
                     }
                 }
             }
-
-            // Decode events
-            self.decode_events(node).await;
         }
     }
 
