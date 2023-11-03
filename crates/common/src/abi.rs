@@ -16,7 +16,7 @@ where
     S: AsRef<str>,
 {
     let params = std::iter::zip(&func.inputs, args)
-        .map(|(input, arg)| coerce_value(&input.selector_type(), arg.as_ref()))
+        .map(|(input, arg)| coerce_value(&input.selector_type(), sanitize_arg(arg.as_ref())))
         .collect::<Result<Vec<_>>>()?;
     func.abi_encode_input(params.as_slice()).map_err(Into::into)
 }
@@ -188,6 +188,16 @@ pub fn find_source(
 fn coerce_value(ty: &str, arg: &str) -> Result<DynSolValue> {
     let ty = DynSolType::parse(ty)?;
     Ok(DynSolType::coerce_str(&ty, arg)?)
+}
+
+/// Sanitizes arguments for encoding function arguments.
+/// If it's an empty sequence, it returns "0x00" to avoid encoding errors.
+fn sanitize_arg<'a>(arg: &'a str) -> &'a str {
+    if arg == "0x" {
+        return "0x00"
+    } else {
+        return arg
+    }
 }
 
 #[cfg(test)]

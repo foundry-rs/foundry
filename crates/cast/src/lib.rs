@@ -2020,6 +2020,14 @@ mod tests {
         );
     }
 
+    #[test]
+    fn calldata_encode_bytes() {
+        assert_eq!(
+            "0xd45754f8000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000",
+            Cast::calldata_encode("f(bytes x)", &["0x00"]).unwrap().as_str()
+        );
+    }
+
     // <https://github.com/foundry-rs/foundry/issues/2681>
     #[test]
     fn calldata_array() {
