@@ -17,9 +17,7 @@ contract EtchTest is DSTest {
     function testEtchNotAvailableOnPrecompiles() public {
         address target = address(1);
         bytes memory code = hex"1010";
-        vm.expectRevert(
-            bytes("Etch cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead")
-        );
+        vm.expectRevert(bytes("cannot call `etch` on precompile 0x0000000000000000000000000000000000000001"));
         vm.etch(target, code);
     }
 }

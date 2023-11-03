@@ -1,6 +1,6 @@
 //! Commonly used constants
 
-use ethers_core::types::H160;
+use alloy_primitives::{address, Address};
 use std::time::Duration;
 
 /// The dev chain-id, inherited from hardhat
@@ -19,7 +19,7 @@ pub const CONTRACT_MAX_SIZE: usize = 24576;
 /// responses. This timeout should be a reasonable amount of time to wait for a request.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 
-/// Alchemy free tier cups <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
+/// Alchemy free tier cups: <https://docs.alchemy.com/reference/pricing-plans>
 pub const ALCHEMY_FREE_TIER_CUPS: u64 = 330;
 
 /// Logged when an error is indicative that the user is trying to fork from a non-archive node.
@@ -29,19 +29,13 @@ supported. Please try to change your RPC url to an archive node if the issue per
 
 /// Arbitrum L1 sender address of the first transaction in every block.
 /// `0x00000000000000000000000000000000000a4b05`
-pub const ARBITRUM_SENDER: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x0a, 0x4b, 0x05,
-]);
+pub const ARBITRUM_SENDER: Address = address!("00000000000000000000000000000000000a4b05");
 
 /// The system address, the sender of the first transaction in every block:
 /// `0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001`
 ///
 /// See also <https://github.com/ethereum-optimism/optimism/blob/65ec61dde94ffa93342728d324fecf474d228e1f/specs/deposits.md#l1-attributes-deposited-transaction>
-pub const OPTIMISM_SYSTEM_ADDRESS: H160 = H160([
-    0xDE, 0xAD, 0xDE, 0xAD, 0xDE, 0xAD, 0xDE, 0xAD, 0xDE, 0xAD, 0xDE, 0xAD, 0xDE, 0xAD, 0xDE, 0xAD,
-    0xDE, 0xAD, 0x00, 0x01,
-]);
+pub const OPTIMISM_SYSTEM_ADDRESS: Address = address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001");
 
 /// Transaction identifier of System transaction types
 pub const SYSTEM_TRANSACTION_TYPE: u64 = 126u64;
@@ -52,7 +46,7 @@ pub const SYSTEM_TRANSACTION_TYPE: u64 = 126u64;
 ///
 /// See: [ARBITRUM_SENDER], [OPTIMISM_SYSTEM_ADDRESS]
 #[inline]
-pub fn is_known_system_sender(sender: H160) -> bool {
+pub fn is_known_system_sender(sender: Address) -> bool {
     [ARBITRUM_SENDER, OPTIMISM_SYSTEM_ADDRESS].contains(&sender)
 }
 
@@ -63,9 +57,9 @@ mod tests {
 
     #[test]
     fn test_constant_sender() {
-        let arb = H160::from_str("0x00000000000000000000000000000000000a4b05").unwrap();
+        let arb = Address::from_str("0x00000000000000000000000000000000000a4b05").unwrap();
         assert_eq!(arb, ARBITRUM_SENDER);
-        let base = H160::from_str("0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001").unwrap();
+        let base = Address::from_str("0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001").unwrap();
         assert_eq!(base, OPTIMISM_SYSTEM_ADDRESS);
     }
 }

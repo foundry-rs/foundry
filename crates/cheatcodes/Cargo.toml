@@ -1,0 +1,37 @@
+[package]
+name = "foundry-cheatcodes"
+description = "Foundry cheatcodes definitions and implementations"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[dependencies]
+foundry-cheatcodes-defs.workspace = true
+foundry-common.workspace = true
+foundry-compilers.workspace = true
+foundry-config.workspace = true
+foundry-evm-core.workspace = true
+foundry-utils.workspace = true
+
+alloy-dyn-abi.workspace = true
+alloy-json-abi.workspace = true
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+ethers-core.workspace = true
+ethers-providers.workspace = true
+ethers-signers.workspace = true
+
+eyre.workspace = true
+hex.workspace = true
+itertools.workspace = true
+jsonpath_lib.workspace = true
+revm.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+walkdir = "2"

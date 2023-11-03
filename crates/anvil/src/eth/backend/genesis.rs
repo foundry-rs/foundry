@@ -4,17 +4,17 @@ use crate::{
     eth::backend::db::{Db, MaybeHashDatabase},
     genesis::Genesis,
 };
-use alloy_primitives::{Address as B160, B256, U256};
+use alloy_primitives::{Address as aAddress, B256, U256};
 use ethers::{
     abi::ethereum_types::BigEndianHash,
     types::{Address, H256},
 };
 use foundry_evm::{
-    executor::{
-        backend::{snapshot::StateSnapshot, DatabaseError, DatabaseResult},
-        DatabaseRef,
+    backend::{DatabaseError, DatabaseResult, StateSnapshot},
+    revm::{
+        db::DatabaseRef,
+        primitives::{AccountInfo, Bytecode, KECCAK_EMPTY},
     },
-    revm::primitives::{AccountInfo, Bytecode, KECCAK_EMPTY},
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::Mutex;
@@ -103,7 +103,7 @@ pub(crate) struct AtGenesisStateDb<'a> {
 
 impl<'a> DatabaseRef for AtGenesisStateDb<'a> {
     type Error = DatabaseError;
-    fn basic(&self, address: B160) -> DatabaseResult<Option<AccountInfo>> {
+    fn basic(&self, address: aAddress) -> DatabaseResult<Option<AccountInfo>> {
         if let Some(acc) = self.accounts.get(&(address.to_ethers())).cloned() {
             return Ok(Some(acc))
         }
@@ -117,7 +117,7 @@ impl<'a> DatabaseRef for AtGenesisStateDb<'a> {
         self.db.code_by_hash(code_hash)
     }
 
-    fn storage(&self, address: B160, index: U256) -> DatabaseResult<U256> {
+    fn storage(&self, address: aAddress, index: U256) -> DatabaseResult<U256> {
         if let Some(acc) = self
             .genesis
             .as_ref()

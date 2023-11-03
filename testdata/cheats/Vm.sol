@@ -1,687 +1,229 @@
-// SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+// Automatically generated from `foundry-cheatcodes` Vm definitions. Do not modify manually.
+// This interface is just for internal testing purposes. Use `forge-std` instead.
+
+// SPDX-License-Identifier: MIT OR Apache-2.0
+pragma solidity ^0.8.4;
 
 interface Vm {
-    // Possible caller modes for readCallers()
-    enum CallerMode {
-        None,
-        Broadcast,
-        RecurrentBroadcast,
-        Prank,
-        RecurrentPrank
-    }
-
-    // This allows us to getRecordedLogs()
-    struct Log {
-        bytes32[] topics;
-        bytes data;
-        address emitter;
-    }
-
-    // Used in getRpcStructs
-    struct Rpc {
-        string name;
-        string url;
-    }
-
-    // Used in eth_getLogs
-    struct EthGetLogs {
-        address emitter;
-        bytes32[] topics;
-        bytes data;
-        uint256 blockNumber;
-        bytes32 transactionHash;
-        uint256 transactionIndex;
-        bytes32 blockHash;
-        uint256 logIndex;
-        bool removed;
-    }
-
-    // Used in readDir
-    struct DirEntry {
-        string errorMessage;
-        string path;
-        uint64 depth;
-        bool isDir;
-        bool isSymlink;
-    }
-
-    // Used in fsMetadata
-    struct FsMetadata {
-        bool isDir;
-        bool isSymlink;
-        uint256 length;
-        bool readOnly;
-        uint256 modified;
-        uint256 accessed;
-        uint256 created;
-    }
-
-    // Returned by 'createWallet'. Used with 'sign' and 'getNonce'
-    struct Wallet {
-        address addr;
-        uint256 publicKeyX;
-        uint256 publicKeyY;
-        uint256 privateKey;
-    }
-
-    struct FfiResult {
-        int32 exit_code;
-        bytes stdout;
-        bytes stderr;
-    }
-
-    // Set block.timestamp (newTimestamp)
-    function warp(uint256) external;
-
-    // Set block.difficulty (newDifficulty)
-    // No longer works from Paris onwards.
-    function difficulty(uint256) external;
-
-    // Set block.prevrandao (newPrevrandao)
-    function prevrandao(bytes32) external;
-
-    // Set block.height (newHeight)
-    function roll(uint256) external;
-
-    // Set block.basefee (newBasefee)
-    function fee(uint256) external;
-
-    // Set block.coinbase (who)
-    function coinbase(address) external;
-
-    // Loads a storage slot from an address (who, slot)
-    function load(address, bytes32) external returns (bytes32);
-
-    // Stores a value to an address' storage slot, (who, slot, value)
-    function store(address, bytes32, bytes32) external;
-
-    // Cools off a warm address and its storage slots
-    function cool(address) external;
-
-    // Signs data, (privateKey, digest) => (v, r, s)
-    function sign(uint256, bytes32) external returns (uint8, bytes32, bytes32);
-
-    // Gets address for a given private key, (privateKey) => (address)
-    function addr(uint256) external returns (address);
-
-    // Derive a private key from a provided English mnemonic string (or mnemonic file path) at the derivation path m/44'/60'/0'/0/{index}
-    function deriveKey(string calldata, uint32) external returns (uint256);
-
-    // Derive a private key from a provided English mnemonic string (or mnemonic file path) at the derivation path {path}{index}
-    function deriveKey(string calldata, string calldata, uint32) external returns (uint256);
-
-    // Derive a private key from a provided mnemonic string (or mnemonic file path) of specified language at the derivation path m/44'/60'/0'/0/{index}
-    function deriveKey(string calldata, uint32, string calldata) external returns (uint256);
-
-    // Derive a private key from a provided mnemonic string (or mnemonic file path) of specified language at the derivation path {path}{index}
-    function deriveKey(string calldata, string calldata, uint32, string calldata) external returns (uint256);
-
-    // Adds a private key to the local forge wallet and returns the address
-    function rememberKey(uint256) external returns (address);
-
-    // Derives a private key from the name, labels the account with that name, and returns the wallet
-    function createWallet(string calldata) external returns (Wallet memory);
-
-    // Generates a wallet from the private key and returns the wallet
-    function createWallet(uint256) external returns (Wallet memory);
-
-    // Generates a wallet from the private key, labels the account with that name, and returns the wallet
-    function createWallet(uint256, string calldata) external returns (Wallet memory);
-
-    // Signs data, (Wallet, digest) => (v, r, s)
-    function sign(Wallet calldata, bytes32) external returns (uint8, bytes32, bytes32);
-
-    // Get nonce for a Wallet
-    function getNonce(Wallet calldata) external returns (uint64);
-
-    // Performs a foreign function call via terminal, (stringInputs) => (result)
-    function ffi(string[] calldata) external returns (bytes memory);
-
-    // Performs a foreign function call via terminal and returns the exit code, stdout, and stderr
-    function tryFfi(string[] calldata) external returns (FfiResult memory);
-
-    // Set environment variables, (name, value)
-    function setEnv(string calldata, string calldata) external;
-
-    // Read environment variables, (name) => (value)
-    function envBool(string calldata) external returns (bool);
-
-    function envUint(string calldata) external returns (uint256);
-
-    function envInt(string calldata) external returns (int256);
-
-    function envAddress(string calldata) external returns (address);
-
-    function envBytes32(string calldata) external returns (bytes32);
-
-    function envString(string calldata) external returns (string memory);
-
-    function envBytes(string calldata) external returns (bytes memory);
-
-    // Read environment variables as arrays, (name, delim) => (value[])
-    function envBool(string calldata, string calldata) external returns (bool[] memory);
-
-    function envUint(string calldata, string calldata) external returns (uint256[] memory);
-
-    function envInt(string calldata, string calldata) external returns (int256[] memory);
-
-    function envAddress(string calldata, string calldata) external returns (address[] memory);
-
-    function envBytes32(string calldata, string calldata) external returns (bytes32[] memory);
-
-    function envString(string calldata, string calldata) external returns (string[] memory);
-
-    function envBytes(string calldata, string calldata) external returns (bytes[] memory);
-
-    // Read environment variables with default value, (name, value) => (value)
-    function envOr(string calldata, bool) external returns (bool);
-
-    function envOr(string calldata, uint256) external returns (uint256);
-
-    function envOr(string calldata, int256) external returns (int256);
-
-    function envOr(string calldata, address) external returns (address);
-
-    function envOr(string calldata, bytes32) external returns (bytes32);
-
-    function envOr(string calldata, string calldata) external returns (string memory);
-
-    function envOr(string calldata, bytes calldata) external returns (bytes memory);
-
-    // Read environment variables as arrays with default value, (name, value[]) => (value[])
-    function envOr(string calldata, string calldata, bool[] calldata) external returns (bool[] memory);
-
-    function envOr(string calldata, string calldata, uint256[] calldata) external returns (uint256[] memory);
-
-    function envOr(string calldata, string calldata, int256[] calldata) external returns (int256[] memory);
-
-    function envOr(string calldata, string calldata, address[] calldata) external returns (address[] memory);
-
-    function envOr(string calldata, string calldata, bytes32[] calldata) external returns (bytes32[] memory);
-
-    function envOr(string calldata, string calldata, string[] calldata) external returns (string[] memory);
-
-    function envOr(string calldata, string calldata, bytes[] calldata) external returns (bytes[] memory);
-
-    // Sets the *next* call's msg.sender to be the input address
-    function prank(address) external;
-
-    // Sets all subsequent calls' msg.sender to be the input address until `stopPrank` is called
-    function startPrank(address) external;
-
-    // Sets the *next* call's msg.sender to be the input address, and the tx.origin to be the second input
-    function prank(address, address) external;
-
-    // Sets all subsequent calls' msg.sender to be the input address until `stopPrank` is called, and the tx.origin to be the second input
-    function startPrank(address, address) external;
-
-    // Resets subsequent calls' msg.sender to be `address(this)`
-    function stopPrank() external;
-
-    // Reads the current msg.sender and tx.origin from state
-    function readCallers() external returns (CallerMode, address, address);
-
-    // Sets an address' balance, (who, newBalance)
-    function deal(address, uint256) external;
-
-    // Sets an address' code, (who, newCode)
-    function etch(address, bytes calldata) external;
-
-    // Skips a test.
-    function skip(bool) external;
-
-    // Sleeps for a given number of milliseconds.
-    function sleep(uint256) external;
-
-    /// Returns the time since unix epoch in milliseconds
-    function unixTime() external returns (uint256);
-
-    // Expects an error on next call
-    function expectRevert() external;
-
-    function expectRevert(bytes calldata) external;
-
-    function expectRevert(bytes4) external;
-
-    // Record all storage reads and writes
-    function record() external;
-
-    // Gets all accessed reads and write slot from a recording session, for a given address
-    function accesses(address) external returns (bytes32[] memory reads, bytes32[] memory writes);
-
-    // Record all the transaction logs
-    function recordLogs() external;
-
-    // Gets all the recorded logs
-    function getRecordedLogs() external returns (Log[] memory);
-
-    // Prepare an expected log with all four checks enabled.
-    // Call this function, then emit an event, then call a function. Internally after the call, we check if
-    // logs were emitted in the expected order with the expected topics and data.
-    // Second form also checks supplied address against emitting contract.
-    function expectEmit() external;
-
-    // Prepare an expected log with all four checks enabled, and check supplied address against emitting contract.
-    function expectEmit(address) external;
-
-    // Prepare an expected log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData).
-    // Call this function, then emit an event, then call a function. Internally after the call, we check if
-    // logs were emitted in the expected order with the expected topics and data (as specified by the booleans).
-    // Second form also checks supplied address against emitting contract.
-    function expectEmit(bool, bool, bool, bool) external;
-
-    function expectEmit(bool, bool, bool, bool, address) external;
-
-    // Mocks a call to an address, returning specified data.
-    // Calldata can either be strict or a partial match, e.g. if you only
-    // pass a Solidity selector to the expected calldata, then the entire Solidity
-    // function will be mocked.
-    function mockCall(address, bytes calldata, bytes calldata) external;
-
-    // Mocks a call to an address with a specific msg.value, returning specified data.
-    // Calldata match takes precedence over msg.value in case of ambiguity.
-    function mockCall(address, uint256, bytes calldata, bytes calldata) external;
-
-    // Reverts a call to an address with specified revert data.
-    function mockCallRevert(address, bytes calldata, bytes calldata) external;
-
-    // Reverts a call to an address with a specific msg.value, with specified revert data.
-    function mockCallRevert(address, uint256 msgValue, bytes calldata, bytes calldata) external;
-
-    // Clears all mocked calls
-    function clearMockedCalls() external;
-
-    // Expect a call to an address with the specified calldata.
-    // Calldata can either be strict or a partial match
-    function expectCall(address, bytes calldata) external;
-
-    // Expect given number of calls to an address with the specified calldata.
-    // Calldata can either be strict or a partial match
-    function expectCall(address, bytes calldata, uint64) external;
-
-    // Expect a call to an address with the specified msg.value and calldata
-    function expectCall(address, uint256, bytes calldata) external;
-
-    // Expect a given number of calls to an address with the specified msg.value and calldata
-    function expectCall(address, uint256, bytes calldata, uint64) external;
-
-    // Expect a call to an address with the specified msg.value, gas, and calldata.
-    function expectCall(address, uint256, uint64, bytes calldata) external;
-
-    // Expect a given number of calls to an address with the specified msg.value, gas, and calldata.
-    function expectCall(address, uint256, uint64, bytes calldata, uint64) external;
-
-    // Expect a call to an address with the specified msg.value and calldata, and a *minimum* amount of gas.
-    function expectCallMinGas(address, uint256, uint64, bytes calldata) external;
-
-    // Expect a given number of calls to an address with the specified msg.value and calldata, and a *minimum* amount of gas.
-    function expectCallMinGas(address, uint256, uint64, bytes calldata, uint64) external;
-
-    // Only allows memory writes to offsets [0x00, 0x60) ∪ [min, max) in the current subcontext. If any other
-    // memory is written to, the test will fail.
-    function expectSafeMemory(uint64, uint64) external;
-
-    // Only allows memory writes to offsets [0x00, 0x60) ∪ [min, max) in the next created subcontext.
-    // If any other memory is written to, the test will fail.
-    function expectSafeMemoryCall(uint64, uint64) external;
-
-    // Gets the bytecode from an artifact file. Takes in the relative path to the json file
-    function getCode(string calldata) external returns (bytes memory);
-
-    // Gets the _deployed_ bytecode from an artifact file. Takes in the relative path to the json file
-    function getDeployedCode(string calldata) external returns (bytes memory);
-
-    // Labels an address in call traces
-    function label(address, string calldata) external;
-
-    // Retrieves a label by its address.
-    function getLabel(address) external returns (string memory);
-
-    // If the condition is false, discard this run's fuzz inputs and generate new ones
-    function assume(bool) external;
-
-    // Set nonce for an account
-    function setNonce(address, uint64) external;
-
-    // Get nonce for an account
-    function getNonce(address) external returns (uint64);
-
-    // Resets the nonce for an account
-    function resetNonce(address) external;
-
-    // Set an arbitrary nonce for an account
-    function setNonceUnsafe(address, uint64) external;
-
-    // Set block.chainid (newChainId)
-    function chainId(uint256) external;
-
-    // Using the address that calls the test contract, has the next call (at this call depth only) create a transaction that can later be signed and sent onchain
+    error CheatcodeError(string message);
+    enum CallerMode { None, Broadcast, RecurrentBroadcast, Prank, RecurrentPrank }
+    struct Log { bytes32[] topics; bytes data; address emitter; }
+    struct Rpc { string key; string url; }
+    struct EthGetLogs { address emitter; bytes32[] topics; bytes data; bytes32 blockHash; uint64 blockNumber; bytes32 transactionHash; uint64 transactionIndex; uint256 logIndex; bool removed; }
+    struct DirEntry { string errorMessage; string path; uint64 depth; bool isDir; bool isSymlink; }
+    struct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created; }
+    struct Wallet { address addr; uint256 publicKeyX; uint256 publicKeyY; uint256 privateKey; }
+    struct FfiResult { int32 exitCode; bytes stdout; bytes stderr; }
+    function accesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
+    function activeFork() external view returns (uint256 forkId);
+    function addr(uint256 privateKey) external pure returns (address keyAddr);
+    function allowCheatcodes(address account) external;
+    function assume(bool condition) external pure;
+    function breakpoint(string calldata char) external;
+    function breakpoint(string calldata char, bool value) external;
     function broadcast() external;
-
-    // Has the next call (at this call depth only) create a transaction with the address provided as the sender that can later be signed and sent onchain
-    function broadcast(address) external;
-
-    // Has the next call (at this call depth only) create a transaction with the private key provided as the sender that can later be signed and sent onchain
-    function broadcast(uint256) external;
-
-    // Using the address that calls the test contract, has the all subsequent calls (at this call depth only) create transactions that can later be signed and sent onchain
-    function startBroadcast() external;
-
-    // Has all subsequent calls (at this call depth only) create transactions with the address provided that can later be signed and sent onchain
-    function startBroadcast(address) external;
-
-    // Has all subsequent calls (at this call depth only) create transactions with the private key provided that can later be signed and sent onchain
-    function startBroadcast(uint256) external;
-
-    // Stops collecting onchain transactions
-    function stopBroadcast() external;
-
-    // Get the path of the current project root
-    function projectRoot() external returns (string memory);
-
-    // Reads the entire content of file to string. Path is relative to the project root.
-    // (path) => (data)
-    function readFile(string calldata) external returns (string memory);
-
-    // Reads the entire content of file as binary. Path is relative to the project root.
-    // (path) => (data)
-    function readFileBinary(string calldata) external returns (bytes memory);
-
-    // Reads next line of file to string.
-    // (path) => (line)
-    function readLine(string calldata) external returns (string memory);
-
-    // Writes data to file, creating a file if it does not exist, and entirely replacing its contents if it does.
-    // `path` is relative to the project root.
-    // (path, data) => ()
-    function writeFile(string calldata, string calldata) external;
-
-    // Writes binary data to a file, creating a file if it does not exist, and entirely replacing its contents if it does.
-    // `path` is relative to the project root.
-    // (path, data) => ()
-    function writeFileBinary(string calldata, bytes calldata) external;
-
-    // Writes line to file, creating a file if it does not exist.
-    // `path` is relative to the project root.
-    // (path, data) => ()
-    function writeLine(string calldata, string calldata) external;
-
-    // Copies the contents of one file to another. This function will **overwrite** the contents of `to`.
-    // On success, the total number of bytes copied is returned and it is equal to the length of the `to` file as reported by `metadata`.
-    // Both `from` and `to` are relative to the project root.
-    // (from, to) => (copied)
-    function copyFile(string calldata, string calldata) external returns (uint64);
-
-    // Closes file for reading, resetting the offset and allowing to read it from beginning with readLine.
-    // `path` is relative to the project root.
-    // (path) => ()
-    function closeFile(string calldata) external;
-
-    // Removes a file from the filesystem.
-    // This cheatcode will revert in the following situations, but is not limited to just these cases:
-    // - `path` points to a directory.
-    // - The file doesn't exist.
-    // - The user lacks permissions to remove the file.
-    // `path` is relative to the project root.
-    // (path) => ()
-    function removeFile(string calldata) external;
-
-    // Creates a new, empty directory at the provided path.
-    // This cheatcode will revert in the following situations, but is not limited to just these cases:
-    // - User lacks permissions to modify `path`.
-    // - A parent of the given path doesn't exist and `recursive` is false.
-    // - `path` already exists and `recursive` is false.
-    // `path` is relative to the project root.
-    // (path, recursive) => ()
-    function createDir(string calldata, bool) external;
-
-    // Removes a directory at the provided path.
-    // This cheatcode will revert in the following situations, but is not limited to just these cases:
-    // - `path` doesn't exist.
-    // - `path` isn't a directory.
-    // - User lacks permissions to modify `path`.
-    // - The directory is not empty and `recursive` is false.
-    // `path` is relative to the project root.
-    // (path, recursive) => ()
-    function removeDir(string calldata, bool) external;
-
-    // Reads the directory at the given path recursively, up to `max_depth`.
-    // `max_depth` defaults to 1, meaning only the direct children of the given directory will be returned.
-    // Follows symbolic links if `follow_links` is true.
-    // (path) => (entries)
-    function readDir(string calldata) external returns (DirEntry[] memory);
-
-    // (path, max_depth) => (entries)
-    function readDir(string calldata, uint64) external returns (DirEntry[] memory);
-
-    // (path, max_depth, follow_links) => (entries)
-    function readDir(string calldata, uint64, bool) external returns (DirEntry[] memory);
-
-    // Reads a symbolic link, returning the path that the link points to.
-    // This cheatcode will revert in the following situations, but is not limited to just these cases:
-    // - `path` is not a symbolic link.
-    // - `path` does not exist.
-    // (link_path) => (path)
-    function readLink(string calldata) external returns (string memory);
-
-    // Given a path, query the file system to get information about a file, directory, etc.
-    // (path) => (metadata)
-    function fsMetadata(string calldata) external returns (FsMetadata memory);
-
-    function toString(address) external returns (string memory);
-
-    function toString(bytes calldata) external returns (string memory);
-
-    function toString(bytes32) external returns (string memory);
-
-    function toString(bool) external returns (string memory);
-
-    function toString(uint256) external returns (string memory);
-
-    function toString(int256) external returns (string memory);
-
-    function parseBytes(string memory) external returns (bytes memory);
-
-    function parseAddress(string memory) external returns (address);
-
-    function parseUint(string memory) external returns (uint256);
-
-    function parseInt(string memory) external returns (int256);
-
-    function parseBytes32(string memory) external returns (bytes32);
-
-    function parseBool(string memory) external returns (bool);
-
-    // Snapshot the current state of the evm.
-    // Returns the id of the snapshot that was created.
-    // To revert a snapshot use `revertTo`
-    function snapshot() external returns (uint256);
-
-    // Revert the state of the evm to a previous snapshot
-    // Takes the snapshot id to revert to.
-    // This deletes the snapshot and all snapshots taken after the given snapshot id.
-    function revertTo(uint256) external returns (bool);
-
-    // Creates a new fork with the given endpoint and block and returns the identifier of the fork
-    function createFork(string calldata, uint256) external returns (uint256);
-
-    // Creates a new fork with the given endpoint and at the block the given transaction was mined in, and replays all transaction mined in the block before the transaction
-    function createFork(string calldata, bytes32) external returns (uint256);
-
-    // Creates a new fork with the given endpoint and the _latest_ block and returns the identifier of the fork
-    function createFork(string calldata) external returns (uint256);
-
-    // Creates _and_ also selects a new fork with the given endpoint and block and returns the identifier of the fork
-    function createSelectFork(string calldata, uint256) external returns (uint256);
-
-    // Creates _and_ also selects new fork with the given endpoint and at the block the given transaction was mined in, and replays all transaction mined in the block before the transaction
-    function createSelectFork(string calldata, bytes32) external returns (uint256);
-
-    // Creates _and_ also selects a new fork with the given endpoint and the latest block and returns the identifier of the fork
-    function createSelectFork(string calldata) external returns (uint256);
-
-    // Takes a fork identifier created by `createFork` and sets the corresponding forked state as active.
-    function selectFork(uint256) external;
-
-    // Fetches the given transaction from the active fork and executes it on the current state
-    function transact(bytes32) external;
-
-    // Fetches the given transaction from the given fork and executes it on the current state
-    function transact(uint256, bytes32) external;
-
-    // Returns the currently active fork
-    // Reverts if no fork is currently active
-    function activeFork() external returns (uint256);
-
-    // In forking mode, explicitly grant the given address cheatcode access
-    function allowCheatcodes(address) external;
-
-    // Marks that the account(s) should use persistent storage across fork swaps.
-    // Meaning, changes made to the state of this account will be kept when switching forks
-    function makePersistent(address) external;
-
-    function makePersistent(address, address) external;
-
-    function makePersistent(address, address, address) external;
-
-    function makePersistent(address[] calldata) external;
-
-    // Revokes persistent status from the address, previously added via `makePersistent`
-    function revokePersistent(address) external;
-
-    function revokePersistent(address[] calldata) external;
-
-    // Returns true if the account is marked as persistent
-    function isPersistent(address) external returns (bool);
-
-    // Updates the currently active fork to given block number
-    // This is similar to `roll` but for the currently active fork
-    function rollFork(uint256) external;
-
-    // Updates the currently active fork to given transaction
-    // this will `rollFork` with the number of the block the transaction was mined in and replays all transaction mined before it in the block
-    function rollFork(bytes32) external;
-
-    // Updates the given fork to given block number
-    function rollFork(uint256 forkId, uint256 blockNumber) external;
-
-    // Updates the given fork to block number of the given transaction and replays all transaction mined before it in the block
-    function rollFork(uint256 forkId, bytes32 transaction) external;
-
-    /// Returns the RPC url for the given alias
-    function rpcUrl(string calldata) external returns (string memory);
-
-    /// Returns all rpc urls and their aliases `[alias, url][]`
-    function rpcUrls() external returns (string[2][] memory);
-
-    /// Returns all rpc urls and their aliases as an array of structs
-    function rpcUrlStructs() external returns (Rpc[] memory);
-
-    // Gets all the logs according to specified filter
-    function eth_getLogs(uint256, uint256, address, bytes32[] memory) external returns (EthGetLogs[] memory);
-
-    // Generic rpc call function
-    function rpc(string calldata, string calldata) external returns (bytes memory);
-
-    function parseJson(string calldata, string calldata) external returns (bytes memory);
-
-    function parseJson(string calldata) external returns (bytes memory);
-
-    function parseJsonKeys(string calldata, string calldata) external returns (string[] memory);
-
-    function parseJsonUint(string calldata, string calldata) external returns (uint256);
-
-    function parseJsonUintArray(string calldata, string calldata) external returns (uint256[] memory);
-
-    function parseJsonInt(string calldata, string calldata) external returns (int256);
-
-    function parseJsonIntArray(string calldata, string calldata) external returns (int256[] memory);
-
-    function parseJsonBool(string calldata, string calldata) external returns (bool);
-
-    function parseJsonBoolArray(string calldata, string calldata) external returns (bool[] memory);
-
-    function parseJsonAddress(string calldata, string calldata) external returns (address);
-
-    function parseJsonAddressArray(string calldata, string calldata) external returns (address[] memory);
-
-    function parseJsonString(string calldata, string calldata) external returns (string memory);
-
-    function parseJsonStringArray(string calldata, string calldata) external returns (string[] memory);
-
-    function parseJsonBytes(string calldata, string calldata) external returns (bytes memory);
-
-    function parseJsonBytesArray(string calldata, string calldata) external returns (bytes[] memory);
-
-    function parseJsonBytes32(string calldata, string calldata) external returns (bytes32);
-
-    function parseJsonBytes32Array(string calldata, string calldata) external returns (bytes32[] memory);
-
-    function serializeJson(string calldata, string calldata) external returns (string memory);
-
-    function serializeBool(string calldata, string calldata, bool) external returns (string memory);
-
-    function serializeUint(string calldata, string calldata, uint256) external returns (string memory);
-
-    function serializeInt(string calldata, string calldata, int256) external returns (string memory);
-
-    function serializeAddress(string calldata, string calldata, address) external returns (string memory);
-
-    function serializeBytes32(string calldata, string calldata, bytes32) external returns (string memory);
-
-    function serializeString(string calldata, string calldata, string calldata) external returns (string memory);
-
-    function serializeBytes(string calldata, string calldata, bytes calldata) external returns (string memory);
-
-    function serializeBool(string calldata, string calldata, bool[] calldata) external returns (string memory);
-
-    function serializeUint(string calldata, string calldata, uint256[] calldata) external returns (string memory);
-
-    function serializeInt(string calldata, string calldata, int256[] calldata) external returns (string memory);
-
-    function serializeAddress(string calldata, string calldata, address[] calldata) external returns (string memory);
-
-    function serializeBytes32(string calldata, string calldata, bytes32[] calldata) external returns (string memory);
-
-    function serializeString(string calldata, string calldata, string[] calldata) external returns (string memory);
-
-    function serializeBytes(string calldata, string calldata, bytes[] calldata) external returns (string memory);
-
-    function writeJson(string calldata, string calldata) external;
-
-    function writeJson(string calldata, string calldata, string calldata) external;
-
-    // Checks if a key exists in the given json string
-    function keyExists(string calldata, string calldata) external returns (bool);
-
-    // Pauses gas metering (gas usage will not be counted)
+    function broadcast(address signer) external;
+    function broadcast(uint256 privateKey) external;
+    function chainId(uint256 newChainId) external;
+    function clearMockedCalls() external;
+    function closeFile(string calldata path) external;
+    function coinbase(address newCoinbase) external;
+    function cool(address target) external;
+    function copyFile(string calldata from, string calldata to) external returns (uint64 copied);
+    function createDir(string calldata path, bool recursive) external;
+    function createFork(string calldata urlOrAlias) external returns (uint256 forkId);
+    function createFork(string calldata urlOrAlias, uint256 blockNumber) external returns (uint256 forkId);
+    function createFork(string calldata urlOrAlias, bytes32 txHash) external returns (uint256 forkId);
+    function createSelectFork(string calldata urlOrAlias) external returns (uint256 forkId);
+    function createSelectFork(string calldata urlOrAlias, uint256 blockNumber) external returns (uint256 forkId);
+    function createSelectFork(string calldata urlOrAlias, bytes32 txHash) external returns (uint256 forkId);
+    function createWallet(string calldata walletLabel) external returns (Wallet memory wallet);
+    function createWallet(uint256 privateKey) external returns (Wallet memory wallet);
+    function createWallet(uint256 privateKey, string calldata walletLabel) external returns (Wallet memory wallet);
+    function deal(address account, uint256 newBalance) external;
+    function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256 privateKey);
+    function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index) external pure returns (uint256 privateKey);
+    function deriveKey(string calldata mnemonic, uint32 index, string calldata language) external pure returns (uint256 privateKey);
+    function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index, string calldata language) external pure returns (uint256 privateKey);
+    function difficulty(uint256 newDifficulty) external;
+    function envAddress(string calldata name) external view returns (address value);
+    function envAddress(string calldata name, string calldata delim) external view returns (address[] memory value);
+    function envBool(string calldata name) external view returns (bool value);
+    function envBool(string calldata name, string calldata delim) external view returns (bool[] memory value);
+    function envBytes32(string calldata name) external view returns (bytes32 value);
+    function envBytes32(string calldata name, string calldata delim) external view returns (bytes32[] memory value);
+    function envBytes(string calldata name) external view returns (bytes memory value);
+    function envBytes(string calldata name, string calldata delim) external view returns (bytes[] memory value);
+    function envInt(string calldata name) external view returns (int256 value);
+    function envInt(string calldata name, string calldata delim) external view returns (int256[] memory value);
+    function envOr(string calldata name, bool defaultValue) external returns (bool value);
+    function envOr(string calldata name, uint256 defaultValue) external returns (uint256 value);
+    function envOr(string calldata name, string calldata delim, address[] calldata defaultValue) external returns (address[] memory value);
+    function envOr(string calldata name, string calldata delim, bytes32[] calldata defaultValue) external returns (bytes32[] memory value);
+    function envOr(string calldata name, string calldata delim, string[] calldata defaultValue) external returns (string[] memory value);
+    function envOr(string calldata name, string calldata delim, bytes[] calldata defaultValue) external returns (bytes[] memory value);
+    function envOr(string calldata name, int256 defaultValue) external returns (int256 value);
+    function envOr(string calldata name, address defaultValue) external returns (address value);
+    function envOr(string calldata name, bytes32 defaultValue) external returns (bytes32 value);
+    function envOr(string calldata name, string calldata defaultValue) external returns (string memory value);
+    function envOr(string calldata name, bytes calldata defaultValue) external returns (bytes memory value);
+    function envOr(string calldata name, string calldata delim, bool[] calldata defaultValue) external returns (bool[] memory value);
+    function envOr(string calldata name, string calldata delim, uint256[] calldata defaultValue) external returns (uint256[] memory value);
+    function envOr(string calldata name, string calldata delim, int256[] calldata defaultValue) external returns (int256[] memory value);
+    function envString(string calldata name) external view returns (string memory value);
+    function envString(string calldata name, string calldata delim) external view returns (string[] memory value);
+    function envUint(string calldata name) external view returns (uint256 value);
+    function envUint(string calldata name, string calldata delim) external view returns (uint256[] memory value);
+    function etch(address target, bytes calldata newRuntimeBytecode) external;
+    function eth_getLogs(uint256 fromBlock, uint256 toBlock, address addr, bytes32[] memory topics) external returns (EthGetLogs[] memory logs);
+    function exists(string calldata path) external returns (bool result);
+    function expectCallMinGas(address callee, uint256 msgValue, uint64 minGas, bytes calldata data) external;
+    function expectCallMinGas(address callee, uint256 msgValue, uint64 minGas, bytes calldata data, uint64 count) external;
+    function expectCall(address callee, bytes calldata data) external;
+    function expectCall(address callee, bytes calldata data, uint64 count) external;
+    function expectCall(address callee, uint256 msgValue, bytes calldata data) external;
+    function expectCall(address callee, uint256 msgValue, bytes calldata data, uint64 count) external;
+    function expectCall(address callee, uint256 msgValue, uint64 gas, bytes calldata data) external;
+    function expectCall(address callee, uint256 msgValue, uint64 gas, bytes calldata data, uint64 count) external;
+    function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData) external;
+    function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter) external;
+    function expectEmit() external;
+    function expectEmit(address emitter) external;
+    function expectRevert() external;
+    function expectRevert(bytes4 revertData) external;
+    function expectRevert(bytes calldata revertData) external;
+    function expectSafeMemory(uint64 min, uint64 max) external;
+    function expectSafeMemoryCall(uint64 min, uint64 max) external;
+    function fee(uint256 newBasefee) external;
+    function ffi(string[] calldata commandInput) external returns (bytes memory result);
+    function fsMetadata(string calldata path) external view returns (FsMetadata memory metadata);
+    function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
+    function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);
+    function getLabel(address account) external returns (string memory currentLabel);
+    function getMappingKeyAndParentOf(address target, bytes32 elementSlot) external returns (bool found, bytes32 key, bytes32 parent);
+    function getMappingLength(address target, bytes32 mappingSlot) external returns (uint256 length);
+    function getMappingSlotAt(address target, bytes32 mappingSlot, uint256 idx) external returns (bytes32 value);
+    function getNonce(address account) external view returns (uint64 nonce);
+    function getNonce(Wallet calldata wallet) external returns (uint64 nonce);
+    function getRecordedLogs() external returns (Log[] memory logs);
+    function isDir(string calldata path) external returns (bool result);
+    function isFile(string calldata path) external returns (bool result);
+    function isPersistent(address account) external view returns (bool persistent);
+    function keyExists(string calldata json, string calldata key) external view returns (bool);
+    function label(address account, string calldata newLabel) external;
+    function load(address target, bytes32 slot) external view returns (bytes32 data);
+    function makePersistent(address account) external;
+    function makePersistent(address account0, address account1) external;
+    function makePersistent(address account0, address account1, address account2) external;
+    function makePersistent(address[] calldata accounts) external;
+    function mockCallRevert(address callee, bytes calldata data, bytes calldata revertData) external;
+    function mockCallRevert(address callee, uint256 msgValue, bytes calldata data, bytes calldata revertData) external;
+    function mockCall(address callee, bytes calldata data, bytes calldata returnData) external;
+    function mockCall(address callee, uint256 msgValue, bytes calldata data, bytes calldata returnData) external;
+    function parseAddress(string calldata stringifiedValue) external pure returns (address parsedValue);
+    function parseBool(string calldata stringifiedValue) external pure returns (bool parsedValue);
+    function parseBytes(string calldata stringifiedValue) external pure returns (bytes memory parsedValue);
+    function parseBytes32(string calldata stringifiedValue) external pure returns (bytes32 parsedValue);
+    function parseInt(string calldata stringifiedValue) external pure returns (int256 parsedValue);
+    function parseJsonAddress(string calldata json, string calldata key) external pure returns (address);
+    function parseJsonAddressArray(string calldata json, string calldata key) external pure returns (address[] memory);
+    function parseJsonBool(string calldata json, string calldata key) external pure returns (bool);
+    function parseJsonBoolArray(string calldata json, string calldata key) external pure returns (bool[] memory);
+    function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);
+    function parseJsonBytes32(string calldata json, string calldata key) external pure returns (bytes32);
+    function parseJsonBytes32Array(string calldata json, string calldata key) external pure returns (bytes32[] memory);
+    function parseJsonBytesArray(string calldata json, string calldata key) external pure returns (bytes[] memory);
+    function parseJsonInt(string calldata json, string calldata key) external pure returns (int256);
+    function parseJsonIntArray(string calldata json, string calldata key) external pure returns (int256[] memory);
+    function parseJsonKeys(string calldata json, string calldata key) external pure returns (string[] memory keys);
+    function parseJsonString(string calldata json, string calldata key) external pure returns (string memory);
+    function parseJsonStringArray(string calldata json, string calldata key) external pure returns (string[] memory);
+    function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);
+    function parseJsonUintArray(string calldata json, string calldata key) external pure returns (uint256[] memory);
+    function parseJson(string calldata json) external pure returns (bytes memory abiEncodedData);
+    function parseJson(string calldata json, string calldata key) external pure returns (bytes memory abiEncodedData);
+    function parseUint(string calldata stringifiedValue) external pure returns (uint256 parsedValue);
     function pauseGasMetering() external;
-
-    // Resumes gas metering from where it left off
+    function prank(address msgSender) external;
+    function prank(address msgSender, address txOrigin) external;
+    function prevrandao(bytes32 newPrevrandao) external;
+    function projectRoot() external view returns (string memory path);
+    function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);
+    function readDir(string calldata path) external view returns (DirEntry[] memory entries);
+    function readDir(string calldata path, uint64 maxDepth) external view returns (DirEntry[] memory entries);
+    function readDir(string calldata path, uint64 maxDepth, bool followLinks) external view returns (DirEntry[] memory entries);
+    function readFile(string calldata path) external view returns (string memory data);
+    function readFileBinary(string calldata path) external view returns (bytes memory data);
+    function readLine(string calldata path) external view returns (string memory line);
+    function readLink(string calldata linkPath) external view returns (string memory targetPath);
+    function record() external;
+    function recordLogs() external;
+    function rememberKey(uint256 privateKey) external returns (address keyAddr);
+    function removeDir(string calldata path, bool recursive) external;
+    function removeFile(string calldata path) external;
+    function resetNonce(address account) external;
     function resumeGasMetering() external;
-
-    // Starts recording all map SSTOREs for later retrieval.
+    function revertTo(uint256 snapshotId) external returns (bool success);
+    function revokePersistent(address account) external;
+    function revokePersistent(address[] calldata accounts) external;
+    function roll(uint256 newHeight) external;
+    function rollFork(uint256 blockNumber) external;
+    function rollFork(bytes32 txHash) external;
+    function rollFork(uint256 forkId, uint256 blockNumber) external;
+    function rollFork(uint256 forkId, bytes32 txHash) external;
+    function rpc(string calldata method, string calldata params) external returns (bytes memory data);
+    function rpcUrl(string calldata rpcAlias) external view returns (string memory json);
+    function rpcUrlStructs() external view returns (Rpc[] memory urls);
+    function rpcUrls() external view returns (string[2][] memory urls);
+    function selectFork(uint256 forkId) external;
+    function serializeAddress(string calldata objectKey, string calldata valueKey, address value) external returns (string memory json);
+    function serializeAddress(string calldata objectKey, string calldata valueKey, address[] calldata values) external returns (string memory json);
+    function serializeBool(string calldata objectKey, string calldata valueKey, bool value) external returns (string memory json);
+    function serializeBool(string calldata objectKey, string calldata valueKey, bool[] calldata values) external returns (string memory json);
+    function serializeBytes32(string calldata objectKey, string calldata valueKey, bytes32 value) external returns (string memory json);
+    function serializeBytes32(string calldata objectKey, string calldata valueKey, bytes32[] calldata values) external returns (string memory json);
+    function serializeBytes(string calldata objectKey, string calldata valueKey, bytes calldata value) external returns (string memory json);
+    function serializeBytes(string calldata objectKey, string calldata valueKey, bytes[] calldata values) external returns (string memory json);
+    function serializeInt(string calldata objectKey, string calldata valueKey, int256 value) external returns (string memory json);
+    function serializeInt(string calldata objectKey, string calldata valueKey, int256[] calldata values) external returns (string memory json);
+    function serializeJson(string calldata objectKey, string calldata value) external returns (string memory json);
+    function serializeString(string calldata objectKey, string calldata valueKey, string calldata value) external returns (string memory json);
+    function serializeString(string calldata objectKey, string calldata valueKey, string[] calldata values) external returns (string memory json);
+    function serializeUint(string calldata objectKey, string calldata valueKey, uint256 value) external returns (string memory json);
+    function serializeUint(string calldata objectKey, string calldata valueKey, uint256[] calldata values) external returns (string memory json);
+    function setEnv(string calldata name, string calldata value) external;
+    function setNonce(address account, uint64 newNonce) external;
+    function setNonceUnsafe(address account, uint64 newNonce) external;
+    function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
+    function sign(Wallet calldata wallet, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);
+    function skip(bool skipTest) external;
+    function sleep(uint256 duration) external;
+    function snapshot() external returns (uint256 snapshotId);
+    function startBroadcast() external;
+    function startBroadcast(address signer) external;
+    function startBroadcast(uint256 privateKey) external;
     function startMappingRecording() external;
-
-    // Stops recording all map SSTOREs for later retrieval and clears the recorded data.
+    function startPrank(address msgSender) external;
+    function startPrank(address msgSender, address txOrigin) external;
+    function stopBroadcast() external;
     function stopMappingRecording() external;
-
-    // Gets the length of a mapping at a given slot, for a given address.
-    function getMappingLength(address target, bytes32 slot) external returns (uint256);
-
-    // Gets the element at index idx of a mapping at a given slot, for a given address.
-    function getMappingSlotAt(address target, bytes32 slot, uint256 idx) external returns (bytes32);
-
-    // Gets the map key and parent of a mapping at a given slot, for a given address.
-    function getMappingKeyAndParentOf(address target, bytes32 slot) external returns (bool, bytes32, bytes32);
-
-    // Returns true if the given path points to an existing entity, else returns false
-    function exists(string calldata path) external returns (bool);
-
-    // Returns true if the path exists on disk and is pointing at a regular file, else returns false
-    function isFile(string calldata path) external returns (bool);
-
-    // Returns true if the path exists on disk and is pointing at a directory, else returns false
-    function isDir(string calldata path) external returns (bool);
+    function stopPrank() external;
+    function store(address target, bytes32 slot, bytes32 value) external;
+    function toString(address value) external pure returns (string memory stringifiedValue);
+    function toString(bytes calldata value) external pure returns (string memory stringifiedValue);
+    function toString(bytes32 value) external pure returns (string memory stringifiedValue);
+    function toString(bool value) external pure returns (string memory stringifiedValue);
+    function toString(uint256 value) external pure returns (string memory stringifiedValue);
+    function toString(int256 value) external pure returns (string memory stringifiedValue);
+    function transact(bytes32 txHash) external;
+    function transact(uint256 forkId, bytes32 txHash) external;
+    function tryFfi(string[] calldata commandInput) external returns (FfiResult memory result);
+    function txGasPrice(uint256 newGasPrice) external;
+    function unixTime() external returns (uint256 milliseconds);
+    function warp(uint256 newTimestamp) external;
+    function writeFile(string calldata path, string calldata data) external;
+    function writeFileBinary(string calldata path, bytes calldata data) external;
+    function writeJson(string calldata json, string calldata path) external;
+    function writeJson(string calldata json, string calldata path, string calldata valueKey) external;
+    function writeLine(string calldata path, string calldata data) external;
 }

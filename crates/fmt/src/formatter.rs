@@ -1254,7 +1254,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         ident: &mut Option<Identifier>,
     ) -> Result<()> {
         let ident =
-            if let Some(ident) = ident { format!(":{}", ident.name) } else { "".to_owned() };
+            if let Some(ident) = ident { format!(":{}", ident.name) } else { String::new() };
         write_chunk!(self, loc.start(), loc.end(), "{val}{ident}")?;
         Ok(())
     }
@@ -1497,12 +1497,27 @@ impl<'a, W: Write> Formatter<'a, W> {
                 if fmt.inline_config.is_disabled(returns_loc) {
                     fmt.indented(1, |fmt| fmt.visit_source(returns_loc))?;
                 } else {
-                    let returns = fmt.items_to_chunks(
+                    let mut returns = fmt.items_to_chunks(
                         returns_end,
                         func.returns
                             .iter_mut()
                             .filter_map(|(loc, param)| param.as_mut().map(|param| (*loc, param))),
                     )?;
+
+                    // there's an issue with function return value that would lead to indent issues because those can be formatted with line breaks <https://github.com/foundry-rs/foundry/issues/4080>
+                    for function_chunk in
+                        returns.iter_mut().filter(|chunk| chunk.content.starts_with("function("))
+                    {
+                        // this will bypass the recursive indent that was applied when the function
+                        // content was formatted in the chunk
+                        function_chunk.content = function_chunk
+                            .content
+                            .split('\n')
+                            .map(|s| s.trim_start())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                    }
+
                     fmt.write_postfix_comments_before(returns_loc.start())?;
                     fmt.write_whitespace_separator(multiline)?;
                     fmt.indented(1, |fmt| {

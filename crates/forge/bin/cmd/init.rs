@@ -1,9 +1,9 @@
 use super::install::DependencyInstallOpts;
 use clap::{Parser, ValueHint};
-use ethers::solc::remappings::Remapping;
 use eyre::Result;
 use foundry_cli::{p_println, utils::Git};
 use foundry_common::fs;
+use foundry_compilers::remappings::Remapping;
 use foundry_config::Config;
 use std::path::{Path, PathBuf};
 use yansi::Paint;
@@ -68,7 +68,7 @@ impl InitArgs {
 
             // fetch the template - always fetch shallow for templates since git history will be
             // collapsed. gitmodules will be initialized after the template is fetched
-            Git::fetch(true, &template, branch)?;
+            git.fetch(true, &template, branch)?;
             // reset git history to the head of the template
             // first get the commit hash that was fetched
             let commit_hash = git.commit_hash(true, "FETCH_HEAD")?;
@@ -84,7 +84,7 @@ impl InitArgs {
                 git.submodule_init()?;
             } else {
                 // if not shallow, initialize and clone submodules (without fetching latest)
-                git.submodule_update(false, false, true, None::<PathBuf>)?;
+                git.submodule_update(false, false, true, true, None::<PathBuf>)?;
             }
         } else {
             // if target is not empty
@@ -223,7 +223,7 @@ fn init_vscode(root: &Path) -> Result<()> {
         fs::create_dir_all(&vscode_dir)?;
         serde_json::json!({})
     } else if settings_file.exists() {
-        ethers::solc::utils::read_json_file(&settings_file)?
+        foundry_compilers::utils::read_json_file(&settings_file)?
     } else {
         serde_json::json!({})
     };

@@ -139,7 +139,7 @@ impl Dependency {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers::solc::info::ContractInfo;
+    use foundry_compilers::info::ContractInfo;
 
     #[test]
     fn parses_dependencies() {

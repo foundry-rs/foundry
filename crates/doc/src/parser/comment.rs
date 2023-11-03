@@ -213,7 +213,7 @@ mod tests {
         assert_eq!(CommentTag::from_str("param"), Some(CommentTag::Param));
         assert_eq!(CommentTag::from_str("return"), Some(CommentTag::Return));
         assert_eq!(CommentTag::from_str("inheritdoc"), Some(CommentTag::Inheritdoc));
-        assert_eq!(CommentTag::from_str("custom:"), Some(CommentTag::Custom("".to_owned())));
+        assert_eq!(CommentTag::from_str("custom:"), Some(CommentTag::Custom(String::new())));
         assert_eq!(
             CommentTag::from_str("custom:some"),
             Some(CommentTag::Custom("some".to_owned()))

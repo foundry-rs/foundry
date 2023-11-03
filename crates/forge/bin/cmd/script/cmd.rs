@@ -276,8 +276,8 @@ impl ScriptArgs {
                 project,
                 default_known_contracts,
                 Libraries::parse(&deployment_sequence.libraries)?,
-                script_config.config.sender.to_alloy(), // irrelevant, since we're not creating any
-                0,                                      // irrelevant, since we're not creating any
+                script_config.config.sender, // irrelevant, since we're not creating any
+                0,                           // irrelevant, since we're not creating any
             )?;
 
             verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);
@@ -352,7 +352,7 @@ impl ScriptArgs {
         }
         if let Some(wallets) = self.wallets.private_keys()? {
             if wallets.len() == 1 {
-                script_config.evm_opts.sender = wallets.get(0).unwrap().address().to_alloy()
+                script_config.evm_opts.sender = wallets.first().unwrap().address().to_alloy()
             }
         }
         Ok(())

@@ -1,9 +1,10 @@
 //! Commonly used traits
 
-use ethers_core::abi::Function;
+use alloy_json_abi::Function;
+use auto_impl::auto_impl;
 
 /// Extension trait for matching tests
-#[auto_impl::auto_impl(&)]
+#[auto_impl(&)]
 pub trait TestFilter: Send + Sync {
     /// Returns whether the test should be included
     fn matches_test(&self, test_name: impl AsRef<str>) -> bool;
@@ -14,7 +15,7 @@ pub trait TestFilter: Send + Sync {
 }
 
 /// Extension trait for `Function`
-#[auto_impl::auto_impl(&)]
+#[auto_impl(&)]
 pub trait TestFunctionExt {
     /// Whether this function should be executed as invariant test
     fn is_invariant_test(&self) -> bool;
@@ -51,28 +52,6 @@ impl TestFunctionExt for Function {
     }
 }
 
-impl<'a> TestFunctionExt for &'a str {
-    fn is_invariant_test(&self) -> bool {
-        self.starts_with("invariant") || self.starts_with("statefulFuzz")
-    }
-
-    fn is_fuzz_test(&self) -> bool {
-        unimplemented!("no naming convention for fuzz tests.")
-    }
-
-    fn is_test(&self) -> bool {
-        self.starts_with("test")
-    }
-
-    fn is_test_fail(&self) -> bool {
-        self.starts_with("testFail")
-    }
-
-    fn is_setup(&self) -> bool {
-        self.eq_ignore_ascii_case("setup")
-    }
-}
-
 impl TestFunctionExt for String {
     fn is_invariant_test(&self) -> bool {
         self.as_str().is_invariant_test()
@@ -92,5 +71,27 @@ impl TestFunctionExt for String {
 
     fn is_setup(&self) -> bool {
         self.as_str().is_setup()
+    }
+}
+
+impl TestFunctionExt for str {
+    fn is_invariant_test(&self) -> bool {
+        self.starts_with("invariant") || self.starts_with("statefulFuzz")
+    }
+
+    fn is_fuzz_test(&self) -> bool {
+        unimplemented!("no naming convention for fuzz tests.")
+    }
+
+    fn is_test(&self) -> bool {
+        self.starts_with("test")
+    }
+
+    fn is_test_fail(&self) -> bool {
+        self.starts_with("testFail")
+    }
+
+    fn is_setup(&self) -> bool {
+        self.eq_ignore_ascii_case("setup")
     }
 }

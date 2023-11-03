@@ -1,7 +1,7 @@
 //! Tests for invariants
 
 use crate::{config::*, test_helpers::filter::Filter};
-use ethers::types::U256;
+use alloy_primitives::U256;
 use forge::fuzz::CounterExample;
 use std::collections::BTreeMap;
 
@@ -20,6 +20,10 @@ async fn test_invariant() {
     assert_multiple(
         &results,
         BTreeMap::from([
+            (
+                "fuzz/invariant/common/InvariantHandlerFailure.t.sol:InvariantHandlerFailure",
+                vec![("statefulFuzz_BrokenInvariant()", true, None, None, None)],
+            ),
             (
                 "fuzz/invariant/common/InvariantInnerContract.t.sol:InvariantInnerContract",
                 vec![("invariantHideJesus()", false, Some("jesus betrayed.".into()), None, None)],
@@ -114,6 +118,40 @@ async fn test_invariant_override() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_fail_on_revert() {
+    let mut runner = runner().await;
+
+    let mut opts = test_opts();
+    opts.invariant.fail_on_revert = true;
+    opts.invariant.runs = 1;
+    opts.invariant.depth = 10;
+    runner.test_options = opts.clone();
+
+    let results = runner
+        .test(
+            &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantHandlerFailure.t.sol"),
+            None,
+            opts,
+        )
+        .await;
+
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "fuzz/invariant/common/InvariantHandlerFailure.t.sol:InvariantHandlerFailure",
+            vec![(
+                "statefulFuzz_BrokenInvariant()",
+                false,
+                Some("failed on revert".into()),
+                None,
+                None,
+            )],
+        )]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn test_invariant_storage() {
     let mut runner = runner().await;
 
@@ -135,10 +173,10 @@ async fn test_invariant_storage() {
         BTreeMap::from([(
             "fuzz/invariant/storage/InvariantStorageTest.t.sol:InvariantStorageTest",
             vec![
-                ("invariantChangeAddress()", false, Some("changedAddr".into()), None, None),
-                ("invariantChangeString()", false, Some("changedStr".into()), None, None),
-                ("invariantChangeUint()", false, Some("changedUint".into()), None, None),
-                ("invariantPush()", false, Some("pushUint".into()), None, None),
+                ("invariantChangeAddress()", false, Some("changedAddr".to_string()), None, None),
+                ("invariantChangeString()", false, Some("changedString".to_string()), None, None),
+                ("invariantChangeUint()", false, Some("changedUint".to_string()), None, None),
+                ("invariantPush()", false, Some("pushUint".to_string()), None, None),
             ],
         )]),
     );

@@ -1,8 +1,8 @@
 use clap::Parser;
-use ethers::solc::{FileFilter, ProjectPathsConfig};
 use forge::TestFilter;
 use foundry_cli::utils::FoundryPathExt;
 use foundry_common::glob::GlobMatcher;
+use foundry_compilers::{FileFilter, ProjectPathsConfig};
 use foundry_config::Config;
 use std::{fmt, path::Path};
 
@@ -139,7 +139,7 @@ impl TestFilter for FilterArgs {
 }
 
 impl fmt::Display for FilterArgs {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut patterns = Vec::new();
         if let Some(ref p) = self.test_pattern {
             patterns.push(format!("\tmatch-test: `{}`", p.as_str()));
@@ -211,7 +211,7 @@ impl TestFilter for ProjectPathsAwareFilter {
 }
 
 impl fmt::Display for ProjectPathsAwareFilter {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.args_filter.fmt(f)
     }
 }

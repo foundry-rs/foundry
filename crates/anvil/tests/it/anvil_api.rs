@@ -483,3 +483,67 @@ async fn test_get_transaction_receipt() {
         new_receipt.unwrap().effective_gas_price.unwrap().as_u64()
     );
 }
+
+// test can set chain id
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_chain_id() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let chain_id = provider.get_chainid().await.unwrap();
+    assert_eq!(chain_id, U256::from(31337));
+
+    let chain_id = 1234;
+    api.anvil_set_chain_id(chain_id).await.unwrap();
+
+    let chain_id = provider.get_chainid().await.unwrap();
+    assert_eq!(chain_id, U256::from(1234));
+}
+
+// <https://github.com/foundry-rs/foundry/issues/6096>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_revert_next_block_timestamp() {
+    let (api, _handle) = spawn(fork_config()).await;
+
+    // Mine a new block, and check the new block gas limit
+    api.mine_one().await;
+    let latest_block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
+
+    let snapshot_id = api.evm_snapshot().await.unwrap();
+    api.mine_one().await;
+    api.evm_revert(snapshot_id).await.unwrap();
+    let block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
+    assert_eq!(block, latest_block);
+
+    api.mine_one().await;
+    let block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
+    assert!(block.timestamp > latest_block.timestamp);
+}
+
+// test that after a snapshot revert, the env block is reset
+// to its correct value (block number, etc.)
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_revert_call_latest_block_timestamp() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // Mine a new block, and check the new block gas limit
+    api.mine_one().await;
+    let latest_block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
+
+    let snapshot_id = api.evm_snapshot().await.unwrap();
+    api.mine_one().await;
+    api.evm_revert(snapshot_id).await.unwrap();
+
+    let multicall = MulticallContract::new(
+        Address::from_str("0xeefba1e63905ef1d7acba5a8513c70307c1ce441").unwrap(),
+        provider.into(),
+    );
+
+    assert_eq!(multicall.get_current_block_timestamp().await.unwrap(), latest_block.timestamp);
+    assert_eq!(multicall.get_current_block_difficulty().await.unwrap(), latest_block.difficulty);
+    assert_eq!(multicall.get_current_block_gas_limit().await.unwrap(), latest_block.gas_limit);
+    assert_eq!(
+        multicall.get_current_block_coinbase().await.unwrap(),
+        latest_block.author.unwrap_or_default()
+    );
+}

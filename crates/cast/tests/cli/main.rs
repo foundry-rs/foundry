@@ -139,7 +139,7 @@ casttest!(estimate_function_gas, |_: TestProject, mut cmd: TestCommand| {
     let eth_rpc_url = next_http_rpc_endpoint();
     cmd.args([
         "estimate",
-        "vitalik.eth",
+        "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", // vitalik.eth
         "--value",
         "100",
         "deposit()",
@@ -509,4 +509,18 @@ casttest!(cast_tx_raw, |_: TestProject, mut cmd: TestCommand| {
     ]);
     let output2 = cmd.stdout_lossy();
     assert_eq!(output, output2);
+});
+
+// ensure receipt or code is required
+casttest!(cast_send_requires_to, |_: TestProject, mut cmd: TestCommand| {
+    cmd.args([
+        "send",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+    ]);
+    let output = cmd.stderr_lossy();
+    assert_eq!(
+        output.trim(),
+        "Error: \nMust specify a recipient address or contract code to deploy"
+    );
 });

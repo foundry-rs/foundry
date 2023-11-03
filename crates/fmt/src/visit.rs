@@ -5,7 +5,7 @@ use crate::solang_ext::pt::*;
 /// A trait that is invoked while traversing the Solidity Parse Tree.
 /// Each method of the [Visitor] trait is a hook that can be potentially overridden.
 ///
-/// Currently the main implementor of this trait is the [`Formatter`](crate::Formatter) struct.
+/// Currently the main implementor of this trait is the [`Formatter`](crate::Formatter<'_>) struct.
 pub trait Visitor {
     type Error: std::error::Error;
 

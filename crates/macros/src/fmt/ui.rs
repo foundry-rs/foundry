@@ -92,7 +92,7 @@ impl<T: UIfmt> UIfmt for Option<T> {
         if let Some(ref inner) = self {
             inner.pretty()
         } else {
-            "".to_string()
+            String::new()
         }
     }
 }
@@ -501,7 +501,7 @@ value                0".to_string();
     #[test]
     fn uifmt_option_u64() {
         let empty: Option<U64> = None;
-        assert_eq!("".to_string(), empty.pretty());
+        assert_eq!(String::new(), empty.pretty());
         assert_eq!("100".to_string(), U64::from_dec_str("100").unwrap().pretty());
         assert_eq!("100".to_string(), Option::from(U64::from_dec_str("100").unwrap()).pretty())
     }
@@ -509,7 +509,7 @@ value                0".to_string();
     #[test]
     fn uifmt_option_h64() {
         let empty: Option<H256> = None;
-        assert_eq!("".to_string(), empty.pretty());
+        assert_eq!(String::new(), empty.pretty());
         H256::from_low_u64_be(100);
         assert_eq!(
             "0x0000000000000000000000000000000000000000000000000000000000000064",
@@ -523,7 +523,7 @@ value                0".to_string();
     #[test]
     fn uifmt_option_bytes() {
         let empty: Option<Bytes> = None;
-        assert_eq!("".to_string(), empty.pretty());
+        assert_eq!(String::new(), empty.pretty());
         assert_eq!(
             "0x0000000000000000000000000000000000000000000000000000000000000064".to_string(),
             Bytes::from_str("0x0000000000000000000000000000000000000000000000000000000000000064")

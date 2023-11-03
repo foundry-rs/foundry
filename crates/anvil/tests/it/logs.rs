@@ -143,7 +143,7 @@ async fn watch_events() {
     let mut stream = event.stream().await.unwrap();
 
     // Also set up a subscription for the same thing
-    let ws = Arc::new(handle.ws_provider().await);
+    let ws = Arc::new(handle.ws_provider());
     let contract2 = SimpleStorage::new(contract.address(), ws);
     let event2 = contract2.event::<ValueChanged>();
     let mut subscription = event2.subscribe().await.unwrap();

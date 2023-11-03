@@ -5,10 +5,8 @@ use crate::{
     utils::{self, EnvExternalities},
 };
 use anvil::{spawn, NodeConfig};
-use ethers::{
-    solc::{artifacts::BytecodeHash, remappings::Remapping},
-    types::Address,
-};
+use ethers::types::Address;
+use foundry_compilers::{artifacts::BytecodeHash, remappings::Remapping};
 use foundry_config::Config;
 use foundry_test_utils::{
     forgetest, forgetest_async,
@@ -215,6 +213,96 @@ forgetest_async!(
         cmd.unchecked_output().stdout_matches_path(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures/can_create_using_unlocked-2nd.stdout"),
+        );
+    }
+);
+
+// tests that we can deploy with constructor args
+forgetest_async!(
+    #[serial_test::serial]
+    can_create_with_constructor_args,
+    |prj: TestProject, mut cmd: TestCommand| async move {
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let rpc = handle.http_endpoint();
+        let wallet = handle.dev_wallets().next().unwrap();
+        let pk = hex::encode(wallet.signer().to_bytes());
+        cmd.args(["init", "--force"]);
+        cmd.assert_non_empty_stdout();
+
+        // explicitly byte code hash for consistent checks
+        let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
+        prj.write_config(config);
+
+        prj.inner()
+            .add_source(
+                "ConstructorContract",
+                r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+contract ConstructorContract {
+    string public name;
+
+    constructor(string memory _name) {
+        name = _name;
+    }
+}
+"#,
+            )
+            .unwrap();
+
+        cmd.forge_fuse().args([
+            "create",
+            "./src/ConstructorContract.sol:ConstructorContract",
+            "--use",
+            "solc:0.8.15",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--constructor-args",
+            "My Constructor",
+        ]);
+
+        cmd.unchecked_output().stdout_matches_path(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/can_create_with_constructor_args.stdout"),
+        );
+
+        prj.inner()
+            .add_source(
+                "TupleArrayConstructorContract",
+                r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+struct Point {
+    uint256 x;
+    uint256 y;
+}
+
+contract TupleArrayConstructorContract {
+    constructor(Point[] memory _points) {}
+}
+"#,
+            )
+            .unwrap();
+
+        cmd.forge_fuse().args([
+            "create",
+            "./src/TupleArrayConstructorContract.sol:TupleArrayConstructorContract",
+            "--use",
+            "solc:0.8.15",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--constructor-args",
+            "[(1,2), (2,3), (3,4)]",
+        ]);
+
+        cmd.unchecked_output().stdout_matches_path(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/can_create_with_tuple_constructor_args.stdout"),
         );
     }
 );

@@ -2,10 +2,10 @@
 use foundry_config::Config;
 use foundry_test_utils::{
     forgetest, forgetest_init,
-    util::{OutputExt, TestCommand, TestProject},
+    util::{template_lock, OutputExt, TestCommand, TestProject},
 };
 use foundry_utils::rpc;
-use std::{path::PathBuf, str::FromStr};
+use std::{path::PathBuf, process::Command, str::FromStr};
 
 // tests that test filters are handled correctly
 forgetest!(can_set_filter_values, |prj: TestProject, mut cmd: TestCommand| {
@@ -132,7 +132,7 @@ contract ATest is DSTest {
         .unwrap();
 
     cmd.arg("test");
-    cmd.stdout().contains("[PASS]")
+    cmd.stdout_lossy().contains("[PASS]")
 });
 
 // tests that `bytecode_hash` will be sanitized
@@ -157,7 +157,7 @@ contract ATest is DSTest {
         .unwrap();
 
     cmd.arg("test");
-    cmd.stdout().contains("[PASS]")
+    cmd.stdout_lossy().contains("[PASS]")
 });
 
 // tests that using the --match-path option only runs files matching the path
@@ -197,7 +197,7 @@ contract FailTest is DSTest {
         .unwrap();
 
     cmd.args(["test", "--match-path", "*src/ATest.t.sol"]);
-    cmd.stdout().contains("[PASS]") && !cmd.stdout().contains("[FAIL]")
+    cmd.stdout_lossy().contains("[PASS]") && !cmd.stdout_lossy().contains("[FAIL]")
 });
 
 // tests that `forge test` will pick up tests that are stored in the `test = <path>` config value
@@ -297,13 +297,25 @@ forgetest_init!(
     #[serial_test::serial]
     can_test_forge_std,
     |prj: TestProject, mut cmd: TestCommand| {
+        let mut lock = template_lock();
+        let write = lock.write().unwrap();
         let forge_std_dir = prj.root().join("lib/forge-std");
+        let status = Command::new("git")
+            .current_dir(&forge_std_dir)
+            .args(["pull", "origin", "master"])
+            .status()
+            .unwrap();
+        if !status.success() {
+            panic!("failed to update forge-std");
+        }
+        drop(write);
+
         // execute in subdir
         cmd.cmd().current_dir(forge_std_dir);
         cmd.args(["test", "--root", "."]);
-        let stdout = cmd.stdout();
+        let stdout = cmd.stdout_lossy();
         assert!(stdout.contains("[PASS]"), "No tests passed:\n{stdout}");
-        assert!(!stdout.contains("[FAIL]"), "Tests failed :\n{stdout}");
+        assert!(!stdout.contains("[FAIL]"), "Tests failed:\n{stdout}");
     }
 );
 

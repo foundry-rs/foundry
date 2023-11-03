@@ -5,21 +5,20 @@ use crate::{
         AsHashDB, Db, MaybeForkedDatabase, MaybeHashDatabase, SerializableAccountRecord,
         SerializableState, StateDb,
     },
-    mem::state::{state_merkle_trie_root, trie_hash_db},
+    mem::state::{state_merkle_trie_root, storage_trie_db, trie_hash_db},
     revm::primitives::AccountInfo,
     Address, U256,
 };
 use ethers::{prelude::H256, types::BlockId};
+use foundry_evm::{
+    backend::{DatabaseResult, StateSnapshot},
+    fork::BlockchainDb,
+};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use tracing::{trace, warn};
 
 // reexport for convenience
-use crate::mem::state::storage_trie_db;
-pub use foundry_evm::executor::{backend::MemDb, DatabaseRef};
-use foundry_evm::executor::{
-    backend::{snapshot::StateSnapshot, DatabaseResult},
-    fork::BlockchainDb,
-};
+pub use foundry_evm::{backend::MemDb, revm::db::DatabaseRef};
 
 impl Db for MemDb {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
@@ -135,16 +134,16 @@ impl MaybeForkedDatabase for MemDb {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::{
         eth::backend::db::{Db, SerializableAccountRecord, SerializableState},
         revm::primitives::AccountInfo,
         Address,
     };
-    use alloy_primitives::U256 as rU256;
-    use bytes::Bytes;
+    use alloy_primitives::{Bytes, U256 as rU256};
     use ethers::types::U256;
     use foundry_evm::{
-        executor::{backend::MemDb, DatabaseRef},
+        backend::MemDb,
         revm::primitives::{Bytecode, KECCAK_EMPTY},
     };
     use foundry_utils::types::ToAlloy;
@@ -159,9 +158,7 @@ mod tests {
 
         let mut dump_db = MemDb::default();
 
-        let contract_code: Bytecode =
-            Bytecode::new_raw(alloy_primitives::Bytes(Bytes::from("fake contract code")))
-                .to_checked();
+        let contract_code = Bytecode::new_raw(Bytes::from("fake contract code")).to_checked();
 
         dump_db.insert_account(
             test_addr,
@@ -201,9 +198,7 @@ mod tests {
         let test_addr2: Address =
             Address::from_str("0x70997970c51812dc3a010c7d01b50e0d17dc79c8").unwrap();
 
-        let contract_code: Bytecode =
-            Bytecode::new_raw(alloy_primitives::Bytes(Bytes::from("fake contract code")))
-                .to_checked();
+        let contract_code = Bytecode::new_raw(Bytes::from("fake contract code")).to_checked();
 
         let mut db = MemDb::default();
 

@@ -1,6 +1,6 @@
 use crate::config::anvil_tmp_dir;
 use ethers::prelude::H256;
-use foundry_evm::executor::backend::snapshot::StateSnapshot;
+use foundry_evm::backend::StateSnapshot;
 use std::{
     io,
     path::{Path, PathBuf},

@@ -32,10 +32,8 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use foundry_evm::{
-    executor::{
-        fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
-        inspector::DEFAULT_CREATE2_DEPLOYER,
-    },
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     revm,
     revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv, U256 as rU256},
     utils::apply_chain_and_block_specific_env_changes,
@@ -125,6 +123,8 @@ pub struct NodeConfig {
     pub eth_rpc_url: Option<String>,
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
+    /// headers to use with `eth_rpc_url`
+    pub fork_headers: Vec<String>,
     /// specifies chain id for cache to skip fetching from remote in offline-start mode
     pub fork_chain_id: Option<U256>,
     /// The generator used to generate the dev accounts
@@ -173,7 +173,7 @@ pub struct NodeConfig {
 
 impl NodeConfig {
     fn as_string(&self, fork: Option<&ClientFork>) -> String {
-        let mut config_string: String = "".to_owned();
+        let mut config_string: String = String::new();
         let _ = write!(config_string, "\n{}", Paint::green(BANNER));
         let _ = write!(config_string, "\n    {VERSION_MESSAGE}");
         let _ = write!(
@@ -394,6 +394,7 @@ impl Default for NodeConfig {
             config_out: None,
             genesis: None,
             fork_request_timeout: REQUEST_TIMEOUT,
+            fork_headers: vec![],
             fork_request_retries: 5,
             fork_retry_backoff: Duration::from_millis(1_000),
             fork_chain_id: None,
@@ -661,6 +662,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the `fork_headers` to use with `eth_rpc_url`
+    #[must_use]
+    pub fn with_fork_headers(mut self, headers: Vec<String>) -> Self {
+        self.fork_headers = headers;
+        self
+    }
+
     /// Sets the `fork_request_timeout` to use for requests
     #[must_use]
     pub fn fork_request_timeout(mut self, fork_request_timeout: Option<Duration>) -> Self {
@@ -903,6 +911,7 @@ impl NodeConfig {
                 .compute_units_per_second(self.compute_units_per_second)
                 .max_retry(10)
                 .initial_backoff(1000)
+                .headers(self.fork_headers.clone())
                 .build()
                 .expect("Failed to establish provider to fork url"),
         );

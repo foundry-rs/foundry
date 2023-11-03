@@ -1,3 +1,6 @@
+[alias]
+cheats = "test -p foundry-cheatcodes-defs --features schema tests::"
+
 [target.x86_64-pc-windows-msvc]
 rustflags = [
     # Increases the stack size to 10MB, which is

@@ -59,8 +59,9 @@ use ethers::{
 };
 use foundry_common::ProviderBuilder;
 use foundry_evm::{
-    executor::{backend::DatabaseError, DatabaseRef},
+    backend::DatabaseError,
     revm::{
+        db::DatabaseRef,
         interpreter::{return_ok, return_revert, InstructionResult},
         primitives::BlockEnv,
     },
@@ -303,6 +304,7 @@ impl EthApi {
                 self.anvil_set_storage_at(addr, slot, val).await.to_rpc_result()
             }
             EthRequest::SetCoinbase(addr) => self.anvil_set_coinbase(addr).await.to_rpc_result(),
+            EthRequest::SetChainId(id) => self.anvil_set_chain_id(id).await.to_rpc_result(),
             EthRequest::SetLogging(log) => self.anvil_set_logging(log).await.to_rpc_result(),
             EthRequest::SetMinGasPrice(gas) => {
                 self.anvil_set_min_gas_price(gas).await.to_rpc_result()
@@ -804,7 +806,7 @@ impl EthApi {
         node_info!("eth_signTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.get(0).cloned().ok_or(BlockchainError::NoSignerAvailable)
+            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
         })?;
 
         let (nonce, _) = self.request_nonce(&request, from).await?;
@@ -823,7 +825,7 @@ impl EthApi {
         node_info!("eth_sendTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.get(0).cloned().ok_or(BlockchainError::NoSignerAvailable)
+            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
         })?;
 
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
@@ -1536,6 +1538,12 @@ impl EthApi {
         }
     }
 
+    pub async fn anvil_set_chain_id(&self, chain_id: u64) -> Result<()> {
+        node_info!("anvil_setChainId");
+        self.backend.set_chain_id(chain_id);
+        Ok(())
+    }
+
     /// Modifies the balance of an account.
     ///
     /// Handler for RPC call: `anvil_setBalance`
@@ -2153,7 +2161,8 @@ impl EthApi {
                 return Err(InvalidTransactionError::BasicOutOfGas(gas_limit).into())
             }
             // need to check if the revert was due to lack of gas or unrelated reason
-            return_revert!() => {
+            // we're also checking for InvalidFEOpcode here because this can be used to trigger an error <https://github.com/foundry-rs/foundry/issues/6138> common usage in openzeppelin <https://github.com/OpenZeppelin/openzeppelin-contracts/blob/94697be8a3f0dfcd95dfb13ffbd39b5973f5c65d/contracts/metatx/ERC2771Forwarder.sol#L360-L367>
+            return_revert!() | InstructionResult::InvalidFEOpcode => {
                 // if price or limit was included in the request then we can execute the request
                 // again with the max gas limit to check if revert is gas related or not
                 return if request.gas.is_some() || request.gas_price.is_some() {
@@ -2225,7 +2234,9 @@ impl EthApi {
                     // gas).
                     InstructionResult::Revert |
                     InstructionResult::OutOfGas |
-                    InstructionResult::OutOfFund => {
+                    InstructionResult::OutOfFund |
+                    // we're also checking for InvalidFEOpcode here because this can be used to trigger an error <https://github.com/foundry-rs/foundry/issues/6138> common usage in openzeppelin <https://github.com/OpenZeppelin/openzeppelin-contracts/blob/94697be8a3f0dfcd95dfb13ffbd39b5973f5c65d/contracts/metatx/ERC2771Forwarder.sol#L360-L367>
+                    InstructionResult::InvalidFEOpcode => {
                         lowest_gas_limit = mid_gas_limit;
                     }
                     // The tx failed for some other reason.

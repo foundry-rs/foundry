@@ -1,0 +1,57 @@
+[package]
+name = "foundry-evm-core"
+description = "Core EVM abstractions"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+foundry-abi.workspace = true
+foundry-common.workspace = true
+foundry-compilers.workspace = true
+foundry-config.workspace = true
+foundry-utils.workspace = true
+
+# EVM
+revm = { workspace = true, default-features = false, features = [
+    "std",
+    "serde",
+    "memory_limit",
+    "optional_eip3607",
+    "optional_block_gas_limit",
+    "optional_no_base_fee",
+    "arbitrary",
+] }
+alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
+alloy-json-abi = { workspace = true }
+alloy-sol-types.workspace = true
+ethers = { workspace = true, features = ["ethers-solc"] }
+
+# Encoding/decoding
+serde_json = "1"
+serde = "1"
+hex.workspace = true
+
+# Error handling
+eyre = "0.6"
+thiserror = "1"
+
+# Logging
+tracing = "0.1"
+
+# Threading/futures
+tokio = { version = "1", features = ["time", "macros"] }
+parking_lot = "0.12"
+futures = "0.3"
+once_cell = "1"
+
+# Misc
+url = "2"
+auto_impl = "1"
+itertools.workspace = true

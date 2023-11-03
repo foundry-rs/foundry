@@ -83,7 +83,7 @@ impl FmtArgs {
                     }
 
                     if path.is_dir() {
-                        inputs.extend(ethers::solc::utils::source_files_iter(path));
+                        inputs.extend(foundry_compilers::utils::source_files_iter(path));
                     } else if path.is_sol() {
                         inputs.push(path.to_path_buf());
                     } else {
@@ -195,7 +195,7 @@ enum Input {
 }
 
 impl fmt::Display for Line {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
             None => f.write_str("    "),
             Some(idx) => write!(f, "{:<4}", idx + 1),

@@ -1,7 +1,7 @@
 use clap::{Parser, ValueHint};
-use ethers::solc::Graph;
 use eyre::{Result, WrapErr};
 use foundry_cli::utils::LoadConfig;
+use foundry_compilers::Graph;
 use foundry_config::{impl_figment_convert_basic, Config};
 use itertools::Itertools;
 use rayon::prelude::*;

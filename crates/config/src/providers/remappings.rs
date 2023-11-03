@@ -1,9 +1,9 @@
 use crate::{foundry_toml_dirs, remappings_from_env_var, remappings_from_newline, Config};
-use ethers_solc::remappings::{RelativeRemapping, Remapping};
 use figment::{
     value::{Dict, Map},
     Error, Metadata, Profile, Provider,
 };
+use foundry_compilers::remappings::{RelativeRemapping, Remapping};
 use std::{
     borrow::Cow,
     collections::{btree_map::Entry, BTreeMap, HashSet},
@@ -30,11 +30,19 @@ impl Remappings {
         Self { remappings }
     }
 
+    /// Filters the remappings vector by name and context.
+    fn filter_key(r: &Remapping) -> String {
+        match &r.context {
+            Some(str) => str.clone() + &r.name.clone(),
+            None => r.name.clone(),
+        }
+    }
+
     /// Consumes the wrapper and returns the inner remappings vector.
     pub fn into_inner(self) -> Vec<Remapping> {
         let mut tmp = HashSet::new();
         let remappings =
-            self.remappings.iter().filter(|r| tmp.insert(r.name.clone())).cloned().collect();
+            self.remappings.iter().filter(|r| tmp.insert(Self::filter_key(r))).cloned().collect();
         remappings
     }
 

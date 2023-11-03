@@ -5,12 +5,12 @@ use alloy_primitives::{Address, Bytes};
 use ethers_addressbook::contract;
 use ethers_core::types::{BlockId, Chain, NameOrAddress};
 use ethers_providers::{Middleware, Provider};
-use ethers_solc::{
+use eyre::{Result, WrapErr};
+use foundry_compilers::{
     artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode, Libraries},
     contracts::ArtifactContracts,
     ArtifactId,
 };
-use eyre::{Result, WrapErr};
 use futures::future::BoxFuture;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -409,8 +409,8 @@ fn recurse_link<'a>(
             };
 
             // link the dependency to the target
-            target_bytecode.0.link(file.clone(), key.clone(), address.to_ethers());
-            target_bytecode.1.link(file.clone(), key.clone(), address.to_ethers());
+            target_bytecode.0.link(file.clone(), key.clone(), address);
+            target_bytecode.1.link(file.clone(), key.clone(), address);
             trace!(target : "forge::link", ?target, dependency = next_target, file, key, "linking dependency done");
         });
     }
@@ -427,7 +427,7 @@ pub fn to_table(value: serde_json::Value) -> String {
             }
             s
         }
-        _ => "".to_owned(),
+        _ => String::new(),
     }
 }
 
@@ -537,8 +537,8 @@ pub async fn next_nonce(
 mod tests {
     use super::*;
     use ethers_core::types::Address;
-    use ethers_solc::{Project, ProjectPathsConfig};
     use foundry_common::ContractsByArtifact;
+    use foundry_compilers::{Project, ProjectPathsConfig};
 
     struct LinkerTest {
         contracts: ArtifactContracts,

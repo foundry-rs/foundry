@@ -1,4 +1,3 @@
-use cast::SimpleCast;
 use clap::{builder::TypedValueParser, Parser};
 use ethers::{
     core::{k256::ecdsa::SigningKey, rand::thread_rng},
@@ -8,6 +7,7 @@ use ethers::{
 };
 use eyre::Result;
 
+use foundry_utils::types::ToAlloy;
 use rayon::iter::{self, ParallelIterator};
 use regex::Regex;
 use std::time::Instant;
@@ -117,14 +117,11 @@ impl VanityArgs {
             timer.elapsed().as_secs(),
             if nonce.is_some() { "\nContract address: " } else { "" },
             if nonce.is_some() {
-                SimpleCast::to_checksum_address(&get_contract_address(
-                    wallet.address(),
-                    nonce.unwrap(),
-                ))
+                wallet.address().to_alloy().create(nonce.unwrap()).to_checksum(None)
             } else {
-                "".to_string()
+                String::new()
             },
-            SimpleCast::to_checksum_address(&wallet.address()),
+            wallet.address().to_alloy().to_checksum(None),
             hex::encode(wallet.signer().to_bytes()),
         );
 

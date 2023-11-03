@@ -1,40 +1,43 @@
 use self::{build::BuildOutput, runner::ScriptRunner};
 use super::{build::BuildArgs, retry::RetryArgs};
+use alloy_dyn_abi::FunctionExt;
+use alloy_json_abi::{Function, InternalType, JsonAbi as Abi};
 use alloy_primitives::{Address, Bytes, U256};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers::{
-    abi::{Abi, Function, HumanReadableParser},
-    prelude::{
-        artifacts::{ContractBytecodeSome, Libraries},
-        ArtifactId, Project,
-    },
     providers::{Http, Middleware},
     signers::LocalWallet,
-    solc::contracts::ArtifactContracts,
     types::{
         transaction::eip2718::TypedTransaction, Chain, Log, NameOrAddress, TransactionRequest,
     },
 };
 use eyre::{ContextCompat, Result, WrapErr};
 use forge::{
+    backend::Backend,
     debug::DebugArena,
     decode::decode_console_logs,
-    executor::{opts::EvmOpts, Backend},
-    trace::{
+    opts::EvmOpts,
+    traces::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
         CallTraceDecoder, CallTraceDecoderBuilder, RawOrDecodedCall, RawOrDecodedReturnData,
         TraceKind, Traces,
     },
-    CallKind,
+    utils::CallKind,
 };
 use foundry_cli::opts::MultiWallet;
 use foundry_common::{
-    abi::{encode_args, format_token},
+    abi::encode_function_args,
     contracts::get_contract_name,
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
+    fmt::format_token,
     shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+};
+use foundry_compilers::{
+    artifacts::{ContractBytecodeSome, Libraries},
+    contracts::ArtifactContracts,
+    ArtifactId, Project,
 };
 use foundry_config::{
     figment,
@@ -45,11 +48,9 @@ use foundry_config::{
     Config,
 };
 use foundry_evm::{
+    constants::DEFAULT_CREATE2_DEPLOYER,
     decode,
-    executor::inspector::{
-        cheatcodes::{util::BroadcastableTransactions, BroadcastableTransaction},
-        DEFAULT_CREATE2_DEPLOYER,
-    },
+    inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::future;
@@ -69,8 +70,6 @@ mod runner;
 mod sequence;
 pub mod transaction;
 mod verify;
-
-pub use transaction::TransactionWithMetadata;
 
 /// List of Chains that support Shanghai.
 static SHANGHAI_ENABLED_CHAINS: &[Chain] = &[
@@ -115,7 +114,7 @@ pub struct ScriptArgs {
     #[clap(
         long,
         env = "ETH_PRIORITY_GAS_PRICE",
-        value_parser = foundry_cli::utils::alloy_parse_ether_value,
+        value_parser = foundry_cli::utils::parse_ether_value,
         value_name = "PRICE"
     )]
     pub priority_gas_price: Option<U256>,
@@ -192,7 +191,7 @@ pub struct ScriptArgs {
     #[clap(
         long,
         env = "ETH_GAS_PRICE",
-        value_parser = foundry_cli::utils::alloy_parse_ether_value,
+        value_parser = foundry_cli::utils::parse_ether_value,
         value_name = "PRICE",
     )]
     pub with_gas_price: Option<U256>,
@@ -230,9 +229,7 @@ impl ScriptArgs {
 
         let mut local_identifier = LocalTraceIdentifier::new(known_contracts);
         let mut decoder = CallTraceDecoderBuilder::new()
-            .with_labels(
-                result.labeled_addresses.iter().map(|(a, s)| ((*a).to_ethers(), s.clone())),
-            )
+            .with_labels(result.labeled_addresses.clone())
             .with_verbosity(verbosity)
             .with_signature_identifier(SignaturesIdentifier::new(
                 Config::foundry_cache_dir(),
@@ -241,7 +238,7 @@ impl ScriptArgs {
             .build();
 
         // Decoding traces using etherscan is costly as we run into rate limits,
-        // causing scripts to run for a very long time unnecesarily.
+        // causing scripts to run for a very long time unnecessarily.
         // Therefore, we only try and use etherscan if the user has provided an API key.
         let should_use_etherscan_traces = script_config.config.etherscan_api_key.is_some();
 
@@ -257,15 +254,19 @@ impl ScriptArgs {
     pub fn get_returns(
         &self,
         script_config: &ScriptConfig,
-        returned: &bytes::Bytes,
+        returned: &Bytes,
     ) -> Result<HashMap<String, NestedValue>> {
         let func = script_config.called_function.as_ref().expect("There should be a function.");
         let mut returns = HashMap::new();
 
-        match func.decode_output(returned) {
+        match func.abi_decode_output(returned, false) {
             Ok(decoded) => {
                 for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
-                    let internal_type = output.internal_type.as_deref().unwrap_or("unknown");
+                    let internal_type =
+                        output.internal_type.clone().unwrap_or(InternalType::Other {
+                            contract: None,
+                            ty: "unknown".to_string(),
+                        });
 
                     let label = if !output.name.is_empty() {
                         output.name.to_string()
@@ -283,7 +284,7 @@ impl ScriptArgs {
                 }
             }
             Err(_) => {
-                shell::println(format!("{:x?}", (&returned)))?;
+                shell::println(format!("{returned:?}"))?;
             }
         }
 
@@ -330,10 +331,14 @@ impl ScriptArgs {
 
         if result.success && !result.returned.is_empty() {
             shell::println("\n== Return ==")?;
-            match func.decode_output(&result.returned) {
+            match func.abi_decode_output(&result.returned, false) {
                 Ok(decoded) => {
                     for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
-                        let internal_type = output.internal_type.as_deref().unwrap_or("unknown");
+                        let internal_type =
+                            output.internal_type.clone().unwrap_or(InternalType::Other {
+                                contract: None,
+                                ty: "unknown".to_string(),
+                            });
 
                         let label = if !output.name.is_empty() {
                             output.name.to_string()
@@ -452,21 +457,18 @@ impl ScriptArgs {
     ///
     /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
     pub fn get_method_and_calldata(&self, abi: &Abi) -> Result<(Function, Bytes)> {
-        let (func, data) = if let Ok(func) = HumanReadableParser::parse_function(&self.sig) {
+        let (func, data) = if let Ok(func) = Function::parse(&self.sig) {
             (
-                abi.functions()
-                    .find(|&abi_func| abi_func.short_signature() == func.short_signature())
-                    .wrap_err(format!(
-                        "Function `{}` is not implemented in your script.",
-                        self.sig
-                    ))?,
-                encode_args(&func, &self.args)?.into(),
+                abi.functions().find(|&abi_func| abi_func.selector() == func.selector()).wrap_err(
+                    format!("Function `{}` is not implemented in your script.", self.sig),
+                )?,
+                encode_function_args(&func, &self.args)?.into(),
             )
         } else {
             let decoded = hex::decode(&self.sig).wrap_err("Invalid hex calldata")?;
             let selector = &decoded[..SELECTOR_LEN];
             (
-                abi.functions().find(|&func| selector == &func.short_signature()[..]).ok_or_else(
+                abi.functions().find(|&func| selector == &func.selector()[..]).ok_or_else(
                     || {
                         eyre::eyre!(
                             "Function selector `{}` not found in the ABI",
@@ -617,7 +619,7 @@ pub struct ScriptResult {
     pub gas_used: u64,
     pub labeled_addresses: BTreeMap<Address, String>,
     pub transactions: Option<BroadcastableTransactions>,
-    pub returned: bytes::Bytes,
+    pub returned: Bytes,
     pub address: Option<Address>,
     pub script_wallets: Vec<LocalWallet>,
     pub breakpoints: Breakpoints,

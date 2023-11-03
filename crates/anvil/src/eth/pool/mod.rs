@@ -358,7 +358,7 @@ pub struct PruneResult {
 }
 
 impl fmt::Debug for PruneResult {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(fmt, "PruneResult {{ ")?;
         write!(
             fmt,

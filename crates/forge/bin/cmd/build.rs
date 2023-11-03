@@ -1,12 +1,12 @@
 use super::{install, watch::WatchArgs};
 use clap::Parser;
-use ethers::solc::{Project, ProjectCompileOutput};
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{
     compile,
     compile::{ProjectCompiler, SkipBuildFilter},
 };
+use foundry_compilers::{Project, ProjectCompileOutput};
 use foundry_config::{
     figment::{
         self,

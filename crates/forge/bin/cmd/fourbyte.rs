@@ -1,5 +1,4 @@
 use clap::Parser;
-use ethers::prelude::artifacts::output_selection::ContractOutputSelection;
 use eyre::Result;
 use foundry_cli::{
     opts::{CompilerArgs, CoreBuildArgs, ProjectPathsArgs},
@@ -10,6 +9,7 @@ use foundry_common::{
     selectors::{import_selectors, SelectorImportData},
     shell,
 };
+use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use yansi::Paint;
 
 /// CLI arguments for `forge upload-selectors`.

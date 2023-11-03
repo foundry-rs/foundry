@@ -405,7 +405,7 @@ impl FeeDetails {
 }
 
 impl fmt::Debug for FeeDetails {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(fmt, "Fees {{ ")?;
         write!(fmt, "gaPrice: {:?}, ", self.gas_price)?;
         write!(fmt, "max_fee_per_gas: {:?}, ", self.max_fee_per_gas)?;

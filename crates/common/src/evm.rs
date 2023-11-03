@@ -1,6 +1,6 @@
 //! cli arguments for configuring the evm settings
+use alloy_primitives::{Address, B256, U256};
 use clap::{ArgAction, Parser};
-use ethers_core::types::{Address, H256, U256};
 use eyre::ContextCompat;
 use foundry_config::{
     figment::{
@@ -54,6 +54,13 @@ pub struct EvmArgs {
     #[clap(long, requires = "fork_url", value_name = "BLOCK")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
+
+    /// Number of retries.
+    ///
+    /// See --fork-url.
+    #[clap(long, requires = "fork_url", value_name = "RETRIES")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fork_retries: Option<u32>,
 
     /// Initial retry backoff on encountering errors.
     ///
@@ -228,7 +235,7 @@ pub struct EnvArgs {
     /// The block prevrandao value. NOTE: Before merge this field was mix_hash.
     #[clap(long, value_name = "PREVRANDAO")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub block_prevrandao: Option<H256>,
+    pub block_prevrandao: Option<B256>,
 
     /// The block gas limit.
     #[clap(long, value_name = "GAS_LIMIT")]

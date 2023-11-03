@@ -5,11 +5,11 @@ use ethers::types::Log;
 use foundry_evm::{
     call_inspectors,
     decode::decode_console_logs,
-    executor::inspector::{LogCollector, Tracer},
+    inspectors::{LogCollector, Tracer},
     revm,
     revm::{
         interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
-        primitives::{Address as rAddress, Bytes, B256},
+        primitives::{Address, Bytes, B256},
         EVMData,
     },
 };
@@ -71,7 +71,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     fn log(
         &mut self,
         evm_data: &mut EVMData<'_, DB>,
-        address: &rAddress,
+        address: &Address,
         topics: &[B256],
         data: &Bytes,
     ) {
@@ -126,7 +126,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
-    ) -> (InstructionResult, Option<rAddress>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.create(data, call);
         });
@@ -140,10 +140,10 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         data: &mut EVMData<'_, DB>,
         inputs: &CreateInputs,
         status: InstructionResult,
-        address: Option<rAddress>,
+        address: Option<Address>,
         gas: Gas,
         retdata: Bytes,
-    ) -> (InstructionResult, Option<rAddress>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.create_end(data, inputs, status, address, gas, retdata.clone());
         });

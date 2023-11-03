@@ -44,6 +44,8 @@ pub fn stack_indices_affected(op: u8) -> Vec<(usize, &'static str)> {
         0x55 => vec![(0, "key"), (1, "value")],
         0x56 => vec![(0, "jump_to")],
         0x57 => vec![(0, "jump_to"), (1, "if")],
+        0x5c => vec![(0, "key")],
+        0x5d => vec![(0, "key"), (1, "value")],
         0x80 => vec![(0, "dup_value")],
         0x81 => vec![(1, "dup_value")],
         0x82 => vec![(2, "dup_value")],

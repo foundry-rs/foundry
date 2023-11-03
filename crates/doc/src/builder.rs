@@ -2,8 +2,8 @@ use crate::{
     document::DocumentContent, helpers::merge_toml_table, AsDoc, BufWriter, Document, ParseItem,
     ParseSource, Parser, Preprocessor,
 };
-use ethers_solc::utils::source_files_iter;
 use forge_fmt::{FormatterConfig, Visitable};
+use foundry_compilers::utils::source_files_iter;
 use foundry_config::DocConfig;
 use foundry_utils::glob::expand_globs;
 use itertools::Itertools;

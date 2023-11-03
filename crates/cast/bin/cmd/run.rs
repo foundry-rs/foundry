@@ -1,5 +1,6 @@
+use alloy_primitives::U256;
 use clap::Parser;
-use ethers::{prelude::Middleware, solc::EvmVersion};
+use ethers::prelude::Middleware;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     init_progress,
@@ -8,11 +9,12 @@ use foundry_cli::{
     utils::{handle_traces, TraceResult},
 };
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
+use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{
-    executor::{inspector::cheatcodes::util::configure_tx_env, opts::EvmOpts, EvmError},
-    revm::primitives::U256 as rU256,
-    trace::TracingExecutor,
+    executors::{EvmError, TracingExecutor},
+    opts::EvmOpts,
+    utils::configure_tx_env,
 };
 use foundry_utils::types::ToAlloy;
 use tracing::trace;
@@ -98,7 +100,7 @@ impl RunArgs {
             .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         // check if the tx is a system transaction
-        if is_known_system_sender(tx.from) ||
+        if is_known_system_sender(tx.from.to_alloy()) ||
             tx.transaction_type.map(|ty| ty.as_u64()) == Some(SYSTEM_TRANSACTION_TYPE)
         {
             return Err(eyre::eyre!(
@@ -120,7 +122,7 @@ impl RunArgs {
         let mut executor =
             TracingExecutor::new(env.clone(), fork, self.evm_version, self.debug).await;
 
-        env.block.number = rU256::from(tx_block_number);
+        env.block.number = U256::from(tx_block_number);
 
         let block = provider.get_block_with_txs(tx_block_number).await?;
         if let Some(ref block) = block {
@@ -143,7 +145,7 @@ impl RunArgs {
                 for (index, tx) in block.transactions.into_iter().enumerate() {
                     // System transactions such as on L2s don't contain any pricing info so we skip
                     // them otherwise this would cause reverts
-                    if is_known_system_sender(tx.from) ||
+                    if is_known_system_sender(tx.from.to_alloy()) ||
                         tx.transaction_type.map(|ty| ty.as_u64()) ==
                             Some(SYSTEM_TRANSACTION_TYPE)
                     {
