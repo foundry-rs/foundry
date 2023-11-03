@@ -366,6 +366,7 @@ impl Executor {
             debug,
             script_wallets,
             env,
+            coverage,
             ..
         } = result;
 
@@ -421,7 +422,7 @@ impl Executor {
 
         trace!(address=?address, "deployed contract");
 
-        Ok(DeployResult { address, gas_used, gas_refunded, logs, traces, debug, env })
+        Ok(DeployResult { address, gas_used, gas_refunded, logs, traces, debug, env, coverage })
     }
 
     /// Deploys a contract and commits the new state to the underlying database.
@@ -597,6 +598,8 @@ pub struct DeployResult {
     pub debug: Option<DebugArena>,
     /// The `revm::Env` after deployment
     pub env: Env,
+    /// The coverage info collected during the deployment
+    pub coverage: Option<HitMaps>,
 }
 
 /// The result of a call.
