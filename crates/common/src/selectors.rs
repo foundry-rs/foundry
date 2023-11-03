@@ -299,7 +299,7 @@ impl SignEthClient {
 
         let request = match data {
             SelectorImportData::Abi(abis) => {
-                let names: Vec<String> = abis
+                let functions_and_errors: Vec<String> = abis
                     .iter()
                     .flat_map(|abi| {
                         abi.abi
@@ -307,10 +307,17 @@ impl SignEthClient {
                             .map(|func| {
                                 func.signature().split(':').next().unwrap_or("").to_string()
                             })
+                            .chain(abi.abi.errors().map(|error| error.signature()))
                             .collect::<Vec<_>>()
                     })
                     .collect();
-                SelectorImportRequest { function: names, event: Default::default() }
+
+                let events = abis
+                    .iter()
+                    .flat_map(|abi| abi.abi.events().map(|event| event.signature()))
+                    .collect::<Vec<_>>();
+
+                SelectorImportRequest { function: functions_and_errors, event: events }
             }
             SelectorImportData::Raw(raw) => {
                 SelectorImportRequest { function: raw.function, event: raw.event }
