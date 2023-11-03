@@ -9,7 +9,8 @@ use crate::{
 use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
 use ethers::{
     prelude::Block,
-    types::{BlockNumber, Transaction}, utils::GenesisAccount,
+    types::{BlockNumber, Transaction},
+    utils::GenesisAccount,
 };
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use foundry_utils::types::{ToAlloy, ToEthers};
@@ -19,7 +20,7 @@ use revm::{
     precompile::{Precompiles, SpecId},
     primitives::{
         Account, AccountInfo, Bytecode, CreateScheme, Env, HashMap as Map, Log, ResultAndState,
-        TransactTo, KECCAK_EMPTY, StorageSlot,
+        StorageSlot, TransactTo, KECCAK_EMPTY,
     },
     Database, DatabaseCommit, Inspector, JournaledState, EVM,
 };

@@ -13,10 +13,7 @@ use revm::{
     primitives::{AccountInfo, Bytecode, Env, ResultAndState},
     Database, Inspector, JournaledState,
 };
-use std::{
-    collections::HashMap,
-    borrow::Cow
-};
+use std::{borrow::Cow, collections::HashMap};
 
 /// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
 ///
