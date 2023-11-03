@@ -10,6 +10,7 @@ use foundry_cli::opts::{RawWallet, Wallet};
 use foundry_common::fs;
 use foundry_config::Config;
 use foundry_utils::types::{ToAlloy, ToEthers};
+use serde_json::json;
 use std::path::Path;
 use yansi::Paint;
 
@@ -36,6 +37,14 @@ pub enum WalletSubcommands {
         /// This is UNSAFE to use and we recommend using the --password.
         #[clap(long, requires = "path", env = "CAST_PASSWORD", value_name = "PASSWORD")]
         unsafe_password: Option<String>,
+
+        /// Number of wallets to generate.
+        #[clap(long, short, default_value = "1")]
+        number: u32,
+
+        /// Output generated wallets as JSON.
+        #[clap(long, short, default_value = "false")]
+        json: bool,
     },
 
     /// Generate a vanity address.
@@ -120,9 +129,10 @@ pub enum WalletSubcommands {
 impl WalletSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
-            WalletSubcommands::New { path, unsafe_password, .. } => {
+            WalletSubcommands::New { path, unsafe_password, number, json, .. } => {
                 let mut rng = thread_rng();
 
+                let mut json_values = if json { Some(vec![]) } else { None };
                 if let Some(path) = path {
                     let path = dunce::canonicalize(path)?;
                     if !path.is_dir() {
@@ -137,16 +147,50 @@ impl WalletSubcommands {
                         rpassword::prompt_password("Enter secret: ")?
                     };
 
-                    let (wallet, uuid) =
-                        LocalWallet::new_keystore(&path, &mut rng, password, None)?;
+                    for _ in 0..number {
+                        let (wallet, uuid) =
+                            LocalWallet::new_keystore(&path, &mut rng, password.clone(), None)?;
 
-                    println!("Created new encrypted keystore file: {}", path.join(uuid).display());
-                    println!("Address: {}", wallet.address().to_alloy().to_checksum(None));
+                        if let Some(json) = json_values.as_mut() {
+                            json.push(json!({
+                                "address": wallet.address().to_alloy().to_checksum(None),
+                                "path": format!("{}", path.join(uuid).display()),
+                            }
+                            ));
+                        } else {
+                            println!(
+                                "Created new encrypted keystore file: {}",
+                                path.join(uuid).display()
+                            );
+                            println!("Address: {}", wallet.address().to_alloy().to_checksum(None));
+                        }
+                    }
+
+                    if let Some(json) = json_values.as_ref() {
+                        println!("{}", serde_json::to_string_pretty(json)?);
+                    }
                 } else {
-                    let wallet = LocalWallet::new(&mut rng);
-                    println!("Successfully created new keypair.");
-                    println!("Address:     {}", wallet.address().to_alloy().to_checksum(None));
-                    println!("Private key: 0x{}", hex::encode(wallet.signer().to_bytes()));
+                    for _ in 0..number {
+                        let wallet = LocalWallet::new(&mut rng);
+
+                        if let Some(json) = json_values.as_mut() {
+                            json.push(json!({
+                                "address": wallet.address().to_alloy().to_checksum(None),
+                                "private_key": format!("0x{}", hex::encode(wallet.signer().to_bytes())),
+                            }))
+                        } else {
+                            println!("Successfully created new keypair.");
+                            println!(
+                                "Address:     {}",
+                                wallet.address().to_alloy().to_checksum(None)
+                            );
+                            println!("Private key: 0x{}", hex::encode(wallet.signer().to_bytes()));
+                        }
+                    }
+
+                    if let Some(json) = json_values.as_ref() {
+                        println!("{}", serde_json::to_string_pretty(json)?);
+                    }
                 }
             }
             WalletSubcommands::Vanity(cmd) => {
