@@ -7,12 +7,16 @@ use crate::{
     fork::{CreateFork, ForkId},
 };
 use alloy_primitives::{Address, B256, U256};
+use ethers::utils::GenesisAccount;
 use revm::{
     db::DatabaseRef,
     primitives::{AccountInfo, Bytecode, Env, ResultAndState},
     Database, Inspector, JournaledState,
 };
-use std::borrow::Cow;
+use std::{
+    collections::HashMap,
+    borrow::Cow
+};
 
 /// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
 ///
@@ -196,6 +200,14 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         journaled_state: &JournaledState,
     ) -> Option<RevertDiagnostic> {
         self.backend.diagnose_revert(callee, journaled_state)
+    }
+
+    fn load_allocs(
+        &mut self,
+        allocs: &HashMap<Address, GenesisAccount>,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), DatabaseError> {
+        self.backend_mut(&Env::default()).load_allocs(allocs, journaled_state)
     }
 
     fn is_persistent(&self, acc: &Address) -> bool {

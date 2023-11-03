@@ -148,6 +148,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function load(address target, bytes32 slot) external view returns (bytes32 data);
 
+    /// Load a genesis JSON file's `allocs` into the in-memory revm state.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function loadAllocs(string calldata pathToAllocsJson) external;
+
     /// Signs data.
     #[cheatcode(group = Evm, safety = Safe)]
     function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);

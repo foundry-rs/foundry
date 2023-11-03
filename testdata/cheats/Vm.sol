@@ -112,6 +112,7 @@ interface Vm {
     function keyExists(string calldata json, string calldata key) external view returns (bool);
     function label(address account, string calldata newLabel) external;
     function load(address target, bytes32 slot) external view returns (bytes32 data);
+    function loadAllocs(string calldata pathToAllocsJson) external;
     function makePersistent(address account) external;
     function makePersistent(address account0, address account1) external;
     function makePersistent(address account0, address account1, address account2) external;
