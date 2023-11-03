@@ -188,6 +188,7 @@ impl NodeArgs {
                     .fork_block_number
                     .or_else(|| self.evm_opts.fork_url.as_ref().and_then(|f| f.block)),
             )
+            .with_fork_headers(self.evm_opts.fork_headers)
             .with_fork_chain_id(self.evm_opts.fork_chain_id.map(u64::from))
             .fork_request_timeout(self.evm_opts.fork_request_timeout.map(Duration::from_millis))
             .fork_request_retries(self.evm_opts.fork_request_retries)
@@ -327,6 +328,17 @@ pub struct AnvilEvmArgs {
         help_heading = "Fork config"
     )]
     pub fork_url: Option<ForkUrl>,
+
+    /// Headers to use for the rpc client, e.g. "User-Agent: test-agent"
+    ///
+    /// See --fork-url.
+    #[clap(
+        long = "fork-header",
+        value_name = "HEADERS",
+        help_heading = "Fork config",
+        requires = "fork_url"
+    )]
+    pub fork_headers: Vec<String>,
 
     /// Timeout in ms for requests sent to remote JSON-RPC server in forking mode.
     ///
@@ -662,6 +674,23 @@ mod tests {
     fn can_parse_hardfork() {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--hardfork", "berlin"]);
         assert_eq!(args.hardfork, Some(Hardfork::Berlin));
+    }
+
+    #[test]
+    fn can_parse_fork_headers() {
+        let args: NodeArgs = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http,://localhost:8545",
+            "--fork-header",
+            "User-Agent: test-agent",
+            "--fork-header",
+            "Referrer: example.com",
+        ]);
+        assert_eq!(
+            args.evm_opts.fork_headers,
+            vec!["User-Agent: test-agent", "Referrer: example.com"]
+        );
     }
 
     #[test]

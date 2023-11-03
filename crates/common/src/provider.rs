@@ -1,6 +1,9 @@
 //! Commonly used helpers to construct `Provider`s
 
-use crate::{runtime_client::RuntimeClient, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
+use crate::{
+    runtime_client::{RuntimeClient, RuntimeClientBuilder},
+    ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
+};
 use ethers_core::types::{Chain, U256};
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use ethers_providers::{is_local_endpoint, Middleware, Provider, DEFAULT_LOCAL_POLL_INTERVAL};
@@ -61,6 +64,7 @@ pub struct ProviderBuilder {
     compute_units_per_second: u64,
     /// JWT Secret
     jwt: Option<String>,
+    headers: Vec<String>,
 }
 
 // === impl ProviderBuilder ===
@@ -104,6 +108,7 @@ impl ProviderBuilder {
             // alchemy max cpus <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
             jwt: None,
+            headers: vec![],
         }
     }
 
@@ -188,6 +193,13 @@ impl ProviderBuilder {
         self
     }
 
+    /// Sets http headers
+    pub fn headers(mut self, headers: Vec<String>) -> Self {
+        self.headers = headers;
+
+        self
+    }
+
     /// Same as [`Self:build()`] but also retrieves the `chainId` in order to derive an appropriate
     /// interval.
     pub async fn connect(self) -> Result<RetryProvider> {
@@ -211,20 +223,24 @@ impl ProviderBuilder {
             timeout,
             compute_units_per_second,
             jwt,
+            headers,
         } = self;
         let url = url?;
 
-        let is_local = is_local_endpoint(url.as_str());
-
-        let mut provider = Provider::new(RuntimeClient::new(
-            url,
+        let client_builder = RuntimeClientBuilder::new(
+            url.clone(),
             max_retry,
             timeout_retry,
             initial_backoff,
             timeout,
             compute_units_per_second,
-            jwt,
-        ));
+        )
+        .with_headers(headers)
+        .with_jwt(jwt);
+
+        let mut provider = Provider::new(client_builder.build());
+
+        let is_local = is_local_endpoint(url.as_str());
 
         if is_local {
             provider = provider.interval(DEFAULT_LOCAL_POLL_INTERVAL);
