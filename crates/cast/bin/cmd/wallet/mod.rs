@@ -2,9 +2,13 @@ use alloy_primitives::Address;
 use clap::Parser;
 use ethers::{
     core::rand::thread_rng,
-    signers::{LocalWallet, Signer},
+    signers::{
+        coins_bip39::{English, Mnemonic},
+        LocalWallet, MnemonicBuilder, Signer,
+    },
     types::{transaction::eip712::TypedData, Signature},
 };
+use ethers_core::utils::to_checksum;
 use eyre::{Context, Result};
 use foundry_cli::opts::{RawWallet, Wallet};
 use foundry_common::fs;
@@ -45,6 +49,18 @@ pub enum WalletSubcommands {
         /// Output generated wallets as JSON.
         #[clap(long, short, default_value = "false")]
         json: bool,
+    },
+
+    /// Generates a random BIP39 mnemonic phrase
+    #[clap(visible_alias = "nm")]
+    NewMnemonic {
+        /// Number of words for the mnemonic
+        #[clap(long, short, default_value = "12")]
+        words: usize,
+
+        /// Number of accounts to display
+        #[clap(long, short, default_value = "1")]
+        accounts: u8,
     },
 
     /// Generate a vanity address.
@@ -191,6 +207,27 @@ impl WalletSubcommands {
                     if let Some(json) = json_values.as_ref() {
                         println!("{}", serde_json::to_string_pretty(json)?);
                     }
+                }
+            }
+            WalletSubcommands::NewMnemonic { words, accounts } => {
+                let mut rng = thread_rng();
+                let phrase = Mnemonic::<English>::new_with_count(&mut rng, words)?.to_phrase();
+
+                let builder = MnemonicBuilder::<English>::default().phrase(phrase.as_str());
+                let derivation_path = "m/44'/60'/0'/0/";
+                let wallets = (0..accounts)
+                    .map(|i| builder.clone().derivation_path(&format!("{derivation_path}{i}")))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let wallets =
+                    wallets.into_iter().map(|b| b.build()).collect::<Result<Vec<_>, _>>()?;
+
+                println!("{}", Paint::green("Successfully generated a new mnemonic."));
+                println!("Phrase:\n{phrase}");
+                println!("\nAccounts:");
+                for (i, wallet) in wallets.iter().enumerate() {
+                    println!("- Account {i}:");
+                    println!("Address:     {}", to_checksum(&wallet.address(), None));
+                    println!("Private key: 0x{}\n", hex::encode(wallet.signer().to_bytes()));
                 }
             }
             WalletSubcommands::Vanity(cmd) => {
