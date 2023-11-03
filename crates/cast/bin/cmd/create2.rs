@@ -44,11 +44,11 @@ pub struct Create2Args {
     deployer: Address,
 
     /// Init code of the contract to be deployed.
-    #[clap(short, long, value_name = "HEX", default_value = "")]
-    init_code: String,
+    #[clap(short, long, value_name = "HEX")]
+    init_code: Option<String>,
 
     /// Init code hash of the contract to be deployed.
-    #[clap(alias = "ch", long, value_name = "HASH")]
+    #[clap(alias = "ch", long, value_name = "HASH", required_unless_present = "init_code")]
     init_code_hash: Option<String>,
 
     /// Number of threads to use. Defaults to and caps at the number of logical cores.
@@ -115,13 +115,13 @@ impl Create2Args {
         let regex = RegexSetBuilder::new(regexs).case_insensitive(!case_sensitive).build()?;
 
         let init_code_hash = if let Some(init_code_hash) = init_code_hash {
-            let mut a: [u8; 32] = [0; 32];
-            let init_code_hash_bytes = hex::decode(init_code_hash)?;
-            assert!(init_code_hash_bytes.len() == 32, "init code hash should be 32 bytes long");
-            a.copy_from_slice(&init_code_hash_bytes);
-            a.into()
-        } else {
+            let mut hash: [u8; 32] = [0; 32];
+            hex::decode_to_slice(init_code_hash, &mut hash)?;
+            hash.into()
+        } else if let Some(init_code) = init_code {
             keccak256(hex::decode(init_code)?)
+        } else {
+            unreachable!();
         };
 
         let mut n_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
@@ -214,41 +214,45 @@ mod tests {
 
     #[test]
     fn basic_create2() {
+        let mk_args = |args: &[&str]| {
+            Create2Args::parse_from(["foundry-cli", "--init-code-hash=0x0000000000000000000000000000000000000000000000000000000000000000"].iter().chain(args))
+        };
+
         // even hex chars
-        let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "aa"]);
+        let args = mk_args(&["--starts-with", "aa"]);
         let create2_out = args.run().unwrap();
         assert!(format!("{:x}", create2_out.address).starts_with("aa"));
 
-        let args = Create2Args::parse_from(["foundry-cli", "--ends-with", "bb"]);
+        let args = mk_args(&["--ends-with", "bb"]);
         let create2_out = args.run().unwrap();
         assert!(format!("{:x}", create2_out.address).ends_with("bb"));
 
         // odd hex chars
-        let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "aaa"]);
+        let args = mk_args(&["--starts-with", "aaa"]);
         let create2_out = args.run().unwrap();
         assert!(format!("{:x}", create2_out.address).starts_with("aaa"));
 
-        let args = Create2Args::parse_from(["foundry-cli", "--ends-with", "bbb"]);
+        let args = mk_args(&["--ends-with", "bbb"]);
         let create2_out = args.run().unwrap();
         assert!(format!("{:x}", create2_out.address).ends_with("bbb"));
 
         // even hex chars with 0x prefix
-        let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "0xaa"]);
+        let args = mk_args(&["--starts-with", "0xaa"]);
         let create2_out = args.run().unwrap();
         assert!(format!("{:x}", create2_out.address).starts_with("aa"));
 
         // odd hex chars with 0x prefix
-        let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "0xaaa"]);
+        let args = mk_args(&["--starts-with", "0xaaa"]);
         let create2_out = args.run().unwrap();
         assert!(format!("{:x}", create2_out.address).starts_with("aaa"));
 
         // check fails on wrong chars
-        let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "0xerr"]);
+        let args = mk_args(&["--starts-with", "0xerr"]);
         let create2_out = args.run();
         assert!(create2_out.is_err());
 
         // check fails on wrong x prefixed string provided
-        let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "x00"]);
+        let args = mk_args(&["--starts-with", "x00"]);
         let create2_out = args.run();
         assert!(create2_out.is_err());
     }
@@ -257,8 +261,8 @@ mod tests {
     fn matches_pattern() {
         let args = Create2Args::parse_from([
             "foundry-cli",
-            "--matching",
-            "0xbbXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+            "--init-code-hash=0x0000000000000000000000000000000000000000000000000000000000000000",
+            "--matching=0xbbXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
         ]);
         let create2_out = args.run().unwrap();
         let address = create2_out.address;
@@ -268,13 +272,8 @@ mod tests {
     #[test]
     fn create2_init_code() {
         let init_code = "00";
-        let args = Create2Args::parse_from([
-            "foundry-cli",
-            "--starts-with",
-            "cc",
-            "--init-code",
-            init_code,
-        ]);
+        let args =
+            Create2Args::parse_from(["foundry-cli", "--starts-with=cc", "--init-code", init_code]);
         let create2_out = args.run().unwrap();
         let address = create2_out.address;
         assert!(format!("{address:x}").starts_with("cc"));
@@ -288,8 +287,7 @@ mod tests {
         let init_code_hash = "bc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a";
         let args = Create2Args::parse_from([
             "foundry-cli",
-            "--starts-with",
-            "dd",
+            "--starts-with=dd",
             "--init-code-hash",
             init_code_hash,
         ]);
