@@ -1594,8 +1594,8 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// assert_eq!(
-    ///     "0x693c61390000000000000000000000000000000000000000000000000000000000000001",
-    ///     Cast::calldata_encode("f(uint a)", &["1"]).unwrap().as_str()
+    ///     "0xb3de648b0000000000000000000000000000000000000000000000000000000000000001",
+    ///     Cast::calldata_encode("f(uint256 a)", &["1"]).unwrap().as_str()
     /// );
     /// # Ok::<_, eyre::Report>(())
     /// ```
@@ -2015,8 +2015,8 @@ mod tests {
     #[test]
     fn calldata_uint() {
         assert_eq!(
-            "0x693c61390000000000000000000000000000000000000000000000000000000000000001",
-            Cast::calldata_encode("f(uint a)", &["1"]).unwrap().as_str()
+            "0xb3de648b0000000000000000000000000000000000000000000000000000000000000001",
+            Cast::calldata_encode("f(uint256 a)", &["1"]).unwrap().as_str()
         );
     }
 
