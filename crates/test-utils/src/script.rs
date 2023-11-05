@@ -261,7 +261,6 @@ impl ScriptOutcome {
 
     pub fn is_err(&self) -> bool {
         match self {
-<<<<<<< HEAD
             ScriptOutcome::OkNoEndpoint |
             ScriptOutcome::OkSimulation |
             ScriptOutcome::OkBroadcast |
@@ -272,29 +271,6 @@ impl ScriptOutcome {
             ScriptOutcome::UnsupportedLibraries |
             ScriptOutcome::ErrorSelectForkOnBroadcast |
             ScriptOutcome::ScriptFailed => true,
-||||||| parent of c5ce7950 (wip)
-            ScriptOutcome::OkNoEndpoint |
-            ScriptOutcome::OkSimulation |
-            ScriptOutcome::OkBroadcast |
-            ScriptOutcome::WarnSpecifyDeployer => false,
-            ScriptOutcome::MissingSender |
-            ScriptOutcome::MissingWallet |
-            ScriptOutcome::StaticCallNotAllowed |
-            ScriptOutcome::UnsupportedLibraries |
-            ScriptOutcome::ErrorSelectForkOnBroadcast |
-            ScriptOutcome::FailedScript => true,
-=======
-            ScriptOutcome::OkNoEndpoint
-            | ScriptOutcome::OkSimulation
-            | ScriptOutcome::OkBroadcast
-            | ScriptOutcome::WarnSpecifyDeployer => false,
-            ScriptOutcome::MissingSender
-            | ScriptOutcome::MissingWallet
-            | ScriptOutcome::StaticCallNotAllowed
-            | ScriptOutcome::UnsupportedLibraries
-            | ScriptOutcome::ErrorSelectForkOnBroadcast
-            | ScriptOutcome::FailedScript => true,
->>>>>>> c5ce7950 (wip)
         }
     }
 }
