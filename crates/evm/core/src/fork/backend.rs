@@ -185,7 +185,13 @@ where
                     // serialize & deserialize back to U256
                     let idx_req = B256::from(idx);
                     let storage = provider.get_storage_at(address, idx_req, block_id).await;
-                    (storage, address, idx)
+                    Ok((
+                        storage.success().ok_or_else(|| {
+                            eyre::eyre!("could not fetch slot {idx} from {address}")
+                        })?,
+                        address,
+                        idx,
+                    ))
                 });
                 self.pending_requests.push(ProviderRequest::Storage(fut));
             }
@@ -199,13 +205,23 @@ where
         let block_id = self.block_id;
         let fut = Box::pin(async move {
             let balance = provider.get_balance(address, block_id);
-            let nonce = provider.get_transaction_count(address, block_id.into());
+            let nonce = provider.get_transaction_count(address, block_id);
             let code =
                 provider.get_code_at(address, block_id.unwrap_or(BlockNumberOrTag::Latest.into()));
-            let resp = tokio::try_join!(balance, nonce, code).map(|(balance, nonce, code)| {
-                (balance.to_alloy(), nonce.to_alloy(), Bytes::from(code.0))
-            });
-            (resp, address)
+            let (balance, nonce, code) = tokio::join!(balance, nonce, code);
+            Ok((
+                (
+                    balance
+                        .success()
+                        .ok_or_else(|| eyre::eyre!("could not fetch balance for {address}"))?,
+                    nonce
+                        .success()
+                        .ok_or_else(|| eyre::eyre!("could not fetch nonce for {address}"))?,
+                    code.success()
+                        .ok_or_else(|| eyre::eyre!("could not fetch code for {address}"))?,
+                ),
+                address,
+            ))
         });
         ProviderRequest::Account(fut)
     }
@@ -745,7 +761,7 @@ mod tests {
     async fn can_read_write_cache() {
         let provider = get_http_provider(ENDPOINT);
 
-        let block_num = provider.get_block_number().await.unwrap().as_u64();
+        let block_num = provider.get_block_number().await.success().unwrap().to();
 
         let config = Config::figment();
         let mut evm_opts = config.extract::<EvmOpts>().unwrap();

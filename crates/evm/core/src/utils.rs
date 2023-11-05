@@ -3,15 +3,14 @@ use alloy_primitives::{Address, FixedBytes, B256};
 use alloy_rpc_types::{Block, Transaction};
 use ethers::types::{ActionType, CallType, Chain, H256, U256};
 use eyre::ContextCompat;
+pub use foundry_compilers::utils::RuntimeOrHandle;
+pub use revm::primitives::State as StateChangeset;
 use revm::{
     interpreter::{opcode, opcode::spec_opcode_gas, CallScheme, CreateInputs, InstructionResult},
     primitives::{CreateScheme, Eval, Halt, SpecId, TransactTo},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-
-pub use foundry_compilers::utils::RuntimeOrHandle;
-pub use revm::primitives::State as StateChangeset;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
@@ -254,7 +253,10 @@ pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
         .map(|item| {
             (
                 item.address,
-                item.storage_keys.into_iter().map(h256_to_u256_be).map(|g| g.to_alloy()).collect(),
+                item.storage_keys
+                    .into_iter()
+                    .map(|g| alloy_primitives::U256::from_be_bytes(g.0))
+                    .collect(),
             )
         })
         .collect();
