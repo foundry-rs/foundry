@@ -31,6 +31,10 @@ revm = { workspace = true, default-features = false, features = [
     "optional_no_base_fee",
     "arbitrary",
 ] }
+alloy-providers = { workspace = true }
+alloy-transports = { workspace = true }
+alloy-rpc-types = { workspace = true }
+ethers = { workspace = true, features = ["ethers-solc"] }
 
 ethers-contract.workspace = true
 ethers-core.workspace = true

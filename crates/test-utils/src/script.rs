@@ -1,10 +1,8 @@
 use crate::{init_tracing, TestCommand};
 use alloy_primitives::{Address, U256};
-use ethers_core::types::NameOrAddress;
-use ethers_providers::Middleware;
+use alloy_providers::provider::TempProvider;
 use eyre::Result;
 use foundry_common::{get_http_provider, RetryProvider};
-use foundry_utils::types::{ToAlloy, ToEthers};
 use std::{collections::BTreeMap, path::Path, str::FromStr};
 
 const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
@@ -114,13 +112,10 @@ impl ScriptTester {
 
             if let Some(provider) = &self.provider {
                 let nonce = provider
-                    .get_transaction_count(
-                        NameOrAddress::Address(self.accounts_pub[index as usize].to_ethers()),
-                        None,
-                    )
+                    .get_transaction_count(self.accounts_pub[index as usize], None)
                     .await
                     .unwrap();
-                self.nonces.insert(index, nonce.to_alloy());
+                self.nonces.insert(index, nonce);
             }
         }
         self
@@ -128,14 +123,9 @@ impl ScriptTester {
 
     pub async fn load_addresses(&mut self, addresses: Vec<Address>) -> &mut Self {
         for address in addresses {
-            let nonce = self
-                .provider
-                .as_ref()
-                .unwrap()
-                .get_transaction_count(NameOrAddress::Address(address.to_ethers()), None)
-                .await
-                .unwrap();
-            self.address_nonces.insert(address, nonce.to_alloy());
+            let nonce =
+                self.provider.as_ref().unwrap().get_transaction_count(address, None).await.unwrap();
+            self.address_nonces.insert(address, nonce);
         }
         self
     }
@@ -182,18 +172,13 @@ impl ScriptTester {
     ) -> &mut Self {
         for (private_key_slot, expected_increment) in keys_indexes {
             let addr = self.accounts_pub[private_key_slot as usize];
-            let nonce = self
-                .provider
-                .as_ref()
-                .unwrap()
-                .get_transaction_count(NameOrAddress::Address(addr.to_ethers()), None)
-                .await
-                .unwrap();
+            let nonce =
+                self.provider.as_ref().unwrap().get_transaction_count(addr, None).await.unwrap();
             let prev_nonce = self.nonces.get(&private_key_slot).unwrap();
 
             assert_eq!(
                 nonce,
-                (prev_nonce + U256::from(expected_increment)).to_ethers(),
+                (prev_nonce + U256::from(expected_increment)),
                 "nonce not incremented correctly for {addr}: \
                  {prev_nonce} + {expected_increment} != {nonce}"
             );
@@ -207,16 +192,11 @@ impl ScriptTester {
         address_indexes: Vec<(Address, u32)>,
     ) -> &mut Self {
         for (address, expected_increment) in address_indexes {
-            let nonce = self
-                .provider
-                .as_ref()
-                .unwrap()
-                .get_transaction_count(NameOrAddress::Address(address.to_ethers()), None)
-                .await
-                .unwrap();
+            let nonce =
+                self.provider.as_ref().unwrap().get_transaction_count(address, None).await.unwrap();
             let prev_nonce = self.address_nonces.get(&address).unwrap();
 
-            assert_eq!(nonce, (prev_nonce + U256::from(expected_increment)).to_ethers());
+            assert_eq!(nonce, (prev_nonce + U256::from(expected_increment)));
         }
         self
     }
@@ -281,6 +261,7 @@ impl ScriptOutcome {
 
     pub fn is_err(&self) -> bool {
         match self {
+<<<<<<< HEAD
             ScriptOutcome::OkNoEndpoint |
             ScriptOutcome::OkSimulation |
             ScriptOutcome::OkBroadcast |
@@ -291,6 +272,29 @@ impl ScriptOutcome {
             ScriptOutcome::UnsupportedLibraries |
             ScriptOutcome::ErrorSelectForkOnBroadcast |
             ScriptOutcome::ScriptFailed => true,
+||||||| parent of c5ce7950 (wip)
+            ScriptOutcome::OkNoEndpoint |
+            ScriptOutcome::OkSimulation |
+            ScriptOutcome::OkBroadcast |
+            ScriptOutcome::WarnSpecifyDeployer => false,
+            ScriptOutcome::MissingSender |
+            ScriptOutcome::MissingWallet |
+            ScriptOutcome::StaticCallNotAllowed |
+            ScriptOutcome::UnsupportedLibraries |
+            ScriptOutcome::ErrorSelectForkOnBroadcast |
+            ScriptOutcome::FailedScript => true,
+=======
+            ScriptOutcome::OkNoEndpoint
+            | ScriptOutcome::OkSimulation
+            | ScriptOutcome::OkBroadcast
+            | ScriptOutcome::WarnSpecifyDeployer => false,
+            ScriptOutcome::MissingSender
+            | ScriptOutcome::MissingWallet
+            | ScriptOutcome::StaticCallNotAllowed
+            | ScriptOutcome::UnsupportedLibraries
+            | ScriptOutcome::ErrorSelectForkOnBroadcast
+            | ScriptOutcome::FailedScript => true,
+>>>>>>> c5ce7950 (wip)
         }
     }
 }

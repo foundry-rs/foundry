@@ -6,7 +6,7 @@ use crate::{
     snapshot::Snapshots,
 };
 use alloy_primitives::{Address, B256, U256};
-use ethers_core::types::BlockId;
+use alloy_rpc_types::BlockId;
 use parking_lot::Mutex;
 use revm::{
     db::{CacheDB, DatabaseRef},

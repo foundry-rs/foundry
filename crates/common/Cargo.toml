@@ -14,6 +14,7 @@ foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-macros.workspace = true
+foundry-utils.workspace = true
 
 ethers-core.workspace = true
 ethers-middleware.workspace = true
@@ -22,6 +23,8 @@ ethers-providers = { workspace = true, features = ["ws", "ipc"] }
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-providers.workspace = true
+alloy-transports.workspace = true
 
 async-trait = "0.1"
 auto_impl = "1.1.0"

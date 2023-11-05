@@ -1,8 +1,11 @@
 use super::fork::environment;
 use crate::fork::CreateFork;
 use alloy_primitives::{Address, B256, U256};
-use ethers_core::types::{Block, Chain, TxHash};
-use ethers_providers::{Middleware, Provider};
+use alloy_rpc_types::Block;
+use ethers::{
+    providers::{Middleware, Provider},
+    types::Chain,
+};
 use eyre::WrapErr;
 use foundry_common::{self, ProviderBuilder, RpcUrl, ALCHEMY_FREE_TIER_CUPS};
 use foundry_compilers::utils::RuntimeOrHandle;
@@ -71,7 +74,7 @@ impl EvmOpts {
     pub async fn fork_evm_env(
         &self,
         fork_url: impl AsRef<str>,
-    ) -> eyre::Result<(revm::primitives::Env, Block<TxHash>)> {
+    ) -> eyre::Result<(revm::primitives::Env, Block)> {
         let fork_url = fork_url.as_ref();
         let provider = ProviderBuilder::new(fork_url)
             .compute_units_per_second(self.get_compute_units_per_second())
@@ -154,7 +157,7 @@ impl EvmOpts {
     ///   - mainnet otherwise
     pub fn get_chain_id(&self) -> u64 {
         if let Some(id) = self.env.chain_id {
-            return id
+            return id;
         }
         self.get_remote_chain_id().map_or(Chain::Mainnet as u64, |id| id as u64)
     }
@@ -167,7 +170,7 @@ impl EvmOpts {
         if self.no_rpc_rate_limit {
             u64::MAX
         } else if let Some(cups) = self.compute_units_per_second {
-            return cups
+            return cups;
         } else {
             ALCHEMY_FREE_TIER_CUPS
         }
@@ -178,14 +181,14 @@ impl EvmOpts {
         if let Some(ref url) = self.fork_url {
             if url.contains("mainnet") {
                 trace!(?url, "auto detected mainnet chain");
-                return Some(Chain::Mainnet)
+                return Some(Chain::Mainnet);
             }
             trace!(?url, "retrieving chain via eth_chainId");
             let provider = Provider::try_from(url.as_str())
                 .unwrap_or_else(|_| panic!("Failed to establish provider to {url}"));
 
             if let Ok(id) = RuntimeOrHandle::new().block_on(provider.get_chainid()) {
-                return Chain::try_from(id.as_u64()).ok()
+                return Chain::try_from(id.as_u64()).ok();
             }
         }
 

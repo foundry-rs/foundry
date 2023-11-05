@@ -18,6 +18,7 @@ foundry-config.workspace = true
 foundry-utils.workspace = true
 
 alloy-primitives.workspace = true
+alloy-providers.workspace = true
 
 ethers-core.workspace = true
 ethers-providers.workspace = true

@@ -4,13 +4,12 @@ use crate::{
     fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
 };
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
-use ethers_core::{
-    abi::ethereum_types::BigEndianHash,
-    types::{Block, BlockId, NameOrAddress, Transaction},
-};
-use ethers_providers::Middleware;
+use alloy_providers::provider::TempProvider;
+use alloy_rpc_types::{Block, BlockId, BlockNumberOrTag, Transaction};
+use alloy_transports::TransportError;
+use ethers::types::NameOrAddress;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
-use foundry_utils::types::{ToAlloy, ToEthers};
+use foundry_utils::types::ToEthers;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     stream::Stream,
@@ -36,12 +35,8 @@ type AccountFuture<Err> =
     Pin<Box<dyn Future<Output = (Result<(U256, U256, Bytes), Err>, Address)> + Send>>;
 type StorageFuture<Err> = Pin<Box<dyn Future<Output = (Result<U256, Err>, Address, U256)> + Send>>;
 type BlockHashFuture<Err> = Pin<Box<dyn Future<Output = (Result<B256, Err>, u64)> + Send>>;
-type FullBlockFuture<Err> = Pin<
-    Box<
-        dyn Future<Output = (FullBlockSender, Result<Option<Block<Transaction>>, Err>, BlockId)>
-            + Send,
-    >,
->;
+type FullBlockFuture<Err> =
+    Pin<Box<dyn Future<Output = (FullBlockSender, Result<Option<Block>, Err>, BlockId)> + Send>>;
 type TransactionFuture<Err> = Pin<
     Box<dyn Future<Output = (TransactionSender, Result<Option<Transaction>, Err>, B256)> + Send>,
 >;
@@ -49,7 +44,7 @@ type TransactionFuture<Err> = Pin<
 type AccountInfoSender = OneshotSender<DatabaseResult<AccountInfo>>;
 type StorageSender = OneshotSender<DatabaseResult<U256>>;
 type BlockHashSender = OneshotSender<DatabaseResult<B256>>;
-type FullBlockSender = OneshotSender<DatabaseResult<Block<Transaction>>>;
+type FullBlockSender = OneshotSender<DatabaseResult<Block>>;
 type TransactionSender = OneshotSender<DatabaseResult<Transaction>>;
 
 /// Request variants that are executed by the provider
@@ -83,12 +78,12 @@ enum BackendRequest {
 /// This handler will remain active as long as it is reachable (request channel still open) and
 /// requests are in progress.
 #[must_use = "BackendHandler does nothing unless polled."]
-pub struct BackendHandler<M: Middleware> {
-    provider: M,
+pub struct BackendHandler<P> {
+    provider: P,
     /// Stores all the data.
     db: BlockchainDb,
     /// Requests currently in progress
-    pending_requests: Vec<ProviderRequest<M::Error>>,
+    pending_requests: Vec<ProviderRequest<TransportError>>,
     /// Listeners that wait for a `get_account` related response
     account_requests: HashMap<Address, Vec<AccountInfoSender>>,
     /// Listeners that wait for a `get_storage_at` response
@@ -104,12 +99,12 @@ pub struct BackendHandler<M: Middleware> {
     block_id: Option<BlockId>,
 }
 
-impl<M> BackendHandler<M>
+impl<P> BackendHandler<P>
 where
-    M: Middleware + Clone + 'static,
+    P: TempProvider + Clone + 'static,
 {
     fn new(
-        provider: M,
+        provider: P,
         db: BlockchainDb,
         rx: Receiver<BackendRequest>,
         block_id: Option<BlockId>,
@@ -189,14 +184,7 @@ where
                 let fut = Box::pin(async move {
                     // serialize & deserialize back to U256
                     let idx_req = B256::from(idx);
-                    let storage = provider
-                        .get_storage_at(
-                            NameOrAddress::Address(address.to_ethers()),
-                            idx_req.to_ethers(),
-                            block_id,
-                        )
-                        .await;
-                    let storage = storage.map(|storage| storage.into_uint()).map(|s| s.to_alloy());
+                    let storage = provider.get_storage_at(address, idx_req, block_id).await;
                     (storage, address, idx)
                 });
                 self.pending_requests.push(ProviderRequest::Storage(fut));
@@ -205,16 +193,15 @@ where
     }
 
     /// returns the future that fetches the account data
-    fn get_account_req(&self, address: Address) -> ProviderRequest<M::Error> {
+    fn get_account_req(&self, address: Address) -> ProviderRequest<TransportError> {
         trace!(target: "backendhandler", "preparing account request, address={:?}", address);
         let provider = self.provider.clone();
         let block_id = self.block_id;
         let fut = Box::pin(async move {
-            let balance =
-                provider.get_balance(NameOrAddress::Address(address.to_ethers()), block_id);
-            let nonce = provider
-                .get_transaction_count(NameOrAddress::Address(address.to_ethers()), block_id);
-            let code = provider.get_code(NameOrAddress::Address(address.to_ethers()), block_id);
+            let balance = provider.get_balance(address, block_id);
+            let nonce = provider.get_transaction_count(address, block_id.into());
+            let code =
+                provider.get_code_at(address, block_id.unwrap_or(BlockNumberOrTag::Latest.into()));
             let resp = tokio::try_join!(balance, nonce, code).map(|(balance, nonce, code)| {
                 (balance.to_alloy(), nonce.to_alloy(), Bytes::from(code.0))
             });
@@ -240,7 +227,7 @@ where
     fn request_full_block(&mut self, number: BlockId, sender: FullBlockSender) {
         let provider = self.provider.clone();
         let fut = Box::pin(async move {
-            let block = provider.get_block_with_txs(number).await;
+            let block = provider.get_block_by_number(number.into(), true).await;
             (sender, block, number)
         });
 
@@ -251,7 +238,7 @@ where
     fn request_transaction(&mut self, tx: B256, sender: TransactionSender) {
         let provider = self.provider.clone();
         let fut = Box::pin(async move {
-            let block = provider.get_transaction(tx.to_ethers()).await;
+            let block = provider.get_transaction_by_hash(tx).await;
             (sender, block, tx)
         });
 
@@ -269,7 +256,7 @@ where
                 entry.insert(vec![listener]);
                 let provider = self.provider.clone();
                 let fut = Box::pin(async move {
-                    let block = provider.get_block(number).await;
+                    let block = provider.get_block_by_number(number, false).await;
 
                     let block_hash = match block {
                         Ok(Some(block)) => Ok(block
@@ -294,9 +281,9 @@ where
     }
 }
 
-impl<M> Future for BackendHandler<M>
+impl<P> Future for BackendHandler<P>
 where
-    M: Middleware + Clone + Unpin + 'static,
+    P: TempProvider + Clone + Unpin + 'static,
 {
     type Output = ();
 
@@ -316,7 +303,7 @@ where
                     }
                     Poll::Ready(None) => {
                         trace!(target: "backendhandler", "last sender dropped, ready to drop (&flush cache)");
-                        return Poll::Ready(())
+                        return Poll::Ready(());
                     }
                     Poll::Pending => break,
                 }
@@ -341,7 +328,7 @@ where
                                             )));
                                         })
                                     }
-                                    continue
+                                    continue;
                                 }
                             };
 
@@ -367,7 +354,7 @@ where
                                     let _ = l.send(Ok(acc.clone()));
                                 })
                             }
-                            continue
+                            continue;
                         }
                     }
                     ProviderRequest::Storage(fut) => {
@@ -388,7 +375,7 @@ where
                                             )));
                                         })
                                     }
-                                    continue
+                                    continue;
                                 }
                             };
 
@@ -401,7 +388,7 @@ where
                                     let _ = l.send(Ok(value));
                                 })
                             }
-                            continue
+                            continue;
                         }
                     }
                     ProviderRequest::BlockHash(fut) => {
@@ -419,7 +406,7 @@ where
                                             )));
                                         })
                                     }
-                                    continue
+                                    continue;
                                 }
                             };
 
@@ -432,7 +419,7 @@ where
                                     let _ = l.send(Ok(value));
                                 })
                             }
-                            continue
+                            continue;
                         }
                     }
                     ProviderRequest::FullBlock(fut) => {
@@ -446,7 +433,7 @@ where
                                 }
                             };
                             let _ = sender.send(msg);
-                            continue
+                            continue;
                         }
                     }
                     ProviderRequest::Transaction(fut) => {
@@ -460,7 +447,7 @@ where
                                 }
                             };
                             let _ = sender.send(msg);
-                            continue
+                            continue;
                         }
                     }
                 }
@@ -471,7 +458,7 @@ where
             // If no new requests have been queued, break to
             // be polled again later.
             if pin.queued_requests.is_empty() {
-                return Poll::Pending
+                return Poll::Pending;
             }
         }
     }
@@ -524,9 +511,9 @@ impl SharedBackend {
     /// dropped.
     ///
     /// NOTE: this should be called with `Arc<Provider>`
-    pub async fn spawn_backend<M>(provider: M, db: BlockchainDb, pin_block: Option<BlockId>) -> Self
+    pub async fn spawn_backend<P>(provider: P, db: BlockchainDb, pin_block: Option<BlockId>) -> Self
     where
-        M: Middleware + Unpin + 'static + Clone,
+        P: TempProvider + Unpin + 'static + Clone,
     {
         let (shared, handler) = Self::new(provider, db, pin_block);
         // spawn the provider handler to a task
@@ -537,13 +524,13 @@ impl SharedBackend {
 
     /// Same as `Self::spawn_backend` but spawns the `BackendHandler` on a separate `std::thread` in
     /// its own `tokio::Runtime`
-    pub fn spawn_backend_thread<M>(
-        provider: M,
+    pub fn spawn_backend_thread<P>(
+        provider: P,
         db: BlockchainDb,
         pin_block: Option<BlockId>,
     ) -> Self
     where
-        M: Middleware + Unpin + 'static + Clone,
+        P: TempProvider + Unpin + 'static + Clone,
     {
         let (shared, handler) = Self::new(provider, db, pin_block);
 
@@ -566,13 +553,13 @@ impl SharedBackend {
     }
 
     /// Returns a new `SharedBackend` and the `BackendHandler`
-    pub fn new<M>(
-        provider: M,
+    pub fn new<P>(
+        provider: P,
         db: BlockchainDb,
         pin_block: Option<BlockId>,
-    ) -> (Self, BackendHandler<M>)
+    ) -> (Self, BackendHandler<P>)
     where
-        M: Middleware + Unpin + 'static + Clone,
+        P: TempProvider + Clone + 'static,
     {
         let (backend, backend_rx) = channel(1);
         let cache = Arc::new(FlushJsonBlockCacheDB(Arc::clone(db.cache())));
@@ -587,7 +574,7 @@ impl SharedBackend {
     }
 
     /// Returns the full block for the given block identifier
-    pub fn get_full_block(&self, block: impl Into<BlockId>) -> DatabaseResult<Block<Transaction>> {
+    pub fn get_full_block(&self, block: impl Into<BlockId>) -> DatabaseResult<Block> {
         tokio::task::block_in_place(|| {
             let (sender, rx) = oneshot_channel();
             let req = BackendRequest::FullBlock(block.into(), sender);
@@ -673,7 +660,7 @@ impl DatabaseRef for SharedBackend {
 
     fn block_hash(&self, number: U256) -> Result<B256, Self::Error> {
         if number > U256::from(u64::MAX) {
-            return Ok(KECCAK_EMPTY)
+            return Ok(KECCAK_EMPTY);
         }
         let number: U256 = number;
         let number = number.to();
