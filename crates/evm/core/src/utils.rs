@@ -1,8 +1,8 @@
 use alloy_json_abi::{Function, JsonAbi as Abi};
 use alloy_primitives::{Address, FixedBytes, B256};
-use ethers::types::{ActionType, Block, CallType, Chain, Transaction, H256, U256};
+use alloy_rpc_types::{Block, Transaction};
+use ethers::types::{ActionType, CallType, Chain, H256, U256};
 use eyre::ContextCompat;
-use foundry_utils::types::ToAlloy;
 use revm::{
     interpreter::{opcode, opcode::spec_opcode_gas, CallScheme, CreateInputs, InstructionResult},
     primitives::{CreateScheme, Eval, Halt, SpecId, TransactTo},
@@ -139,40 +139,38 @@ pub fn halt_to_instruction_result(halt: Halt) -> InstructionResult {
 ///
 /// This checks for:
 ///    - prevrandao mixhash after merge
-pub fn apply_chain_and_block_specific_env_changes<T>(
-    env: &mut revm::primitives::Env,
-    block: &Block<T>,
-) {
+pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::Env, block: &Block) {
     if let Ok(chain) = Chain::try_from(env.cfg.chain_id) {
-        let block_number = block.number.unwrap_or_default();
+        let block_number = block.header.number.unwrap_or_default();
 
         match chain {
             Chain::Mainnet => {
                 // after merge difficulty is supplanted with prevrandao EIP-4399
-                if block_number.as_u64() >= 15_537_351u64 {
+                if block_number.to::<u64>() >= 15_537_351u64 {
                     env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
                 }
 
-                return
+                return;
             }
-            Chain::Arbitrum |
-            Chain::ArbitrumGoerli |
-            Chain::ArbitrumNova |
-            Chain::ArbitrumTestnet => {
+            Chain::Arbitrum
+            | Chain::ArbitrumGoerli
+            | Chain::ArbitrumNova
+            | Chain::ArbitrumTestnet => {
                 // on arbitrum `block.number` is the L1 block which is included in the
                 // `l1BlockNumber` field
-                if let Some(l1_block_number) = block.other.get("l1BlockNumber").cloned() {
-                    if let Ok(l1_block_number) = serde_json::from_value::<U256>(l1_block_number) {
-                        env.block.number = l1_block_number.to_alloy();
-                    }
+                // todo(onbjerg): not supported by new alloy rpc types
+                /*if let Some(l1_block_number) = block.other.get("l1BlockNumber").cloned() {
+                if let Ok(l1_block_number) = serde_json::from_value::<U256>(l1_block_number) {
+                    env.block.number = l1_block_number.to_alloy();
                 }
+                }*/
             }
             _ => {}
         }
     }
 
     // if difficulty is `0` we assume it's past merge
-    if block.difficulty.is_zero() {
+    if block.header.difficulty.is_zero() {
         env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
     }
 }
@@ -243,28 +241,26 @@ pub fn get_function(
 
 /// Configures the env for the transaction
 pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
-    env.tx.caller = tx.from.to_alloy();
-    env.tx.gas_limit = tx.gas.as_u64();
-    env.tx.gas_price = tx.gas_price.unwrap_or_default().to_alloy();
-    env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(|g| g.to_alloy());
-    env.tx.nonce = Some(tx.nonce.as_u64());
+    env.tx.caller = tx.from;
+    env.tx.gas_limit = tx.gas.to();
+    env.tx.gas_price = tx.gas_price.unwrap_or_default().to();
+    env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(|g| g.to());
+    env.tx.nonce = Some(tx.nonce.to());
     env.tx.access_list = tx
         .access_list
         .clone()
         .unwrap_or_default()
-        .0
         .into_iter()
         .map(|item| {
             (
-                item.address.to_alloy(),
+                item.address,
                 item.storage_keys.into_iter().map(h256_to_u256_be).map(|g| g.to_alloy()).collect(),
             )
         })
         .collect();
-    env.tx.value = tx.value.to_alloy();
+    env.tx.value = tx.value.to();
     env.tx.data = alloy_primitives::Bytes(tx.input.0.clone());
-    env.tx.transact_to =
-        tx.to.map(|tx| tx.to_alloy()).map(TransactTo::Call).unwrap_or_else(TransactTo::create)
+    env.tx.transact_to = tx.to.map(TransactTo::Call).unwrap_or_else(TransactTo::create)
 }
 
 /// Get the address of a contract creation

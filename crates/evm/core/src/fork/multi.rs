@@ -4,13 +4,11 @@
 //! concurrently active pairs at once.
 
 use crate::fork::{BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend};
-use ethers::{
-    providers::Provider,
-    types::{BlockId, BlockNumber},
-};
-use foundry_common::{runtime_client::RuntimeClient, ProviderBuilder};
+use alloy_providers::provider::Provider;
+use alloy_transports::BoxTransport;
+use ethers::types::BlockNumber;
+use foundry_common::ProviderBuilder;
 use foundry_config::Config;
-use foundry_utils::types::ToEthers;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     stream::{Fuse, Stream},
@@ -153,7 +151,7 @@ impl MultiFork {
     }
 }
 
-type Handler = BackendHandler<Arc<Provider<RuntimeClient>>>;
+type Handler = BackendHandler<Provider<BoxTransport>>;
 
 type CreateFuture = Pin<Box<dyn Future<Output = eyre::Result<(CreatedFork, Handler)>> + Send>>;
 type CreateSender = OneshotSender<eyre::Result<(ForkId, SharedBackend, Env)>>;
@@ -228,7 +226,7 @@ impl MultiForkHandler {
             #[allow(irrefutable_let_patterns)]
             if let ForkTask::Create(_, in_progress, _, additional) = task {
                 if in_progress == id {
-                    return Some(additional)
+                    return Some(additional);
                 }
             }
         }
@@ -246,7 +244,7 @@ impl MultiForkHandler {
             // there could already be a task for the requested fork in progress
             if let Some(in_progress) = self.find_in_progress_task(&fork_id) {
                 in_progress.push(sender);
-                return
+                return;
             }
 
             // need to create a new fork
@@ -307,7 +305,7 @@ impl Future for MultiForkHandler {
                 Poll::Ready(None) => {
                     // channel closed, but we still need to drive the fork handlers to completion
                     trace!(target: "fork::multi", "request channel closed");
-                    break
+                    break;
                 }
                 Poll::Pending => break,
             }
@@ -368,7 +366,7 @@ impl Future for MultiForkHandler {
 
         if pin.handlers.is_empty() && pin.incoming.is_done() {
             trace!(target: "fork::multi", "completed");
-            return Poll::Ready(())
+            return Poll::Ready(());
         }
 
         // periodically flush cached RPC state
@@ -376,8 +374,8 @@ impl Future for MultiForkHandler {
             .flush_cache_interval
             .as_mut()
             .map(|interval| interval.poll_tick(cx).is_ready())
-            .unwrap_or_default() &&
-            !pin.forks.is_empty()
+            .unwrap_or_default()
+            && !pin.forks.is_empty()
         {
             trace!(target: "fork::multi", "tick flushing caches");
             let forks = pin.forks.values().map(|f| f.backend.clone()).collect::<Vec<_>>();
@@ -464,21 +462,17 @@ async fn create_fork(mut fork: CreateFork) -> eyre::Result<(CreatedFork, Handler
 
     // we need to use the block number from the block because the env's number can be different on
     // some L2s (e.g. Arbitrum).
-    let number = block
-        .number
-        .map(|num| num.as_u64())
-        .unwrap_or_else(|| meta.block_env.number.to_ethers().as_u64());
+    let number = block.header.number.unwrap_or_else(|| meta.block_env.number);
 
     // determine the cache path if caching is enabled
     let cache_path = if fork.enable_caching {
-        Config::foundry_block_cache_dir(meta.cfg_env.chain_id, number)
+        Config::foundry_block_cache_dir(meta.cfg_env.chain_id, number.to::<u64>())
     } else {
         None
     };
 
     let db = BlockchainDb::new(meta, cache_path);
-    let (backend, handler) =
-        SharedBackend::new(provider, db, Some(BlockId::Number(BlockNumber::Number(number.into()))));
+    let (backend, handler) = SharedBackend::new(provider, db, Some(number.to::<u64>().into()));
     let fork = CreatedFork::new(fork, backend);
     Ok((fork, handler))
 }

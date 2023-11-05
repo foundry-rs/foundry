@@ -30,6 +30,9 @@ revm = { workspace = true, default-features = false, features = [
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi = { workspace = true }
+alloy-providers = { workspace = true }
+alloy-transports = { workspace = true }
+alloy-rpc-types = { workspace = true }
 alloy-sol-types.workspace = true
 ethers = { workspace = true, features = ["ethers-solc"] }
 

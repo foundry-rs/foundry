@@ -1,11 +1,15 @@
 //! Commonly used helpers to construct `Provider`s
 
-use crate::{runtime_client::RuntimeClient, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
-use ethers_core::types::{Chain, U256};
+use crate::{ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
+use alloy_primitives::U256;
+use alloy_providers::provider::{Provider, TempProvider};
+use alloy_transports::{Authorization, BoxTransport, Http, Transport};
+use ethers_core::types::Chain;
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
-use ethers_providers::{is_local_endpoint, Middleware, Provider, DEFAULT_LOCAL_POLL_INTERVAL};
+use ethers_providers::{JwtAuth, JwtKey};
 use eyre::{Result, WrapErr};
-use reqwest::Url;
+use foundry_utils::types::ToAlloy;
+use reqwest::{header::HeaderValue, Url};
 use std::{
     path::{Path, PathBuf},
     time::Duration,
@@ -13,7 +17,7 @@ use std::{
 use url::ParseError;
 
 /// Helper type alias for a retry provider
-pub type RetryProvider = Provider<RuntimeClient>;
+pub type RetryProvider = Provider<BoxTransport>;
 
 /// Helper type alias for a rpc url
 pub type RpcUrl = String;
@@ -191,12 +195,13 @@ impl ProviderBuilder {
     /// Same as [`Self:build()`] but also retrieves the `chainId` in order to derive an appropriate
     /// interval.
     pub async fn connect(self) -> Result<RetryProvider> {
-        let mut provider = self.build()?;
-        if let Some(blocktime) = provider.get_chainid().await.ok().and_then(|id| {
+        let provider = self.build()?;
+        // todo: port poll interval hint
+        /*if let Some(blocktime) = provider.get_chainid().await.ok().and_then(|id| {
             Chain::try_from(id).ok().and_then(|chain| chain.average_blocktime_hint())
         }) {
             provider = provider.interval(blocktime / 2);
-        }
+            }*/
         Ok(provider)
     }
 
@@ -214,25 +219,38 @@ impl ProviderBuilder {
         } = self;
         let url = url?;
 
-        let is_local = is_local_endpoint(url.as_str());
+        // todo: ipc
+        // todo: ws
+        // todo: port alchemy compute units logic?
+        // todo: provider polling interval
+        let transport = match url.scheme() {
+            "http" | "https" => {
+                let mut client_builder = reqwest::Client::builder().timeout(self.timeout);
 
-        let mut provider = Provider::new(RuntimeClient::new(
-            url,
-            max_retry,
-            timeout_retry,
-            initial_backoff,
-            timeout,
-            compute_units_per_second,
-            jwt,
-        ));
+                if let Some(jwt) = jwt {
+                    // todo: wrap err
+                    let auth = build_auth(jwt)?;
 
-        if is_local {
-            provider = provider.interval(DEFAULT_LOCAL_POLL_INTERVAL);
-        } else if let Some(blocktime) = chain.average_blocktime_hint() {
-            provider = provider.interval(blocktime / 2);
-        }
+                    let mut auth_value: HeaderValue = HeaderValue::from_str(&auth.to_string())
+                        .expect("Header should be valid string");
+                    auth_value.set_sensitive(true);
 
-        Ok(provider)
+                    let mut headers = reqwest::header::HeaderMap::new();
+                    headers.insert(reqwest::header::AUTHORIZATION, auth_value);
+
+                    client_builder = client_builder.default_headers(headers);
+                };
+
+                // todo: wrap err
+                let client = client_builder.build()?;
+
+                // todo: retry tower layer
+                Http::with_client(client, url).boxed()
+            }
+            _ => unimplemented!(),
+        };
+
+        Ok(Provider::new(transport))
     }
 }
 
@@ -242,17 +260,19 @@ impl ProviderBuilder {
 ///   - polygon
 ///
 /// Fallback is the default [`Provider::estimate_eip1559_fees`] implementation
-pub async fn estimate_eip1559_fees<M: Middleware>(
-    provider: &M,
+pub async fn estimate_eip1559_fees<P: TempProvider>(
+    provider: &P,
     chain: Option<u64>,
-) -> Result<(U256, U256)>
-where
-    M::Error: 'static,
-{
+) -> Result<(U256, U256)> {
     let chain = if let Some(chain) = chain {
         chain
     } else {
-        provider.get_chainid().await.wrap_err("Failed to get chain id")?.as_u64()
+        provider
+            .get_chain_id()
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("Failed to get chain id"))?
+            .to()
     };
 
     if let Ok(chain) = Chain::try_from(chain) {
@@ -260,12 +280,17 @@ where
         match chain {
             Chain::Polygon | Chain::PolygonMumbai => {
                 let estimator = Polygon::new(chain)?.category(GasCategory::Standard);
-                return Ok(estimator.estimate_eip1559_fees().await?)
+                let (a, b) = estimator.estimate_eip1559_fees().await?;
+                return Ok((a.to_alloy(), b.to_alloy()));
             }
             _ => {}
         }
     }
-    provider.estimate_eip1559_fees(None).await.wrap_err("Failed fetch EIP1559 fees")
+    provider
+        .estimate_eip1559_fees(None)
+        .await
+        .success()
+        .ok_or_else(|| eyre::eyre!("Failed fetch EIP1559 fees"))
 }
 
 #[cfg(not(windows))]
@@ -285,6 +310,20 @@ fn resolve_path(path: &Path) -> Result<PathBuf, ()> {
         }
     }
     Err(())
+}
+
+// todo: docs
+fn build_auth(jwt: String) -> eyre::Result<Authorization> {
+    // Decode jwt from hex, then generate claims (iat with current timestamp)
+    let jwt = hex::decode(jwt)?;
+    let secret = JwtKey::from_slice(&jwt).map_err(|err| eyre::eyre!("Invalid JWT: {}", err))?;
+    let auth = JwtAuth::new(secret, None, None);
+    let token = auth.generate_token()?;
+
+    // Essentially unrolled ethers-rs new_with_auth to accomodate the custom timeout
+    let auth = Authorization::Bearer(token);
+
+    Ok(auth)
 }
 
 #[cfg(test)]
