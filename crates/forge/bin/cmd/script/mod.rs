@@ -366,8 +366,10 @@ impl ScriptArgs {
         }
 
         if !result.success {
-            let revert_msg = decode::decode_revert(&result.returned[..], None, None);
-            eyre::bail!("{}", Paint::red(revert_msg));
+            return Err(eyre::eyre!(
+                "script failed: {}",
+                decode::decode_revert(&result.returned[..], None, None)
+            ))
         }
 
         Ok(())

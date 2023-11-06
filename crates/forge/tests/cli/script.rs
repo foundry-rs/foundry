@@ -627,7 +627,7 @@ forgetest_async!(can_deploy_with_create2, |prj: TestProject, cmd: TestCommand| a
         .assert_nonce_increment([(0, 2)])
         .await
         // Running again results in error, since we're repeating the salt passed to CREATE2
-        .run(ScriptOutcome::FailedScript);
+        .run(ScriptOutcome::ScriptFailed);
 });
 
 forgetest_async!(

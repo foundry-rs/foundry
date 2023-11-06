@@ -1,15 +1,15 @@
 //! Various utilities to decode test results.
 
+use crate::abi::ConsoleEvents;
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::B256;
 use alloy_sol_types::{SolCall, SolError, SolInterface, SolValue};
 use ethers::{abi::RawLog, contract::EthLogDecode, types::Log};
-use foundry_abi::console::ConsoleEvents::{self, *};
 use foundry_cheatcodes_defs::Vm;
 use foundry_common::SELECTOR_LEN;
 use itertools::Itertools;
-use revm::interpreter::{return_ok, InstructionResult};
+use revm::interpreter::InstructionResult;
 
 /// Decode a set of logs, only returning logs from DSTest logging events and Hardhat's `console.log`
 pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
@@ -21,17 +21,19 @@ pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
 /// This function returns [None] if it is not a DSTest log or the result of a Hardhat
 /// `console.log`.
 pub fn decode_console_log(log: &Log) -> Option<String> {
+    use ConsoleEvents as CE;
+
     // NOTE: We need to do this conversion because ethers-rs does not
     // support passing `Log`s
     let raw_log = RawLog { topics: log.topics.clone(), data: log.data.to_vec() };
     let decoded = match ConsoleEvents::decode_log(&raw_log).ok()? {
-        LogsFilter(inner) => format!("{}", inner.0),
-        LogBytesFilter(inner) => format!("{}", inner.0),
-        LogNamedAddressFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
-        LogNamedBytes32Filter(inner) => {
+        CE::LogsFilter(inner) => format!("{}", inner.0),
+        CE::LogBytesFilter(inner) => format!("{}", inner.0),
+        CE::LogNamedAddressFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        CE::LogNamedBytes32Filter(inner) => {
             format!("{}: {}", inner.key, B256::new(inner.val))
         }
-        LogNamedDecimalIntFilter(inner) => {
+        CE::LogNamedDecimalIntFilter(inner) => {
             let (sign, val) = inner.val.into_sign_and_abs();
             format!(
                 "{}: {}{}",
@@ -40,22 +42,22 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
                 ethers::utils::format_units(val, inner.decimals.as_u32()).unwrap()
             )
         }
-        LogNamedDecimalUintFilter(inner) => {
+        CE::LogNamedDecimalUintFilter(inner) => {
             format!(
                 "{}: {}",
                 inner.key,
                 ethers::utils::format_units(inner.val, inner.decimals.as_u32()).unwrap()
             )
         }
-        LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
-        LogNamedUintFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
-        LogNamedBytesFilter(inner) => {
+        CE::LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        CE::LogNamedUintFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        CE::LogNamedBytesFilter(inner) => {
             format!("{}: {}", inner.key, inner.val)
         }
-        LogNamedStringFilter(inner) => format!("{}: {}", inner.key, inner.val),
-        LogNamedArray1Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
-        LogNamedArray2Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
-        LogNamedArray3Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        CE::LogNamedStringFilter(inner) => format!("{}: {}", inner.key, inner.val),
+        CE::LogNamedArray1Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        CE::LogNamedArray2Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        CE::LogNamedArray3Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
 
         e => e.to_string(),
     };
@@ -73,11 +75,15 @@ pub fn decode_revert(
 ) -> String {
     if err.len() < SELECTOR_LEN {
         if let Some(status) = status {
-            if !matches!(status, return_ok!()) {
+            if !status.is_ok() {
                 return format!("EvmError: {status:?}")
             }
         }
-        return format!("custom error bytes {}", hex::encode_prefixed(err))
+        return if err.is_empty() {
+            "<no data>".to_string()
+        } else {
+            format!("custom error bytes {}", hex::encode_prefixed(err))
+        }
     }
 
     if err == crate::constants::MAGIC_SKIP {

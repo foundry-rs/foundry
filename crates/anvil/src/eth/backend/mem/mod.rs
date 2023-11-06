@@ -64,7 +64,7 @@ use foundry_evm::{
     revm::{
         self,
         db::CacheDB,
-        interpreter::{return_ok, InstructionResult},
+        interpreter::InstructionResult,
         primitives::{
             Account, BlockEnv, CreateScheme, EVMError, Env, ExecutionResult, InvalidHeader, Output,
             SpecId, TransactTo, TxEnv, KECCAK_EMPTY,
@@ -909,39 +909,20 @@ impl Backend {
             // insert all transactions
             for (info, receipt) in transactions.into_iter().zip(receipts) {
                 // log some tx info
-                {
-                    node_info!("    Transaction: {:?}", info.transaction_hash);
-                    if let Some(ref contract) = info.contract_address {
-                        node_info!("    Contract created: {:?}", contract);
-                    }
-                    node_info!("    Gas used: {}", receipt.gas_used());
-                    match info.exit {
-                        return_ok!() => (),
-                        InstructionResult::OutOfFund => {
-                            node_info!("    Error: reverted due to running out of funds");
-                        }
-                        InstructionResult::CallTooDeep => {
-                            node_info!("    Error: reverted with call too deep");
-                        }
-                        InstructionResult::Revert => {
-                            if let Some(r) = &info.out {
-                                node_info!(
-                                    "    Error: reverted with '{}'",
-                                    decode_revert(r, None, None)
-                                );
-                            } else {
-                                node_info!("    Error: reverted without a reason");
-                            }
-                        }
-                        InstructionResult::OutOfGas => {
-                            node_info!("    Error: ran out of gas");
-                        }
-                        reason => {
-                            node_info!("    Error: failed due to {:?}", reason);
-                        }
-                    }
-                    node_info!("");
+                node_info!("    Transaction: {:?}", info.transaction_hash);
+                if let Some(contract) = &info.contract_address {
+                    node_info!("    Contract created: {contract:?}");
                 }
+                node_info!("    Gas used: {}", receipt.gas_used());
+                if !info.exit.is_ok() {
+                    let r = decode_revert(
+                        info.out.as_deref().unwrap_or_default(),
+                        None,
+                        Some(info.exit),
+                    );
+                    node_info!("    Error: reverted with: {r}");
+                }
+                node_info!("");
 
                 let mined_tx = MinedTransaction {
                     info,

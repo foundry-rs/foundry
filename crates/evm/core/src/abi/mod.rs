@@ -4,8 +4,8 @@ use once_cell::sync::Lazy;
 use std::collections::HashMap;
 
 pub use foundry_abi::{
-    console::{self, ConsoleEvents, CONSOLE_ABI},
-    hardhat_console::{self, HardhatConsoleCalls, HARDHATCONSOLE_ABI as HARDHAT_CONSOLE_ABI},
+    console::{ConsoleEvents, CONSOLE_ABI},
+    hardhat_console::{HardhatConsoleCalls, HARDHATCONSOLE_ABI as HARDHAT_CONSOLE_ABI},
     hevm::HEVM_ABI,
 };
 
