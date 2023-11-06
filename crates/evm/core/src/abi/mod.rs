@@ -3,7 +3,7 @@
 pub use foundry_abi::{
     console::{self, ConsoleEvents, CONSOLE_ABI},
     hardhat_console::{self, HardhatConsoleCalls, HARDHATCONSOLE_ABI as HARDHAT_CONSOLE_ABI},
-    hevm::{self, HEVMCalls, HEVM_ABI},
+    hevm::HEVM_ABI,
 };
 use once_cell::sync::Lazy;
 use std::collections::HashMap;

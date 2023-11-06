@@ -230,6 +230,8 @@ pub struct TestSetup {
     pub labeled_addresses: BTreeMap<Address, String>,
     /// The reason the setup failed, if it did
     pub reason: Option<String>,
+    /// Coverage info during setup
+    pub coverage: Option<HitMaps>,
 }
 
 impl TestSetup {
@@ -261,8 +263,9 @@ impl TestSetup {
         logs: Vec<Log>,
         traces: Traces,
         labeled_addresses: BTreeMap<Address, String>,
+        coverage: Option<HitMaps>,
     ) -> Self {
-        Self { address, logs, traces, labeled_addresses, reason: None }
+        Self { address, logs, traces, labeled_addresses, reason: None, coverage }
     }
 
     pub fn failed_with(
@@ -271,7 +274,14 @@ impl TestSetup {
         labeled_addresses: BTreeMap<Address, String>,
         reason: String,
     ) -> Self {
-        Self { address: Address::ZERO, logs, traces, labeled_addresses, reason: Some(reason) }
+        Self {
+            address: Address::ZERO,
+            logs,
+            traces,
+            labeled_addresses,
+            reason: Some(reason),
+            coverage: None,
+        }
     }
 
     pub fn failed(reason: String) -> Self {

@@ -2207,6 +2207,26 @@
     },
     {
       "func": {
+        "id": "loadAllocs",
+        "description": "Load a genesis JSON file's `allocs` into the in-memory revm state.",
+        "declaration": "function loadAllocs(string calldata pathToAllocsJson) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "loadAllocs(string)",
+        "selector": "0xb3a056d7",
+        "selectorBytes": [
+          179,
+          160,
+          86,
+          215
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "makePersistent_0",
         "description": "Marks that the account(s) should use persistent storage across fork swaps in a multifork setup\nMeaning, changes made to the state of this account will be kept when switching forks.",
         "declaration": "function makePersistent(address account) external;",
