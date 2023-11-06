@@ -160,7 +160,7 @@ impl figment::Provider for EthereumOpts {
         dict.extend(self.rpc.dict());
 
         if let Some(from) = self.wallet.from {
-            dict.insert("sender".to_string(), format!("{from:?}").into());
+            dict.insert("sender".to_string(), from.to_string().into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
