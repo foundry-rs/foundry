@@ -139,24 +139,22 @@ impl CallTraceArena {
             struct_logs.push(log);
 
             // Descend into a child trace if the step was a call
-            match step.op {
-                Instruction::OpCode(
-                    opcode::CREATE |
-                    opcode::CREATE2 |
-                    opcode::DELEGATECALL |
-                    opcode::CALL |
-                    opcode::STATICCALL |
-                    opcode::CALLCODE,
-                ) => {
-                    self.add_to_geth_trace(
-                        storage,
-                        &self.arena[trace_node.children[child_id]],
-                        struct_logs,
-                        opts,
-                    );
-                    child_id += 1;
-                }
-                _ => {}
+            if let Instruction::OpCode(
+                opcode::CREATE |
+                opcode::CREATE2 |
+                opcode::DELEGATECALL |
+                opcode::CALL |
+                opcode::STATICCALL |
+                opcode::CALLCODE,
+            ) = step.op
+            {
+                self.add_to_geth_trace(
+                    storage,
+                    &self.arena[trace_node.children[child_id]],
+                    struct_logs,
+                    opts,
+                );
+                child_id += 1;
             }
         }
     }
