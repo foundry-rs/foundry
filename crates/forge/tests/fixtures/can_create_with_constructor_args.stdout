@@ -1,3 +1,4 @@
+Warning! This command is deprecated and will be removed in v1. use `forge script` instead
 Compiling 23 files with 0.8.15
 Solc 0.8.15 finished in 2.82s
 Compiler run successful!
