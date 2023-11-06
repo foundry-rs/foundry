@@ -21,8 +21,8 @@ use foundry_common::{compile, estimate_eip1559_fees, fmt::parse_tokens, shell};
 use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalized};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use serde_json::json;
-use yansi::Paint;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc};
+use yansi::Paint;
 
 /// CLI arguments for `forge create`.
 #[derive(Debug, Clone, Parser)]
