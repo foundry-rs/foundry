@@ -445,6 +445,8 @@ impl From<&CallTraceStep> for StructLog {
             stack: Some(step.stack.data().iter().copied().map(|v| v.to_ethers()).collect_vec()),
             // Filled in `CallTraceArena::geth_trace` as a result of compounding all slot changes
             storage: None,
+            return_data: None,
+            mem_size: None,
         }
     }
 }
