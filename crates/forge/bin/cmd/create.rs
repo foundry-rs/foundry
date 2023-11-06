@@ -17,10 +17,11 @@ use foundry_cli::{
     opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
-use foundry_common::{compile, estimate_eip1559_fees, fmt::parse_tokens};
+use foundry_common::{compile, estimate_eip1559_fees, fmt::parse_tokens, shell};
 use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalized};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use serde_json::json;
+use yansi::Paint;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc};
 
 /// CLI arguments for `forge create`.
@@ -77,6 +78,8 @@ pub struct CreateArgs {
 impl CreateArgs {
     /// Executes the command to create a contract
     pub async fn run(mut self) -> Result<()> {
+        shell::println(Paint::yellow("Warning! This command is deprecated and will be removed in v1. use `forge script` instead"))?;
+
         // Find Project & Compile
         let project = self.opts.project()?;
         let mut output = if self.json || self.opts.silent {
