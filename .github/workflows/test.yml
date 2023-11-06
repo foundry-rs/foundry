@@ -109,9 +109,7 @@ jobs:
               run: |
                   # see https://github.com/foundry-rs/foundry/pull/3959
                   export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
-                  cargo nextest run \
-                    --retries 2 \
-                    --archive-file tests-${{ matrix.target }}.tar.zst \
+                  cargo nextest run --archive-file tests-${{ matrix.target }}.tar.zst \
                     ${{ matrix.flags }}
 
     doctests:
