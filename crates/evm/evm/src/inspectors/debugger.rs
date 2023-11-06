@@ -1,4 +1,5 @@
 use alloy_primitives::{Address, Bytes};
+use foundry_common::SELECTOR_LEN;
 use foundry_evm_core::{
     backend::DatabaseExt,
     constants::CHEATCODE_ADDRESS,
@@ -8,7 +9,7 @@ use foundry_evm_core::{
 use revm::{
     interpreter::{
         opcode::{self, spec_opcode_gas},
-        CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory,
+        CallInputs, CreateInputs, Gas, InstructionResult, Interpreter,
     },
     EVMData, Inspector,
 };
@@ -96,14 +97,14 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
             call.context.code_address,
             call.context.scheme.into(),
         );
-        if CHEATCODE_ADDRESS == call.contract {
-            self.arena.arena[self.head].steps.push(DebugStep {
-                memory: Memory::new(),
-                instruction: Instruction::Cheatcode(
-                    call.input[0..4].try_into().expect("malformed cheatcode call"),
-                ),
-                ..Default::default()
-            });
+
+        if call.contract == CHEATCODE_ADDRESS {
+            if let Some(selector) = call.input.get(..SELECTOR_LEN) {
+                self.arena.arena[self.head].steps.push(DebugStep {
+                    instruction: Instruction::Cheatcode(selector.try_into().unwrap()),
+                    ..Default::default()
+                });
+            }
         }
 
         (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())

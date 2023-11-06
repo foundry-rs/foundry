@@ -1,4 +1,4 @@
-use crate::{CallTrace, RawOrDecodedCall};
+use crate::{CallTrace, TraceCallData};
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::{abi, sol, SolCall};
 use itertools::Itertools;
@@ -40,7 +40,7 @@ pub(super) fn decode(trace: &mut CallTrace, _chain_id: u64) -> bool {
         return false
     };
 
-    let RawOrDecodedCall::Raw(data) = &trace.data else { return false };
+    let TraceCallData::Raw(data) = &trace.data else { return false };
 
     let (signature, args) = match x {
         0x01 => {
@@ -67,7 +67,7 @@ pub(super) fn decode(trace: &mut CallTrace, _chain_id: u64) -> bool {
 
     // TODO: Other chain precompiles
 
-    trace.data = RawOrDecodedCall::Decoded { signature: signature.to_string(), args };
+    trace.data = TraceCallData::Decoded { signature: signature.to_string(), args };
 
     trace.contract = Some("PRECOMPILES".into());
 

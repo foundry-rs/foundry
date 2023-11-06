@@ -3,14 +3,13 @@
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::B256;
-use alloy_sol_types::{SolCall, SolInterface};
+use alloy_sol_types::{SolCall, SolError, SolInterface, SolValue};
 use ethers::{abi::RawLog, contract::EthLogDecode, types::Log};
 use foundry_abi::console::ConsoleEvents::{self, *};
 use foundry_cheatcodes_defs::Vm;
 use foundry_common::SELECTOR_LEN;
 use itertools::Itertools;
 use revm::interpreter::{return_ok, InstructionResult};
-use thiserror::Error;
 
 /// Decode a set of logs, only returning logs from DSTest logging events and Hardhat's `console.log`
 pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
@@ -63,27 +62,6 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
     Some(decoded)
 }
 
-/// Possible errors when decoding a revert error string.
-#[derive(Debug, Clone, Error)]
-pub enum RevertDecodingError {
-    #[error("Not enough data to decode")]
-    InsufficientErrorData,
-    #[error("Unsupported solidity builtin panic")]
-    UnsupportedSolidityBuiltinPanic,
-    #[error("Could not decode slice")]
-    SliceDecodingError,
-    #[error("Non-native error and not string")]
-    NonNativeErrorAndNotString,
-    #[error("Unknown Error Selector")]
-    UnknownErrorSelector,
-    #[error("Could not decode cheatcode string")]
-    UnknownCheatcodeErrorString,
-    #[error("Bad String decode")]
-    BadStringDecode,
-    #[error(transparent)]
-    AlloyDecodingError(alloy_dyn_abi::Error),
-}
-
 /// Tries to decode an error message from the given revert bytes.
 ///
 /// Note that this is just a best-effort guess, and should not be relied upon for anything other
@@ -99,7 +77,12 @@ pub fn decode_revert(
                 return format!("EvmError: {status:?}")
             }
         }
-        return format!("custom error {}", hex::encode(err))
+        return format!("custom error bytes {}", hex::encode_prefixed(err))
+    }
+
+    if err == crate::constants::MAGIC_SKIP {
+        // Also used in forge fuzz runner
+        return "SKIPPED".to_string()
     }
 
     // Solidity's `Error(string)` or `Panic(uint256)`
@@ -108,19 +91,28 @@ pub fn decode_revert(
     }
 
     let (selector, data) = err.split_at(SELECTOR_LEN);
+    let selector: &[u8; 4] = selector.try_into().unwrap();
 
-    // `expectRevert(bytes)`
-    if selector == Vm::expectRevert_2Call::SELECTOR {
-        if let Ok(e) = Vm::expectRevert_2Call::abi_decode_raw(data, false) {
-            return decode_revert(&e.revertData[..], maybe_abi, status)
+    match *selector {
+        // `CheatcodeError(string)`
+        Vm::CheatcodeError::SELECTOR => {
+            if let Ok(e) = Vm::CheatcodeError::abi_decode_raw(data, false) {
+                return e.message
+            }
         }
-    }
-
-    // `expectRevert(bytes4)`
-    if selector == Vm::expectRevert_1Call::SELECTOR {
-        if let Ok(e) = Vm::expectRevert_1Call::abi_decode_raw(err, false) {
-            return decode_revert(&e.revertData[..], maybe_abi, status)
+        // `expectRevert(bytes)`
+        Vm::expectRevert_2Call::SELECTOR => {
+            if let Ok(e) = Vm::expectRevert_2Call::abi_decode_raw(data, false) {
+                return decode_revert(&e.revertData[..], maybe_abi, status)
+            }
         }
+        // `expectRevert(bytes4)`
+        Vm::expectRevert_1Call::SELECTOR => {
+            if let Ok(e) = Vm::expectRevert_1Call::abi_decode_raw(data, false) {
+                return decode_revert(&e.revertData[..], maybe_abi, status)
+            }
+        }
+        _ => {}
     }
 
     // Custom error from the given ABI
@@ -137,6 +129,11 @@ pub fn decode_revert(
         }
     }
 
+    // ABI-encoded `string`
+    if let Ok(s) = String::abi_decode(err, false) {
+        return s
+    }
+
     // UTF-8-encoded string
     if let Ok(s) = std::str::from_utf8(err) {
         return s.to_string()
@@ -146,7 +143,7 @@ pub fn decode_revert(
     format!(
         "custom error {}:{}",
         hex::encode(selector),
-        std::str::from_utf8(data).map_or_else(|_| trimmed_hex(err), String::from)
+        std::str::from_utf8(data).map_or_else(|_| trimmed_hex(data), String::from)
     )
 }
 

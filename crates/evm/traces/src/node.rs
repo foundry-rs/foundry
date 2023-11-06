@@ -1,6 +1,6 @@
 use crate::{
-    utils, utils::decode_cheatcode_outputs, CallTrace, LogCallOrder, RawOrDecodedCall,
-    RawOrDecodedLog, RawOrDecodedReturnData,
+    utils, utils::decode_cheatcode_outputs, CallTrace, LogCallOrder, RawOrDecodedLog,
+    TraceCallData, TraceRetData,
 };
 use alloy_dyn_abi::{FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi as Abi};
@@ -104,7 +104,7 @@ impl CallTraceNode {
         // the same name and inputs.
         let func = &funcs[0];
 
-        if let RawOrDecodedCall::Raw(ref bytes) = self.trace.data {
+        if let TraceCallData::Raw(ref bytes) = self.trace.data {
             let args = if bytes.len() >= SELECTOR_LEN {
                 if self.trace.address == CHEATCODE_ADDRESS {
                     // Try to decode cheatcode inputs in a more custom way
@@ -128,16 +128,16 @@ impl CallTraceNode {
             };
 
             // add signature to decoded calls for better calls filtering
-            self.trace.data = RawOrDecodedCall::Decoded { signature: func.signature(), args };
+            self.trace.data = TraceCallData::Decoded { signature: func.signature(), args };
 
-            if let RawOrDecodedReturnData::Raw(bytes) = &self.trace.output {
-                if !bytes.is_empty() && self.trace.success {
+            if let TraceRetData::Raw(bytes) = &self.trace.output {
+                if self.trace.success {
                     if self.trace.address == CHEATCODE_ADDRESS {
                         if let Some(decoded) = funcs
                             .iter()
                             .find_map(|func| decode_cheatcode_outputs(func, bytes, verbosity))
                         {
-                            self.trace.output = RawOrDecodedReturnData::Decoded(decoded);
+                            self.trace.output = TraceRetData::Decoded(decoded);
                             return
                         }
                     }
@@ -148,7 +148,7 @@ impl CallTraceNode {
                         // Functions coming from an external database do not have any outputs
                         // specified, and will lead to returning an empty list of tokens.
                         if !tokens.is_empty() {
-                            self.trace.output = RawOrDecodedReturnData::Decoded(
+                            self.trace.output = TraceRetData::Decoded(
                                 tokens
                                     .iter()
                                     .map(|token| utils::label(token, labels))
@@ -158,7 +158,7 @@ impl CallTraceNode {
                         }
                     }
                 } else {
-                    self.trace.output = RawOrDecodedReturnData::Decoded(decode::decode_revert(
+                    self.trace.output = TraceRetData::Decoded(decode::decode_revert(
                         bytes,
                         Some(errors),
                         Some(self.trace.status),
@@ -174,9 +174,9 @@ impl CallTraceNode {
         precompile_fn: &Function,
         labels: &HashMap<Address, String>,
     ) {
-        if let RawOrDecodedCall::Raw(ref bytes) = self.trace.data {
+        if let TraceCallData::Raw(ref bytes) = self.trace.data {
             self.trace.label = Some("PRECOMPILE".to_string());
-            self.trace.data = RawOrDecodedCall::Decoded {
+            self.trace.data = TraceCallData::Decoded {
                 signature: precompile_fn.signature(),
                 args: precompile_fn.abi_decode_input(bytes, false).map_or_else(
                     |_| vec![hex::encode(bytes)],
@@ -184,8 +184,8 @@ impl CallTraceNode {
                 ),
             };
 
-            if let RawOrDecodedReturnData::Raw(ref bytes) = self.trace.output {
-                self.trace.output = RawOrDecodedReturnData::Decoded(
+            if let TraceRetData::Raw(ref bytes) = self.trace.output {
+                self.trace.output = TraceRetData::Decoded(
                     precompile_fn.abi_decode_output(bytes, false).map_or_else(
                         |_| hex::encode(bytes),
                         |tokens| {

@@ -1,7 +1,7 @@
 use crate::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
     hashbrown::HashSet,
-    traces::{CallTraceArena, RawOrDecodedCall, TraceKind},
+    traces::{CallTraceArena, TraceCallData, TraceKind},
 };
 use alloy_primitives::U256;
 use comfy_table::{presets::ASCII_MARKDOWN, *};
@@ -77,14 +77,14 @@ impl GasReport {
                 let contract_info = self.contracts.entry(name.to_string()).or_default();
 
                 match &trace.data {
-                    RawOrDecodedCall::Raw(bytes) => {
+                    TraceCallData::Raw(bytes) => {
                         if trace.created() {
                             contract_info.gas = U256::from(trace.gas_cost);
                             contract_info.size = U256::from(bytes.len());
                         }
                     }
-                    RawOrDecodedCall::Decoded { signature, .. } => {
-                        let name = signature.split_once('(').unwrap().0;
+                    TraceCallData::Decoded { signature, .. } => {
+                        let name = signature.split('(').next().unwrap();
                         // ignore any test/setup functions
                         let should_include =
                             !(name.is_test() || name.is_invariant_test() || name.is_setup());

@@ -840,10 +840,10 @@ fn convert_call_result(
             })
         }
         _ => {
-            let reason = decode::decode_revert(result.as_ref(), abi, Some(status));
-            if reason == "SKIPPED" {
+            if &result == crate::constants::MAGIC_SKIP {
                 return Err(EvmError::SkipError)
             }
+            let reason = decode::decode_revert(&result, abi, Some(status));
             Err(EvmError::Execution(Box::new(ExecutionErr {
                 reverted,
                 reason,

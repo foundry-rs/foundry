@@ -1,7 +1,7 @@
 use crate::{
     identifier::{AddressIdentity, SingleSignaturesIdentifier, TraceIdentifier},
     node::CallTraceNode,
-    utils, CallTraceArena, RawOrDecodedCall, RawOrDecodedLog, RawOrDecodedReturnData,
+    utils, CallTraceArena, RawOrDecodedLog, TraceCallData, TraceRetData,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt};
 use alloy_json_abi::{Event, Function, JsonAbi as Abi};
@@ -228,12 +228,12 @@ impl CallTraceDecoder {
                 return
             }
 
-            if let RawOrDecodedCall::Raw(bytes) = &node.trace.data {
+            if let TraceCallData::Raw(bytes) = &node.trace.data {
                 if bytes.len() >= SELECTOR_LEN {
                     if let Some(funcs) = self.functions.get(&bytes[..SELECTOR_LEN]) {
                         node.decode_function(funcs, &self.labels, &self.errors, self.verbosity);
                     } else if node.trace.address == DEFAULT_CREATE2_DEPLOYER {
-                        node.trace.data = RawOrDecodedCall::Decoded {
+                        node.trace.data = TraceCallData::Decoded {
                             signature: "create2".to_string(),
                             args: vec![],
                         };
@@ -255,16 +255,15 @@ impl CallTraceDecoder {
                     let signature =
                         if bytes.is_empty() && has_receive { "receive()" } else { "fallback()" }
                             .into();
-                    node.trace.data = RawOrDecodedCall::Decoded { signature, args: Vec::new() };
+                    node.trace.data = TraceCallData::Decoded { signature, args: Vec::new() };
 
-                    if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
+                    if let TraceRetData::Raw(bytes) = &node.trace.output {
                         if !node.trace.success {
-                            node.trace.output =
-                                RawOrDecodedReturnData::Decoded(decode::decode_revert(
-                                    bytes,
-                                    Some(&self.errors),
-                                    Some(node.trace.status),
-                                ));
+                            node.trace.output = TraceRetData::Decoded(decode::decode_revert(
+                                bytes,
+                                Some(&self.errors),
+                                Some(node.trace.status),
+                            ));
                         }
                     }
                 }

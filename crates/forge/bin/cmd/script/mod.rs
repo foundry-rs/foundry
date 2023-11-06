@@ -20,8 +20,7 @@ use forge::{
     opts::EvmOpts,
     traces::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
-        CallTraceDecoder, CallTraceDecoderBuilder, RawOrDecodedCall, RawOrDecodedReturnData,
-        TraceKind, Traces,
+        CallTraceDecoder, CallTraceDecoderBuilder, TraceCallData, TraceKind, TraceRetData, Traces,
     },
     utils::CallKind,
 };
@@ -519,9 +518,9 @@ impl ScriptArgs {
         let mut unknown_c = 0usize;
         for node in create_nodes {
             // Calldata == init code
-            if let RawOrDecodedCall::Raw(ref init_code) = node.trace.data {
+            if let TraceCallData::Raw(ref init_code) = node.trace.data {
                 // Output is the runtime code
-                if let RawOrDecodedReturnData::Raw(ref deployed_code) = node.trace.output {
+                if let TraceRetData::Raw(ref deployed_code) = node.trace.output {
                     // Only push if it was not present already
                     if !bytecodes.iter().any(|(_, b, _)| *b == init_code.as_ref()) {
                         bytecodes.push((format!("Unknown{unknown_c}"), init_code, deployed_code));
