@@ -285,11 +285,10 @@ pub fn sanitize_token(token: Token) -> Token {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
     use super::*;
     use ethers::types::H160;
     use ethers_core::types::H256;
+    use std::str::FromStr;
 
     const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
     const TRANSFER_SIG: &str = "Transfer(address indexed,address indexed,uint256)";

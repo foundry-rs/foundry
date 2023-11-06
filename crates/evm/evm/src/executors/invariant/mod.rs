@@ -4,7 +4,7 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::JsonAbi as Abi;
-use alloy_primitives::{Address, FixedBytes};
+use alloy_primitives::{Address, FixedBytes, U256};
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::{FuzzDictionaryConfig, InvariantConfig};
@@ -28,10 +28,7 @@ use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
-use revm::{
-    primitives::{Address as rAddress, HashMap, U256 as rU256},
-    DatabaseCommit,
-};
+use revm::{primitives::HashMap, DatabaseCommit};
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 
 mod error;
@@ -160,7 +157,7 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Executes the call from the randomly generated sequence.
                 let call_result = executor
-                    .call_raw(*sender, *address, calldata.clone(), rU256::ZERO)
+                    .call_raw(*sender, *address, calldata.clone(), U256::ZERO)
                     .expect("could not make raw evm call");
 
                 // Collect data for fuzzing from the state changeset.
@@ -673,7 +670,7 @@ impl<'a> InvariantExecutor<'a> {
                 address,
                 func.clone(),
                 vec![],
-                rU256::ZERO,
+                U256::ZERO,
                 Some(abi),
             ) {
                 return f(call_result.result)
@@ -693,7 +690,7 @@ impl<'a> InvariantExecutor<'a> {
 /// before inserting it into the dictionary. Otherwise, we flood the dictionary with
 /// randomly generated addresses.
 fn collect_data(
-    state_changeset: &mut HashMap<rAddress, revm::primitives::Account>,
+    state_changeset: &mut HashMap<Address, revm::primitives::Account>,
     sender: &Address,
     call_result: &RawCallResult,
     fuzz_state: EvmFuzzState,
