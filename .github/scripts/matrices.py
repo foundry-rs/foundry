@@ -16,15 +16,15 @@ class Target:
         self.target = target
 
 
-# A single test suite to run
+# A single test suite to run.
 class Case:
-    # Name of the test suite
+    # Name of the test suite.
     name: str
-    # Nextest filter expression
+    # Nextest filter expression.
     filter: str
-    # Number of partitions to split the test suite into
+    # Number of partitions to split the test suite into.
     n_partitions: int
-    # Whether to run on non-Linux platforms for PRs
+    # Whether to run on non-Linux platforms for PRs. All platforms and tests are run on pushes.
     pr_cross_platform: bool
 
     def __init__(
@@ -36,7 +36,7 @@ class Case:
         self.pr_cross_platform = pr_cross_platform
 
 
-# Expanded GHA matrix entry
+# GHA matrix entry
 class Expanded:
     name: str
     os: str
@@ -101,9 +101,8 @@ def main():
     expanded = []
     for target in targets:
         for case in config:
-            if is_pr:
-                if not case.pr_cross_platform and target != t_linux_x86:
-                    continue
+            if is_pr and (not case.pr_cross_platform and target != t_linux_x86):
+                continue
 
             for partition in range(1, case.n_partitions + 1):
                 os_str = ""
