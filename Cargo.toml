@@ -167,7 +167,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 hex = { package = "const-hex", version = "1.6", features = ["hex"] }
 protobuf = "=3.2.0"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 tracing = "0.1"
 jsonpath_lib = "0.3"
 eyre = "0.6"
@@ -186,16 +186,16 @@ color-eyre = "0.6"
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "841ff8c47980798fbb47991e047f8481b1d5eb39" }
-ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", rev = "841ff8c47980798fbb47991e047f8481b1d5eb39" }
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "841ff8c47980798fbb47991e047f8481b1d5eb39" }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "841ff8c47980798fbb47991e047f8481b1d5eb39" }
-ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "841ff8c47980798fbb47991e047f8481b1d5eb39" }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "841ff8c47980798fbb47991e047f8481b1d5eb39" }
-ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "841ff8c47980798fbb47991e047f8481b1d5eb39" }
-ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "841ff8c47980798fbb47991e047f8481b1d5eb39" }
-ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "841ff8c47980798fbb47991e047f8481b1d5eb39" }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "841ff8c47980798fbb47991e047f8481b1d5eb39" }
+ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "4f7b354ecec0aea38ed165560ae4f3224d644c9e" }
+ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", rev = "4f7b354ecec0aea38ed165560ae4f3224d644c9e" }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "4f7b354ecec0aea38ed165560ae4f3224d644c9e" }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "4f7b354ecec0aea38ed165560ae4f3224d644c9e" }
+ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "4f7b354ecec0aea38ed165560ae4f3224d644c9e" }
+ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "4f7b354ecec0aea38ed165560ae4f3224d644c9e" }
+ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "4f7b354ecec0aea38ed165560ae4f3224d644c9e" }
+ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "4f7b354ecec0aea38ed165560ae4f3224d644c9e" }
+ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "4f7b354ecec0aea38ed165560ae4f3224d644c9e" }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "4f7b354ecec0aea38ed165560ae4f3224d644c9e" }
 
 foundry-compilers = { git = "https://github.com/foundry-rs/compilers" }
 foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers" }
