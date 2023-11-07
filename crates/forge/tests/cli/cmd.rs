@@ -1030,7 +1030,7 @@ forgetest!(
         assert!(package.exists());
         assert!(package_mod.exists());
 
-        let submods = read_string(&git_mod_file);
+        let submods = read_string(git_mod_file);
         assert!(submods.contains("https://github.com/evalir/forge-5980-test"));
 
         // try to update the top-level dependency; there should be no update for this dependency,
