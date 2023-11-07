@@ -491,7 +491,10 @@ pub enum EthRequest {
     NodeInfo(()),
 
     /// Retrieves the Anvil node metadata.
-    #[cfg_attr(feature = "serde", serde(rename = "anvil_metadata", with = "empty_params"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "anvil_metadata", alias = "hardhat_metadata", with = "empty_params")
+    )]
     AnvilMetadata(()),
 
     // Ganache compatible calls
