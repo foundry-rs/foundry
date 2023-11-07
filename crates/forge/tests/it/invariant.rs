@@ -1,8 +1,9 @@
 //! Tests for invariants
 
-use crate::{config::*, test_helpers::filter::Filter};
+use crate::config::*;
 use alloy_primitives::U256;
 use forge::fuzz::CounterExample;
+use foundry_test_utils::Filter;
 use std::collections::BTreeMap;
 
 #[tokio::test(flavor = "multi_thread")]

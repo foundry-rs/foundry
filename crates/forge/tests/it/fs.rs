@@ -1,10 +1,8 @@
 //! Tests for reproducing issues
 
-use crate::{
-    config::*,
-    test_helpers::{filter::Filter, PROJECT},
-};
+use crate::{config::*, test_helpers::PROJECT};
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
+use foundry_test_utils::Filter;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fs_disabled() {

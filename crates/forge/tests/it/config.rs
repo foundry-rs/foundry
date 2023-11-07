@@ -1,6 +1,6 @@
 //! Test setup
 
-use crate::test_helpers::{filter::Filter, COMPILED, EVM_OPTS, PROJECT};
+use crate::test_helpers::{COMPILED, EVM_OPTS, PROJECT};
 use forge::{
     result::{SuiteResult, TestStatus},
     MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
@@ -12,6 +12,7 @@ use foundry_config::{
 use foundry_evm::{
     decode::decode_console_logs, inspectors::CheatsConfig, revm::primitives::SpecId,
 };
+use foundry_test_utils::Filter;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},

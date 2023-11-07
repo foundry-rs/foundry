@@ -35,7 +35,7 @@ pub static TEMPLATE_PATH: Lazy<PathBuf> =
     Lazy::new(|| env::temp_dir().join("foundry-forge-test-template"));
 
 /// Global default template lock.
-static TEMPLATE_LOCK: Lazy<PathBuf> =
+pub static TEMPLATE_LOCK: Lazy<PathBuf> =
     Lazy::new(|| env::temp_dir().join("foundry-forge-test-template.lock"));
 
 // identifier for tests

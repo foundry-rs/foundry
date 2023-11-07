@@ -1,13 +1,11 @@
 //! Tests for reproducing issues
 
-use crate::{
-    config::*,
-    test_helpers::{filter::Filter, PROJECT},
-};
+use crate::{config::*, test_helpers::PROJECT};
 use alloy_primitives::Address;
 use ethers::abi::{Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
 use forge::result::TestStatus;
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
+use foundry_test_utils::Filter;
 use std::str::FromStr;
 
 /// A macro that tests a single pattern (".*/repros/<issue>")

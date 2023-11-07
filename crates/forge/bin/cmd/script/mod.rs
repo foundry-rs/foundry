@@ -741,8 +741,8 @@ mod tests {
     use super::*;
     use foundry_cli::utils::LoadConfig;
     use foundry_config::UnresolvedEnvVarError;
-    use foundry_test_utils::tempfile::tempdir;
     use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn can_parse_sig() {
