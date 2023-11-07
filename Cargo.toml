@@ -131,7 +131,9 @@ foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 foundry-utils = { path = "crates/utils" }
 
+# block explorer & verification bindings
 foundry-block-explorers = { version = "0.1", default-features = false }
+# solc & compilation utilities
 foundry-compilers = { version = "0.1", default-features = false }
 
 ## revm
@@ -197,7 +199,6 @@ ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "4f7b3
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "4f7b354ecec0aea38ed165560ae4f3224d644c9e" }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "4f7b354ecec0aea38ed165560ae4f3224d644c9e" }
 
-foundry-compilers = { git = "https://github.com/foundry-rs/compilers" }
 foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers" }
 
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/" }
