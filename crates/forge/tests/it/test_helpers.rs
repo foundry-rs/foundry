@@ -23,10 +23,11 @@ use std::{
 
 const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata");
 
-pub static PROJECT: Lazy<Project> = Lazy::new(|| {
-    let paths = ProjectPathsConfig::builder().root(TESTDATA).sources(TESTDATA).build().unwrap();
-    Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap()
-});
+// pub static PROJECT: Lazy<Project> = Lazy::new(|| {
+//     let paths = ProjectPathsConfig::builder().root(TESTDATA).sources(TESTDATA).build().unwrap();
+//     Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap()
+// });
+pub use LIBS_PROJECT as PROJECT;
 
 pub static LIBS_PROJECT: Lazy<Project> = Lazy::new(|| {
     let paths = ProjectPathsConfig::builder().root(TESTDATA).sources(TESTDATA).build().unwrap();
