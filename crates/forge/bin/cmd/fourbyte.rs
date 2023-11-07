@@ -70,11 +70,8 @@ impl UploadSelectorsArgs {
 
         let mut artifacts = artifacts.into_iter().peekable();
         while let Some((contract, artifact)) = artifacts.next() {
-            let abi = artifact.abi.ok_or(eyre::eyre!("Unable to fetch abi"))?;
-            if abi.abi.functions.is_empty() &&
-                abi.abi.events.is_empty() &&
-                abi.abi.errors.is_empty()
-            {
+            let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?.abi;
+            if abi.functions.is_empty() && abi.events.is_empty() && abi.errors.is_empty() {
                 continue
             }
 

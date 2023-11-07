@@ -99,7 +99,7 @@ pub fn format_source(source: &str, config: FormatterConfig) -> eyre::Result<Stri
         Ok(parsed) => {
             let mut formatted_source = String::default();
 
-            if forge_fmt::format(&mut formatted_source, parsed, config).is_err() {
+            if forge_fmt::format_to(&mut formatted_source, parsed, config).is_err() {
                 eyre::bail!("Could not format source!");
             }
 

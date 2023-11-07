@@ -33,14 +33,14 @@ pub enum FormatterError {
     InvalidParsedItem(Loc),
     /// All other errors
     #[error(transparent)]
-    Custom(Box<dyn std::error::Error>),
+    Custom(Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl FormatterError {
     fn fmt() -> Self {
         Self::Fmt(std::fmt::Error)
     }
-    fn custom(err: impl std::error::Error + 'static) -> Self {
+    fn custom(err: impl std::error::Error + Send + Sync + 'static) -> Self {
         Self::Custom(Box::new(err))
     }
 }

@@ -117,7 +117,7 @@ impl SelectorsSubcommands {
                     println!("Uploading selectors for {contract}...");
 
                     // upload abi to selector database
-                    import_selectors(SelectorImportData::Abi(vec![abi])).await?.describe();
+                    import_selectors(SelectorImportData::Abi(vec![abi.abi])).await?.describe();
 
                     if artifacts.peek().is_some() {
                         println!()

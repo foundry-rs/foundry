@@ -1,6 +1,6 @@
+use alloy_json_abi::JsonAbi;
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
-use ethers::abi::RawAbi;
 use eyre::Result;
 use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
 use foundry_common::compile;
@@ -10,7 +10,7 @@ use foundry_compilers::{
             BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
             EvmOutputSelection, EwasmOutputSelection,
         },
-        LosslessAbi, StorageLayout,
+        StorageLayout,
     },
     info::ContractInfo,
     utils::canonicalize,
@@ -90,7 +90,7 @@ impl InspectArgs {
                     .abi
                     .as_ref()
                     .ok_or_else(|| eyre::eyre!("Failed to fetch lossless ABI"))?;
-                print_abi(abi, pretty)?;
+                print_abi(&abi.abi, pretty)?;
             }
             ContractArtifactField::Bytecode => {
                 let tval: Value = to_value(&artifact.bytecode)?;
@@ -165,7 +165,8 @@ impl InspectArgs {
             }
             ContractArtifactField::Errors => {
                 let mut out = serde_json::Map::new();
-                if let Some(LosslessAbi { abi, .. }) = &artifact.abi {
+                if let Some(abi) = &artifact.abi {
+                    let abi = &abi.abi;
                     // Print the signature of all errors
                     for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
                         let types = er.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
@@ -181,7 +182,8 @@ impl InspectArgs {
             }
             ContractArtifactField::Events => {
                 let mut out = serde_json::Map::new();
-                if let Some(LosslessAbi { abi, .. }) = &artifact.abi {
+                if let Some(abi) = &artifact.abi {
+                    let abi = &abi.abi;
                     // print the signature of all events including anonymous
                     for ev in abi.events.iter().flat_map(|(_, events)| events) {
                         let types = ev.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
@@ -199,17 +201,13 @@ impl InspectArgs {
     }
 }
 
-pub fn print_abi(abi: &LosslessAbi, pretty: bool) -> Result<()> {
-    let abi_json = to_value(abi)?;
-    if !pretty {
-        println!("{}", serde_json::to_string_pretty(&abi_json)?);
-        return Ok(())
-    }
-
-    let abi_json: RawAbi = serde_json::from_value(abi_json)?;
-    let source = foundry_utils::abi::abi_to_solidity(&abi_json, "")?;
-    println!("{}", source);
-
+pub fn print_abi(abi: &JsonAbi, pretty: bool) -> Result<()> {
+    let s = if pretty {
+        foundry_utils::abi::abi_to_solidity(&abi, "")?
+    } else {
+        serde_json::to_string_pretty(&abi)?
+    };
+    println!("{s}");
     Ok(())
 }
 

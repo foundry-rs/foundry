@@ -5,7 +5,6 @@ use alloy_primitives::{Address, I256, U256};
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
-    abi::RawAbi,
     types::{transaction::eip2718::TypedTransaction, Chain, *},
     utils::{
         format_bytes32_string, format_units, get_contract_address, keccak256, parse_bytes32_string,
@@ -15,7 +14,7 @@ use ethers_core::{
 use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
 use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, ContextCompat, Result};
-use foundry_block_explorers::{errors::EtherscanError, Client};
+use foundry_block_explorers::Client;
 use foundry_common::{abi::encode_function_args, fmt::*, TransactionReceiptWithRevertReason};
 pub use foundry_evm::*;
 use foundry_utils::types::{ToAlloy, ToEthers};
@@ -1619,40 +1618,24 @@ impl SimpleCast {
     /// # }
     /// ```
     pub async fn generate_interface(address_or_path: AbiPath) -> Result<Vec<InterfaceSource>> {
-        let (contract_abis, contract_names): (Vec<RawAbi>, Vec<String>) = match address_or_path {
+        let (contract_abis, contract_names) = match address_or_path {
             AbiPath::Local { path, name } => {
                 let file = std::fs::read_to_string(path).wrap_err("unable to read abi file")?;
-                let mut json: serde_json::Value = serde_json::from_str(&file)?;
-                let json = if !json["abi"].is_null() { json["abi"].take() } else { json };
-                let abi: RawAbi =
-                    serde_json::from_value(json).wrap_err("unable to parse json ABI from file")?;
-
-                (vec![abi], vec![name.unwrap_or_else(|| "Interface".to_owned())])
+                (
+                    vec![serde_json::from_str(&file)?],
+                    vec![name.unwrap_or_else(|| "Interface".to_owned())],
+                )
             }
             AbiPath::Etherscan { address, chain, api_key } => {
                 let client = Client::new(chain, api_key)?;
-
-                // get the source
-                let source = match client.contract_source_code(address).await {
-                    Ok(source) => source,
-                    Err(EtherscanError::InvalidApiKey) => {
-                        eyre::bail!("Invalid Etherscan API key. Did you set it correctly? You may be using an API key for another Etherscan API chain (e.g. Etherscan API key for Polygonscan).")
-                    }
-                    Err(EtherscanError::ContractCodeNotVerified(address)) => {
-                        eyre::bail!("Contract source code at {:?} on {} not verified. Maybe you have selected the wrong chain?", address, chain)
-                    }
-                    Err(err) => {
-                        eyre::bail!(err)
-                    }
-                };
-
+                let source = client.contract_source_code(address).await?;
                 let names = source
                     .items
                     .iter()
                     .map(|item| item.contract_name.clone())
                     .collect::<Vec<String>>();
 
-                let abis = source.raw_abis()?;
+                let abis = source.abis()?;
 
                 (abis, names)
             }
