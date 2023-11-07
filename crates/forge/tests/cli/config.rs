@@ -11,10 +11,10 @@ use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
     forgetest, forgetest_init,
     foundry_compilers::{remappings::Remapping, EvmVersion},
-    pretty_eq,
     util::{pretty_err, OutputExt, TestCommand, TestProject},
 };
 use path_slash::PathBufExt;
+use pretty_assertions::assert_eq;
 use std::{fs, path::PathBuf, str::FromStr};
 
 // tests all config values that are in use
@@ -148,25 +148,25 @@ forgetest_init!(
         let profile = Config::load_with_root(prj.root());
         // ensure that the auto-generated internal remapping for forge-std's ds-test exists
         assert_eq!(profile.remappings.len(), 2);
-        pretty_eq!("ds-test/=lib/forge-std/lib/ds-test/src/", profile.remappings[0].to_string());
+        assert_eq!("ds-test/=lib/forge-std/lib/ds-test/src/", profile.remappings[0].to_string());
 
         // ensure remappings contain test
-        pretty_eq!("ds-test/=lib/forge-std/lib/ds-test/src/", profile.remappings[0].to_string());
+        assert_eq!("ds-test/=lib/forge-std/lib/ds-test/src/", profile.remappings[0].to_string());
         // the loaded config has resolved, absolute paths
-        pretty_eq!(
+        assert_eq!(
             "ds-test/=lib/forge-std/lib/ds-test/src/",
             Remapping::from(profile.remappings[0].clone()).to_string()
         );
 
         cmd.arg("config");
         let expected = profile.to_string_pretty().unwrap();
-        pretty_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
+        assert_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
 
         // remappings work
         let remappings_txt =
             prj.create_file("remappings.txt", "ds-test/=lib/forge-std/lib/ds-test/from-file/");
         let config = forge_utils::load_config_with_root(Some(prj.root().into()));
-        pretty_eq!(
+        assert_eq!(
             format!(
                 "ds-test/={}/",
                 prj.root().join("lib/forge-std/lib/ds-test/from-file").to_slash_lossy()
@@ -177,7 +177,7 @@ forgetest_init!(
         // env vars work
         std::env::set_var("DAPP_REMAPPINGS", "ds-test/=lib/forge-std/lib/ds-test/from-env/");
         let config = forge_utils::load_config_with_root(Some(prj.root().into()));
-        pretty_eq!(
+        assert_eq!(
             format!(
                 "ds-test/={}/",
                 prj.root().join("lib/forge-std/lib/ds-test/from-env").to_slash_lossy()
@@ -187,7 +187,7 @@ forgetest_init!(
 
         let config =
             prj.config_from_output(["--remappings", "ds-test/=lib/forge-std/lib/ds-test/from-cli"]);
-        pretty_eq!(
+        assert_eq!(
             format!(
                 "ds-test/={}/",
                 prj.root().join("lib/forge-std/lib/ds-test/from-cli").to_slash_lossy()
@@ -197,7 +197,7 @@ forgetest_init!(
 
         let config = prj.config_from_output(["--remappings", "other-key/=lib/other/"]);
         assert_eq!(config.remappings.len(), 3);
-        pretty_eq!(
+        assert_eq!(
             format!("other-key/={}/", prj.root().join("lib/other").to_slash_lossy()),
             // As CLI has the higher priority, it'll be found at the first slot.
             Remapping::from(config.remappings[0].clone()).to_string()
@@ -208,7 +208,7 @@ forgetest_init!(
 
         cmd.set_cmd(prj.forge_bin()).args(["config", "--basic"]);
         let expected = profile.into_basic().to_string_pretty().unwrap();
-        pretty_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
+        assert_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
     }
 );
 
@@ -224,17 +224,17 @@ forgetest_init!(
         // ensure that the auto-generated internal remapping for forge-std's ds-test exists
         assert_eq!(profile.remappings.len(), 2);
         let [r, _] = &profile.remappings[..] else { unreachable!() };
-        pretty_eq!("ds-test/=lib/forge-std/lib/ds-test/src/", r.to_string());
+        assert_eq!("ds-test/=lib/forge-std/lib/ds-test/src/", r.to_string());
 
         // the loaded config has resolved, absolute paths
-        pretty_eq!(
+        assert_eq!(
             "ds-test/=lib/forge-std/lib/ds-test/src/",
             Remapping::from(r.clone()).to_string()
         );
 
         cmd.arg("config");
         let expected = profile.to_string_pretty().unwrap();
-        pretty_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
+        assert_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
 
         let install = |cmd: &mut TestCommand, dep: &str| {
             cmd.forge_fuse().args(["install", dep, "--no-commit"]);
@@ -253,13 +253,13 @@ forgetest_init!(
         let path = prj.root().join("lib/solmate/src/").to_slash_lossy().into_owned();
         #[cfg(windows)]
         let path = path + "/";
-        pretty_eq!(
+        assert_eq!(
             format!("solmate/={path}"),
             Remapping::from(config.remappings[0].clone()).to_string()
         );
         // As this is an user-generated remapping, it is not removed, even if it points to the same
         // location.
-        pretty_eq!(
+        assert_eq!(
             format!("solmate-contracts/={path}"),
             Remapping::from(config.remappings[1].clone()).to_string()
         );
@@ -267,7 +267,7 @@ forgetest_init!(
 
         cmd.set_cmd(prj.forge_bin()).args(["config", "--basic"]);
         let expected = profile.into_basic().to_string_pretty().unwrap();
-        pretty_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
+        assert_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
     }
 );
 
