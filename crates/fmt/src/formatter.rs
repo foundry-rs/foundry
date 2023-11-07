@@ -2445,6 +2445,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 } else {
                     let mut base_or_modifier =
                         self.visit_to_chunk(loc.start(), Some(loc.end()), base)?;
+
+                    // TODO fix
                     if base_or_modifier.content.ends_with("()") {
                         base_or_modifier.content.truncate(base_or_modifier.content.len() - 2);
                     }
