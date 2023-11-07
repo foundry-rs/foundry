@@ -129,7 +129,10 @@ jobs:
             - name: Build binaries
               env:
                   SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
-              run: cargo build --release --bins --target ${{ matrix.target }}
+              run: |
+                  flags=()
+                  [[ "${{ matrix.target }}" == *windows* ]] && flags+="-j2"
+                  cargo build --release --bins --target ${{ matrix.target }} "${flags[@]}"
 
             - name: Archive binaries
               id: artifacts
