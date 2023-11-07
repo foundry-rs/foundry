@@ -1,6 +1,6 @@
 [profile.default]
-retries = { backoff = "exponential", count = 3, delay = "1s", jitter = true }
-slow-timeout = "3m"
+retries = { backoff = "exponential", count = 2, delay = "2s", jitter = true }
+slow-timeout = { period = "1m", terminate-after = 3 }
 
 [profile.heavy]
 retries = 1
