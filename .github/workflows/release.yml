@@ -71,6 +71,7 @@ jobs:
         timeout-minutes: 60
         needs: prepare
         strategy:
+            fail-fast: false
             matrix:
                 job:
                     # The OS is used for the runner

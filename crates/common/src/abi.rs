@@ -166,7 +166,7 @@ pub fn find_source(
         } else {
             let implementation = metadata.implementation.unwrap();
             println!(
-                "Contract at {address} is a proxy, trying to fetch source at {implementation:?}..."
+                "Contract at {address} is a proxy, trying to fetch source at {implementation}..."
             );
             match find_source(client, implementation).await {
                 impl_source @ Ok(_) => impl_source,

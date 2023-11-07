@@ -298,11 +298,12 @@ pub mod wrapper {
     // copied from https://github.com/gakonst/ethers-rs
     #[derive(Serialize, Deserialize)]
     struct WrappedLog {
-        /// H160. the contract that emitted the log
+        /// The contract address that emitted the log.
         #[serde(serialize_with = "serialize_addr")]
         pub address: Address,
 
-        /// topics: Array of 0 to 4 32 Bytes of indexed log arguments.
+        /// Array of 0 to 4 32 Bytes of indexed log arguments.
+        ///
         /// (In solidity: The first topic is the hash of the signature of the event
         /// (e.g. `Deposit(address,bytes32,uint256)`), except you declared the event
         /// with the anonymous specifier.)
