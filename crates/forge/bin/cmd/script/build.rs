@@ -151,7 +151,13 @@ impl ScriptArgs {
 
                 // if it's the target contract, grab the info
                 if extra.no_target_name {
-                    if id.source == std::path::PathBuf::from(&extra.target_fname) {
+                    // Match artifact source, and ignore interfaces
+                    if id.source == std::path::PathBuf::from(&extra.target_fname) &&
+                        match contract.bytecode.as_ref() {
+                            Some(bytecode) => bytecode.object.bytes_len() > 0,
+                            None => false,
+                        }
+                    {
                         if extra.matched {
                             eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
                         }

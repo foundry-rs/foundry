@@ -1108,3 +1108,24 @@ contract NestedCreateFail is Script {
     cmd.arg("script").arg(script).args(["--tc", "NestedCreateFail"]);
     assert!(cmd.stdout_lossy().contains("Script ran successfully."));
 });
+
+forgetest_async!(assert_can_detect_target_contract_with_interfaces, |prj, cmd| {
+    let script = prj
+        .inner()
+        .add_script(
+            "ScriptWithInterface.s.sol",
+            r#"
+pragma solidity ^0.8.22;
+
+contract Script {
+  function run() external {}
+}
+
+interface Interface {}
+            "#,
+        )
+        .unwrap();
+
+    cmd.arg("script").arg(script);
+    assert!(cmd.stdout_lossy().contains("Script ran successfully."));
+});
