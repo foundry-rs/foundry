@@ -21,45 +21,25 @@ use std::{
     str::FromStr,
 };
 
+pub const RE_PATH_SEPARATOR: &str = "/";
+
 const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata");
 
-// pub static PROJECT: Lazy<Project> = Lazy::new(|| {
-//     let paths = ProjectPathsConfig::builder().root(TESTDATA).sources(TESTDATA).build().unwrap();
-//     Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap()
-// });
-pub use LIBS_PROJECT as PROJECT;
-
-pub static LIBS_PROJECT: Lazy<Project> = Lazy::new(|| {
+pub static PROJECT: Lazy<Project> = Lazy::new(|| {
     let paths = ProjectPathsConfig::builder().root(TESTDATA).sources(TESTDATA).build().unwrap();
+
     let libs =
         ["fork/Fork.t.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string()];
-
     let settings = Settings { libraries: Libraries::parse(&libs).unwrap(), ..Default::default() };
-
     let solc_config = SolcConfig::builder().settings(settings).build();
-    Project::builder()
-        .paths(paths)
-        .ephemeral()
-        .no_artifacts()
-        .solc_config(solc_config)
-        .build()
-        .unwrap()
+
+    Project::builder().paths(paths).solc_config(solc_config).build().unwrap()
 });
 
 pub static COMPILED: Lazy<ProjectCompileOutput> = Lazy::new(|| {
-    let out = (*PROJECT).compile().unwrap();
+    let out = PROJECT.compile().unwrap();
     if out.has_compiler_errors() {
-        eprintln!("{out}");
-        panic!("Compiled with errors");
-    }
-    out
-});
-
-pub static COMPILED_WITH_LIBS: Lazy<ProjectCompileOutput> = Lazy::new(|| {
-    let out = (*LIBS_PROJECT).compile().unwrap();
-    if out.has_compiler_errors() {
-        eprintln!("{out}");
-        panic!("Compiled with errors");
+        panic!("Compiled with errors:\n{out}");
     }
     out
 });
@@ -90,8 +70,6 @@ pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor) -> FuzzedExecutor {
         config::test_opts().fuzz,
     )
 }
-
-pub const RE_PATH_SEPARATOR: &str = "/";
 
 pub mod filter {
     use super::*;

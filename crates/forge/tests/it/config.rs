@@ -1,8 +1,6 @@
 //! Test setup
 
-use crate::test_helpers::{
-    filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
-};
+use crate::test_helpers::{filter::Filter, COMPILED, EVM_OPTS, PROJECT};
 use forge::{
     result::{SuiteResult, TestStatus},
     MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
@@ -201,7 +199,7 @@ pub async fn forked_runner(rpc: &str) -> MultiContractRunner {
 
     base_runner()
         .with_fork(fork)
-        .build(&LIBS_PROJECT.paths.root, (*COMPILED_WITH_LIBS).clone(), env, opts)
+        .build(&PROJECT.paths.root, (*COMPILED).clone(), env, opts)
         .unwrap()
 }
 
