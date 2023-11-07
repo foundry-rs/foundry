@@ -11,7 +11,7 @@
 ///
 /// ```no_run
 /// use foundry_test_utils::*;
-/// forgetest!(my_test, |prj: TestProject, mut cmd: TestCommand| {
+/// forgetest!(my_test, |prj, cmd| {
 ///     // adds `init` to forge's command arguments
 ///     cmd.arg("init");
 ///     // executes forge <args> and panics if the command failed or output is empty
@@ -24,7 +24,7 @@
 /// ```no_run
 /// use foundry_test_utils::*;
 /// use foundry_test_utils::foundry_compilers::PathStyle;
-/// forgetest!(can_clean_hardhat, PathStyle::HardHat, |prj: TestProject, mut cmd: TestCommand| {
+/// forgetest!(can_clean_hardhat, PathStyle::HardHat, |prj, cmd| {
 ///     prj.assert_create_dirs_exists();
 ///     prj.assert_style_paths_exist(PathStyle::HardHat);
 ///     cmd.arg("clean");
@@ -33,48 +33,45 @@
 /// });
 #[macro_export]
 macro_rules! forgetest {
-    ($(#[$meta:meta])* $test:ident, $fun:expr) => {
-        $crate::forgetest!($(#[$meta])* $test, $crate::foundry_compilers::PathStyle::Dapptools, $fun);
+    ($(#[$meta:meta])* $test:ident, |$prj:ident, $cmd:ident| $e:expr) => {
+        $crate::forgetest!($(#[$meta])* $test, $crate::foundry_compilers::PathStyle::Dapptools, |$prj, $cmd| $e);
     };
-    ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
+    ($(#[$meta:meta])* $test:ident, $style:expr, |$prj:ident, $cmd:ident| $e:expr) => {
         #[test]
         $(#[$meta])*
         fn $test() {
-            let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
-            let f = $fun;
-            f(prj, cmd);
+            let (mut $prj, mut $cmd) = $crate::util::setup_forge(stringify!($test), $style);
+            $e
         }
     };
 }
 
 #[macro_export]
 macro_rules! forgetest_async {
-    ($(#[$meta:meta])* $test:ident, $fun:expr) => {
-        $crate::forgetest_async!($(#[$meta])* $test, $crate::foundry_compilers::PathStyle::Dapptools, $fun);
+    ($(#[$meta:meta])* $test:ident, |$prj:ident, $cmd:ident| $e:expr) => {
+        $crate::forgetest_async!($(#[$meta])* $test, $crate::foundry_compilers::PathStyle::Dapptools, |$prj, $cmd| $e);
     };
-    ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
+    ($(#[$meta:meta])* $test:ident, $style:expr, |$prj:ident, $cmd:ident| $e:expr) => {
         #[tokio::test(flavor = "multi_thread")]
         $(#[$meta])*
         async fn $test() {
-            let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
-            let f = $fun;
-            f(prj, cmd).await;
+            let (mut $prj, mut $cmd) = $crate::util::setup_forge(stringify!($test), $style);
+            $e
         }
     };
 }
 
 #[macro_export]
 macro_rules! casttest {
-    ($(#[$meta:meta])* $test:ident, $fun:expr) => {
-        $crate::casttest!($(#[$meta])* $test, $crate::foundry_compilers::PathStyle::Dapptools, $fun);
+    ($(#[$meta:meta])* $test:ident, |$prj:ident, $cmd:ident| $e:expr) => {
+        $crate::casttest!($(#[$meta])* $test, $crate::foundry_compilers::PathStyle::Dapptools, |$prj, $cmd| $e);
     };
-    ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
+    ($(#[$meta:meta])* $test:ident, $style:expr, |$prj:ident, $cmd:ident| $e:expr) => {
         #[test]
         $(#[$meta])*
         fn $test() {
-            let (prj, cmd) = $crate::util::setup_cast(stringify!($test), $style);
-            let f = $fun;
-            f(prj, cmd);
+            let (mut $prj, mut $cmd) = $crate::util::setup_cast(stringify!($test), $style);
+            $e
         }
     };
 }
@@ -82,17 +79,16 @@ macro_rules! casttest {
 /// Same as `forgetest` but returns an already initialized project workspace (`forge init`)
 #[macro_export]
 macro_rules! forgetest_init {
-    ($(#[$meta:meta])* $test:ident, $fun:expr) => {
-        $crate::forgetest_init!($(#[$meta])* $test, $crate::foundry_compilers::PathStyle::Dapptools, $fun);
+    ($(#[$meta:meta])* $test:ident, |$prj:ident, $cmd:ident| $e:expr) => {
+        $crate::forgetest_init!($(#[$meta])* $test, $crate::foundry_compilers::PathStyle::Dapptools, |$prj, $cmd| $e);
     };
-    ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
+    ($(#[$meta:meta])* $test:ident, $style:expr, |$prj:ident, $cmd:ident| $e:expr) => {
         #[test]
         $(#[$meta])*
         fn $test() {
-            let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
-            $crate::util::initialize(prj.root());
-            let f = $fun;
-            f(prj, cmd);
+            let (mut $prj, mut $cmd) = $crate::util::setup_forge(stringify!($test), $style);
+            $crate::util::initialize($prj.root());
+            $e
         }
     };
 }

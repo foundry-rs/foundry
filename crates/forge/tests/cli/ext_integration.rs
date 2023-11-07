@@ -1,5 +1,3 @@
-use foundry_test_utils::forgetest_external;
-
 forgetest_external!(solmate, "transmissions11/solmate");
 forgetest_external!(prb_math, "PaulRBerg/prb-math");
 forgetest_external!(prb_proxy, "PaulRBerg/prb-proxy");
