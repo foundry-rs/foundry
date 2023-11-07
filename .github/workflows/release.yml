@@ -68,42 +68,41 @@ jobs:
     release:
         name: ${{ matrix.target }} (${{ matrix.os }})
         runs-on: ${{ matrix.os }}
-        timeout-minutes: 60
+        timeout-minutes: 90
         needs: prepare
         strategy:
             fail-fast: false
             matrix:
                 include:
-                    # The OS is used for the runner
-                    # The platform is a generic platform name
-                    # The target is used by Cargo
-                    # The arch is either 386, arm64 or amd64
-                    # The svm target platform to use for the binary https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
+                    # `os`: GHA runner
+                    # `target`: Rust build target triple
+                    # `platform` and `arch`: Used in tarball names
+                    # `svm`: target platform to use for the Solc binary: https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
                     - os: ubuntu-20.04
-                      platform: linux
                       target: x86_64-unknown-linux-gnu
-                      arch: amd64
                       svm_target_platform: linux-amd64
-                    - os: ubuntu-20.04
                       platform: linux
+                      arch: amd64
+                    - os: ubuntu-20.04
                       target: aarch64-unknown-linux-gnu
-                      arch: arm64
                       svm_target_platform: linux-aarch64
-                    - os: macos-latest
-                      platform: darwin
-                      target: x86_64-apple-darwin
-                      arch: amd64
-                      svm_target_platform: macosx-amd64
-                    - os: macos-latest
-                      platform: darwin
-                      target: aarch64-apple-darwin
+                      platform: linux
                       arch: arm64
-                      svm_target_platform: macosx-aarch64
-                    - os: windows-latest
-                      platform: win32
-                      target: x86_64-pc-windows-msvc
+                    - os: macos-latest
+                      target: x86_64-apple-darwin
+                      svm_target_platform: macosx-amd64
+                      platform: darwin
                       arch: amd64
+                    - os: macos-latest
+                      target: aarch64-apple-darwin
+                      svm_target_platform: macosx-aarch64
+                      platform: darwin
+                      arch: arm64
+                    - os: windows-latest
+                      target: x86_64-pc-windows-msvc
                       svm_target_platform: windows-amd64
+                      platform: win32
+                      arch: amd64
         steps:
             - uses: actions/checkout@v3
             - uses: dtolnay/rust-toolchain@stable
@@ -129,6 +128,8 @@ jobs:
             - name: Build binaries
               env:
                   SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
+              shell: bash
+              # Windows runs out of RAM when building binaries with LLVM
               run: |
                   flags=()
                   [[ "${{ matrix.target }}" == *windows* ]] && flags+="-j2"
@@ -209,7 +210,7 @@ jobs:
 
     cleanup:
         name: Release cleanup
-        runs-on: ubuntu-20.04
+        runs-on: ubuntu-latest
         timeout-minutes: 30
         needs: release
         if: always()
