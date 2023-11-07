@@ -132,7 +132,7 @@ jobs:
               # Windows runs out of RAM when building binaries with LLVM
               run: |
                   flags=()
-                  [[ "${{ matrix.target }}" == *windows* ]] && flags+="-j2"
+                  [[ "${{ matrix.target }}" == *windows* ]] && flags+=(-j2)
                   cargo build --release --bins --target ${{ matrix.target }} "${flags[@]}"
 
             - name: Archive binaries
