@@ -43,19 +43,13 @@ class Expanded:
         self.partition = partition
 
 
-default_target = Target("ubuntu-latest", "x86_64-unknown-linux-gnu")
+t_linux = Target("ubuntu-latest", "x86_64-unknown-linux-gnu")
+t_macos = Target("macos-latest", "x86_64-apple-darwin")
+t_windows = Target("windows-latest", "x86_64-pc-windows-msvc")
 if os.environ.get("EVENT_NAME") == "pull_request":
-    targets = [default_target]
+    targets = [t_linux, t_windows]
 else:
-    targets = [
-        default_target,
-        Target("ubuntu-latest", "aarch64-unknown-linux-gnu"),
-        Target("macos-latest", "x86_64-apple-darwin"),
-        # Disabled since the test binary will be built for M1/M2, but there are no
-        # GitHub runners capable of executing those binaries.
-        # Target("macos-latest", "aarch64-apple-darwin"),
-        Target("windows-latest", "x86_64-pc-windows-msvc"),
-    ]
+    targets = [t_linux, t_macos, t_windows]
 
 config = [
     Case(
@@ -102,7 +96,7 @@ def test_matrix():
     expanded = []
     for target in targets:
         for case in config:
-            if not case.xplatform and target != default_target:
+            if not case.xplatform and target != t_linux:
                 continue
 
             for partition in range(1, case.n_partitions + 1):
