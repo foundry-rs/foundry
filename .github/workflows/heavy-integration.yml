@@ -38,7 +38,7 @@ jobs:
               run: git config --global url."https://github.com/".insteadOf "git@github.com:"
             - name: test
               run: |
-                  cargo nextest run --profile local -p forge \
+                  cargo nextest run --profile heavy -p forge \
                     --test cli --features heavy-integration-tests -E "test(~heavy_integration)"
 
     # If any of the jobs fail, this will create a high-priority issue to signal so.
