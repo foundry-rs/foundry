@@ -94,19 +94,11 @@ impl InvariantFuzzError {
             logs: call_result.logs,
             traces: call_result.traces,
             test_error: proptest::test_runner::TestError::Fail(
-                format!(
-                    "{}, reason: '{}'",
-                    origin,
-                    match &revert_reason {
-                        Ok(s) => s.clone(),
-                        Err(e) => e.to_string(),
-                    }
-                )
-                .into(),
+                format!("{origin}, reason: {revert_reason}").into(),
                 calldata.to_vec(),
             ),
             return_reason: "".into(),
-            revert_reason: revert_reason.unwrap_or_default(),
+            revert_reason,
             addr: invariant_contract.address,
             func,
             inner_sequence: inner_sequence.to_vec(),

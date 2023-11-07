@@ -26,6 +26,6 @@ contract TargetSenders is DSTest {
     }
 
     function invariantTrueWorld() public {
-        require(hello.world() == true, "false world.");
+        require(hello.world() == true, "false world");
     }
 }

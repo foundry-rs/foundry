@@ -92,7 +92,7 @@ impl CallTraceArena {
             .iter()
             .map(|node| {
                 if node.trace.created() {
-                    if let RawOrDecodedReturnData::Raw(ref bytes) = node.trace.output {
+                    if let TraceRetData::Raw(bytes) = &node.trace.output {
                         return (&node.trace.address, Some(bytes.as_ref()))
                     }
                 }
@@ -138,29 +138,23 @@ impl CallTraceArena {
             // Add step to geth trace
             struct_logs.push(log);
 
-            // Check if the step was a call
-            match step.op {
-                Instruction::OpCode(opc) => {
-                    match opc {
-                        // If yes, descend into a child trace
-                        opcode::CREATE |
-                        opcode::CREATE2 |
-                        opcode::DELEGATECALL |
-                        opcode::CALL |
-                        opcode::STATICCALL |
-                        opcode::CALLCODE => {
-                            self.add_to_geth_trace(
-                                storage,
-                                &self.arena[trace_node.children[child_id]],
-                                struct_logs,
-                                opts,
-                            );
-                            child_id += 1;
-                        }
-                        _ => {}
-                    }
-                }
-                Instruction::Cheatcode(_) => {}
+            // Descend into a child trace if the step was a call
+            if let Instruction::OpCode(
+                opcode::CREATE |
+                opcode::CREATE2 |
+                opcode::DELEGATECALL |
+                opcode::CALL |
+                opcode::STATICCALL |
+                opcode::CALLCODE,
+            ) = step.op
+            {
+                self.add_to_geth_trace(
+                    storage,
+                    &self.arena[trace_node.children[child_id]],
+                    struct_logs,
+                    opts,
+                );
+                child_id += 1;
             }
         }
     }
@@ -253,14 +247,13 @@ impl fmt::Display for CallTraceArena {
 
             // Display trace return data
             let color = trace_color(&node.trace);
-            write!(writer, "{child}{EDGE}")?;
-            write!(writer, "{}", color.paint(RETURN))?;
+            write!(writer, "{child}{EDGE}{}", color.paint(RETURN))?;
             if node.trace.created() {
                 match &node.trace.output {
-                    RawOrDecodedReturnData::Raw(bytes) => {
+                    TraceRetData::Raw(bytes) => {
                         writeln!(writer, "{} bytes of code", bytes.len())?;
                     }
-                    RawOrDecodedReturnData::Decoded(val) => {
+                    TraceRetData::Decoded(val) => {
                         writeln!(writer, "{val}")?;
                     }
                 }
@@ -327,48 +320,54 @@ pub enum LogCallOrder {
 
 /// Raw or decoded calldata.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub enum RawOrDecodedCall {
-    /// Raw calldata
+pub enum TraceCallData {
+    /// Raw calldata bytes.
     Raw(Bytes),
     /// Decoded calldata.
-    ///
-    /// The first element in the tuple is the function name, second is the function signature and
-    /// the third element is a vector of decoded parameters.
-    Decoded(String, String, Vec<String>),
+    Decoded {
+        /// The function signature.
+        signature: String,
+        /// The function arguments.
+        args: Vec<String>,
+    },
 }
 
-impl RawOrDecodedCall {
-    pub fn to_raw(&self) -> Vec<u8> {
-        match self {
-            RawOrDecodedCall::Raw(raw) => raw.to_vec(),
-            RawOrDecodedCall::Decoded(_, _, _) => {
-                vec![]
-            }
-        }
+impl Default for TraceCallData {
+    fn default() -> Self {
+        Self::Raw(Bytes::new())
     }
 }
 
-impl Default for RawOrDecodedCall {
-    fn default() -> Self {
-        RawOrDecodedCall::Raw(Default::default())
+impl TraceCallData {
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            TraceCallData::Raw(raw) => raw,
+            TraceCallData::Decoded { .. } => &[],
+        }
     }
 }
 
 /// Raw or decoded return data.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub enum RawOrDecodedReturnData {
-    /// Raw return data
+pub enum TraceRetData {
+    /// Raw return data.
     Raw(Bytes),
-    /// Decoded return data
+    /// Decoded return data.
     Decoded(String),
 }
 
-impl RawOrDecodedReturnData {
+impl Default for TraceRetData {
+    fn default() -> Self {
+        Self::Raw(Bytes::new())
+    }
+}
+
+impl TraceRetData {
     /// Returns the data as [`Bytes`]
     pub fn to_bytes(&self) -> Bytes {
         match self {
-            RawOrDecodedReturnData::Raw(raw) => raw.clone(),
-            RawOrDecodedReturnData::Decoded(val) => val.as_bytes().to_vec().into(),
+            TraceRetData::Raw(raw) => raw.clone(),
+            TraceRetData::Decoded(val) => val.as_bytes().to_vec().into(),
         }
     }
 
@@ -377,23 +376,17 @@ impl RawOrDecodedReturnData {
     }
 }
 
-impl Default for RawOrDecodedReturnData {
-    fn default() -> Self {
-        RawOrDecodedReturnData::Raw(Default::default())
-    }
-}
-
-impl fmt::Display for RawOrDecodedReturnData {
+impl fmt::Display for TraceRetData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self {
-            RawOrDecodedReturnData::Raw(bytes) => {
+            TraceRetData::Raw(bytes) => {
                 if bytes.is_empty() {
                     write!(f, "()")
                 } else {
                     bytes.fmt(f)
                 }
             }
-            RawOrDecodedReturnData::Decoded(decoded) => f.write_str(decoded),
+            TraceRetData::Decoded(decoded) => f.write_str(decoded),
         }
     }
 }
@@ -477,10 +470,10 @@ pub struct CallTrace {
     /// The value transferred in the call
     pub value: U256,
     /// The calldata for the call, or the init code for contract creations
-    pub data: RawOrDecodedCall,
+    pub data: TraceCallData,
     /// The return data of the call if this was not a contract creation, otherwise it is the
     /// runtime bytecode of the created contract
-    pub output: RawOrDecodedReturnData,
+    pub output: TraceRetData,
     /// The gas cost of the call
     pub gas_cost: u64,
     /// The status of the trace's call
@@ -524,54 +517,53 @@ impl Default for CallTrace {
 impl fmt::Display for CallTrace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let address = self.address.to_checksum(None);
+        write!(f, "[{}] ", self.gas_cost)?;
         if self.created() {
             write!(
                 f,
-                "[{}] {}{} {}@{}",
-                self.gas_cost,
+                "{}{} {}@{}",
                 Paint::yellow(CALL),
                 Paint::yellow("new"),
-                self.label.as_ref().unwrap_or(&"<Unknown>".to_string()),
+                self.label.as_deref().unwrap_or("<unknown>"),
                 address
-            )?;
+            )
         } else {
-            let (func, inputs) = match &self.data {
-                RawOrDecodedCall::Raw(bytes) => {
+            let (func_name, inputs) = match &self.data {
+                TraceCallData::Raw(bytes) => {
                     // We assume that the fallback function (`data.len() < 4`) counts as decoded
                     // calldata
-                    assert!(bytes.len() >= 4);
-                    (hex::encode(&bytes[0..4]), hex::encode(&bytes[4..]))
+                    let (selector, data) = bytes.split_at(4);
+                    (hex::encode(selector), hex::encode(data))
                 }
-                RawOrDecodedCall::Decoded(func, _, inputs) => (func.clone(), inputs.join(", ")),
+                TraceCallData::Decoded { signature, args } => {
+                    let name = signature.split('(').next().unwrap();
+                    (name.to_string(), args.join(", "))
+                }
             };
 
             let action = match self.kind {
                 // do not show anything for CALLs
                 CallKind::Call => "",
-                CallKind::StaticCall => "[staticcall]",
-                CallKind::CallCode => "[callcode]",
-                CallKind::DelegateCall => "[delegatecall]",
-                _ => unreachable!(),
+                CallKind::StaticCall => " [staticcall]",
+                CallKind::CallCode => " [callcode]",
+                CallKind::DelegateCall => " [delegatecall]",
+                CallKind::Create | CallKind::Create2 => unreachable!(),
             };
 
             let color = trace_color(self);
             write!(
                 f,
-                "[{}] {}::{}{}({}) {}",
-                self.gas_cost,
-                color.paint(self.label.as_ref().unwrap_or(&address)),
-                color.paint(func),
-                if !self.value == U256::ZERO {
-                    format!("{{value: {}}}", self.value)
+                "{addr}::{func_name}{opt_value}({inputs}){action}",
+                addr = color.paint(self.label.as_deref().unwrap_or(&address)),
+                func_name = color.paint(func_name),
+                opt_value = if self.value == U256::ZERO {
+                    String::new()
                 } else {
-                    "".to_string()
+                    format!("{{value: {}}}", self.value)
                 },
-                inputs,
-                Paint::yellow(action),
-            )?;
+                action = Paint::yellow(action),
+            )
         }
-
-        Ok(())
     }
 }
 

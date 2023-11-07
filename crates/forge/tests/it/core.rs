@@ -18,7 +18,7 @@ async fn test_core() {
                 vec![(
                     "setUp()",
                     false,
-                    Some("Setup failed: setup failed predictably".to_string()),
+                    Some("setup failed: revert: setup failed predictably".to_string()),
                     None,
                     None,
                 )],
@@ -65,7 +65,7 @@ async fn test_core() {
                 vec![(
                     "setUp()",
                     false,
-                    Some("Setup failed: execution error".to_string()),
+                    Some("setup failed: execution error".to_string()),
                     None,
                     None,
                 )],

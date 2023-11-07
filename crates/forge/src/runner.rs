@@ -148,11 +148,11 @@ impl<'a> ContractRunner<'a> {
                 Err(EvmError::Execution(err)) => {
                     let ExecutionErr { traces, labels, logs, reason, .. } = *err;
                     error!(reason = ?reason, contract = ?address, "setUp failed");
-                    (logs, traces, labels, Some(format!("Setup failed: {reason}")), None)
+                    (logs, traces, labels, Some(format!("setup failed: {reason}")), None)
                 }
                 Err(err) => {
                     error!(reason=?err, contract= ?address, "setUp failed");
-                    (Vec::new(), None, BTreeMap::new(), Some(format!("Setup failed: {err}")), None)
+                    (Vec::new(), None, BTreeMap::new(), Some(format!("setup failed: {err}")), None)
                 }
             };
             traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));

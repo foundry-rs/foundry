@@ -45,6 +45,6 @@ contract InvariantInnerContract is DSTest {
     }
 
     function invariantHideJesus() public {
-        require(jesus.identity_revealed() == false, "jesus betrayed.");
+        require(jesus.identity_revealed() == false, "jesus betrayed");
     }
 }

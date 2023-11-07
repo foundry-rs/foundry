@@ -53,19 +53,18 @@ use ethers::{
         DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, OtherFields,
         Trace, Transaction, TransactionReceipt, H160,
     },
-    utils::{hex, keccak256, rlp},
+    utils::{keccak256, rlp},
 };
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-use foundry_common::fmt::format_token;
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
-    decode::{decode_custom_error_args, decode_revert},
+    decode::decode_revert,
     inspectors::AccessListTracer,
     revm::{
         self,
         db::CacheDB,
-        interpreter::{return_ok, InstructionResult},
+        interpreter::InstructionResult,
         primitives::{
             Account, BlockEnv, CreateScheme, EVMError, Env, ExecutionResult, InvalidHeader, Output,
             SpecId, TransactTo, TxEnv, KECCAK_EMPTY,
@@ -285,7 +284,7 @@ impl Backend {
             fork_genesis_infos.clear();
 
             for res in genesis_accounts {
-                let (address, mut info) = res??;
+                let (address, mut info) = res.map_err(DatabaseError::display)??;
                 info.balance = self.genesis.balance;
                 db.insert_account(address, info.clone());
 
@@ -910,54 +909,20 @@ impl Backend {
             // insert all transactions
             for (info, receipt) in transactions.into_iter().zip(receipts) {
                 // log some tx info
-                {
-                    node_info!("    Transaction: {:?}", info.transaction_hash);
-                    if let Some(ref contract) = info.contract_address {
-                        node_info!("    Contract created: {:?}", contract);
-                    }
-                    node_info!("    Gas used: {}", receipt.gas_used());
-                    match info.exit {
-                        return_ok!() => (),
-                        InstructionResult::OutOfFund => {
-                            node_info!("    Error: reverted due to running out of funds");
-                        }
-                        InstructionResult::CallTooDeep => {
-                            node_info!("    Error: reverted with call too deep");
-                        }
-                        InstructionResult::Revert => {
-                            if let Some(ref r) = info.out {
-                                if let Ok(reason) = decode_revert(r.as_ref(), None, None) {
-                                    node_info!("    Error: reverted with '{}'", reason);
-                                } else {
-                                    match decode_custom_error_args(r, 5) {
-                                        // assuming max 5 args
-                                        Some(token) => {
-                                            node_info!(
-                                                "    Error: reverted with custom error: {:?}",
-                                                format_token(&token)
-                                            );
-                                        }
-                                        None => {
-                                            node_info!(
-                                                "    Error: reverted with custom error: {}",
-                                                hex::encode(r)
-                                            );
-                                        }
-                                    }
-                                }
-                            } else {
-                                node_info!("    Error: reverted without a reason");
-                            }
-                        }
-                        InstructionResult::OutOfGas => {
-                            node_info!("    Error: ran out of gas");
-                        }
-                        reason => {
-                            node_info!("    Error: failed due to {:?}", reason);
-                        }
-                    }
-                    node_info!("");
+                node_info!("    Transaction: {:?}", info.transaction_hash);
+                if let Some(contract) = &info.contract_address {
+                    node_info!("    Contract created: {contract:?}");
                 }
+                node_info!("    Gas used: {}", receipt.gas_used());
+                if !info.exit.is_ok() {
+                    let r = decode_revert(
+                        info.out.as_deref().unwrap_or_default(),
+                        None,
+                        Some(info.exit),
+                    );
+                    node_info!("    Error: reverted with: {r}");
+                }
+                node_info!("");
 
                 let mined_tx = MinedTransaction {
                     info,

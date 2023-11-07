@@ -27,6 +27,6 @@ contract TargetContracts is DSTest {
     }
 
     function invariantTrueWorld() public {
-        require(hello2.world() == true, "false world.");
+        require(hello2.world() == true, "false world");
     }
 }

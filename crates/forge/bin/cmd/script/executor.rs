@@ -173,7 +173,7 @@ impl ScriptArgs {
                                         return Some(AdditionalContract {
                                             opcode: node.kind(),
                                             address: node.trace.address,
-                                            init_code: node.trace.data.to_raw(),
+                                            init_code: node.trace.data.as_bytes().to_vec(),
                                         })
                                     }
                                     None

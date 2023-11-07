@@ -203,7 +203,7 @@ pub fn get_available_profiles(toml_path: impl AsRef<Path>) -> eyre::Result<Vec<S
     let doc = read_toml(toml_path)?;
 
     if let Some(Item::Table(profiles)) = doc.as_table().get(Config::PROFILE_SECTION) {
-        for (profile, _) in profiles.iter() {
+        for (profile, _) in profiles {
             let p = profile.to_string();
             if !result.contains(&p) {
                 result.push(p);

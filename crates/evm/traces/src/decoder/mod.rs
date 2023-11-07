@@ -1,11 +1,11 @@
 use crate::{
     identifier::{AddressIdentity, SingleSignaturesIdentifier, TraceIdentifier},
     node::CallTraceNode,
-    utils, CallTraceArena, RawOrDecodedCall, RawOrDecodedLog, RawOrDecodedReturnData,
+    utils, CallTraceArena, RawOrDecodedLog, TraceCallData, TraceRetData,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt};
 use alloy_json_abi::{Event, Function, JsonAbi as Abi};
-use alloy_primitives::{Address, FixedBytes, B256};
+use alloy_primitives::{Address, Selector, B256};
 use foundry_common::{abi::get_indexed_event, SELECTOR_LEN};
 use foundry_evm_core::{
     abi::{CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HEVM_ABI},
@@ -18,6 +18,8 @@ use foundry_evm_core::{
 use foundry_utils::types::ToAlloy;
 use once_cell::sync::OnceCell;
 use std::collections::{BTreeMap, HashMap};
+
+mod precompiles;
 
 /// Build a new [CallTraceDecoder].
 #[derive(Default)]
@@ -83,8 +85,6 @@ impl CallTraceDecoderBuilder {
 /// different sets might overlap.
 #[derive(Clone, Default, Debug)]
 pub struct CallTraceDecoder {
-    /// Information for decoding precompile calls.
-    pub precompiles: HashMap<Address, Function>,
     /// Addresses identified to be a specific contract.
     ///
     /// The values are in the form `"<artifact>:<contract>"`.
@@ -94,7 +94,7 @@ pub struct CallTraceDecoder {
     /// Information whether the contract address has a receive function
     pub receive_contracts: HashMap<Address, bool>,
     /// A mapping of signatures to their known functions
-    pub functions: BTreeMap<FixedBytes<4>, Vec<Function>>,
+    pub functions: BTreeMap<Selector, Vec<Function>>,
     /// All known events
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
     /// All known errors
@@ -103,27 +103,6 @@ pub struct CallTraceDecoder {
     pub signature_identifier: Option<SingleSignaturesIdentifier>,
     /// Verbosity level
     pub verbosity: u8,
-}
-
-/// Returns an expression of the type `[(Address, Function); N]`
-macro_rules! precompiles {
-    ($($number:literal : $name:ident($( $name_in:ident : $in:expr ),* $(,)?) -> ($( $name_out:ident : $out:expr ),* $(,)?)),+ $(,)?) => {{
-        use std::string::String as RustString;
-        use ethers::abi::ParamType::*;
-        [$(
-            (
-                alloy_primitives::Address::with_last_byte($number),
-                #[allow(deprecated)]
-                ethers::abi::Function {
-                    name: RustString::from(stringify!($name)),
-                    inputs: vec![$(ethers::abi::Param { name: RustString::from(stringify!($name_in)), kind: $in, internal_type: None, }),*],
-                    outputs: vec![$(ethers::abi::Param { name: RustString::from(stringify!($name_out)), kind: $out, internal_type: None, }),*],
-                    constant: None,
-                    state_mutability: ethers::abi::StateMutability::Pure,
-                },
-            ),
-        )+]
-    }};
 }
 
 impl CallTraceDecoder {
@@ -140,20 +119,6 @@ impl CallTraceDecoder {
 
     fn init() -> Self {
         Self {
-            // TODO: These are the Ethereum precompiles. We should add a way to support precompiles
-            // for other networks, too.
-            precompiles: precompiles!(
-                0x01: ecrecover(hash: FixedBytes(32), v: Uint(256), r: Uint(256), s: Uint(256)) -> (publicAddress: Address),
-                0x02: sha256(data: Bytes) -> (hash: FixedBytes(32)),
-                0x03: ripemd(data: Bytes) -> (hash: FixedBytes(32)),
-                0x04: identity(data: Bytes) -> (data: Bytes),
-                0x05: modexp(Bsize: Uint(256), Esize: Uint(256), Msize: Uint(256), BEM: Bytes) -> (value: Bytes),
-                0x06: ecadd(x1: Uint(256), y1: Uint(256), x2: Uint(256), y2: Uint(256)) -> (x: Uint(256), y: Uint(256)),
-                0x07: ecmul(x1: Uint(256), y1: Uint(256), s: Uint(256)) -> (x: Uint(256), y: Uint(256)),
-                0x08: ecpairing(x1: Uint(256), y1: Uint(256), x2: Uint(256), y2: Uint(256), x3: Uint(256), y3: Uint(256)) -> (success: Uint(256)),
-                0x09: blake2f(rounds: Uint(4), h: FixedBytes(64), m: FixedBytes(128), t: FixedBytes(16), f: FixedBytes(1)) -> (h: FixedBytes(64)),
-            ).into_iter().map(|(addr, func)| (addr, func.to_alloy())).collect(),
-
             contracts: Default::default(),
 
             labels: [
@@ -241,28 +206,37 @@ impl CallTraceDecoder {
         }
     }
 
+    /// Decodes all nodes in the specified call trace.
     pub async fn decode(&self, traces: &mut CallTraceArena) {
         for node in &mut traces.arena {
             // Set contract name
-            if let Some(contract) = self.contracts.get(&node.trace.address).cloned() {
-                node.trace.contract = Some(contract);
+            if let Some(contract) = self.contracts.get(&node.trace.address) {
+                node.trace.contract = Some(contract.clone());
             }
 
             // Set label
-            if let Some(label) = self.labels.get(&node.trace.address).cloned() {
-                node.trace.label = Some(label);
+            if let Some(label) = self.labels.get(&node.trace.address) {
+                node.trace.label = Some(label.clone());
             }
 
+            // Decode events
+            self.decode_events(node).await;
+
             // Decode call
-            if let Some(precompile_fn) = self.precompiles.get(&node.trace.address) {
-                node.decode_precompile(precompile_fn, &self.labels);
-            } else if let RawOrDecodedCall::Raw(ref bytes) = node.trace.data {
-                if bytes.len() >= 4 {
+            // TODO: chain ID argument
+            if precompiles::decode(&mut node.trace, 1) {
+                return
+            }
+
+            if let TraceCallData::Raw(bytes) = &node.trace.data {
+                if bytes.len() >= SELECTOR_LEN {
                     if let Some(funcs) = self.functions.get(&bytes[..SELECTOR_LEN]) {
                         node.decode_function(funcs, &self.labels, &self.errors, self.verbosity);
                     } else if node.trace.address == DEFAULT_CREATE2_DEPLOYER {
-                        node.trace.data =
-                            RawOrDecodedCall::Decoded("create2".to_string(), String::new(), vec![]);
+                        node.trace.data = TraceCallData::Decoded {
+                            signature: "create2".to_string(),
+                            args: vec![],
+                        };
                     } else if let Some(identifier) = &self.signature_identifier {
                         if let Some(function) =
                             identifier.write().await.identify_function(&bytes[..SELECTOR_LEN]).await
@@ -276,35 +250,24 @@ impl CallTraceDecoder {
                         }
                     }
                 } else {
-                    let has_receive = self
-                        .receive_contracts
-                        .get(&node.trace.address)
-                        .copied()
-                        .unwrap_or_default();
-                    let func_name =
-                        if bytes.is_empty() && has_receive { "receive" } else { "fallback" };
+                    let has_receive =
+                        self.receive_contracts.get(&node.trace.address).copied().unwrap_or(false);
+                    let signature =
+                        if bytes.is_empty() && has_receive { "receive()" } else { "fallback()" }
+                            .into();
+                    node.trace.data = TraceCallData::Decoded { signature, args: Vec::new() };
 
-                    node.trace.data =
-                        RawOrDecodedCall::Decoded(func_name.to_string(), String::new(), Vec::new());
-
-                    if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
+                    if let TraceRetData::Raw(bytes) = &node.trace.output {
                         if !node.trace.success {
-                            if let Ok(decoded_error) = decode::decode_revert(
-                                &bytes[..],
+                            node.trace.output = TraceRetData::Decoded(decode::decode_revert(
+                                bytes,
                                 Some(&self.errors),
                                 Some(node.trace.status),
-                            ) {
-                                node.trace.output = RawOrDecodedReturnData::Decoded(format!(
-                                    r#""{decoded_error}""#
-                                ));
-                            }
+                            ));
                         }
                     }
                 }
             }
-
-            // Decode events
-            self.decode_events(node).await;
         }
     }
 

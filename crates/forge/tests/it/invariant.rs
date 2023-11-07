@@ -26,7 +26,13 @@ async fn test_invariant() {
             ),
             (
                 "fuzz/invariant/common/InvariantInnerContract.t.sol:InvariantInnerContract",
-                vec![("invariantHideJesus()", false, Some("jesus betrayed.".into()), None, None)],
+                vec![(
+                    "invariantHideJesus()",
+                    false,
+                    Some("revert: jesus betrayed".into()),
+                    None,
+                    None,
+                )],
             ),
             (
                 "fuzz/invariant/common/InvariantReentrancy.t.sol:InvariantReentrancy",
@@ -35,11 +41,11 @@ async fn test_invariant() {
             (
                 "fuzz/invariant/common/InvariantTest1.t.sol:InvariantTest",
                 vec![
-                    ("invariant_neverFalse()", false, Some("false.".into()), None, None),
+                    ("invariant_neverFalse()", false, Some("revert: false".into()), None, None),
                     (
                         "statefulFuzz_neverFalseWithInvariantAlias()",
                         false,
-                        Some("false.".into()),
+                        Some("revert: false".into()),
                         None,
                         None,
                     ),
@@ -55,11 +61,23 @@ async fn test_invariant() {
             ),
             (
                 "fuzz/invariant/target/TargetSenders.t.sol:TargetSenders",
-                vec![("invariantTrueWorld()", false, Some("false world.".into()), None, None)],
+                vec![(
+                    "invariantTrueWorld()",
+                    false,
+                    Some("revert: false world".into()),
+                    None,
+                    None,
+                )],
             ),
             (
                 "fuzz/invariant/target/TargetInterfaces.t.sol:TargetWorldInterfaces",
-                vec![("invariantTrueWorld()", false, Some("false world.".into()), None, None)],
+                vec![(
+                    "invariantTrueWorld()",
+                    false,
+                    Some("revert: false world".into()),
+                    None,
+                    None,
+                )],
             ),
             (
                 "fuzz/invariant/target/ExcludeSenders.t.sol:ExcludeSenders",
@@ -77,7 +95,13 @@ async fn test_invariant() {
                 "fuzz/invariant/targetAbi/TargetArtifacts.t.sol:TargetArtifacts",
                 vec![
                     ("invariantShouldPass()", true, None, None, None),
-                    ("invariantShouldFail()", false, Some("false world.".into()), None, None),
+                    (
+                        "invariantShouldFail()",
+                        false,
+                        Some("revert: false world".into()),
+                        None,
+                        None,
+                    ),
                 ],
             ),
             (
@@ -86,7 +110,13 @@ async fn test_invariant() {
             ),
             (
                 "fuzz/invariant/targetAbi/TargetArtifactSelectors2.t.sol:TargetArtifactSelectors2",
-                vec![("invariantShouldFail()", false, Some("its false.".into()), None, None)],
+                vec![(
+                    "invariantShouldFail()",
+                    false,
+                    Some("revert: it's false".into()),
+                    None,
+                    None,
+                )],
             ),
         ]),
     );
@@ -112,7 +142,7 @@ async fn test_invariant_override() {
         &results,
         BTreeMap::from([(
             "fuzz/invariant/common/InvariantReentrancy.t.sol:InvariantReentrancy",
-            vec![("invariantNotStolen()", false, Some("stolen.".into()), None, None)],
+            vec![("invariantNotStolen()", false, Some("revert: stolen".into()), None, None)],
         )]),
     );
 }
@@ -142,7 +172,7 @@ async fn test_invariant_fail_on_revert() {
             vec![(
                 "statefulFuzz_BrokenInvariant()",
                 false,
-                Some("failed on revert".into()),
+                Some("revert: failed on revert".into()),
                 None,
                 None,
             )],

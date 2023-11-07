@@ -35,6 +35,7 @@ impl AccessListTracer {
                 .collect(),
         }
     }
+
     pub fn access_list(&self) -> AccessList {
         AccessList::from(
             self.access_list
@@ -47,6 +48,7 @@ impl AccessListTracer {
         )
     }
 }
+
 impl<DB: Database> Inspector<DB> for AccessListTracer {
     #[inline]
     fn step(

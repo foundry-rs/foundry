@@ -40,6 +40,6 @@ contract ExcludeArtifacts is DSTest {
     }
 
     function invariantShouldPass() public {
-        require(excluded.world() == true, "false world.");
+        require(excluded.world() == true, "false world");
     }
 }
