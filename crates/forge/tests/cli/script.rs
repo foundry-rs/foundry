@@ -377,7 +377,7 @@ contract RunScript is Script {
         }
     }
 }"#
-    .replace("CONTRACT_ADDRESS", &contract_address);
+    .replace("CONTRACT_ADDRESS", contract_address);
 
     let run_script = prj.inner().add_source("RunScript", run_code).unwrap();
     let run_contract = run_script.display().to_string() + ":RunScript";
