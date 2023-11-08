@@ -47,7 +47,6 @@ impl EyreHandler for Handler {
 /// verbose debug-centric handler is installed.
 ///
 /// Panics are always caught by the more debug-centric handler.
-#[cfg_attr(windows, inline(never))]
 pub fn install() -> Result<()> {
     let debug_enabled = std::env::var("FOUNDRY_DEBUG").is_ok();
 

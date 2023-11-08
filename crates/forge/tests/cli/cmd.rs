@@ -1008,7 +1008,7 @@ forgetest!(can_install_latest_release_tag, |prj, cmd| {
 // Tests that forge update doesn't break a working dependency by recursively updating nested
 // dependencies
 forgetest!(
-    #[cfg_attr(windows, ignore)] // No idea why this fails
+    #[cfg_attr(windows, ignore = "weird git fail")]
     can_update_library_with_outdated_nested_dependency,
     |prj, cmd| {
         cmd.git_init();

@@ -219,9 +219,9 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     macro_rules! fix_test {
-        ($(#[$meta:meta])* $name:ident, $fun:expr) => {
+        ($(#[$attr:meta])* $name:ident, $fun:expr) => {
             #[test]
-            $(#[$meta])*
+            $(#[$attr])*
             fn $name() {
                 Jail::expect_with(|jail| {
                     // setup home directory,
