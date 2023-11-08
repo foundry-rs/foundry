@@ -185,27 +185,27 @@ impl fmt::Display for Cache {
                 chain.block_explorer as f32 + chain.blocks.iter().map(|x| x.1).sum::<u64>() as f32,
             ) {
                 NumberPrefix::Standalone(size) => {
-                    writeln!(f, "-️ {} ({size:.1} B)", chain.name)?;
+                    writeln!(f, "- {} ({size:.1} B)", chain.name)?;
                 }
                 NumberPrefix::Prefixed(prefix, size) => {
-                    writeln!(f, "-️ {} ({size:.1} {prefix}B)", chain.name)?;
+                    writeln!(f, "- {} ({size:.1} {prefix}B)", chain.name)?;
                 }
             }
             match NumberPrefix::decimal(chain.block_explorer as f32) {
                 NumberPrefix::Standalone(size) => {
-                    writeln!(f, "\t-️ Block Explorer ({size:.1} B)\n")?;
+                    writeln!(f, "\t- Block Explorer ({size:.1} B)\n")?;
                 }
                 NumberPrefix::Prefixed(prefix, size) => {
-                    writeln!(f, "\t-️ Block Explorer ({size:.1} {prefix}B)\n")?;
+                    writeln!(f, "\t- Block Explorer ({size:.1} {prefix}B)\n")?;
                 }
             }
             for block in &chain.blocks {
                 match NumberPrefix::decimal(block.1 as f32) {
                     NumberPrefix::Standalone(size) => {
-                        writeln!(f, "\t-️ Block {} ({size:.1} B)", block.0)?;
+                        writeln!(f, "\t- Block {} ({size:.1} B)", block.0)?;
                     }
                     NumberPrefix::Prefixed(prefix, size) => {
-                        writeln!(f, "\t-️ Block {} ({size:.1} {prefix}B)", block.0)?;
+                        writeln!(f, "\t- Block {} ({size:.1} {prefix}B)", block.0)?;
                     }
                 }
             }
@@ -292,22 +292,22 @@ mod tests {
         };
 
         let expected = "\
-            -️ mainnet (503.0 B)\n\t\
-                -️ Block Explorer (500.0 B)\n\n\t\
-                -️ Block 1 (1.0 B)\n\t\
-                -️ Block 2 (2.0 B)\n\
-            -️ ropsten (4.6 kB)\n\t\
-                -️ Block Explorer (4.6 kB)\n\n\t\
-                -️ Block 1 (1.0 B)\n\t\
-                -️ Block 2 (2.0 B)\n\
-            -️ rinkeby (6.2 MB)\n\t\
-                -️ Block Explorer (4.2 MB)\n\n\t\
-                -️ Block 1 (1.0 kB)\n\t\
-                -️ Block 2 (2.0 MB)\n\
-            -️ mumbai (3.0 B)\n\t\
-                -️ Block Explorer (0.0 B)\n\n\t\
-                -️ Block 1 (1.0 B)\n\t\
-                -️ Block 2 (2.0 B)\n";
+            - mainnet (503.0 B)\n\t\
+                - Block Explorer (500.0 B)\n\n\t\
+                - Block 1 (1.0 B)\n\t\
+                - Block 2 (2.0 B)\n\
+            - ropsten (4.6 kB)\n\t\
+                - Block Explorer (4.6 kB)\n\n\t\
+                - Block 1 (1.0 B)\n\t\
+                - Block 2 (2.0 B)\n\
+            - rinkeby (6.2 MB)\n\t\
+                - Block Explorer (4.2 MB)\n\n\t\
+                - Block 1 (1.0 kB)\n\t\
+                - Block 2 (2.0 MB)\n\
+            - mumbai (3.0 B)\n\t\
+                - Block Explorer (0.0 B)\n\n\t\
+                - Block 1 (1.0 B)\n\t\
+                - Block 2 (2.0 B)\n";
         assert_str_eq!(format!("{cache}"), expected);
     }
 }

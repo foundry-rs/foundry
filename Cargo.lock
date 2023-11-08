@@ -2781,7 +2781,6 @@ dependencies = [
  "globset",
  "number_prefix",
  "once_cell",
- "open-fastrlp",
  "path-slash",
  "pretty_assertions",
  "regex",
@@ -2794,7 +2793,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml 0.8.8",
- "toml_edit 0.20.7",
+ "toml_edit 0.21.0",
  "tracing",
  "walkdir",
 ]

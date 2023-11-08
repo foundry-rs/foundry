@@ -17,7 +17,7 @@ alloy-primitives = { workspace = true, features = ["std", "serde"] }
 revm-primitives = { workspace = true, default-features = false, features = ["std"] }
 
 foundry-compilers = { workspace = true, features = ["async", "svm-solc"] }
-foundry-block-explorers = { workspace = true, features = ["foundry-compilers"]}
+foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 
 # formats
 Inflector = "0.11"
@@ -27,15 +27,12 @@ serde.workspace = true
 serde_regex = "1"
 serde_json.workspace = true
 toml = { version = "0.8", features = ["preserve_order"] }
-toml_edit = "0.20"
+toml_edit = "0.21"
 
 # dirs
 dirs-next = "2"
 globset = "0.4"
 walkdir = "2"
-
-# encoding
-open-fastrlp = "0.1"
 
 # misc
 eyre.workspace = true
