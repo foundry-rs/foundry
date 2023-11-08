@@ -331,29 +331,29 @@ interface Vm {
     // --- Creation and Selection ---
 
     /// Returns the identifier of the currently active fork. Reverts if no fork is currently active.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Safe)]
     function activeFork() external view returns (uint256 forkId);
 
     /// Creates a new fork with the given endpoint and the _latest_ block and returns the identifier of the fork.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Safe)]
     function createFork(string calldata urlOrAlias) external returns (uint256 forkId);
     /// Creates a new fork with the given endpoint and block and returns the identifier of the fork.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Safe)]
     function createFork(string calldata urlOrAlias, uint256 blockNumber) external returns (uint256 forkId);
     /// Creates a new fork with the given endpoint and at the block the given transaction was mined in,
     /// replays all transaction mined in the block before the transaction, and returns the identifier of the fork.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Safe)]
     function createFork(string calldata urlOrAlias, bytes32 txHash) external returns (uint256 forkId);
 
     /// Creates and also selects a new fork with the given endpoint and the latest block and returns the identifier of the fork.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Safe)]
     function createSelectFork(string calldata urlOrAlias) external returns (uint256 forkId);
     /// Creates and also selects a new fork with the given endpoint and block and returns the identifier of the fork.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Safe)]
     function createSelectFork(string calldata urlOrAlias, uint256 blockNumber) external returns (uint256 forkId);
     /// Creates and also selects new fork with the given endpoint and at the block the given transaction was mined in,
     /// replays all transaction mined in the block before the transaction, returns the identifier of the fork.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Safe)]
     function createSelectFork(string calldata urlOrAlias, bytes32 txHash) external returns (uint256 forkId);
 
     /// Updates the currently active fork to given block number
@@ -372,7 +372,7 @@ interface Vm {
     function rollFork(uint256 forkId, bytes32 txHash) external;
 
     /// Takes a fork identifier created by `createFork` and sets the corresponding forked state as active.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Safe)]
     function selectFork(uint256 forkId) external;
 
     /// Fetches the given transaction from the active fork and executes it on the current state.
@@ -383,11 +383,11 @@ interface Vm {
     function transact(uint256 forkId, bytes32 txHash) external;
 
     /// Performs an Ethereum JSON-RPC request to the current fork URL.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Safe)]
     function rpc(string calldata method, string calldata params) external returns (bytes memory data);
 
     /// Gets all the logs according to specified filter.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Safe)]
     function eth_getLogs(uint256 fromBlock, uint256 toBlock, address addr, bytes32[] memory topics)
         external
         returns (EthGetLogs[] memory logs);
