@@ -49,9 +49,9 @@ jobs:
               with:
                   target: ${{ matrix.target }}
             - uses: taiki-e/install-action@nextest
-            - uses: taiki-e/setup-cross-toolchain-action@v1
-              with:
-                  target: ${{ matrix.target }}
+            # - uses: taiki-e/setup-cross-toolchain-action@v1
+            #   with:
+            #       target: ${{ matrix.target }}
             - name: Forge RPC cache
               uses: actions/cache@v3
               with:
@@ -61,7 +61,7 @@ jobs:
                   key: rpc-cache-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
             - uses: Swatinem/rust-cache@v2
               with:
-                  key: ${{ matrix.target }}
+                  #   key: ${{ matrix.target }}
                   cache-on-failure: true
             - name: Setup Git config
               run: |
