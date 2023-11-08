@@ -2206,6 +2206,7 @@ dependencies = [
  "auto_impl",
  "ethers-contract",
  "ethers-core",
+ "ethers-etherscan",
  "ethers-providers",
  "ethers-signers",
  "futures-channel",
@@ -2647,8 +2648,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2cc59cf4c18884c485b20f376e98946774b76f3b8e2e71e4f35723ffb34b8544"
+source = "git+https://github.com/foundry-rs/block-explorers#714c1537cf09d9a96293aadc633166c97d19da95"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
