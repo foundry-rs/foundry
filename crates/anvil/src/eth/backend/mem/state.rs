@@ -2,7 +2,8 @@
 
 use crate::eth::{backend::db::AsHashDB, error::BlockchainError};
 use alloy_primitives::{Address, Bytes, U256 as rU256};
-use anvil_core::eth::{state::StateOverride, trie::RefSecTrieDBMut};
+use alloy_rpc_types::state::StateOverride;
+use anvil_core::eth::trie::RefSecTrieDBMut;
 use ethers::{
     types::H256,
     utils::{rlp, rlp::RlpStream},

@@ -2,14 +2,13 @@ use crate::{
     eth::subscription::{SubscriptionId, SubscriptionKind, SubscriptionParams},
     types::{EvmMineOptions, Forking, Index},
 };
-use alloy_rpc_types::{StateOverride, CallRequest, BlockId, BlockNumberOrTag};
-use ethers_core::{
-    abi::ethereum_types::H64,
-    types::{
-        transaction::eip712::TypedData, Address, BlockId, Bytes, Filter,
-        GethDebugTracingOptions, TxHash, H256, U256,
-    },
-};
+use ethers_core::types::{
+        transaction::eip712::TypedData,
+        GethDebugTracingOptions, U256
+    };
+// TODO: Use U256 after replacing other types, otherwise rust-analyzer gets stuck on resolution
+use alloy_primitives::{Address, Bytes, TxHash, B256, B64};
+use alloy_rpc_types::{state::StateOverride, CallRequest, BlockId, BlockNumberOrTag, Filter};
 
 pub mod block;
 pub mod proof;
@@ -36,7 +35,7 @@ pub struct Params<T: Default> {
     pub params: T,
 }
 
-/// Represents the ethereum JSON-RPC API
+/// Represents ethereum JSON-RPC API
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "method", content = "params"))]
@@ -84,11 +83,11 @@ pub enum EthRequest {
     EthGetStorageAt(Address, U256, Option<BlockId>),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getBlockByHash"))]
-    EthGetBlockByHash(H256, bool),
+    EthGetBlockByHash(B256, bool),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getBlockByNumber"))]
     EthGetBlockByNumber(
-        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number"))]
+        // TODO: serde_helper for deserializing
         BlockNumberOrTag,
         bool,
     ),
@@ -100,13 +99,13 @@ pub enum EthRequest {
         feature = "serde",
         serde(rename = "eth_getBlockTransactionCountByHash", with = "sequence")
     )]
-    EthGetTransactionCountByHash(H256),
+    EthGetTransactionCountByHash(B256),
 
     #[cfg_attr(
         feature = "serde",
         serde(
             rename = "eth_getBlockTransactionCountByNumber",
-            deserialize_with = "lenient_block_number_seq"
+            // TODO: Serde helper for deserializing
         )
     )]
     EthGetTransactionCountByNumber(BlockNumberOrTag),
@@ -115,13 +114,12 @@ pub enum EthRequest {
         feature = "serde",
         serde(rename = "eth_getUncleCountByBlockHash", with = "sequence")
     )]
-    EthGetUnclesCountByHash(H256),
+    EthGetUnclesCountByHash(B256),
 
     #[cfg_attr(
         feature = "serde",
         serde(
             rename = "eth_getUncleCountByBlockNumber",
-            deserialize_with = "lenient_block_number_seq"
         )
     )]
     EthGetUnclesCountByNumber(BlockNumberOrTag),
@@ -132,7 +130,7 @@ pub enum EthRequest {
     /// Returns the account and storage values of the specified account including the Merkle-proof.
     /// This call can be used to verify that the data you are pulling from is not tampered with.
     #[cfg_attr(feature = "serde", serde(rename = "eth_getProof"))]
-    EthGetProof(Address, Vec<H256>, Option<BlockId>),
+    EthGetProof(Address, Vec<B256>, Option<BlockId>),
 
     /// The sign method calculates an Ethereum specific signature with:
     #[cfg_attr(feature = "serde", serde(rename = "eth_sign"))]
@@ -186,20 +184,20 @@ pub enum EthRequest {
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getTransactionByBlockNumberAndIndex"))]
     EthGetTransactionByBlockNumberAndIndex(
-        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number"))]
+        // TODO: serde_helper for deserializing
         BlockNumberOrTag,
         Index,
     ),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getTransactionReceipt", with = "sequence"))]
-    EthGetTransactionReceipt(H256),
+    EthGetTransactionReceipt(B256),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getUncleByBlockHashAndIndex"))]
-    EthGetUncleByBlockHashAndIndex(H256, Index),
+    EthGetUncleByBlockHashAndIndex(B256, Index),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getUncleByBlockNumberAndIndex"))]
     EthGetUncleByBlockNumberAndIndex(
-        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number"))]
+        // TODO: serde_helper for deserializing
         BlockNumberOrTag,
         Index,
     ),
@@ -240,10 +238,10 @@ pub enum EthRequest {
     EthGetWork(()),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_submitWork"))]
-    EthSubmitWork(H64, H256, H256),
+    EthSubmitWork(B64, B256, B256),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_submitHashrate"))]
-    EthSubmitHashRate(U256, H256),
+    EthSubmitHashRate(U256, B256),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_feeHistory"))]
     EthFeeHistory(
@@ -258,7 +256,7 @@ pub enum EthRequest {
     /// geth's `debug_traceTransaction`  endpoint
     #[cfg_attr(feature = "serde", serde(rename = "debug_traceTransaction"))]
     DebugTraceTransaction(
-        H256,
+        B256,
         #[cfg_attr(feature = "serde", serde(default))] GethDebugTracingOptions,
     ),
 
@@ -272,12 +270,12 @@ pub enum EthRequest {
 
     /// Trace transaction endpoint for parity's `trace_transaction`
     #[cfg_attr(feature = "serde", serde(rename = "trace_transaction", with = "sequence"))]
-    TraceTransaction(H256),
+    TraceTransaction(B256),
 
     /// Trace transaction endpoint for parity's `trace_block`
     #[cfg_attr(
         feature = "serde",
-        serde(rename = "trace_block", deserialize_with = "lenient_block_number_seq")
+        serde(rename = "trace_block")
     )]
     TraceBlock(BlockNumberOrTag),
 
@@ -359,7 +357,7 @@ pub enum EthRequest {
             with = "sequence"
         )
     )]
-    DropTransaction(H256),
+    DropTransaction(B256),
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config
     #[cfg_attr(feature = "serde", serde(rename = "anvil_reset", alias = "hardhat_reset"))]
@@ -407,7 +405,7 @@ pub enum EthRequest {
         /// slot
         U256,
         /// value
-        H256,
+        B256,
     ),
 
     /// Sets the coinbase address
@@ -485,6 +483,13 @@ pub enum EthRequest {
     /// Retrieves the Anvil node configuration params
     #[cfg_attr(feature = "serde", serde(rename = "anvil_nodeInfo", with = "empty_params"))]
     NodeInfo(()),
+
+    /// Retrieves the Anvil node metadata.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "anvil_metadata", alias = "hardhat_metadata", with = "empty_params")
+    )]
+    AnvilMetadata(()),
 
     // Ganache compatible calls
     /// Snapshot the state of the blockchain at the current block.
@@ -607,7 +612,7 @@ pub enum EthRequest {
     /// Related upstream issue: https://github.com/otterscan/otterscan/issues/1081
     #[cfg_attr(feature = "serde", serde(rename = "erigon_getHeaderByNumber"))]
     ErigonGetHeaderByNumber(
-        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number_seq"))]
+        // TODO: serde_helper for deserializing
         BlockNumberOrTag,
     ),
 
@@ -620,26 +625,26 @@ pub enum EthRequest {
     /// Traces internal ETH transfers, contracts creation (CREATE/CREATE2) and self-destructs for a
     /// certain transaction.
     #[cfg_attr(feature = "serde", serde(rename = "ots_getInternalOperations", with = "sequence"))]
-    OtsGetInternalOperations(H256),
+    OtsGetInternalOperations(B256),
 
     /// Otterscan's `ots_hasCode` endpoint
     /// Check if an ETH address contains code at a certain block number.
     #[cfg_attr(feature = "serde", serde(rename = "ots_hasCode"))]
     OtsHasCode(
         Address,
-        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number", default))]
+        // TODO: serde_helper for deserializing
         BlockNumberOrTag,
     ),
 
     /// Otterscan's `ots_traceTransaction` endpoint
     /// Trace a transaction and generate a trace call tree.
     #[cfg_attr(feature = "serde", serde(rename = "ots_traceTransaction", with = "sequence"))]
-    OtsTraceTransaction(H256),
+    OtsTraceTransaction(B256),
 
     /// Otterscan's `ots_getTransactionError` endpoint
     /// Given a transaction hash, returns its raw revert reason.
     #[cfg_attr(feature = "serde", serde(rename = "ots_getTransactionError", with = "sequence"))]
-    OtsGetTransactionError(H256),
+    OtsGetTransactionError(B256),
 
     /// Otterscan's `ots_getBlockDetails` endpoint
     /// Given a block number, return its data. Similar to the standard eth_getBlockByNumber/Hash
@@ -647,14 +652,14 @@ pub enum EthRequest {
     /// logBloom
     #[cfg_attr(feature = "serde", serde(rename = "ots_getBlockDetails"))]
     OtsGetBlockDetails(
-        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number_seq"))]
+        // TODO: serde_helper for deserializing
         BlockNumberOrTag,
     ),
 
     /// Otterscan's `ots_getBlockDetails` endpoint
     /// Same as `ots_getBlockDetails`, but receiving a block hash instead of number
     #[cfg_attr(feature = "serde", serde(rename = "ots_getBlockDetailsByHash", with = "sequence"))]
-    OtsGetBlockDetailsByHash(H256),
+    OtsGetBlockDetailsByHash(B256),
 
     /// Otterscan's `ots_getBlockTransactions` endpoint
     /// Gets paginated transaction data for a certain block. Return data is similar to
