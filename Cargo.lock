@@ -352,6 +352,7 @@ name = "anvil"
 version = "0.2.0"
 dependencies = [
  "alloy-primitives",
+ "alloy-rpc-types",
  "anvil-core",
  "anvil-rpc",
  "anvil-server",
@@ -401,6 +402,7 @@ name = "anvil-core"
 version = "0.2.0"
 dependencies = [
  "alloy-primitives",
+ "alloy-rpc-types",
  "bytes",
  "ethers-core",
  "foundry-evm",

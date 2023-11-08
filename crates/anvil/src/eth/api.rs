@@ -32,14 +32,16 @@ use anvil_core::{
     eth::{
         block::BlockInfo,
         proof::AccountProof,
-        state::StateOverride,
         transaction::{
-            EthTransactionRequest, LegacyTransaction, PendingTransaction, TransactionKind,
-            TypedTransaction, TypedTransactionRequest,
+            LegacyTransaction, PendingTransaction,
+            TypedTransaction,
         },
         EthRequest,
     },
     types::{EvmMineOptions, Forking, Index, NodeEnvironment, NodeForkConfig, NodeInfo, Work},
+};
+use alloy_rpc_types::{
+    StateOverride, CallRequest, TransactionKind, TypedTransactionRequest,
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{
@@ -802,7 +804,7 @@ impl EthApi {
     /// Signs a transaction
     ///
     /// Handler for ETH RPC call: `eth_signTransaction`
-    pub async fn sign_transaction(&self, request: EthTransactionRequest) -> Result<String> {
+    pub async fn sign_transaction(&self, request: CallRequest) -> Result<String> {
         node_info!("eth_signTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
@@ -821,7 +823,7 @@ impl EthApi {
     /// Sends a transaction
     ///
     /// Handler for ETH RPC call: `eth_sendTransaction`
-    pub async fn send_transaction(&self, request: EthTransactionRequest) -> Result<TxHash> {
+    pub async fn send_transaction(&self, request: CallRequest) -> Result<TxHash> {
         node_info!("eth_sendTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
@@ -914,7 +916,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_call`
     pub async fn call(
         &self,
-        request: EthTransactionRequest,
+        request: CallRequest,
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
     ) -> Result<Bytes> {
@@ -968,7 +970,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_createAccessList`
     pub async fn create_access_list(
         &self,
-        mut request: EthTransactionRequest,
+        mut request: CallRequest,
         block_number: Option<BlockId>,
     ) -> Result<AccessListWithGasUsed> {
         node_info!("eth_createAccessList");
@@ -1017,7 +1019,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_estimateGas`
     pub async fn estimate_gas(
         &self,
-        request: EthTransactionRequest,
+        request: CallRequest,
         block_number: Option<BlockId>,
     ) -> Result<U256> {
         node_info!("eth_estimateGas");
@@ -1380,7 +1382,7 @@ impl EthApi {
     /// Handler for RPC call: `debug_traceCall`
     pub async fn debug_trace_call(
         &self,
-        request: EthTransactionRequest,
+        request: CallRequest,
         block_number: Option<BlockId>,
         opts: GethDebugTracingOptions,
     ) -> Result<DefaultFrame> {
@@ -1881,7 +1883,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_sendUnsignedTransaction`
     pub async fn eth_send_unsigned_transaction(
         &self,
-        request: EthTransactionRequest,
+        request: CallRequest,
     ) -> Result<TxHash> {
         node_info!("eth_sendUnsignedTransaction");
         // either use the impersonated account of the request's `from` field
@@ -2047,7 +2049,7 @@ impl EthApi {
 
     async fn do_estimate_gas(
         &self,
-        request: EthTransactionRequest,
+        request: CallRequest,
         block_number: Option<BlockId>,
     ) -> Result<U256> {
         let block_request = self.block_request(block_number).await?;
@@ -2069,10 +2071,10 @@ impl EthApi {
 
     /// Estimates the gas usage of the `request` with the state.
     ///
-    /// This will execute the [EthTransactionRequest] and find the best gas limit via binary search
+    /// This will execute the [CallRequest] and find the best gas limit via binary search
     fn do_estimate_gas_with_state<D>(
         &self,
-        mut request: EthTransactionRequest,
+        mut request: CallRequest,
         state: D,
         block_env: BlockEnv,
     ) -> Result<U256>
@@ -2351,7 +2353,7 @@ impl EthApi {
 
     fn build_typed_tx_request(
         &self,
-        request: EthTransactionRequest,
+        request: CallRequest,
         nonce: U256,
     ) -> Result<TypedTransactionRequest> {
         let chain_id = request.chain_id.map(|c| c.as_u64()).unwrap_or_else(|| self.chain_id());
@@ -2428,7 +2430,7 @@ impl EthApi {
     /// This will also check the tx pool for pending transactions from the sender.
     async fn request_nonce(
         &self,
-        request: &EthTransactionRequest,
+        request: &CallRequest,
         from: Address,
     ) -> Result<(U256, U256)> {
         let highest_nonce =
@@ -2503,7 +2505,7 @@ fn ensure_return_ok(exit: InstructionResult, out: &Option<Output>) -> Result<Byt
 /// not
 #[inline]
 fn map_out_of_gas_err<D>(
-    mut request: EthTransactionRequest,
+    mut request: CallRequest,
     state: D,
     backend: Arc<backend::mem::Backend>,
     block_env: BlockEnv,
@@ -2537,7 +2539,7 @@ where
 
 /// Determines the minimum gas needed for a transaction depending on the transaction kind.
 #[inline]
-fn determine_base_gas_by_kind(request: EthTransactionRequest) -> U256 {
+fn determine_base_gas_by_kind(request: CallRequest) -> U256 {
     match request.into_typed_request() {
         Some(request) => match request {
             TypedTransactionRequest::Legacy(req) => match req.kind {

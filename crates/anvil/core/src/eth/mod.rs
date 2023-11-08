@@ -1,15 +1,12 @@
-use self::state::StateOverride;
 use crate::{
-    eth::{
-        subscription::{SubscriptionId, SubscriptionKind, SubscriptionParams},
-        transaction::EthTransactionRequest,
-    },
+    eth::subscription::{SubscriptionId, SubscriptionKind, SubscriptionParams},
     types::{EvmMineOptions, Forking, Index},
 };
+use alloy_rpc_types::{StateOverride, CallRequest, BlockId, BlockNumberOrTag};
 use ethers_core::{
     abi::ethereum_types::H64,
     types::{
-        transaction::eip712::TypedData, Address, BlockId, BlockNumber, Bytes, Filter,
+        transaction::eip712::TypedData, Address, BlockId, Bytes, Filter,
         GethDebugTracingOptions, TxHash, H256, U256,
     },
 };
@@ -17,7 +14,6 @@ use ethers_core::{
 pub mod block;
 pub mod proof;
 pub mod receipt;
-pub mod state;
 pub mod subscription;
 pub mod transaction;
 pub mod trie;
@@ -40,7 +36,7 @@ pub struct Params<T: Default> {
     pub params: T,
 }
 
-/// Represents ethereum JSON-RPC API
+/// Represents the ethereum JSON-RPC API
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "method", content = "params"))]
@@ -93,7 +89,7 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "eth_getBlockByNumber"))]
     EthGetBlockByNumber(
         #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number"))]
-        BlockNumber,
+        BlockNumberOrTag,
         bool,
     ),
 
@@ -113,7 +109,7 @@ pub enum EthRequest {
             deserialize_with = "lenient_block_number_seq"
         )
     )]
-    EthGetTransactionCountByNumber(BlockNumber),
+    EthGetTransactionCountByNumber(BlockNumberOrTag),
 
     #[cfg_attr(
         feature = "serde",
@@ -128,7 +124,7 @@ pub enum EthRequest {
             deserialize_with = "lenient_block_number_seq"
         )
     )]
-    EthGetUnclesCountByNumber(BlockNumber),
+    EthGetUnclesCountByNumber(BlockNumberOrTag),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getCode"))]
     EthGetCodeAt(Address, Option<BlockId>),
@@ -143,7 +139,7 @@ pub enum EthRequest {
     EthSign(Address, Bytes),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_signTransaction"))]
-    EthSignTransaction(Box<EthTransactionRequest>),
+    EthSignTransaction(Box<CallRequest>),
 
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).
     #[cfg_attr(feature = "serde", serde(rename = "eth_signTypedData"))]
@@ -158,27 +154,27 @@ pub enum EthRequest {
     EthSignTypedDataV4(Address, TypedData),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_sendTransaction", with = "sequence"))]
-    EthSendTransaction(Box<EthTransactionRequest>),
+    EthSendTransaction(Box<CallRequest>),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_sendRawTransaction", with = "sequence"))]
     EthSendRawTransaction(Bytes),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_call"))]
     EthCall(
-        EthTransactionRequest,
+        CallRequest,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
         #[cfg_attr(feature = "serde", serde(default))] Option<StateOverride>,
     ),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_createAccessList"))]
     EthCreateAccessList(
-        EthTransactionRequest,
+        CallRequest,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
     ),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_estimateGas"))]
     EthEstimateGas(
-        EthTransactionRequest,
+        CallRequest,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
     ),
 
@@ -191,7 +187,7 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "eth_getTransactionByBlockNumberAndIndex"))]
     EthGetTransactionByBlockNumberAndIndex(
         #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number"))]
-        BlockNumber,
+        BlockNumberOrTag,
         Index,
     ),
 
@@ -204,7 +200,7 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "eth_getUncleByBlockNumberAndIndex"))]
     EthGetUncleByBlockNumberAndIndex(
         #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number"))]
-        BlockNumber,
+        BlockNumberOrTag,
         Index,
     ),
 
@@ -252,7 +248,7 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "eth_feeHistory"))]
     EthFeeHistory(
         #[cfg_attr(feature = "serde", serde(deserialize_with = "deserialize_number"))] U256,
-        BlockNumber,
+        BlockNumberOrTag,
         #[cfg_attr(feature = "serde", serde(default))] Vec<f64>,
     ),
 
@@ -269,7 +265,7 @@ pub enum EthRequest {
     /// geth's `debug_traceCall`  endpoint
     #[cfg_attr(feature = "serde", serde(rename = "debug_traceCall"))]
     DebugTraceCall(
-        EthTransactionRequest,
+        CallRequest,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
         #[cfg_attr(feature = "serde", serde(default))] GethDebugTracingOptions,
     ),
@@ -283,7 +279,7 @@ pub enum EthRequest {
         feature = "serde",
         serde(rename = "trace_block", deserialize_with = "lenient_block_number_seq")
     )]
-    TraceBlock(BlockNumber),
+    TraceBlock(BlockNumberOrTag),
 
     // Custom endpoints, they're not extracted to a separate type out of serde convenience
     /// send transactions impersonating specific account and contract addresses.
@@ -580,7 +576,7 @@ pub enum EthRequest {
         feature = "serde",
         serde(rename = "eth_sendUnsignedTransaction", with = "sequence")
     )]
-    EthSendUnsignedTransaction(Box<EthTransactionRequest>),
+    EthSendUnsignedTransaction(Box<CallRequest>),
 
     /// Turn on call traces for transactions that are returned to the user when they execute a
     /// transaction (instead of just txhash/receipt)
@@ -612,7 +608,7 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "erigon_getHeaderByNumber"))]
     ErigonGetHeaderByNumber(
         #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number_seq"))]
-        BlockNumber,
+        BlockNumberOrTag,
     ),
 
     /// Otterscan's `ots_getApiLevel` endpoint
@@ -632,7 +628,7 @@ pub enum EthRequest {
     OtsHasCode(
         Address,
         #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number", default))]
-        BlockNumber,
+        BlockNumberOrTag,
     ),
 
     /// Otterscan's `ots_traceTransaction` endpoint
@@ -652,7 +648,7 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "ots_getBlockDetails"))]
     OtsGetBlockDetails(
         #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number_seq"))]
-        BlockNumber,
+        BlockNumberOrTag,
     ),
 
     /// Otterscan's `ots_getBlockDetails` endpoint
@@ -1401,7 +1397,7 @@ mod tests {
     #[test]
     fn test_eth_call() {
         let req = r#"{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}"#;
-        let _req = serde_json::from_str::<EthTransactionRequest>(req).unwrap();
+        let _req = serde_json::from_str::<CallRequest>(req).unwrap();
 
         let s = r#"{"method": "eth_call", "params":  [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"},"latest"]}"#;
         let _req = serde_json::from_str::<EthRequest>(s).unwrap();
