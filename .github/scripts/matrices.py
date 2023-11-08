@@ -71,12 +71,7 @@ t_linux_x86 = Target("ubuntu-latest", "x86_64-unknown-linux-gnu", "linux-amd64")
 # t_linux_arm = Target("ubuntu-latest", "aarch64-unknown-linux-gnu", "linux-aarch64")
 t_macos = Target("macos-latest", "x86_64-apple-darwin", "macosx-amd64")
 t_windows = Target("windows-latest", "x86_64-pc-windows-msvc", "windows-amd64")
-targets = (
-    # [t_linux_x86, t_windows]
-    # if is_pr
-    # else
-    [t_linux_x86, t_macos, t_windows]
-)
+targets = [t_linux_x86, t_windows] if is_pr else [t_linux_x86, t_macos, t_windows]
 
 config = [
     Case(
@@ -116,8 +111,8 @@ def main():
     expanded = []
     for target in targets:
         for case in config:
-            # if is_pr and (not case.pr_cross_platform and target != t_linux_x86):
-            #     continue
+            if is_pr and (not case.pr_cross_platform and target != t_linux_x86):
+                continue
 
             for partition in range(1, case.n_partitions + 1):
                 os_str = ""
