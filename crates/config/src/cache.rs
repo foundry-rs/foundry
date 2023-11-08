@@ -229,9 +229,9 @@ pub struct ChainCache {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_str_eq;
-
     use super::*;
+    use crate::chain::NamedChain;
+    use pretty_assertions::assert_str_eq;
 
     #[test]
     fn can_parse_storage_config() {
@@ -255,8 +255,8 @@ mod tests {
             w.rpc_storage_caching,
             StorageCachingConfig {
                 chains: CachedChains::Chains(vec![
-                    Chain::Named(ethers_core::types::Chain::Mainnet),
-                    Chain::Named(ethers_core::types::Chain::Optimism),
+                    Chain::Named(NamedChain::Mainnet),
+                    Chain::Named(NamedChain::Optimism),
                     Chain::Id(999999)
                 ]),
                 endpoints: CachedEndpoints::All

@@ -1,7 +1,6 @@
-use ethers_core::types::Address;
-
 use super::{Preprocessor, PreprocessorId};
 use crate::{Document, PreprocessorOutput};
+use alloy_primitives::Address;
 use std::{fs, path::PathBuf};
 
 /// [Deployments] preprocessor id.

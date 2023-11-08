@@ -1,10 +1,11 @@
 use crate::U256;
 use alloy_primitives::U64;
-use ethers_core::types::Chain as NamedChain;
 use eyre::Result;
 use open_fastrlp::{Decodable, Encodable};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{fmt, str::FromStr};
+
+pub use ethers_core::types::Chain as NamedChain;
 
 /// Either a named or chain id or the actual id value
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]

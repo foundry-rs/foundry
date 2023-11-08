@@ -1860,12 +1860,11 @@ impl SimpleCast {
     ///
     /// ```
     /// # use cast::SimpleCast as Cast;
-    /// # use ethers_core::types::Chain;
+    /// # use foundry_config::NamedChain;
     /// # use std::path::PathBuf;
-    ///
     /// # async fn expand() -> eyre::Result<()> {
     /// Cast::expand_etherscan_source_to_directory(
-    ///     Chain::Mainnet,
+    ///     NamedChain::Mainnet,
     ///     "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(),
     ///     "<etherscan_api_key>".to_string(),
     ///     PathBuf::from("output_dir"),

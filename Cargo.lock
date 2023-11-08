@@ -2523,9 +2523,9 @@ dependencies = [
 name = "forge-doc"
 version = "0.2.0"
 dependencies = [
+ "alloy-primitives",
  "auto_impl",
  "derive_more",
- "ethers-core",
  "eyre",
  "forge-fmt",
  "foundry-compilers",

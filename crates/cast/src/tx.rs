@@ -25,15 +25,17 @@ pub type TxBuilderOutput = (TypedTransaction, Option<Function>);
 pub type TxBuilderPeekOutput<'a> = (&'a TypedTransaction, &'a Option<Function>);
 
 /// Transaction builder
+///
+/// # Examples
+///
 /// ```
 /// # async fn foo() -> eyre::Result<()> {
-/// use alloy_primitives::U256;
-/// use cast::TxBuilder;
-/// use ethers_core::types::Chain;
-///
+/// # use alloy_primitives::U256;
+/// # use cast::TxBuilder;
+/// # use foundry_config::NamedChain;
 /// let provider = ethers_providers::test_provider::MAINNET.provider();
 /// let mut builder =
-///     TxBuilder::new(&provider, "a.eth", Some("b.eth"), Chain::Mainnet, false).await?;
+///     TxBuilder::new(&provider, "a.eth", Some("b.eth"), NamedChain::Mainnet, false).await?;
 /// builder.gas(Some(U256::from(1)));
 /// let (tx, _) = builder.build();
 /// # Ok(())

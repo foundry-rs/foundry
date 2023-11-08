@@ -4,7 +4,6 @@
 
 use crate::cache::StorageCachingConfig;
 use alloy_primitives::{address, Address, B256, U256};
-use ethers_core::types::Chain::Mainnet;
 use eyre::{ContextCompat, WrapErr};
 use figment::{
     providers::{Env, Format, Serialized, Toml},
@@ -36,6 +35,7 @@ use std::{
     str::FromStr,
 };
 pub(crate) use tracing::trace;
+use NamedChain::Mainnet;
 
 // Macros useful for creating a figment.
 mod macros;
@@ -55,7 +55,7 @@ pub mod cache;
 use cache::{Cache, ChainCache};
 
 mod chain;
-pub use chain::Chain;
+pub use chain::{Chain, NamedChain};
 
 pub mod fmt;
 pub use fmt::FormatterConfig;
@@ -2517,12 +2517,12 @@ mod tests {
         fs_permissions::PathPermission,
     };
     use alloy_primitives::Address;
-    use ethers_core::types::Chain::Moonbeam;
     use figment::{error::Kind::InvalidType, value::Value, Figment};
     use foundry_compilers::artifacts::{ModelCheckerEngine, YulDetails};
     use pretty_assertions::assert_eq;
     use std::{collections::BTreeMap, fs::File, io::Write, str::FromStr};
     use tempfile::tempdir;
+    use NamedChain::Moonbeam;
 
     // Helper function to clear `__warnings` in config, since it will be populated during loading
     // from file, causing testing problem when comparing to those created from `default()`, etc.
@@ -2541,7 +2541,7 @@ mod tests {
     #[test]
     fn test_caching() {
         let mut config = Config::default();
-        let chain_id = ethers_core::types::Chain::Mainnet;
+        let chain_id = NamedChain::Mainnet;
         let url = "https://eth-mainnet.alchemyapi";
         assert!(config.enable_caching(url, chain_id));
 
@@ -2549,7 +2549,7 @@ mod tests {
         assert!(!config.enable_caching(url, chain_id));
 
         config.no_storage_caching = false;
-        assert!(!config.enable_caching(url, ethers_core::types::Chain::Dev));
+        assert!(!config.enable_caching(url, NamedChain::Dev));
     }
 
     #[test]
@@ -2925,16 +2925,14 @@ mod tests {
             let config = Config::load();
             assert!(config.get_etherscan_config_with_chain(None::<u64>).unwrap().is_none());
             assert!(config
-                .get_etherscan_config_with_chain(Some(ethers_core::types::Chain::BinanceSmartChain))
+                .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain))
                 .is_err());
 
             std::env::set_var(env_key, env_value);
 
             assert_eq!(
                 config
-                    .get_etherscan_config_with_chain(Some(
-                        ethers_core::types::Chain::BinanceSmartChain
-                    ))
+                    .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain))
                     .unwrap()
                     .unwrap()
                     .key,
@@ -2946,9 +2944,7 @@ mod tests {
 
             assert_eq!(
                 with_key
-                    .get_etherscan_config_with_chain(Some(
-                        ethers_core::types::Chain::BinanceSmartChain
-                    ))
+                    .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain))
                     .unwrap()
                     .unwrap()
                     .key,
@@ -3164,13 +3160,12 @@ mod tests {
 
             let mut config = Config::load();
 
-            let optimism = config.get_etherscan_api_key(Some(ethers_core::types::Chain::Optimism));
+            let optimism = config.get_etherscan_api_key(Some(NamedChain::Optimism));
             assert_eq!(optimism, Some("https://etherscan-optimism.com/".to_string()));
 
             config.etherscan_api_key = Some("mumbai".to_string());
 
-            let mumbai =
-                config.get_etherscan_api_key(Some(ethers_core::types::Chain::PolygonMumbai));
+            let mumbai = config.get_etherscan_api_key(Some(NamedChain::PolygonMumbai));
             assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
 
             Ok(())
@@ -3193,7 +3188,7 @@ mod tests {
             let config = Config::load();
 
             let mumbai = config
-                .get_etherscan_config_with_chain(Some(ethers_core::types::Chain::PolygonMumbai))
+                .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai))
                 .unwrap()
                 .unwrap();
             assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
@@ -3218,7 +3213,7 @@ mod tests {
             let config = Config::load();
 
             let mumbai = config
-                .get_etherscan_config_with_chain(Some(ethers_core::types::Chain::PolygonMumbai))
+                .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai))
                 .unwrap()
                 .unwrap();
             assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
@@ -3300,8 +3295,8 @@ mod tests {
                     via_ir: true,
                     rpc_storage_caching: StorageCachingConfig {
                         chains: CachedChains::Chains(vec![
-                            Chain::Named(ethers_core::types::Chain::Mainnet),
-                            Chain::Named(ethers_core::types::Chain::Optimism),
+                            Chain::Named(NamedChain::Mainnet),
+                            Chain::Named(NamedChain::Optimism),
                             Chain::Id(999999)
                         ]),
                         endpoints: CachedEndpoints::All
