@@ -5,12 +5,12 @@ cheats = "test -p foundry-cheatcodes-defs --features schema tests::"
 rustflags = [
     # Increases the stack size to 10MB, which is
     # in line with Linux (whereas default for Windows is 1MB)
-    "-C=link-arg=/STACK:10000000",
+    "-Clink-arg=/STACK:10000000",
 ]
 
 [target.i686-pc-windows-msvc]
 rustflags = [
     # Increases the stack size to 10MB, which is
     # in line with Linux (whereas default for Windows is 1MB)
-    "-C=link-arg=/STACK:10000000",
+    "-Clink-arg=/STACK:10000000",
 ]
