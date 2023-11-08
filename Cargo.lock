@@ -2992,7 +2992,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "dunce",
- "ethers-addressbook",
  "ethers-core",
  "ethers-providers",
  "eyre",

@@ -65,9 +65,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         };
 
         let to_addr = if let Some(to) = to {
-            let addr =
-                resolve_ens(provider, foundry_utils::resolve_addr(to, chain.try_into().ok())?)
-                    .await?;
+            let addr = resolve_ens(provider, to).await?;
             tx.set_to(addr.to_ethers());
             Some(addr)
         } else {

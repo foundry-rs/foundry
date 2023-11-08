@@ -2,8 +2,7 @@
 #![warn(unused_crate_dependencies)]
 
 use alloy_primitives::{Address, Bytes};
-use ethers_addressbook::contract;
-use ethers_core::types::{BlockId, Chain, NameOrAddress};
+use ethers_core::types::BlockId;
 use ethers_providers::{Middleware, Provider};
 use eyre::{Result, WrapErr};
 use foundry_compilers::{
@@ -431,30 +430,6 @@ pub fn to_table(value: serde_json::Value) -> String {
     }
 }
 
-/// Resolves an input to [`NameOrAddress`]. The input could also be a contract/token name supported
-/// by
-/// [`ethers-addressbook`](https://github.com/gakonst/ethers-rs/tree/master/ethers-addressbook).
-pub fn resolve_addr<T: Into<NameOrAddress>>(to: T, chain: Option<Chain>) -> Result<NameOrAddress> {
-    Ok(match to.into() {
-        NameOrAddress::Address(addr) => NameOrAddress::Address(addr),
-        NameOrAddress::Name(contract_or_ens) => {
-            if let Some(contract) = contract(&contract_or_ens) {
-                let chain = chain
-                    .ok_or_else(|| eyre::eyre!("resolving contract requires a known chain"))?;
-                NameOrAddress::Address(contract.address(chain).ok_or_else(|| {
-                    eyre::eyre!(
-                        "contract: {} not found in addressbook for network: {}",
-                        contract_or_ens,
-                        chain
-                    )
-                })?)
-            } else {
-                NameOrAddress::Name(contract_or_ens)
-            }
-        }
-    })
-}
-
 /// Reads the `ETHERSCAN_API_KEY` env variable
 pub fn etherscan_api_key() -> eyre::Result<String> {
     std::env::var("ETHERSCAN_API_KEY").map_err(|err| match err {
@@ -536,7 +511,6 @@ pub async fn next_nonce(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers_core::types::Address;
     use foundry_common::ContractsByArtifact;
     use foundry_compilers::{Project, ProjectPathsConfig};
 
@@ -585,7 +559,7 @@ mod tests {
                 self.contracts,
                 &mut ContractsByArtifact::default(),
                 Default::default(),
-                sender.to_alloy(),
+                sender,
                 initial_nonce,
                 &mut called_once,
                 |post_link_input| {
@@ -615,7 +589,7 @@ mod tests {
                         let expected_lib_id = format!("{}:{:?}", expected.0, expected.2);
                         assert_eq!(expected_lib_id, actual.id, "unexpected dependency, expected: {}, got: {}", expected_lib_id, actual.id);
                         assert_eq!(actual.nonce, expected.1, "nonce wrong for dependency, expected: {}, got: {}", expected.1, actual.nonce);
-                        assert_eq!(actual.address.to_ethers(), expected.2, "address wrong for dependency, expected: {}, got: {}", expected.2, actual.address);
+                        assert_eq!(actual.address, expected.2, "address wrong for dependency, expected: {}, got: {}", expected.2, actual.address);
                     }
 
                     Ok(())
@@ -856,47 +830,5 @@ mod tests {
                 ],
             )
             .test_with_sender_and_nonce(Address::default(), 1);
-    }
-
-    #[test]
-    fn test_resolve_addr() {
-        use std::str::FromStr;
-
-        // DAI:mainnet exists in ethers-addressbook (0x6b175474e89094c44da98b954eedeac495271d0f)
-        assert_eq!(
-            resolve_addr(NameOrAddress::Name("dai".to_string()), Some(Chain::Mainnet)).ok(),
-            Some(NameOrAddress::Address(
-                Address::from_str("0x6b175474e89094c44da98b954eedeac495271d0f").unwrap()
-            ))
-        );
-
-        // DAI:goerli exists in ethers-adddressbook (0x11fE4B6AE13d2a6055C8D9cF65c55bac32B5d844)
-        assert_eq!(
-            resolve_addr(NameOrAddress::Name("dai".to_string()), Some(Chain::Goerli)).ok(),
-            Some(NameOrAddress::Address(
-                Address::from_str("0x11fE4B6AE13d2a6055C8D9cF65c55bac32B5d844").unwrap()
-            ))
-        );
-
-        // DAI:moonbean does not exist in addressbook
-        assert!(
-            resolve_addr(NameOrAddress::Name("dai".to_string()), Some(Chain::MoonbeamDev)).is_err()
-        );
-
-        // If not present in addressbook, gets resolved to an ENS name.
-        assert_eq!(
-            resolve_addr(
-                NameOrAddress::Name("contractnotpresent".to_string()),
-                Some(Chain::Mainnet)
-            )
-            .ok(),
-            Some(NameOrAddress::Name("contractnotpresent".to_string())),
-        );
-
-        // Nothing to resolve for an address.
-        assert_eq!(
-            resolve_addr(NameOrAddress::Address(Address::zero()), Some(Chain::Mainnet)).ok(),
-            Some(NameOrAddress::Address(Address::zero())),
-        );
     }
 }

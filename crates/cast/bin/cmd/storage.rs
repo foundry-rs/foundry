@@ -24,10 +24,7 @@ use foundry_config::{
     figment::{self, value::Dict, Metadata, Profile},
     impl_figment_convert_cast, Config,
 };
-use foundry_utils::{
-    resolve_addr,
-    types::{ToAlloy, ToEthers},
-};
+use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::future::join_all;
 use semver::Version;
 use std::str::FromStr;
@@ -132,8 +129,10 @@ impl StorageArgs {
         let chain = utils::get_chain(config.chain_id, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
         let client = Client::new(chain.named()?, api_key)?;
-        let addr = resolve_addr(address.clone(), Some(chain.named()?))?;
-        let addr = addr.as_address().ok_or(eyre::eyre!("Could not resolve address"))?.to_alloy();
+        let addr = address
+            .as_address()
+            .ok_or_else(|| eyre::eyre!("Could not resolve address"))?
+            .to_alloy();
         let source = find_source(client, addr).await?;
         let metadata = source.items.first().unwrap();
         if metadata.is_vyper() {
