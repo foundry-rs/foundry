@@ -20,17 +20,17 @@ use forge::{
     opts::EvmOpts,
     traces::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
-        CallTraceDecoder, CallTraceDecoderBuilder, RawOrDecodedCall, RawOrDecodedReturnData,
-        TraceKind, Traces,
+        CallTraceDecoder, CallTraceDecoderBuilder, TraceCallData, TraceKind, TraceRetData, Traces,
     },
     utils::CallKind,
 };
 use foundry_cli::opts::MultiWallet;
 use foundry_common::{
-    abi::{encode_function_args, format_token},
+    abi::encode_function_args,
     contracts::get_contract_name,
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
+    fmt::format_token,
     shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::{
@@ -366,11 +366,10 @@ impl ScriptArgs {
         }
 
         if !result.success {
-            let revert_msg = decode::decode_revert(&result.returned[..], None, None)
-                .map(|err| format!("{err}\n"))
-                .unwrap_or_else(|_| "Script failed.\n".to_string());
-
-            eyre::bail!("{}", Paint::red(revert_msg));
+            return Err(eyre::eyre!(
+                "script failed: {}",
+                decode::decode_revert(&result.returned[..], None, None)
+            ))
         }
 
         Ok(())
@@ -521,9 +520,9 @@ impl ScriptArgs {
         let mut unknown_c = 0usize;
         for node in create_nodes {
             // Calldata == init code
-            if let RawOrDecodedCall::Raw(ref init_code) = node.trace.data {
+            if let TraceCallData::Raw(ref init_code) = node.trace.data {
                 // Output is the runtime code
-                if let RawOrDecodedReturnData::Raw(ref deployed_code) = node.trace.output {
+                if let TraceRetData::Raw(ref deployed_code) = node.trace.output {
                     // Only push if it was not present already
                     if !bytecodes.iter().any(|(_, b, _)| *b == init_code.as_ref()) {
                         bytecodes.push((format!("Unknown{unknown_c}"), init_code, deployed_code));
@@ -742,8 +741,8 @@ mod tests {
     use super::*;
     use foundry_cli::utils::LoadConfig;
     use foundry_config::UnresolvedEnvVarError;
-    use foundry_test_utils::tempfile::tempdir;
     use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn can_parse_sig() {

@@ -1,6 +1,6 @@
 use crate::{
-    CallTrace, CallTraceArena, CallTraceStep, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
-    RawOrDecodedReturnData,
+    CallTrace, CallTraceArena, CallTraceStep, LogCallOrder, RawOrDecodedLog, TraceCallData,
+    TraceRetData,
 };
 use alloy_primitives::{Address, Bytes, Log as RawLog, B256, U256};
 use foundry_evm_core::{
@@ -45,7 +45,7 @@ impl Tracer {
                 depth,
                 address,
                 kind,
-                data: RawOrDecodedCall::Raw(data.into()),
+                data: TraceCallData::Raw(data.into()),
                 value,
                 status: InstructionResult::Continue,
                 caller,
@@ -68,7 +68,7 @@ impl Tracer {
         trace.status = status;
         trace.success = success;
         trace.gas_cost = cost;
-        trace.output = RawOrDecodedReturnData::Raw(output.into());
+        trace.output = TraceRetData::Raw(output.into());
 
         if let Some(address) = address {
             trace.address = address;

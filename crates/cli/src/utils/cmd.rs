@@ -166,7 +166,13 @@ macro_rules! update_progress {
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain: u64) -> bool {
     if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
-        return matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::ArbitrumGoerli)
+        return matches!(
+            chain,
+            Chain::Arbitrum |
+                Chain::ArbitrumTestnet |
+                Chain::ArbitrumGoerli |
+                Chain::ArbitrumSepolia
+        )
     }
     false
 }
@@ -174,7 +180,13 @@ pub fn has_different_gas_calc(chain: u64) -> bool {
 /// True if it supports broadcasting in batches.
 pub fn has_batch_support(chain: u64) -> bool {
     if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
-        return !matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::ArbitrumGoerli)
+        return !matches!(
+            chain,
+            Chain::Arbitrum |
+                Chain::ArbitrumTestnet |
+                Chain::ArbitrumGoerli |
+                Chain::ArbitrumSepolia
+        )
     }
     true
 }

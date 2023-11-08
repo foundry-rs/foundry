@@ -35,10 +35,10 @@ contract TargetArtifacts is DSTest {
     }
 
     function invariantShouldPass() public {
-        require(target2.world() == true || target1.world() == true || hello.world() == true, "false world.");
+        require(target2.world() == true || target1.world() == true || hello.world() == true, "false world");
     }
 
     function invariantShouldFail() public {
-        require(target2.world() == true || target1.world() == true, "false world.");
+        require(target2.world() == true || target1.world() == true, "false world");
     }
 }

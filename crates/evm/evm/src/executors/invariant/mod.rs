@@ -4,7 +4,7 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::JsonAbi as Abi;
-use alloy_primitives::{Address, FixedBytes};
+use alloy_primitives::{Address, FixedBytes, U256};
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::{FuzzDictionaryConfig, InvariantConfig};
@@ -28,10 +28,7 @@ use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
-use revm::{
-    primitives::{Address as rAddress, HashMap, U256 as rU256},
-    DatabaseCommit,
-};
+use revm::{primitives::HashMap, DatabaseCommit};
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 
 mod error;
@@ -115,6 +112,13 @@ impl<'a> InvariantExecutor<'a> {
         // Stores data related to reverts or failed assertions of the test.
         let failures = RefCell::new(InvariantFailures::new());
 
+        // Stores the calldata in the last run.
+        let last_run_calldata: RefCell<Vec<BasicTxDetails>> = RefCell::new(vec![]);
+
+        // Let's make sure the invariant is sound before actually starting the run:
+        // We'll assert the invariant in its initial state, and if it fails, we'll
+        // already know if we can early exit the invariant run.
+        // This does not count as a fuzz run. It will just register the revert.
         let last_call_results = RefCell::new(assert_invariants(
             &invariant_contract,
             &self.executor,
@@ -122,8 +126,7 @@ impl<'a> InvariantExecutor<'a> {
             &mut failures.borrow_mut(),
             self.config.shrink_sequence,
         ));
-        let last_run_calldata: RefCell<Vec<BasicTxDetails>> = RefCell::new(vec![]);
-        // Make sure invariants are sound even before starting to fuzz
+
         if last_call_results.borrow().is_none() {
             fuzz_cases.borrow_mut().push(FuzzedCases::new(vec![]));
         }
@@ -134,8 +137,8 @@ impl<'a> InvariantExecutor<'a> {
         // values.
         let branch_runner = RefCell::new(self.runner.clone());
         let _ = self.runner.run(&strat, |mut inputs| {
-            // Scenarios where we want to fail as soon as possible.
-            if self.config.fail_on_revert && failures.borrow().reverts == 1 {
+            // We stop the run immediately if we have reverted, and `fail_on_revert` is set.
+            if self.config.fail_on_revert && failures.borrow().reverts > 0 {
                 return Err(TestCaseError::fail("Revert occurred."))
             }
 
@@ -154,7 +157,7 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Executes the call from the randomly generated sequence.
                 let call_result = executor
-                    .call_raw(*sender, *address, calldata.clone(), rU256::ZERO)
+                    .call_raw(*sender, *address, calldata.clone(), U256::ZERO)
                     .expect("could not make raw evm call");
 
                 // Collect data for fuzzing from the state changeset.
@@ -351,7 +354,6 @@ impl<'a> InvariantExecutor<'a> {
                 },
             )
             .into_iter()
-            .map(|(contract, functions)| (contract, functions))
             .collect::<BTreeMap<_, _>>();
 
         // Insert them into the executor `targeted_abi`.
@@ -667,7 +669,7 @@ impl<'a> InvariantExecutor<'a> {
                 address,
                 func.clone(),
                 vec![],
-                rU256::ZERO,
+                U256::ZERO,
                 Some(abi),
             ) {
                 return f(call_result.result)
@@ -687,7 +689,7 @@ impl<'a> InvariantExecutor<'a> {
 /// before inserting it into the dictionary. Otherwise, we flood the dictionary with
 /// randomly generated addresses.
 fn collect_data(
-    state_changeset: &mut HashMap<rAddress, revm::primitives::Account>,
+    state_changeset: &mut HashMap<Address, revm::primitives::Account>,
     sender: &Address,
     call_result: &RawCallResult,
     fuzz_state: EvmFuzzState,
@@ -745,10 +747,9 @@ fn can_continue(
             return RichInvariantResults::new(false, None)
         }
     } else {
+        // Increase the amount of reverts.
         failures.reverts += 1;
-
-        // The user might want to stop all execution if a revert happens to
-        // better bound their testing space.
+        // If fail on revert is set, we must return inmediately.
         if fail_on_revert {
             let error = InvariantFuzzError::new(
                 invariant_contract,
@@ -760,6 +761,7 @@ fn can_continue(
             );
 
             failures.revert_reason = Some(error.revert_reason.clone());
+            failures.error = Some(error);
 
             return RichInvariantResults::new(false, None)
         }

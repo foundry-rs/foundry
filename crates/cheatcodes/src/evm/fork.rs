@@ -1,5 +1,4 @@
-use super::{Cheatcode, CheatsCtxt, DatabaseExt, Result};
-use crate::{Cheatcodes, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::B256;
 use alloy_sol_types::SolValue;
 use ethers_core::types::Filter;
@@ -222,14 +221,14 @@ impl Cheatcode for rpcCall {
         let Self { method, params } = self;
         let url =
             ccx.data.db.active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
-        let provider = ProviderBuilder::new(url).build()?;
+        let provider = ProviderBuilder::new(&url).build()?;
 
         let params_json: serde_json::Value = serde_json::from_str(params)?;
         let result = RuntimeOrHandle::new()
             .block_on(provider.request(method, params_json))
             .map_err(|err| fmt_err!("{method:?}: {err}"))?;
 
-        let result_as_tokens = crate::impls::json::value_to_token(&result)
+        let result_as_tokens = crate::json::value_to_token(&result)
             .map_err(|err| fmt_err!("failed to parse result: {err}"))?;
 
         Ok(result_as_tokens.abi_encode())
@@ -250,7 +249,7 @@ impl Cheatcode for eth_getLogsCall {
 
         let url =
             ccx.data.db.active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
-        let provider = ProviderBuilder::new(url).build()?;
+        let provider = ProviderBuilder::new(&url).build()?;
         let mut filter =
             Filter::new().address(addr.to_ethers()).from_block(from_block).to_block(to_block);
         for (i, topic) in topics.iter().enumerate() {

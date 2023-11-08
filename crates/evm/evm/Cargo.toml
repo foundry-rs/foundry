@@ -11,7 +11,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-foundry-cheatcodes = { workspace = true, features = ["impls"] }
+foundry-cheatcodes.workspace = true
 foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true

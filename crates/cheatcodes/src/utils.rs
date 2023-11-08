@@ -1,7 +1,6 @@
 //! Implementations of [`Utils`](crate::Group::Utils) cheatcodes.
 
-use super::{Cheatcode, CheatsCtxt, DatabaseExt, Result};
-use crate::{Cheatcodes, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{keccak256, B256, U256};
 use alloy_sol_types::SolValue;
 use ethers_core::k256::{

@@ -40,6 +40,6 @@ contract InvariantReentrancy is DSTest {
     }
 
     function invariantNotStolen() public {
-        require(vuln.stolen() == false, "stolen.");
+        require(vuln.stolen() == false, "stolen");
     }
 }

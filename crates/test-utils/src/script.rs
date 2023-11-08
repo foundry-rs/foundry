@@ -6,7 +6,7 @@ use foundry_common::{get_http_provider, RetryProvider};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use std::{collections::BTreeMap, path::Path, str::FromStr};
 
-pub const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
+const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
 
 /// A helper struct to test forge script scenarios
 pub struct ScriptTester {
@@ -257,7 +257,7 @@ pub enum ScriptOutcome {
     MissingSender,
     MissingWallet,
     StaticCallNotAllowed,
-    FailedScript,
+    ScriptFailed,
     UnsupportedLibraries,
     ErrorSelectForkOnBroadcast,
 }
@@ -272,7 +272,7 @@ impl ScriptOutcome {
             Self::MissingSender => "You seem to be using Foundry's default sender. Be sure to set your own --sender",
             Self::MissingWallet => "No associated wallet",
             Self::StaticCallNotAllowed => "staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead",
-            Self::FailedScript => "Script failed.",
+            Self::ScriptFailed => "script failed: ",
             Self::UnsupportedLibraries => "Multi chain deployment does not support library linking at the moment.",
             Self::ErrorSelectForkOnBroadcast => "cannot select forks during a broadcast",
         }
@@ -289,7 +289,7 @@ impl ScriptOutcome {
             ScriptOutcome::StaticCallNotAllowed |
             ScriptOutcome::UnsupportedLibraries |
             ScriptOutcome::ErrorSelectForkOnBroadcast |
-            ScriptOutcome::FailedScript => true,
+            ScriptOutcome::ScriptFailed => true,
         }
     }
 }

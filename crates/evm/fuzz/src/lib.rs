@@ -92,7 +92,7 @@ impl BaseCounterExample {
 
 impl fmt::Display for BaseCounterExample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let args = foundry_common::abi::format_tokens(&self.args).collect::<Vec<_>>().join(", ");
+        let args = foundry_common::fmt::format_tokens(&self.args).collect::<Vec<_>>().join(", ");
 
         if let Some(sender) = self.sender {
             write!(f, "sender={sender} addr=")?
@@ -109,7 +109,7 @@ impl fmt::Display for BaseCounterExample {
         if let Some(sig) = &self.signature {
             write!(f, "calldata={sig}")?
         } else {
-            write!(f, "calldata=0x{}", self.calldata)?
+            write!(f, "calldata={}", self.calldata)?
         }
 
         write!(f, ", args=[{args}]")

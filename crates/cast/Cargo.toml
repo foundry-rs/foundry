@@ -35,7 +35,6 @@ alloy-dyn-abi.workspace = true
 foundry-compilers = { workspace = true, default-features = false }
 foundry-block-explorers = { workspace = true }
 
-
 chrono.workspace = true
 evm-disassembler = "0.3"
 eyre.workspace = true

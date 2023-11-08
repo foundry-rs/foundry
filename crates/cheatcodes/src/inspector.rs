@@ -1,6 +1,6 @@
 //! Cheatcode EVM [Inspector].
 
-use super::{
+use crate::{
     evm::{
         mapping::{self, MappingSlots},
         mock::{MockCallDataContext, MockCallReturnData},
@@ -11,9 +11,8 @@ use super::{
     test::expect::{
         self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit, ExpectedRevert,
     },
-    CheatsCtxt, Error, Result,
+    CheatsConfig, CheatsCtxt, Error, Result, Vm,
 };
-use crate::{CheatsConfig, Vm};
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{SolInterface, SolValue};
 use ethers_core::types::{
@@ -223,8 +222,7 @@ impl Cheatcodes {
         // but only if the backend is in forking mode
         data.db.ensure_cheatcode_access_forking_mode(caller)?;
 
-        // apply the cheatcode to the current state
-        decoded.apply(&mut CheatsCtxt { state: self, data, caller })
+        apply_dispatch(&decoded, &mut CheatsCtxt { state: self, data, caller })
     }
 
     /// Determines the address of the contract and marks it as allowed
@@ -1106,4 +1104,16 @@ fn check_if_fixed_gas_limit<DB: DatabaseExt>(data: &EVMData<'_, DB>, call_gas_li
         // Transfers in forge scripts seem to be estimated at 2300 by revm leading to "Intrinsic
         // gas too low" failure when simulated on chain
         && call_gas_limit > 2300
+}
+
+/// Dispatches the cheatcode call to the appropriate function.
+fn apply_dispatch<DB: DatabaseExt>(calls: &Vm::VmCalls, ccx: &mut CheatsCtxt<DB>) -> Result {
+    macro_rules! match_ {
+        ($($variant:ident),*) => {
+            match calls {
+                $(Vm::VmCalls::$variant(cheat) => crate::Cheatcode::apply_traced(cheat, ccx),)*
+            }
+        };
+    }
+    vm_calls!(match_)
 }

@@ -36,6 +36,6 @@ contract TargetArtifactSelectors is DSTest {
     }
 
     function invariantShouldPass() public {
-        require(hello.world() == true, "false world.");
+        require(hello.world() == true, "false world");
     }
 }

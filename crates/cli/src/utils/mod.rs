@@ -264,12 +264,17 @@ impl CommandUtils for Command {
         if output.status.success() {
             Ok(output)
         } else {
-            let mut stderr = String::from_utf8_lossy(&output.stderr);
-            let mut msg = stderr.trim();
-            if msg.is_empty() {
-                stderr = String::from_utf8_lossy(&output.stdout);
-                msg = stderr.trim();
-            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stdout = stdout.trim();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = stderr.trim();
+            let msg = if stdout.is_empty() {
+                stderr.to_string()
+            } else if stderr.is_empty() {
+                stdout.to_string()
+            } else {
+                format!("stdout:\n{stdout}\n\nstderr:\n{stderr}")
+            };
 
             let mut name = self.get_program().to_string_lossy();
             if let Some(arg) = self.get_args().next() {
@@ -286,8 +291,9 @@ impl CommandUtils for Command {
                 None => format!("{name} terminated by a signal"),
             };
             if !msg.is_empty() {
-                err.push_str(": ");
-                err.push_str(msg);
+                err.push(':');
+                err.push(if msg.lines().count() == 0 { ' ' } else { '\n' });
+                err.push_str(&msg);
             }
             Err(eyre::eyre!(err))
         }
@@ -546,6 +552,7 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
         force: bool,
         remote: bool,
         no_fetch: bool,
+        recursive: bool,
         paths: I,
     ) -> Result<()>
     where
@@ -554,12 +561,23 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
     {
         self.cmd()
             .stderr(self.stderr())
-            .args(["submodule", "update", "--progress", "--init", "--recursive"])
+            .args(["submodule", "update", "--progress", "--init"])
             .args(self.shallow.then_some("--depth=1"))
             .args(force.then_some("--force"))
             .args(remote.then_some("--remote"))
             .args(no_fetch.then_some("--no-fetch"))
+            .args(recursive.then_some("--recursive"))
             .args(paths)
+            .exec()
+            .map(drop)
+    }
+
+    pub fn submodule_foreach(self, recursive: bool, cmd: impl AsRef<OsStr>) -> Result<()> {
+        self.cmd()
+            .stderr(self.stderr())
+            .args(["submodule", "foreach"])
+            .args(recursive.then_some("--recursive"))
+            .arg(cmd)
             .exec()
             .map(drop)
     }

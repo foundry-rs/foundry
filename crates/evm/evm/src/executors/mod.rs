@@ -94,7 +94,7 @@ impl Executor {
         let create2_deployer_account = self
             .backend
             .basic(DEFAULT_CREATE2_DEPLOYER)?
-            .ok_or(DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
+            .ok_or_else(|| DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
         // if the deployer is not currently deployed, deploy the default one
         if create2_deployer_account.code.map_or(true, |code| code.is_empty()) {
@@ -366,6 +366,7 @@ impl Executor {
             debug,
             script_wallets,
             env,
+            coverage,
             ..
         } = result;
 
@@ -396,8 +397,7 @@ impl Executor {
                 }
             }
             _ => {
-                let reason = decode::decode_revert(result.as_ref(), abi, Some(exit_reason))
-                    .unwrap_or_else(|_| format!("{exit_reason:?}"));
+                let reason = decode::decode_revert(result.as_ref(), abi, Some(exit_reason));
                 return Err(EvmError::Execution(Box::new(ExecutionErr {
                     reverted: true,
                     reason,
@@ -421,7 +421,7 @@ impl Executor {
 
         trace!(address=?address, "deployed contract");
 
-        Ok(DeployResult { address, gas_used, gas_refunded, logs, traces, debug, env })
+        Ok(DeployResult { address, gas_used, gas_refunded, logs, traces, debug, env, coverage })
     }
 
     /// Deploys a contract and commits the new state to the underlying database.
@@ -597,6 +597,8 @@ pub struct DeployResult {
     pub debug: Option<DebugArena>,
     /// The `revm::Env` after deployment
     pub env: Env,
+    /// The coverage info collected during the deployment
+    pub coverage: Option<HitMaps>,
 }
 
 /// The result of a call.
@@ -838,11 +840,10 @@ fn convert_call_result(
             })
         }
         _ => {
-            let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
-                .unwrap_or_else(|_| format!("{status:?}"));
-            if reason == "SKIPPED" {
+            if &result == crate::constants::MAGIC_SKIP {
                 return Err(EvmError::SkipError)
             }
+            let reason = decode::decode_revert(&result, abi, Some(status));
             Err(EvmError::Execution(Box::new(ExecutionErr {
                 reverted,
                 reason,

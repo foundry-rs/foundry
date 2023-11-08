@@ -6,10 +6,11 @@ use ethers::{
     core::types::{BlockId, BlockNumber::Latest},
     providers::Middleware,
 };
-use eyre::{Result, WrapErr};
+use eyre::Result;
 use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
-    abi::{format_tokens, get_event},
+    abi::get_event,
+    fmt::format_tokens,
     fs,
     selectors::{
         decode_calldata, decode_event_topic, decode_function_selector, import_selectors,
@@ -123,15 +124,15 @@ async fn main() -> Result<()> {
         }
         Subcommands::ToHex(ToBaseArgs { value, base_in }) => {
             let value = stdin::unwrap_line(value)?;
-            println!("{}", SimpleCast::to_base(&value, base_in, "hex")?);
+            println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), "hex")?);
         }
         Subcommands::ToDec(ToBaseArgs { value, base_in }) => {
             let value = stdin::unwrap_line(value)?;
-            println!("{}", SimpleCast::to_base(&value, base_in, "dec")?);
+            println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), "dec")?);
         }
         Subcommands::ToBase { base: ToBaseArgs { value, base_in }, base_out } => {
             let (value, base_out) = stdin::unwrap2(value, base_out)?;
-            println!("{}", SimpleCast::to_base(&value, base_in, &base_out)?);
+            println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), &base_out)?);
         }
         Subcommands::ToBytes32 { bytes } => {
             let value = stdin::unwrap_line(bytes)?;
@@ -174,17 +175,17 @@ async fn main() -> Result<()> {
             println!("{}", pretty_calldata(&calldata, offline).await?);
         }
         Subcommands::Sig { sig, optimize } => {
-            let sig = stdin::unwrap_line(sig).wrap_err("Failed to read signature")?;
-            if optimize.is_none() {
-                println!("{}", SimpleCast::get_selector(&sig, None)?.0);
-            } else {
-                println!("Starting to optimize signature...");
-                let start_time = Instant::now();
-                let (selector, signature) = SimpleCast::get_selector(&sig, optimize)?;
-                let elapsed_time = start_time.elapsed();
-                println!("Successfully generated in {} seconds", elapsed_time.as_secs());
-                println!("Selector: {}", selector);
-                println!("Optimized signature: {}", signature);
+            let sig = stdin::unwrap_line(sig)?;
+            match optimize {
+                Some(opt) => {
+                    println!("Starting to optimize signature...");
+                    let start_time = Instant::now();
+                    let (selector, signature) = SimpleCast::get_selector(&sig, opt)?;
+                    println!("Successfully generated in {:?}", start_time.elapsed());
+                    println!("Selector: {selector}");
+                    println!("Optimized signature: {signature}");
+                }
+                None => println!("{}", SimpleCast::get_selector(&sig, 0)?.0),
             }
         }
 
@@ -453,10 +454,10 @@ async fn main() -> Result<()> {
             println!("{:?}", parsed_event.signature());
         }
         Subcommands::LeftShift { value, bits, base_in, base_out } => {
-            println!("{}", SimpleCast::left_shift(&value, &bits, base_in, &base_out)?);
+            println!("{}", SimpleCast::left_shift(&value, &bits, base_in.as_deref(), &base_out)?);
         }
         Subcommands::RightShift { value, bits, base_in, base_out } => {
-            println!("{}", SimpleCast::right_shift(&value, &bits, base_in, &base_out)?);
+            println!("{}", SimpleCast::right_shift(&value, &bits, base_in.as_deref(), &base_out)?);
         }
         Subcommands::EtherscanSource { address, directory, etherscan } => {
             let config = Config::from(&etherscan);

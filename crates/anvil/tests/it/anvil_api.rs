@@ -1,9 +1,9 @@
 //! tests for custom anvil endpoints
 use crate::{abi::*, fork::fork_config};
-use anvil::{spawn, Hardfork, NodeConfig};
+use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
 use anvil_core::{
     eth::EthRequest,
-    types::{NodeEnvironment, NodeForkConfig, NodeInfo},
+    types::{AnvilMetadata, ForkedNetwork, Forking, NodeEnvironment, NodeForkConfig, NodeInfo},
 };
 use ethers::{
     abi::{ethereum_types::BigEndianHash, AbiDecode},
@@ -452,6 +452,74 @@ async fn can_get_node_info() {
     };
 
     assert_eq!(node_info, expected_node_info);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_metadata() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let metadata = api.anvil_metadata().await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    let chain_id = provider.get_chainid().await.unwrap();
+    let block = provider.get_block(block_number).await.unwrap().unwrap();
+
+    let expected_metadata = AnvilMetadata {
+        latest_block_hash: block.hash.unwrap(),
+        latest_block_number: block_number,
+        chain_id,
+        client_version: CLIENT_VERSION,
+        instance_id: api.instance_id(),
+        forked_network: None,
+    };
+
+    assert_eq!(metadata, expected_metadata);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_metadata_on_fork() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
+    let provider = Arc::new(handle.http_provider());
+
+    let metadata = api.anvil_metadata().await.unwrap();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    let chain_id = provider.get_chainid().await.unwrap();
+    let block = provider.get_block(block_number).await.unwrap().unwrap();
+
+    let expected_metadata = AnvilMetadata {
+        latest_block_hash: block.hash.unwrap(),
+        latest_block_number: block_number,
+        chain_id,
+        client_version: CLIENT_VERSION,
+        instance_id: api.instance_id(),
+        forked_network: Some(ForkedNetwork {
+            chain_id,
+            fork_block_number: block_number,
+            fork_block_hash: block.hash.unwrap(),
+        }),
+    };
+
+    assert_eq!(metadata, expected_metadata);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metadata_changes_on_reset() {
+    let (api, _) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
+
+    let metadata = api.anvil_metadata().await.unwrap();
+    let instance_id = metadata.instance_id;
+
+    api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: None })).await.unwrap();
+
+    let new_metadata = api.anvil_metadata().await.unwrap();
+    let new_instance_id = new_metadata.instance_id;
+
+    assert_ne!(instance_id, new_instance_id);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -1,6 +1,6 @@
 # Automatically run `cargo update` periodically
 
-name: Update Dependencies
+name: dependencies
 
 on:
     schedule:
@@ -32,7 +32,7 @@ jobs:
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: dtolnay/rust-toolchain@nightly
 
             - name: cargo update

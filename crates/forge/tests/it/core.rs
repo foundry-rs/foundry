@@ -1,8 +1,9 @@
 //! forge tests for core functionality
 
-use crate::{config::*, test_helpers::filter::Filter};
+use crate::config::*;
 use forge::result::SuiteResult;
 use foundry_evm::traces::TraceKind;
+use foundry_test_utils::Filter;
 use std::{collections::BTreeMap, env};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -18,7 +19,7 @@ async fn test_core() {
                 vec![(
                     "setUp()",
                     false,
-                    Some("Setup failed: setup failed predictably".to_string()),
+                    Some("setup failed: revert: setup failed predictably".to_string()),
                     None,
                     None,
                 )],
@@ -65,7 +66,7 @@ async fn test_core() {
                 vec![(
                     "setUp()",
                     false,
-                    Some("Setup failed: execution error".to_string()),
+                    Some("setup failed: execution error".to_string()),
                     None,
                     None,
                 )],

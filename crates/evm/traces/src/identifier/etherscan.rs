@@ -67,11 +67,9 @@ impl EtherscanIdentifier {
         let outputs_fut = contracts_iter
             .clone()
             .map(|(address, metadata)| {
-                println!("Compiling: {} {address:?}", metadata.contract_name);
-                let err_msg = format!(
-                    "Failed to compile contract {} from {address:?}",
-                    metadata.contract_name
-                );
+                println!("Compiling: {} {address}", metadata.contract_name);
+                let err_msg =
+                    format!("Failed to compile contract {} from {address}", metadata.contract_name);
                 compile::compile_from_source(metadata).map_err(move |err| err.wrap_err(err_msg))
             })
             .collect::<Vec<_>>();

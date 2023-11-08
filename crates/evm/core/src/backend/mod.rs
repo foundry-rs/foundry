@@ -10,6 +10,7 @@ use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
 use ethers::{
     prelude::Block,
     types::{BlockNumber, Transaction},
+    utils::GenesisAccount,
 };
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use foundry_utils::types::{ToAlloy, ToEthers};
@@ -19,7 +20,7 @@ use revm::{
     precompile::{Precompiles, SpecId},
     primitives::{
         Account, AccountInfo, Bytecode, CreateScheme, Env, HashMap as Map, Log, ResultAndState,
-        TransactTo, KECCAK_EMPTY,
+        StorageSlot, TransactTo, KECCAK_EMPTY,
     },
     Database, DatabaseCommit, Inspector, JournaledState, EVM,
 };
@@ -68,7 +69,6 @@ const GLOBAL_FAILURE_SLOT: B256 =
     b256!("6661696c65640000000000000000000000000000000000000000000000000000");
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
-#[auto_impl::auto_impl(&mut, Box)]
 pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// Creates a new snapshot at the current point of execution.
     ///
@@ -247,6 +247,15 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         callee: Address,
         journaled_state: &JournaledState,
     ) -> Option<RevertDiagnostic>;
+
+    /// Loads the account allocs from the given `allocs` map into the passed [JournaledState].
+    ///
+    /// Returns [Ok] if all accounts were successfully inserted into the journal, [Err] otherwise.
+    fn load_allocs(
+        &mut self,
+        allocs: &HashMap<Address, GenesisAccount>,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), DatabaseError>;
 
     /// Returns true if the given account is currently marked as persistent.
     fn is_persistent(&self, acc: &Address) -> bool;
@@ -1261,6 +1270,55 @@ impl DatabaseExt for Backend {
             }
         }
         None
+    }
+
+    /// Loads the account allocs from the given `allocs` map into the passed [JournaledState].
+    ///
+    /// Returns [Ok] if all accounts were successfully inserted into the journal, [Err] otherwise.
+    fn load_allocs(
+        &mut self,
+        allocs: &HashMap<Address, GenesisAccount>,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), DatabaseError> {
+        // Loop through all of the allocs defined in the map and commit them to the journal.
+        for (addr, acc) in allocs.iter() {
+            // Fetch the account from the journaled state. Will create a new account if it does
+            // not already exist.
+            let (state_acc, _) = journaled_state.load_account(*addr, self)?;
+
+            // Set the account's bytecode and code hash, if the `bytecode` field is present.
+            if let Some(bytecode) = acc.code.as_ref() {
+                state_acc.info.code_hash = keccak256(bytecode);
+                let bytecode = Bytecode::new_raw(bytecode.0.clone().into());
+                state_acc.info.code = Some(bytecode);
+            }
+
+            // Set the account's storage, if the `storage` field is present.
+            if let Some(storage) = acc.storage.as_ref() {
+                state_acc.storage = storage
+                    .iter()
+                    .map(|(slot, value)| {
+                        let slot = U256::from_be_bytes(slot.0);
+                        (
+                            slot,
+                            StorageSlot::new_changed(
+                                state_acc
+                                    .storage
+                                    .get(&slot)
+                                    .map(|s| s.present_value)
+                                    .unwrap_or_default(),
+                                U256::from_be_bytes(value.0),
+                            ),
+                        )
+                    })
+                    .collect();
+            }
+            // Set the account's nonce and balance.
+            state_acc.info.nonce = acc.nonce.unwrap_or_default();
+            state_acc.info.balance = acc.balance.to_alloy();
+        }
+
+        Ok(())
     }
 
     fn is_persistent(&self, acc: &Address) -> bool {

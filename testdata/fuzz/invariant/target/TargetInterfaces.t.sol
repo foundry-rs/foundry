@@ -67,6 +67,6 @@ contract TargetWorldInterfaces is DSTest {
     }
 
     function invariantTrueWorld() public {
-        require(proxy.world() == false, "false world.");
+        require(proxy.world() == false, "false world");
     }
 }

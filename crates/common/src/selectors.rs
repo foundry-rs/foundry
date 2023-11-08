@@ -241,12 +241,17 @@ impl SignEthClient {
     /// Pretty print calldata and if available, fetch possible function signatures
     ///
     /// ```no_run
-    /// 
     /// use foundry_common::selectors::SignEthClient;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    ///   let pretty_data = SignEthClient::new()?.pretty_calldata("0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5".to_string(), false).await?;
-    ///   println!("{}",pretty_data);
+    /// let pretty_data = SignEthClient::new()?
+    ///     .pretty_calldata(
+    ///         "0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5"
+    ///             .to_string(),
+    ///         false,
+    ///     )
+    ///     .await?;
+    /// println!("{}", pretty_data);
     /// # Ok(())
     /// # }
     /// ```
@@ -294,18 +299,23 @@ impl SignEthClient {
 
         let request = match data {
             SelectorImportData::Abi(abis) => {
-                let names: Vec<String> = abis
+                let functions_and_errors: Vec<String> = abis
                     .iter()
                     .flat_map(|abi| {
                         abi.abi
                             .functions()
-                            .map(|func| {
-                                func.signature().split(':').next().unwrap_or("").to_string()
-                            })
+                            .map(|func| func.signature())
+                            .chain(abi.abi.errors().map(|error| error.signature()))
                             .collect::<Vec<_>>()
                     })
                     .collect();
-                SelectorImportRequest { function: names, event: Default::default() }
+
+                let events = abis
+                    .iter()
+                    .flat_map(|abi| abi.abi.events().map(|event| event.signature()))
+                    .collect::<Vec<_>>();
+
+                SelectorImportRequest { function: functions_and_errors, event: events }
             }
             SelectorImportData::Raw(raw) => {
                 SelectorImportRequest { function: raw.function, event: raw.event }
@@ -388,12 +398,15 @@ pub async fn decode_event_topic(topic: &str) -> eyre::Result<Vec<String>> {
 /// Pretty print calldata and if available, fetch possible function signatures
 ///
 /// ```no_run
-/// 
 /// use foundry_common::selectors::pretty_calldata;
 ///
 /// # async fn foo() -> eyre::Result<()> {
-///   let pretty_data = pretty_calldata("0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5".to_string(), false).await?;
-///   println!("{}",pretty_data);
+/// let pretty_data = pretty_calldata(
+///     "0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5".to_string(),
+///     false,
+/// )
+/// .await?;
+/// println!("{}", pretty_data);
 /// # Ok(())
 /// # }
 /// ```

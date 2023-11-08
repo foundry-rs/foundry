@@ -1,4 +1,4 @@
-use ethers_core::types::{H256, U256, U64};
+use ethers_core::types::{TxHash, H256, U256, U64};
 use revm::primitives::SpecId;
 
 #[cfg(feature = "serde")]
@@ -202,6 +202,32 @@ pub struct NodeForkConfig {
     pub fork_url: Option<String>,
     pub fork_block_number: Option<u64>,
     pub fork_retry_backoff: Option<u128>,
+}
+
+/// Anvil equivalent of `hardhat_metadata`.
+/// Metadata about the current Anvil instance.
+/// See <https://hardhat.org/hardhat-network/docs/reference#hardhat_metadata>
+#[derive(Debug, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct AnvilMetadata {
+    pub client_version: &'static str,
+    pub chain_id: U256,
+    pub instance_id: H256,
+    pub latest_block_number: U64,
+    pub latest_block_hash: H256,
+    pub forked_network: Option<ForkedNetwork>,
+}
+
+/// Information about the forked network.
+/// See <https://hardhat.org/hardhat-network/docs/reference#hardhat_metadata>
+#[derive(Debug, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct ForkedNetwork {
+    pub chain_id: U256,
+    pub fork_block_number: U64,
+    pub fork_block_hash: TxHash,
 }
 
 #[cfg(test)]
