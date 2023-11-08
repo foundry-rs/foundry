@@ -1,6 +1,6 @@
 use crate::rlp_converter::Item;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
-use alloy_json_abi::Function;
+use alloy_json_abi::{ContractObject, Function};
 use alloy_primitives::{Address, I256, U256};
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
@@ -1620,11 +1620,11 @@ impl SimpleCast {
     pub async fn generate_interface(address_or_path: AbiPath) -> Result<Vec<InterfaceSource>> {
         let (contract_abis, contract_names) = match address_or_path {
             AbiPath::Local { path, name } => {
-                let file = std::fs::read_to_string(path).wrap_err("unable to read abi file")?;
-                (
-                    vec![serde_json::from_str(&file)?],
-                    vec![name.unwrap_or_else(|| "Interface".to_owned())],
-                )
+                let file = std::fs::read_to_string(&path).wrap_err("unable to read abi file")?;
+                let obj: ContractObject = serde_json::from_str(&file)?;
+                let abi =
+                    obj.abi.ok_or_else(|| eyre::eyre!("could not find ABI in file {path}"))?;
+                (vec![abi], vec![name.unwrap_or_else(|| "Interface".to_owned())])
             }
             AbiPath::Etherscan { address, chain, api_key } => {
                 let client = Client::new(chain, api_key)?;

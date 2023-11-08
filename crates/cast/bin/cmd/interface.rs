@@ -1,6 +1,6 @@
 use cast::{AbiPath, SimpleCast};
 use clap::Parser;
-use eyre::Result;
+use eyre::{Context, Result};
 use foundry_cli::opts::EtherscanOpts;
 use foundry_common::fs;
 use foundry_config::Config;
@@ -51,14 +51,18 @@ impl InterfaceArgs {
             etherscan,
             json,
         } = self;
-        let config = Config::from(&etherscan);
-        let chain = config.chain_id.unwrap_or_default();
         let source = if Path::new(&path_or_address).exists() {
             AbiPath::Local { path: path_or_address, name }
         } else {
+            let config = Config::from(&etherscan);
+            let chain = config.chain_id.unwrap_or_default();
             let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
             let chain = chain.named()?;
-            AbiPath::Etherscan { chain, api_key, address: path_or_address.parse()? }
+            AbiPath::Etherscan {
+                chain,
+                api_key,
+                address: path_or_address.parse().wrap_err("invalid path or address")?,
+            }
         };
         let interfaces = SimpleCast::generate_interface(source).await?;
 
