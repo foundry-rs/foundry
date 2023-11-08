@@ -1813,7 +1813,7 @@ impl SimpleCast {
         let value = NumberWithBase::parse_uint(value, base_in)?;
         let bits = NumberWithBase::parse_uint(bits, None)?;
 
-        let res = value.number() >> bits.number();
+        let res = value.number().wrapping_shr(bits.number().saturating_to());
 
         Ok(res.to_base(base_out, true)?)
     }

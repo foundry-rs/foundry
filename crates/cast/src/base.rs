@@ -1,4 +1,4 @@
-use alloy_primitives::{ruint::ParseError, Sign, I256, U256};
+use alloy_primitives::{Sign, I256, U256};
 use ethers_core::utils::ParseUnits;
 use eyre::Result;
 use foundry_utils::types::ToAlloy;
@@ -122,21 +122,21 @@ impl Base {
             // anyway;
             // strip prefix when using u128::from_str_radix because it does not recognize it as
             // valid.
-            _ if s.starts_with("0b") => match u128::from_str_radix(&s[2..], 2) {
+            _ if s.starts_with("0b") => match u64::from_str_radix(&s[2..], 2) {
                 Ok(_) => Ok(Self::Binary),
                 Err(e) => match e.kind() {
                     IntErrorKind::PosOverflow => Ok(Self::Binary),
                     _ => Err(eyre::eyre!("could not parse binary value: {}", e)),
                 },
             },
-            _ if s.starts_with("0o") => match u128::from_str_radix(&s[2..], 8) {
+            _ if s.starts_with("0o") => match u64::from_str_radix(&s[2..], 8) {
                 Ok(_) => Ok(Self::Octal),
                 Err(e) => match e.kind() {
                     IntErrorKind::PosOverflow => Ok(Self::Octal),
                     _ => Err(eyre::eyre!("could not parse octal value: {e}")),
                 },
             },
-            _ if s.starts_with("0x") => match u128::from_str_radix(&s[2..], 16) {
+            _ if s.starts_with("0x") => match u64::from_str_radix(&s[2..], 16) {
                 Ok(_) => Ok(Self::Hexadecimal),
                 Err(e) => match e.kind() {
                     IntErrorKind::PosOverflow => Ok(Self::Hexadecimal),
@@ -160,10 +160,10 @@ impl Base {
     /// Returns the Rust standard prefix for a base
     pub const fn prefix(&self) -> &str {
         match self {
-            Base::Binary => "0b",
-            Base::Octal => "0o",
-            Base::Hexadecimal => "0x",
-            _ => "",
+            Self::Binary => "0b",
+            Self::Octal => "0o",
+            Self::Decimal => "",
+            Self::Hexadecimal => "0x",
         }
     }
 }
@@ -406,13 +406,11 @@ impl NumberWithBase {
     }
 
     fn _parse_uint(s: &str, base: Base) -> Result<U256> {
-        // TODO: Parse from binary or octal str into U256, requires a parser
-        U256::from_str_radix(s, base as u64).map_err(|e| match e {
-            ParseError::InvalidRadix(_) => {
-                eyre::eyre!("numbers in base {base} are currently not supported as input")
-            }
-            _ => eyre::eyre!(e),
-        })
+        let s = match s.get(0..2) {
+            Some("0x" | "0X" | "0o" | "0O" | "0b" | "0B") => &s[2..],
+            _ => s,
+        };
+        U256::from_str_radix(s, base as u64).map_err(Into::into)
     }
 }
 
