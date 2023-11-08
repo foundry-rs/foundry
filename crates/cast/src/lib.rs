@@ -1126,7 +1126,7 @@ impl SimpleCast {
             let value_len = value_stripped.len();
             (sign, value_stripped, value_len)
         };
-        let decimals = NumberWithBase::parse_uint(decimals, None)?.number().low_u64() as usize;
+        let decimals = NumberWithBase::parse_uint(decimals, None)?.number().to::<usize>();
 
         let value = if decimals >= value_len {
             // Add "0." and pad with 0s
@@ -1294,8 +1294,7 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_wei(value: &str, unit: &str) -> Result<String> {
-        let value = NumberWithBase::parse_int(value, None)?.number();
-
+        let value = NumberWithBase::parse_int(value, None)?.number().to_ethers();
         Ok(match unit {
             "gwei" => format_units(value, 9),
             _ => format_units(value, 18),
