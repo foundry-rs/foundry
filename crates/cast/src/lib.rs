@@ -7,8 +7,8 @@ use chrono::NaiveDateTime;
 use ethers_core::{
     types::{transaction::eip2718::TypedTransaction, Chain, *},
     utils::{
-        format_bytes32_string, format_units, get_contract_address, keccak256, parse_bytes32_string,
-        parse_units, rlp, Units,
+        format_bytes32_string, format_units, keccak256, parse_bytes32_string, parse_units, rlp,
+        Units,
     },
 };
 use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
@@ -486,8 +486,8 @@ where
         &self,
         who: T,
         block: Option<BlockId>,
-    ) -> Result<U256> {
-        Ok(self.provider.get_transaction_count(who, block).await?.to_alloy())
+    ) -> Result<u64> {
+        Ok(self.provider.get_transaction_count(who, block).await?.to_alloy().to())
     }
 
     /// # Example
@@ -553,38 +553,22 @@ where
     /// ```no_run
     /// use alloy_primitives::{Address, U256};
     /// use cast::Cast;
-    /// use ethers_core::types::Address;
     /// use ethers_providers::{Http, Provider};
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
-    /// let nonce_addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let addr = Address::from_str("7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
-    /// let nonce = cast.nonce(nonce_addr, None).await? + U256::from(5);
-    /// let computed_address = cast.compute_address(addr, Some(nonce)).await?;
-    /// println!("Computed address for address {} with nonce {}: {}", addr, nonce, computed_address);
-    /// let computed_address_no_nonce = cast.compute_address(addr, None).await?;
-    /// println!(
-    ///     "Computed address for address {} with nonce {}: {}",
-    ///     addr, nonce, computed_address_no_nonce
-    /// );
+    /// let computed_address = cast.compute_address(addr, None).await?;
+    /// println!("Computed address for address {addr}: {computed_address}");
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn compute_address<T: Into<Address> + Copy + Send + Sync>(
-        &self,
-        address: T,
-        nonce: Option<U256>,
-    ) -> Result<Address> {
-        let unpacked = if let Some(n) = nonce {
-            n
-        } else {
-            self.provider.get_transaction_count(address.into().to_ethers(), None).await?.to_alloy()
-        };
-
-        Ok(get_contract_address(address.into().to_ethers(), unpacked.to_ethers()).to_alloy())
+    pub async fn compute_address(&self, address: Address, nonce: Option<u64>) -> Result<Address> {
+        let unpacked =
+            if let Some(n) = nonce { n } else { self.nonce(address.to_ethers(), None).await? };
+        Ok(address.create(unpacked))
     }
 
     /// # Example
@@ -1367,8 +1351,8 @@ impl SimpleCast {
     /// # Example
     ///
     /// ```
+    /// use alloy_primitives::I256;
     /// use cast::SimpleCast as Cast;
-    /// use ethers_core::types::{I256, U256};
     ///
     /// assert_eq!(Cast::to_base("100", Some("10"), "16")?, "0x64");
     /// assert_eq!(Cast::to_base("100", Some("10"), "oct")?, "0o144");

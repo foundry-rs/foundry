@@ -368,7 +368,7 @@ pub enum Subcommands {
 
         /// The nonce of the deployer address.
         #[clap(long)]
-        nonce: Option<U256>,
+        nonce: Option<u64>,
 
         #[clap(flatten)]
         rpc: RpcOpts,

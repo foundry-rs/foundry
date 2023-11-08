@@ -176,7 +176,7 @@ impl Base {
 ///
 /// ```
 /// use cast::base::NumberWithBase;
-/// use ethers_core::types::U256;
+/// use alloy_primitives::U256;
 ///
 /// let number: NumberWithBase = U256::from(12345).into();
 /// assert_eq!(number.format(), "12345");
@@ -428,8 +428,8 @@ pub trait ToBase {
     /// # Example
     ///
     /// ```
+    /// use alloy_primitives::U256;
     /// use cast::base::{Base, ToBase};
-    /// use ethers_core::types::U256;
     ///
     /// // Any type that implements ToBase
     /// let number = U256::from(12345);
