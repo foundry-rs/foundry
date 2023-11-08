@@ -1,6 +1,7 @@
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::{ContractObject, Function};
 use alloy_primitives::{Address, I256, U256};
+use alloy_rlp::Decodable;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
@@ -1323,7 +1324,7 @@ impl SimpleCast {
     /// ```
     pub fn from_rlp(value: impl AsRef<str>) -> Result<String> {
         let bytes = hex::decode(value.as_ref()).wrap_err("Could not decode hex")?;
-        let item = rlp::decode::<Item>(&bytes).wrap_err("Could not decode rlp")?;
+        let item = Item::decode(&mut &bytes[..]).wrap_err("Could not decode rlp")?;
         Ok(item.to_string())
     }
 
@@ -1344,7 +1345,7 @@ impl SimpleCast {
         let val = serde_json::from_str(value)
             .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
         let item = Item::value_to_item(&val)?;
-        Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
+        Ok(format!("0x{}", hex::encode(alloy_rlp::encode(&item))))
     }
 
     /// Converts a number of one base to another

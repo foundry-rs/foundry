@@ -27,9 +27,10 @@ foundry-common.workspace = true
 ethers-core.workspace = true
 ethers-providers.workspace = true
 
-alloy-primitives.workspace = true
-alloy-json-abi.workspace = true
 alloy-dyn-abi.workspace = true
+alloy-json-abi.workspace = true
+alloy-primitives.workspace = true
+alloy-rlp.workspace = true
 
 foundry-compilers = { workspace = true, default-features = false }
 foundry-block-explorers = { workspace = true }
