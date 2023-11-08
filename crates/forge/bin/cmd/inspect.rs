@@ -203,7 +203,7 @@ impl InspectArgs {
 
 pub fn print_abi(abi: &JsonAbi, pretty: bool) -> Result<()> {
     let s = if pretty {
-        foundry_utils::abi::abi_to_solidity(&abi, "")?
+        foundry_utils::abi::abi_to_solidity(abi, "")?
     } else {
         serde_json::to_string_pretty(&abi)?
     };
