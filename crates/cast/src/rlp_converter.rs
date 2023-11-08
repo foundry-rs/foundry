@@ -75,7 +75,6 @@ impl fmt::Display for Item {
             }
             Item::Array(items) => {
                 f.write_str("[")?;
-                write!(f, "[")?;
                 for (i, item) in items.iter().enumerate() {
                     if i > 0 {
                         f.write_str(",")?;

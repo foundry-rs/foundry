@@ -1345,7 +1345,7 @@ impl SimpleCast {
         let val = serde_json::from_str(value)
             .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
         let item = Item::value_to_item(&val)?;
-        Ok(format!("0x{}", hex::encode(alloy_rlp::encode(&item))))
+        Ok(format!("0x{}", hex::encode(alloy_rlp::encode(item))))
     }
 
     /// Converts a number of one base to another
