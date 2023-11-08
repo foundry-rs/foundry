@@ -22,10 +22,12 @@ foundry-evm-traces.workspace = true
 foundry-macros.workspace = true
 foundry-utils.workspace = true
 
-alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
-ethers = { workspace = true, features = ["ethers-solc"] }
+alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-sol-types.workspace = true
+ethers-core.workspace = true
+ethers-signers.workspace = true
 hashbrown = { version = "0.14", features = ["serde"] }
 revm = { workspace = true, default-features = false, features = [
     "std",

@@ -3,11 +3,11 @@ use alloy_primitives::{B256, U256};
 use cast::Cast;
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
-use ethers::{
+use ethers_core::{
     abi::ethabi::ethereum_types::BigEndianHash,
-    prelude::{BlockId, NameOrAddress},
-    providers::Middleware,
+    types::{BlockId, NameOrAddress},
 };
+use ethers_providers::Middleware;
 use eyre::Result;
 use foundry_block_explorers::Client;
 use foundry_cli::{

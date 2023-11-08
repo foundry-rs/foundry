@@ -6,7 +6,9 @@ use foundry_compilers::{
     remappings::Remapping,
     ConfigurableContractArtifact,
 };
-use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
+use foundry_config::{
+    parse_with_profile, BasicConfig, Chain, Config, NamedChain, SolidityErrorCode,
+};
 use foundry_test_utils::{
     forgetest, forgetest_init,
     foundry_compilers::PathStyle,
@@ -38,7 +40,7 @@ forgetest!(
     #[ignore]
     can_cache_ls,
     |_: TestProject, mut cmd: TestCommand| {
-        let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
+        let chain = Chain::Named(NamedChain::Mainnet);
         let block1 = 100;
         let block2 = 101;
 
@@ -135,7 +137,7 @@ forgetest!(
     #[ignore]
     can_cache_clean_chain,
     |_: TestProject, mut cmd: TestCommand| {
-        let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
+        let chain = Chain::Named(NamedChain::Mainnet);
         let cache_dir = Config::foundry_chain_cache_dir(chain).unwrap();
         let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
         let path = cache_dir.as_path();
@@ -158,7 +160,7 @@ forgetest!(
     #[ignore]
     can_cache_clean_blocks,
     |_: TestProject, mut cmd: TestCommand| {
-        let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
+        let chain = Chain::Named(NamedChain::Mainnet);
         let block1 = 100;
         let block2 = 101;
         let block3 = 102;
@@ -192,12 +194,9 @@ forgetest!(
     #[ignore]
     can_cache_clean_chain_etherscan,
     |_: TestProject, mut cmd: TestCommand| {
-        let cache_dir =
-            Config::foundry_chain_cache_dir(Chain::Named(ethers::prelude::Chain::Mainnet)).unwrap();
-        let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(Chain::Named(
-            ethers::prelude::Chain::Mainnet,
-        ))
-        .unwrap();
+        let cache_dir = Config::foundry_chain_cache_dir(Chain::Named(NamedChain::Mainnet)).unwrap();
+        let etherscan_cache_dir =
+            Config::foundry_etherscan_chain_cache_dir(Chain::Named(NamedChain::Mainnet)).unwrap();
         let path = cache_dir.as_path();
         let etherscan_path = etherscan_cache_dir.as_path();
         fs::create_dir_all(path).unwrap();

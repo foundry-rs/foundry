@@ -7,9 +7,8 @@ use crate::{
     utils::configure_tx_env,
 };
 use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
-use ethers::{
-    prelude::Block,
-    types::{BlockNumber, Transaction},
+use ethers_core::{
+    types::{Block, BlockNumber, Transaction},
     utils::GenesisAccount,
 };
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};

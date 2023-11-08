@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256, U256};
-use ethers::types::BlockId;
+use ethers_core::types::BlockId;
 use futures::channel::mpsc::{SendError, TrySendError};
 use std::{
     convert::Infallible,

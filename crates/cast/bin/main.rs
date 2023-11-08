@@ -2,10 +2,8 @@ use alloy_primitives::{keccak256, Address, B256};
 use cast::{Cast, SimpleCast};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use ethers::{
-    core::types::{BlockId, BlockNumber::Latest},
-    providers::Middleware,
-};
+use ethers_core::types::{BlockId, BlockNumber::Latest};
+use ethers_providers::Middleware;
 use eyre::Result;
 use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{

@@ -32,7 +32,9 @@ alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitr
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi = { workspace = true }
 alloy-sol-types.workspace = true
-ethers = { workspace = true, features = ["ethers-solc"] }
+ethers-core.workspace = true
+ethers-contract.workspace = true
+ethers-providers.workspace = true
 
 # Encoding/decoding
 serde_json = "1"

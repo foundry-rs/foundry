@@ -22,7 +22,7 @@ foundry-utils.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi = { workspace = true }
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
-ethers = { workspace = true, features = ["ethers-solc"] }
+ethers-core.workspace = true
 revm = { workspace = true, default-features = false, features = [
     "std",
     "serde",
@@ -41,3 +41,4 @@ proptest = "1"
 serde = "1"
 thiserror = "1"
 tracing = "0.1"
+rand.workspace = true

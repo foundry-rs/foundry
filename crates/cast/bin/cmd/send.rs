@@ -1,8 +1,9 @@
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::{
-    prelude::MiddlewareBuilder, providers::Middleware, signers::Signer, types::NameOrAddress,
-};
+use ethers_core::types::NameOrAddress;
+use ethers_middleware::MiddlewareBuilder;
+use ethers_providers::Middleware;
+use ethers_signers::Signer;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},

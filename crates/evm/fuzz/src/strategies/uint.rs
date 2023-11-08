@@ -1,12 +1,9 @@
-use std::ops::Shl;
-
-use ethers::core::rand::Rng;
+use alloy_primitives::U256;
 use proptest::{
     strategy::{NewTree, Strategy, ValueTree},
     test_runner::TestRunner,
 };
-
-use alloy_primitives::U256;
+use rand::Rng;
 
 /// Value tree for unsigned ints (up to uint256).
 /// This is very similar to [proptest::BinarySearch]
@@ -100,11 +97,8 @@ impl UintStrategy {
         // Choose if we want values around 0 or max
         let is_min = rng.gen_bool(0.5);
         let offset = U256::from(rng.gen_range(0..4));
-        let max = if self.bits < 256 {
-            (U256::from(1u8).shl(self.bits)) - U256::from(1)
-        } else {
-            U256::MAX
-        };
+        let max =
+            if self.bits < 256 { (U256::from(1) << self.bits) - U256::from(1) } else { U256::MAX };
         let start = if is_min { offset } else { max.saturating_sub(offset) };
         Ok(UintValueTree::new(start, false))
     }

@@ -469,14 +469,14 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers::types::NameOrAddress;
+    /// use ethers_core::types::Address;
     /// use ethers_providers::{Http, Provider};
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
-    /// let addr = NameOrAddress::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let nonce = cast.nonce(addr, None).await?;
     /// println!("{}", nonce);
     /// # Ok(())
@@ -553,14 +553,14 @@ where
     /// ```no_run
     /// use alloy_primitives::{Address, U256};
     /// use cast::Cast;
-    /// use ethers::types::NameOrAddress;
+    /// use ethers_core::types::Address;
     /// use ethers_providers::{Http, Provider};
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
-    /// let nonce_addr = NameOrAddress::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let nonce_addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let addr = Address::from_str("7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let nonce = cast.nonce(nonce_addr, None).await? + U256::from(5);
     /// let computed_address = cast.compute_address(addr, Some(nonce)).await?;

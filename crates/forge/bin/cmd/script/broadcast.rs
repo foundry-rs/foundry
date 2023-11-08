@@ -2,11 +2,9 @@ use super::{
     multi::MultiChainSequence, providers::ProvidersManager, receipts::clear_pendings,
     sequence::ScriptSequence, transaction::TransactionWithMetadata, verify::VerifyBundle, *,
 };
-use ethers::{
-    prelude::{Provider, Signer, TxHash},
-    providers::{JsonRpcClient, Middleware},
-    utils::format_units,
-};
+use ethers_core::{types::TxHash, utils::format_units};
+use ethers_providers::{JsonRpcClient, Middleware, Provider};
+use ethers_signers::Signer;
 use eyre::{bail, ContextCompat, Result, WrapErr};
 use foundry_cli::{
     init_progress,

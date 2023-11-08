@@ -5,13 +5,11 @@ use alloy_json_abi::{Function, InternalType, JsonAbi as Abi};
 use alloy_primitives::{Address, Bytes, U256};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
-use ethers::{
-    providers::{Http, Middleware},
-    signers::LocalWallet,
-    types::{
-        transaction::eip2718::TypedTransaction, Chain, Log, NameOrAddress, TransactionRequest,
-    },
+use ethers_core::types::{
+    transaction::eip2718::TypedTransaction, Chain, Log, NameOrAddress, TransactionRequest,
 };
+use ethers_providers::{Http, Middleware};
+use ethers_signers::LocalWallet;
 use eyre::{ContextCompat, Result, WrapErr};
 use forge::{
     backend::Backend,
@@ -440,7 +438,7 @@ impl ScriptArgs {
                 transaction: TypedTransaction::Legacy(TransactionRequest {
                     from: Some(from.to_ethers()),
                     data: Some(bytes.clone().0.into()),
-                    nonce: Some(ethers::types::U256::from(nonce + i as u64)),
+                    nonce: Some((nonce + i as u64).into()),
                     ..Default::default()
                 }),
             })
@@ -699,7 +697,7 @@ impl ScriptConfig {
     /// If not, warns the user.
     async fn check_shanghai_support(&self) -> Result<()> {
         let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
-            if let Ok(provider) = ethers::providers::Provider::<Http>::try_from(rpc) {
+            if let Ok(provider) = ethers_providers::Provider::<Http>::try_from(rpc) {
                 match provider.get_chainid().await {
                     Ok(chain_id) => match TryInto::<Chain>::try_into(chain_id) {
                         Ok(chain) => return Some((SHANGHAI_ENABLED_CHAINS.contains(&chain), chain)),
@@ -740,7 +738,7 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855"#,
 mod tests {
     use super::*;
     use foundry_cli::utils::LoadConfig;
-    use foundry_config::UnresolvedEnvVarError;
+    use foundry_config::{NamedChain, UnresolvedEnvVarError};
     use foundry_test_utils::tempfile::tempdir;
     use std::fs;
 
@@ -856,7 +854,7 @@ mod tests {
         ]);
 
         let config = args.load_config();
-        let mumbai = config.get_etherscan_api_key(Some(ethers::types::Chain::PolygonMumbai));
+        let mumbai = config.get_etherscan_api_key(Some(NamedChain::PolygonMumbai));
         assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
     }
 

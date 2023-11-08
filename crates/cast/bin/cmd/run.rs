@@ -1,6 +1,6 @@
 use alloy_primitives::U256;
 use clap::Parser;
-use ethers::prelude::Middleware;
+use ethers_providers::Middleware;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     init_progress,

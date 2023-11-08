@@ -8,7 +8,7 @@
 extern crate tracing;
 
 use alloy_primitives::{Address, Bytes, Log as RawLog, B256, U256};
-use ethers::types::{DefaultFrame, GethDebugTracingOptions, StructLog};
+use ethers_core::types::{DefaultFrame, GethDebugTracingOptions, StructLog};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::{constants::CHEATCODE_ADDRESS, debug::Instruction, utils::CallKind};
 use foundry_utils::types::ToEthers;

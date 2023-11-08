@@ -148,7 +148,7 @@ ethers-contract-abigen = { version = "2.0", default-features = false }
 ethers-providers = { version = "2.0", default-features = false }
 ethers-signers = { version = "2.0", default-features = false }
 ethers-middleware = { version = "2.0", default-features = false }
-ethers-etherscan = { version = "2.0", default-features = false }
+# ethers-etherscan = { version = "2.0", default-features = false }
 ethers-solc = { version = "2.0", default-features = false }
 
 ## alloy
@@ -162,17 +162,18 @@ alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
 
 ## misc
-toml = "0.8"
-itertools = "0.11"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+color-eyre = "0.6"
+eyre = "0.6"
 hex = { package = "const-hex", version = "1.6", features = ["hex"] }
+itertools = "0.11"
+jsonpath_lib = "0.3"
 protobuf = "=3.2.0"
+rand = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
+toml = "0.8"
 tracing = "0.1"
-jsonpath_lib = "0.3"
-eyre = "0.6"
-color-eyre = "0.6"
 
 #[patch."https://github.com/gakonst/ethers-rs"]
 #ethers = { path = "../ethers-rs/ethers" }

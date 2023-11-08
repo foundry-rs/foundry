@@ -5,7 +5,7 @@ use crate::{
     test_helpers::{filter::Filter, PROJECT},
 };
 use alloy_primitives::Address;
-use ethers::abi::{Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
+use ethers_core::abi::{Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
 use forge::result::TestStatus;
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use std::str::FromStr;

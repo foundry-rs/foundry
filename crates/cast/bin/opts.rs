@@ -5,7 +5,7 @@ use crate::cmd::{
 };
 use alloy_primitives::{Address, B256, U256};
 use clap::{Parser, Subcommand, ValueHint};
-use ethers::types::{BlockId, NameOrAddress};
+use ethers_core::types::{BlockId, NameOrAddress};
 use eyre::Result;
 use foundry_cli::opts::{EtherscanOpts, RpcOpts};
 use foundry_common::serde_helpers::Numeric;
@@ -883,7 +883,7 @@ pub fn parse_slot(s: &str) -> Result<B256> {
 mod tests {
     use super::*;
     use cast::SimpleCast;
-    use ethers::types::BlockNumber;
+    use ethers_core::types::BlockNumber;
 
     #[test]
     fn parse_call_data() {

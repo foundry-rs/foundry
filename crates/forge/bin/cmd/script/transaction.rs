@@ -2,7 +2,7 @@ use super::{artifacts::ArtifactInfo, ScriptResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256};
-use ethers::{prelude::NameOrAddress, types::transaction::eip2718::TypedTransaction};
+use ethers_core::types::{transaction::eip2718::TypedTransaction, NameOrAddress};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{fmt::format_token_raw, RpcUrl, SELECTOR_LEN};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder, utils::CallKind};
@@ -260,8 +260,7 @@ impl TransactionWithMetadata {
 // wrapper for modifying ethers-rs type serialization
 pub mod wrapper {
     pub use super::*;
-
-    use ethers::{
+    use ethers_core::{
         types::{Bloom, Bytes, Log, TransactionReceipt, H256, U256, U64},
         utils::to_checksum,
     };

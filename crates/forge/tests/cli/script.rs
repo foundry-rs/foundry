@@ -1,17 +1,15 @@
-//! Contains various tests related to forge script
+//! Contains various tests related to `forge script`.
+
 use crate::constants::TEMPLATE_CONTRACT;
+use alloy_primitives::Address;
 use anvil::{spawn, NodeConfig};
-use ethers::abi::Address;
 use foundry_config::Config;
 use foundry_test_utils::{
     forgetest, forgetest_async, forgetest_init,
     util::{OutputExt, TestCommand, TestProject},
     ScriptOutcome, ScriptTester,
 };
-use foundry_utils::{
-    rpc,
-    types::{ToAlloy, ToEthers},
-};
+use foundry_utils::{rpc, types::ToEthers};
 use regex::Regex;
 use serde_json::Value;
 use std::{env, path::PathBuf, str::FromStr};
@@ -369,10 +367,12 @@ contract DeployScript is Script {
         let run_log =
             std::fs::read_to_string("broadcast/DeployScript.sol/1/run-latest.json").unwrap();
         let run_object: Value = serde_json::from_str(&run_log).unwrap();
-        let contract_address = ethers::utils::to_checksum(
-            &run_object["receipts"][0]["contractAddress"].as_str().unwrap().parse().unwrap(),
-            None,
-        );
+        let contract_address = &run_object["receipts"][0]["contractAddress"]
+            .as_str()
+            .unwrap()
+            .parse::<Address>()
+            .unwrap()
+            .to_string();
 
         let run_code = r#"
 // SPDX-License-Identifier: UNLICENSED
@@ -459,15 +459,15 @@ forgetest_async!(
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
-            .load_addresses(vec![Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906")
-                .unwrap()
-                .to_alloy()])
+            .load_addresses(vec![
+                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
+            ])
             .await
             .add_sig("BroadcastTest", "deployPrivateKey()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment_addresses(vec![(
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap().to_alloy(),
+                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
                 3,
             )])
             .await;
@@ -498,15 +498,15 @@ forgetest_async!(
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
-            .load_addresses(vec![Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906")
-                .unwrap()
-                .to_alloy()])
+            .load_addresses(vec![
+                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
+            ])
             .await
             .add_sig("BroadcastTest", "deployRememberKey()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment_addresses(vec![(
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap().to_alloy(),
+                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
                 2,
             )])
             .await;
@@ -522,9 +522,9 @@ forgetest_async!(
 
         tester
             .add_deployer(0)
-            .load_addresses(vec![Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906")
-                .unwrap()
-                .to_alloy()])
+            .load_addresses(vec![
+                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
+            ])
             .await
             .add_sig("BroadcastTest", "deployRememberKeyResume()")
             .simulate(ScriptOutcome::OkSimulation)
@@ -534,7 +534,7 @@ forgetest_async!(
             .await
             .run(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment_addresses(vec![(
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap().to_alloy(),
+                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
                 1,
             )])
             .await
@@ -610,7 +610,7 @@ forgetest_async!(can_deploy_with_create2, |prj: TestProject, cmd: TestCommand| a
     // Prepare CREATE2 Deployer
     api.anvil_set_code(
         foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER.to_ethers(),
-        ethers::types::Bytes::from_static(
+        ethers_core::types::Bytes::from_static(
             foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
         ),
     )
@@ -701,7 +701,7 @@ forgetest_async!(
         // Prepare CREATE2 Deployer
         let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
         let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
-        api.anvil_set_code(addr, code).await.unwrap();
+        api.anvil_set_code(addr.to_ethers(), code).await.unwrap();
 
         tester
             .load_private_keys([0])

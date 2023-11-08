@@ -4,11 +4,11 @@ use crate::{
     fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
 };
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
-use ethers::{
-    core::abi::ethereum_types::BigEndianHash,
-    providers::Middleware,
+use ethers_core::{
+    abi::ethereum_types::BigEndianHash,
     types::{Block, BlockId, NameOrAddress, Transaction},
 };
+use ethers_providers::Middleware;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
 use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::{
@@ -699,9 +699,8 @@ mod tests {
         fork::{BlockchainDbMeta, CreateFork, JsonBlockCacheDB},
         opts::EvmOpts,
     };
-    use ethers::types::Chain;
     use foundry_common::get_http_provider;
-    use foundry_config::Config;
+    use foundry_config::{Config, NamedChain};
     use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
     const ENDPOINT: &str = "https://mainnet.infura.io/v3/40bee2d557ed4b52908c3e62345a3d8b";
 
@@ -795,7 +794,7 @@ mod tests {
 
         let db = BlockchainDb::new(
             meta,
-            Some(Config::foundry_block_cache_dir(Chain::Mainnet, block_num).unwrap()),
+            Some(Config::foundry_block_cache_dir(NamedChain::Mainnet, block_num).unwrap()),
         );
         assert!(db.accounts().read().contains_key(&address));
         assert!(db.storage().read().contains_key(&address));

@@ -2,7 +2,7 @@ use super::{BasicTxDetails, InvariantContract};
 use crate::executors::{Executor, RawCallResult};
 use alloy_json_abi::Function;
 use alloy_primitives::Address;
-use ethers::types::Log;
+use ethers_core::types::Log;
 use eyre::Result;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::{constants::CALLER, decode::decode_revert};
@@ -63,7 +63,7 @@ pub struct InvariantFuzzError {
     /// Address of the invariant asserter.
     pub addr: Address,
     /// Function data for invariant check.
-    pub func: Option<ethers::prelude::Bytes>,
+    pub func: Option<ethers_core::types::Bytes>,
     /// Inner fuzzing Sequence coming from overriding calls.
     pub inner_sequence: Vec<Option<BasicTxDetails>>,
     /// Shrink the failed test case to the smallest sequence.

@@ -24,7 +24,6 @@ foundry-evm.workspace = true
 foundry-config.workspace = true
 foundry-common.workspace = true
 
-ethers-etherscan.workspace = true
 ethers-core.workspace = true
 ethers-providers.workspace = true
 
@@ -53,7 +52,9 @@ rusoto_kms = { version = "0.48", default-features = false }
 foundry-cli.workspace = true
 
 # eth
-ethers = { workspace = true, features = ["rustls"] }
+ethers-contract.workspace = true
+ethers-middleware.workspace = true
+ethers-signers.workspace = true
 eth-keystore = "0.5"
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }

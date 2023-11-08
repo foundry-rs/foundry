@@ -1,5 +1,6 @@
 use alloy_primitives::U256;
-use ethers::{prelude::TransactionReceipt, providers::Middleware};
+use ethers_core::types::TransactionReceipt;
+use ethers_providers::Middleware;
 use eyre::{ContextCompat, Result};
 use foundry_common::units::format_units;
 use foundry_config::{Chain, Config};

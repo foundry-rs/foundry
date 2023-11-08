@@ -5,7 +5,7 @@ use crate::{
 use alloy_dyn_abi::{FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi as Abi};
 use alloy_primitives::Address;
-use ethers::types::{Action, Call, CallResult, Create, CreateResult, Res, Suicide};
+use ethers_core::types::{Action, Call, CallResult, Create, CreateResult, Res, Suicide};
 use foundry_common::SELECTOR_LEN;
 use foundry_evm_core::{constants::CHEATCODE_ADDRESS, decode, utils::CallKind};
 use foundry_utils::types::ToEthers;

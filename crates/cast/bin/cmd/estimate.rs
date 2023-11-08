@@ -1,7 +1,7 @@
 use alloy_primitives::U256;
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::types::NameOrAddress;
+use ethers_core::types::NameOrAddress;
 use eyre::Result;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},

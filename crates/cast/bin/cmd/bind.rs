@@ -1,6 +1,7 @@
 use clap::{Parser, ValueHint};
-use ethers::prelude::{errors::EtherscanError, Abigen, Client, MultiAbigen};
+use ethers_contract::{Abigen, MultiAbigen};
 use eyre::Result;
+use foundry_block_explorers::{errors::EtherscanError, Client};
 use foundry_cli::opts::EtherscanOpts;
 use foundry_config::Config;
 use std::path::{Path, PathBuf};
