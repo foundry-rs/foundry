@@ -58,9 +58,10 @@ t_linux_arm = Target("ubuntu-latest", "aarch64-unknown-linux-gnu")
 t_macos = Target("macos-latest", "x86_64-apple-darwin")
 t_windows = Target("windows-latest", "x86_64-pc-windows-msvc")
 targets = (
-    [t_linux_x86, t_windows]
-    if is_pr
-    else [t_linux_x86, t_linux_arm, t_macos, t_windows]
+    # [t_linux_x86, t_windows]
+    # if is_pr
+    # else
+    [t_linux_x86, t_linux_arm, t_macos, t_windows]
 )
 
 config = [
