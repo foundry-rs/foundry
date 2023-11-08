@@ -10,10 +10,13 @@ class Target:
     os_id: str
     # Rust target triple
     target: str
+    # SVM Solc target
+    svm_target_platform: str
 
-    def __init__(self, os_id: str, target: str):
+    def __init__(self, os_id: str, target: str, svm_target_platform: str):
         self.os_id = os_id
         self.target = target
+        self.svm_target_platform = svm_target_platform
 
 
 # A single test suite to run.
@@ -41,22 +44,32 @@ class Expanded:
     name: str
     os: str
     target: str
+    svm_target_platform: str
     flags: str
     partition: int
 
-    def __init__(self, name: str, os: str, target: str, flags: str, partition: int):
+    def __init__(
+        self,
+        name: str,
+        os: str,
+        target: str,
+        svm_target_platform: str,
+        flags: str,
+        partition: int,
+    ):
         self.name = name
         self.os = os
         self.target = target
+        self.svm_target_platform = svm_target_platform
         self.flags = flags
         self.partition = partition
 
 
 is_pr = os.environ.get("EVENT_NAME") == "pull_request"
-t_linux_x86 = Target("ubuntu-latest", "x86_64-unknown-linux-gnu")
-t_linux_arm = Target("ubuntu-latest", "aarch64-unknown-linux-gnu")
-t_macos = Target("macos-latest", "x86_64-apple-darwin")
-t_windows = Target("windows-latest", "x86_64-pc-windows-msvc")
+t_linux_x86 = Target("ubuntu-latest", "x86_64-unknown-linux-gnu", "linux-amd64")
+t_linux_arm = Target("ubuntu-latest", "aarch64-unknown-linux-gnu", "linux-aarch64")
+t_macos = Target("macos-latest", "x86_64-apple-darwin", "macosx-amd64")
+t_windows = Target("windows-latest", "x86_64-pc-windows-msvc", "windows-amd64")
 targets = (
     # [t_linux_x86, t_windows]
     # if is_pr
@@ -122,6 +135,7 @@ def main():
                     name=name,
                     os=target.os_id,
                     target=target.target,
+                    svm_target_platform=target.svm_target_platform,
                     flags=flags,
                     partition=partition,
                 )
