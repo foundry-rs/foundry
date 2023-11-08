@@ -101,8 +101,8 @@ def main():
     expanded = []
     for target in targets:
         for case in config:
-            if is_pr and (not case.pr_cross_platform and target != t_linux_x86):
-                continue
+            # if is_pr and (not case.pr_cross_platform and target != t_linux_x86):
+            #     continue
 
             for partition in range(1, case.n_partitions + 1):
                 os_str = ""
