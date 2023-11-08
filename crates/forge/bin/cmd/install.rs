@@ -489,7 +489,7 @@ fn match_yn(input: String) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_test_utils::tempfile::tempdir;
+    use tempfile::tempdir;
 
     #[test]
     fn get_oz_tags() {

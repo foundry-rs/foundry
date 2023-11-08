@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate foundry_test_utils;
+
 pub mod constants;
 pub mod utils;
 

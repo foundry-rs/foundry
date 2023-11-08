@@ -6,7 +6,7 @@ use foundry_common::{get_http_provider, RetryProvider};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use std::{collections::BTreeMap, path::Path, str::FromStr};
 
-pub const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
+const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
 
 /// A helper struct to test forge script scenarios
 pub struct ScriptTester {

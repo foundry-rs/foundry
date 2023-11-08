@@ -1,5 +1,7 @@
-mod cheats;
 pub mod config;
+pub mod test_helpers;
+
+mod cheats;
 mod core;
 mod fork;
 mod fs;
@@ -8,4 +10,3 @@ mod inline;
 mod invariant;
 mod repros;
 mod spec;
-pub mod test_helpers;

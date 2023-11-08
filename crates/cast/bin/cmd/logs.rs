@@ -1,5 +1,3 @@
-use std::{io, str::FromStr};
-
 use cast::Cast;
 use clap::Parser;
 use ethers::{providers::Middleware, types::NameOrAddress};
@@ -12,9 +10,9 @@ use ethers_core::{
 };
 use eyre::{Result, WrapErr};
 use foundry_cli::{opts::EthereumOpts, utils};
-
 use foundry_config::Config;
 use itertools::Itertools;
+use std::{io, str::FromStr};
 
 /// CLI arguments for `cast logs`.
 #[derive(Debug, Parser)]

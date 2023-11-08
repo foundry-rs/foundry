@@ -1,10 +1,9 @@
-use foundry_test_utils::forgetest_external;
-
 forgetest_external!(solmate, "transmissions11/solmate");
 forgetest_external!(prb_math, "PaulRBerg/prb-math");
 forgetest_external!(prb_proxy, "PaulRBerg/prb-proxy");
 forgetest_external!(solady, "Vectorized/solady");
 forgetest_external!(
+    #[cfg_attr(windows, ignore = "weird git fail")]
     geb,
     "reflexer-labs/geb",
     &["--chain-id", "99", "--sender", "0x00a329c0648769A73afAc7F9381E08FB43dBEA72"]

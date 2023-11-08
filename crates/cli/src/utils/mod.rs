@@ -264,12 +264,17 @@ impl CommandUtils for Command {
         if output.status.success() {
             Ok(output)
         } else {
-            let mut stderr = String::from_utf8_lossy(&output.stderr);
-            let mut msg = stderr.trim();
-            if msg.is_empty() {
-                stderr = String::from_utf8_lossy(&output.stdout);
-                msg = stderr.trim();
-            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stdout = stdout.trim();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = stderr.trim();
+            let msg = if stdout.is_empty() {
+                stderr.to_string()
+            } else if stderr.is_empty() {
+                stdout.to_string()
+            } else {
+                format!("stdout:\n{stdout}\n\nstderr:\n{stderr}")
+            };
 
             let mut name = self.get_program().to_string_lossy();
             if let Some(arg) = self.get_args().next() {
@@ -286,8 +291,9 @@ impl CommandUtils for Command {
                 None => format!("{name} terminated by a signal"),
             };
             if !msg.is_empty() {
-                err.push_str(": ");
-                err.push_str(msg);
+                err.push(':');
+                err.push(if msg.lines().count() == 0 { ' ' } else { '\n' });
+                err.push_str(&msg);
             }
             Err(eyre::eyre!(err))
         }
