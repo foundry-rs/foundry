@@ -1,6 +1,6 @@
 # Automatically run `cargo update` periodically
 
-name: Update Dependencies
+name: dependencies
 
 on:
     schedule:

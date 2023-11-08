@@ -1,4 +1,4 @@
-name: Release version
+name: release
 
 on:
     push:
@@ -9,8 +9,8 @@ on:
     workflow_dispatch:
 
 env:
-    IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     CARGO_TERM_COLOR: always
+    IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 
 jobs:
     prepare:
@@ -110,6 +110,7 @@ jobs:
                   targets: ${{ matrix.target }}
             - uses: Swatinem/rust-cache@v2
               with:
+                  key: ${{ matrix.target }}
                   cache-on-failure: true
 
             - name: Apple M1 setup

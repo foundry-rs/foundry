@@ -7,8 +7,8 @@ on:
     pull_request:
 
 concurrency:
+    group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
     cancel-in-progress: true
-    group: ${{github.workflow}}-${{github.ref}}
 
 env:
     CARGO_TERM_COLOR: always
@@ -61,6 +61,7 @@ jobs:
                   key: rpc-cache-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
             - uses: Swatinem/rust-cache@v2
               with:
+                  key: ${{ matrix.target }}
                   cache-on-failure: true
             - name: Setup git config
               run: |
@@ -70,8 +71,7 @@ jobs:
             - name: Test
               run: cargo nextest run ${{ matrix.flags }}
 
-    doctests:
-        name: doc tests
+    doctest:
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
@@ -80,11 +80,9 @@ jobs:
             - uses: Swatinem/rust-cache@v2
               with:
                   cache-on-failure: true
-            - name: cargo test
-              run: cargo test --doc
+            - run: cargo test --workspace --doc
 
     clippy:
-        name: clippy
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
@@ -97,8 +95,7 @@ jobs:
               env:
                   RUSTFLAGS: -Dwarnings
 
-    fmt:
-        name: fmt
+    rustfmt:
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
@@ -109,7 +106,6 @@ jobs:
             - run: cargo fmt --all --check
 
     forge-fmt:
-        name: forge fmt
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
@@ -126,8 +122,7 @@ jobs:
                   shopt -s extglob
                   cargo run --bin forge -- fmt --check testdata/**/!(Vm).sol
 
-    feature-checks:
-        name: feature checks
+    crate-checks:
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
@@ -137,5 +132,4 @@ jobs:
             - uses: Swatinem/rust-cache@v2
               with:
                   cache-on-failure: true
-            - name: cargo hack
-              run: cargo hack check
+            - run: cargo hack check

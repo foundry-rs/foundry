@@ -1,4 +1,4 @@
-name: Heavy (long-running) integration tests
+name: heavy integration
 
 on:
     schedule:
