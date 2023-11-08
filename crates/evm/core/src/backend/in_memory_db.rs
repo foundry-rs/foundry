@@ -112,9 +112,8 @@ impl DatabaseRef for EmptyDBWrapper {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::b256;
-
     use super::*;
+    use alloy_primitives::b256;
 
     /// Ensures the `Database(Ref)` implementation for `revm::CacheDB` works as expected
     ///

@@ -2480,9 +2480,8 @@ impl BasicConfig {
 }
 
 pub(crate) mod from_str_lowercase {
-    use std::str::FromStr;
-
     use serde::{Deserialize, Deserializer, Serializer};
+    use std::str::FromStr;
 
     pub fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
     where

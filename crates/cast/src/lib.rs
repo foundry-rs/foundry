@@ -1,4 +1,3 @@
-use crate::rlp_converter::Item;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::{ContractObject, Function};
 use alloy_primitives::{Address, I256, U256};
@@ -40,6 +39,8 @@ pub mod base;
 pub mod errors;
 mod rlp_converter;
 mod tx;
+
+use rlp_converter::Item;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 

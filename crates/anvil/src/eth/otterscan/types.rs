@@ -1,3 +1,7 @@
+use crate::eth::{
+    backend::mem::{storage::MinedTransaction, Backend},
+    error::{BlockchainError, Result},
+};
 use alloy_primitives::U256 as rU256;
 use ethers::types::{
     Action, Address, Block, Bytes, CallType, Trace, Transaction, TransactionReceipt, H256, U256,
@@ -7,11 +11,6 @@ use foundry_utils::types::ToEthers;
 use futures::future::join_all;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_repr::Serialize_repr;
-
-use crate::eth::{
-    backend::mem::{storage::MinedTransaction, Backend},
-    error::{BlockchainError, Result},
-};
 
 /// Patched Block struct, to include the additional `transactionCount` field expected by Otterscan
 #[derive(Debug, Serialize)]

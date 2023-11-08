@@ -258,9 +258,8 @@ async fn fill_tx(
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::Address;
-
     use super::*;
+    use alloy_primitives::Address;
 
     #[test]
     fn can_parse_call_data() {

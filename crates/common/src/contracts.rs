@@ -1,4 +1,4 @@
-//! commonly used contract types and functions
+//! Commonly used contract types and functions.
 
 use alloy_json_abi::{Event, Function, JsonAbi as Abi};
 use alloy_primitives::{hex, Address, B256};

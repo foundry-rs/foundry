@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use crate::{
     document::{read_context, DocumentContent},
     parser::ParseSource,
@@ -10,6 +8,7 @@ use crate::{
 use forge_fmt::solang_ext::SafeUnwrap;
 use itertools::Itertools;
 use solang_parser::pt::Base;
+use std::path::Path;
 
 /// The result of [Asdoc::as_doc] method.
 pub type AsDocResult = Result<String, std::fmt::Error>;

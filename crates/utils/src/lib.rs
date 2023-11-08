@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![warn(unused_crate_dependencies)]
 
+use crate::types::{ToAlloy, ToEthers};
 use alloy_primitives::{Address, Bytes};
 use ethers_core::types::BlockId;
 use ethers_providers::{Middleware, Provider};
@@ -20,8 +21,6 @@ use std::{
     time::Duration,
 };
 use tracing::trace;
-
-use crate::types::{ToAlloy, ToEthers};
 
 pub mod abi;
 pub mod error;
