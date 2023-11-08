@@ -20,7 +20,7 @@ jobs:
         outputs:
             test-matrix: ${{ steps.gen.outputs.test-matrix }}
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: actions/setup-python@v4
               with:
                   python-version: "3.11"
@@ -44,7 +44,7 @@ jobs:
         env:
             ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: dtolnay/rust-toolchain@stable
               with:
                   target: ${{ matrix.target }}
@@ -75,7 +75,7 @@ jobs:
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: dtolnay/rust-toolchain@stable
             - uses: Swatinem/rust-cache@v2
               with:
@@ -86,7 +86,7 @@ jobs:
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: dtolnay/rust-toolchain@clippy
             - uses: Swatinem/rust-cache@v2
               with:
@@ -99,7 +99,7 @@ jobs:
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: dtolnay/rust-toolchain@nightly
               with:
                   components: rustfmt
@@ -109,7 +109,7 @@ jobs:
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: dtolnay/rust-toolchain@stable
             - uses: Swatinem/rust-cache@v2
               with:
@@ -126,7 +126,7 @@ jobs:
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: dtolnay/rust-toolchain@stable
             - uses: taiki-e/install-action@cargo-hack
             - uses: Swatinem/rust-cache@v2

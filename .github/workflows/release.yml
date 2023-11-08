@@ -22,7 +22,7 @@ jobs:
             release_name: ${{ steps.release_info.outputs.release_name }}
             changelog: ${{ steps.build_changelog.outputs.changelog }}
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
               with:
                   fetch-depth: 0
 
@@ -104,7 +104,7 @@ jobs:
                       platform: win32
                       arch: amd64
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: dtolnay/rust-toolchain@stable
               with:
                   targets: ${{ matrix.target }}
@@ -216,7 +216,7 @@ jobs:
         needs: release
         if: always()
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
 
             # Moves the `nightly` tag to `HEAD`
             - name: Move nightly tag
@@ -241,7 +241,7 @@ jobs:
         needs: [prepare, release-docker, release, cleanup]
         if: failure()
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: JasonEtco/create-an-issue@v2
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
