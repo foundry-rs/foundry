@@ -8,3 +8,4 @@ slow-timeout = { period = "5m", terminate-after = 4 }
 
 [profile.heavy]
 retries = 1
+slow-timeout = { period = "120m", terminate-after = 1}
