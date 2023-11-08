@@ -16,15 +16,9 @@ use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{abi::encode_function_args, fmt::*, TransactionReceiptWithRevertReason};
-pub use foundry_evm::*;
 use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
-pub use rusoto_core::{
-    credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
-    request::HttpClient as AwsHttpClient, Client as AwsClient,
-};
-pub use rusoto_kms::KmsClient;
 use std::{
     io,
     path::PathBuf,
@@ -32,8 +26,15 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use tokio::signal::ctrl_c;
-pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
+
+pub use foundry_evm::*;
+pub use rusoto_core::{
+    credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
+    request::HttpClient as AwsHttpClient, Client as AwsClient,
+};
+pub use rusoto_kms::KmsClient;
+pub use tx::TxBuilder;
 
 pub mod base;
 pub mod errors;
@@ -72,7 +73,7 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```
     /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Http, Provider};

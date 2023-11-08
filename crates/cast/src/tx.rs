@@ -12,15 +12,6 @@ use foundry_config::Chain;
 use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::future::join_all;
 
-pub struct TxBuilder<'a, M: Middleware> {
-    to: Option<Address>,
-    chain: Chain,
-    tx: TypedTransaction,
-    func: Option<Function>,
-    etherscan_api_key: Option<String>,
-    provider: &'a M,
-}
-
 pub type TxBuilderOutput = (TypedTransaction, Option<Function>);
 pub type TxBuilderPeekOutput<'a> = (&'a TypedTransaction, &'a Option<Function>);
 
@@ -41,6 +32,15 @@ pub type TxBuilderPeekOutput<'a> = (&'a TypedTransaction, &'a Option<Function>);
 /// # Ok(())
 /// # }
 /// ```
+pub struct TxBuilder<'a, M: Middleware> {
+    to: Option<Address>,
+    chain: Chain,
+    tx: TypedTransaction,
+    func: Option<Function>,
+    etherscan_api_key: Option<String>,
+    provider: &'a M,
+}
+
 impl<'a, M: Middleware> TxBuilder<'a, M> {
     /// Create a new TxBuilder
     /// `provider` - provider to use

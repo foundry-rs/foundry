@@ -466,12 +466,12 @@ where
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```
+/// # async fn foo() -> Result<(), Box<dyn std::error::Error>> {
+/// use alloy_primitives::Bytes;
 /// use ethers_contract::ContractFactory;
-/// use ethers_core::types::Bytes;
 /// use ethers_providers::{Provider, Http};
 ///
-/// # async fn foo() -> Result<(), Box<dyn std::error::Error>> {
 /// // get the contract ABI and bytecode
 /// let abi = Default::default();
 /// let bytecode = Bytes::from_static(b"...");

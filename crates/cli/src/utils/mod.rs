@@ -88,8 +88,11 @@ pub fn get_provider(config: &Config) -> Result<foundry_common::RetryProvider> {
 /// Defaults to `http://localhost:8545` and `Mainnet`.
 pub fn get_provider_builder(config: &Config) -> Result<foundry_common::ProviderBuilder> {
     let url = config.get_rpc_url_or_localhost_http()?;
-    let chain = config.chain_id.unwrap_or_default();
-    let mut builder = foundry_common::ProviderBuilder::new(url.as_ref()).chain(chain);
+    let mut builder = foundry_common::ProviderBuilder::new(url.as_ref());
+
+    if let Ok(chain) = config.chain_id.unwrap_or_default().try_into() {
+        builder = builder.chain(chain);
+    }
 
     let jwt = config.get_rpc_jwt_secret()?;
     if let Some(jwt) = jwt {
