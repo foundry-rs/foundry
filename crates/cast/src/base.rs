@@ -136,7 +136,13 @@ impl Base {
                     _ => Err(eyre::eyre!("could not parse octal value: {e}")),
                 },
             },
-            _ if s.starts_with("0x") => Ok(Self::Hexadecimal),
+            _ if s.starts_with("0x") => match u128::from_str_radix(&s[2..], 16) {
+                Ok(_) => Ok(Self::Hexadecimal),
+                Err(e) => match e.kind() {
+                    IntErrorKind::PosOverflow => Ok(Self::Hexadecimal),
+                    _ => Err(eyre::eyre!("could not parse hexadecimal value: {e}")),
+                },
+            },
             // No prefix => first try parsing as decimal
             _ => match U256::from_str_radix(s, 10) {
                 // Can be both, ambiguous but default to Decimal
@@ -651,8 +657,7 @@ mod tests {
         let _ = Base::detect("0b234abc").unwrap_err();
         let _ = Base::detect("0o89cba").unwrap_err();
         let _ = Base::detect("0123456789abcdefg").unwrap_err();
-        // Invalid number but for base it's ok
-        assert_eq!(Base::detect("0x123abclpmk").unwrap(), Base::Hexadecimal);
+        let _ = Base::detect("0x123abclpmk").unwrap_err();
         let _ = Base::detect("hello world").unwrap_err();
     }
 
