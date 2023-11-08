@@ -4,11 +4,7 @@ use crate::constants::TEMPLATE_CONTRACT;
 use alloy_primitives::Address;
 use anvil::{spawn, NodeConfig};
 use foundry_config::Config;
-use foundry_test_utils::{
-    forgetest, forgetest_async, forgetest_init,
-    util::{OutputExt, TestCommand, TestProject},
-    ScriptOutcome, ScriptTester,
-};
+use foundry_test_utils::{util::OutputExt, ScriptOutcome, ScriptTester};
 use foundry_utils::{rpc, types::ToEthers};
 use regex::Regex;
 use serde_json::Value;
@@ -18,7 +14,7 @@ use std::{env, path::PathBuf, str::FromStr};
 forgetest_init!(
     #[ignore]
     can_use_fork_cheat_codes_in_script,
-    |prj: TestProject, mut cmd: TestCommand| {
+    |prj, cmd| {
         let script = prj
             .inner()
             .add_source(
@@ -48,7 +44,7 @@ contract ContractScript is Script {
 );
 
 // Tests that the `run` command works correctly
-forgetest!(can_execute_script_command2, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(can_execute_script_command2, |prj, cmd| {
     let script = prj
         .inner()
         .add_source(
@@ -74,7 +70,7 @@ contract Demo {
 });
 
 // Tests that the `run` command works correctly when path *and* script name is specified
-forgetest!(can_execute_script_command_fqn, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(can_execute_script_command_fqn, |prj, cmd| {
     let script = prj
         .inner()
         .add_source(
@@ -100,7 +96,7 @@ contract Demo {
 });
 
 // Tests that the run command can run arbitrary functions
-forgetest!(can_execute_script_command_with_sig, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(can_execute_script_command_with_sig, |prj, cmd| {
     let script = prj
         .inner()
         .add_source(
@@ -126,15 +122,13 @@ contract Demo {
 });
 
 // Tests that the manually specified gas limit is used when using the --unlocked option
-forgetest_async!(
-    can_execute_script_command_with_manual_gas_limit_unlocked,
-    |prj: TestProject, mut cmd: TestCommand| async move {
-        foundry_test_utils::util::initialize(prj.root());
-        let deploy_script = prj
-            .inner()
-            .add_source(
-                "Foo",
-                r#"
+forgetest_async!(can_execute_script_command_with_manual_gas_limit_unlocked, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let deploy_script = prj
+        .inner()
+        .add_source(
+            "Foo",
+            r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.10;
 import "forge-std/Script.sol";
@@ -152,49 +146,45 @@ contract DeployScript is Script {
     }
 }
    "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
-        let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
+    let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
-        let node_config = NodeConfig::test()
-            .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
-            .silent();
-        let (_api, handle) = spawn(node_config).await;
-        let dev = handle.dev_accounts().next().unwrap();
-        cmd.set_current_dir(prj.root());
+    let node_config =
+        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint())).silent();
+    let (_api, handle) = spawn(node_config).await;
+    let dev = handle.dev_accounts().next().unwrap();
+    cmd.set_current_dir(prj.root());
 
-        cmd.args([
-            "script",
-            &deploy_contract,
-            "--root",
-            prj.root().to_str().unwrap(),
-            "--fork-url",
-            &handle.http_endpoint(),
-            "--sender",
-            format!("{dev:?}").as_str(),
-            "-vvvvv",
-            "--slow",
-            "--broadcast",
-            "--unlocked",
-        ]);
+    cmd.args([
+        "script",
+        &deploy_contract,
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--sender",
+        format!("{dev:?}").as_str(),
+        "-vvvvv",
+        "--slow",
+        "--broadcast",
+        "--unlocked",
+    ]);
 
-        let output = cmd.stdout_lossy();
-        assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
-        assert!(output.contains("Gas limit was set in script to 500000"));
-    }
-);
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+    assert!(output.contains("Gas limit was set in script to 500000"));
+});
 
 // Tests that the manually specified gas limit is used.
-forgetest_async!(
-    can_execute_script_command_with_manual_gas_limit,
-    |prj: TestProject, mut cmd: TestCommand| async move {
-        foundry_test_utils::util::initialize(prj.root());
-        let deploy_script = prj
-            .inner()
-            .add_source(
-                "Foo",
-                r#"
+forgetest_async!(can_execute_script_command_with_manual_gas_limit, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let deploy_script = prj
+        .inner()
+        .add_source(
+            "Foo",
+            r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.10;
 import "forge-std/Script.sol";
@@ -212,41 +202,39 @@ contract DeployScript is Script {
     }
 }
    "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
-        let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
+    let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
-        let node_config = NodeConfig::test()
-            .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
-            .silent();
-        let (_api, handle) = spawn(node_config).await;
-        let private_key =
-            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
-        cmd.set_current_dir(prj.root());
+    let node_config =
+        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint())).silent();
+    let (_api, handle) = spawn(node_config).await;
+    let private_key =
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
+    cmd.set_current_dir(prj.root());
 
-        cmd.args([
-            "script",
-            &deploy_contract,
-            "--root",
-            prj.root().to_str().unwrap(),
-            "--fork-url",
-            &handle.http_endpoint(),
-            "-vvvvv",
-            "--slow",
-            "--broadcast",
-            "--private-key",
-            &private_key,
-        ]);
+    cmd.args([
+        "script",
+        &deploy_contract,
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "-vvvvv",
+        "--slow",
+        "--broadcast",
+        "--private-key",
+        &private_key,
+    ]);
 
-        let output = cmd.stdout_lossy();
-        assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
-        assert!(output.contains("Gas limit was set in script to 500000"));
-    }
-);
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+    assert!(output.contains("Gas limit was set in script to 500000"));
+});
 
 // Tests that the run command can run functions with arguments
-forgetest!(can_execute_script_command_with_args, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(can_execute_script_command_with_args, |prj, cmd| {
     let script = prj
         .inner()
         .add_source(
@@ -275,7 +263,7 @@ contract Demo {
 });
 
 // Tests that the run command can run functions with return values
-forgetest!(can_execute_script_command_with_returned, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(can_execute_script_command_with_returned, |prj, cmd| {
     let script = prj
         .inner()
         .add_source(
@@ -299,16 +287,14 @@ contract Demo {
     );
 });
 
-forgetest_async!(
-    can_broadcast_script_skipping_simulation,
-    |prj: TestProject, mut cmd: TestCommand| async move {
-        foundry_test_utils::util::initialize(prj.root());
-        // This example script would fail in on-chain simulation
-        let deploy_script = prj
-            .inner()
-            .add_source(
-                "DeployScript",
-                r#"
+forgetest_async!(can_broadcast_script_skipping_simulation, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    // This example script would fail in on-chain simulation
+    let deploy_script = prj
+        .inner()
+        .add_source(
+            "DeployScript",
+            r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.10;
 import "forge-std/Script.sol";
@@ -331,50 +317,48 @@ contract DeployScript is Script {
         HashChecker hashChecker = new HashChecker();
     }
 }"#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
-        let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
+    let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
-        let node_config = NodeConfig::test()
-            .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
-            .silent();
-        let (_api, handle) = spawn(node_config).await;
-        let private_key =
-            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
-        cmd.set_current_dir(prj.root());
+    let node_config =
+        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint())).silent();
+    let (_api, handle) = spawn(node_config).await;
+    let private_key =
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
+    cmd.set_current_dir(prj.root());
 
-        cmd.args([
-            "script",
-            &deploy_contract,
-            "--root",
-            prj.root().to_str().unwrap(),
-            "--fork-url",
-            &handle.http_endpoint(),
-            "-vvvvv",
-            "--broadcast",
-            "--slow",
-            "--skip-simulation",
-            "--private-key",
-            &private_key,
-        ]);
+    cmd.args([
+        "script",
+        &deploy_contract,
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "-vvvvv",
+        "--broadcast",
+        "--slow",
+        "--skip-simulation",
+        "--private-key",
+        &private_key,
+    ]);
 
-        let output = cmd.stdout_lossy();
+    let output = cmd.stdout_lossy();
 
-        assert!(output.contains("SKIPPING ON CHAIN SIMULATION"));
-        assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+    assert!(output.contains("SKIPPING ON CHAIN SIMULATION"));
+    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
 
-        let run_log =
-            std::fs::read_to_string("broadcast/DeployScript.sol/1/run-latest.json").unwrap();
-        let run_object: Value = serde_json::from_str(&run_log).unwrap();
-        let contract_address = &run_object["receipts"][0]["contractAddress"]
-            .as_str()
-            .unwrap()
-            .parse::<Address>()
-            .unwrap()
-            .to_string();
+    let run_log = std::fs::read_to_string("broadcast/DeployScript.sol/1/run-latest.json").unwrap();
+    let run_object: Value = serde_json::from_str(&run_log).unwrap();
+    let contract_address = &run_object["receipts"][0]["contractAddress"]
+        .as_str()
+        .unwrap()
+        .parse::<Address>()
+        .unwrap()
+        .to_string();
 
-        let run_code = r#"
+    let run_code = r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.10;
 import "forge-std/Script.sol";
@@ -393,37 +377,36 @@ contract RunScript is Script {
         }
     }
 }"#
-        .replace("CONTRACT_ADDRESS", &contract_address);
+    .replace("CONTRACT_ADDRESS", &contract_address);
 
-        let run_script = prj.inner().add_source("RunScript", run_code).unwrap();
-        let run_contract = run_script.display().to_string() + ":RunScript";
+    let run_script = prj.inner().add_source("RunScript", run_code).unwrap();
+    let run_contract = run_script.display().to_string() + ":RunScript";
 
-        cmd.forge_fuse();
-        cmd.set_current_dir(prj.root());
-        cmd.args([
-            "script",
-            &run_contract,
-            "--root",
-            prj.root().to_str().unwrap(),
-            "--fork-url",
-            &handle.http_endpoint(),
-            "-vvvvv",
-            "--broadcast",
-            "--slow",
-            "--skip-simulation",
-            "--gas-estimate-multiplier",
-            "200",
-            "--private-key",
-            &private_key,
-        ]);
+    cmd.forge_fuse();
+    cmd.set_current_dir(prj.root());
+    cmd.args([
+        "script",
+        &run_contract,
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "-vvvvv",
+        "--broadcast",
+        "--slow",
+        "--skip-simulation",
+        "--gas-estimate-multiplier",
+        "200",
+        "--private-key",
+        &private_key,
+    ]);
 
-        let output = cmd.stdout_lossy();
-        assert!(output.contains("SKIPPING ON CHAIN SIMULATION"));
-        assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
-    }
-);
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("SKIPPING ON CHAIN SIMULATION"));
+    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+});
 
-forgetest_async!(can_deploy_script_without_lib, |prj: TestProject, cmd: TestCommand| async move {
+forgetest_async!(can_deploy_script_without_lib, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -437,7 +420,7 @@ forgetest_async!(can_deploy_script_without_lib, |prj: TestProject, cmd: TestComm
         .await;
 });
 
-forgetest_async!(can_deploy_script_with_lib, |prj: TestProject, cmd: TestCommand| async move {
+forgetest_async!(can_deploy_script_with_lib, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -454,7 +437,7 @@ forgetest_async!(can_deploy_script_with_lib, |prj: TestProject, cmd: TestCommand
 forgetest_async!(
     #[serial_test::serial]
     can_deploy_script_private_key,
-    |prj: TestProject, cmd: TestCommand| async move {
+    |prj, cmd| {
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -477,7 +460,7 @@ forgetest_async!(
 forgetest_async!(
     #[serial_test::serial]
     can_deploy_unlocked,
-    |prj: TestProject, cmd: TestCommand| async move {
+    |prj, cmd| {
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -493,7 +476,7 @@ forgetest_async!(
 forgetest_async!(
     #[serial_test::serial]
     can_deploy_script_remember_key,
-    |prj: TestProject, cmd: TestCommand| async move {
+    |prj, cmd| {
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -516,7 +499,7 @@ forgetest_async!(
 forgetest_async!(
     #[serial_test::serial]
     can_deploy_script_remember_key_and_resume,
-    |prj: TestProject, cmd: TestCommand| async move {
+    |prj, cmd| {
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -543,7 +526,7 @@ forgetest_async!(
     }
 );
 
-forgetest_async!(can_resume_script, |prj: TestProject, cmd: TestCommand| async move {
+forgetest_async!(can_resume_script, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -561,7 +544,7 @@ forgetest_async!(can_resume_script, |prj: TestProject, cmd: TestCommand| async m
         .await;
 });
 
-forgetest_async!(can_deploy_broadcast_wrap, |prj: TestProject, cmd: TestCommand| async move {
+forgetest_async!(can_deploy_broadcast_wrap, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -576,7 +559,7 @@ forgetest_async!(can_deploy_broadcast_wrap, |prj: TestProject, cmd: TestCommand|
         .await;
 });
 
-forgetest_async!(panic_no_deployer_set, |prj: TestProject, cmd: TestCommand| async move {
+forgetest_async!(panic_no_deployer_set, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -588,7 +571,7 @@ forgetest_async!(panic_no_deployer_set, |prj: TestProject, cmd: TestCommand| asy
         .broadcast(ScriptOutcome::MissingSender);
 });
 
-forgetest_async!(can_deploy_no_arg_broadcast, |prj: TestProject, cmd: TestCommand| async move {
+forgetest_async!(can_deploy_no_arg_broadcast, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -603,7 +586,7 @@ forgetest_async!(can_deploy_no_arg_broadcast, |prj: TestProject, cmd: TestComman
         .await;
 });
 
-forgetest_async!(can_deploy_with_create2, |prj: TestProject, cmd: TestCommand| async move {
+forgetest_async!(can_deploy_with_create2, |prj, cmd| {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -633,7 +616,7 @@ forgetest_async!(can_deploy_with_create2, |prj: TestProject, cmd: TestCommand| a
 forgetest_async!(
     #[serial_test::serial]
     can_deploy_and_simulate_25_txes_concurrently,
-    |prj: TestProject, cmd: TestCommand| async move {
+    |prj, cmd| {
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -651,7 +634,7 @@ forgetest_async!(
 forgetest_async!(
     #[serial_test::serial]
     can_deploy_and_simulate_mixed_broadcast_modes,
-    |prj: TestProject, cmd: TestCommand| async move {
+    |prj, cmd| {
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -666,7 +649,7 @@ forgetest_async!(
     }
 );
 
-forgetest_async!(deploy_with_setup, |prj: TestProject, cmd: TestCommand| async move {
+forgetest_async!(deploy_with_setup, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -680,7 +663,7 @@ forgetest_async!(deploy_with_setup, |prj: TestProject, cmd: TestCommand| async m
         .await;
 });
 
-forgetest_async!(fail_broadcast_staticcall, |prj: TestProject, cmd: TestCommand| async move {
+forgetest_async!(fail_broadcast_staticcall, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -694,7 +677,7 @@ forgetest_async!(fail_broadcast_staticcall, |prj: TestProject, cmd: TestCommand|
 forgetest_async!(
     #[serial_test::serial]
     check_broadcast_log,
-    |prj: TestProject, cmd: TestCommand| async move {
+    |prj, cmd| {
         let (api, handle) = spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -767,7 +750,7 @@ forgetest_async!(
     }
 );
 
-forgetest_async!(test_default_sender_balance, |prj: TestProject, cmd: TestCommand| async move {
+forgetest_async!(test_default_sender_balance, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -777,7 +760,7 @@ forgetest_async!(test_default_sender_balance, |prj: TestProject, cmd: TestComman
         .simulate(ScriptOutcome::OkSimulation);
 });
 
-forgetest_async!(test_custom_sender_balance, |prj: TestProject, cmd: TestCommand| async move {
+forgetest_async!(test_custom_sender_balance, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -799,15 +782,13 @@ struct Transaction {
 }
 
 // test we output arguments <https://github.com/foundry-rs/foundry/issues/3053>
-forgetest_async!(
-    can_execute_script_with_arguments,
-    |prj: TestProject, mut cmd: TestCommand| async move {
-        cmd.args(["init", "--force"]).arg(prj.root());
-        cmd.assert_non_empty_stdout();
-        cmd.forge_fuse();
+forgetest_async!(can_execute_script_with_arguments, |prj, cmd| {
+    cmd.args(["init", "--force"]).arg(prj.root());
+    cmd.assert_non_empty_stdout();
+    cmd.forge_fuse();
 
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let script = prj
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let script = prj
             .inner()
             .add_script(
                 "Counter.s.sol",
@@ -848,57 +829,54 @@ contract Script0 is Script {
             )
             .unwrap();
 
-        cmd.arg("script").arg(script).args([
-            "--tc",
-            "Script0",
-            "--sender",
-            "0x00a329c0648769A73afAc7F9381E08FB43dBEA72",
-            "--rpc-url",
-            handle.http_endpoint().as_str(),
-        ]);
+    cmd.arg("script").arg(script).args([
+        "--tc",
+        "Script0",
+        "--sender",
+        "0x00a329c0648769A73afAc7F9381E08FB43dBEA72",
+        "--rpc-url",
+        handle.http_endpoint().as_str(),
+    ]);
 
-        assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE"));
+    assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE"));
 
-        let run_latest = foundry_common::fs::json_files(prj.root().join("broadcast"))
-            .into_iter()
-            .find(|file| file.ends_with("run-latest.json"))
-            .expect("No broadcast artifacts");
+    let run_latest = foundry_common::fs::json_files(prj.root().join("broadcast"))
+        .into_iter()
+        .find(|file| file.ends_with("run-latest.json"))
+        .expect("No broadcast artifacts");
 
-        let content = foundry_common::fs::read_to_string(run_latest).unwrap();
+    let content = foundry_common::fs::read_to_string(run_latest).unwrap();
 
-        let transactions: Transactions = serde_json::from_str(&content).unwrap();
-        let transactions = transactions.transactions;
-        assert_eq!(transactions.len(), 1);
-        assert_eq!(
-            transactions[0].arguments,
-            vec![
-                "0x00a329c0648769A73afAc7F9381E08FB43dBEA72".to_string(),
-                "4294967296".to_string(),
-                "-4294967296".to_string(),
-                "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6".to_string(),
-                "true".to_string(),
-                "0x616263646566".to_string(),
-                "(10, 99)".to_string(),
-                "hello".to_string(),
-            ]
-        );
-    }
-);
+    let transactions: Transactions = serde_json::from_str(&content).unwrap();
+    let transactions = transactions.transactions;
+    assert_eq!(transactions.len(), 1);
+    assert_eq!(
+        transactions[0].arguments,
+        vec![
+            "0x00a329c0648769A73afAc7F9381E08FB43dBEA72".to_string(),
+            "4294967296".to_string(),
+            "-4294967296".to_string(),
+            "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6".to_string(),
+            "true".to_string(),
+            "0x616263646566".to_string(),
+            "(10, 99)".to_string(),
+            "hello".to_string(),
+        ]
+    );
+});
 
 // test we output arguments <https://github.com/foundry-rs/foundry/issues/3053>
-forgetest_async!(
-    can_execute_script_with_arguments_nested_deploy,
-    |prj: TestProject, mut cmd: TestCommand| async move {
-        cmd.args(["init", "--force"]).arg(prj.root());
-        cmd.assert_non_empty_stdout();
-        cmd.forge_fuse();
+forgetest_async!(can_execute_script_with_arguments_nested_deploy, |prj, cmd| {
+    cmd.args(["init", "--force"]).arg(prj.root());
+    cmd.assert_non_empty_stdout();
+    cmd.forge_fuse();
 
-        let (_api, handle) = spawn(NodeConfig::test()).await;
-        let script = prj
-            .inner()
-            .add_script(
-                "Counter.s.sol",
-                r#"
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let script = prj
+        .inner()
+        .add_script(
+            "Counter.s.sol",
+            r#"
 pragma solidity ^0.8.13;
 
 import "forge-std/Script.sol";
@@ -936,47 +914,46 @@ contract Script0 is Script {
   }
 }
    "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
-        cmd.arg("script").arg(script).args([
-            "--tc",
-            "Script0",
-            "--sender",
-            "0x00a329c0648769A73afAc7F9381E08FB43dBEA72",
-            "--rpc-url",
-            handle.http_endpoint().as_str(),
-        ]);
+    cmd.arg("script").arg(script).args([
+        "--tc",
+        "Script0",
+        "--sender",
+        "0x00a329c0648769A73afAc7F9381E08FB43dBEA72",
+        "--rpc-url",
+        handle.http_endpoint().as_str(),
+    ]);
 
-        assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE"));
+    assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE"));
 
-        let run_latest = foundry_common::fs::json_files(prj.root().join("broadcast"))
-            .into_iter()
-            .find(|file| file.ends_with("run-latest.json"))
-            .expect("No broadcast artifacts");
+    let run_latest = foundry_common::fs::json_files(prj.root().join("broadcast"))
+        .into_iter()
+        .find(|file| file.ends_with("run-latest.json"))
+        .expect("No broadcast artifacts");
 
-        let content = foundry_common::fs::read_to_string(run_latest).unwrap();
+    let content = foundry_common::fs::read_to_string(run_latest).unwrap();
 
-        let transactions: Transactions = serde_json::from_str(&content).unwrap();
-        let transactions = transactions.transactions;
-        assert_eq!(transactions.len(), 1);
-        assert_eq!(
-            transactions[0].arguments,
-            vec![
-                "0x00a329c0648769A73afAc7F9381E08FB43dBEA72".to_string(),
-                "4294967296".to_string(),
-                "-4294967296".to_string(),
-                "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6".to_string(),
-                "true".to_string(),
-                "0x616263646566".to_string(),
-                "hello".to_string(),
-            ]
-        );
-    }
-);
+    let transactions: Transactions = serde_json::from_str(&content).unwrap();
+    let transactions = transactions.transactions;
+    assert_eq!(transactions.len(), 1);
+    assert_eq!(
+        transactions[0].arguments,
+        vec![
+            "0x00a329c0648769A73afAc7F9381E08FB43dBEA72".to_string(),
+            "4294967296".to_string(),
+            "-4294967296".to_string(),
+            "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6".to_string(),
+            "true".to_string(),
+            "0x616263646566".to_string(),
+            "hello".to_string(),
+        ]
+    );
+});
 
 // checks that skipping build
-forgetest_init!(can_execute_script_and_skip_contracts, |prj: TestProject, mut cmd: TestCommand| {
+forgetest_init!(can_execute_script_and_skip_contracts, |prj, cmd| {
     // explicitly set to run with 0.8.17 for consistent output
     let config = Config { solc: Some("0.8.17".into()), ..Default::default() };
     prj.write_config(config);
@@ -1005,33 +982,28 @@ contract Demo {
     );
 });
 
-forgetest_async!(
-    can_run_script_with_empty_setup,
-    |prj: TestProject, cmd: TestCommand| async move {
-        let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+forgetest_async!(can_run_script_with_empty_setup, |prj, cmd| {
+    let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
 
-        tester.add_sig("BroadcastEmptySetUp", "run()").simulate(ScriptOutcome::OkNoEndpoint);
-    }
-);
+    tester.add_sig("BroadcastEmptySetUp", "run()").simulate(ScriptOutcome::OkNoEndpoint);
+});
 
-forgetest_async!(does_script_override_correctly, |prj: TestProject, cmd: TestCommand| async move {
+forgetest_async!(does_script_override_correctly, |prj, cmd| {
     let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
 
     tester.add_sig("CheckOverrides", "run()").simulate(ScriptOutcome::OkNoEndpoint);
 });
 
-forgetest_async!(
-    assert_tx_origin_is_not_overritten,
-    |prj: TestProject, mut cmd: TestCommand| async move {
-        cmd.args(["init", "--force"]).arg(prj.root());
-        cmd.assert_non_empty_stdout();
-        cmd.forge_fuse();
+forgetest_async!(assert_tx_origin_is_not_overritten, |prj, cmd| {
+    cmd.args(["init", "--force"]).arg(prj.root());
+    cmd.assert_non_empty_stdout();
+    cmd.forge_fuse();
 
-        let script = prj
-            .inner()
-            .add_script(
-                "ScriptTxOrigin.s.sol",
-                r#"
+    let script = prj
+        .inner()
+        .add_script(
+            "ScriptTxOrigin.s.sol",
+            r#"
 pragma solidity ^0.8.13;
 
 import { Script } from "forge-std/Script.sol";
@@ -1081,26 +1053,23 @@ contract ContractC {
     }
 }
    "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
-        cmd.arg("script").arg(script).args(["--tc", "ScriptTxOrigin"]);
-        assert!(cmd.stdout_lossy().contains("Script ran successfully."));
-    }
-);
+    cmd.arg("script").arg(script).args(["--tc", "ScriptTxOrigin"]);
+    assert!(cmd.stdout_lossy().contains("Script ran successfully."));
+});
 
-forgetest_async!(
-    assert_can_create_multiple_contracts_with_correct_nonce,
-    |prj: TestProject, mut cmd: TestCommand| async move {
-        cmd.args(["init", "--force"]).arg(prj.root());
-        cmd.assert_non_empty_stdout();
-        cmd.forge_fuse();
+forgetest_async!(assert_can_create_multiple_contracts_with_correct_nonce, |prj, cmd| {
+    cmd.args(["init", "--force"]).arg(prj.root());
+    cmd.assert_non_empty_stdout();
+    cmd.forge_fuse();
 
-        let script = prj
-            .inner()
-            .add_script(
-                "ScriptTxOrigin.s.sol",
-                r#"
+    let script = prj
+        .inner()
+        .add_script(
+            "ScriptTxOrigin.s.sol",
+            r#"
 pragma solidity ^0.8.17;
 
 import {Script, console} from "forge-std/Script.sol";
@@ -1133,10 +1102,9 @@ contract NestedCreateFail is Script {
   }
 }
    "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
-        cmd.arg("script").arg(script).args(["--tc", "NestedCreateFail"]);
-        assert!(cmd.stdout_lossy().contains("Script ran successfully."));
-    }
-);
+    cmd.arg("script").arg(script).args(["--tc", "NestedCreateFail"]);
+    assert!(cmd.stdout_lossy().contains("Script ran successfully."));
+});

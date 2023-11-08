@@ -1,6 +1,5 @@
 //! svm sanity checks
 
-use foundry_test_utils::{forgetest_init, TestCommand, TestProject};
 use semver::Version;
 use svm::Platform;
 
@@ -42,7 +41,7 @@ ensure_svm_releases!(
 );
 
 // Ensures we can always test with the latest solc build
-forgetest_init!(can_test_with_latest_solc, |prj: TestProject, mut cmd: TestCommand| {
+forgetest_init!(can_test_with_latest_solc, |prj, cmd| {
     let src = format!(
         r#"
 // SPDX-License-Identifier: UNLICENSED
@@ -58,5 +57,5 @@ contract CounterTest is Test {{
     "#
     );
     prj.inner().add_test("Counter", src).unwrap();
-    cmd.arg("test").stdout_lossy().contains("[PASS]")
+    cmd.arg("test").stdout_lossy().contains("[PASS]");
 });

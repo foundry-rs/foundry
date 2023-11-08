@@ -1,12 +1,11 @@
-use foundry_test_utils::{forgetest, TestCommand, TestProject};
 use regex::Regex;
 
-forgetest!(basic_coverage, |_prj: TestProject, mut cmd: TestCommand| {
+forgetest!(basic_coverage, |_prj, cmd| {
     cmd.args(["coverage"]);
     cmd.assert_success();
 });
 
-forgetest!(report_file_coverage, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(report_file_coverage, |prj, cmd| {
     cmd.arg("coverage").args([
         "--report".to_string(),
         "lcov".to_string(),
@@ -16,7 +15,7 @@ forgetest!(report_file_coverage, |prj: TestProject, mut cmd: TestCommand| {
     cmd.assert_success();
 });
 
-forgetest!(test_setup_coverage, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(test_setup_coverage, |prj, cmd| {
     prj.insert_ds_test();
     prj.inner()
         .add_source(

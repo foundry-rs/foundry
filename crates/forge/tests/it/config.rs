@@ -1,8 +1,6 @@
 //! Test setup
 
-use crate::test_helpers::{
-    filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
-};
+use crate::test_helpers::{COMPILED, EVM_OPTS, PROJECT};
 use forge::{
     result::{SuiteResult, TestStatus},
     MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
@@ -14,6 +12,7 @@ use foundry_config::{
 use foundry_evm::{
     decode::decode_console_logs, inspectors::CheatsConfig, revm::primitives::SpecId,
 };
+use foundry_test_utils::Filter;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -201,7 +200,7 @@ pub async fn forked_runner(rpc: &str) -> MultiContractRunner {
 
     base_runner()
         .with_fork(fork)
-        .build(&LIBS_PROJECT.paths.root, (*COMPILED_WITH_LIBS).clone(), env, opts)
+        .build(&PROJECT.paths.root, (*COMPILED).clone(), env, opts)
         .unwrap()
 }
 

@@ -455,7 +455,7 @@ mod tests {
     use clap::Parser;
     use foundry_cli::utils::LoadConfig;
     use foundry_common::fs;
-    use foundry_test_utils::tempfile::tempdir;
+    use tempfile::tempdir;
 
     #[test]
     fn can_extract_etherscan_verify_config() {
