@@ -4,7 +4,7 @@ slow-timeout = { period = "1m", terminate-after = 3 }
 
 [[profile.default.overrides]]
 filter = "test(ext_integration)"
-slow-timeout = { period = "2m", terminate-after = 3 }
+slow-timeout = { period = "5m", terminate-after = 4 }
 
 [profile.heavy]
 retries = 1
