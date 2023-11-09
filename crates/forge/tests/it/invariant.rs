@@ -214,8 +214,7 @@ async fn test_invariant_storage() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-// for some reason there's different rng
-#[cfg(not(windows))]
+#[cfg_attr(windows, ignore = "for some reason there's different rng")]
 async fn test_invariant_shrink() {
     let mut runner = runner().await;
 
