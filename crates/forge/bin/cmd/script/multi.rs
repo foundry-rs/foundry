@@ -167,8 +167,7 @@ impl ScriptArgs {
             results.push(result);
         }
 
-        let errors =
-            results.into_iter().filter(|res| res.is_err()).collect::<Vec<_>>();
+        let errors = results.into_iter().filter(|res| res.is_err()).collect::<Vec<_>>();
 
         if !errors.is_empty() {
             return Err(eyre::eyre!("{errors:?}"))
