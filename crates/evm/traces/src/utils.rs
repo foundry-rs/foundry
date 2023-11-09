@@ -13,7 +13,7 @@ pub fn label(token: &DynSolValue, labels: &HashMap<Address, String>) -> String {
     match token {
         DynSolValue::Address(addr) => {
             if let Some(label) = labels.get(addr) {
-                format!("{label}: [{}]", addr.to_checksum(None))
+                format!("{label}: [{addr}]")
             } else {
                 format_token(token)
             }

@@ -15,8 +15,9 @@ use foundry_evm_core::{
     decode,
 };
 use foundry_utils::types::ToAlloy;
+use itertools::Itertools;
 use once_cell::sync::OnceCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 
 mod precompiles;
 
@@ -88,15 +89,15 @@ pub struct CallTraceDecoder {
     ///
     /// The values are in the form `"<artifact>:<contract>"`.
     pub contracts: HashMap<Address, String>,
-    /// Address labels
+    /// Address labels.
     pub labels: HashMap<Address, String>,
-    /// Information whether the contract address has a receive function
-    pub receive_contracts: HashMap<Address, bool>,
-    /// A mapping of signatures to their known functions
-    pub functions: BTreeMap<Selector, Vec<Function>>,
-    /// All known events
+    /// Contract addresses that have a receive function.
+    pub receive_contracts: Vec<Address>,
+    /// All known functions.
+    pub functions: HashMap<Selector, Vec<Function>>,
+    /// All known events.
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
-    /// All known errors
+    /// All known errors.
     pub errors: Abi,
     /// A signature identifier for events and functions.
     pub signature_identifier: Option<SingleSignaturesIdentifier>,
@@ -186,7 +187,16 @@ impl CallTraceDecoder {
             if let Some(abi) = &identity.abi {
                 // Store known functions for the address
                 for function in abi.functions() {
-                    self.functions.entry(function.selector()).or_default().push(function.clone())
+                    match self.functions.entry(function.selector()) {
+                        Entry::Occupied(entry) => {
+                            // This shouldn't happen that often
+                            debug!(target: "evm::traces", selector=%entry.key(), old=?entry.get(), new=?function, "Duplicate function");
+                            entry.into_mut().push(function.clone());
+                        }
+                        Entry::Vacant(entry) => {
+                            entry.insert(vec![function.clone()]);
+                        }
+                    }
                 }
 
                 // Flatten events from all ABIs
@@ -200,7 +210,9 @@ impl CallTraceDecoder {
                     self.errors.errors.entry(error.name.clone()).or_default().push(error.clone());
                 }
 
-                self.receive_contracts.entry(address).or_insert(abi.receive.is_some());
+                if abi.receive.is_some() {
+                    self.receive_contracts.push(address);
+                }
             }
         }
     }
@@ -262,7 +274,7 @@ impl CallTraceDecoder {
             self.decode_function_input(trace, func);
             self.decode_function_output(trace, functions);
         } else {
-            let has_receive = self.receive_contracts.get(&trace.address).copied().unwrap_or(false);
+            let has_receive = self.receive_contracts.contains(&trace.address);
             let signature =
                 if cdata.is_empty() && has_receive { "receive()" } else { "fallback()" }.into();
             let args = if cdata.is_empty() { Vec::new() } else { vec![cdata.to_string()] };
@@ -280,13 +292,14 @@ impl CallTraceDecoder {
         }
     }
 
+    /// Decodes a function's input into the given trace.
     fn decode_function_input(&self, trace: &mut CallTrace, func: &Function) {
         let TraceCallData::Raw(data) = &trace.data else { return };
         let mut args = None;
         if data.len() >= SELECTOR_LEN {
             if trace.address == CHEATCODE_ADDRESS {
                 // Try to decode cheatcode inputs in a more custom way
-                if let Some(v) = decode_cheatcode_inputs(func, data, &self.errors, self.verbosity) {
+                if let Some(v) = self.decode_cheatcode_inputs(func, data) {
                     args = Some(v);
                 }
             }
@@ -301,13 +314,78 @@ impl CallTraceDecoder {
             TraceCallData::Decoded { signature: func.signature(), args: args.unwrap_or_default() };
     }
 
+    /// Custom decoding for cheatcode inputs.
+    fn decode_cheatcode_inputs(&self, func: &Function, data: &[u8]) -> Option<Vec<String>> {
+        match func.name.as_str() {
+            "expectRevert" => Some(vec![decode::decode_revert(data, Some(&self.errors), None)]),
+            "rememberKey" | "addr" | "startBroadcast" | "broadcast" => {
+                // these functions accept a private key as uint256, which should not be
+                // converted to plain text
+                if !func.inputs.is_empty() && func.inputs[0].ty != "uint256" {
+                    // redact private key input
+                    Some(vec!["<pk>".to_string()])
+                } else {
+                    None
+                }
+            }
+            "sign" => {
+                // sign(uint256,bytes32)
+                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
+                if !decoded.is_empty() && func.inputs[0].ty != "uint256" {
+                    decoded[0] = DynSolValue::String("<pk>".to_string());
+                }
+                Some(decoded.iter().map(format_token).collect())
+            }
+            "deriveKey" => Some(vec!["<pk>".to_string()]),
+            "parseJson" |
+            "parseJsonUint" |
+            "parseJsonUintArray" |
+            "parseJsonInt" |
+            "parseJsonIntArray" |
+            "parseJsonString" |
+            "parseJsonStringArray" |
+            "parseJsonAddress" |
+            "parseJsonAddressArray" |
+            "parseJsonBool" |
+            "parseJsonBoolArray" |
+            "parseJsonBytes" |
+            "parseJsonBytesArray" |
+            "parseJsonBytes32" |
+            "parseJsonBytes32Array" |
+            "writeJson" |
+            "keyExists" |
+            "serializeBool" |
+            "serializeUint" |
+            "serializeInt" |
+            "serializeAddress" |
+            "serializeBytes32" |
+            "serializeString" |
+            "serializeBytes" => {
+                if self.verbosity >= 5 {
+                    None
+                } else {
+                    let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
+                    let token =
+                        if func.name.as_str() == "parseJson" || func.name.as_str() == "keyExists" {
+                            "<JSON file>"
+                        } else {
+                            "<stringified JSON>"
+                        };
+                    decoded[0] = DynSolValue::String(token.to_string());
+                    Some(decoded.iter().map(format_token).collect())
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Decodes a function's output into the given trace.
     fn decode_function_output(&self, trace: &mut CallTrace, funcs: &[Function]) {
         let TraceRetData::Raw(data) = &trace.output else { return };
         if trace.success {
             if trace.address == CHEATCODE_ADDRESS {
-                if let Some(decoded) = funcs
-                    .iter()
-                    .find_map(|func| decode_cheatcode_outputs(func, data, self.verbosity))
+                if let Some(decoded) =
+                    funcs.iter().find_map(|func| self.decode_cheatcode_outputs(func))
                 {
                     trace.output = TraceRetData::Decoded(decoded);
                     return
@@ -320,11 +398,7 @@ impl CallTraceDecoder {
                 .find_map(|func| func.abi_decode_output(data, false).ok())
             {
                 trace.output = TraceRetData::Decoded(
-                    tokens
-                        .iter()
-                        .map(|value| self.apply_label(value))
-                        .collect::<Vec<_>>()
-                        .join(", "),
+                    tokens.iter().map(|value| self.apply_label(value)).format(", ").to_string(),
                 );
             }
         } else {
@@ -336,6 +410,19 @@ impl CallTraceDecoder {
         }
     }
 
+    /// Custom decoding for cheatcode outputs.
+    fn decode_cheatcode_outputs(&self, func: &Function) -> Option<String> {
+        match func.name.as_str() {
+            s if s.starts_with("env") => Some("<env var value>"),
+            "deriveKey" => Some("<pk>"),
+            "parseJson" if self.verbosity < 5 => Some("<encoded JSON value>"),
+            "readFile" if self.verbosity < 5 => Some("<file>"),
+            _ => None,
+        }
+        .map(Into::into)
+    }
+
+    /// Decodes an event.
     async fn decode_event(&self, log: &mut TraceLog) {
         let TraceLog::Raw(raw_log) = log else { return };
         let &[t0, ..] = raw_log.topics() else { return };
@@ -398,86 +485,4 @@ fn reconstruct_params(event: &Event, decoded: &DecodedEvent) -> Vec<DynSolValue>
 
 fn indexed_inputs(event: &Event) -> usize {
     event.inputs.iter().filter(|param| param.indexed).count()
-}
-
-/// Custom decoding of cheatcode calls
-fn decode_cheatcode_inputs(
-    func: &Function,
-    data: &[u8],
-    errors: &Abi,
-    verbosity: u8,
-) -> Option<Vec<String>> {
-    match func.name.as_str() {
-        "expectRevert" => Some(vec![decode::decode_revert(data, Some(errors), None)]),
-        "rememberKey" | "addr" | "startBroadcast" | "broadcast" => {
-            // these functions accept a private key as uint256, which should not be
-            // converted to plain text
-            if !func.inputs.is_empty() && func.inputs[0].ty != "uint256" {
-                // redact private key input
-                Some(vec!["<pk>".to_string()])
-            } else {
-                None
-            }
-        }
-        "sign" => {
-            // sign(uint256,bytes32)
-            let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
-            if !decoded.is_empty() && func.inputs[0].ty != "uint256" {
-                decoded[0] = DynSolValue::String("<pk>".to_string());
-            }
-            Some(decoded.iter().map(format_token).collect())
-        }
-        "deriveKey" => Some(vec!["<pk>".to_string()]),
-        "parseJson" |
-        "parseJsonUint" |
-        "parseJsonUintArray" |
-        "parseJsonInt" |
-        "parseJsonIntArray" |
-        "parseJsonString" |
-        "parseJsonStringArray" |
-        "parseJsonAddress" |
-        "parseJsonAddressArray" |
-        "parseJsonBool" |
-        "parseJsonBoolArray" |
-        "parseJsonBytes" |
-        "parseJsonBytesArray" |
-        "parseJsonBytes32" |
-        "parseJsonBytes32Array" |
-        "writeJson" |
-        "keyExists" |
-        "serializeBool" |
-        "serializeUint" |
-        "serializeInt" |
-        "serializeAddress" |
-        "serializeBytes32" |
-        "serializeString" |
-        "serializeBytes" => {
-            if verbosity >= 5 {
-                None
-            } else {
-                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
-                let token =
-                    if func.name.as_str() == "parseJson" || func.name.as_str() == "keyExists" {
-                        "<JSON file>"
-                    } else {
-                        "<stringified JSON>"
-                    };
-                decoded[0] = DynSolValue::String(token.to_string());
-                Some(decoded.iter().map(format_token).collect())
-            }
-        }
-        _ => None,
-    }
-}
-
-/// Custom decoding of cheatcode return values
-fn decode_cheatcode_outputs(func: &Function, _data: &[u8], verbosity: u8) -> Option<String> {
-    match func.name.as_str() {
-        s if s.starts_with("env") => Some("<env var value>"),
-        "deriveKey" => Some("<pk>"),
-        "parseJson" if verbosity < 5 => Some("<encoded JSON value>"),
-        "readFile" if verbosity < 5 => Some("<file>"),
-        _ => None,
-    }
-    .map(Into::into)
 }
