@@ -9,10 +9,9 @@ contract Issue5808Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testReadInt() public {
-        // TODO: blocked on https://github.com/alloy-rs/core/issues/387
-        // string memory str1 = '["ffffffff","00000010"]';
-        // vm.expectRevert();
-        // int256[] memory ints1 = vm.parseJsonIntArray(str1, "");
+        string memory str1 = '["ffffffff","00000010"]';
+        vm.expectRevert();
+        int256[] memory ints1 = vm.parseJsonIntArray(str1, "");
 
         string memory str2 = '["0xffffffff","0x00000010"]';
         int256[] memory ints2 = vm.parseJsonIntArray(str2, "");

@@ -116,5 +116,39 @@ where
 }
 
 fn parse_value(s: &str, ty: &DynSolType) -> Result<DynSolValue> {
-    ty.coerce_str(s).map_err(|e| fmt_err!("failed parsing {s:?} as type `{ty}`: {e}"))
+    match ty.coerce_str(s) {
+        Ok(value) => Ok(value),
+        Err(e) => match parse_value_fallback(s, ty) {
+            Some(Ok(value)) => Ok(value),
+            Some(Err(e2)) => Err(fmt_err!("failed parsing {s:?} as type `{ty}`: {e2}")),
+            None => Err(fmt_err!("failed parsing {s:?} as type `{ty}`: {e}")),
+        },
+    }
+}
+
+// More lenient parsers than `coerce_str`.
+fn parse_value_fallback(s: &str, ty: &DynSolType) -> Option<Result<DynSolValue, &'static str>> {
+    match ty {
+        DynSolType::Bool => {
+            let b = match s {
+                "1" => true,
+                "0" => false,
+                s if s.eq_ignore_ascii_case("true") => true,
+                s if s.eq_ignore_ascii_case("false") => false,
+                _ => return None,
+            };
+            return Some(Ok(DynSolValue::Bool(b)));
+        }
+        DynSolType::Int(_) |
+        DynSolType::Uint(_) |
+        DynSolType::FixedBytes(_) |
+        DynSolType::Bytes => {
+            if !s.starts_with("0x") && s.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Some(Err("missing hex prefix (\"0x\") for hex string"))
+            }
+        }
+        DynSolType::String => return Some(Ok(DynSolValue::String(s.to_owned()))),
+        _ => {}
+    }
+    None
 }
