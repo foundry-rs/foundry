@@ -178,9 +178,11 @@ tracing = "0.1"
 
 #[patch."https://github.com/gakonst/ethers-rs"]
 #ethers = { path = "../ethers-rs/ethers" }
+#ethers-addressbook = { path = "../ethers-rs/ethers-addressbook" }
 #ethers-contract = { path = "../ethers-rs/ethers-contract" }
 #ethers-contract-abigen = { path = "../ethers-rs/ethers-contract/ethers-contract-abigen" }
 #ethers-core = { path = "../ethers-rs/ethers-core" }
+#ethers-etherscan = { path = "../ethers-rs/ethers-etherscan" }
 #ethers-middleware = { path = "../ethers-rs/ethers-middleware" }
 #ethers-providers = { path = "../ethers-rs/ethers-providers" }
 #ethers-signers = { path = "../ethers-rs/ethers-signers" }
@@ -188,12 +190,14 @@ tracing = "0.1"
 
 [patch.crates-io]
 ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
+ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
 ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
 ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
 ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
 ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
 ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
+ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
 
 foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers" }
