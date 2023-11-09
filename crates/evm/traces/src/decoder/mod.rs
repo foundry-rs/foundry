@@ -357,7 +357,7 @@ impl CallTraceDecoder {
         };
         for event in events {
             if let Ok(decoded) = event.decode_log(raw_log, false) {
-                let params = reconstruct_params(&event, &decoded);
+                let params = reconstruct_params(event, &decoded);
                 *log = TraceLog::Decoded(
                     event.name.clone(),
                     params
