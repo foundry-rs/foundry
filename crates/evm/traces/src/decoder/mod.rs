@@ -392,13 +392,16 @@ impl CallTraceDecoder {
                 }
             }
 
-            if let Some(tokens) = funcs
-                .iter()
-                .filter(|f| !f.inputs.is_empty())
-                .find_map(|func| func.abi_decode_output(data, false).ok())
+            if let Some(values) =
+                funcs.iter().find_map(|func| func.abi_decode_output(data, false).ok())
             {
+                // Functions coming from an external database do not have any outputs specified,
+                // and will lead to returning an empty list of values.
+                if values.is_empty() {
+                    return
+                }
                 trace.output = TraceRetData::Decoded(
-                    tokens.iter().map(|value| self.apply_label(value)).format(", ").to_string(),
+                    values.iter().map(|value| self.apply_label(value)).format(", ").to_string(),
                 );
             }
         } else {
