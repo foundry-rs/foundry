@@ -4,6 +4,7 @@ use eyre::{Context, Result};
 use foundry_cli::opts::EtherscanOpts;
 use foundry_common::fs;
 use foundry_config::Config;
+use itertools::Itertools;
 use std::path::{Path, PathBuf};
 
 /// CLI arguments for `cast interface`.
@@ -19,7 +20,7 @@ pub struct InterfaceArgs {
     name: Option<String>,
 
     /// Solidity pragma version.
-    #[clap(long, short, default_value = "^0.8.10", value_name = "VERSION")]
+    #[clap(long, short, default_value = "^0.8.4", value_name = "VERSION")]
     pragma: String,
 
     /// The path to the output file.
@@ -64,28 +65,30 @@ impl InterfaceArgs {
                 address: path_or_address.parse().wrap_err("invalid path or address")?,
             }
         };
+
         let interfaces = SimpleCast::generate_interface(source).await?;
 
         // put it all together
         let res = if json {
-            interfaces.into_iter().map(|iface| iface.json_abi).collect::<Vec<_>>().join("\n")
+            interfaces.iter().map(|iface| &iface.json_abi).format("\n").to_string()
         } else {
-            let pragma = format!("pragma solidity {pragma};");
-            let interfaces = interfaces
-                .iter()
-                .map(|iface| iface.source.to_string())
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!("{pragma}\n\n{interfaces}")
+            format!(
+                "// SPDX-License-Identifier: UNLICENSED\n\
+                 pragma solidity {pragma};\n\n\
+                 {}",
+                interfaces.iter().map(|iface| &iface.source).format("\n")
+            )
         };
 
         // print or write to file
         if let Some(loc) = output_location {
-            fs::create_dir_all(loc.parent().unwrap())?;
+            if let Some(parent) = loc.parent() {
+                fs::create_dir_all(parent)?;
+            }
             fs::write(&loc, res)?;
             println!("Saved interface at {}", loc.display());
         } else {
-            println!("{res}");
+            print!("{res}");
         }
         Ok(())
     }
