@@ -2599,7 +2599,7 @@ where
 
 /// Determines the minimum gas needed for a transaction depending on the transaction kind.
 #[inline]
-fn determine_base_gas_by_kind(request: CallRequest) -> U256 {
+fn determine_base_gas_by_kind(request: TransactionRequest) -> U256 {
     match request.into_typed_request() {
         Some(request) => match request {
             TypedTransactionRequest::Legacy(req) => match req.kind {
