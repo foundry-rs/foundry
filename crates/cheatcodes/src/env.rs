@@ -1,7 +1,8 @@
 //! Implementations of [`Environment`](crate::Group::Environment) cheatcodes.
 
 use crate::{string, Cheatcode, Cheatcodes, Result, Vm::*};
-use alloy_primitives::{Address, Bytes, B256, I256, U256};
+use alloy_dyn_abi::DynSolType;
+use alloy_primitives::Bytes;
 use alloy_sol_types::SolValue;
 use std::env;
 
@@ -26,98 +27,98 @@ impl Cheatcode for setEnvCall {
 impl Cheatcode for envBool_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
-        env::<bool>(name, None)
+        env(name, &DynSolType::Bool)
     }
 }
 
 impl Cheatcode for envUint_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
-        env::<U256>(name, None)
+        env(name, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for envInt_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
-        env::<I256>(name, None)
+        env(name, &DynSolType::Int(256))
     }
 }
 
 impl Cheatcode for envAddress_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
-        env::<Address>(name, None)
+        env(name, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for envBytes32_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
-        env::<B256>(name, None)
+        env(name, &DynSolType::FixedBytes(32))
     }
 }
 
 impl Cheatcode for envString_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
-        env::<String>(name, None)
+        env(name, &DynSolType::String)
     }
 }
 
 impl Cheatcode for envBytes_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
-        env::<Bytes>(name, None)
+        env(name, &DynSolType::Bytes)
     }
 }
 
 impl Cheatcode for envBool_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim } = self;
-        env_array::<bool>(name, delim, None)
+        env_array(name, delim, &DynSolType::Bool)
     }
 }
 
 impl Cheatcode for envUint_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim } = self;
-        env_array::<U256>(name, delim, None)
+        env_array(name, delim, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for envInt_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim } = self;
-        env_array::<I256>(name, delim, None)
+        env_array(name, delim, &DynSolType::Int(256))
     }
 }
 
 impl Cheatcode for envAddress_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim } = self;
-        env_array::<Address>(name, delim, None)
+        env_array(name, delim, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for envBytes32_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim } = self;
-        env_array::<B256>(name, delim, None)
+        env_array(name, delim, &DynSolType::FixedBytes(32))
     }
 }
 
 impl Cheatcode for envString_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim } = self;
-        env_array::<String>(name, delim, None)
+        env_array(name, delim, &DynSolType::String)
     }
 }
 
 impl Cheatcode for envBytes_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim } = self;
-        env_array::<Bytes>(name, delim, None)
+        env_array(name, delim, &DynSolType::Bytes)
     }
 }
 
@@ -125,7 +126,7 @@ impl Cheatcode for envBytes_1Call {
 impl Cheatcode for envOr_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, defaultValue } = self;
-        env::<bool>(name, Some(defaultValue))
+        env_default(name, defaultValue, &DynSolType::Bool)
     }
 }
 
@@ -133,7 +134,7 @@ impl Cheatcode for envOr_0Call {
 impl Cheatcode for envOr_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, defaultValue } = self;
-        env::<U256>(name, Some(defaultValue))
+        env_default(name, defaultValue, &DynSolType::Uint(256))
     }
 }
 
@@ -141,7 +142,7 @@ impl Cheatcode for envOr_1Call {
 impl Cheatcode for envOr_2Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, defaultValue } = self;
-        env::<I256>(name, Some(defaultValue))
+        env_default(name, defaultValue, &DynSolType::Int(256))
     }
 }
 
@@ -149,7 +150,7 @@ impl Cheatcode for envOr_2Call {
 impl Cheatcode for envOr_3Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, defaultValue } = self;
-        env::<Address>(name, Some(defaultValue))
+        env_default(name, defaultValue, &DynSolType::Address)
     }
 }
 
@@ -157,7 +158,7 @@ impl Cheatcode for envOr_3Call {
 impl Cheatcode for envOr_4Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, defaultValue } = self;
-        env::<B256>(name, Some(defaultValue))
+        env_default(name, defaultValue, &DynSolType::FixedBytes(32))
     }
 }
 
@@ -165,7 +166,7 @@ impl Cheatcode for envOr_4Call {
 impl Cheatcode for envOr_5Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, defaultValue } = self;
-        env::<String>(name, Some(defaultValue))
+        env_default(name, defaultValue, &DynSolType::String)
     }
 }
 
@@ -173,7 +174,7 @@ impl Cheatcode for envOr_5Call {
 impl Cheatcode for envOr_6Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, defaultValue } = self;
-        env::<Bytes>(name, Some(&defaultValue.clone().into()))
+        env_default(name, defaultValue, &DynSolType::Bytes)
     }
 }
 
@@ -181,7 +182,7 @@ impl Cheatcode for envOr_6Call {
 impl Cheatcode for envOr_7Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim, defaultValue } = self;
-        env_array::<bool>(name, delim, Some(defaultValue))
+        env_array_default(name, delim, defaultValue, &DynSolType::Bool)
     }
 }
 
@@ -189,7 +190,7 @@ impl Cheatcode for envOr_7Call {
 impl Cheatcode for envOr_8Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim, defaultValue } = self;
-        env_array::<U256>(name, delim, Some(defaultValue))
+        env_array_default(name, delim, defaultValue, &DynSolType::Uint(256))
     }
 }
 
@@ -197,7 +198,7 @@ impl Cheatcode for envOr_8Call {
 impl Cheatcode for envOr_9Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim, defaultValue } = self;
-        env_array::<I256>(name, delim, Some(defaultValue))
+        env_array_default(name, delim, defaultValue, &DynSolType::Int(256))
     }
 }
 
@@ -205,7 +206,7 @@ impl Cheatcode for envOr_9Call {
 impl Cheatcode for envOr_10Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim, defaultValue } = self;
-        env_array::<Address>(name, delim, Some(defaultValue))
+        env_array_default(name, delim, defaultValue, &DynSolType::Address)
     }
 }
 
@@ -213,7 +214,7 @@ impl Cheatcode for envOr_10Call {
 impl Cheatcode for envOr_11Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim, defaultValue } = self;
-        env_array::<B256>(name, delim, Some(defaultValue))
+        env_array_default(name, delim, defaultValue, &DynSolType::FixedBytes(32))
     }
 }
 
@@ -221,7 +222,7 @@ impl Cheatcode for envOr_11Call {
 impl Cheatcode for envOr_12Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim, defaultValue } = self;
-        env_array::<String>(name, delim, Some(defaultValue))
+        env_array_default(name, delim, defaultValue, &DynSolType::String)
     }
 }
 
@@ -230,32 +231,24 @@ impl Cheatcode for envOr_13Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim, defaultValue } = self;
         let default = defaultValue.iter().map(|vec| vec.clone().into()).collect::<Vec<Bytes>>();
-        env_array::<Bytes>(name, delim, Some(&default))
+        env_array_default(name, delim, &default, &DynSolType::Bytes)
     }
 }
 
-fn env<T>(key: &str, default: Option<&T>) -> Result
-where
-    T: SolValue + std::str::FromStr,
-    T::Err: std::fmt::Display,
-{
-    match (get_env(key), default) {
-        (Ok(val), _) => string::parse::<T>(&val),
-        (Err(_), Some(default)) => Ok(default.abi_encode()),
-        (Err(e), None) => Err(e),
-    }
+fn env(key: &str, ty: &DynSolType) -> Result {
+    get_env(key).and_then(|val| string::parse(&val, ty))
 }
 
-fn env_array<T>(key: &str, delim: &str, default: Option<&[T]>) -> Result
-where
-    T: SolValue + std::str::FromStr,
-    T::Err: std::fmt::Display,
-{
-    match (get_env(key), default) {
-        (Ok(val), _) => string::parse_array::<_, _, T>(val.split(delim).map(str::trim)),
-        (Err(_), Some(default)) => Ok(default.abi_encode()),
-        (Err(e), None) => Err(e),
-    }
+fn env_default<T: SolValue>(key: &str, default: &T, ty: &DynSolType) -> Result {
+    Ok(env(key, ty).unwrap_or_else(|_| default.abi_encode()))
+}
+
+fn env_array(key: &str, delim: &str, ty: &DynSolType) -> Result {
+    get_env(key).and_then(|val| string::parse_array(val.split(delim).map(str::trim), ty))
+}
+
+fn env_array_default<T: SolValue>(key: &str, delim: &str, default: &T, ty: &DynSolType) -> Result {
+    Ok(env_array(key, delim, ty).unwrap_or_else(|_| default.abi_encode()))
 }
 
 fn get_env(key: &str) -> Result<String> {
