@@ -605,7 +605,7 @@ impl Config {
     /// let project = config.project();
     /// ```
     pub fn project(&self) -> Result<Project, SolcError> {
-        self.create_project(true, false)
+        self.create_project(self.cache, false)
     }
 
     /// Same as [`Self::project()`] but sets configures the project to not emit artifacts and ignore
