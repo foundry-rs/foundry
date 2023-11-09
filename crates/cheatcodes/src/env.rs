@@ -33,7 +33,7 @@ impl Cheatcode for envBool_0Call {
 impl Cheatcode for envUint_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name } = self;
-        env::<U256>(name, None)
+        env_uint(name, None).map_err(|e| fmt_err!("Could not parse U256 environment variable {name}. Make sure it's a valid uint, and ideally 0x-prefixed if its using hex: {e}"))
     }
 }
 
@@ -241,6 +241,19 @@ where
 {
     match (get_env(key), default) {
         (Ok(val), _) => string::parse::<T>(&val),
+        (Err(_), Some(default)) => Ok(default.abi_encode()),
+        (Err(e), None) => Err(e),
+    }
+}
+
+/// Utility function to add special parsing for non-0x prefixed hex strings as uints.
+fn env_uint(key: &str, default: Option<U256>) -> Result {
+    match (get_env(key), default) {
+        (Ok(val), _) => Ok(string::parse::<U256>(&val).unwrap_or(
+            U256::from_str_radix(&val, 16)
+                .map_err(|e| fmt_err!("Could not parse Uint: {e}"))?
+                .abi_encode(),
+        )),
         (Err(_), Some(default)) => Ok(default.abi_encode()),
         (Err(e), None) => Err(e),
     }
