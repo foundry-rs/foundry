@@ -79,7 +79,7 @@ checksum = "0942ffc6dcaadf03badf6e6a2d0228460359d5e34b57ccdc720b7382dfbd5ec5"
 [[package]]
 name = "alloy-dyn-abi"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#818071e6f20cec5c0b7fb465fda5e0553b2e0ed4"
+source = "git+https://github.com/alloy-rs/core/#89f07abf7837f63d22e30d2076e860dac6acef57"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -99,7 +99,7 @@ dependencies = [
 [[package]]
 name = "alloy-json-abi"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#818071e6f20cec5c0b7fb465fda5e0553b2e0ed4"
+source = "git+https://github.com/alloy-rs/core/#89f07abf7837f63d22e30d2076e860dac6acef57"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-type-parser",
@@ -110,7 +110,7 @@ dependencies = [
 [[package]]
 name = "alloy-primitives"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#818071e6f20cec5c0b7fb465fda5e0553b2e0ed4"
+source = "git+https://github.com/alloy-rs/core/#89f07abf7837f63d22e30d2076e860dac6acef57"
 dependencies = [
  "alloy-rlp",
  "arbitrary",
@@ -119,6 +119,7 @@ dependencies = [
  "const-hex",
  "derive_arbitrary",
  "derive_more",
+ "ethereum_ssz",
  "getrandom 0.2.10",
  "hex-literal",
  "itoa",
@@ -156,7 +157,7 @@ dependencies = [
 [[package]]
 name = "alloy-sol-macro"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#818071e6f20cec5c0b7fb465fda5e0553b2e0ed4"
+source = "git+https://github.com/alloy-rs/core/#89f07abf7837f63d22e30d2076e860dac6acef57"
 dependencies = [
  "const-hex",
  "dunce",
@@ -173,7 +174,7 @@ dependencies = [
 [[package]]
 name = "alloy-sol-type-parser"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#818071e6f20cec5c0b7fb465fda5e0553b2e0ed4"
+source = "git+https://github.com/alloy-rs/core/#89f07abf7837f63d22e30d2076e860dac6acef57"
 dependencies = [
  "winnow",
 ]
@@ -181,7 +182,7 @@ dependencies = [
 [[package]]
 name = "alloy-sol-types"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#818071e6f20cec5c0b7fb465fda5e0553b2e0ed4"
+source = "git+https://github.com/alloy-rs/core/#89f07abf7837f63d22e30d2076e860dac6acef57"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-macro",
@@ -2031,6 +2032,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethereum_ssz"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e61ffea29f26e8249d35128a82ec8d3bd4fbc80179ea5f5e5e3daafef6a80fcb"
+dependencies = [
+ "ethereum-types",
+ "itertools 0.10.5",
+ "smallvec",
+]
+
+[[package]]
 name = "ethers"
 version = "2.0.10"
 source = "git+https://github.com/gakonst/ethers-rs?rev=4f7b354ecec0aea38ed165560ae4f3224d644c9e#4f7b354ecec0aea38ed165560ae4f3224d644c9e"
@@ -2417,6 +2429,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "835c052cb0c08c1acf6ffd71c022172e18723949c8282f2b9f27efbc51e64534"
 dependencies = [
+ "arbitrary",
  "byteorder",
  "rand 0.8.5",
  "rustc-hex",
@@ -6818,7 +6831,7 @@ dependencies = [
 [[package]]
 name = "syn-solidity"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#818071e6f20cec5c0b7fb465fda5e0553b2e0ed4"
+source = "git+https://github.com/alloy-rs/core/#89f07abf7837f63d22e30d2076e860dac6acef57"
 dependencies = [
  "paste",
  "proc-macro2",
@@ -7488,6 +7501,7 @@ version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76f64bba2c53b04fcab63c01a7d7427eadc821e3bc48c34dc9ba29c501164b52"
 dependencies = [
+ "arbitrary",
  "byteorder",
  "crunchy",
  "hex",
