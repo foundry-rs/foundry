@@ -834,7 +834,7 @@ impl Backend {
             let number = block
                 .header
                 .number
-                .ok_or_else(|| DatabaseError::BlockNotFound(BlockNumber::Latest.into()))?;
+                .ok_or_else(|| DatabaseError::BlockNotFound(BlockNumberOrTag::Latest.into()))?;
 
             Ok((number.to::<U64>(), block))
         }

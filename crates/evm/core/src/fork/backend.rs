@@ -6,8 +6,6 @@ use crate::{
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{Block, BlockId, BlockNumberOrTag, Transaction};
-use alloy_transports::TransportError;
-use ethers::types::NameOrAddress;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
 use foundry_utils::types::ToEthers;
 use futures::{
@@ -37,9 +35,8 @@ type StorageFuture<Err> = Pin<Box<dyn Future<Output = (Result<U256, Err>, Addres
 type BlockHashFuture<Err> = Pin<Box<dyn Future<Output = (Result<B256, Err>, u64)> + Send>>;
 type FullBlockFuture<Err> =
     Pin<Box<dyn Future<Output = (FullBlockSender, Result<Option<Block>, Err>, BlockId)> + Send>>;
-type TransactionFuture<Err> = Pin<
-    Box<dyn Future<Output = (TransactionSender, Result<Option<Transaction>, Err>, B256)> + Send>,
->;
+type TransactionFuture<Err> =
+    Pin<Box<dyn Future<Output = (TransactionSender, Result<Transaction, Err>, B256)> + Send>>;
 
 type AccountInfoSender = OneshotSender<DatabaseResult<AccountInfo>>;
 type StorageSender = OneshotSender<DatabaseResult<U256>>;
@@ -83,7 +80,7 @@ pub struct BackendHandler<P> {
     /// Stores all the data.
     db: BlockchainDb,
     /// Requests currently in progress
-    pending_requests: Vec<ProviderRequest<TransportError>>,
+    pending_requests: Vec<ProviderRequest<eyre::Report>>,
     /// Listeners that wait for a `get_account` related response
     account_requests: HashMap<Address, Vec<AccountInfoSender>>,
     /// Listeners that wait for a `get_storage_at` response
@@ -185,13 +182,13 @@ where
                     // serialize & deserialize back to U256
                     let idx_req = B256::from(idx);
                     let storage = provider.get_storage_at(address, idx_req, block_id).await;
-                    Ok((
+                    (
                         storage.success().ok_or_else(|| {
                             eyre::eyre!("could not fetch slot {idx} from {address}")
-                        })?,
+                        }),
                         address,
                         idx,
-                    ))
+                    )
                 });
                 self.pending_requests.push(ProviderRequest::Storage(fut));
             }
@@ -199,7 +196,7 @@ where
     }
 
     /// returns the future that fetches the account data
-    fn get_account_req(&self, address: Address) -> ProviderRequest<TransportError> {
+    fn get_account_req(&self, address: Address) -> ProviderRequest<eyre::Report> {
         trace!(target: "backendhandler", "preparing account request, address={:?}", address);
         let provider = self.provider.clone();
         let block_id = self.block_id;
@@ -209,19 +206,27 @@ where
             let code =
                 provider.get_code_at(address, block_id.unwrap_or(BlockNumberOrTag::Latest.into()));
             let (balance, nonce, code) = tokio::join!(balance, nonce, code);
-            Ok((
-                (
-                    balance
-                        .success()
-                        .ok_or_else(|| eyre::eyre!("could not fetch balance for {address}"))?,
-                    nonce
-                        .success()
-                        .ok_or_else(|| eyre::eyre!("could not fetch nonce for {address}"))?,
-                    code.success()
-                        .ok_or_else(|| eyre::eyre!("could not fetch code for {address}"))?,
-                ),
+            // todo(onbjerg): there has to be a better way to transform (Res<..>, Res<..>, Res<..>) into Res<(.., .., ..)>
+            (
+                balance
+                    .success()
+                    .ok_or_else(|| eyre::eyre!("could not fetch balance for {address}"))
+                    .and_then(|balance| {
+                        Ok(nonce
+                            .success()
+                            .ok_or_else(|| eyre::eyre!("could not fetch nonce for {address}"))
+                            .and_then(|nonce| {
+                                Ok((
+                                    balance,
+                                    nonce,
+                                    code.success().ok_or_else(|| {
+                                        eyre::eyre!("could not fetch code for {address}")
+                                    })?,
+                                ))
+                            })?)
+                    }),
                 address,
-            ))
+            )
         });
         ProviderRequest::Account(fut)
     }
@@ -254,7 +259,11 @@ where
     fn request_transaction(&mut self, tx: B256, sender: TransactionSender) {
         let provider = self.provider.clone();
         let fut = Box::pin(async move {
-            let block = provider.get_transaction_by_hash(tx).await;
+            let block = provider
+                .get_transaction_by_hash(tx)
+                .await
+                .success()
+                .ok_or_else(|| eyre::eyre!("could not get transaction {tx}"));
             (sender, block, tx)
         });
 
@@ -335,7 +344,7 @@ where
                             let (balance, nonce, code) = match resp {
                                 Ok(res) => res,
                                 Err(err) => {
-                                    let err = Arc::new(eyre::Error::new(err));
+                                    let err = Arc::new(err);
                                     if let Some(listeners) = pin.account_requests.remove(&addr) {
                                         listeners.into_iter().for_each(|l| {
                                             let _ = l.send(Err(DatabaseError::GetAccount(
@@ -379,7 +388,7 @@ where
                                 Ok(value) => value,
                                 Err(err) => {
                                     // notify all listeners
-                                    let err = Arc::new(eyre::Error::new(err));
+                                    let err = Arc::new(err);
                                     if let Some(listeners) =
                                         pin.storage_requests.remove(&(addr, idx))
                                     {
@@ -412,7 +421,7 @@ where
                             let value = match block_hash {
                                 Ok(value) => value,
                                 Err(err) => {
-                                    let err = Arc::new(eyre::Error::new(err));
+                                    let err = Arc::new(err);
                                     // notify all listeners
                                     if let Some(listeners) = pin.block_requests.remove(&number) {
                                         listeners.into_iter().for_each(|l| {
@@ -444,7 +453,7 @@ where
                                 Ok(Some(block)) => Ok(block),
                                 Ok(None) => Err(DatabaseError::BlockNotFound(number)),
                                 Err(err) => {
-                                    let err = Arc::new(eyre::Error::new(err));
+                                    let err = Arc::new(err);
                                     Err(DatabaseError::GetFullBlock(number, err))
                                 }
                             };
@@ -455,10 +464,9 @@ where
                     ProviderRequest::Transaction(fut) => {
                         if let Poll::Ready((sender, tx, tx_hash)) = fut.poll_unpin(cx) {
                             let msg = match tx {
-                                Ok(Some(tx)) => Ok(tx),
-                                Ok(None) => Err(DatabaseError::TransactionNotFound(tx_hash)),
+                                Ok(tx) => Ok(tx),
                                 Err(err) => {
-                                    let err = Arc::new(eyre::Error::new(err));
+                                    let err = Arc::new(err);
                                     Err(DatabaseError::GetTransaction(tx_hash, err))
                                 }
                             };
