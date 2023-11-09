@@ -290,12 +290,12 @@ impl CallTraceDecoder {
                         func.abi_decode_input(&data[SELECTOR_LEN..], false)
                             .expect("bad function input decode")
                             .iter()
-                            .map(|token| utils::label(token, &self.labels))
+                            .map(|value| self.apply_label(value))
                             .collect()
                     })
             } else {
                 match func.abi_decode_input(&data[SELECTOR_LEN..], false) {
-                    Ok(v) => v.iter().map(|token| utils::label(token, &self.labels)).collect(),
+                    Ok(v) => v.iter().map(|value| self.apply_label(value)).collect(),
                     Err(_) => Vec::new(),
                 }
             }
@@ -326,7 +326,7 @@ impl CallTraceDecoder {
                 trace.output = TraceRetData::Decoded(
                     tokens
                         .iter()
-                        .map(|token| utils::label(token, &self.labels))
+                        .map(|value| self.apply_label(value))
                         .collect::<Vec<_>>()
                         .join(", "),
                 );
@@ -376,8 +376,8 @@ impl CallTraceDecoder {
         }
     }
 
-    fn apply_label(&self, token: &DynSolValue) -> String {
-        utils::label(token, &self.labels)
+    fn apply_label(&self, value: &DynSolValue) -> String {
+        utils::label(value, &self.labels)
     }
 }
 
