@@ -1,17 +1,9 @@
-use crate::{
-    utils, utils::decode_cheatcode_outputs, CallTrace, LogCallOrder, RawOrDecodedLog,
-    TraceCallData, TraceRetData,
-};
-use alloy_dyn_abi::{FunctionExt, JsonAbiExt};
-use alloy_json_abi::{Function, JsonAbi as Abi};
-use alloy_primitives::Address;
+use crate::{CallTrace, LogCallOrder, TraceLog};
 use ethers::types::{Action, Call, CallResult, Create, CreateResult, Res, Suicide};
-use foundry_common::SELECTOR_LEN;
-use foundry_evm_core::{constants::CHEATCODE_ADDRESS, decode, utils::CallKind};
+use foundry_evm_core::utils::CallKind;
 use foundry_utils::types::ToEthers;
 use revm::interpreter::InstructionResult;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// A node in the arena
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,7 +18,7 @@ pub struct CallTraceNode {
     pub trace: CallTrace,
     /// Logs
     #[serde(skip)]
-    pub logs: Vec<RawOrDecodedLog>,
+    pub logs: Vec<TraceLog>,
     /// Ordering of child calls and logs
     pub ordering: Vec<LogCallOrder>,
 }
@@ -86,85 +78,6 @@ impl CallTraceNode {
                 gas: self.trace.gas_cost.into(),
                 init: self.trace.data.as_bytes().to_vec().into(),
             }),
-        }
-    }
-
-    /// Decode a regular function
-    pub fn decode_function(
-        &mut self,
-        funcs: &[Function],
-        labels: &HashMap<Address, String>,
-        errors: &Abi,
-        verbosity: u8,
-    ) {
-        debug_assert!(!funcs.is_empty(), "requires at least 1 func");
-        // This is safe because (1) we would not have an entry for the given
-        // selector if no functions with that selector were added and (2) the
-        // same selector implies the function has
-        // the same name and inputs.
-        let func = &funcs[0];
-
-        if let TraceCallData::Raw(ref bytes) = self.trace.data {
-            let args = if bytes.len() >= SELECTOR_LEN {
-                if self.trace.address == CHEATCODE_ADDRESS {
-                    // Try to decode cheatcode inputs in a more custom way
-                    utils::decode_cheatcode_inputs(func, bytes, errors, verbosity).unwrap_or_else(
-                        || {
-                            func.abi_decode_input(&bytes[SELECTOR_LEN..], false)
-                                .expect("bad function input decode")
-                                .iter()
-                                .map(|token| utils::label(token, labels))
-                                .collect()
-                        },
-                    )
-                } else {
-                    match func.abi_decode_input(&bytes[SELECTOR_LEN..], false) {
-                        Ok(v) => v.iter().map(|token| utils::label(token, labels)).collect(),
-                        Err(_) => Vec::new(),
-                    }
-                }
-            } else {
-                Vec::new()
-            };
-
-            // add signature to decoded calls for better calls filtering
-            self.trace.data = TraceCallData::Decoded { signature: func.signature(), args };
-
-            if let TraceRetData::Raw(bytes) = &self.trace.output {
-                if self.trace.success {
-                    if self.trace.address == CHEATCODE_ADDRESS {
-                        if let Some(decoded) = funcs
-                            .iter()
-                            .find_map(|func| decode_cheatcode_outputs(func, bytes, verbosity))
-                        {
-                            self.trace.output = TraceRetData::Decoded(decoded);
-                            return
-                        }
-                    }
-
-                    if let Some(tokens) =
-                        funcs.iter().find_map(|func| func.abi_decode_output(bytes, false).ok())
-                    {
-                        // Functions coming from an external database do not have any outputs
-                        // specified, and will lead to returning an empty list of tokens.
-                        if !tokens.is_empty() {
-                            self.trace.output = TraceRetData::Decoded(
-                                tokens
-                                    .iter()
-                                    .map(|token| utils::label(token, labels))
-                                    .collect::<Vec<_>>()
-                                    .join(", "),
-                            );
-                        }
-                    }
-                } else {
-                    self.trace.output = TraceRetData::Decoded(decode::decode_revert(
-                        bytes,
-                        Some(errors),
-                        Some(self.trace.status),
-                    ));
-                }
-            }
         }
     }
 }

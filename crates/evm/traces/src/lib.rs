@@ -270,7 +270,7 @@ impl fmt::Display for CallTraceArena {
 
 /// A raw or decoded log.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RawOrDecodedLog {
+pub enum TraceLog {
     /// A raw log
     Raw(RawLog),
     /// A decoded log.
@@ -280,10 +280,10 @@ pub enum RawOrDecodedLog {
     Decoded(String, Vec<(String, String)>),
 }
 
-impl fmt::Display for RawOrDecodedLog {
+impl fmt::Display for TraceLog {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RawOrDecodedLog::Raw(log) => {
+            TraceLog::Raw(log) => {
                 for (i, topic) in log.topics().iter().enumerate() {
                     writeln!(
                         f,
@@ -295,7 +295,7 @@ impl fmt::Display for RawOrDecodedLog {
 
                 write!(f, "          data: {}", Paint::cyan(hex::encode_prefixed(&log.data)))
             }
-            RawOrDecodedLog::Decoded(name, params) => {
+            TraceLog::Decoded(name, params) => {
                 let params = params
                     .iter()
                     .map(|(name, value)| format!("{name}: {value}"))
