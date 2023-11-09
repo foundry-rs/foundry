@@ -14,12 +14,11 @@ use foundry_evm_core::{constants::CHEATCODE_ADDRESS, debug::Instruction, utils::
 use foundry_utils::types::ToEthers;
 use hashbrown::HashMap;
 use itertools::Itertools;
-use node::CallTraceNode;
 use revm::interpreter::{opcode, CallContext, InstructionResult, Memory, Stack};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
-    fmt::{self, Write},
+    fmt,
 };
 use yansi::{Color, Paint};
 
@@ -35,7 +34,9 @@ pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 mod inspector;
 pub use inspector::Tracer;
 
-pub mod node;
+mod node;
+pub use node::CallTraceNode;
+
 pub mod utils;
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
@@ -198,20 +199,16 @@ impl fmt::Display for CallTraceArena {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fn inner(
             arena: &CallTraceArena,
-            writer: &mut (impl Write + ?Sized),
+            f: &mut fmt::Formatter<'_>,
             idx: usize,
             left: &str,
             child: &str,
-            verbose: bool,
         ) -> fmt::Result {
             let node = &arena.arena[idx];
 
             // Display trace header
-            if !verbose {
-                writeln!(writer, "{left}{}", node.trace)?;
-            } else {
-                writeln!(writer, "{left}{:#}", node.trace)?;
-            }
+            f.write_str(left)?;
+            node.trace.fmt(f)?;
 
             // Display logs and subcalls
             let left_prefix = format!("{child}{BRANCH}");
@@ -219,13 +216,11 @@ impl fmt::Display for CallTraceArena {
             for child in &node.ordering {
                 match child {
                     LogCallOrder::Log(index) => {
-                        let mut log = String::new();
-                        write!(log, "{}", node.logs[*index])?;
-
+                        let log = node.logs[*index].to_string();
                         // Prepend our tree structure symbols to each line of the displayed log
                         log.lines().enumerate().try_for_each(|(i, line)| {
                             writeln!(
-                                writer,
+                                f,
                                 "{}{}",
                                 if i == 0 { &left_prefix } else { &right_prefix },
                                 line
@@ -233,44 +228,37 @@ impl fmt::Display for CallTraceArena {
                         })?;
                     }
                     LogCallOrder::Call(index) => {
-                        inner(
-                            arena,
-                            writer,
-                            node.children[*index],
-                            &left_prefix,
-                            &right_prefix,
-                            verbose,
-                        )?;
+                        inner(arena, f, node.children[*index], &left_prefix, &right_prefix)?;
                     }
                 }
             }
 
             // Display trace return data
             let color = trace_color(&node.trace);
-            write!(writer, "{child}{EDGE}{}", color.paint(RETURN))?;
+            write!(f, "{child}{EDGE}{}", color.paint(RETURN))?;
             if node.trace.created() {
                 match &node.trace.output {
                     TraceRetData::Raw(bytes) => {
-                        writeln!(writer, "{} bytes of code", bytes.len())?;
+                        writeln!(f, "{} bytes of code", bytes.len())?;
                     }
                     TraceRetData::Decoded(val) => {
-                        writeln!(writer, "{val}")?;
+                        writeln!(f, "{val}")?;
                     }
                 }
             } else {
-                writeln!(writer, "{}", node.trace.output)?;
+                writeln!(f, "{}", node.trace.output)?;
             }
 
             Ok(())
         }
 
-        inner(self, f, 0, "  ", "  ", f.alternate())
+        inner(self, f, 0, "  ", "  ")
     }
 }
 
 /// A raw or decoded log.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RawOrDecodedLog {
+pub enum TraceLog {
     /// A raw log
     Raw(RawLog),
     /// A decoded log.
@@ -280,10 +268,10 @@ pub enum RawOrDecodedLog {
     Decoded(String, Vec<(String, String)>),
 }
 
-impl fmt::Display for RawOrDecodedLog {
+impl fmt::Display for TraceLog {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RawOrDecodedLog::Raw(log) => {
+            TraceLog::Raw(log) => {
                 for (i, topic) in log.topics().iter().enumerate() {
                     writeln!(
                         f,
@@ -295,7 +283,7 @@ impl fmt::Display for RawOrDecodedLog {
 
                 write!(f, "          data: {}", Paint::cyan(hex::encode_prefixed(&log.data)))
             }
-            RawOrDecodedLog::Decoded(name, params) => {
+            TraceLog::Decoded(name, params) => {
                 let params = params
                     .iter()
                     .map(|(name, value)| format!("{name}: {value}"))
@@ -484,8 +472,6 @@ pub struct CallTrace {
     pub steps: Vec<CallTraceStep>,
 }
 
-// === impl CallTrace ===
-
 impl CallTrace {
     /// Whether this is a contract creation or not
     pub fn created(&self) -> bool {
@@ -516,8 +502,8 @@ impl Default for CallTrace {
 
 impl fmt::Display for CallTrace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let address = self.address.to_checksum(None);
         write!(f, "[{}] ", self.gas_cost)?;
+        let address = self.address.to_checksum(None);
         if self.created() {
             write!(
                 f,
@@ -530,10 +516,13 @@ impl fmt::Display for CallTrace {
         } else {
             let (func_name, inputs) = match &self.data {
                 TraceCallData::Raw(bytes) => {
-                    // We assume that the fallback function (`data.len() < 4`) counts as decoded
-                    // calldata
-                    let (selector, data) = bytes.split_at(4);
-                    (hex::encode(selector), hex::encode(data))
+                    debug!(target: "evm::traces", trace=?self, "unhandled raw calldata");
+                    if bytes.len() < 4 {
+                        ("fallback".into(), hex::encode(bytes))
+                    } else {
+                        let (selector, data) = bytes.split_at(4);
+                        (hex::encode(selector), hex::encode(data))
+                    }
                 }
                 TraceCallData::Decoded { signature, args } => {
                     let name = signature.split('(').next().unwrap();

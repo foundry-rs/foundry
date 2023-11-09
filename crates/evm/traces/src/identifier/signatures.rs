@@ -96,7 +96,7 @@ impl SignaturesIdentifier {
         &mut self,
         selector_type: SelectorType,
         identifier: &[u8],
-        get_type: fn(&str) -> eyre::Result<T>,
+        get_type: impl Fn(&str) -> eyre::Result<T>,
     ) -> Option<T> {
         // Exit early if we have unsuccessfully queried it before.
         if self.unavailable.contains(identifier) {
