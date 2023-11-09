@@ -71,14 +71,13 @@ pub(super) fn decode(trace: &mut CallTrace, _chain_id: u64) -> bool {
         0x08 => (ecpairingCall::SIGNATURE, tri!(decode_ecpairing(data))),
         0x09 => (blake2fCall::SIGNATURE, tri!(decode_blake2f(data))),
         0x0a => (pointEvaluationCall::SIGNATURE, tri!(decode_kzg(data))),
-        _ => unreachable!(),
+        0x00 | 0x0b.. => unreachable!(),
     };
 
     // TODO: Other chain precompiles
 
     trace.data = TraceCallData::Decoded { signature: signature.to_string(), args };
-
-    trace.contract = Some("PRECOMPILES".into());
+    trace.label = Some("PRECOMPILES".into());
 
     true
 }

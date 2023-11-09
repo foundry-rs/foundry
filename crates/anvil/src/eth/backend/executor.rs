@@ -24,7 +24,7 @@ use foundry_evm::{
         interpreter::InstructionResult,
         primitives::{BlockEnv, CfgEnv, EVMError, Env, ExecutionResult, Output, SpecId},
     },
-    traces::{node::CallTraceNode, CallTraceArena},
+    traces::{CallTraceArena, CallTraceNode},
     utils::{eval_to_instruction_result, halt_to_instruction_result},
 };
 use foundry_utils::types::{ToAlloy, ToEthers};

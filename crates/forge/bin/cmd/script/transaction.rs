@@ -211,10 +211,8 @@ impl TransactionWithMetadata {
                     // This CALL is made to an external contract. We can only decode it, if it has
                     // been verified and identified by etherscan.
 
-                    if let Some(Some(function)) = decoder
-                        .functions
-                        .get(&data.0[..SELECTOR_LEN])
-                        .map(|functions| functions.first())
+                    if let Some(function) =
+                        decoder.functions.get(&data.0[..SELECTOR_LEN]).and_then(|v| v.first())
                     {
                         self.contract_name = decoder.contracts.get(&target).cloned();
 

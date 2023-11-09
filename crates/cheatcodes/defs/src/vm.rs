@@ -383,11 +383,11 @@ interface Vm {
     function transact(uint256 forkId, bytes32 txHash) external;
 
     /// Performs an Ethereum JSON-RPC request to the current fork URL.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Safe)]
     function rpc(string calldata method, string calldata params) external returns (bytes memory data);
 
     /// Gets all the logs according to specified filter.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Safe)]
     function eth_getLogs(uint256 fromBlock, uint256 toBlock, address addr, bytes32[] memory topics)
         external
         returns (EthGetLogs[] memory logs);

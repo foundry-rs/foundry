@@ -10,7 +10,7 @@ use svm::Platform;
 ///     2. svm updated with all build info
 ///     3. svm bumped in ethers-rs
 ///     4. ethers bumped in foundry + update the `LATEST_SOLC`
-const LATEST_SOLC: Version = Version::new(0, 8, 22);
+const LATEST_SOLC: Version = Version::new(0, 8, 23);
 
 macro_rules! ensure_svm_releases {
     ($($test:ident => $platform:ident),* $(,)?) => {$(

@@ -1483,7 +1483,7 @@
       },
       "group": "evm",
       "status": "stable",
-      "safety": "unsafe"
+      "safety": "safe"
     },
     {
       "func": {
@@ -3423,7 +3423,7 @@
       },
       "group": "evm",
       "status": "stable",
-      "safety": "unsafe"
+      "safety": "safe"
     },
     {
       "func": {
