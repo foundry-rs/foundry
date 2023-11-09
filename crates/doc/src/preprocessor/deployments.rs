@@ -61,11 +61,10 @@ impl Preprocessor for Deployments {
                 item_path_clone.set_extension("json");
 
                 // Determine the path of the deployment artifact relative to the root directory.
-                let deployment_path = deployments_dir.join(network).join(
-                    item_path_clone
-                        .file_name()
-                        .ok_or(eyre::eyre!("Failed to extract file name from item path"))?,
-                );
+                let deployment_path =
+                    deployments_dir.join(network).join(item_path_clone.file_name().ok_or_else(
+                        || eyre::eyre!("Failed to extract file name from item path"),
+                    )?);
 
                 // If the deployment file for the given contract is found, add the deployment
                 // address to the document context.

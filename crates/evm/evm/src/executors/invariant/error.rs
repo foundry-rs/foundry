@@ -1,7 +1,7 @@
 use super::{BasicTxDetails, InvariantContract};
 use crate::executors::{Executor, RawCallResult};
 use alloy_json_abi::Function;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes};
 use ethers_core::types::Log;
 use eyre::Result;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
@@ -63,7 +63,7 @@ pub struct InvariantFuzzError {
     /// Address of the invariant asserter.
     pub addr: Address,
     /// Function data for invariant check.
-    pub func: Option<ethers_core::types::Bytes>,
+    pub func: Option<Bytes>,
     /// Inner fuzzing Sequence coming from overriding calls.
     pub inner_sequence: Vec<Option<BasicTxDetails>>,
     /// Shrink the failed test case to the smallest sequence.
@@ -80,7 +80,7 @@ impl InvariantFuzzError {
         shrink: bool,
     ) -> Self {
         let (func, origin) = if let Some(f) = error_func {
-            (Some(f.selector().0.into()), f.name.as_str())
+            (Some(f.selector().to_vec().into()), f.name.as_str())
         } else {
             (None, "Revert")
         };
@@ -159,7 +159,7 @@ impl InvariantFuzzError {
             // Checks the invariant.
             if let Some(func) = &self.func {
                 let error_call_result = executor
-                    .call_raw(CALLER, self.addr, func.0.clone().into(), U256::ZERO)
+                    .call_raw(CALLER, self.addr, func.clone(), U256::ZERO)
                     .expect("bad call to evm");
 
                 traces.push((TraceKind::Execution, error_call_result.traces.clone().unwrap()));
@@ -194,13 +194,13 @@ impl InvariantFuzzError {
             let (sender, (addr, bytes)) = details;
 
             executor
-                .call_raw_committing(*sender, *addr, bytes.0.clone().into(), U256::ZERO)
+                .call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)
                 .expect("bad call to evm");
 
             // Checks the invariant. If we exit before the last call, all the better.
             if let Some(func) = &self.func {
                 let error_call_result = executor
-                    .call_raw(CALLER, self.addr, func.0.clone().into(), U256::ZERO)
+                    .call_raw(CALLER, self.addr, func.clone(), U256::ZERO)
                     .expect("bad call to evm");
 
                 if error_call_result.reverted {

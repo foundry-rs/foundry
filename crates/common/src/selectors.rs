@@ -188,7 +188,7 @@ impl SignEthClient {
 
         Ok(decoded
             .get(selector)
-            .ok_or(eyre::eyre!("No signature found"))?
+            .ok_or_else(|| eyre::eyre!("No signature found"))?
             .iter()
             .filter(|&d| !d.filtered)
             .map(|d| d.name.clone())
