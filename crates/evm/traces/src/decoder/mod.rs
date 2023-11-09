@@ -266,12 +266,13 @@ impl CallTraceDecoder {
             let has_receive = self.receive_contracts.get(&trace.address).copied().unwrap_or(false);
             let signature =
                 if cdata.is_empty() && has_receive { "receive()" } else { "fallback()" }.into();
-            trace.data = TraceCallData::Decoded { signature, args: vec![cdata.to_string()] };
+            let args = if cdata.is_empty() { Vec::new() } else { vec![cdata.to_string()] };
+            trace.data = TraceCallData::Decoded { signature, args };
 
-            if let TraceRetData::Raw(bytes) = &trace.output {
+            if let TraceRetData::Raw(rdata) = &trace.output {
                 if !trace.success {
                     trace.output = TraceRetData::Decoded(decode::decode_revert(
-                        bytes,
+                        rdata,
                         Some(&self.errors),
                         Some(trace.status),
                     ));
@@ -282,27 +283,25 @@ impl CallTraceDecoder {
 
     fn decode_function_input(&self, trace: &mut CallTrace, func: &Function) {
         let TraceCallData::Raw(data) = &trace.data else { return };
-        let args = if data.len() >= SELECTOR_LEN {
+        let mut args = None;
+        if data.len() >= SELECTOR_LEN {
             if trace.address == CHEATCODE_ADDRESS {
                 // Try to decode cheatcode inputs in a more custom way
-                utils::decode_cheatcode_inputs(func, data, &self.errors, self.verbosity)
-                    .unwrap_or_else(|| {
-                        func.abi_decode_input(&data[SELECTOR_LEN..], false)
-                            .expect("bad function input decode")
-                            .iter()
-                            .map(|value| self.apply_label(value))
-                            .collect()
-                    })
-            } else {
-                match func.abi_decode_input(&data[SELECTOR_LEN..], false) {
-                    Ok(v) => v.iter().map(|value| self.apply_label(value)).collect(),
-                    Err(_) => Vec::new(),
+                if let Some(v) =
+                    utils::decode_cheatcode_inputs(func, data, &self.errors, self.verbosity)
+                {
+                    args = Some(v);
                 }
             }
-        } else {
-            Vec::new()
-        };
-        trace.data = TraceCallData::Decoded { signature: func.signature(), args };
+
+            if args.is_none() {
+                if let Ok(v) = func.abi_decode_input(&data[SELECTOR_LEN..], false) {
+                    args = Some(v.iter().map(|value| self.apply_label(value)).collect());
+                }
+            }
+        }
+        trace.data =
+            TraceCallData::Decoded { signature: func.signature(), args: args.unwrap_or_default() };
     }
 
     fn decode_function_output(&self, trace: &mut CallTrace, funcs: &[Function]) {
