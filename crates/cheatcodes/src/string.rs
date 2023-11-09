@@ -109,7 +109,7 @@ where
             .chain(values)
             .map(|s| parse_value(s.as_ref(), ty))
             .collect::<Result<Vec<_>, _>>()
-            .map(|vec| DynSolValue::Tuple(vec).abi_encode()),
+            .map(|vec| DynSolValue::Array(vec).abi_encode()),
         // return the empty encoded Bytes when values is empty or the first element is empty
         _ => Ok("".abi_encode()),
     }
