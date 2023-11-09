@@ -11,27 +11,24 @@ repository.workspace = true
 
 [dependencies]
 # foundry internal
-foundry-config.workspace = true
 foundry-common.workspace = true
-foundry-evm.workspace = true
+foundry-config.workspace = true
 foundry-debugger.workspace = true
+foundry-evm.workspace = true
 foundry-utils.workspace = true
 
 foundry-compilers = { workspace = true, features = ["full"] }
 
-# aws
+alloy-dyn-abi.workspace = true
+alloy-json-abi.workspace = true
+alloy-primitives.workspace = true
+
+ethers-core.workspace = true
+ethers-providers.workspace = true
+ethers-signers = { workspace = true, features = ["aws", "ledger", "trezor"] }
+
 rusoto_core = { version = "0.48", default-features = false }
 rusoto_kms = { version = "0.48", default-features = false }
-
-# eth
-ethers-core.workspace = true
-ethers-signers = { workspace = true, features = ["aws", "ledger", "trezor"] }
-ethers-providers.workspace = true
-
-# alloy
-alloy-primitives.workspace = true
-alloy-json-abi.workspace = true
-alloy-dyn-abi.workspace = true
 
 async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
@@ -49,9 +46,9 @@ strsim = "0.10"
 strum = { version = "0.25", features = ["derive"] }
 thiserror = "1"
 tokio = { version = "1", features = ["macros"] }
-tracing.workspace = true
 tracing-error = "0.2"
 tracing-subscriber = { version = "0.3", features = ["registry", "env-filter", "fmt"] }
+tracing.workspace = true
 yansi = "0.5"
 
 [dev-dependencies]

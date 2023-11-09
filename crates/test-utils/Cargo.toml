@@ -12,15 +12,15 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-foundry-config.workspace = true
 foundry-common.workspace = true
+foundry-compilers = { workspace = true, features = ["project-util"] }
+foundry-config.workspace = true
 foundry-utils.workspace = true
+
+alloy-primitives.workspace = true
 
 ethers-core.workspace = true
 ethers-providers.workspace = true
-alloy-primitives.workspace = true
-
-foundry-compilers = { workspace = true, features = ["project-util"] }
 
 eyre.workspace = true
 fd-lock = "4.0.0"

@@ -11,7 +11,7 @@ use crossterm::{
 };
 use eyre::Result;
 use foundry_common::{compile::ContractSources, evm::Breakpoints};
-use foundry_evm::{
+use foundry_evm_core::{
     debug::{DebugStep, Instruction},
     utils::{build_pc_ic_map, CallKind, PCICMap},
 };

@@ -10,23 +10,18 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-# foundry dep
 foundry-config.workspace = true
 
-# alloy
 alloy-primitives.workspace = true
 
-# parser
-solang-parser.workspace = true
-
-# misc
-itertools.workspace = true
-thiserror = "1"
 ariadne = "0.3"
+itertools.workspace = true
+solang-parser.workspace = true
+thiserror = "1"
 tracing.workspace = true
 
 [dev-dependencies]
-pretty_assertions = "1"
 itertools.workspace = true
+pretty_assertions = "1"
 toml.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

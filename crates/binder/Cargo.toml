@@ -15,6 +15,6 @@ foundry-config.workspace = true
 ethers-contract = { workspace = true, features = ["abigen"] }
 eyre.workspace = true
 git2 = { version = "0.18", default-features = false }
-url = "2"
-tracing.workspace = true
 tempfile = "3"
+tracing.workspace = true
+url = "2"
