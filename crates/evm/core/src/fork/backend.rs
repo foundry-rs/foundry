@@ -206,24 +206,19 @@ where
             let code =
                 provider.get_code_at(address, block_id.unwrap_or(BlockNumberOrTag::Latest.into()));
             let (balance, nonce, code) = tokio::join!(balance, nonce, code);
-            // todo(onbjerg): there has to be a better way to transform (Res<..>, Res<..>, Res<..>) into Res<(.., .., ..)>
             (
                 balance
                     .success()
                     .ok_or_else(|| eyre::eyre!("could not fetch balance for {address}"))
                     .and_then(|balance| {
-                        Ok(nonce
-                            .success()
-                            .ok_or_else(|| eyre::eyre!("could not fetch nonce for {address}"))
-                            .and_then(|nonce| {
-                                Ok((
-                                    balance,
-                                    nonce,
-                                    code.success().ok_or_else(|| {
-                                        eyre::eyre!("could not fetch code for {address}")
-                                    })?,
-                                ))
-                            })?)
+                        Ok((
+                            balance,
+                            nonce.success().ok_or_else(|| {
+                                eyre::eyre!("could not fetch nonce for {address}")
+                            })?,
+                            code.success()
+                                .ok_or_else(|| eyre::eyre!("could not fetch code for {address}"))?,
+                        ))
                     }),
                 address,
             )
