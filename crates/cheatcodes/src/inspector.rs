@@ -202,11 +202,18 @@ pub struct Cheatcodes {
     pub breakpoints: Breakpoints,
 
     /// Track if cool cheatcode was called on each address
-    pub addresses: HashMap<Address, AddressState>,
-    /// Track if an addresses storage slot is cool or not
-    pub address_storage: HashMap<Address, HashMap<U256, StorageSlotState>>,
+    pub addresses: HashMap<Address, CoolState>,
     /// How much gas to charge in the next step (op code) based on cool cheatcode calculations
     pub additional_gas_next_op: u64,
+}
+
+/// Tracking if an address and it's slots are cool
+#[derive(Debug, Clone)]
+pub struct CoolState {
+    /// Track if address is cool
+    pub address: AddressState,
+    /// Track if each storage slot is cool or not
+    pub slots: HashMap<U256, StorageSlotState>,
 }
 
 /// Whether an Address is accessed or not
@@ -235,7 +242,7 @@ fn add_gas_from_cool_cheatcode<DB: DatabaseExt>(
     interpreter: &mut Interpreter,
     data: &mut EVMData<'_, DB>,
 ) -> InstructionResult {
-    if state.addresses.len() == 0 {
+    if state.addresses.is_empty() {
         return InstructionResult::Continue
     }
 
@@ -268,9 +275,11 @@ fn add_gas_from_cool_cheatcode<DB: DatabaseExt>(
                     // COLD_ACCOUNT_ACCESS_COST is 2600
                     // check this is done once per address, unless cheatcode is called again
                     // ignore if same as contract address
-                    if state.addresses.get(&addr) == Some(&AddressState::Cool) {
-                        state.additional_gas_next_op = 2500;
-                        state.addresses.insert(addr, AddressState::Warm);
+                    if let Some(cool_state) = state.addresses.get_mut(&addr) {
+                        if cool_state.address == AddressState::Cool {
+                            state.additional_gas_next_op = 2500;
+                            cool_state.address = AddressState::Warm;
+                        }
                     }
                 }
             }
@@ -283,32 +292,34 @@ fn add_gas_from_cool_cheatcode<DB: DatabaseExt>(
                     // COLD_ACCOUNT_ACCESS_COST is 2600
                     // check this is done once per address, unless cheatcode is called again
                     // ignore if same as contract address
-                    if state.addresses.get(&addr) == Some(&AddressState::Cool) {
-                        state.additional_gas_next_op = 2500;
-                        state.addresses.insert(addr, AddressState::Warm);
+                    if let Some(cool_state) = state.addresses.get_mut(&addr) {
+                        if cool_state.address == AddressState::Cool {
+                            state.additional_gas_next_op = 2500;
+                            cool_state.address = AddressState::Warm;
+                        }
                     }
                 }
             }
             _ => {}
         }
         // check target's slots
-        if let Some(contract_storage) = state.address_storage.get_mut(&contract_address) {
+        if let Some(cool_state) = state.addresses.get_mut(&contract_address) {
             match interpreter.current_opcode() {
                 opcode::SLOAD => {
                     let key = try_or_continue!(interpreter.stack().peek(0));
 
                     let account = data.journaled_state.state().get(&contract_address).unwrap();
                     if account.storage.get(&key).is_some() {
-                        match contract_storage.get(&key) {
+                        match cool_state.slots.get(&key) {
                             None | Some(StorageSlotState::Cool) => {
                                 // COLD_SLOAD_COST is 2100
                                 state.additional_gas_next_op = 2000;
-                                contract_storage.insert(key, StorageSlotState::WarmWithSLOAD);
+                                cool_state.slots.insert(key, StorageSlotState::WarmWithSLOAD);
                             }
                             Some(_) => {}
                         }
                     } else {
-                        contract_storage.insert(key, StorageSlotState::WarmWithSLOAD);
+                        cool_state.slots.insert(key, StorageSlotState::WarmWithSLOAD);
                     }
                 }
                 opcode::SSTORE => {
@@ -318,7 +329,7 @@ fn add_gas_from_cool_cheatcode<DB: DatabaseExt>(
                     let account = data.journaled_state.state().get(&contract_address).unwrap();
                     if account.storage.get(&key).is_some() {
                         // only add gas the first time the storage is touched again
-                        match contract_storage.get(&key) {
+                        match cool_state.slots.get(&key) {
                             Some(StorageSlotState::WarmWithSLOAD) => {
                                 // cool keeps the slot value changes
                                 // as if the previous_or_original_value = present_value`
@@ -337,7 +348,7 @@ fn add_gas_from_cool_cheatcode<DB: DatabaseExt>(
                                 }
 
                                 // set slot is_warm to true
-                                contract_storage.insert(key, StorageSlotState::WarmWithSSTORE);
+                                cool_state.slots.insert(key, StorageSlotState::WarmWithSSTORE);
                             }
                             None | Some(StorageSlotState::Cool) => {
                                 // Means SSTORE was called without SLOAD before
@@ -359,12 +370,12 @@ fn add_gas_from_cool_cheatcode<DB: DatabaseExt>(
                                         state.additional_gas_next_op += 2900 - 100
                                     }
                                 }
-                                contract_storage.insert(key, StorageSlotState::WarmWithSSTORE);
+                                cool_state.slots.insert(key, StorageSlotState::WarmWithSSTORE);
                             }
                             Some(StorageSlotState::WarmWithSSTORE) => {}
                         }
                     } else {
-                        contract_storage.insert(key, StorageSlotState::WarmWithSSTORE);
+                        cool_state.slots.insert(key, StorageSlotState::WarmWithSSTORE);
                     }
                 }
                 _ => {}

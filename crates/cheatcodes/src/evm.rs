@@ -1,6 +1,10 @@
 //! Implementations of [`Evm`](crate::Group::Evm) cheatcodes.
 
-use crate::{inspector::AddressState, Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
+use crate::{
+    inspector::{AddressState, CoolState},
+    Cheatcode, Cheatcodes, CheatsCtxt, Result,
+    Vm::*,
+};
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolValue;
@@ -306,8 +310,9 @@ impl Cheatcode for coolCall {
         let Self { target } = *self;
         ensure_not_precompile!(&target, ccx);
         // TODO: prevent or warn about cooling the to/from address in a tx
-        ccx.state.addresses.insert(target, AddressState::Cool);
-        ccx.state.address_storage.insert(target, HashMap::new());
+        ccx.state
+            .addresses
+            .insert(target, CoolState { address: AddressState::Cool, slots: HashMap::new() });
         Ok(Default::default())
     }
 }
