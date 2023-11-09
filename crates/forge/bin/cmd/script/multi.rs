@@ -148,8 +148,6 @@ impl ScriptArgs {
         let mut results: Vec<Result<(), Report>> = Vec::new(); // Declare a Vec of Result<(), Report>
 
         for sequence in deployments.deployments.iter_mut() {
-            let fork_url = &sequence.typed_transactions().first().unwrap().0.clone();
-            println!("fork url is {fork_url}");
             let result = match self
                 .send_transactions(
                     sequence,
