@@ -147,7 +147,7 @@ fn parse_value_fallback(s: &str, ty: &DynSolType) -> Option<Result<DynSolValue, 
                 return Some(Err("missing hex prefix (\"0x\") for hex string"))
             }
         }
-        DynSolType::String => return Some(Ok(DynSolValue::String(s.to_owned()))),
+        // DynSolType::String => return Some(Ok(DynSolValue::String(s.to_owned()))),
         _ => {}
     }
     None

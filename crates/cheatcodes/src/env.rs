@@ -1,6 +1,6 @@
 //! Implementations of [`Environment`](crate::Group::Environment) cheatcodes.
 
-use crate::{string, Cheatcode, Cheatcodes, Result, Vm::*};
+use crate::{string, Cheatcode, Cheatcodes, Error, Result, Vm::*};
 use alloy_dyn_abi::DynSolType;
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolValue;
@@ -236,7 +236,7 @@ impl Cheatcode for envOr_13Call {
 }
 
 fn env(key: &str, ty: &DynSolType) -> Result {
-    get_env(key).and_then(|val| string::parse(&val, ty))
+    get_env(key).and_then(|val| string::parse(&val, ty).map_err(map_env_err(key)))
 }
 
 fn env_default<T: SolValue>(key: &str, default: &T, ty: &DynSolType) -> Result {
@@ -244,7 +244,9 @@ fn env_default<T: SolValue>(key: &str, default: &T, ty: &DynSolType) -> Result {
 }
 
 fn env_array(key: &str, delim: &str, ty: &DynSolType) -> Result {
-    get_env(key).and_then(|val| string::parse_array(val.split(delim).map(str::trim), ty))
+    get_env(key).and_then(|val| {
+        string::parse_array(val.split(delim).map(str::trim), ty).map_err(map_env_err(key))
+    })
 }
 
 fn env_array_default<T: SolValue>(key: &str, delim: &str, default: &T, ty: &DynSolType) -> Result {
@@ -258,5 +260,20 @@ fn get_env(key: &str) -> Result<String> {
         Err(env::VarError::NotUnicode(s)) => {
             Err(fmt_err!("environment variable {key:?} was not valid unicode: {s:?}"))
         }
+    }
+}
+
+fn map_env_err(key: &str) -> impl FnOnce(Error) -> Error + '_ {
+    move |e| {
+        let e = e.to_string();
+        let mut e = e.as_str();
+        // cut off the message to not leak the value
+        let sep = if let Some(idx) = e.rfind(" as type `") {
+            e = &e[idx..];
+            ""
+        } else {
+            ": "
+        };
+        fmt_err!("failed parsing ${key}{sep}{e}")
     }
 }
