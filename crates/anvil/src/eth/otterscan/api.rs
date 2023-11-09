@@ -5,9 +5,11 @@ use crate::eth::{
 };
 
 use ethers::types::{
-    Action, Address, Block, BlockId, BlockNumber, Bytes, Call, Create, CreateResult, Res, Reward,
-    Transaction, TxHash, H256, U256, U64,
+    Action, Call, Create, CreateResult, Res, Reward,
+    Transaction,
 };
+use alloy_rpc_types::{BlockNumberOrTag, BlockId, Block};
+use alloy_primitives::{Address, Bytes, B256, U256, U64};
 use itertools::Itertools;
 
 use super::types::{
@@ -23,8 +25,8 @@ impl EthApi {
     /// information), which is not relevant in the context of an anvil node
     pub async fn erigon_get_header_by_number(
         &self,
-        number: BlockNumber,
-    ) -> Result<Option<Block<TxHash>>> {
+        number: BlockNumberOrTag,
+    ) -> Result<Option<Block>> {
         node_info!("ots_getApiLevel");
 
         self.backend.block_by_number(number).await
@@ -43,7 +45,7 @@ impl EthApi {
     /// certain transaction.
     pub async fn ots_get_internal_operations(
         &self,
-        hash: H256,
+        hash: B256,
     ) -> Result<Vec<OtsInternalOperation>> {
         node_info!("ots_getInternalOperations");
 
@@ -54,25 +56,25 @@ impl EthApi {
     }
 
     /// Check if an ETH address contains code at a certain block number.
-    pub async fn ots_has_code(&self, address: Address, block_number: BlockNumber) -> Result<bool> {
+    pub async fn ots_has_code(&self, address: Address, block_number: BlockNumberOrTag) -> Result<bool> {
         node_info!("ots_hasCode");
         let block_id = Some(BlockId::Number(block_number));
         Ok(self.get_code(address, block_id).await?.len() > 0)
     }
 
     /// Trace a transaction and generate a trace call tree.
-    pub async fn ots_trace_transaction(&self, hash: H256) -> Result<Vec<OtsTrace>> {
+    pub async fn ots_trace_transaction(&self, hash: B256) -> Result<Vec<OtsTrace>> {
         node_info!("ots_traceTransaction");
 
         Ok(OtsTrace::batch_build(self.backend.trace_transaction(hash).await?))
     }
 
     /// Given a transaction hash, returns its raw revert reason.
-    pub async fn ots_get_transaction_error(&self, hash: H256) -> Result<Option<Bytes>> {
+    pub async fn ots_get_transaction_error(&self, hash: B256) -> Result<Option<Bytes>> {
         node_info!("ots_getTransactionError");
 
         if let Some(receipt) = self.backend.mined_transaction_receipt(hash) {
-            if receipt.inner.status == Some(U64::zero()) {
+            if receipt.inner.status == Some(U64::ZERO) {
                 return Ok(receipt.out)
             }
         }
@@ -83,7 +85,7 @@ impl EthApi {
     /// For simplicity purposes, we return the entire block instead of emptying the values that
     /// Otterscan doesn't want. This is the original purpose of the endpoint (to save bandwidth),
     /// but it doesn't seem necessary in the context of an anvil node
-    pub async fn ots_get_block_details(&self, number: BlockNumber) -> Result<OtsBlockDetails> {
+    pub async fn ots_get_block_details(&self, number: BlockNumberOrTag) -> Result<OtsBlockDetails> {
         node_info!("ots_getBlockDetails");
 
         if let Some(block) = self.backend.block_by_number(number).await? {
@@ -98,7 +100,7 @@ impl EthApi {
     /// For simplicity purposes, we return the entire block instead of emptying the values that
     /// Otterscan doesn't want. This is the original purpose of the endpoint (to save bandwidth),
     /// but it doesn't seem necessary in the context of an anvil node
-    pub async fn ots_get_block_details_by_hash(&self, hash: H256) -> Result<OtsBlockDetails> {
+    pub async fn ots_get_block_details_by_hash(&self, hash: B256) -> Result<OtsBlockDetails> {
         node_info!("ots_getBlockDetailsByHash");
 
         if let Some(block) = self.backend.block_by_hash(hash).await? {
@@ -135,7 +137,7 @@ impl EthApi {
     ) -> Result<OtsSearchTransactions> {
         node_info!("ots_searchTransactionsBefore");
 
-        let best = self.backend.best_number().as_u64();
+        let best = self.backend.best_number().to::<u64>();
         // we go from given block (defaulting to best) down to first block
         // considering only post-fork
         let from = if block_number == 0 { best } else { block_number };
@@ -183,7 +185,7 @@ impl EthApi {
     ) -> Result<OtsSearchTransactions> {
         node_info!("ots_searchTransactionsAfter");
 
-        let best = self.backend.best_number().as_u64();
+        let best = self.backend.best_number().to::<u64>();
         // we go from the first post-fork block, up to the tip
         let from = if block_number == 0 {
             self.get_fork().map(|f| f.block_number() + 1).unwrap_or(1)
@@ -242,7 +244,7 @@ impl EthApi {
         node_info!("ots_getTransactionBySenderAndNonce");
 
         let from = self.get_fork().map(|f| f.block_number() + 1).unwrap_or_default();
-        let to = self.backend.best_number().as_u64();
+        let to = self.backend.best_number().to::<u64>();
 
         for n in (from..=to).rev() {
             if let Some(txs) = self.backend.mined_transactions_by_block_number(n.into()).await {
@@ -266,7 +268,7 @@ impl EthApi {
         node_info!("ots_getContractCreator");
 
         let from = self.get_fork().map(|f| f.block_number()).unwrap_or_default();
-        let to = self.backend.best_number().as_u64();
+        let to = self.backend.best_number().to::<u64>();
 
         // loop in reverse, since we want the latest deploy to the address
         for n in (from..=to).rev() {

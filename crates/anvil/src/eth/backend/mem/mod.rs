@@ -31,7 +31,7 @@ use crate::{
 };
 use alloy_rpc_types::{
     state::StateOverride, CallRequest, TransactionKind, TypedTransactionRequest,
-    BlockId, BlockNumberOrTag, Filter
+    BlockId, BlockNumberOrTag, Filter, Block as AlloyBlock, BlockTransactions, TransactionReceipt
 };
 use alloy_primitives::{Address, Bytes, B64, B256, U64, TxHash};
 use anvil_core::{
@@ -51,11 +51,11 @@ use anvil_core::{
 use anvil_rpc::error::RpcError;
 use ethers::{
     abi::ethereum_types::BigEndianHash,
-    prelude::{BlockNumber, GethTraceFrame, U256},
+    prelude::{GethTraceFrame, U256},
     types::{
-        transaction::eip2930::AccessList, Block as EthersBlock,
+        transaction::eip2930::AccessList,
         DefaultFrame, FilteredParams, GethDebugTracingOptions, GethTrace, Log, OtherFields,
-        Trace, Transaction, TransactionReceipt, H160,
+        Trace, Transaction, H160,
     },
     utils::{keccak256, rlp},
 };
@@ -346,7 +346,7 @@ impl Backend {
 
     /// Returns the `AccountInfo` from the database
     pub async fn get_account(&self, address: Address) -> DatabaseResult<AccountInfo> {
-        Ok(self.db.read().await.basic(address.to_alloy())?.unwrap_or_default())
+        Ok(self.db.read().await.basic(address)?.unwrap_or_default())
     }
 
     /// Whether we're forked off some remote client
@@ -487,7 +487,7 @@ impl Backend {
 
     /// Returns the client coinbase address.
     pub fn coinbase(&self) -> Address {
-        self.env.read().block.coinbase.to_ethers()
+        self.env.read().block.coinbase
     }
 
     /// Returns the client coinbase address.
@@ -626,7 +626,7 @@ impl Backend {
     ///
     /// Returns the id of the snapshot created
     pub async fn create_snapshot(&self) -> U256 {
-        let num = self.best_number().as_u64();
+        let num = self.best_number().to::<u64>();
         let hash = self.best_hash();
         let id = self.db.write().await.snapshot();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
@@ -640,13 +640,13 @@ impl Backend {
         if let Some((num, hash)) = block {
             let best_block_hash = {
                 // revert the storage that's newer than the snapshot
-                let current_height = self.best_number().as_u64();
+                let current_height = self.best_number().to::<u64>();
                 let mut storage = self.blockchain.storage.write();
 
                 for n in ((num + 1)..=current_height).rev() {
                     trace!(target: "backend", "reverting block {}", n);
-                    let n: U64 = n.into();
-                    if let Some(hash) = storage.hashes.remove(&n) {
+                    let n: U64 = U64::from(n);
+                    if let Some(hash) = storage.hashes.remove(&n.to_ethers()) {
                         if let Some(block) = storage.blocks.remove(&hash) {
                             for tx in block.transactions {
                                 let _ = storage.transactions.remove(&tx.hash());
@@ -656,23 +656,23 @@ impl Backend {
                 }
 
                 storage.best_number = num.into();
-                storage.best_hash = hash;
+                storage.best_hash = hash.to_ethers();
                 hash
             };
             let block =
                 self.block_by_hash(best_block_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
 
-            let reset_time = block.timestamp.as_u64();
+            let reset_time = block.header.timestamp.to::<u64>();
             self.time.reset(reset_time);
 
             let mut env = self.env.write();
             env.block = BlockEnv {
                 number: rU256::from(num),
-                timestamp: block.timestamp.to_alloy(),
-                difficulty: block.difficulty.to_alloy(),
+                timestamp: block.header.timestamp,
+                difficulty: block.header.difficulty,
                 // ensures prevrandao is set
-                prevrandao: Some(block.mix_hash.unwrap_or_default()).map(|h| h.to_alloy()),
-                gas_limit: block.gas_limit.to_alloy(),
+                prevrandao: Some(block.header.mix_hash),
+                gas_limit: block.header.gas_limit,
                 // Keep previous `coinbase` and `basefee` value
                 coinbase: env.block.coinbase,
                 basefee: env.block.basefee,
@@ -932,7 +932,7 @@ impl Backend {
                     info,
                     receipt,
                     block_hash,
-                    block_number: block_number.as_u64(),
+                    block_number: block_number.to::<u64>(),
                 };
                 storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
             }
@@ -941,7 +941,7 @@ impl Backend {
             if let Some(transaction_block_keeper) = self.transaction_block_keeper {
                 if storage.blocks.len() > transaction_block_keeper {
                     let to_clear = block_number
-                        .as_u64()
+                        .to::<u64>()
                         .saturating_sub(transaction_block_keeper.try_into().unwrap());
                     storage.remove_block_transactions_by_number(to_clear)
                 }
@@ -991,7 +991,7 @@ impl Backend {
         overrides: Option<StateOverride>,
     ) -> Result<(InstructionResult, Option<Output>, u64, State), BlockchainError> {
         self.with_database_at(block_request, |state, block| {
-            let block_number = (block.number.to_ethers()).as_u64();
+            let block_number = (block.number.to_ethers()).to::<u64>();
             let (exit, out, gas, state) = match overrides {
                 None => self.call_with_state(state, request, fee_details, block),
                 Some(overrides) => {
@@ -1030,7 +1030,7 @@ impl Backend {
 
         env.tx = TxEnv {
             caller: caller.to_alloy(),
-            gas_limit: gas_limit.as_u64(),
+            gas_limit: gas_limit.to::<u64>(),
             gas_price: gas_price.to_alloy(),
             gas_priority_fee: max_priority_fee_per_gas.map(|f| f.to_alloy()),
             transact_to: match to {
@@ -1040,7 +1040,7 @@ impl Backend {
             value: value.unwrap_or_default().to_alloy(),
             data: data.unwrap_or_default().to_vec().into(),
             chain_id: None,
-            nonce: nonce.map(|n| n.as_u64()),
+            nonce: nonce.map(|n| n.to::<u64>()),
             access_list: to_revm_access_list(access_list.unwrap_or_default()),
             ..Default::default()
         };
@@ -1161,7 +1161,7 @@ impl Backend {
             AccessList(request.access_list.clone().unwrap_or_default()),
             from,
             to,
-            self.precompiles().into_iter().map(|p| p.to_alloy()).collect(),
+            self.precompiles().into_iter().map(|p| p).collect(),
         );
 
         let mut evm = revm::EVM::new();
@@ -1252,11 +1252,11 @@ impl Backend {
                     removed: Some(false),
                 };
                 let mut is_match: bool = true;
-                if filter.address.is_some() && filter.has_topics() {
+                if !filter.address.is_empty() && filter.has_topics() {
                     if !params.filter_address(&log) || !params.filter_topics(&log) {
                         is_match = false;
                     }
-                } else if filter.address.is_some() {
+                } else if !filter.address.is_empty() {
                     if !params.filter_address(&log) {
                         is_match = false;
                     }
@@ -1323,7 +1323,7 @@ impl Backend {
         if let Some(hash) = filter.get_block_hash() {
             self.logs_for_block(filter, hash).await
         } else {
-            let best = self.best_number().as_u64();
+            let best = self.best_number().to::<u64>();
             let to_block =
                 self.convert_block_number(filter.block_option.get_to_block().copied()).min(best);
             let from_block =
@@ -1340,7 +1340,7 @@ impl Backend {
     pub async fn block_by_hash(
         &self,
         hash: B256,
-    ) -> Result<Option<EthersBlock<TxHash>>, BlockchainError> {
+    ) -> Result<Option<AlloyBlock>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
         if let tx @ Some(_) = self.mined_block_by_hash(hash) {
             return Ok(tx)
@@ -1356,7 +1356,7 @@ impl Backend {
     pub async fn block_by_hash_full(
         &self,
         hash: B256,
-    ) -> Result<Option<EthersBlock<Transaction>>, BlockchainError> {
+    ) -> Result<Option<AlloyBlock>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
         if let tx @ Some(_) = self.get_full_block(hash) {
             return Ok(tx)
@@ -1369,7 +1369,7 @@ impl Backend {
         Ok(None)
     }
 
-    fn mined_block_by_hash(&self, hash: B256) -> Option<EthersBlock<TxHash>> {
+    fn mined_block_by_hash(&self, hash: B256) -> Option<AlloyBlock> {
         let block = self.blockchain.get_block_by_hash(&hash)?;
         Some(self.convert_block(block))
     }
@@ -1402,7 +1402,7 @@ impl Backend {
     pub async fn block_by_number(
         &self,
         number: BlockNumberOrTag,
-    ) -> Result<Option<EthersBlock<TxHash>>, BlockchainError> {
+    ) -> Result<Option<AlloyBlock>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
         if let tx @ Some(_) = self.mined_block_by_number(number) {
             return Ok(tx)
@@ -1421,7 +1421,7 @@ impl Backend {
     pub async fn block_by_number_full(
         &self,
         number: BlockNumberOrTag,
-    ) -> Result<Option<EthersBlock<Transaction>>, BlockchainError> {
+    ) -> Result<Option<AlloyBlock>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
         if let tx @ Some(_) = self.get_full_block(number) {
             return Ok(tx)
@@ -1439,7 +1439,7 @@ impl Backend {
 
     pub fn get_block(&self, id: impl Into<BlockId>) -> Option<Block> {
         let hash = match id.into() {
-            BlockId::Hash(hash) => hash,
+            BlockId::Hash(hash) => hash.block_hash,
             BlockId::Number(number) => {
                 let storage = self.blockchain.storage.read();
                 let slots_in_an_epoch = U64::from(32u64);
@@ -1472,19 +1472,20 @@ impl Backend {
         self.blockchain.get_block_by_hash(&hash)
     }
 
-    pub fn mined_block_by_number(&self, number: BlockNumberOrTag) -> Option<EthersBlock<TxHash>> {
+    pub fn mined_block_by_number(&self, number: BlockNumberOrTag) -> Option<AlloyBlock> {
         Some(self.convert_block(self.get_block(number)?))
     }
 
-    pub fn get_full_block(&self, id: impl Into<BlockId>) -> Option<EthersBlock<Transaction>> {
+    pub fn get_full_block(&self, id: impl Into<BlockId>) -> Option<AlloyBlock> {
         let block = self.get_block(id)?;
         let transactions = self.mined_transactions_in_block(&block)?;
         let block = self.convert_block(block);
+        // TODO: custom into_full_block that feeds txs into alloy block from ethers internal txs
         Some(block.into_full_block(transactions))
     }
 
     /// Takes a block as it's stored internally and returns the eth api conform block format
-    pub fn convert_block(&self, block: Block) -> EthersBlock<TxHash> {
+    pub fn convert_block(&self, block: Block) -> AlloyBlock {
         let size = U256::from(rlp::encode(&block).len() as u32);
 
         let Block { header, transactions, .. } = block;
@@ -1509,7 +1510,7 @@ impl Backend {
             base_fee_per_gas,
         } = header;
 
-        EthersBlock {
+        AlloyBlock {
             hash: Some(hash),
             parent_hash,
             uncles_hash: ommers_hash,
@@ -1517,7 +1518,7 @@ impl Backend {
             state_root,
             transactions_root,
             receipts_root,
-            number: Some(number.as_u64().into()),
+            number: Some(number.to::<u64>().into()),
             gas_used,
             gas_limit,
             extra_data,
@@ -1546,21 +1547,22 @@ impl Backend {
         &self,
         block_id: Option<T>,
     ) -> Result<u64, BlockchainError> {
-        let current = self.best_number().as_u64();
+        let current = self.best_number().to::<u64>();
         let slots_in_an_epoch = 32u64;
         let requested =
             match block_id.map(Into::into).unwrap_or(BlockId::Number(BlockNumberOrTag::Latest)) {
                 BlockId::Hash(hash) => self
-                    .block_by_hash(hash)
+                    .block_by_hash(hash.block_hash)
                     .await?
                     .ok_or(BlockchainError::BlockNotFound)?
+                    .header
                     .number
                     .ok_or(BlockchainError::BlockNotFound)?
-                    .as_u64(),
+                    .to::<u64>(),
                 BlockId::Number(num) => match num {
-                    BlockNumberOrTag::Latest | BlockNumberOrTag::Pending => self.best_number().as_u64(),
+                    BlockNumberOrTag::Latest | BlockNumberOrTag::Pending => self.best_number().to::<u64>(),
                     BlockNumberOrTag::Earliest => 0,
-                    BlockNumberOrTag::Number(num) => num.as_u64(),
+                    BlockNumberOrTag::Number(num) => num,
                     BlockNumberOrTag::Safe => current.saturating_sub(slots_in_an_epoch),
                     BlockNumberOrTag::Finalized => current.saturating_sub(slots_in_an_epoch * 2),
                 },
@@ -1574,12 +1576,12 @@ impl Backend {
     }
 
     pub fn convert_block_number(&self, block: Option<BlockNumberOrTag>) -> u64 {
-        let current = self.best_number().as_u64();
+        let current = self.best_number().to::<u64>();
         let slots_in_an_epoch = 32u64;
         match block.unwrap_or(BlockNumberOrTag::Latest) {
             BlockNumberOrTag::Latest | BlockNumberOrTag::Pending => current,
             BlockNumberOrTag::Earliest => 0,
-            BlockNumberOrTag::Number(num) => num.as_u64(),
+            BlockNumberOrTag::Number(num) => num,
             BlockNumberOrTag::Safe => current.saturating_sub(slots_in_an_epoch),
             BlockNumberOrTag::Finalized => current.saturating_sub(slots_in_an_epoch * 2),
         }
@@ -1614,7 +1616,7 @@ impl Backend {
                     .await;
                 return Ok(result)
             }
-            Some(BlockRequest::Number(bn)) => Some(BlockNumberOrTag::Number(bn)),
+            Some(BlockRequest::Number(bn)) => Some(BlockNumberOrTag::Number(bn.to::<u64>())),
             None => None,
         };
         let block_number: U256 = self.convert_block_number(block_number).into();
@@ -1624,7 +1626,7 @@ impl Backend {
                 let mut states = self.states.write();
 
                 if let Some((state, block)) = self
-                    .get_block(block_number.as_u64())
+                    .get_block(block_number.to::<u64>())
                     .and_then(|block| Some((states.get(&block.header.hash())?, block)))
                 {
                     let block = BlockEnv {
@@ -1680,8 +1682,8 @@ impl Backend {
     ) -> Result<B256, BlockchainError> {
         self.with_database_at(block_request, |db, _| {
             trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
-            let val = db.storage(address.to_alloy(), index.to_alloy())?;
-            Ok(u256_to_h256_be(val.to_ethers()))
+            let val = db.storage(address, index)?;
+            Ok(u256_to_h256_be(val))
         })
         .await?
     }
@@ -1707,7 +1709,7 @@ impl Backend {
         D: DatabaseRef<Error = DatabaseError>,
     {
         trace!(target: "backend", "get code for {:?}", address);
-        let account = state.basic(address.to_alloy())?.unwrap_or_default();
+        let account = state.basic(address)?.unwrap_or_default();
         if account.code_hash == KECCAK_EMPTY {
             // if the code hash is `KECCAK_EMPTY`, we check no further
             return Ok(Default::default())
@@ -1741,7 +1743,7 @@ impl Backend {
         D: DatabaseRef<Error = DatabaseError>,
     {
         trace!(target: "backend", "get balance for {:?}", address);
-        Ok(state.basic(address.to_alloy())?.unwrap_or_default().balance.to_ethers())
+        Ok(state.basic(address)?.unwrap_or_default().balance.to_ethers())
     }
 
     /// Returns the nonce of the address
@@ -1764,7 +1766,7 @@ impl Backend {
         };
         self.with_database_at(final_block_request, |db, _| {
             trace!(target: "backend", "get nonce for {:?}", address);
-            Ok(db.basic(address.to_alloy())?.unwrap_or_default().nonce.into())
+            Ok(db.basic(address)?.unwrap_or_default().nonce.into())
         })
         .await?
     }
@@ -1871,17 +1873,20 @@ impl Backend {
         let block = self.mined_block_by_hash(hash)?;
         let mut receipts = Vec::new();
         let storage = self.blockchain.storage.read();
-        for tx in block.transactions {
-            let receipt = storage.transactions.get(&tx)?.receipt.clone();
-            receipts.push(receipt);
+        if let BlockTransactions::Full(txns) = block.transactions {
+            for tx in txns {
+                let receipt = storage.transactions.get(&tx.hash.to_ethers())?.receipt.clone();
+                receipts.push(receipt);
+            }
+            return Some(receipts)
         }
-        Some(receipts)
+        None
     }
 
     /// Returns the transaction receipt for the given hash
     pub(crate) fn mined_transaction_receipt(&self, hash: B256) -> Option<MinedTransactionReceipt> {
         let MinedTransaction { info, receipt, block_hash, .. } =
-            self.blockchain.get_transaction_by_hash(&hash)?;
+            self.blockchain.get_transaction_by_hash(&hash.to_ethers())?;
 
         let EIP658Receipt { status_code, gas_used, logs_bloom, logs } = receipt.into();
 
@@ -1890,7 +1895,7 @@ impl Backend {
         let block = self.blockchain.get_block_by_hash(&block_hash)?;
 
         // TODO store cumulative gas used in receipt instead
-        let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash()));
+        let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash().to_alloy()));
 
         let mut cumulative_gas_used = U256::zero();
         for receipt in receipts.iter().take(index + 1) {
@@ -1969,7 +1974,7 @@ impl Backend {
         number: BlockNumberOrTag,
         index: Index,
     ) -> Result<Option<Transaction>, BlockchainError> {
-        if let Some(hash) = self.mined_block_by_number(number).and_then(|b| b.hash) {
+        if let Some(hash) = self.mined_block_by_number(number).and_then(|b| b.header.hash) {
             return Ok(self.mined_transaction_by_block_hash_and_index(hash, index))
         }
 
@@ -1993,7 +1998,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.transaction_by_block_hash_and_index(hash, index.into()).await?)
+            return Ok(fork.transaction_by_block_hash_and_index(hash.to_ethers(), index.into()).await?)
         }
 
         Ok(None)
@@ -2006,7 +2011,7 @@ impl Backend {
     ) -> Option<Transaction> {
         let (info, block, tx) = {
             let storage = self.blockchain.storage.read();
-            let block = storage.blocks.get(&block_hash).cloned()?;
+            let block = storage.blocks.get(&block_hash.to_ethers()).cloned()?;
             let index: usize = index.into();
             let tx = block.transactions.get(index)?.clone();
             let info = storage.transactions.get(&tx.hash())?.info.clone();
@@ -2014,7 +2019,7 @@ impl Backend {
         };
 
         Some(transaction_build(
-            Some(info.transaction_hash),
+            Some(info.transaction_hash.to_alloy()),
             tx,
             Some(&block),
             Some(info),
@@ -2042,14 +2047,14 @@ impl Backend {
         let (info, block) = {
             let storage = self.blockchain.storage.read();
             let MinedTransaction { info, block_hash, .. } =
-                storage.transactions.get(&hash)?.clone();
+                storage.transactions.get(&hash.to_ethers())?.clone();
             let block = storage.blocks.get(&block_hash).cloned()?;
             (info, block)
         };
         let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
         Some(transaction_build(
-            Some(info.transaction_hash),
+            Some(info.transaction_hash.to_alloy()),
             tx,
             Some(&block),
             Some(info),
@@ -2066,7 +2071,7 @@ impl Backend {
         keys: Vec<B256>,
         block_request: Option<BlockRequest>,
     ) -> Result<AccountProof, BlockchainError> {
-        let account_key = B256::from(keccak256(address.as_bytes()));
+        let account_key = B256::from(keccak256(address));
         let block_number = block_request.as_ref().map(|r| r.block_number());
 
         self.with_database_at(block_request, |block_db, _| {
@@ -2085,7 +2090,7 @@ impl Backend {
                     })
                 };
                 let query = (&mut recorder, acc_decoder);
-                trie.get_with(account_key.as_bytes(), query)
+                trie.get_with(account_key.to_ethers().as_bytes(), query)
                     .map_err(|err| BlockchainError::TrieError(err.to_string()))?
             };
             let account = maybe_account.unwrap_or_default();
@@ -2103,10 +2108,10 @@ impl Backend {
                 .collect::<Vec<_>>();
 
             let account_db =
-                block_db.maybe_account_db(address).ok_or(BlockchainError::DataUnavailable)?;
+                block_db.maybe_account_db(address.to_ethers()).ok_or(BlockchainError::DataUnavailable)?;
 
             let account_proof = AccountProof {
-                address,
+                address: address.to_ethers(),
                 balance: account.balance,
                 nonce: account.nonce.as_u64().into(),
                 code_hash: account.code_hash,
@@ -2119,8 +2124,8 @@ impl Backend {
                         let key = B256::from(keccak256(storage_key));
                         prove_storage(&account, &account_db.0, key).map(
                             |(storage_proof, storage_value)| StorageProof {
-                                key: storage_key,
-                                value: storage_value.into_uint(),
+                                key: storage_key.to_ethers(),
+                                value: storage_value.to_ethers().into_uint(),
                                 proof: storage_proof
                                     .into_iter()
                                     .map(|proof| {
@@ -2166,11 +2171,11 @@ impl Backend {
 /// Get max nonce from transaction pool by address
 fn get_pool_transactions_nonce(
     pool_transactions: &[Arc<PoolTransaction>],
-    address: ethers::types::H160,
+    address: Address,
 ) -> Option<U256> {
     let highest_nonce_tx = pool_transactions
         .iter()
-        .filter(|tx| *tx.pending_transaction.sender() == address)
+        .filter(|tx| *tx.pending_transaction.sender() == address.to_ethers())
         .reduce(|accum, item| {
             let nonce = item.pending_transaction.nonce();
             if nonce.gt(accum.pending_transaction.nonce()) {
@@ -2192,7 +2197,7 @@ impl TransactionValidator for Backend {
         tx: &PendingTransaction,
     ) -> Result<(), BlockchainError> {
         let address = *tx.sender();
-        let account = self.get_account(address).await?;
+        let account = self.get_account(address.to_alloy()).await?;
         let env = self.next_env();
         Ok(self.validate_pool_transaction_for(tx, &account, &env)?)
     }
@@ -2283,7 +2288,7 @@ impl TransactionValidator for Backend {
         env: &Env,
     ) -> Result<(), InvalidTransactionError> {
         self.validate_pool_transaction_for(tx, account, env)?;
-        if tx.nonce().as_u64() > account.nonce {
+        if tx.nonce().to::<u64>() > account.nonce {
             return Err(InvalidTransactionError::NonceTooHigh)
         }
         Ok(())
@@ -2321,9 +2326,9 @@ pub fn transaction_build(
     }
 
     transaction.block_hash =
-        block.as_ref().map(|block| B256::from(keccak256(&rlp::encode(&block.header))));
+        block.as_ref().map(|block| B256::from(keccak256(&rlp::encode(&block.header)))).map(|h| h.to_ethers());
 
-    transaction.block_number = block.as_ref().map(|block| block.header.number.as_u64().into());
+    transaction.block_number = block.as_ref().map(|block| block.header.number.to::<u64>().into());
 
     transaction.transaction_index = info.as_ref().map(|status| status.transaction_index.into());
 
@@ -2343,7 +2348,7 @@ pub fn transaction_build(
     // Note: for impersonated transactions this only concerns pending transactions because there's
     // no `info` yet.
     if let Some(tx_hash) = tx_hash {
-        transaction.hash = tx_hash;
+        transaction.hash = tx_hash.to_ethers();
     }
 
     transaction.to = info.as_ref().map_or(eth_transaction.to().cloned(), |status| status.to);

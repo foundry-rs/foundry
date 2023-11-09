@@ -8,7 +8,7 @@ use ethers_core::types::{
     };
 // TODO: Use U256 after replacing other types, otherwise rust-analyzer gets stuck on resolution
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64};
-use alloy_rpc_types::{state::StateOverride, CallRequest, BlockId, BlockNumberOrTag, Filter};
+use alloy_rpc_types::{state::StateOverride, CallRequest, BlockId, BlockNumberOrTag, Filter, TransactionRequest};
 
 pub mod block;
 pub mod proof;
@@ -137,7 +137,7 @@ pub enum EthRequest {
     EthSign(Address, Bytes),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_signTransaction"))]
-    EthSignTransaction(Box<CallRequest>),
+    EthSignTransaction(Box<TransactionRequest>),
 
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).
     #[cfg_attr(feature = "serde", serde(rename = "eth_signTypedData"))]
@@ -152,7 +152,7 @@ pub enum EthRequest {
     EthSignTypedDataV4(Address, TypedData),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_sendTransaction", with = "sequence"))]
-    EthSendTransaction(Box<CallRequest>),
+    EthSendTransaction(Box<TransactionRequest>),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_sendRawTransaction", with = "sequence"))]
     EthSendRawTransaction(Bytes),
@@ -581,7 +581,7 @@ pub enum EthRequest {
         feature = "serde",
         serde(rename = "eth_sendUnsignedTransaction", with = "sequence")
     )]
-    EthSendUnsignedTransaction(Box<CallRequest>),
+    EthSendUnsignedTransaction(Box<TransactionRequest>),
 
     /// Turn on call traces for transactions that are returned to the user when they execute a
     /// transaction (instead of just txhash/receipt)
