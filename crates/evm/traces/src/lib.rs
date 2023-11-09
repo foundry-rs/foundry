@@ -530,10 +530,12 @@ impl fmt::Display for CallTrace {
         } else {
             let (func_name, inputs) = match &self.data {
                 TraceCallData::Raw(bytes) => {
-                    // We assume that the fallback function (`data.len() < 4`) counts as decoded
-                    // calldata
-                    let (selector, data) = bytes.split_at(4);
-                    (hex::encode(selector), hex::encode(data))
+                    if bytes.len() < 4 {
+                        ("<unknown>".into(), hex::encode(bytes))
+                    } else {
+                        let (selector, data) = bytes.split_at(4);
+                        (hex::encode(selector), hex::encode(data))
+                    }
                 }
                 TraceCallData::Decoded { signature, args } => {
                     let name = signature.split('(').next().unwrap();

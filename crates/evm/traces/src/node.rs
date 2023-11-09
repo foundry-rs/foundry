@@ -167,37 +167,4 @@ impl CallTraceNode {
             }
         }
     }
-
-    /// Decode the node's tracing data for the given precompile function
-    pub fn decode_precompile(
-        &mut self,
-        precompile_fn: &Function,
-        labels: &HashMap<Address, String>,
-    ) {
-        if let TraceCallData::Raw(ref bytes) = self.trace.data {
-            self.trace.label = Some("PRECOMPILE".to_string());
-            self.trace.data = TraceCallData::Decoded {
-                signature: precompile_fn.signature(),
-                args: precompile_fn.abi_decode_input(bytes, false).map_or_else(
-                    |_| vec![hex::encode(bytes)],
-                    |tokens| tokens.iter().map(|token| utils::label(token, labels)).collect(),
-                ),
-            };
-
-            if let TraceRetData::Raw(ref bytes) = self.trace.output {
-                self.trace.output = TraceRetData::Decoded(
-                    precompile_fn.abi_decode_output(bytes, false).map_or_else(
-                        |_| hex::encode(bytes),
-                        |tokens| {
-                            tokens
-                                .iter()
-                                .map(|token| utils::label(token, labels))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        },
-                    ),
-                );
-            }
-        }
-    }
 }

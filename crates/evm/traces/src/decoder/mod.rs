@@ -209,62 +209,61 @@ impl CallTraceDecoder {
     /// Decodes all nodes in the specified call trace.
     pub async fn decode(&self, traces: &mut CallTraceArena) {
         for node in &mut traces.arena {
-            // Set contract name
-            if let Some(contract) = self.contracts.get(&node.trace.address) {
-                node.trace.contract = Some(contract.clone());
-            }
-
-            // Set label
-            if let Some(label) = self.labels.get(&node.trace.address) {
-                node.trace.label = Some(label.clone());
-            }
-
             // Decode events
             self.decode_events(node).await;
 
-            // Decode call
-            // TODO: chain ID argument
+            // Decode precompile
             if precompiles::decode(&mut node.trace, 1) {
-                return
+                continue
             }
 
-            if let TraceCallData::Raw(bytes) = &node.trace.data {
-                if bytes.len() >= SELECTOR_LEN {
-                    if let Some(funcs) = self.functions.get(&bytes[..SELECTOR_LEN]) {
-                        node.decode_function(funcs, &self.labels, &self.errors, self.verbosity);
-                    } else if node.trace.address == DEFAULT_CREATE2_DEPLOYER {
-                        node.trace.data = TraceCallData::Decoded {
-                            signature: "create2".to_string(),
-                            args: vec![],
-                        };
-                    } else if let Some(identifier) = &self.signature_identifier {
-                        if let Some(function) =
-                            identifier.write().await.identify_function(&bytes[..SELECTOR_LEN]).await
-                        {
-                            node.decode_function(
-                                &[function],
-                                &self.labels,
-                                &self.errors,
-                                self.verbosity,
-                            );
-                        }
-                    }
-                } else {
-                    let has_receive =
-                        self.receive_contracts.get(&node.trace.address).copied().unwrap_or(false);
-                    let signature =
-                        if bytes.is_empty() && has_receive { "receive()" } else { "fallback()" }
-                            .into();
-                    node.trace.data = TraceCallData::Decoded { signature, args: Vec::new() };
+            // Set label
+            if node.trace.label.is_none() {
+                if let Some(label) = self.labels.get(&node.trace.address) {
+                    node.trace.label = Some(label.clone());
+                }
+            }
 
-                    if let TraceRetData::Raw(bytes) = &node.trace.output {
-                        if !node.trace.success {
-                            node.trace.output = TraceRetData::Decoded(decode::decode_revert(
-                                bytes,
-                                Some(&self.errors),
-                                Some(node.trace.status),
-                            ));
-                        }
+            // Set contract name
+            if node.trace.contract.is_none() {
+                if let Some(contract) = self.contracts.get(&node.trace.address) {
+                    node.trace.contract = Some(contract.clone());
+                }
+            }
+
+            let TraceCallData::Raw(bytes) = &node.trace.data else { continue };
+            if bytes.len() >= SELECTOR_LEN {
+                if let Some(funcs) = self.functions.get(&bytes[..SELECTOR_LEN]) {
+                    node.decode_function(funcs, &self.labels, &self.errors, self.verbosity);
+                } else if node.trace.address == DEFAULT_CREATE2_DEPLOYER {
+                    node.trace.data =
+                        TraceCallData::Decoded { signature: "create2".to_string(), args: vec![] };
+                } else if let Some(identifier) = &self.signature_identifier {
+                    if let Some(function) =
+                        identifier.write().await.identify_function(&bytes[..SELECTOR_LEN]).await
+                    {
+                        node.decode_function(
+                            &[function],
+                            &self.labels,
+                            &self.errors,
+                            self.verbosity,
+                        );
+                    }
+                }
+            } else {
+                let has_receive =
+                    self.receive_contracts.get(&node.trace.address).copied().unwrap_or(false);
+                let signature =
+                    if bytes.is_empty() && has_receive { "receive()" } else { "fallback()" }.into();
+                node.trace.data = TraceCallData::Decoded { signature, args: Vec::new() };
+
+                if let TraceRetData::Raw(bytes) = &node.trace.output {
+                    if !node.trace.success {
+                        node.trace.output = TraceRetData::Decoded(decode::decode_revert(
+                            bytes,
+                            Some(&self.errors),
+                            Some(node.trace.status),
+                        ));
                     }
                 }
             }
