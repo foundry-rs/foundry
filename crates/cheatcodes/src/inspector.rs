@@ -202,18 +202,10 @@ pub struct Cheatcodes {
     pub breakpoints: Breakpoints,
 
     /// Track if cool cheatcode was called on each address
-    pub addresses: HashMap<Address, CoolState>,
+    /// Mapping tracks if the address itself is cool and if each of it's slots are cool
+    pub addresses: HashMap<Address, (AddressState, HashMap<U256, StorageSlotState>)>,
     /// How much gas to charge in the next step (op code) based on cool cheatcode calculations
     pub additional_gas_next_op: u64,
-}
-
-/// Tracking if an address and it's slots are cool
-#[derive(Debug, Clone)]
-pub struct CoolState {
-    /// Track if address is cool
-    pub address: AddressState,
-    /// Track if each storage slot is cool or not
-    pub slots: HashMap<U256, StorageSlotState>,
 }
 
 /// Whether an Address is accessed or not
@@ -275,10 +267,10 @@ fn add_gas_from_cool_cheatcode<DB: DatabaseExt>(
                     // COLD_ACCOUNT_ACCESS_COST is 2600
                     // check this is done once per address, unless cheatcode is called again
                     // ignore if same as contract address
-                    if let Some(cool_state) = state.addresses.get_mut(&addr) {
-                        if cool_state.address == AddressState::Cool {
+                    if let Some((ref mut address, _)) = state.addresses.get_mut(&addr) {
+                        if *address == AddressState::Cool {
                             state.additional_gas_next_op = 2500;
-                            cool_state.address = AddressState::Warm;
+                            *address = AddressState::Warm;
                         }
                     }
                 }
@@ -292,10 +284,10 @@ fn add_gas_from_cool_cheatcode<DB: DatabaseExt>(
                     // COLD_ACCOUNT_ACCESS_COST is 2600
                     // check this is done once per address, unless cheatcode is called again
                     // ignore if same as contract address
-                    if let Some(cool_state) = state.addresses.get_mut(&addr) {
-                        if cool_state.address == AddressState::Cool {
+                    if let Some((ref mut address, _)) = state.addresses.get_mut(&addr) {
+                        if *address == AddressState::Cool {
                             state.additional_gas_next_op = 2500;
-                            cool_state.address = AddressState::Warm;
+                            *address = AddressState::Warm;
                         }
                     }
                 }
@@ -303,23 +295,23 @@ fn add_gas_from_cool_cheatcode<DB: DatabaseExt>(
             _ => {}
         }
         // check target's slots
-        if let Some(cool_state) = state.addresses.get_mut(&contract_address) {
+        if let Some((_, slots)) = state.addresses.get_mut(&contract_address) {
             match interpreter.current_opcode() {
                 opcode::SLOAD => {
                     let key = try_or_continue!(interpreter.stack().peek(0));
 
                     let account = data.journaled_state.state().get(&contract_address).unwrap();
                     if account.storage.get(&key).is_some() {
-                        match cool_state.slots.get(&key) {
+                        match slots.get(&key) {
                             None | Some(StorageSlotState::Cool) => {
                                 // COLD_SLOAD_COST is 2100
                                 state.additional_gas_next_op = 2000;
-                                cool_state.slots.insert(key, StorageSlotState::WarmWithSLOAD);
+                                slots.insert(key, StorageSlotState::WarmWithSLOAD);
                             }
                             Some(_) => {}
                         }
                     } else {
-                        cool_state.slots.insert(key, StorageSlotState::WarmWithSLOAD);
+                        slots.insert(key, StorageSlotState::WarmWithSLOAD);
                     }
                 }
                 opcode::SSTORE => {
@@ -329,7 +321,7 @@ fn add_gas_from_cool_cheatcode<DB: DatabaseExt>(
                     let account = data.journaled_state.state().get(&contract_address).unwrap();
                     if account.storage.get(&key).is_some() {
                         // only add gas the first time the storage is touched again
-                        match cool_state.slots.get(&key) {
+                        match slots.get(&key) {
                             Some(StorageSlotState::WarmWithSLOAD) => {
                                 // cool keeps the slot value changes
                                 // as if the previous_or_original_value = present_value`
@@ -348,7 +340,7 @@ fn add_gas_from_cool_cheatcode<DB: DatabaseExt>(
                                 }
 
                                 // set slot is_warm to true
-                                cool_state.slots.insert(key, StorageSlotState::WarmWithSSTORE);
+                                slots.insert(key, StorageSlotState::WarmWithSSTORE);
                             }
                             None | Some(StorageSlotState::Cool) => {
                                 // Means SSTORE was called without SLOAD before
@@ -370,12 +362,12 @@ fn add_gas_from_cool_cheatcode<DB: DatabaseExt>(
                                         state.additional_gas_next_op += 2900 - 100
                                     }
                                 }
-                                cool_state.slots.insert(key, StorageSlotState::WarmWithSSTORE);
+                                slots.insert(key, StorageSlotState::WarmWithSSTORE);
                             }
                             Some(StorageSlotState::WarmWithSSTORE) => {}
                         }
                     } else {
-                        cool_state.slots.insert(key, StorageSlotState::WarmWithSSTORE);
+                        slots.insert(key, StorageSlotState::WarmWithSSTORE);
                     }
                 }
                 _ => {}
