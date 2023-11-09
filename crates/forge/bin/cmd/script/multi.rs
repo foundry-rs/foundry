@@ -5,7 +5,7 @@ use super::{
     ScriptArgs,
 };
 use ethers::signers::LocalWallet;
-use eyre::{ContextCompat, Result, WrapErr};
+use eyre::{ContextCompat, Report, Result, WrapErr};
 use foundry_cli::utils::now;
 use foundry_common::{fs, get_http_provider};
 use foundry_compilers::{artifacts::Libraries, ArtifactId};
@@ -139,37 +139,38 @@ impl ScriptArgs {
                 join_all(futs).await.into_iter().filter(|res| res.is_err()).collect::<Vec<_>>();
 
             if !errors.is_empty() {
-                return Err(eyre::eyre!("{errors:?}"))
+                return Err(eyre::eyre!("{errors:?}"));
             }
         }
 
         trace!(target: "script", "broadcasting multi chain deployments");
 
-        let futs = deployments
-            .deployments
-            .iter_mut()
-            .map(|sequence| async {
-                match self
-                    .send_transactions(
-                        sequence,
-                        &sequence.typed_transactions().first().unwrap().0.clone(),
-                        &script_wallets,
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        if self.verify {
-                            return sequence.verify_contracts(config, verify.clone()).await
-                        }
-                        Ok(())
+        let mut results: Vec<Result<(), Report>> = Vec::new(); // Declare a Vec of Result<(), Report>
+
+        for sequence in deployments.deployments.iter_mut() {
+            let fork_url = &sequence.typed_transactions().first().unwrap().0.clone();
+            println!("fork url is {fork_url}");
+            let result = match self
+                .send_transactions(
+                    sequence,
+                    &sequence.typed_transactions().first().unwrap().0.clone(),
+                    &script_wallets,
+                )
+                .await
+            {
+                Ok(_) => {
+                    if self.verify {
+                        return sequence.verify_contracts(config, verify.clone()).await
                     }
-                    Err(err) => Err(err),
+                    Ok(())
                 }
-            })
-            .collect::<Vec<_>>();
+                Err(err) => Err(err),
+            };
+            results.push(result);
+        }
 
         let errors =
-            join_all(futs).await.into_iter().filter(|res| res.is_err()).collect::<Vec<_>>();
+            results.into_iter().filter(|res| res.is_err()).collect::<Vec<_>>();
 
         if !errors.is_empty() {
             return Err(eyre::eyre!("{errors:?}"))
