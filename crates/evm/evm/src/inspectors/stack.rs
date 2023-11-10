@@ -355,6 +355,7 @@ impl InspectorStack {
 
 impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
     fn initialize_interp(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
+        let res = interpreter.instruction_result;
         call_inspectors!(
             [
                 &mut self.debugger,
@@ -368,7 +369,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 inspector.initialize_interp(interpreter, data);
 
                 // Allow inspectors to exit early
-                if interpreter.instruction_result != InstructionResult::Continue {
+                if interpreter.instruction_result != res {
                     #[allow(clippy::needless_return)]
                     return
                 }
@@ -377,6 +378,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
     }
 
     fn step(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
+        let res = interpreter.instruction_result;
         call_inspectors!(
             [
                 &mut self.fuzzer,
@@ -391,7 +393,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 inspector.step(interpreter, data);
 
                 // Allow inspectors to exit early
-                if interpreter.instruction_result != InstructionResult::Continue {
+                if interpreter.instruction_result != res {
                     #[allow(clippy::needless_return)]
                     return
                 }
@@ -415,6 +417,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
     }
 
     fn step_end(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
+        let res = interpreter.instruction_result;
         call_inspectors!(
             [
                 &mut self.debugger,
@@ -428,7 +431,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 inspector.step_end(interpreter, data);
 
                 // Allow inspectors to exit early
-                if interpreter.instruction_result != InstructionResult::Continue {
+                if interpreter.instruction_result != res {
                     #[allow(clippy::needless_return)]
                     return
                 }
