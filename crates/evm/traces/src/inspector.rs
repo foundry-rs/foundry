@@ -11,7 +11,7 @@ use revm::{
         opcode, return_ok, CallInputs, CallScheme, CreateInputs, Gas, InstructionResult,
         Interpreter,
     },
-    Database, EVMData, Inspector, JournalEntry,
+    Database, EvmContext, Inspector, JournalEntry,
 };
 
 /// An inspector that collects call traces.
@@ -74,7 +74,7 @@ impl Tracer {
         }
     }
 
-    fn start_step<DB: Database>(&mut self, interp: &Interpreter, data: &EVMData<'_, DB>) {
+    fn start_step<DB: Database>(&mut self, interp: &Interpreter, data: &EvmContext<'_, DB>) {
         let trace_idx =
             *self.trace_stack.last().expect("can't start step without starting a trace first");
         let node = &mut self.traces.arena[trace_idx];
@@ -99,7 +99,7 @@ impl Tracer {
     fn fill_step<DB: Database>(
         &mut self,
         interp: &Interpreter,
-        data: &EVMData<'_, DB>,
+        data: &EvmContext<'_, DB>,
         status: InstructionResult,
     ) {
         let (trace_idx, step_idx) =
@@ -136,28 +136,21 @@ impl Tracer {
 
 impl<DB: Database> Inspector<DB> for Tracer {
     #[inline]
-    fn step(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>) -> InstructionResult {
+    fn step(&mut self, interp: &mut Interpreter, data: &mut EvmContext<'_, DB>) {
         if self.record_steps {
             self.start_step(interp, data);
         }
-        InstructionResult::Continue
     }
 
     #[inline]
-    fn step_end(
-        &mut self,
-        interp: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-        status: InstructionResult,
-    ) -> InstructionResult {
+    fn step_end(&mut self, interp: &mut Interpreter, data: &mut EvmContext<'_, DB>) {
         if self.record_steps {
-            self.fill_step(interp, data, status);
+            self.fill_step(interp, data, interp.instruction_result);
         }
-        status
     }
 
     #[inline]
-    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[B256], data: &Bytes) {
+    fn log(&mut self, _: &mut EvmContext<'_, DB>, _: &Address, topics: &[B256], data: &Bytes) {
         let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
         node.ordering.push(LogCallOrder::Log(node.logs.len()));
         let data = data.clone();
@@ -168,7 +161,7 @@ impl<DB: Database> Inspector<DB> for Tracer {
     #[inline]
     fn call(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         inputs: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
         let (from, to) = match inputs.context.scheme {
@@ -193,7 +186,7 @@ impl<DB: Database> Inspector<DB> for Tracer {
     #[inline]
     fn call_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         _inputs: &CallInputs,
         gas: Gas,
         status: InstructionResult,
@@ -212,7 +205,7 @@ impl<DB: Database> Inspector<DB> for Tracer {
     #[inline]
     fn create(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         inputs: &mut CreateInputs,
     ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         // TODO: Does this increase gas cost?
@@ -233,7 +226,7 @@ impl<DB: Database> Inspector<DB> for Tracer {
     #[inline]
     fn create_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         _inputs: &CreateInputs,
         status: InstructionResult,
         address: Option<Address>,

@@ -14,7 +14,7 @@ use foundry_evm_core::{constants::CHEATCODE_ADDRESS, debug::Instruction, utils::
 use foundry_utils::types::ToEthers;
 use hashbrown::HashMap;
 use itertools::Itertools;
-use revm::interpreter::{opcode, CallContext, InstructionResult, Memory, Stack};
+use revm::interpreter::{opcode, CallContext, InstructionResult, SharedMemory, Stack};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},

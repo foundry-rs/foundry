@@ -30,7 +30,7 @@ use itertools::Itertools;
 use revm::{
     interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
     primitives::{BlockEnv, CreateScheme, TransactTo},
-    EVMData, Inspector,
+    EvmContext, Inspector,
 };
 use serde_json::Value;
 use std::{
@@ -211,7 +211,7 @@ impl Cheatcodes {
 
     fn apply_cheatcode<DB: DatabaseExt>(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         call: &CallInputs,
     ) -> Result {
         // decode the cheatcode call
@@ -231,7 +231,7 @@ impl Cheatcodes {
     /// automatically we need to determine the new address
     fn allow_cheatcodes_on_create<DB: DatabaseExt>(
         &self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         inputs: &CreateInputs,
     ) {
         if data.journaled_state.depth > 1 && !data.db.has_cheatcode_access(inputs.caller) {
@@ -255,7 +255,7 @@ impl Cheatcodes {
     ///
     /// Cleanup any previously applied cheatcodes that altered the state in such a way that revm's
     /// revert would run into issues.
-    pub fn on_revert<DB: DatabaseExt>(&mut self, data: &mut EVMData<'_, DB>) {
+    pub fn on_revert<DB: DatabaseExt>(&mut self, data: &mut EvmContext<'_, DB>) {
         trace!(deals = ?self.eth_deals.len(), "rolling back deals");
 
         // Delay revert clean up until expected revert is handled, if set.
@@ -281,11 +281,7 @@ impl Cheatcodes {
 
 impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     #[inline]
-    fn initialize_interp(
-        &mut self,
-        _: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-    ) -> InstructionResult {
+    fn initialize_interp(&mut self, _: &mut Interpreter, data: &mut EvmContext<'_, DB>) {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
         if let Some(block) = self.block.take() {
@@ -294,15 +290,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(gas_price) = self.gas_price.take() {
             data.env.tx.gas_price = gas_price;
         }
-
-        InstructionResult::Continue
     }
 
-    fn step(
-        &mut self,
-        interpreter: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-    ) -> InstructionResult {
+    fn step(&mut self, interpreter: &mut Interpreter, data: &mut EvmContext<'_, DB>) {
         self.pc = interpreter.program_counter();
 
         // reset gas if gas metering is turned off
@@ -448,7 +438,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             // If the offset being loaded is >= than the memory size, the
                             // memory is being expanded. If none of the allowed ranges contain
                             // [offset, offset + 32), memory has been unexpectedly mutated.
-                            if offset >= interpreter.memory.len() as u64 && !ranges.iter().any(|range| {
+                            if offset >= interpreter.shared_memory.len() as u64 && !ranges.iter().any(|range| {
                                 range.contains(&offset) && range.contains(&(offset + 31))
                             }) {
                                 disallowed_mem_write(offset, 32, interpreter, ranges);
@@ -475,7 +465,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                                         range.contains(&(dest_offset + size.saturating_sub(1)))
                                 }) && ($writes ||
                                     [dest_offset, (dest_offset + size).saturating_sub(1)].into_iter().any(|offset| {
-                                        offset >= interpreter.memory.len() as u64
+                                        offset >= interpreter.shared_memory.len() as u64
                                     })
                                 );
 
@@ -519,11 +509,15 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(mapping_slots) = &mut self.mapping_slots {
             mapping::step(mapping_slots, interpreter);
         }
-
-        InstructionResult::Continue
     }
 
-    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[B256], data: &Bytes) {
+    fn log(
+        &mut self,
+        _: &mut EvmContext<'_, DB>,
+        address: &Address,
+        topics: &[B256],
+        data: &Bytes,
+    ) {
         if !self.expected_emits.is_empty() {
             expect::handle_expect_emit(self, address, topics, data);
         }
@@ -540,7 +534,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
     fn call(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         call: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
         let gas = Gas::new(call.gas_limit);
@@ -694,7 +688,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
     fn call_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         call: &CallInputs,
         remaining_gas: Gas,
         status: InstructionResult,
@@ -891,7 +885,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
     fn create(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         call: &mut CreateInputs,
     ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         let gas = Gas::new(call.gas_limit);
@@ -970,7 +964,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
     fn create_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         _: &CreateInputs,
         status: InstructionResult,
         address: Option<Address>,
@@ -1046,17 +1040,17 @@ fn disallowed_mem_write(
 /// Expands memory, stores a revert string, and sets the return range to the revert
 /// string's location in memory.
 fn mstore_revert_string(interpreter: &mut Interpreter, bytes: &[u8]) {
-    let starting_offset = interpreter.memory.len();
-    interpreter.memory.resize(starting_offset + bytes.len());
-    interpreter.memory.set_data(starting_offset, 0, bytes.len(), bytes);
+    let starting_offset = interpreter.shared_memory.len();
+    interpreter.shared_memory.resize(starting_offset + bytes.len());
+    interpreter.shared_memory.set_data(starting_offset, 0, bytes.len(), bytes);
     interpreter.return_offset = starting_offset;
-    interpreter.return_len = interpreter.memory.len() - starting_offset
+    interpreter.return_len = interpreter.shared_memory.len() - starting_offset
 }
 
 fn process_create<DB: DatabaseExt>(
     broadcast_sender: Address,
     bytecode: Bytes,
-    data: &mut EVMData<'_, DB>,
+    data: &mut EvmContext<'_, DB>,
     call: &mut CreateInputs,
 ) -> Result<(Bytes, Option<Address>, u64), DB::Error> {
     match call.scheme {
@@ -1094,7 +1088,10 @@ fn process_create<DB: DatabaseExt>(
 
 // Determines if the gas limit on a given call was manually set in the script and should therefore
 // not be overwritten by later estimations
-fn check_if_fixed_gas_limit<DB: DatabaseExt>(data: &EVMData<'_, DB>, call_gas_limit: u64) -> bool {
+fn check_if_fixed_gas_limit<DB: DatabaseExt>(
+    data: &EvmContext<'_, DB>,
+    call_gas_limit: u64,
+) -> bool {
     // If the gas limit was not set in the source code it is set to the estimated gas left at the
     // time of the call, which should be rather close to configured gas limit.
     // TODO: Find a way to reliably make this determination.

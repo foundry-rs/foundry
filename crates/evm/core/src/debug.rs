@@ -114,7 +114,7 @@ pub struct DebugStep {
     /// Stack *prior* to running the associated opcode
     pub stack: Vec<U256>,
     /// Memory *prior* to running the associated opcode
-    pub memory: Vec<u8>,
+    pub memory: SharedMemory,
     /// Opcode to be executed
     pub instruction: Instruction,
     /// Optional bytes that are being pushed onto the stack
@@ -132,7 +132,7 @@ impl Default for DebugStep {
     fn default() -> Self {
         Self {
             stack: vec![],
-            memory: Vec::new(),
+            memory: Default::default(),
             instruction: Instruction::OpCode(revm::interpreter::opcode::INVALID),
             push_bytes: None,
             pc: 0,

@@ -10,7 +10,7 @@ use foundry_evm_core::backend::DatabaseExt;
 use foundry_utils::types::ToAlloy;
 use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
-    EVMData,
+    EvmContext,
 };
 use std::{collections::HashMap, path::Path};
 
@@ -397,7 +397,7 @@ fn read_callers(state: &Cheatcodes, default_sender: &Address) -> Result {
 
 /// Ensures the `Account` is loaded and touched.
 pub(super) fn journaled_account<'a, DB: DatabaseExt>(
-    data: &'a mut EVMData<'_, DB>,
+    data: &'a mut EvmContext<'_, DB>,
     addr: Address,
 ) -> Result<&'a mut Account> {
     data.journaled_state.load_account(addr, data.db)?;

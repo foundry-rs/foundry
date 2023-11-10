@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, Bytes};
 use revm::{
     interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
-    Database, EVMData, Inspector,
+    Database, EvmContext, Inspector,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -11,7 +11,7 @@ pub struct TracePrinter;
 impl<DB: Database> Inspector<DB> for TracePrinter {
     // get opcode by calling `interp.contract.opcode(interp.program_counter())`.
     // all other information can be obtained from interp.
-    fn step(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>) -> InstructionResult {
+    fn step(&mut self, interp: &mut Interpreter, data: &mut EvmContext<'_, DB>) {
         let opcode = interp.current_opcode();
         let opcode_str = opcode::OPCODE_JUMPMAP[opcode as usize];
         let gas_remaining = interp.gas.remaining();
@@ -29,13 +29,11 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
             interp.memory.data().len(),
             hex::encode(interp.memory.data()),
         );
-
-        InstructionResult::Continue
     }
 
     fn call(
         &mut self,
-        _data: &mut EVMData<'_, DB>,
+        _data: &mut EvmContext<'_, DB>,
         inputs: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
         println!(
@@ -51,7 +49,7 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
 
     fn create(
         &mut self,
-        _data: &mut EVMData<'_, DB>,
+        _data: &mut EvmContext<'_, DB>,
         inputs: &mut CreateInputs,
     ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         println!(

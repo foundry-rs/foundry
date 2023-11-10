@@ -12,7 +12,7 @@ use revm::{
         return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, Stack,
     },
     primitives::{BlockEnv, Env},
-    EVMData, Inspector,
+    EvmContext, Inspector,
 };
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -318,7 +318,7 @@ impl InspectorStack {
 
     fn do_call_end<DB: DatabaseExt>(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         call: &CallInputs,
         remaining_gas: Gas,
         status: InstructionResult,
@@ -353,11 +353,7 @@ impl InspectorStack {
 }
 
 impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
-    fn initialize_interp(
-        &mut self,
-        interpreter: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-    ) -> InstructionResult {
+    fn initialize_interp(&mut self, interpreter: &mut Interpreter, data: &mut EvmContext<'_, DB>) {
         call_inspectors!(
             [
                 &mut self.debugger,
@@ -368,23 +364,12 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                let status = inspector.initialize_interp(interpreter, data);
-
-                // Allow inspectors to exit early
-                if status != InstructionResult::Continue {
-                    return status
-                }
+                inspector.initialize_interp(interpreter, data);
             }
         );
-
-        InstructionResult::Continue
     }
 
-    fn step(
-        &mut self,
-        interpreter: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-    ) -> InstructionResult {
+    fn step(&mut self, interpreter: &mut Interpreter, data: &mut EvmContext<'_, DB>) {
         call_inspectors!(
             [
                 &mut self.fuzzer,
@@ -396,21 +381,14 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                let status = inspector.step(interpreter, data);
-
-                // Allow inspectors to exit early
-                if status != InstructionResult::Continue {
-                    return status
-                }
+                inspector.step(interpreter, data);
             }
         );
-
-        InstructionResult::Continue
     }
 
     fn log(
         &mut self,
-        evm_data: &mut EVMData<'_, DB>,
+        evm_data: &mut EvmContext<'_, DB>,
         address: &Address,
         topics: &[B256],
         data: &Bytes,
@@ -423,12 +401,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
         );
     }
 
-    fn step_end(
-        &mut self,
-        interpreter: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-        status: InstructionResult,
-    ) -> InstructionResult {
+    fn step_end(&mut self, interpreter: &mut Interpreter, data: &mut EvmContext<'_, DB>) {
         call_inspectors!(
             [
                 &mut self.debugger,
@@ -439,12 +412,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.chisel_state
             ],
             |inspector| {
-                let status = inspector.step_end(interpreter, data, status);
-
-                // Allow inspectors to exit early
-                if status != InstructionResult::Continue {
-                    return status
-                }
+                inspector.step_end(interpreter, data);
             }
         );
 
@@ -453,7 +421,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
 
     fn call(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         call: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
         call_inspectors!(
@@ -481,7 +449,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
 
     fn call_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         call: &CallInputs,
         remaining_gas: Gas,
         status: InstructionResult,
@@ -503,7 +471,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
 
     fn create(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         call: &mut CreateInputs,
     ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         call_inspectors!(
@@ -530,7 +498,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
 
     fn create_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         call: &CreateInputs,
         status: InstructionResult,
         address: Option<Address>,

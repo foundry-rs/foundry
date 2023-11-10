@@ -4,7 +4,7 @@ use foundry_evm_core::utils;
 use foundry_utils::types::ToEthers;
 use revm::{
     interpreter::{CallInputs, CallScheme, Gas, InstructionResult, Interpreter},
-    Database, EVMData, Inspector,
+    Database, EvmContext, Inspector,
 };
 
 /// An inspector that can fuzz and collect data for that effect.
@@ -20,23 +20,18 @@ pub struct Fuzzer {
 
 impl<DB: Database> Inspector<DB> for Fuzzer {
     #[inline]
-    fn step(
-        &mut self,
-        interpreter: &mut Interpreter,
-        _: &mut EVMData<'_, DB>,
-    ) -> InstructionResult {
+    fn step(&mut self, interpreter: &mut Interpreter, _: &mut EvmContext<'_, DB>) {
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
             self.collect_data(interpreter);
             self.collect = false;
         }
-        InstructionResult::Continue
     }
 
     #[inline]
     fn call(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         call: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
         // We don't want to override the very first call made to the test contract.
@@ -54,7 +49,7 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
     #[inline]
     fn call_end(
         &mut self,
-        _: &mut EVMData<'_, DB>,
+        _: &mut EvmContext<'_, DB>,
         _: &CallInputs,
         remaining_gas: Gas,
         status: InstructionResult,
@@ -82,9 +77,9 @@ impl Fuzzer {
         }
 
         // TODO: disabled for now since it's flooding the dictionary
-        // for index in 0..interpreter.memory.len() / 32 {
+        // for index in 0..interpreter.shared_memory.len() / 32 {
         //     let mut slot = [0u8; 32];
-        //     slot.clone_from_slice(interpreter.memory.get_slice(index * 32, 32));
+        //     slot.clone_from_slice(interpreter.shared_memory.get_slice(index * 32, 32));
 
         //     state.insert(slot);
         // }
