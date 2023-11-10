@@ -9,7 +9,8 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
     interpreter::{
-        return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, Stack,
+        return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter,
+        InterpreterResult, Memory, Stack,
     },
     primitives::{BlockEnv, Env},
     EvmContext, Inspector,
@@ -450,11 +451,8 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
     fn call_end(
         &mut self,
         data: &mut EvmContext<'_, DB>,
-        call: &CallInputs,
-        remaining_gas: Gas,
-        status: InstructionResult,
-        retdata: Bytes,
-    ) -> (InstructionResult, Gas, Bytes) {
+        result: InterpreterResult,
+    ) -> InterpreterResult {
         let res = self.do_call_end(data, call, remaining_gas, status, retdata);
 
         if matches!(res.0, return_revert!()) {
@@ -473,7 +471,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
         &mut self,
         data: &mut EvmContext<'_, DB>,
         call: &mut CreateInputs,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+    ) -> Option<(InterpreterResult, Option<Address>)> {
         call_inspectors!(
             [
                 &mut self.debugger,
@@ -484,27 +482,23 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                let (status, addr, gas, retdata) = inspector.create(data, call);
-
+                let res = inspector.create(data, call);
                 // Allow inspectors to exit early
-                if status != InstructionResult::Continue {
-                    return (status, addr, gas, retdata)
+                if res.is_some() {
+                    return res
                 }
             }
         );
 
-        (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
+        None
     }
 
     fn create_end(
         &mut self,
-        data: &mut EvmContext<'_, DB>,
-        call: &CreateInputs,
-        status: InstructionResult,
+        ctx: &mut EvmContext<'_, DB>,
+        result: InterpreterResult,
         address: Option<Address>,
-        remaining_gas: Gas,
-        retdata: Bytes,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<Address>) {
         call_inspectors!(
             [
                 &mut self.debugger,

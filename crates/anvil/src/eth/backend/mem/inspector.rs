@@ -8,7 +8,9 @@ use foundry_evm::{
     inspectors::{LogCollector, Tracer},
     revm,
     revm::{
-        interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
+        interpreter::{
+            CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, InterpreterResult,
+        },
         primitives::{Address, Bytes, B256},
         EvmContext,
     },
@@ -101,45 +103,39 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     #[inline]
     fn call_end(
         &mut self,
-        data: &mut EvmContext<'_, DB>,
-        inputs: &CallInputs,
-        remaining_gas: Gas,
-        ret: InstructionResult,
-        out: Bytes,
-    ) -> (InstructionResult, Gas, Bytes) {
+        ctx: &mut EvmContext<'_, DB>,
+        result: InterpreterResult,
+    ) -> InterpreterResult {
         call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.call_end(data, inputs, remaining_gas, ret, out.clone());
+            inspector.call_end(ctx, result.clone());
         });
-        (ret, remaining_gas, out)
+        result
     }
 
     #[inline]
     fn create(
         &mut self,
-        data: &mut EvmContext<'_, DB>,
-        call: &mut CreateInputs,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+        ctx: &mut EvmContext<'_, DB>,
+        inputs: &mut CreateInputs,
+    ) -> Option<(InterpreterResult, Option<Address>)> {
         call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.create(data, call);
+            inspector.create(ctx, inputs);
         });
 
-        (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
+        None
     }
 
     #[inline]
     fn create_end(
         &mut self,
-        data: &mut EvmContext<'_, DB>,
-        inputs: &CreateInputs,
-        status: InstructionResult,
+        ctx: &mut EvmContext<'_, DB>,
+        result: InterpreterResult,
         address: Option<Address>,
-        gas: Gas,
-        retdata: Bytes,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<Address>) {
         call_inspectors!([&mut self.tracer], |inspector| {
-            inspector.create_end(data, inputs, status, address, gas, retdata.clone());
+            inspector.create_end(ctx, result.clone(), address);
         });
-        (status, address, gas, retdata)
+        (status, address)
     }
 }
 

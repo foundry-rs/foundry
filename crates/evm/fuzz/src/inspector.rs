@@ -3,7 +3,7 @@ use alloy_primitives::Bytes;
 use foundry_evm_core::utils;
 use foundry_utils::types::ToEthers;
 use revm::{
-    interpreter::{CallInputs, CallScheme, Gas, InstructionResult, Interpreter},
+    interpreter::{CallInputs, CallScheme, Gas, InstructionResult, Interpreter, InterpreterResult},
     Database, EvmContext, Inspector,
 };
 
@@ -49,12 +49,9 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
     #[inline]
     fn call_end(
         &mut self,
-        _: &mut EvmContext<'_, DB>,
-        _: &CallInputs,
-        remaining_gas: Gas,
-        status: InstructionResult,
-        retdata: Bytes,
-    ) -> (InstructionResult, Gas, Bytes) {
+        ctx: &mut EvmContext<'_, DB>,
+        result: InterpreterResult,
+    ) -> InterpreterResult {
         if let Some(ref mut call_generator) = self.call_generator {
             call_generator.used = false;
         }

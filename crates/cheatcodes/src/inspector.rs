@@ -28,7 +28,9 @@ use foundry_evm_core::{
 use foundry_utils::types::ToEthers;
 use itertools::Itertools;
 use revm::{
-    interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
+    interpreter::{
+        opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, InterpreterResult,
+    },
     primitives::{BlockEnv, CreateScheme, TransactTo},
     EvmContext, Inspector,
 };
@@ -689,11 +691,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     fn call_end(
         &mut self,
         data: &mut EvmContext<'_, DB>,
-        call: &CallInputs,
-        remaining_gas: Gas,
-        status: InstructionResult,
-        retdata: Bytes,
-    ) -> (InstructionResult, Gas, Bytes) {
+        result: InterpreterResult,
+    ) -> InterpreterResult {
         if call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS {
             return (status, remaining_gas, retdata)
         }
@@ -886,8 +885,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     fn create(
         &mut self,
         data: &mut EvmContext<'_, DB>,
-        call: &mut CreateInputs,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+        inputs: &mut CreateInputs,
+    ) -> Option<(InterpreterResult, Option<Address>)> {
         let gas = Gas::new(call.gas_limit);
 
         // allow cheatcodes from the address of the new contract
@@ -964,13 +963,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
     fn create_end(
         &mut self,
-        data: &mut EvmContext<'_, DB>,
-        _: &CreateInputs,
-        status: InstructionResult,
+        ctx: &mut EvmContext<'_, DB>,
+        result: InterpreterResult,
         address: Option<Address>,
-        remaining_gas: Gas,
-        retdata: Bytes,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<Address>) {
         // Clean up pranks
         if let Some(prank) = &self.prank {
             if data.journaled_state.depth() == prank.depth {

@@ -1,6 +1,8 @@
 use alloy_primitives::{Address, Bytes};
 use revm::{
-    interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
+    interpreter::{
+        opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, InterpreterResult,
+    },
     Database, EvmContext, Inspector,
 };
 
@@ -49,9 +51,9 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
 
     fn create(
         &mut self,
-        _data: &mut EvmContext<'_, DB>,
+        ctx: &mut EvmContext<'_, DB>,
         inputs: &mut CreateInputs,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+    ) -> Option<(InterpreterResult, Option<Address>)> {
         println!(
             "CREATE CALL: caller:{}, scheme:{:?}, value:{:?}, init_code:{:?}, gas:{:?}",
             inputs.caller,
@@ -60,6 +62,6 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
             hex::encode(&inputs.init_code),
             inputs.gas_limit
         );
-        (InstructionResult::Continue, None, Gas::new(0), Bytes::new())
+        None
     }
 }

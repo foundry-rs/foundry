@@ -9,7 +9,7 @@ use foundry_evm_core::{
 use revm::{
     interpreter::{
         opcode::{self, spec_opcode_gas},
-        CallInputs, CreateInputs, Gas, InstructionResult, Interpreter,
+        CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, InterpreterResult,
     },
     EvmContext, Inspector,
 };
@@ -107,23 +107,20 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
     #[inline]
     fn call_end(
         &mut self,
-        _: &mut EvmContext<'_, DB>,
-        _: &CallInputs,
-        gas: Gas,
-        status: InstructionResult,
-        retdata: Bytes,
-    ) -> (InstructionResult, Gas, Bytes) {
+        ctx: &mut EvmContext<'_, DB>,
+        result: InterpreterResult,
+    ) -> InterpreterResult {
         self.exit();
 
-        (status, gas, retdata)
+        result
     }
 
     #[inline]
     fn create(
         &mut self,
         data: &mut EvmContext<'_, DB>,
-        call: &mut CreateInputs,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+        inputs: &mut CreateInputs,
+    ) -> Option<(InterpreterResult, Option<Address>)> {
         // TODO: Does this increase gas cost?
         if let Err(err) = data.journaled_state.load_account(call.caller, data.db) {
             let gas = Gas::new(call.gas_limit);
@@ -143,13 +140,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
     #[inline]
     fn create_end(
         &mut self,
-        _: &mut EvmContext<'_, DB>,
-        _: &CreateInputs,
-        status: InstructionResult,
+        ctx: &mut EvmContext<'_, DB>,
+        result: InterpreterResult,
         address: Option<Address>,
-        gas: Gas,
-        retdata: Bytes,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<Address>) {
         self.exit();
 
         (status, address, gas, retdata)

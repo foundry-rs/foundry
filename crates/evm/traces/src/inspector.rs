@@ -9,7 +9,7 @@ use foundry_evm_core::{
 use revm::{
     interpreter::{
         opcode, return_ok, CallInputs, CallScheme, CreateInputs, Gas, InstructionResult,
-        Interpreter,
+        Interpreter, InterpreterResult,
     },
     Database, EvmContext, Inspector, JournalEntry,
 };
@@ -187,11 +187,8 @@ impl<DB: Database> Inspector<DB> for Tracer {
     fn call_end(
         &mut self,
         data: &mut EvmContext<'_, DB>,
-        _inputs: &CallInputs,
-        gas: Gas,
-        status: InstructionResult,
-        retdata: Bytes,
-    ) -> (InstructionResult, Gas, Bytes) {
+        result: InterpreterResult,
+    ) -> InterpreterResult {
         self.fill_trace(
             status,
             gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
@@ -207,7 +204,7 @@ impl<DB: Database> Inspector<DB> for Tracer {
         &mut self,
         data: &mut EvmContext<'_, DB>,
         inputs: &mut CreateInputs,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+    ) -> Option<(InterpreterResult, Option<Address>)> {
         // TODO: Does this increase gas cost?
         let _ = data.journaled_state.load_account(inputs.caller, data.db);
         let nonce = data.journaled_state.account(inputs.caller).info.nonce;
@@ -227,12 +224,9 @@ impl<DB: Database> Inspector<DB> for Tracer {
     fn create_end(
         &mut self,
         data: &mut EvmContext<'_, DB>,
-        _inputs: &CreateInputs,
-        status: InstructionResult,
+        result: InterpreterResult,
         address: Option<Address>,
-        gas: Gas,
-        retdata: Bytes,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<Address>) {
         let code = match address {
             Some(address) => data
                 .journaled_state
