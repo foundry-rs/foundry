@@ -76,7 +76,7 @@ pub fn initialize(target: impl AsRef<Path>) {
     }
 }
 
-/// Clones a remote repository into the specified directory. Fails if the command fails.
+/// Clones a remote repository into the specified directory. Panics if the command fails.
 pub fn clone_remote(repo_url: &str, target_dir: &str) {
     let mut cmd = Command::new("git");
     let status = cmd
