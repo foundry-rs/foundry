@@ -88,7 +88,7 @@ pub fn clone_remote(
             "1",
             "--recursive",
             repo_url,
-            target_dir.as_ref().to_str().expect("Target path for git clone does not exist"),
+            target_dir.as_ref().to_str().unwrap(),
         ])
         .output()
 }

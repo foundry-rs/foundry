@@ -11,6 +11,7 @@ forgetest_external!(
 forgetest_external!(stringutils, "Arachnid/solidity-stringutils");
 forgetest_external!(lootloose, "gakonst/lootloose");
 forgetest_external!(lil_web3, "m1guelpf/lil-web3");
+forgetest_external!(snekmate, "pcaversaccio/snekmate");
 
 // Forking tests
 
