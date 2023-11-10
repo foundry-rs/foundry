@@ -52,23 +52,23 @@ jobs:
 
             # External tests dependencies
             - name: Setup Python
-              if: contains(matrix.name, "external")
+              if: contains(matrix.name, 'external')
               uses: actions/setup-python@v4
               with:
                   python-version: 3.11
             - name: Setup Node.js
-              if: contains(matrix.name, "external")
+              if: contains(matrix.name, 'external')
               uses: actions/setup-node@v4
               with:
                   node-version: 20
             - name: Install pnpm
-              if: contains(matrix.name, "external")
+              if: contains(matrix.name, 'external')
               uses: pnpm/action-setup@v2
               with:
                   version: latest
                   run_install: false
             - name: Install Vyper
-              if: contains(matrix.name, "external")
+              if: contains(matrix.name, 'external')
               run: pip install vyper
 
             - name: Forge RPC cache
