@@ -123,7 +123,7 @@ impl Tracer {
         step.gas_cost = step.gas - interp.gas.remaining();
 
         // Error codes only
-        if interp.instruction_result as u8 > InstructionResult::OutOfGas as u8 {
+        if interp.instruction_result.is_error() {
             step.error = Some(format!("{:?}", interp.instruction_result));
         }
     }
