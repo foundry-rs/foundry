@@ -122,7 +122,7 @@ impl ClientFork {
         self.config.read().base_fee
     }
 
-    pub fn block_hash(&self) -> H256 {
+    pub fn block_hash_ref(&self) -> H256 {
         self.config.read().block_hash
     }
 

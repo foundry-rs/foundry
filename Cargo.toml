@@ -205,3 +205,6 @@ alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/" }
 alloy-primitives = { git = "https://github.com/alloy-rs/core/" }
 alloy-json-abi = { git = "https://github.com/alloy-rs/core/" }
 alloy-sol-types = { git = "https://github.com/alloy-rs/core/" }
+
+revm = { git = "https://github.com/bluealloy/revm", rev = "e17c529e51de83c938e606d7c79776fcc1a6381f" }
+revm-primitives = { git = "https://github.com/bluealloy/revm", rev = "e17c529e51de83c938e606d7c79776fcc1a6381f" }

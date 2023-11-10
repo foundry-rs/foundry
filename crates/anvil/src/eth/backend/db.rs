@@ -136,7 +136,7 @@ pub trait Db:
     /// Deserialize and add all chain data to the backend storage
     fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
         for (addr, account) in state.accounts.into_iter() {
-            let old_account_nonce = DatabaseRef::basic(self, addr.to_alloy())
+            let old_account_nonce = DatabaseRef::basic_ref(self, addr.to_alloy())
                 .ok()
                 .and_then(|acc| acc.map(|acc| acc.nonce))
                 .unwrap_or_default();
@@ -288,19 +288,19 @@ impl StateDb {
 
 impl DatabaseRef for StateDb {
     type Error = DatabaseError;
-    fn basic(&self, address: B160) -> DatabaseResult<Option<AccountInfo>> {
+    fn basic_ref(&self, address: B160) -> DatabaseResult<Option<AccountInfo>> {
         self.0.basic(address)
     }
 
-    fn code_by_hash(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
+    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
         self.0.code_by_hash(code_hash)
     }
 
-    fn storage(&self, address: B160, index: rU256) -> DatabaseResult<rU256> {
+    fn storage_ref(&self, address: B160, index: rU256) -> DatabaseResult<rU256> {
         self.0.storage(address, index)
     }
 
-    fn block_hash(&self, number: rU256) -> DatabaseResult<B256> {
+    fn block_hash_ref(&self, number: rU256) -> DatabaseResult<B256> {
         self.0.block_hash(number)
     }
 }
