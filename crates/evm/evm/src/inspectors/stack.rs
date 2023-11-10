@@ -369,6 +369,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
 
                 // Allow inspectors to exit early
                 if interpreter.instruction_result != InstructionResult::Continue {
+                    #[allow(clippy::needless_return)]
                     return
                 }
             }
@@ -391,6 +392,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
 
                 // Allow inspectors to exit early
                 if interpreter.instruction_result != InstructionResult::Continue {
+                    #[allow(clippy::needless_return)]
                     return
                 }
             }
@@ -427,6 +429,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
 
                 // Allow inspectors to exit early
                 if interpreter.instruction_result != InstructionResult::Continue {
+                    #[allow(clippy::needless_return)]
                     return
                 }
             }
@@ -452,6 +455,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 let (status, gas, retdata) = inspector.call(data, call);
 
                 // Allow inspectors to exit early
+                #[allow(clippy::needless_return)]
                 if status != InstructionResult::Continue {
                     return (status, gas, retdata)
                 }
