@@ -806,7 +806,7 @@ forgetest!(
             dss_exec_lib,
             "-vvv",
         ]);
-        cmd.print_output();
+        cmd.assert_non_empty_stdout();
     }
 );
 
@@ -1176,21 +1176,18 @@ contract ContractThreeTest is DSTest {
     cmd.forge_fuse();
     let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
-    // cmd.arg("test").arg("--gas-report").print_output();
 
     cmd.forge_fuse();
     prj.write_config(Config { gas_reports: (vec![]), ..Default::default() });
     cmd.forge_fuse();
     let second_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(second_out.contains("foo") && second_out.contains("bar") && second_out.contains("baz"));
-    // cmd.arg("test").arg("--gas-report").print_output();
 
     cmd.forge_fuse();
     prj.write_config(Config { gas_reports: (vec!["*".to_string()]), ..Default::default() });
     cmd.forge_fuse();
     let third_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
-    // cmd.arg("test").arg("--gas-report").print_output();
 
     cmd.forge_fuse();
     prj.write_config(Config {
@@ -1204,7 +1201,6 @@ contract ContractThreeTest is DSTest {
     cmd.forge_fuse();
     let fourth_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(fourth_out.contains("foo") && fourth_out.contains("bar") && fourth_out.contains("baz"));
-    // cmd.arg("test").arg("--gas-report").print_output();
 });
 
 forgetest!(gas_report_some_contracts, |prj, cmd| {
@@ -1309,7 +1305,6 @@ contract ContractThreeTest is DSTest {
     cmd.forge_fuse();
     let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(first_out.contains("foo") && !first_out.contains("bar") && !first_out.contains("baz"));
-    // cmd.arg("test").arg("--gas-report").print_output();
 
     // report for Two
     cmd.forge_fuse();
@@ -1322,7 +1317,6 @@ contract ContractThreeTest is DSTest {
     assert!(
         !second_out.contains("foo") && second_out.contains("bar") && !second_out.contains("baz")
     );
-    // cmd.arg("test").arg("--gas-report").print_output();
 
     // report for Three
     cmd.forge_fuse();
@@ -1333,7 +1327,6 @@ contract ContractThreeTest is DSTest {
     cmd.forge_fuse();
     let third_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(!third_out.contains("foo") && !third_out.contains("bar") && third_out.contains("baz"));
-    // cmd.arg("test").arg("--gas-report").print_output();
 });
 
 forgetest!(gas_ignore_some_contracts, |prj, cmd| {
@@ -1438,7 +1431,6 @@ contract ContractThreeTest is DSTest {
     cmd.forge_fuse();
     let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(!first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
-    // cmd.arg("test").arg("--gas-report").print_output();
 
     // ignore ContractTwo
     cmd.forge_fuse();
@@ -1452,7 +1444,6 @@ contract ContractThreeTest is DSTest {
     assert!(
         second_out.contains("foo") && !second_out.contains("bar") && second_out.contains("baz")
     );
-    // cmd.arg("test").arg("--gas-report").print_output();
 
     // ignore ContractThree
     cmd.forge_fuse();

@@ -34,23 +34,7 @@ impl FlattenArgs {
         let FlattenArgs { target_path, output, project_paths } = self;
 
         // flatten is a subset of `BuildArgs` so we can reuse that to get the config
-        let build_args = CoreBuildArgs {
-            project_paths,
-            out_path: Default::default(),
-            compiler: Default::default(),
-            ignored_error_codes: vec![],
-            deny_warnings: false,
-            no_auto_detect: false,
-            use_solc: None,
-            offline: false,
-            force: false,
-            libraries: vec![],
-            via_ir: false,
-            revert_strings: None,
-            silent: false,
-            build_info: false,
-            build_info_path: None,
-        };
+        let build_args = CoreBuildArgs { project_paths, ..Default::default() };
 
         let config = build_args.try_load_config_emit_warnings()?;
 

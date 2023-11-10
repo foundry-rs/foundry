@@ -11,6 +11,13 @@ forgetest_external!(
 forgetest_external!(stringutils, "Arachnid/solidity-stringutils");
 forgetest_external!(lootloose, "gakonst/lootloose");
 forgetest_external!(lil_web3, "m1guelpf/lil-web3");
+forgetest_external!(
+    // https://github.com/foundry-rs/foundry/pull/6280
+    // `run: pnpm --version` is ok, `Command::new("pnpm")` isn't. Good job Windows.
+    #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
+    snekmate,
+    "pcaversaccio/snekmate"
+);
 
 // Forking tests
 
