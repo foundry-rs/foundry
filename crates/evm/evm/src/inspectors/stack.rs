@@ -366,6 +366,11 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
             ],
             |inspector| {
                 inspector.initialize_interp(interpreter, data);
+
+                // Allow inspectors to exit early
+                if interpreter.instruction_result != InstructionResult::Continue {
+                    return
+                }
             }
         );
     }
@@ -383,6 +388,11 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
             ],
             |inspector| {
                 inspector.step(interpreter, data);
+
+                // Allow inspectors to exit early
+                if interpreter.instruction_result != InstructionResult::Continue {
+                    return
+                }
             }
         );
     }
@@ -414,6 +424,11 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
             ],
             |inspector| {
                 inspector.step_end(interpreter, data);
+
+                // Allow inspectors to exit early
+                if interpreter.instruction_result != InstructionResult::Continue {
+                    return
+                }
             }
         );
     }
