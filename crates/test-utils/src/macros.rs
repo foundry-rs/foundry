@@ -147,24 +147,10 @@ macro_rules! forgetest_external {
             prj.wipe();
 
             // Clone the external repository
-            let git_clone =
-                $crate::util::clone_remote(&format!("https://github.com/{}", $repo), prj.root())
-                    .expect("Could not clone repository. Is git installed?");
-            assert!(
-                git_clone.status.success(),
-                "could not clone repository:\n\nstdout:\n{}\n\nstderr:\n{}",
-                String::from_utf8_lossy(&git_clone.stdout),
-                String::from_utf8_lossy(&git_clone.stderr)
-            );
+            $crate::util::clone_remote(concat!("https://github.com/", $repo), prj.root().to_str().unwrap());
 
-            // We just run make install, but we do not care if it worked or not,
-            // since some repositories do not have that target
-            let make_install = Command::new("make")
-                .arg("install")
-                .current_dir(prj.root())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+            // Run common installation commands
+            $crate::util::run_install_commands(prj.root());
 
             // Run the tests
             cmd.arg("test").args($forge_opts).args([
