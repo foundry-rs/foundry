@@ -152,7 +152,7 @@ macro_rules! forgetest_external {
                     .expect("Could not clone repository. Is git installed?");
             assert!(
                 git_clone.status.success(),
-                "could not clone repository:\nstdout:\n{}\nstderr:\n{}",
+                "could not clone repository:\n\nstdout:\n{}\n\nstderr:\n{}",
                 String::from_utf8_lossy(&git_clone.stdout),
                 String::from_utf8_lossy(&git_clone.stderr)
             );
@@ -172,6 +172,7 @@ macro_rules! forgetest_external {
                 "--optimizer-runs",
                 "20000",
                 "--ffi",
+                "-vvvvv",
             ]);
             cmd.set_env("FOUNDRY_FUZZ_RUNS", "1");
 
