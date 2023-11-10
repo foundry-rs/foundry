@@ -96,13 +96,10 @@ pub fn run_install_commands(root: &Path) {
     let contains = |path: &str| root_files.iter().any(|p| p.to_str().unwrap().contains(path));
     let run = |args: &[&str]| {
         let mut cmd = Command::new(args[0]);
-        cmd.args(&args[1..]);
+        cmd.args(&args[1..]).current_dir(root);
         eprintln!("cd {}; {cmd:?}", root.display());
-        let prev = std::env::current_dir().unwrap();
-        env::set_current_dir(root).unwrap();
         let st = cmd.status().unwrap();
         eprintln!("\n\n{cmd:?}: {st:?}");
-        env::set_current_dir(prev).unwrap();
     };
     let maybe_run = |path: &str, args: &[&str]| {
         let c = contains(path);
