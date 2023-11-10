@@ -98,6 +98,9 @@ pub fn run_install_commands(root: &Path) {
         let mut cmd = Command::new(args[0]);
         cmd.args(&args[1..]).current_dir(root);
         eprintln!("cd {}; {cmd:?}", root.display());
+        #[cfg(windows)]
+        let st = cmd.status();
+        #[cfg(not(windows))]
         let st = cmd.status().unwrap();
         eprintln!("\n\n{cmd:?}: {st:?}");
     };
