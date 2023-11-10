@@ -15,17 +15,17 @@ foundry-cheatcodes.workspace = true
 foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
-foundry-evm-coverage.workspace = true
 foundry-evm-core.workspace = true
+foundry-evm-coverage.workspace = true
 foundry-evm-fuzz.workspace = true
 foundry-evm-traces.workspace = true
 foundry-macros.workspace = true
 foundry-utils.workspace = true
 
-alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
-ethers = { workspace = true, features = ["ethers-solc"] }
+alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-sol-types.workspace = true
 hashbrown = { version = "0.14", features = ["serde"] }
 revm = { workspace = true, default-features = false, features = [
     "std",
@@ -36,6 +36,9 @@ revm = { workspace = true, default-features = false, features = [
     "optional_no_base_fee",
     "arbitrary",
 ] }
+
+ethers-core.workspace = true
+ethers-signers.workspace = true
 
 eyre = "0.6"
 hex.workspace = true

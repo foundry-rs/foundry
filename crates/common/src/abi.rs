@@ -3,9 +3,9 @@
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{AbiItem, Event, Function};
 use alloy_primitives::{hex, Address, Log};
-use ethers_core::types::Chain;
 use eyre::{ContextCompat, Result};
 use foundry_block_explorers::{contract::ContractMetadata, errors::EtherscanError, Client};
+use foundry_config::NamedChain;
 use std::{future::Future, pin::Pin};
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
@@ -132,7 +132,7 @@ pub async fn get_func_etherscan(
     function_name: &str,
     contract: Address,
     args: &[String],
-    chain: Chain,
+    chain: NamedChain,
     etherscan_api_key: &str,
 ) -> Result<Function> {
     let client = Client::new(chain, etherscan_api_key)?;

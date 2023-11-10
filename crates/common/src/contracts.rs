@@ -1,4 +1,4 @@
-//! commonly used contract types and functions
+//! Commonly used contract types and functions.
 
 use alloy_json_abi::{Event, Function, JsonAbi as Abi};
 use alloy_primitives::{hex, Address, B256};
@@ -224,11 +224,11 @@ pub fn compact_to_contract(
     contract: CompactContractBytecode,
 ) -> eyre::Result<ContractBytecodeSome> {
     Ok(ContractBytecodeSome {
-        abi: contract.abi.ok_or(eyre::eyre!("No contract abi"))?,
-        bytecode: contract.bytecode.ok_or(eyre::eyre!("No contract bytecode"))?.into(),
+        abi: contract.abi.ok_or_else(|| eyre::eyre!("No contract abi"))?,
+        bytecode: contract.bytecode.ok_or_else(|| eyre::eyre!("No contract bytecode"))?.into(),
         deployed_bytecode: contract
             .deployed_bytecode
-            .ok_or(eyre::eyre!("No contract deployed bytecode"))?
+            .ok_or_else(|| eyre::eyre!("No contract deployed bytecode"))?
             .into(),
     })
 }
@@ -236,7 +236,7 @@ pub fn compact_to_contract(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers_core::{abi, abi::ParamType};
+    use alloy_dyn_abi::DynSolType;
 
     // <https://github.com/foundry-rs/foundry/issues/3053>
     #[test]
@@ -247,15 +247,14 @@ mod tests {
 
         let args = find_constructor_args(&code).unwrap();
 
-        let params = vec![
-            ParamType::Address,
-            ParamType::Uint(256),
-            ParamType::Int(256),
-            ParamType::FixedBytes(32),
-            ParamType::Bool,
-        ];
-
-        let _decoded = abi::decode(&params, args).unwrap();
+        let params = DynSolType::Tuple(vec![
+            DynSolType::Address,
+            DynSolType::Uint(256),
+            DynSolType::Int(256),
+            DynSolType::FixedBytes(32),
+            DynSolType::Bool,
+        ]);
+        let _decoded = params.abi_decode_params(args).unwrap();
     }
 
     #[test]
@@ -266,16 +265,15 @@ mod tests {
 
         let args = find_constructor_args(&code).unwrap();
 
-        let params = vec![
-            ParamType::Address,
-            ParamType::Uint(256),
-            ParamType::Int(256),
-            ParamType::FixedBytes(32),
-            ParamType::Bool,
-            ParamType::Bytes,
-            ParamType::String,
-        ];
-
-        let _decoded = abi::decode(&params, args).unwrap();
+        let params = DynSolType::Tuple(vec![
+            DynSolType::Address,
+            DynSolType::Uint(256),
+            DynSolType::Int(256),
+            DynSolType::FixedBytes(32),
+            DynSolType::Bool,
+            DynSolType::Bytes,
+            DynSolType::String,
+        ]);
+        let _decoded = params.abi_decode_params(args).unwrap();
     }
 }

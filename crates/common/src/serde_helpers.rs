@@ -1,9 +1,8 @@
-//! Misc serde helpers for foundry crates.
-
-use std::str::FromStr;
+//! Misc Serde helpers for foundry crates.
 
 use alloy_primitives::U256;
 use serde::Deserialize;
+use std::str::FromStr;
 
 /// Helper type to parse both `u64` and `U256`
 #[derive(Copy, Clone, Deserialize)]

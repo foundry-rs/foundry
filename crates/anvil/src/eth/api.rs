@@ -1,3 +1,4 @@
+use super::{backend::mem::BlockRequest, sign::build_typed_transaction};
 use crate::{
     eth::{
         backend,
@@ -74,8 +75,6 @@ use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
 use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
 use tracing::{trace, warn};
-
-use super::{backend::mem::BlockRequest, sign::build_typed_transaction};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));

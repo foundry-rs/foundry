@@ -8,7 +8,7 @@ use crate::cmd::{
     verify::provider::VerificationProviderType,
 };
 use alloy_primitives::{Address, TxHash};
-use ethers::{prelude::TransactionReceipt, types::transaction::eip2718::TypedTransaction};
+use ethers_core::types::{transaction::eip2718::TypedTransaction, TransactionReceipt};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_cli::utils::now;
 use foundry_common::{fs, shell, SELECTOR_LEN};

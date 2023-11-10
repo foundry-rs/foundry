@@ -1,10 +1,10 @@
 use crate::U256;
 use alloy_primitives::U64;
-use ethers_core::types::Chain as NamedChain;
 use eyre::Result;
-use open_fastrlp::{Decodable, Encodable};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{fmt, str::FromStr};
+
+pub use ethers_core::types::Chain as NamedChain;
 
 /// Either a named or chain id or the actual id value
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -147,27 +147,6 @@ impl<'de> Deserialize<'de> for Chain {
                 Ok(NamedChain::try_from(id).map(Chain::Named).unwrap_or_else(|_| Chain::Id(id)))
             }
         }
-    }
-}
-
-impl Encodable for Chain {
-    fn length(&self) -> usize {
-        match self {
-            Self::Named(chain) => u64::from(*chain).length(),
-            Self::Id(id) => id.length(),
-        }
-    }
-    fn encode(&self, out: &mut dyn open_fastrlp::BufMut) {
-        match self {
-            Self::Named(chain) => u64::from(*chain).encode(out),
-            Self::Id(id) => id.encode(out),
-        }
-    }
-}
-
-impl Decodable for Chain {
-    fn decode(buf: &mut &[u8]) -> Result<Self, open_fastrlp::DecodeError> {
-        Ok(u64::decode(buf)?.into())
     }
 }
 

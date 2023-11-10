@@ -1,6 +1,7 @@
 use super::sequence::ScriptSequence;
 use alloy_primitives::TxHash;
-use ethers::{prelude::PendingTransaction, providers::Middleware, types::TransactionReceipt};
+use ethers_core::types::TransactionReceipt;
+use ethers_providers::{Middleware, PendingTransaction};
 use eyre::Result;
 use foundry_cli::{init_progress, update_progress, utils::print_receipt};
 use foundry_common::RetryProvider;

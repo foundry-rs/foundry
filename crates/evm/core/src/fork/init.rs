@@ -1,9 +1,7 @@
 use crate::utils::apply_chain_and_block_specific_env_changes;
 use alloy_primitives::{Address, U256};
-use ethers::{
-    providers::Middleware,
-    types::{Block, TxHash},
-};
+use ethers_core::types::{Block, TxHash};
+use ethers_providers::Middleware;
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
 use foundry_utils::types::ToAlloy;

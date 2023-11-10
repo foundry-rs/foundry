@@ -408,10 +408,11 @@ impl EtherscanVerificationProvider {
             let (_, _, contract) = self.cache_entry(project, &args.contract.name).wrap_err(
                 "Cache must be enabled in order to use the `--constructor-args-path` option",
             )?;
-            let abi = contract.abi.as_ref().ok_or(eyre!("Can't find ABI in cached artifact."))?;
+            let abi =
+                contract.abi.as_ref().ok_or_else(|| eyre!("Can't find ABI in cached artifact."))?;
             let constructor = abi
                 .constructor()
-                .ok_or(eyre!("Can't retrieve constructor info from artifact ABI."))?;
+                .ok_or_else(|| eyre!("Can't retrieve constructor info from artifact ABI."))?;
             #[allow(deprecated)]
             let func = Function {
                 name: "constructor".to_string(),

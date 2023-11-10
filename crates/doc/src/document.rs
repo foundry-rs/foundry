@@ -1,6 +1,5 @@
-use std::{collections::HashMap, path::PathBuf, sync::Mutex};
-
 use crate::{ParseItem, PreprocessorId, PreprocessorOutput};
+use std::{collections::HashMap, path::PathBuf, sync::Mutex};
 
 /// The wrapper around the [ParseItem] containing additional
 /// information the original item and extra context for outputting it.

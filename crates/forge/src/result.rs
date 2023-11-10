@@ -1,7 +1,7 @@
 //! test outcomes
 
 use alloy_primitives::Address;
-use ethers::prelude::Log;
+use ethers_core::types::Log;
 use foundry_common::evm::Breakpoints;
 use foundry_evm::{
     coverage::HitMaps,

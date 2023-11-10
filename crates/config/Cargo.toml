@@ -11,45 +11,37 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-# eth
-ethers-core.workspace = true
+foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
+foundry-compilers = { workspace = true, features = ["async", "svm-solc"] }
+
 alloy-primitives = { workspace = true, features = ["std", "serde"] }
 revm-primitives = { workspace = true, default-features = false, features = ["std"] }
 
-foundry-compilers = { workspace = true, features = ["async", "svm-solc"] }
-foundry-block-explorers = { workspace = true, features = ["foundry-compilers"]}
+ethers-core.workspace = true
 
-# formats
-Inflector = "0.11"
-figment = { version = "0.10", features = ["toml", "env"] }
-number_prefix = "0.4"
-serde.workspace = true
-serde_regex = "1"
-serde_json.workspace = true
-toml = { version = "0.8", features = ["preserve_order"] }
-toml_edit = "0.20"
-
-# dirs
 dirs-next = "2"
-globset = "0.4"
-walkdir = "2"
-
-# encoding
-open-fastrlp = "0.1"
-
-# misc
 eyre.workspace = true
-regex = "1"
-semver = { version = "1", features = ["serde"] }
-tracing.workspace = true
+figment = { version = "0.10", features = ["toml", "env"] }
+globset = "0.4"
+Inflector = "0.11"
+number_prefix = "0.4"
 once_cell = "1"
-thiserror = "1"
+regex = "1"
 reqwest = { version = "0.11", default-features = false }
+semver = { version = "1", features = ["serde"] }
+serde_json.workspace = true
+serde_regex = "1"
+serde.workspace = true
+thiserror = "1"
+toml = { version = "0.8", features = ["preserve_order"] }
+toml_edit = "0.21"
+tracing.workspace = true
+walkdir = "2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 path-slash = "0.2.1"
 
 [dev-dependencies]
-pretty_assertions = "1"
+pretty_assertions.workspace = true
 figment = { version = "0.10", features = ["test"] }
 tempfile = "3"

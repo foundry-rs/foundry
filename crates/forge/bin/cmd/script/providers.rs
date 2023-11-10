@@ -1,5 +1,5 @@
 use alloy_primitives::U256;
-use ethers::prelude::{Middleware, Provider};
+use ethers_providers::{Middleware, Provider};
 use eyre::{Result, WrapErr};
 use foundry_common::{get_http_provider, runtime_client::RuntimeClient, RpcUrl};
 use foundry_config::Chain;

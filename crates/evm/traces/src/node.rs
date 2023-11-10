@@ -1,5 +1,5 @@
 use crate::{CallTrace, LogCallOrder, TraceLog};
-use ethers::types::{Action, Call, CallResult, Create, CreateResult, Res, Suicide};
+use ethers_core::types::{Action, Call, CallResult, Create, CreateResult, Res, Suicide};
 use foundry_evm_core::utils::CallKind;
 use foundry_utils::types::ToEthers;
 use revm::interpreter::InstructionResult;

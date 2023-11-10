@@ -1,5 +1,6 @@
 //! general eth api tests
 
+use crate::abi::{MulticallContract, SimpleStorage};
 use anvil::{
     eth::{api::CLIENT_VERSION, EthApi},
     spawn, NodeConfig, CHAIN_ID,
@@ -13,8 +14,6 @@ use ethers::{
     utils::get_contract_address,
 };
 use std::{collections::HashMap, sync::Arc, time::Duration};
-
-use crate::abi::{MulticallContract, SimpleStorage};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_block_number() {

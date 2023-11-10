@@ -1,4 +1,4 @@
-//! commonly used calculations
+//! Commonly used calculations.
 
 use alloy_primitives::U256;
 use std::ops::Div;

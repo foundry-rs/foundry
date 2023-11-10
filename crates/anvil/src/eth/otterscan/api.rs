@@ -1,19 +1,17 @@
+use super::types::{
+    OtsBlockDetails, OtsBlockTransactions, OtsContractCreator, OtsInternalOperation,
+    OtsSearchTransactions, OtsTrace,
+};
 use crate::eth::{
     error::{BlockchainError, Result},
     macros::node_info,
     EthApi,
 };
-
 use ethers::types::{
     Action, Address, Block, BlockId, BlockNumber, Bytes, Call, Create, CreateResult, Res, Reward,
     Transaction, TxHash, H256, U256, U64,
 };
 use itertools::Itertools;
-
-use super::types::{
-    OtsBlockDetails, OtsBlockTransactions, OtsContractCreator, OtsInternalOperation,
-    OtsSearchTransactions, OtsTrace,
-};
 
 impl EthApi {
     /// Otterscan currently requires this endpoint, even though it's not part of the ots_*

@@ -1,9 +1,7 @@
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::{
-    providers::Middleware,
-    types::{BlockId, NameOrAddress},
-};
+use ethers_core::types::{BlockId, NameOrAddress};
+use ethers_providers::Middleware;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},

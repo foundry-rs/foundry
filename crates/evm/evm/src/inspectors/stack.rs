@@ -3,7 +3,8 @@ use super::{
     TracePrinter, Tracer,
 };
 use alloy_primitives::{Address, Bytes, B256, U256};
-use ethers::{signers::LocalWallet, types::Log};
+use ethers_core::types::Log;
+use ethers_signers::LocalWallet;
 use foundry_evm_core::{backend::DatabaseExt, debug::DebugArena};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;

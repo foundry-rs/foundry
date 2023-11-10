@@ -1,9 +1,8 @@
+use crate::{AsDoc, CommentTag, Comments, Deployment, Markdown};
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use solang_parser::pt::Parameter;
 use std::fmt::{self, Display, Write};
-
-use crate::{AsDoc, CommentTag, Comments, Deployment, Markdown};
 
 /// Solidity language name.
 const SOLIDITY: &str = "solidity";
