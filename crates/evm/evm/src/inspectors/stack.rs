@@ -9,7 +9,8 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
     interpreter::{
-        return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, Stack,
+        return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, SharedMemory,
+        Stack,
     },
     primitives::{BlockEnv, Env},
     EVMData, Inspector,
@@ -190,7 +191,7 @@ pub struct InspectorData {
     pub coverage: Option<HitMaps>,
     pub cheatcodes: Option<Cheatcodes>,
     pub script_wallets: Vec<LocalWallet>,
-    pub chisel_state: Option<(Stack, Memory, InstructionResult)>,
+    pub chisel_state: Option<(Stack, SharedMemory, InstructionResult)>,
 }
 
 /// An inspector that calls multiple inspectors in sequence.
@@ -353,11 +354,7 @@ impl InspectorStack {
 }
 
 impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
-    fn initialize_interp(
-        &mut self,
-        interpreter: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-    ) -> InstructionResult {
+    fn initialize_interp(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
         call_inspectors!(
             [
                 &mut self.debugger,
@@ -368,23 +365,12 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                let status = inspector.initialize_interp(interpreter, data);
-
-                // Allow inspectors to exit early
-                if status != InstructionResult::Continue {
-                    return status
-                }
+                inspector.initialize_interp(interpreter, data);
             }
         );
-
-        InstructionResult::Continue
     }
 
-    fn step(
-        &mut self,
-        interpreter: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-    ) -> InstructionResult {
+    fn step(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
         call_inspectors!(
             [
                 &mut self.fuzzer,
@@ -396,16 +382,9 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.printer
             ],
             |inspector| {
-                let status = inspector.step(interpreter, data);
-
-                // Allow inspectors to exit early
-                if status != InstructionResult::Continue {
-                    return status
-                }
+                inspector.step(interpreter, data);
             }
         );
-
-        InstructionResult::Continue
     }
 
     fn log(
@@ -423,12 +402,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
         );
     }
 
-    fn step_end(
-        &mut self,
-        interpreter: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-        status: InstructionResult,
-    ) -> InstructionResult {
+    fn step_end(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
         call_inspectors!(
             [
                 &mut self.debugger,
@@ -439,16 +413,9 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
                 &mut self.chisel_state
             ],
             |inspector| {
-                let status = inspector.step_end(interpreter, data, status);
-
-                // Allow inspectors to exit early
-                if status != InstructionResult::Continue {
-                    return status
-                }
+                inspector.step_end(interpreter, data);
             }
         );
-
-        InstructionResult::Continue
     }
 
     fn call(

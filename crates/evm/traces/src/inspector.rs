@@ -74,7 +74,7 @@ impl Tracer {
         }
     }
 
-    fn start_step<DB: Database>(&mut self, interp: &Interpreter, data: &EVMData<'_, DB>) {
+    fn start_step<DB: Database>(&mut self, interp: &Interpreter<'_>, data: &EVMData<'_, DB>) {
         let trace_idx =
             *self.trace_stack.last().expect("can't start step without starting a trace first");
         let node = &mut self.traces.arena[trace_idx];
@@ -87,7 +87,7 @@ impl Tracer {
             op: OpCode(interp.current_opcode()),
             contract: interp.contract.address,
             stack: interp.stack.clone(),
-            memory: interp.memory.clone(),
+            memory: interp.shared_memory.clone(),
             gas: interp.gas.remaining(),
             gas_refund_counter: interp.gas.refunded() as u64,
             gas_cost: 0,
@@ -96,12 +96,7 @@ impl Tracer {
         });
     }
 
-    fn fill_step<DB: Database>(
-        &mut self,
-        interp: &Interpreter,
-        data: &EVMData<'_, DB>,
-        status: InstructionResult,
-    ) {
+    fn fill_step<DB: Database>(&mut self, interp: &Interpreter<'_>, data: &EVMData<'_, DB>) {
         let (trace_idx, step_idx) =
             self.step_stack.pop().expect("can't fill step without starting a step first");
         let step = &mut self.traces.arena[trace_idx].trace.steps[step_idx];
@@ -128,32 +123,25 @@ impl Tracer {
         step.gas_cost = step.gas - interp.gas.remaining();
 
         // Error codes only
-        if status as u8 > InstructionResult::OutOfGas as u8 {
-            step.error = Some(format!("{status:?}"));
+        if interp.instruction_result as u8 > InstructionResult::OutOfGas as u8 {
+            step.error = Some(format!("{:?}", interp.instruction_result));
         }
     }
 }
 
 impl<DB: Database> Inspector<DB> for Tracer {
     #[inline]
-    fn step(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>) -> InstructionResult {
+    fn step(&mut self, interp: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
         if self.record_steps {
             self.start_step(interp, data);
         }
-        InstructionResult::Continue
     }
 
     #[inline]
-    fn step_end(
-        &mut self,
-        interp: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-        status: InstructionResult,
-    ) -> InstructionResult {
+    fn step_end(&mut self, interp: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
         if self.record_steps {
-            self.fill_step(interp, data, status);
+            self.fill_step(interp, data);
         }
-        status
     }
 
     #[inline]

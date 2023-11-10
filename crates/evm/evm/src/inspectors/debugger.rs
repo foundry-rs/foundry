@@ -45,11 +45,7 @@ impl Debugger {
 
 impl<DB: DatabaseExt> Inspector<DB> for Debugger {
     #[inline]
-    fn step(
-        &mut self,
-        interpreter: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-    ) -> InstructionResult {
+    fn step(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
         let pc = interpreter.program_counter();
         let op = interpreter.current_opcode();
 
@@ -77,13 +73,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         self.arena.arena[self.head].steps.push(DebugStep {
             pc,
             stack: interpreter.stack().data().clone(),
-            memory: interpreter.memory.clone(),
+            memory: interpreter.shared_memory.clone(),
             instruction: Instruction::OpCode(op),
             push_bytes,
             total_gas_used,
         });
-
-        InstructionResult::Continue
     }
 
     #[inline]

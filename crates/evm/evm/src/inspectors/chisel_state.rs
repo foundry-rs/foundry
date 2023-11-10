@@ -1,5 +1,5 @@
 use revm::{
-    interpreter::{InstructionResult, Interpreter, Memory, Stack},
+    interpreter::{InstructionResult, Interpreter, SharedMemory, Stack},
     Database, Inspector,
 };
 
@@ -9,7 +9,7 @@ pub struct ChiselState {
     /// The PC of the final instruction
     pub final_pc: usize,
     /// The final state of the REPL contract call
-    pub state: Option<(Stack, Memory, InstructionResult)>,
+    pub state: Option<(Stack, SharedMemory, InstructionResult)>,
 }
 
 impl ChiselState {
@@ -22,18 +22,15 @@ impl ChiselState {
 
 impl<DB: Database> Inspector<DB> for ChiselState {
     #[inline]
-    fn step_end(
-        &mut self,
-        interp: &mut Interpreter,
-        _: &mut revm::EVMData<'_, DB>,
-        eval: InstructionResult,
-    ) -> InstructionResult {
+    fn step_end(&mut self, interp: &mut Interpreter<'_>, _: &mut revm::EVMData<'_, DB>) {
         // If we are at the final pc of the REPL contract execution, set the state.
         // Subtraction can't overflow because `pc` is always at least 1 in `step_end`.
         if self.final_pc == interp.program_counter() - 1 {
-            self.state = Some((interp.stack().clone(), interp.memory.clone(), eval))
+            self.state = Some((
+                interp.stack().clone(),
+                interp.shared_memory.clone(),
+                interp.instruction_result,
+            ))
         }
-        // Pass on [revm::Return] from arguments
-        eval
     }
 }

@@ -1,6 +1,6 @@
 use crate::utils::CallKind;
 use alloy_primitives::{Address, U256};
-use revm::interpreter::{Memory, OpCode};
+use revm::interpreter::{OpCode, SharedMemory};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 
@@ -114,7 +114,7 @@ pub struct DebugStep {
     /// Stack *prior* to running the associated opcode
     pub stack: Vec<U256>,
     /// Memory *prior* to running the associated opcode
-    pub memory: Memory,
+    pub memory: SharedMemory,
     /// Opcode to be executed
     pub instruction: Instruction,
     /// Optional bytes that are being pushed onto the stack
@@ -132,7 +132,7 @@ impl Default for DebugStep {
     fn default() -> Self {
         Self {
             stack: vec![],
-            memory: Memory::new(),
+            memory: Default::default(),
             instruction: Instruction::OpCode(revm::interpreter::opcode::INVALID),
             push_bytes: None,
             pc: 0,

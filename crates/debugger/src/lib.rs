@@ -917,7 +917,7 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
         let stack_space = Block::default()
             .title(format!("Memory (max expansion: {} bytes)", memory.len()))
             .borders(Borders::ALL);
-        let memory = memory.data();
+        let memory = memory.context_memory();
         let max_i = memory.len() / 32;
         let min_len = format!("{:x}", max_i * 32).len();
 

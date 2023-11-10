@@ -52,7 +52,7 @@ pub struct ChiselResult {
     /// EVM State at the final instruction of the `run()` function
     pub state: Option<(
         revm::interpreter::Stack,
-        revm::interpreter::Memory,
+        revm::interpreter::SharedMemory,
         revm::interpreter::InstructionResult,
     )>,
 }
