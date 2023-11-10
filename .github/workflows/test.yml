@@ -50,9 +50,11 @@ jobs:
                   target: ${{ matrix.target }}
             - uses: taiki-e/install-action@nextest
             - uses: actions/setup-python@v4
+              if: contains(matrix.name, "external")
               with:
                   python-version: "3.11"
             - run: pip install vyper
+              if: contains(matrix.name, "external")
             - name: Forge RPC cache
               uses: actions/cache@v3
               with:
