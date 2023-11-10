@@ -341,7 +341,9 @@ impl InspectorStack {
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                if new_status != status || new_retdata != retdata {
+                if new_status != status ||
+                    (new_status == InstructionResult::Revert && new_retdata != retdata)
+                {
                     return (new_status, new_gas, new_retdata)
                 }
             }
