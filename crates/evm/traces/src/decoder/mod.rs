@@ -431,7 +431,7 @@ impl CallTraceDecoder {
         let &[t0, ..] = raw_log.topics() else { return };
 
         let mut events = Vec::new();
-        let events = match self.events.get(&(t0, raw_log.topics().len())) {
+        let events = match self.events.get(&(t0, raw_log.topics().len() - 1)) {
             Some(es) => es,
             None => {
                 if let Some(identifier) = &self.signature_identifier {
