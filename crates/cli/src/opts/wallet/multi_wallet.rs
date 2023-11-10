@@ -1,9 +1,9 @@
 use super::{WalletSigner, WalletTrait};
 use alloy_primitives::Address;
 use clap::Parser;
-use ethers::{
-    prelude::{Middleware, Signer},
-    signers::{AwsSigner, HDPath as LedgerHDPath, Ledger, LocalWallet, Trezor, TrezorHDPath},
+use ethers_providers::Middleware;
+use ethers_signers::{
+    AwsSigner, HDPath as LedgerHDPath, Ledger, LocalWallet, Signer, Trezor, TrezorHDPath,
 };
 use eyre::{Context, ContextCompat, Result};
 use foundry_common::RetryProvider;

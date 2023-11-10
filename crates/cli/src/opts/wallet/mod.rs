@@ -2,16 +2,13 @@ use crate::opts::error::PrivateKeyError;
 use alloy_primitives::Address;
 use async_trait::async_trait;
 use clap::Parser;
-use ethers::{
-    signers::{
-        coins_bip39::English, AwsSigner, AwsSignerError, HDPath as LedgerHDPath, Ledger,
-        LedgerError, LocalWallet, MnemonicBuilder, Signer, Trezor, TrezorError, TrezorHDPath,
-        WalletError,
-    },
-    types::{
-        transaction::{eip2718::TypedTransaction, eip712::Eip712},
-        Signature,
-    },
+use ethers_core::types::{
+    transaction::{eip2718::TypedTransaction, eip712::Eip712},
+    Signature,
+};
+use ethers_signers::{
+    coins_bip39::English, AwsSigner, AwsSignerError, HDPath as LedgerHDPath, Ledger, LedgerError,
+    LocalWallet, MnemonicBuilder, Signer, Trezor, TrezorError, TrezorHDPath, WalletError,
 };
 use eyre::{bail, Result, WrapErr};
 use foundry_common::fs;
@@ -498,7 +495,7 @@ impl Signer for WalletSigner {
         delegate!(self, inner => inner.sign_typed_data(payload).await.map_err(Into::into))
     }
 
-    fn address(&self) -> ethers::types::Address {
+    fn address(&self) -> ethers_core::types::Address {
         delegate!(self, inner => inner.address())
     }
 
@@ -538,7 +535,7 @@ impl Signer for &WalletSigner {
         (*self).sign_typed_data(payload).await
     }
 
-    fn address(&self) -> ethers::types::Address {
+    fn address(&self) -> ethers_core::types::Address {
         (*self).address()
     }
 

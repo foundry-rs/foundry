@@ -4,10 +4,8 @@
 //! concurrently active pairs at once.
 
 use crate::fork::{BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend};
-use ethers::{
-    providers::Provider,
-    types::{BlockId, BlockNumber},
-};
+use ethers_core::types::{BlockId, BlockNumber};
+use ethers_providers::Provider;
 use foundry_common::{runtime_client::RuntimeClient, ProviderBuilder};
 use foundry_config::Config;
 use foundry_utils::types::ToEthers;

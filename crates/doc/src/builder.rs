@@ -283,7 +283,7 @@ impl DocBuilder {
                 document
                     .target_path
                     .parent()
-                    .ok_or(eyre::format_err!("empty target path; noop"))?,
+                    .ok_or_else(|| eyre::format_err!("empty target path; noop"))?,
             )?;
             fs::write(&document.target_path, document.as_doc()?)?;
         }

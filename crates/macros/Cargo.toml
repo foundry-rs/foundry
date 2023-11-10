@@ -13,5 +13,6 @@ repository.workspace = true
 foundry-macros-impl = { path = "impl" }
 
 ethers-core.workspace = true
+
 serde.workspace = true
 serde_json.workspace = true

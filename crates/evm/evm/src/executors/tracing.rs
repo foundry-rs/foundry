@@ -1,6 +1,6 @@
 use crate::executors::{Executor, ExecutorBuilder};
 use foundry_compilers::EvmVersion;
-use foundry_config::{utils::evm_spec_id, Config};
+use foundry_config::{utils::evm_spec_id, Config, NamedChain};
 use foundry_evm_core::{backend::Backend, fork::CreateFork, opts::EvmOpts};
 use revm::primitives::Env;
 use std::ops::{Deref, DerefMut};
@@ -32,7 +32,7 @@ impl TracingExecutor {
     pub async fn get_fork_material(
         config: &Config,
         mut evm_opts: EvmOpts,
-    ) -> eyre::Result<(Env, Option<CreateFork>, Option<ethers::types::Chain>)> {
+    ) -> eyre::Result<(Env, Option<CreateFork>, Option<NamedChain>)> {
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
         evm_opts.fork_block_number = config.fork_block_number;
 

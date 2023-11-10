@@ -1,7 +1,6 @@
-use forge_fmt::solang_ext::SafeUnwrap;
-
 use super::{Preprocessor, PreprocessorId};
 use crate::{document::DocumentContent, Document, ParseSource, PreprocessorOutput};
+use forge_fmt::solang_ext::SafeUnwrap;
 use std::{collections::HashMap, path::PathBuf};
 
 /// [ContractInheritance] preprocessor id.

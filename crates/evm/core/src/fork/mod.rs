@@ -1,9 +1,8 @@
-mod backend;
-
 use super::opts::EvmOpts;
-pub use backend::{BackendHandler, SharedBackend};
-
 use revm::primitives::Env;
+
+mod backend;
+pub use backend::{BackendHandler, SharedBackend};
 
 mod init;
 pub use init::environment;

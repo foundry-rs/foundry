@@ -5,7 +5,8 @@ use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::B256;
 use alloy_sol_types::{SolCall, SolError, SolInterface, SolValue};
-use ethers::{abi::RawLog, contract::EthLogDecode, types::Log};
+use ethers_contract::EthLogDecode;
+use ethers_core::{abi::RawLog, types::Log, utils::format_units};
 use foundry_cheatcodes_defs::Vm;
 use foundry_common::SELECTOR_LEN;
 use itertools::Itertools;
@@ -39,15 +40,11 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
                 "{}: {}{}",
                 inner.key,
                 sign,
-                ethers::utils::format_units(val, inner.decimals.as_u32()).unwrap()
+                format_units(val, inner.decimals.as_u32()).unwrap()
             )
         }
         CE::LogNamedDecimalUintFilter(inner) => {
-            format!(
-                "{}: {}",
-                inner.key,
-                ethers::utils::format_units(inner.val, inner.decimals.as_u32()).unwrap()
-            )
+            format!("{}: {}", inner.key, format_units(inner.val, inner.decimals.as_u32()).unwrap())
         }
         CE::LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
         CE::LogNamedUintFilter(inner) => format!("{}: {:?}", inner.key, inner.val),

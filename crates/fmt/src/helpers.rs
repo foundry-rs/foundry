@@ -33,7 +33,7 @@ pub fn parse(src: &str) -> Result<Parsed, Vec<Diagnostic>> {
 }
 
 /// Format parsed code
-pub fn format<W: Write>(
+pub fn format_to<W: Write>(
     writer: W,
     mut parsed: Parsed,
     config: FormatterConfig,
@@ -45,11 +45,11 @@ pub fn format<W: Write>(
 }
 
 /// Parse and format a string with default settings
-pub fn fmt(src: &str) -> Result<String, FormatterError> {
+pub fn format(src: &str) -> Result<String, FormatterError> {
     let parsed = parse(src).map_err(|_| FormatterError::Fmt(std::fmt::Error))?;
 
     let mut output = String::new();
-    format(&mut output, parsed, FormatterConfig::default())?;
+    format_to(&mut output, parsed, FormatterConfig::default())?;
 
     Ok(output)
 }

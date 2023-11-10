@@ -1,10 +1,8 @@
 use super::fork::environment;
 use crate::fork::CreateFork;
 use alloy_primitives::{Address, B256, U256};
-use ethers::{
-    providers::{Middleware, Provider},
-    types::{Block, Chain, TxHash},
-};
+use ethers_core::types::{Block, Chain, TxHash};
+use ethers_providers::{Middleware, Provider};
 use eyre::WrapErr;
 use foundry_common::{self, ProviderBuilder, RpcUrl, ALCHEMY_FREE_TIER_CUPS};
 use foundry_compilers::utils::RuntimeOrHandle;

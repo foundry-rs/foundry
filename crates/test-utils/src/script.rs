@@ -1,6 +1,7 @@
 use crate::{init_tracing, TestCommand};
 use alloy_primitives::{Address, U256};
-use ethers::prelude::{Middleware, NameOrAddress};
+use ethers_core::types::NameOrAddress;
+use ethers_providers::Middleware;
 use eyre::Result;
 use foundry_common::{get_http_provider, RetryProvider};
 use foundry_utils::types::{ToAlloy, ToEthers};

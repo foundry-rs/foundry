@@ -4,7 +4,7 @@ use super::{
     verify::VerifyBundle,
     ScriptArgs,
 };
-use ethers::signers::LocalWallet;
+use ethers_signers::LocalWallet;
 use eyre::{ContextCompat, Report, Result, WrapErr};
 use foundry_cli::utils::now;
 use foundry_common::{fs, get_http_provider};

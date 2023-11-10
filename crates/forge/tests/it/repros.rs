@@ -2,7 +2,7 @@
 
 use crate::{config::*, test_helpers::PROJECT};
 use alloy_primitives::Address;
-use ethers::abi::{Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
+use ethers_core::abi::{Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
 use forge::result::TestStatus;
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use foundry_test_utils::Filter;

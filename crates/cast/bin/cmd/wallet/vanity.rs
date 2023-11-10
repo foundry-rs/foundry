@@ -1,10 +1,7 @@
 use alloy_primitives::Address;
 use clap::{builder::TypedValueParser, Parser};
-use ethers::{
-    core::{k256::ecdsa::SigningKey, rand},
-    prelude::{LocalWallet, Signer},
-    utils::secret_key_to_address,
-};
+use ethers_core::{k256::ecdsa::SigningKey, rand, utils::secret_key_to_address};
+use ethers_signers::{LocalWallet, Signer};
 use eyre::Result;
 use foundry_utils::types::ToAlloy;
 use rayon::iter::{self, ParallelIterator};

@@ -2,7 +2,7 @@ use super::{InvariantFailures, InvariantFuzzError};
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use ethers::types::Log;
+use ethers_core::types::Log;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::constants::CALLER;
 use foundry_evm_coverage::HitMaps;

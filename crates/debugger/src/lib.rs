@@ -11,12 +11,12 @@ use crossterm::{
 };
 use eyre::Result;
 use foundry_common::{compile::ContractSources, evm::Breakpoints};
-use foundry_evm::{
+use foundry_evm_core::{
     debug::{DebugStep, Instruction},
     utils::{build_pc_ic_map, CallKind, PCICMap},
 };
 use ratatui::{
-    backend::{Backend, CrosstermBackend},
+    backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     terminal::Frame,
@@ -137,8 +137,8 @@ impl Tui {
 
     /// Create layout and subcomponents
     #[allow(clippy::too_many_arguments)]
-    fn draw_layout<B: Backend>(
-        f: &mut Frame<B>,
+    fn draw_layout(
+        f: &mut Frame<'_>,
         address: Address,
         identified_contracts: &HashMap<Address, String>,
         pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
@@ -189,8 +189,8 @@ impl Tui {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn vertical_layout<B: Backend>(
-        f: &mut Frame<B>,
+    fn vertical_layout(
+        f: &mut Frame<'_>,
         address: Address,
         identified_contracts: &HashMap<Address, String>,
         pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
@@ -267,8 +267,8 @@ impl Tui {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn square_layout<B: Backend>(
-        f: &mut Frame<B>,
+    fn square_layout(
+        f: &mut Frame<'_>,
         address: Address,
         identified_contracts: &HashMap<Address, String>,
         pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
@@ -360,7 +360,7 @@ impl Tui {
         }
     }
 
-    fn draw_footer<B: Backend>(f: &mut Frame<B>, area: Rect) {
+    fn draw_footer(f: &mut Frame<'_>, area: Rect) {
         let block_controls = Block::default();
 
         let text_output = vec![Line::from(Span::styled(
@@ -376,8 +376,8 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn draw_src<B: Backend>(
-        f: &mut Frame<B>,
+    fn draw_src(
+        f: &mut Frame<'_>,
         address: Address,
         identified_contracts: &HashMap<Address, String>,
         pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
@@ -688,8 +688,8 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
     }
 
     /// Draw opcode list into main component
-    fn draw_op_list<B: Backend>(
-        f: &mut Frame<B>,
+    fn draw_op_list(
+        f: &mut Frame<'_>,
         address: Address,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
@@ -786,8 +786,8 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
     }
 
     /// Draw the stack into the stack pane
-    fn draw_stack<B: Backend>(
-        f: &mut Frame<B>,
+    fn draw_stack(
+        f: &mut Frame<'_>,
         debug_steps: &[DebugStep],
         current_step: usize,
         area: Rect,
@@ -905,8 +905,8 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
     }
 
     /// Draw memory in memory pane
-    fn draw_memory<B: Backend>(
-        f: &mut Frame<B>,
+    fn draw_memory(
+        f: &mut Frame<'_>,
         debug_steps: &[DebugStep],
         current_step: usize,
         area: Rect,

@@ -258,30 +258,25 @@ impl EvmArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_config::NamedChain;
 
     #[test]
     fn can_parse_chain_id() {
         let args = EvmArgs {
-            env: EnvArgs {
-                chain_id: Some(ethers_core::types::Chain::Mainnet.into()),
-                ..Default::default()
-            },
+            env: EnvArgs { chain_id: Some(NamedChain::Mainnet.into()), ..Default::default() },
             ..Default::default()
         };
         let config = Config::from_provider(Config::figment().merge(args));
-        assert_eq!(config.chain_id, Some(ethers_core::types::Chain::Mainnet.into()));
+        assert_eq!(config.chain_id, Some(NamedChain::Mainnet.into()));
 
         let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "goerli"]);
-        assert_eq!(env.chain_id, Some(ethers_core::types::Chain::Goerli.into()));
+        assert_eq!(env.chain_id, Some(NamedChain::Goerli.into()));
     }
 
     #[test]
     fn test_memory_limit() {
         let args = EvmArgs {
-            env: EnvArgs {
-                chain_id: Some(ethers_core::types::Chain::Mainnet.into()),
-                ..Default::default()
-            },
+            env: EnvArgs { chain_id: Some(NamedChain::Mainnet.into()), ..Default::default() },
             ..Default::default()
         };
         let config = Config::from_provider(Config::figment().merge(args));

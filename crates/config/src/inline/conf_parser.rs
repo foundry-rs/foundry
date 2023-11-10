@@ -1,8 +1,6 @@
-use regex::Regex;
-
-use crate::{InlineConfigError, NatSpec};
-
 use super::{remove_whitespaces, INLINE_CONFIG_PREFIX};
+use crate::{InlineConfigError, NatSpec};
+use regex::Regex;
 
 /// Errors returned by the [`InlineConfigParser`] trait.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
