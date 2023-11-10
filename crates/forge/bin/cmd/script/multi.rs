@@ -145,7 +145,7 @@ impl ScriptArgs {
 
         trace!(target: "script", "broadcasting multi chain deployments");
 
-        let mut results: Vec<Result<(), Report>> = Vec::new(); // Declare a Vec of Result<(), Report>
+        let mut results: Vec<Result<(), Report>> = Vec::new();
 
         for sequence in deployments.deployments.iter_mut() {
             let result = match self
