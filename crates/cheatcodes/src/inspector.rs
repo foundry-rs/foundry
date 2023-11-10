@@ -412,6 +412,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                                 range.contains(&offset) && range.contains(&(offset + 31))
                             }) {
                                 disallowed_mem_write(offset, 32, interpreter, ranges);
+                                interpreter.instruction_result = InstructionResult::Revert;
                                 return
                             }
                         }
@@ -423,6 +424,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             // unexpectedly mutated.
                             if !ranges.iter().any(|range| range.contains(&offset)) {
                                 disallowed_mem_write(offset, 1, interpreter, ranges);
+                                interpreter.instruction_result = InstructionResult::Revert;
                                 return
                             }
                         }
@@ -442,6 +444,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                                 range.contains(&offset) && range.contains(&(offset + 31))
                             }) {
                                 disallowed_mem_write(offset, 32, interpreter, ranges);
+                                interpreter.instruction_result = InstructionResult::Revert;
                                 return
                             }
                         }
@@ -473,6 +476,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             // that gives information about the allowed ranges and revert.
                             if fail_cond {
                                 disallowed_mem_write(dest_offset, size, interpreter, ranges);
+                                interpreter.instruction_result = InstructionResult::Revert;
                                 return
                             }
                         })*
