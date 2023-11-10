@@ -207,8 +207,7 @@ impl fmt::Display for CallTraceArena {
             let node = &arena.arena[idx];
 
             // Display trace header
-            f.write_str(left)?;
-            node.trace.fmt(f)?;
+            writeln!(f, "{left}{}", node.trace)?;
 
             // Display logs and subcalls
             let left_prefix = format!("{child}{BRANCH}");

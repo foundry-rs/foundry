@@ -76,21 +76,44 @@ pub fn initialize(target: impl AsRef<Path>) {
     }
 }
 
-/// Clones a remote repository into the specified directory.
-pub fn clone_remote(
-    repo_url: &str,
-    target_dir: impl AsRef<Path>,
-) -> std::io::Result<process::Output> {
-    Command::new("git")
-        .args([
-            "clone",
-            "--depth",
-            "1",
-            "--recursive",
-            repo_url,
-            target_dir.as_ref().to_str().expect("Target path for git clone does not exist"),
-        ])
-        .output()
+/// Clones a remote repository into the specified directory. Panics if the command fails.
+pub fn clone_remote(repo_url: &str, target_dir: &str) {
+    let mut cmd = Command::new("git");
+    let status = cmd
+        .args(["clone", "--depth=1", "--recursive", "--shallow-submodules", repo_url, target_dir])
+        .status()
+        .unwrap();
+    if !status.success() {
+        panic!("{cmd:?}");
+    }
+    eprintln!();
+}
+
+/// Runs common installation commands, such as `make` and `npm`. Continues if any command fails.
+pub fn run_install_commands(root: &Path) {
+    let root_files =
+        std::fs::read_dir(root).unwrap().flatten().map(|x| x.path()).collect::<Vec<_>>();
+    let contains = |path: &str| root_files.iter().any(|p| p.to_str().unwrap().contains(path));
+    let run = |args: &[&str]| {
+        let mut cmd = Command::new(args[0]);
+        cmd.args(&args[1..]).current_dir(root).stdout(Stdio::null()).stderr(Stdio::null());
+        let st = cmd.status();
+        eprintln!("\n\n{cmd:?} -> {st:?}");
+    };
+    let maybe_run = |path: &str, args: &[&str]| {
+        let c = contains(path);
+        if c {
+            run(args);
+        }
+        c
+    };
+
+    maybe_run("Makefile", &["make", "install"]);
+    let pnpm = maybe_run("pnpm-lock.yaml", &["pnpm", "install", "--prefer-offline"]);
+    let yarn = maybe_run("yarn.lock", &["yarn", "install", "--prefer-offline"]);
+    if !pnpm && !yarn && contains("package.json") {
+        run(&["npm", "install"]);
+    }
 }
 
 /// Setup an empty test project and return a command pointing to the forge
