@@ -196,7 +196,7 @@ impl<'a> ContractRunner<'a> {
         if setup_fns.len() > 1 {
             return SuiteResult::new(
                 start.elapsed(),
-                [("setUp()".to_string(), TestResult::fail("Multiple setUp functions".to_string()))]
+                [("setUp()".to_string(), TestResult::fail("multiple setUp functions".to_string()))]
                     .into(),
                 warnings,
             )
@@ -463,7 +463,7 @@ impl<'a> ContractRunner<'a> {
             Err(e) => {
                 return TestResult {
                     status: TestStatus::Failure,
-                    reason: Some(format!("Failed to set up invariant testing environment: {e}")),
+                    reason: Some(format!("failed to set up invariant testing environment: {e}")),
                     decoded_logs: decode_console_logs(&logs),
                     traces,
                     labeled_addresses,
