@@ -110,8 +110,7 @@ impl DocBuilder {
             return Ok(())
         }
 
-        let library_sources =
-            self.libraries.iter().flat_map(|lib| source_files_iter(lib)).collect::<Vec<_>>();
+        let library_sources = self.libraries.iter().flat_map(source_files_iter).collect::<Vec<_>>();
 
         let combined_sources = sources
             .iter()
