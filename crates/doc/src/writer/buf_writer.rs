@@ -1,7 +1,7 @@
-use crate::{AsDoc, CommentTag, Comments, Deployment, Markdown};
+use crate::{writer::traits::ParamLike, AsDoc, CommentTag, Comments, Deployment, Markdown};
 use itertools::Itertools;
 use once_cell::sync::Lazy;
-use solang_parser::pt::Parameter;
+use solang_parser::pt::{ErrorParameter, EventParameter, Parameter, VariableDeclaration};
 use std::fmt::{self, Display, Write};
 
 /// Solidity language name.
@@ -114,26 +114,24 @@ impl BufWriter {
         self.writeln()
     }
 
-    /// Tries to write the parameters table to the buffer.
+    /// Tries to write the table to the buffer.
     /// Doesn't write anything if either params or comments are empty.
-    pub fn try_write_param_table(
+    fn try_write_table<T>(
         &mut self,
         tag: CommentTag,
-        params: &[&Parameter],
+        params: &[T],
         comments: &Comments,
-    ) -> fmt::Result {
+        heading: &str,
+    ) -> fmt::Result
+    where
+        T: ParamLike,
+    {
         let comments = comments.include_tag(tag.clone());
 
         // There is nothing to write.
         if params.is_empty() || comments.is_empty() {
             return Ok(())
         }
-
-        let heading = match &tag {
-            CommentTag::Param => "Parameters",
-            CommentTag::Return => "Returns",
-            _ => return Err(fmt::Error),
-        };
 
         self.write_bold(heading)?;
         self.writeln()?;
@@ -142,10 +140,10 @@ impl BufWriter {
         self.write_piped(&PARAM_TABLE_SEPARATOR)?;
 
         for (index, param) in params.iter().enumerate() {
-            let param_name = param.name.as_ref().map(|n| n.name.to_owned());
+            let param_name = param.name();
 
             let mut comment = param_name.as_ref().and_then(|name| {
-                comments.iter().find_map(|comment| comment.match_first_word(name.as_str()))
+                comments.iter().find_map(|comment| comment.match_first_word(name))
             });
 
             // If it's a return tag and couldn't match by first word,
@@ -155,8 +153,8 @@ impl BufWriter {
             }
 
             let row = [
-                Markdown::Code(&param_name.unwrap_or_else(|| "<none>".to_owned())).as_doc()?,
-                Markdown::Code(&param.ty.to_string()).as_doc()?,
+                Markdown::Code(param_name.unwrap_or("<none>")).as_doc()?,
+                Markdown::Code(&param.type_name()).as_doc()?,
                 comment.unwrap_or_default().replace('\n', " "),
             ];
             self.write_piped(&row.join("|"))?;
@@ -165,6 +163,53 @@ impl BufWriter {
         self.writeln()?;
 
         Ok(())
+    }
+
+    /// Tries to write the properties table to the buffer.
+    /// Doesn't write anything if either params or comments are empty.
+    pub fn try_write_properties_table(
+        &mut self,
+        params: &[VariableDeclaration],
+        comments: &Comments,
+    ) -> fmt::Result {
+        self.try_write_table(CommentTag::Param, params, comments, "Properties")
+    }
+
+    /// Tries to write the parameters table to the buffer.
+    /// Doesn't write anything if either params or comments are empty.
+    pub fn try_write_events_table(
+        &mut self,
+        params: &[EventParameter],
+        comments: &Comments,
+    ) -> fmt::Result {
+        self.try_write_table(CommentTag::Param, params, comments, "Parameters")
+    }
+
+    /// Tries to write the parameters table to the buffer.
+    /// Doesn't write anything if either params or comments are empty.
+    pub fn try_write_errors_table(
+        &mut self,
+        params: &[ErrorParameter],
+        comments: &Comments,
+    ) -> fmt::Result {
+        self.try_write_table(CommentTag::Param, params, comments, "Parameters")
+    }
+
+    /// Tries to write the parameters table to the buffer.
+    /// Doesn't write anything if either params or comments are empty.
+    pub fn try_write_param_table(
+        &mut self,
+        tag: CommentTag,
+        params: &[&Parameter],
+        comments: &Comments,
+    ) -> fmt::Result {
+        let heading = match &tag {
+            CommentTag::Param => "Parameters",
+            CommentTag::Return => "Returns",
+            _ => return Err(fmt::Error),
+        };
+
+        self.try_write_table(tag, params, comments, heading)
     }
 
     /// Writes the deployment table to the buffer.
