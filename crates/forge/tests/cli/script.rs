@@ -860,7 +860,7 @@ contract Script0 is Script {
             "true".to_string(),
             "0x616263646566".to_string(),
             "(10, 99)".to_string(),
-            "hello".to_string(),
+            "\"hello\"".to_string(),
         ]
     );
 });
@@ -947,7 +947,7 @@ contract Script0 is Script {
             "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6".to_string(),
             "true".to_string(),
             "0x616263646566".to_string(),
-            "hello".to_string(),
+            "\"hello\"".to_string(),
         ]
     );
 });
