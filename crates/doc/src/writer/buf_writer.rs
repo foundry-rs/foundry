@@ -192,7 +192,7 @@ impl BufWriter {
         params: &[ErrorParameter],
         comments: &Comments,
     ) -> fmt::Result {
-        self.try_write_table(CommentTag::Param, params, comments, "Properties")
+        self.try_write_table(CommentTag::Param, params, comments, "Parameters")
     }
 
     /// Tries to write the parameters table to the buffer.
