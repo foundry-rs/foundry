@@ -32,7 +32,6 @@ use foundry_config::{
     get_available_profiles, Config,
 };
 use foundry_debugger::DebuggerArgs;
-use foundry_evm::fuzz::CounterExample;
 use regex::Regex;
 use std::{collections::BTreeMap, fs, sync::mpsc::channel, time::Duration};
 use tracing::trace;
@@ -543,37 +542,7 @@ impl TestOutcome {
 }
 
 fn short_test_result(name: &str, result: &TestResult) {
-    let status = if result.status == TestStatus::Success {
-        Paint::green("[PASS]".to_string())
-    } else if result.status == TestStatus::Skipped {
-        Paint::yellow("[SKIP]".to_string())
-    } else {
-        let reason = result
-            .reason
-            .as_ref()
-            .map(|reason| format!("Reason: {reason}"))
-            .unwrap_or_else(|| "Reason: Assertion failed.".to_string());
-
-        let counterexample = result
-            .counterexample
-            .as_ref()
-            .map(|example| match example {
-                CounterExample::Single(eg) => format!(" Counterexample: {eg}]"),
-                CounterExample::Sequence(sequence) => {
-                    let mut inner_txt = String::new();
-
-                    for checkpoint in sequence {
-                        inner_txt += format!("\t\t{checkpoint}\n").as_str();
-                    }
-                    format!("]\n\t[Sequence]\n{inner_txt}\n")
-                }
-            })
-            .unwrap_or_else(|| "]".to_string());
-
-        Paint::red(format!("[FAIL. {reason}{counterexample}"))
-    };
-
-    println!("{status} {name} {}", result.kind.report());
+    println!("{result} {name} {}", result.kind.report());
 }
 
 /**

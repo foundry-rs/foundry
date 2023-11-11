@@ -2928,6 +2928,7 @@ dependencies = [
  "foundry-evm-traces",
  "foundry-utils",
  "hashbrown 0.14.2",
+ "itertools 0.11.0",
  "parking_lot",
  "proptest",
  "rand 0.8.5",

@@ -70,27 +70,41 @@ pub fn decode_revert(
     maybe_abi: Option<&JsonAbi>,
     status: Option<InstructionResult>,
 ) -> String {
+    maybe_decode_revert(err, maybe_abi, status).unwrap_or_else(|| {
+        if err.is_empty() {
+            "<no data>".to_string()
+        } else {
+            trimmed_hex(err)
+        }
+    })
+}
+
+pub fn maybe_decode_revert(
+    err: &[u8],
+    maybe_abi: Option<&JsonAbi>,
+    status: Option<InstructionResult>,
+) -> Option<String> {
     if err.len() < SELECTOR_LEN {
         if let Some(status) = status {
             if !status.is_ok() {
-                return format!("EvmError: {status:?}")
+                return Some(format!("EvmError: {status:?}"));
             }
         }
         return if err.is_empty() {
-            "<no data>".to_string()
+            None
         } else {
-            format!("custom error bytes {}", hex::encode_prefixed(err))
+            Some(format!("custom error bytes {}", hex::encode_prefixed(err)))
         }
     }
 
     if err == crate::constants::MAGIC_SKIP {
         // Also used in forge fuzz runner
-        return "SKIPPED".to_string()
+        return Some("SKIPPED".to_string());
     }
 
     // Solidity's `Error(string)` or `Panic(uint256)`
     if let Ok(e) = alloy_sol_types::GenericContractError::abi_decode(err, false) {
-        return e.to_string()
+        return Some(e.to_string());
     }
 
     let (selector, data) = err.split_at(SELECTOR_LEN);
@@ -99,21 +113,18 @@ pub fn decode_revert(
     match *selector {
         // `CheatcodeError(string)`
         Vm::CheatcodeError::SELECTOR => {
-            if let Ok(e) = Vm::CheatcodeError::abi_decode_raw(data, false) {
-                return e.message
-            }
+            let e = Vm::CheatcodeError::abi_decode_raw(data, false).ok()?;
+            return Some(e.message);
         }
         // `expectRevert(bytes)`
         Vm::expectRevert_2Call::SELECTOR => {
-            if let Ok(e) = Vm::expectRevert_2Call::abi_decode_raw(data, false) {
-                return decode_revert(&e.revertData[..], maybe_abi, status)
-            }
+            let e = Vm::expectRevert_2Call::abi_decode_raw(data, false).ok()?;
+            return maybe_decode_revert(&e.revertData[..], maybe_abi, status);
         }
         // `expectRevert(bytes4)`
         Vm::expectRevert_1Call::SELECTOR => {
-            if let Ok(e) = Vm::expectRevert_1Call::abi_decode_raw(data, false) {
-                return decode_revert(&e.revertData[..], maybe_abi, status)
-            }
+            let e = Vm::expectRevert_1Call::abi_decode_raw(data, false).ok()?;
+            return maybe_decode_revert(&e.revertData[..], maybe_abi, status);
         }
         _ => {}
     }
@@ -123,31 +134,31 @@ pub fn decode_revert(
         if let Some(abi_error) = abi.errors().find(|e| selector == e.selector()) {
             // if we don't decode, don't return an error, try to decode as a string later
             if let Ok(decoded) = abi_error.abi_decode_input(data, false) {
-                return format!(
+                return Some(format!(
                     "{}({})",
                     abi_error.name,
                     decoded.iter().map(foundry_common::fmt::format_token).format(", ")
-                )
+                ));
             }
         }
     }
 
     // ABI-encoded `string`
     if let Ok(s) = String::abi_decode(err, false) {
-        return s
+        return Some(s);
     }
 
     // UTF-8-encoded string
     if let Ok(s) = std::str::from_utf8(err) {
-        return s.to_string()
+        return Some(s.to_string());
     }
 
     // Generic custom error
-    format!(
+    Some(format!(
         "custom error {}:{}",
         hex::encode(selector),
         std::str::from_utf8(data).map_or_else(|_| trimmed_hex(data), String::from)
-    )
+    ))
 }
 
 fn trimmed_hex(s: &[u8]) -> String {
