@@ -558,7 +558,7 @@ pub enum Subcommands {
     },
 
     /// Get the event signature for a given topic 0 from https://openchain.xyz.
-    #[clap(name = "4byte-event", visible_aliases = &["4e", "4be"])]
+    #[clap(name = "4byte-event", visible_aliases = &["4e", "4be", "topic0-event", "t0e"])]
     FourByteEvent {
         /// Topic 0
         #[clap(value_name = "TOPIC_0")]
