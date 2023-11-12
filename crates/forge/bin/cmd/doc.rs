@@ -45,6 +45,10 @@ pub struct DocArgs {
     /// for default.
     #[clap(long)]
     deployments: Option<Option<PathBuf>>,
+
+    /// Whether to create docs for external libraries.
+    #[clap(long, short)]
+    include_libraries: bool,
 }
 
 impl DocArgs {
@@ -76,17 +80,22 @@ impl DocArgs {
 
         let commit = foundry_cli::utils::Git::new(&root).commit_hash(false, "HEAD").ok();
 
-        let mut builder = DocBuilder::new(root.clone(), config.project_paths().sources)
-            .with_should_build(self.build)
-            .with_config(doc_config.clone())
-            .with_fmt(config.fmt)
-            .with_preprocessor(ContractInheritance::default())
-            .with_preprocessor(Inheritdoc::default())
-            .with_preprocessor(GitSource {
-                root: root.clone(),
-                commit,
-                repository: doc_config.repository.clone(),
-            });
+        let mut builder = DocBuilder::new(
+            root.clone(),
+            config.project_paths().sources,
+            config.project_paths().libraries,
+            self.include_libraries,
+        )
+        .with_should_build(self.build)
+        .with_config(doc_config.clone())
+        .with_fmt(config.fmt)
+        .with_preprocessor(ContractInheritance { include_libraries: self.include_libraries })
+        .with_preprocessor(Inheritdoc::default())
+        .with_preprocessor(GitSource {
+            root: root.clone(),
+            commit,
+            repository: doc_config.repository.clone(),
+        });
 
         // If deployment docgen is enabled, add the [Deployments] preprocessor
         if let Some(deployments) = self.deployments {

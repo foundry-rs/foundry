@@ -13,8 +13,10 @@ pub const CONTRACT_INHERITANCE_ID: PreprocessorId = PreprocessorId("contract_inh
 ///
 /// This preprocessor writes to [Document]'s context.
 #[derive(Default, Debug)]
-#[non_exhaustive]
-pub struct ContractInheritance;
+pub struct ContractInheritance {
+    /// Whether to capture inherited contracts from libraries.
+    pub include_libraries: bool,
+}
 
 impl Preprocessor for ContractInheritance {
     fn id(&self) -> PreprocessorId {
@@ -51,6 +53,9 @@ impl Preprocessor for ContractInheritance {
 impl ContractInheritance {
     fn try_link_base(&self, base: &str, documents: &Vec<Document>) -> Option<PathBuf> {
         for candidate in documents {
+            if candidate.from_library && !self.include_libraries {
+                continue;
+            }
             if let DocumentContent::Single(ref item) = candidate.content {
                 if let ParseSource::Contract(ref contract) = item.source {
                     if base == contract.name.safe_unwrap().name {
