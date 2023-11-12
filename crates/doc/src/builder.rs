@@ -127,22 +127,22 @@ impl DocBuilder {
 
                 // Read and parse source file
                 let source = fs::read_to_string(path)?;
-                let parser_result = solang_parser::parse(&source, i);
 
-                if parser_result.is_err() {
-                    if from_library {
-                        // Ignore failures for library files
-                        return Ok(Vec::new());
-                    } else {
-                        return Err(eyre::eyre!(
-                            "Failed to parse Solidity code for {}\nDebug info: {:?}",
-                            path.display(),
-                            parser_result.err().unwrap()
-                        ));
+                let (mut source_unit, comments) = match solang_parser::parse(&source, i) {
+                    Ok(res) => res,
+                    Err(err) => {
+                        if from_library {
+                            // Ignore failures for library files
+                            return Ok(Vec::new());
+                        } else {
+                            return Err(eyre::eyre!(
+                                "Failed to parse Solidity code for {}\nDebug info: {:?}",
+                                path.display(),
+                                err
+                            ));
+                        }
                     }
-                }
-
-                let (mut source_unit, comments) = parser_result.unwrap();
+                };
 
                 // Visit the parse tree
                 let mut doc = Parser::new(comments, source).with_fmt(self.fmt.clone());
