@@ -27,6 +27,7 @@ use std::{
         Arc,
     },
 };
+ use ethers::utils::GenesisAccount;
 
 mod diagnostic;
 pub use diagnostic::RevertDiagnostic;
