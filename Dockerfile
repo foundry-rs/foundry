@@ -1,12 +1,10 @@
 FROM lukemathwalker/cargo-chef:latest-rust-1.72.1 as chef
-WORKDIR /opt
+WORKDIR /opt/foundry
 
 FROM chef as planner
 
 # Get the foundry project
-RUN git clone https://github.com/foundry-rs/foundry.git
-
-WORKDIR /opt/foundry
+COPY . .
 
 # Compute a lock-like file for our project
 RUN cargo chef prepare  --recipe-path recipe.json
@@ -27,7 +25,8 @@ RUN cargo chef cook --release --recipe-path recipe.json
 # Up to this point, if our dependency tree stays the same,
 # all layers should be cached.
 
-# Conditional for cross compliation
+# TODO(Conditional for cross compliation)
+# There seem to be some undocumented particulars here
 RUN CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc CFLAGS=-mno-outline-atomics cargo build --release
 
 # Strip any debug symbols
