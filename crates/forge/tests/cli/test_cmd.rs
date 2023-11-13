@@ -125,6 +125,7 @@ forgetest!(can_test_pre_bytecode_hash, |prj, cmd| {
         "ATest.t.sol",
         r#"
 // pre bytecode hash version, was introduced in 0.6.0
+pragma solidity 0.5.17;
 import "./test.sol";
 contract ATest is DSTest {
     function testArray(uint64[2] calldata values) external {
