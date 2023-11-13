@@ -151,10 +151,10 @@ pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::En
 
                 return;
             }
-            Chain::Arbitrum |
-            Chain::ArbitrumGoerli |
-            Chain::ArbitrumNova |
-            Chain::ArbitrumTestnet => {
+            Chain::Arbitrum
+            | Chain::ArbitrumGoerli
+            | Chain::ArbitrumNova
+            | Chain::ArbitrumTestnet => {
                 // on arbitrum `block.number` is the L1 block which is included in the
                 // `l1BlockNumber` field
                 // todo(onbjerg): not supported by new alloy rpc types
@@ -250,15 +250,7 @@ pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
         .clone()
         .unwrap_or_default()
         .into_iter()
-        .map(|item| {
-            (
-                item.address,
-                item.storage_keys
-                    .into_iter()
-                    .map(|g| alloy_primitives::U256::from_be_bytes(g.0))
-                    .collect(),
-            )
-        })
+        .map(|item| (item.address, item.storage_keys))
         .collect();
     env.tx.value = tx.value.to();
     env.tx.data = alloy_primitives::Bytes(tx.input.0.clone());
