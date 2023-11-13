@@ -901,7 +901,7 @@ static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
         r" files with \d+.\d+.\d+",
         // solc runs
         r"runs: \d+, μ: \d+, ~: \d+",
-        // elapsed time - note: must run after "Solc version finished in ..."
+        // elapsed time
         "finished in (.*)?s\n",
         // file paths
         r"-->(.*).sol",
