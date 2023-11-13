@@ -213,9 +213,9 @@ pub struct NodeForkConfig {
 pub struct AnvilMetadata {
     pub client_version: &'static str,
     pub chain_id: U256,
-    pub instance_id: H256,
+    pub instance_id: B256,
     pub latest_block_number: U64,
-    pub latest_block_hash: H256,
+    pub latest_block_hash: B256,
     pub forked_network: Option<ForkedNetwork>,
 }
 

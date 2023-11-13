@@ -254,9 +254,6 @@ pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
             (
                 item.address,
                 item.storage_keys
-                    .into_iter()
-                    .map(|g| alloy_primitives::U256::from_be_bytes(g.0))
-                    .collect(),
             )
         })
         .collect();

@@ -1,5 +1,5 @@
 use crate::utils::apply_chain_and_block_specific_env_changes;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, U256, U64};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{Block, BlockNumberOrTag};
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
@@ -31,7 +31,7 @@ pub async fn environment<P: TempProvider>(
         let (fork_gas_price, rpc_chain_id, block) = tokio::join!(
             provider.get_gas_price(),
             provider.get_chain_id(),
-            provider.get_block_by_number(BlockNumberOrTag::Number(block_number.to::<u64>()), false)
+            provider.get_block_by_number(BlockNumberOrTag::Number(block_number.to::<U64>()), false)
         );
         (
             fork_gas_price.success().ok_or_else(|| eyre::eyre!("Failed to get gas price"))?,
