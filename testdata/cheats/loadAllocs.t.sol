@@ -6,15 +6,43 @@ import "./Vm.sol";
 
 contract LoadAllocsTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
-    string allocsPath;
     address constant ALLOCD = address(0x420);
     address constant ALLOCD_B = address(0x421);
 
+    uint256 snapshotId;
+    string allocsPath;
+
     function setUp() public {
         allocsPath = string.concat(vm.projectRoot(), "/fixtures/Json/test_allocs.json");
+
+        // Snapshot the state; We'll restore it in each test that loads allocs inline.
+        snapshotId = vm.snapshot();
+
+        // Load the allocs file.
+        vm.loadAllocs(allocsPath);
     }
 
+    /// @dev Checks that the `loadAllocs` cheatcode persists account info if called in `setUp`
+    function testLoadAllocsStaticSetup() public {
+        // Balance should be `0xabcd`
+        assertEq(ALLOCD.balance, 0xabcd);
+
+        // Code should be a simple store / return, returning `0x42`
+        (bool success, bytes memory rd) = ALLOCD.staticcall("");
+        assertTrue(success);
+        uint256 ret = abi.decode(rd, (uint256));
+        assertEq(ret, 0x42);
+
+        // Storage should have been set in slot 0x1, equal to `0xbeef`
+        assertEq(uint256(vm.load(ALLOCD, bytes32(uint256(0x10 << 248)))), 0xbeef);
+    }
+
+    /// @dev Checks that the `loadAllocs` cheatcode persists account info if called inline
     function testLoadAllocsStatic() public {
+        // Restore the state snapshot prior to the allocs file being loaded.
+        vm.revertTo(snapshotId);
+
+        // Load the allocs file
         vm.loadAllocs(allocsPath);
 
         // Balance should be `0xabcd`
@@ -30,7 +58,11 @@ contract LoadAllocsTest is DSTest {
         assertEq(uint256(vm.load(ALLOCD, bytes32(uint256(0x10 << 248)))), 0xbeef);
     }
 
+    /// @dev Checks that the `loadAllocs` cheatcode overrides existing account information (if present)
     function testLoadAllocsOverride() public {
+        // Restore the state snapshot prior to the allocs file being loaded.
+        vm.revertTo(snapshotId);
+
         // Populate the alloc'd account's code.
         vm.etch(ALLOCD, hex"FF");
         assertEq(ALLOCD.code, hex"FF");
@@ -52,7 +84,12 @@ contract LoadAllocsTest is DSTest {
         assertEq(ALLOCD.balance, 0xabcd);
     }
 
+    /// @dev Checks that the `loadAllocs` cheatcode does not override existing account information if there is no data
+    ///      within the allocs/genesis file for the account field (i.e., partial overrides)
     function testLoadAllocsPartialOverride() public {
+        // Restore the state snapshot prior to the allocs file being loaded.
+        vm.revertTo(snapshotId);
+
         // Populate the alloc'd account's code.
         vm.etch(ALLOCD_B, hex"FF");
         assertEq(ALLOCD_B.code, hex"FF");
