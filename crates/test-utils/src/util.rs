@@ -27,21 +27,23 @@ use std::{
 
 static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
-// This stores `true` if the current terminal is a tty
+/// Stores whether `stdout` is a tty / terminal.
 pub static IS_TTY: Lazy<bool> = Lazy::new(|| std::io::stdout().is_terminal());
 
-/// Global default template path.
-pub static TEMPLATE_PATH: Lazy<PathBuf> =
+/// Global default template path. Contains the global template project from which all other
+/// temp projects are initialized. See [`initialize()`] for more info.
+static TEMPLATE_PATH: Lazy<PathBuf> =
     Lazy::new(|| env::temp_dir().join("foundry-forge-test-template"));
 
-/// Global default template lock.
-pub static TEMPLATE_LOCK: Lazy<PathBuf> =
+/// Global default template lock. If its contents are not exactly `"1"`, the global template will
+/// be re-initialized. See [`initialize()`] for more info.
+static TEMPLATE_LOCK: Lazy<PathBuf> =
     Lazy::new(|| env::temp_dir().join("foundry-forge-test-template.lock"));
 
-// identifier for tests
+/// Global test identifier.
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
-/// Acquires a lock on the global template dir.
+/// Creates a file lock to the global template dir.
 pub fn template_lock() -> RwLock<File> {
     let lock_path = &*TEMPLATE_LOCK;
     let lock_file = pretty_err(
@@ -51,30 +53,62 @@ pub fn template_lock() -> RwLock<File> {
     RwLock::new(lock_file)
 }
 
-/// Copies an initialized project to the given path
+/// Initializes a project with `forge init` at the given path.
+///
+/// This should be called after an empty project is created like in
+/// [some of this crate's macros](crate::forgetest_init).
+///
+/// ## Note
+///
+/// This doesn't always run `forge init`, instead opting to copy an already-initialized template
+/// project from a global template path. This is done to speed up tests.
+///
+/// This used to use a `static` [`Lazy`], but this approach does not with `cargo-nextest` because it
+/// runs each test in a separate process. Instead, we use a global lock file to ensure that only one
+/// test can initialize the template at a time.
 pub fn initialize(target: &Path) {
-    eprintln!("initialize {}", target.display());
+    eprintln!("initializing {}", target.display());
 
-    let tpath = &*TEMPLATE_PATH;
+    let tpath = TEMPLATE_PATH.as_path();
     pretty_err(tpath, fs::create_dir_all(tpath));
 
+    // Initialize the global template if necessary.
     let mut lock = template_lock();
-    let read = lock.read().unwrap();
+    let mut _read = Some(lock.read().unwrap());
     if fs::read_to_string(&*TEMPLATE_LOCK).unwrap() != "1" {
-        eprintln!("initializing template dir");
+        // We are the first to acquire the lock:
+        // - initialize a new empty temp project;
+        // - run `forge init`;
+        // - run `forge build`;
+        // - copy it over to the global template;
+        // Ideally we would be able to initialize a temp project directly in the global template,
+        // but `TempProject` does not currently allow this: https://github.com/foundry-rs/compilers/issues/22
 
-        drop(read);
+        // Release the read lock and acquire a write lock, initializing the lock file.
+        _read = None;
         let mut write = lock.write().unwrap();
         write.write_all(b"1").unwrap();
 
+        // Initialize and build.
         let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
+        eprintln!("- initializing template dir in {}", prj.root().display());
         cmd.args(["init", "--force"]).assert_success();
-        pretty_err(tpath, fs::remove_dir_all(tpath));
+        cmd.forge_fuse().arg("build").assert_success();
+
+        // Remove the existing template, if any.
+        let _ = fs::remove_dir_all(tpath);
+
+        // Copy the template to the global template path.
         pretty_err(tpath, copy_dir(prj.root(), tpath));
-    } else {
-        pretty_err(target, fs::create_dir_all(target));
-        pretty_err(target, copy_dir(tpath, target));
+
+        // Release the write lock and acquire a new read lock.
+        drop(write);
+        _read = Some(lock.read().unwrap());
     }
+
+    eprintln!("- copying template dir from {}", tpath.display());
+    pretty_err(target, fs::create_dir_all(target));
+    pretty_err(target, copy_dir(tpath, target));
 }
 
 /// Clones a remote repository into the specified directory. Panics if the command fails.
@@ -241,7 +275,7 @@ pub fn setup_cast_project(test: TestProject) -> (TestProject, TestCommand) {
 #[derive(Clone, Debug)]
 pub struct TestProject<T: ArtifactOutput = ConfigurableArtifacts> {
     /// The directory in which this test executable is running.
-    root: PathBuf,
+    exe_root: PathBuf,
     /// The project in which the test should run.
     inner: Arc<TempProject<T>>,
 }
@@ -258,9 +292,9 @@ impl TestProject {
 
     pub fn with_project(project: TempProject) -> Self {
         init_tracing();
-        let root =
-            env::current_exe().unwrap().parent().expect("executable's directory").to_path_buf();
-        Self { root, inner: Arc::new(project) }
+        let this = env::current_exe().unwrap();
+        let exe_root = this.parent().expect("executable's directory").to_path_buf();
+        Self { exe_root, inner: Arc::new(project) }
     }
 
     /// Returns the root path of the project's workspace.
@@ -268,46 +302,67 @@ impl TestProject {
         self.inner.root()
     }
 
+    /// Returns the inner [`TempProject`].
     pub fn inner(&self) -> &TempProject {
         &self.inner
     }
 
+    /// Returns the paths config.
     pub fn paths(&self) -> &ProjectPathsConfig {
         self.inner().paths()
     }
 
-    /// Returns the path to the project's `foundry.toml` file
-    pub fn config_path(&self) -> PathBuf {
+    /// Returns the path to the project's `foundry.toml` file.
+    pub fn config(&self) -> PathBuf {
         self.root().join(Config::FILE_NAME)
     }
 
-    /// Returns the path to the project's cache file
-    pub fn cache_path(&self) -> &PathBuf {
+    /// Returns the path to the project's cache file.
+    pub fn cache(&self) -> &PathBuf {
         &self.paths().cache
+    }
+
+    /// Returns the path to the project's artifacts directory.
+    pub fn artifacts(&self) -> &PathBuf {
+        &self.paths().artifacts
+    }
+
+    /// Removes this project's cache file.
+    pub fn clear_cache(&self) {
+        let _ = fs::remove_file(self.cache());
+    }
+
+    /// Removes this project's artifacts directory.
+    pub fn clear_artifacts(&self) {
+        let _ = fs::remove_dir_all(self.artifacts());
     }
 
     /// Writes the given config as toml to `foundry.toml`
     pub fn write_config(&self, config: Config) {
-        let file = self.config_path();
+        let file = self.config();
         pretty_err(&file, fs::write(&file, config.to_string_pretty().unwrap()));
     }
 
     /// Asserts that the `<root>/foundry.toml` file exits
+    #[track_caller]
     pub fn assert_config_exists(&self) {
-        assert!(self.config_path().exists());
+        assert!(self.config().exists());
     }
 
     /// Asserts that the `<root>/cache/sol-files-cache.json` file exits
+    #[track_caller]
     pub fn assert_cache_exists(&self) {
-        assert!(self.cache_path().exists());
+        assert!(self.cache().exists());
     }
 
     /// Asserts that the `<root>/out` file exits
+    #[track_caller]
     pub fn assert_artifacts_dir_exists(&self) {
         assert!(self.paths().artifacts.exists());
     }
 
     /// Creates all project dirs and ensure they were created
+    #[track_caller]
     pub fn assert_create_dirs_exists(&self) {
         self.paths().create_all().unwrap_or_else(|_| panic!("Failed to create project paths"));
         SolFilesCache::default().write(&self.paths().cache).expect("Failed to create cache");
@@ -315,12 +370,14 @@ impl TestProject {
     }
 
     /// Ensures that the given layout exists
+    #[track_caller]
     pub fn assert_style_paths_exist(&self, style: PathStyle) {
         let paths = style.paths(&self.paths().root).unwrap();
         config_paths_exist(&paths, self.inner().project().cached);
     }
 
     /// Copies the project's root directory to the given target
+    #[track_caller]
     pub fn copy_to(&self, target: impl AsRef<Path>) {
         let target = target.as_ref();
         pretty_err(target, fs::create_dir_all(target));
@@ -404,7 +461,7 @@ impl TestProject {
 
     /// Returns the path to the forge executable.
     pub fn forge_bin(&self) -> Command {
-        let forge = self.root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
+        let forge = self.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
         let mut cmd = Command::new(forge);
         cmd.current_dir(self.inner.root());
         // disable color output for comparisons
@@ -414,7 +471,7 @@ impl TestProject {
 
     /// Returns the path to the cast executable.
     pub fn cast_bin(&self) -> Command {
-        let cast = self.root.join(format!("../cast{}", env::consts::EXE_SUFFIX));
+        let cast = self.exe_root.join(format!("../cast{}", env::consts::EXE_SUFFIX));
         let mut cmd = Command::new(cast);
         // disable color output for comparisons
         cmd.env("NO_COLOR", "1");
