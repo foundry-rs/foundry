@@ -256,7 +256,7 @@ impl Cheatcodes {
     /// Cleanup any previously applied cheatcodes that altered the state in such a way that revm's
     /// revert would run into issues.
     pub fn on_revert<DB: DatabaseExt>(&mut self, data: &mut EVMData<'_, DB>) {
-        trace!(deals = ?self.eth_deals.len(), "rolling back deals");
+        trace!(deals=?self.eth_deals.len(), "rolling back deals");
 
         // Delay revert clean up until expected revert is handled, if set.
         if self.expected_revert.is_some() {

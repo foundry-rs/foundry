@@ -2156,7 +2156,7 @@ impl Provider for DappEnvCompatProvider {
             let val = val.parse::<u8>().map_err(figment::Error::custom)?;
             if val > 1 {
                 return Err(
-                    format!("Invalid $DAPP_BUILD_OPTIMIZE value `{val}`,  expected 0 or 1").into()
+                    format!("Invalid $DAPP_BUILD_OPTIMIZE value `{val}`, expected 0 or 1").into()
                 )
             }
             dict.insert("optimizer".to_string(), (val == 1).into());

@@ -84,7 +84,7 @@ pub async fn clear_pendings(
                 errors.push(format!("Transaction dropped from the mempool: {tx_hash:?}"));
             }
             Ok(TxStatus::Success(receipt)) => {
-                trace!(tx_hash = ?tx_hash, "received tx receipt");
+                trace!(tx_hash=?tx_hash, "received tx receipt");
                 deployment_sequence.remove_pending(receipt.transaction_hash.to_alloy());
                 receipts.push(receipt);
             }
@@ -92,7 +92,7 @@ pub async fn clear_pendings(
                 // consider:
                 // if this is not removed from pending, then the script becomes
                 // un-resumable. Is this desirable on reverts?
-                warn!(tx_hash = ?tx_hash, "Transaction Failure");
+                warn!(tx_hash=?tx_hash, "Transaction Failure");
                 deployment_sequence.remove_pending(receipt.transaction_hash.to_alloy());
                 errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash));
             }

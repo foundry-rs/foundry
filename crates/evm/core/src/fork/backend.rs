@@ -658,7 +658,7 @@ impl DatabaseRef for SharedBackend {
     }
 
     fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        trace!( target: "sharedbackend", "request storage {:?} at {:?}", address, index);
+        trace!(target: "sharedbackend", "request storage {:?} at {:?}", address, index);
         match self.do_get_storage(address, index).map_err(|err| {
             error!(target: "sharedbackend", %err, %address, %index, "Failed to send/recv `storage`");
             if err.is_possibly_non_archive_node_error() {
@@ -677,7 +677,7 @@ impl DatabaseRef for SharedBackend {
         }
         let number: U256 = number;
         let number = number.to();
-        trace!( target: "sharedbackend", "request block hash for number {:?}", number);
+        trace!(target: "sharedbackend", "request block hash for number {:?}", number);
         match self.do_get_block_hash(number).map_err(|err| {
             error!(target: "sharedbackend", %err, %number, "Failed to send/recv `block_hash`");
             if err.is_possibly_non_archive_node_error() {
