@@ -884,10 +884,10 @@ stderr:
 /// terminal is tty, the path argument can be wrapped in [tty_fixture_path()]
 pub trait OutputExt {
     /// Ensure the command wrote the expected data to `stdout`.
-    fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self;
+    fn stdout_matches_path(&self, expected_path: impl AsRef<Path>);
 
     /// Ensure the command wrote the expected data to `stderr`.
-    fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self;
+    fn stderr_matches_path(&self, expected_path: impl AsRef<Path>);
 }
 
 /// Patterns to remove from fixtures before comparing output
@@ -895,9 +895,8 @@ pub trait OutputExt {
 /// This should strip everything that can vary from run to run, like elapsed time, file paths
 static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
     let re = &[
-        r"\r",
         // solc version
-        r"\s*Solc(?: version)? \d+.\d+.\d+\s*",
+        r" ?Solc(?: version)? \d+.\d+.\d+",
         r" with \d+.\d+.\d+",
         // solc runs
         r"runs: \d+, μ: \d+, ~: \d+",
@@ -912,28 +911,24 @@ static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
     Regex::new(&format!("({})", re.join("|"))).unwrap()
 });
 
+fn normalize_output(s: &str) -> String {
+    let s = s.replace("\r\n", "\n").replace('\\', "/");
+    IGNORE_IN_FIXTURES.replace_all(&s, "").into_owned()
+}
+
 impl OutputExt for Output {
     #[track_caller]
-    fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
+    fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) {
         let expected = fs::read_to_string(expected_path).unwrap();
-        let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "").replace('\\', "/");
-        let stdout = lossy_string(&self.stdout);
-        let out = IGNORE_IN_FIXTURES.replace_all(&stdout, "").replace('\\', "/");
-
-        pretty_assertions::assert_eq!(expected, out);
-
-        self
+        let out = lossy_string(&self.stdout);
+        pretty_assertions::assert_eq!(normalize_output(&out), normalize_output(&expected));
     }
 
     #[track_caller]
-    fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
+    fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) {
         let expected = fs::read_to_string(expected_path).unwrap();
-        let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "").replace('\\', "/");
-        let stderr = lossy_string(&self.stderr);
-        let out = IGNORE_IN_FIXTURES.replace_all(&stderr, "").replace('\\', "/");
-
-        pretty_assertions::assert_eq!(expected, out);
-        self
+        let err = lossy_string(&self.stderr);
+        pretty_assertions::assert_eq!(normalize_output(&err), normalize_output(&expected));
     }
 }
 
