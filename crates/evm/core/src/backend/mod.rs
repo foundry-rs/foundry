@@ -27,7 +27,8 @@ use std::{
         Arc,
     },
 };
- use ethers::utils::GenesisAccount;
+use ethers::utils::GenesisAccount;
+use foundry_utils::types::ToAlloy;
 
 mod diagnostic;
 pub use diagnostic::RevertDiagnostic;
