@@ -173,7 +173,7 @@ pub fn find_source(
                 Err(e) => {
                     let err = EtherscanError::ContractCodeNotVerified(address).to_string();
                     if e.to_string() == err {
-                        error!("{}", err);
+                        error!(%err);
                         Ok(source)
                     } else {
                         Err(e)

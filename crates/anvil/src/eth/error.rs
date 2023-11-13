@@ -279,7 +279,7 @@ pub fn to_rpc_result<T: Serialize>(val: T) -> ResponseResult {
     match serde_json::to_value(val) {
         Ok(success) => ResponseResult::Success(success),
         Err(err) => {
-            error!("Failed serialize rpc response: {:?}", err);
+            error!(%err, "Failed serialize rpc response");
             ResponseResult::error(RpcError::internal_error())
         }
     }
@@ -291,7 +291,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
             Ok(val) => to_rpc_result(val),
             Err(err) => match err {
                 BlockchainError::Pool(err) => {
-                    error!("txpool error: {:?}", err);
+                    error!(%err, "txpool error");
                     match err {
                         PoolError::CyclicTransaction => {
                             RpcError::transaction_rejected("Cyclic transaction detected")
@@ -366,7 +366,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     "Invalid input: `max_priority_fee_per_gas` greater than `max_fee_per_gas`",
                 ),
                 BlockchainError::ForkProvider(err) => {
-                    error!("fork provider error: {:?}", err);
+                    error!(%err, "fork provider error");
                     RpcError::internal_error_with(format!("Fork Error: {err:?}"))
                 }
                 err @ BlockchainError::EvmError(_) => {

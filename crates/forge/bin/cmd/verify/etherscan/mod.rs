@@ -80,7 +80,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     .wrap_err_with(|| {
                         // valid json
                         let args = serde_json::to_string(&verify_args).unwrap();
-                        error!(target : "forge::verify",  ?args, "Failed to submit verification");
+                        error!(target: "forge::verify", ?args, "Failed to submit verification");
                         format!("Failed to submit contract verification, payload:\n{args}")
                     })?;
 

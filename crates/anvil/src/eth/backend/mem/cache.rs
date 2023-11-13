@@ -39,7 +39,7 @@ impl DiskStateCache {
                     self.temp_dir = Some(temp_dir);
                 }
                 Err(err) => {
-                    error!(target: "backend", ?err, "failed to create disk state cache dir");
+                    error!(target: "backend", %err, "failed to create disk state cache dir");
                 }
             }
         }
@@ -64,7 +64,7 @@ impl DiskStateCache {
                         trace!(target: "backend", ?hash, "wrote state json file");
                     }
                     Err(err) => {
-                        error!(target: "backend", ?err, ?hash, "Failed to load state snapshot");
+                        error!(target: "backend", %err, ?hash, "Failed to load state snapshot");
                     }
                 };
             });
@@ -82,7 +82,7 @@ impl DiskStateCache {
                     Some(state)
                 }
                 Err(err) => {
-                    error!(target: "backend", ?err, ?hash, "Failed to load state snapshot");
+                    error!(target: "backend", %err, ?hash, "Failed to load state snapshot");
                     None
                 }
             }
@@ -94,7 +94,7 @@ impl DiskStateCache {
     pub fn remove(&mut self, hash: H256) {
         self.with_cache_file(hash, |file| {
             foundry_common::fs::remove_file(file).map_err(|err| {
-                error!(target: "backend", ?err, ?hash, "Failed to remove state snapshot");
+                error!(target: "backend", %err, %hash, "Failed to remove state snapshot");
             })
         });
     }

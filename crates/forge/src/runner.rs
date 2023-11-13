@@ -142,16 +142,16 @@ impl<'a> ContractRunner<'a> {
                 .setup(None, address)
             {
                 Ok(CallResult { traces, labels, logs, coverage, .. }) => {
-                    trace!(contract = ?address, "successfully setUp test");
+                    trace!(contract=%address, "successfully setUp test");
                     (logs, traces, labels, None, coverage)
                 }
                 Err(EvmError::Execution(err)) => {
                     let ExecutionErr { traces, labels, logs, reason, .. } = *err;
-                    error!(reason = ?reason, contract = ?address, "setUp failed");
+                    error!(reason=%reason, contract=%address, "setUp failed");
                     (logs, traces, labels, Some(format!("setup failed: {reason}")), None)
                 }
                 Err(err) => {
-                    error!(reason=?err, contract= ?address, "setUp failed");
+                    error!(reason=%err, contract=%address, "setUp failed");
                     (Vec::new(), None, BTreeMap::new(), Some(format!("setup failed: {err}")), None)
                 }
             };
@@ -493,7 +493,7 @@ impl<'a> ContractRunner<'a> {
                 ) {
                     Ok(c) => counterexample = c,
                     Err(err) => {
-                        error!(?err, "Failed to replay invariant error")
+                        error!(%err, "Failed to replay invariant error");
                     }
                 };
             }

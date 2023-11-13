@@ -770,7 +770,7 @@ impl Backend {
 
         match revm::evm_inner::<Self, true>(env, self, &mut inspector).transact() {
             Ok(res) => Ok(res),
-            Err(e) => eyre::bail!("backend: failed while inspecting: {:?}", e),
+            Err(e) => eyre::bail!("backend: failed while inspecting: {e}"),
         }
     }
 
@@ -1871,7 +1871,7 @@ fn commit_transaction<I: Inspector<Backend>>(
 
         match evm.inspect(inspector) {
             Ok(res) => res.state,
-            Err(e) => eyre::bail!("backend: failed committing transaction: {:?}", e),
+            Err(e) => eyre::bail!("backend: failed committing transaction: {e}"),
         }
     };
 
