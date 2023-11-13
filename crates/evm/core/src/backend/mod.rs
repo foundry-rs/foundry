@@ -8,8 +8,9 @@ use crate::{
 };
 use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
 use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
-use ethers::types::BlockNumber;
+use ethers::{types::BlockNumber, utils::GenesisAccount};
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
+use foundry_utils::types::ToAlloy;
 use revm::{
     db::{CacheDB, DatabaseRef},
     inspectors::NoOpInspector,
@@ -27,8 +28,6 @@ use std::{
         Arc,
     },
 };
-use ethers::utils::GenesisAccount;
-use foundry_utils::types::ToAlloy;
 
 mod diagnostic;
 pub use diagnostic::RevertDiagnostic;
@@ -574,9 +573,8 @@ impl Backend {
     /// Checks if the test contract associated with this backend failed, See
     /// [Self::is_failed_test_contract]
     pub fn is_failed(&self) -> bool {
-        self.has_snapshot_failure()
-            || self
-                .test_contract_address()
+        self.has_snapshot_failure() ||
+            self.test_contract_address()
                 .map(|addr| self.is_failed_test_contract(addr))
                 .unwrap_or_default()
     }
@@ -863,8 +861,8 @@ impl Backend {
             for tx in txs.into_iter() {
                 // System transactions such as on L2s don't contain any pricing info so we skip them
                 // otherwise this would cause reverts
-                if is_known_system_sender(tx.from)
-                    || tx.transaction_type.map(|ty| ty.to::<u64>()) == Some(SYSTEM_TRANSACTION_TYPE)
+                if is_known_system_sender(tx.from) ||
+                    tx.transaction_type.map(|ty| ty.to::<u64>()) == Some(SYSTEM_TRANSACTION_TYPE)
                 {
                     continue;
                 }

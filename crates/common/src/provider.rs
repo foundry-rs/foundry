@@ -8,6 +8,7 @@ use ethers_core::types::Chain;
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use ethers_providers::{JwtAuth, JwtKey};
 use eyre::{Result, WrapErr};
+use foundry_config::NamedChain;
 use foundry_utils::types::ToAlloy;
 use reqwest::{header::HeaderValue, Url};
 use std::{
@@ -15,7 +16,6 @@ use std::{
     time::Duration,
 };
 use url::ParseError;
-use foundry_config::NamedChain;
 
 /// Helper type alias for a retry provider
 pub type RetryProvider = Provider<BoxTransport>;
