@@ -220,7 +220,12 @@ impl MultiWallet {
         script_wallets: &[LocalWallet],
     ) -> Result<HashMap<Address, WalletSigner>> {
         println!("\n###\nFinding wallets for all the necessary addresses...");
-        let chain = provider.get_chain_id().await?.as_u64();
+        let chain = provider
+            .get_chain_id()
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("could not fetch chain id"))?
+            .to();
 
         let mut local_wallets = HashMap::new();
         let mut unused_wallets = vec![];
