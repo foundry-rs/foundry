@@ -61,7 +61,7 @@ impl BlockchainDb {
     }
 
     fn new_db(meta: BlockchainDbMeta, cache_path: Option<PathBuf>, skip_check: bool) -> Self {
-        trace!(target : "forge::cache", cache=?cache_path, "initialising blockchain db");
+        trace!(target: "forge::cache", cache=?cache_path, "initialising blockchain db");
         // read cache and check if metadata matches
         let cache = cache_path
             .as_ref()
@@ -73,7 +73,7 @@ impl BlockchainDb {
                     let mut existing = cache.meta().write();
                     existing.hosts.extend(meta.hosts.clone());
                     if meta != *existing {
-                        warn!(target : "cache", "non-matching block metadata");
+                        warn!(target: "cache", "non-matching block metadata");
                         false
                     } else {
                         true
@@ -334,13 +334,13 @@ impl JsonBlockCacheDB {
     ///   - the format does not match [JsonBlockCacheData]
     pub fn load(path: impl Into<PathBuf>) -> eyre::Result<Self> {
         let path = path.into();
-        trace!(target : "cache", ?path, "reading json cache");
+        trace!(target: "cache", ?path, "reading json cache");
         let contents = std::fs::read_to_string(&path).map_err(|err| {
             warn!(?err, ?path, "Failed to read cache file");
             err
         })?;
         let data = serde_json::from_str(&contents).map_err(|err| {
-            warn!(target : "cache", ?err, ?path, "Failed to deserialize cache data");
+            warn!(target: "cache", ?err, ?path, "Failed to deserialize cache data");
             err
         })?;
         Ok(Self { cache_path: Some(path), data })

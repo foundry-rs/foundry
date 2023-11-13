@@ -68,7 +68,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             return Ok(())
         }
 
-        trace!(target : "forge::verify", ?verify_args,  "submitting verification request");
+        trace!(target: "forge::verify", ?verify_args,  "submitting verification request");
 
         let retry: Retry = args.retry.into();
         let resp = retry.run_async(|| {
@@ -84,7 +84,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         format!("Failed to submit contract verification, payload:\n{args}")
                     })?;
 
-                trace!(target : "forge::verify",  ?resp, "Received verification response");
+                trace!(target: "forge::verify",  ?resp, "Received verification response");
 
                 if resp.status == "0" {
                     if resp.result == "Contract source code already verified" {
@@ -153,7 +153,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         .await
                         .wrap_err("Failed to request verification status")?;
 
-                    trace!(target : "forge::verify",  ?resp, "Received verification response");
+                    trace!(target: "forge::verify",  ?resp, "Received verification response");
 
                     eprintln!(
                         "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
