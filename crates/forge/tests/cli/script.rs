@@ -39,7 +39,7 @@ contract ContractScript is Script {
 
         let rpc = foundry_utils::rpc::next_http_rpc_endpoint();
 
-        cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvv"]);
+        cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvvv"]).assert_success();
     }
 );
 
