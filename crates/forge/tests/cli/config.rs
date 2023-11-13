@@ -319,14 +319,13 @@ forgetest_init!(can_set_config_values, |prj, _cmd| {
 
 // tests that solc can be explicitly set
 forgetest!(can_set_solc_explicitly, |prj, cmd| {
-    prj.inner()
-        .add_source(
-            "Foo",
-            r"
+    prj.add_source(
+        "Foo",
+        r"
 contract Greeter {}
    ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     // explicitly set to run with ^0.8.4
     let config = Config { solc: Some("^0.8.4".into()), ..Default::default() };
@@ -343,14 +342,13 @@ Compiler run successful!
 
 // tests that `--use <solc>` works
 forgetest!(can_use_solc, |prj, cmd| {
-    prj.inner()
-        .add_source(
-            "Foo",
-            r"
+    prj.add_source(
+        "Foo",
+        r"
 contract Foo {}
    ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.args(["build", "--use", "0.7.1"]);
 
@@ -375,10 +373,9 @@ contract Foo {}
 
 // test to ensure yul optimizer can be set as intended
 forgetest!(can_set_yul_optimizer, |prj, cmd| {
-    prj.inner()
-        .add_source(
-            "Foo",
-            r"
+    prj.add_source(
+        "Foo",
+        r"
 contract Foo {
     function bar() public pure {
        assembly {
@@ -387,8 +384,8 @@ contract Foo {
     }
 }
    ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.arg("build");
     cmd.unchecked_output().stderr_matches_path(

@@ -31,10 +31,9 @@ fn setup_with_simple_remapping(prj: &TestProject) -> String {
     };
     prj.write_config(config);
 
-    prj.inner()
-        .add_source(
-            "LinkTest",
-            r#"
+    prj.add_source(
+        "LinkTest",
+        r#"
 import "remapping/MyLib.sol";
 contract LinkTest {
     function foo() public returns (uint256) {
@@ -42,21 +41,20 @@ contract LinkTest {
     }
 }
 "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-    prj.inner()
-        .add_lib(
-            "remapping/MyLib",
-            r"
+    prj.add_lib(
+        "remapping/MyLib",
+        r"
 library MyLib {
     function foobar(uint256 a) public view returns (uint256) {
     	return a * 100;
     }
 }
 ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     "src/LinkTest.sol:LinkTest".to_string()
 }
@@ -71,10 +69,9 @@ fn setup_oracle(prj: &TestProject) -> String {
     };
     prj.write_config(config);
 
-    prj.inner()
-        .add_source(
-            "Contract",
-            r#"
+    prj.add_source(
+        "Contract",
+        r#"
 import {ChainlinkTWAP} from "./libraries/ChainlinkTWAP.sol";
 contract Contract {
     function getPrice() public view returns (int latest) {
@@ -82,21 +79,20 @@ contract Contract {
     }
 }
 "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-    prj.inner()
-        .add_source(
-            "libraries/ChainlinkTWAP",
-            r"
+    prj.add_source(
+        "libraries/ChainlinkTWAP",
+        r"
 library ChainlinkTWAP {
    function getLatestPrice(address base) public view returns (int256) {
         return 0;
    }
 }
 ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     "src/Contract.sol:Contract".to_string()
 }
@@ -226,10 +222,9 @@ forgetest_async!(
         let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
         prj.write_config(config);
 
-        prj.inner()
-            .add_source(
-                "ConstructorContract",
-                r#"
+        prj.add_source(
+            "ConstructorContract",
+            r#"
 contract ConstructorContract {
     string public name;
 
@@ -238,8 +233,8 @@ contract ConstructorContract {
     }
 }
 "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
         cmd.forge_fuse().args([
             "create",
@@ -259,10 +254,9 @@ contract ConstructorContract {
                 .join("tests/fixtures/can_create_with_constructor_args.stdout"),
         );
 
-        prj.inner()
-            .add_source(
-                "TupleArrayConstructorContract",
-                r#"
+        prj.add_source(
+            "TupleArrayConstructorContract",
+            r#"
 struct Point {
     uint256 x;
     uint256 y;
@@ -272,8 +266,8 @@ contract TupleArrayConstructorContract {
     constructor(Point[] memory _points) {}
 }
 "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
         cmd.forge_fuse().args([
             "create",

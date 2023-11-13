@@ -527,18 +527,17 @@ forgetest_init!(can_emit_multiple_extra_output, |prj, cmd| {
 });
 
 forgetest!(can_print_warnings, |prj, cmd| {
-    prj.inner()
-        .add_source(
-            "Foo",
-            r"
+    prj.add_source(
+        "Foo",
+        r"
 contract Greeter {
     function foo(uint256 a) public {
         uint256 x = 1;
     }
 }
    ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.arg("build");
 
@@ -569,10 +568,9 @@ Warning (5667): Warning: Unused function parameter. Remove or comment out the va
 //    |                       ^^^^
 #[cfg(not(target_os = "windows"))]
 forgetest!(can_handle_direct_imports_into_src, |prj, cmd| {
-    prj.inner()
-        .add_source(
-            "Foo",
-            r#"
+    prj.add_source(
+        "Foo",
+        r#"
 import {FooLib} from "src/FooLib.sol";
 struct Bar {
     uint8 x;
@@ -588,21 +586,20 @@ contract Foo {
     }
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-    prj.inner()
-        .add_source(
-            "FooLib",
-            r#"
+    prj.add_source(
+        "FooLib",
+        r#"
 import {Foo, Bar} from "src/Foo.sol";
 library FooLib {
     function check(Bar memory b) public {}
     function check2(Foo f) public {}
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.arg("build");
 
@@ -620,7 +617,6 @@ forgetest!(can_execute_inspect_command, |prj, cmd| {
     prj.write_config(config);
     let contract_name = "Foo";
     let path = prj
-        .inner()
         .add_source(
             contract_name,
             r#"
@@ -660,10 +656,9 @@ forgetest!(
     |prj, cmd| {
         prj.insert_ds_test();
 
-        prj.inner()
-            .add_source(
-                "ATest.t.sol",
-                r#"
+        prj.add_source(
+            "ATest.t.sol",
+            r#"
 import "./test.sol";
 contract ATest is DSTest {
     function testExample() public {
@@ -671,8 +666,8 @@ contract ATest is DSTest {
     }
 }
    "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
         cmd.arg("snapshot");
 
@@ -693,16 +688,15 @@ forgetest!(can_compile_without_warnings, |prj, cmd| {
         ..Default::default()
     };
     prj.write_config(config);
-    prj.inner()
-        .add_source(
-            "A",
-            r"
+    prj.add_source(
+        "A",
+        r"
 contract A {
     function testExample() public {}
 }
    ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.args(["build", "--force"]);
     let out = cmd.stdout_lossy();
@@ -728,16 +722,15 @@ contract A {
 forgetest!(can_fail_compile_with_warnings, |prj, cmd| {
     let config = Config { ignored_error_codes: vec![], deny_warnings: false, ..Default::default() };
     prj.write_config(config);
-    prj.inner()
-        .add_source(
-            "A",
-            r"
+    prj.add_source(
+        "A",
+        r"
 contract A {
     function testExample() public {}
 }
    ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.args(["build", "--force"]);
     let out = cmd.stdout_lossy();
@@ -798,10 +791,9 @@ forgetest!(
 forgetest!(can_build_after_failure, |prj, cmd| {
     prj.insert_ds_test();
 
-    prj.inner()
-        .add_source(
-            "ATest.t.sol",
-            r#"
+    prj.add_source(
+        "ATest.t.sol",
+        r#"
 import "./test.sol";
 contract ATest is DSTest {
     function testExample() public {
@@ -809,12 +801,11 @@ contract ATest is DSTest {
     }
 }
    "#,
-        )
-        .unwrap();
-    prj.inner()
-        .add_source(
-            "BTest.t.sol",
-            r#"
+    )
+    .unwrap();
+    prj.add_source(
+        "BTest.t.sol",
+        r#"
 import "./test.sol";
 contract BTest is DSTest {
     function testExample() public {
@@ -822,8 +813,8 @@ contract BTest is DSTest {
     }
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.arg("build");
     cmd.assert_non_empty_stdout();
@@ -840,7 +831,7 @@ contract CTest is DSTest {
    "#;
 
     // introduce contract with syntax error
-    prj.inner().add_source("CTest.t.sol", syntax_err).unwrap();
+    prj.add_source("CTest.t.sol", syntax_err).unwrap();
 
     // `forge build --force` which should fail
     cmd.arg("--force");
@@ -855,10 +846,9 @@ contract CTest is DSTest {
     cmd.assert_err();
 
     // resolve the error by replacing the file
-    prj.inner()
-        .add_source(
-            "CTest.t.sol",
-            r#"
+    prj.add_source(
+        "CTest.t.sol",
+        r#"
 import "./test.sol";
 contract CTest is DSTest {
     function testExample() public {
@@ -866,8 +856,8 @@ contract CTest is DSTest {
     }
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.assert_non_empty_stdout();
     prj.assert_cache_exists();
@@ -877,7 +867,7 @@ contract CTest is DSTest {
     let cache = fs::read_to_string(prj.cache()).unwrap();
 
     // introduce the error again but building without force
-    prj.inner().add_source("CTest.t.sol", syntax_err).unwrap();
+    prj.add_source("CTest.t.sol", syntax_err).unwrap();
     cmd.assert_err();
 
     // ensure unchanged cache file
@@ -1030,16 +1020,15 @@ forgetest!(
 
         // create test file that uses the top-level dependency; if the sub-dependency is updated,
         // compilation will fail
-        prj.inner()
-            .add_source(
-                "CounterCopy",
-                r#"
+        prj.add_source(
+            "CounterCopy",
+            r#"
 import "forge-5980-test/Counter.sol";
 contract CounterCopy is Counter {
 }
    "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
         // build and check output
         cmd.forge_fuse().arg("build");
@@ -1050,10 +1039,9 @@ contract CounterCopy is Counter {
 
 forgetest!(gas_report_all_contracts, |prj, cmd| {
     prj.insert_ds_test();
-    prj.inner()
-        .add_source(
-            "Contracts.sol",
-            r#"
+    prj.add_source(
+        "Contracts.sol",
+        r#"
 //SPDX-license-identifier: MIT
 
 import "./test.sol";
@@ -1137,8 +1125,8 @@ contract ContractThreeTest is DSTest {
     }
 }
     "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     // report for all
     prj.write_config(Config {
@@ -1178,10 +1166,9 @@ contract ContractThreeTest is DSTest {
 
 forgetest!(gas_report_some_contracts, |prj, cmd| {
     prj.insert_ds_test();
-    prj.inner()
-        .add_source(
-            "Contracts.sol",
-            r#"
+    prj.add_source(
+        "Contracts.sol",
+        r#"
 //SPDX-license-identifier: MIT
 
 import "./test.sol";
@@ -1265,8 +1252,8 @@ contract ContractThreeTest is DSTest {
     }
 }
     "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     // report for One
     prj.write_config(Config {
@@ -1303,10 +1290,9 @@ contract ContractThreeTest is DSTest {
 
 forgetest!(gas_ignore_some_contracts, |prj, cmd| {
     prj.insert_ds_test();
-    prj.inner()
-        .add_source(
-            "Contracts.sol",
-            r#"
+    prj.add_source(
+        "Contracts.sol",
+        r#"
 //SPDX-license-identifier: MIT
 
 import "./test.sol";
@@ -1390,8 +1376,8 @@ contract ContractThreeTest is DSTest {
     }
 }
     "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     // ignore ContractOne
     prj.write_config(Config {
@@ -1442,37 +1428,34 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
     };
     prj.write_config(config);
 
-    prj.inner()
-        .add_lib(
-            "myDepdendency/src/interfaces/IConfig.sol",
-            r"
+    prj.add_lib(
+        "myDepdendency/src/interfaces/IConfig.sol",
+        r"
     
     interface IConfig {}
    ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-    prj.inner()
-        .add_lib(
-            "myDepdendency/src/Config.sol",
-            r#"
+    prj.add_lib(
+        "myDepdendency/src/Config.sol",
+        r#"
         import "src/interfaces/IConfig.sol";
 
     contract Config {}
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-    prj.inner()
-        .add_source(
-            "Greeter",
-            r#"
+    prj.add_source(
+        "Greeter",
+        r#"
         import "myDepdendency/src/Config.sol";
 
     contract Greeter {}
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.arg("build");
     let stdout = cmd.stdout_lossy();
@@ -1481,47 +1464,43 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
 
 // <https://github.com/foundry-rs/foundry/issues/3440>
 forgetest_init!(can_use_absolute_imports_from_test_and_script, |prj, cmd| {
-    prj.inner()
-        .add_script(
-            "IMyScript.sol",
-            r"
+    prj.add_script(
+        "IMyScript.sol",
+        r"
     
     interface IMyScript {}
    ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-    prj.inner()
-        .add_script(
-            "MyScript.sol",
-            r#"
+    prj.add_script(
+        "MyScript.sol",
+        r#"
         import "script/IMyScript.sol";
 
     contract MyScript is IMyScript {}
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-    prj.inner()
-        .add_test(
-            "IMyTest.sol",
-            r"
+    prj.add_test(
+        "IMyTest.sol",
+        r"
     
     interface IMyTest {}
    ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-    prj.inner()
-        .add_test(
-            "MyTest.sol",
-            r#"
+    prj.add_test(
+        "MyTest.sol",
+        r#"
         import "test/IMyTest.sol";
 
     contract MyTest is IMyTest {}
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.arg("build");
     let stdout = cmd.stdout_lossy();
@@ -1592,15 +1571,14 @@ forgetest_init!(can_build_skip_glob, |prj, cmd| {
     // explicitly set to run with 0.8.17 for consistent output
     let config = Config { solc: Some("0.8.17".into()), ..Default::default() };
     prj.write_config(config);
-    prj.inner()
-        .add_test(
-            "Foo",
-            r"
+    prj.add_test(
+        "Foo",
+        r"
 contract TestDemo {
 function test_run() external {}
 }",
-        )
-        .unwrap();
+    )
+    .unwrap();
     // only builds the single template contract `src/*` even if `*.t.sol` or `.s.sol` is absent
     cmd.args(["build", "--skip", "*/test/**", "--skip", "*/script/**"]);
 

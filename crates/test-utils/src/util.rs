@@ -3,6 +3,7 @@ use eyre::{Result, WrapErr};
 use fd_lock::RwLock;
 use foundry_compilers::{
     cache::SolFilesCache,
+    error::Result as SolcResult,
     project_util::{copy_dir, TempProject},
     ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
 };
@@ -309,14 +310,9 @@ impl TestProject {
         self.inner.root()
     }
 
-    /// Returns the inner [`TempProject`].
-    pub fn inner(&self) -> &TempProject {
-        &self.inner
-    }
-
     /// Returns the paths config.
     pub fn paths(&self) -> &ProjectPathsConfig {
-        self.inner().paths()
+        self.inner.paths()
     }
 
     /// Returns the path to the project's `foundry.toml` file.
@@ -350,6 +346,33 @@ impl TestProject {
         pretty_err(&file, fs::write(&file, config.to_string_pretty().unwrap()));
     }
 
+    pub fn add_source(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
+        self.inner.add_source(name, Self::add_source_prelude(contents))
+    }
+
+    pub fn add_script(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
+        self.inner.add_script(name, Self::add_source_prelude(contents))
+    }
+
+    pub fn add_test(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
+        self.inner.add_test(name, Self::add_source_prelude(contents))
+    }
+
+    pub fn add_lib(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
+        self.inner.add_lib(name, Self::add_source_prelude(contents))
+    }
+
+    fn add_source_prelude(s: &str) -> String {
+        let mut s = s.to_string();
+        if !s.contains("pragma solidity") {
+            s = format!("pragma solidity ={SOLC_VERSION};\n{s}");
+        }
+        if !s.contains("// SPDX") {
+            s = format!("// SPDX-License-Identifier: MIT OR Apache-2.0\n{s}");
+        }
+        s
+    }
+
     /// Asserts that the `<root>/foundry.toml` file exists.
     #[track_caller]
     pub fn assert_config_exists(&self) {
@@ -380,7 +403,7 @@ impl TestProject {
     #[track_caller]
     pub fn assert_style_paths_exist(&self, style: PathStyle) {
         let paths = style.paths(&self.paths().root).unwrap();
-        config_paths_exist(&paths, self.inner().project().cached);
+        config_paths_exist(&paths, self.inner.project().cached);
     }
 
     /// Copies the project's root directory to the given target
@@ -411,24 +434,23 @@ impl TestProject {
     /// Adds DSTest as a source under "test.sol"
     pub fn insert_ds_test(&self) -> PathBuf {
         let s = include_str!("../../../testdata/lib/ds-test/src/test.sol");
-        self.inner().add_source("test.sol", s).unwrap()
+        self.add_source("test.sol", s).unwrap()
     }
 
     /// Adds `console.sol` as a source under "console.sol"
     pub fn insert_console(&self) -> PathBuf {
         let s = include_str!("../../../testdata/logs/console.sol");
-        self.inner().add_source("console.sol", s).unwrap()
+        self.add_source("console.sol", s).unwrap()
     }
 
-    /// Asserts all project paths exist
-    ///
-    ///   - sources
-    ///   - artifacts
-    ///   - libs
-    ///   - cache
+    /// Asserts all project paths exist. These are:
+    /// - sources
+    /// - artifacts
+    /// - libs
+    /// - cache
     pub fn assert_all_paths_exist(&self) {
         let paths = self.paths();
-        config_paths_exist(paths, self.inner().project().cached);
+        config_paths_exist(paths, self.inner.project().cached);
     }
 
     /// Asserts that the artifacts dir and cache don't exist
