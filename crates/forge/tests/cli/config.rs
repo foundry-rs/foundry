@@ -10,7 +10,7 @@ use foundry_config::{
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
     foundry_compilers::{remappings::Remapping, EvmVersion},
-    util::{pretty_err, OutputExt, TestCommand},
+    util::{pretty_err, OutputExt, TestCommand, OTHER_SOLC_VERSION},
 };
 use path_slash::PathBufExt;
 use pretty_assertions::assert_eq;
@@ -319,72 +319,62 @@ forgetest_init!(can_set_config_values, |prj, _cmd| {
 
 // tests that solc can be explicitly set
 forgetest!(can_set_solc_explicitly, |prj, cmd| {
-    prj.inner()
-        .add_source(
-            "Foo",
-            r"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity >0.8.9;
+    prj.add_source(
+        "Foo",
+        r"
+pragma solidity *;
 contract Greeter {}
    ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-    // explicitly set to run with 0.8.10
-    let config = Config { solc: Some("0.8.10".into()), ..Default::default() };
+    let config = Config { solc: Some(OTHER_SOLC_VERSION.into()), ..Default::default() };
     prj.write_config(config);
 
     cmd.arg("build");
 
-    assert!(cmd.stdout_lossy().ends_with(
-        "
-Compiler run successful!
-",
-    ));
+    assert!(cmd.stdout_lossy().contains("Compiler run successful!"));
 });
 
 // tests that `--use <solc>` works
 forgetest!(can_use_solc, |prj, cmd| {
-    prj.inner()
-        .add_source(
-            "Foo",
-            r"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity >=0.7.0;
+    prj.add_raw_source(
+        "Foo",
+        r"
+pragma solidity *;
 contract Foo {}
    ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-    cmd.args(["build", "--use", "0.7.1"]);
-
+    cmd.args(["build", "--use", OTHER_SOLC_VERSION]);
     let stdout = cmd.stdout_lossy();
     assert!(stdout.contains("Compiler run successful"));
 
-    cmd.forge_fuse().args(["build", "--force", "--use", "solc:0.7.1"]).root_arg();
-
+    cmd.forge_fuse()
+        .args(["build", "--force", "--use", &format!("solc:{OTHER_SOLC_VERSION}")])
+        .root_arg();
+    let stdout = cmd.stdout_lossy();
     assert!(stdout.contains("Compiler run successful"));
 
     // fails to use solc that does not exist
     cmd.forge_fuse().args(["build", "--use", "this/solc/does/not/exist"]);
     assert!(cmd.stderr_lossy().contains("this/solc/does/not/exist does not exist"));
 
-    // 0.7.1 was installed in previous step, so we can use the path to this directly
-    let local_solc = foundry_compilers::Solc::find_svm_installed_version("0.7.1")
+    // `OTHER_SOLC_VERSION` was installed in previous step, so we can use the path to this directly
+    let local_solc = foundry_compilers::Solc::find_svm_installed_version(OTHER_SOLC_VERSION)
         .unwrap()
-        .expect("solc 0.7.1 is installed");
+        .expect("solc is installed");
     cmd.forge_fuse().args(["build", "--force", "--use"]).arg(local_solc.solc).root_arg();
+    let stdout = cmd.stdout_lossy();
     assert!(stdout.contains("Compiler run successful"));
 });
 
 // test to ensure yul optimizer can be set as intended
 forgetest!(can_set_yul_optimizer, |prj, cmd| {
-    prj.inner()
-        .add_source(
-            "Foo",
-            r"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
+    prj.add_source(
+        "Foo",
+        r"
 contract Foo {
     function bar() public pure {
        assembly {
@@ -393,8 +383,8 @@ contract Foo {
     }
 }
    ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.arg("build");
     cmd.unchecked_output().stderr_matches_path(

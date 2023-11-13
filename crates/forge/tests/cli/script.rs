@@ -3,7 +3,6 @@
 use crate::constants::TEMPLATE_CONTRACT;
 use alloy_primitives::Address;
 use anvil::{spawn, NodeConfig};
-use foundry_config::Config;
 use foundry_test_utils::{util::OutputExt, ScriptOutcome, ScriptTester};
 use foundry_utils::{rpc, types::ToEthers};
 use regex::Regex;
@@ -16,13 +15,9 @@ forgetest_init!(
     can_use_fork_cheat_codes_in_script,
     |prj, cmd| {
         let script = prj
-            .inner()
             .add_source(
                 "Foo",
                 r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity >=0.8.10;
-
 import "forge-std/Script.sol";
 
 contract ContractScript is Script {
@@ -46,12 +41,9 @@ contract ContractScript is Script {
 // Tests that the `run` command works correctly
 forgetest!(can_execute_script_command2, |prj, cmd| {
     let script = prj
-        .inner()
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 contract Demo {
     event log_string(string);
     function run() external {
@@ -72,12 +64,9 @@ contract Demo {
 // Tests that the `run` command works correctly when path *and* script name is specified
 forgetest!(can_execute_script_command_fqn, |prj, cmd| {
     let script = prj
-        .inner()
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 contract Demo {
     event log_string(string);
     function run() external {
@@ -98,12 +87,9 @@ contract Demo {
 // Tests that the run command can run arbitrary functions
 forgetest!(can_execute_script_command_with_sig, |prj, cmd| {
     let script = prj
-        .inner()
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 contract Demo {
     event log_string(string);
     function myFunction() external {
@@ -125,12 +111,9 @@ contract Demo {
 forgetest_async!(can_execute_script_command_with_manual_gas_limit_unlocked, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let deploy_script = prj
-        .inner()
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "forge-std/Script.sol";
 
 contract GasWaster {
@@ -181,12 +164,9 @@ contract DeployScript is Script {
 forgetest_async!(can_execute_script_command_with_manual_gas_limit, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let deploy_script = prj
-        .inner()
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "forge-std/Script.sol";
 
 contract GasWaster {
@@ -236,12 +216,9 @@ contract DeployScript is Script {
 // Tests that the run command can run functions with arguments
 forgetest!(can_execute_script_command_with_args, |prj, cmd| {
     let script = prj
-        .inner()
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 contract Demo {
     event log_string(string);
     event log_uint(uint);
@@ -265,12 +242,9 @@ contract Demo {
 // Tests that the run command can run functions with return values
 forgetest!(can_execute_script_command_with_returned, |prj, cmd| {
     let script = prj
-        .inner()
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 contract Demo {
     event log_string(string);
     function run() external returns (uint256 result, uint8) {
@@ -291,12 +265,9 @@ forgetest_async!(can_broadcast_script_skipping_simulation, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     // This example script would fail in on-chain simulation
     let deploy_script = prj
-        .inner()
         .add_source(
             "DeployScript",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "forge-std/Script.sol";
 
 contract HashChecker {
@@ -359,8 +330,6 @@ contract DeployScript is Script {
         .to_string();
 
     let run_code = r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "forge-std/Script.sol";
 import { HashChecker } from "./DeployScript.sol";
 
@@ -379,7 +348,7 @@ contract RunScript is Script {
 }"#
     .replace("CONTRACT_ADDRESS", contract_address);
 
-    let run_script = prj.inner().add_source("RunScript", run_code).unwrap();
+    let run_script = prj.add_source("RunScript", &run_code).unwrap();
     let run_contract = run_script.display().to_string() + ":RunScript";
 
     cmd.forge_fuse();
@@ -788,13 +757,9 @@ forgetest_async!(can_execute_script_with_arguments, |prj, cmd| {
     cmd.forge_fuse();
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let script = prj
-            .inner()
-            .add_script(
+    let script = prj            .add_script(
                 "Counter.s.sol",
                 r#"
-pragma solidity ^0.8.15;
-
 import "forge-std/Script.sol";
 
 struct Point {
@@ -873,12 +838,9 @@ forgetest_async!(can_execute_script_with_arguments_nested_deploy, |prj, cmd| {
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let script = prj
-        .inner()
         .add_script(
             "Counter.s.sol",
             r#"
-pragma solidity ^0.8.13;
-
 import "forge-std/Script.sol";
 
 contract A {
@@ -954,17 +916,10 @@ contract Script0 is Script {
 
 // checks that skipping build
 forgetest_init!(can_execute_script_and_skip_contracts, |prj, cmd| {
-    // explicitly set to run with 0.8.17 for consistent output
-    let config = Config { solc: Some("0.8.17".into()), ..Default::default() };
-    prj.write_config(config);
-
     let script = prj
-        .inner()
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.17;
 contract Demo {
     event log_string(string);
     function run() external returns (uint256 result, uint8) {
@@ -1000,12 +955,9 @@ forgetest_async!(assert_tx_origin_is_not_overritten, |prj, cmd| {
     cmd.forge_fuse();
 
     let script = prj
-        .inner()
         .add_script(
             "ScriptTxOrigin.s.sol",
             r#"
-pragma solidity ^0.8.13;
-
 import { Script } from "forge-std/Script.sol";
 
 contract ScriptTxOrigin is Script {
@@ -1066,12 +1018,9 @@ forgetest_async!(assert_can_create_multiple_contracts_with_correct_nonce, |prj, 
     cmd.forge_fuse();
 
     let script = prj
-        .inner()
         .add_script(
             "ScriptTxOrigin.s.sol",
             r#"
-pragma solidity ^0.8.17;
-
 import {Script, console} from "forge-std/Script.sol";
 
 contract Contract {
@@ -1111,12 +1060,9 @@ contract NestedCreateFail is Script {
 
 forgetest_async!(assert_can_detect_target_contract_with_interfaces, |prj, cmd| {
     let script = prj
-        .inner()
         .add_script(
             "ScriptWithInterface.s.sol",
             r#"
-pragma solidity ^0.8.22;
-
 contract Script {
   function run() external {}
 }

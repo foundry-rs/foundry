@@ -184,16 +184,16 @@ impl Reporter for SpinnerReporter {
 
     /// Invoked before a new [`Solc`] bin is installed
     fn on_solc_installation_start(&self, version: &Version) {
-        self.send_msg(format!("Installing solc version {version}"));
+        self.send_msg(format!("Installing Solc version {version}"));
     }
 
     /// Invoked before a new [`Solc`] bin was successfully installed
     fn on_solc_installation_success(&self, version: &Version) {
-        self.send_msg(format!("Successfully installed solc {version}"));
+        self.send_msg(format!("Successfully installed Solc {version}"));
     }
 
     fn on_solc_installation_error(&self, version: &Version, error: &str) {
-        self.send_msg(Paint::red(format!("Failed to install solc {version}: {error}")).to_string());
+        self.send_msg(Paint::red(format!("Failed to install Solc {version}: {error}")).to_string());
     }
 
     fn on_unresolved_imports(&self, imports: &[(&Path, &Path)], remappings: &[Remapping]) {

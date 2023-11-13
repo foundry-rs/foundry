@@ -3,13 +3,13 @@
 use semver::Version;
 use svm::Platform;
 
-/// The latest solc release
+/// The latest Solc release.
 ///
-/// solc to foundry release process:
-///     1. new solc release
-///     2. svm updated with all build info
-///     3. svm bumped in ethers-rs
-///     4. ethers bumped in foundry + update the `LATEST_SOLC`
+/// Solc to Foundry release process:
+/// 1. new solc release
+/// 2. svm updated with all build info
+/// 3. svm bumped in ethers-rs
+/// 4. ethers bumped in foundry + update the `LATEST_SOLC`
 const LATEST_SOLC: Version = Version::new(0, 8, 23);
 
 macro_rules! ensure_svm_releases {
@@ -56,6 +56,6 @@ contract CounterTest is Test {{
 }}
     "#
     );
-    prj.inner().add_test("Counter", src).unwrap();
+    prj.add_test("Counter", &src).unwrap();
     cmd.arg("test").stdout_lossy().contains("[PASS]");
 });
