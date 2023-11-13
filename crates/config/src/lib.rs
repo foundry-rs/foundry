@@ -2,6 +2,9 @@
 
 #![warn(missing_docs, unused_crate_dependencies)]
 
+#[macro_use]
+extern crate tracing;
+
 use crate::cache::StorageCachingConfig;
 use alloy_primitives::{address, Address, B256, U256};
 use eyre::{ContextCompat, WrapErr};
@@ -34,8 +37,6 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-pub(crate) use tracing::trace;
-use NamedChain::Mainnet;
 
 // Macros useful for creating a figment.
 mod macros;
@@ -78,7 +79,6 @@ pub mod fix;
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
 use revm_primitives::SpecId;
-use tracing::warn;
 
 /// config providers
 pub mod providers;
@@ -895,7 +895,7 @@ impl Config {
 
         // we treat the `etherscan_api_key` as actual API key
         // if no chain provided, we assume mainnet
-        let chain = self.chain_id.unwrap_or(Chain::Named(Mainnet));
+        let chain = self.chain_id.unwrap_or(Chain::Named(NamedChain::Mainnet));
         let api_key = self.etherscan_api_key.as_ref()?;
         ResolvedEtherscanConfig::create(api_key, chain).map(Ok)
     }
@@ -2156,7 +2156,7 @@ impl Provider for DappEnvCompatProvider {
             let val = val.parse::<u8>().map_err(figment::Error::custom)?;
             if val > 1 {
                 return Err(
-                    format!("Invalid $DAPP_BUILD_OPTIMIZE value `{val}`,  expected 0 or 1").into()
+                    format!("Invalid $DAPP_BUILD_OPTIMIZE value `{val}`, expected 0 or 1").into()
                 )
             }
             dict.insert("optimizer".to_string(), (val == 1).into());
@@ -2979,7 +2979,7 @@ mod tests {
             assert!(!configs.has_unresolved());
 
             let mb_urls = Moonbeam.etherscan_urls().unwrap();
-            let mainnet_urls = Mainnet.etherscan_urls().unwrap();
+            let mainnet_urls = NamedChain::Mainnet.etherscan_urls().unwrap();
             assert_eq!(
                 configs,
                 ResolvedEtherscanConfigs::new([
@@ -2987,7 +2987,7 @@ mod tests {
                         "mainnet",
                         ResolvedEtherscanConfig {
                             api_url: mainnet_urls.0.to_string(),
-                            chain: Some(Mainnet.into()),
+                            chain: Some(NamedChain::Mainnet.into()),
                             browser_url: Some(mainnet_urls.1.to_string()),
                             key: "FX42Z3BBJJEWXWGYV2X1CIPRSCN".to_string(),
                         }

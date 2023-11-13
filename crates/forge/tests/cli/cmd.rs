@@ -765,7 +765,7 @@ forgetest!(
             "14435000",
             "--libraries",
             dss_exec_lib,
-            "-vvv",
+            "-vvvvv",
         ]);
         cmd.assert_non_empty_stdout();
     }

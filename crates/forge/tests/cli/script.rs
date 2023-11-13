@@ -34,7 +34,7 @@ contract ContractScript is Script {
 
         let rpc = foundry_utils::rpc::next_http_rpc_endpoint();
 
-        cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvv"]);
+        cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvvv"]).assert_success();
     }
 );
 
@@ -118,7 +118,7 @@ import "forge-std/Script.sol";
 
 contract GasWaster {
     function wasteGas(uint256 minGas) public {
-        require(gasleft() >= minGas,  "Gas left needs to be higher");
+        require(gasleft() >= minGas, "Gas left needs to be higher");
     }
 }
 contract DeployScript is Script {
@@ -171,7 +171,7 @@ import "forge-std/Script.sol";
 
 contract GasWaster {
     function wasteGas(uint256 minGas) public {
-        require(gasleft() >= minGas,  "Gas left needs to be higher");
+        require(gasleft() >= minGas, "Gas left needs to be higher");
     }
 }
 contract DeployScript is Script {
@@ -279,7 +279,7 @@ contract HashChecker {
     }
 
     function checkLastHash() public {
-        require(lastHash != bytes32(0),  "Hash shouldn't be zero");
+        require(lastHash != bytes32(0), "Hash shouldn't be zero");
     }
 }
 contract DeployScript is Script {

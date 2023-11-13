@@ -34,7 +34,6 @@ use foundry_config::{
 use foundry_debugger::DebuggerArgs;
 use regex::Regex;
 use std::{collections::BTreeMap, fs, sync::mpsc::channel, time::Duration};
-use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 

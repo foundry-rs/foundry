@@ -174,7 +174,7 @@ pub fn fuzz_contract_with_calldata(
         40 => fuzz_calldata_from_state(func, fuzz_state),
     ];
     strats.prop_map(move |calldata| {
-        trace!(input = ?calldata);
+        trace!(input=?calldata);
         (contract, calldata)
     })
 }

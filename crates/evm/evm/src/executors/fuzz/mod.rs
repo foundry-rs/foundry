@@ -92,7 +92,7 @@ impl<'a> FuzzedExecutor<'a> {
         }
 
         let strat = proptest::strategy::Union::new_weighted(weights);
-        debug!(func = ?func.name, should_fail, "fuzzing");
+        debug!(func=?func.name, should_fail, "fuzzing");
         let run_result = self.runner.clone().run(&strat, |calldata| {
             let fuzz_res = self.single_fuzz(&state, address, should_fail, calldata)?;
 

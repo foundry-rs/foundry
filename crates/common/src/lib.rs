@@ -2,6 +2,9 @@
 
 #![warn(missing_docs, unused_crate_dependencies)]
 
+#[macro_use]
+extern crate tracing;
+
 pub mod abi;
 pub mod calc;
 pub mod clap_helpers;

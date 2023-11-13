@@ -9,7 +9,6 @@ use axum::{
     Json,
 };
 use futures::{future, FutureExt};
-use tracing::{trace, warn};
 
 /// Handles incoming JSON-RPC Request
 pub async fn handle<Handler: RpcHandler>(

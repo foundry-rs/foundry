@@ -11,7 +11,6 @@ use std::{
     ops::{Deref, DerefMut},
     time::Duration,
 };
-use tracing::warn;
 
 /// The user agent to use when querying the etherscan API.
 pub const ETHERSCAN_USER_AGENT: &str = concat!("foundry/", env!("CARGO_PKG_VERSION"));

@@ -28,7 +28,6 @@ use foundry_compilers::{
 use foundry_config::{Config, SolcReq};
 use semver::Version;
 use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel};
-use tracing::trace;
 use yansi::Paint;
 
 /// A map, keyed by contract ID, to a tuple of the deployment source map and the runtime source map.
@@ -150,7 +149,7 @@ impl CoverageArgs {
     }
 
     /// Builds the coverage report.
-    #[tracing::instrument(name = "prepare coverage", skip_all)]
+    #[instrument(name = "prepare coverage", skip_all)]
     fn prepare(&self, config: &Config, output: ProjectCompileOutput) -> Result<CoverageReport> {
         let project_paths = config.project_paths();
 

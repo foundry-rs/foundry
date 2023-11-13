@@ -806,7 +806,7 @@ mod tests {
             "blacksmith",
             "--broadcast",
             "--verify",
-            "-vvvv",
+            "-vvvvv",
         ]);
         assert_eq!(
             args.verifier.verifier_url,

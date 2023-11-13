@@ -17,7 +17,6 @@ use foundry_compilers::{
 };
 use serde_json::{to_value, Value};
 use std::fmt;
-use tracing::trace;
 
 /// CLI arguments for `forge inspect`.
 #[derive(Debug, Clone, Parser)]

@@ -17,7 +17,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use tracing::log::trace;
 
 /// Holds the sequences of multiple chain deployments.
 #[derive(Deserialize, Serialize, Clone, Default)]

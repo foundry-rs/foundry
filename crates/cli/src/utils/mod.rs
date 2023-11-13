@@ -179,7 +179,7 @@ macro_rules! p_println {
 
 /// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
 ///
-/// We could use `tracing::warn!` here, but that would imply that the dotenv file can't configure
+/// We could use `warn!` here, but that would imply that the dotenv file can't configure
 /// the logging behavior of Foundry.
 ///
 /// Similarly, we could just use `eprintln!`, but colors are off limits otherwise dotenv is implied
@@ -259,11 +259,11 @@ pub trait CommandUtils {
 impl CommandUtils for Command {
     #[track_caller]
     fn exec(&mut self) -> Result<Output> {
-        tracing::trace!(command=?self, "executing");
+        trace!(command=?self, "executing");
 
         let output = self.output()?;
 
-        tracing::trace!(code=?output.status.code(), ?output);
+        trace!(code=?output.status.code(), ?output);
 
         if output.status.success() {
             Ok(output)

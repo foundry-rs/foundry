@@ -13,7 +13,6 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use tracing::trace;
 
 /// Handles incoming Websocket upgrade
 ///

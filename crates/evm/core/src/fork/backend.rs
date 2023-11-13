@@ -282,7 +282,7 @@ where
                             Ok(KECCAK_EMPTY.to_ethers())
                         }
                         Err(err) => {
-                            error!(target: "backendhandler", ?err, ?number, "failed to get block");
+                            error!(target: "backendhandler", %err, ?number, "failed to get block");
                             Err(err)
                         }
                     };
@@ -643,9 +643,9 @@ impl DatabaseRef for SharedBackend {
     type Error = DatabaseError;
 
     fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        trace!( target: "sharedbackend", "request basic {:?}", address);
+        trace!(target: "sharedbackend", %address, "request basic");
         self.do_get_basic(address).map_err(|err| {
-            error!(target: "sharedbackend",  ?err, ?address,  "Failed to send/recv `basic`");
+            error!(target: "sharedbackend", %err, %address, "Failed to send/recv `basic`");
             if err.is_possibly_non_archive_node_error() {
                 error!(target: "sharedbackend", "{NON_ARCHIVE_NODE_WARNING}");
             }
@@ -658,9 +658,9 @@ impl DatabaseRef for SharedBackend {
     }
 
     fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        trace!( target: "sharedbackend", "request storage {:?} at {:?}", address, index);
+        trace!(target: "sharedbackend", "request storage {:?} at {:?}", address, index);
         match self.do_get_storage(address, index).map_err(|err| {
-            error!( target: "sharedbackend", ?err, ?address, ?index, "Failed to send/recv `storage`");
+            error!(target: "sharedbackend", %err, %address, %index, "Failed to send/recv `storage`");
             if err.is_possibly_non_archive_node_error() {
                 error!(target: "sharedbackend", "{NON_ARCHIVE_NODE_WARNING}");
             }
@@ -677,9 +677,9 @@ impl DatabaseRef for SharedBackend {
         }
         let number: U256 = number;
         let number = number.to();
-        trace!( target: "sharedbackend", "request block hash for number {:?}", number);
+        trace!(target: "sharedbackend", "request block hash for number {:?}", number);
         match self.do_get_block_hash(number).map_err(|err| {
-            error!(target: "sharedbackend",?err, ?number, "Failed to send/recv `block_hash`");
+            error!(target: "sharedbackend", %err, %number, "Failed to send/recv `block_hash`");
             if err.is_possibly_non_archive_node_error() {
                 error!(target: "sharedbackend", "{NON_ARCHIVE_NODE_WARNING}");
             }

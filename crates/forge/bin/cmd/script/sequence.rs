@@ -21,7 +21,6 @@ use std::{
     io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
-use tracing::trace;
 use yansi::Paint;
 
 pub const DRY_RUN_DIR: &str = "dry-run";
