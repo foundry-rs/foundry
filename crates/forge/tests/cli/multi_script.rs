@@ -9,10 +9,10 @@ forgetest_async!(can_deploy_multi_chain_script_without_lib, |prj, cmd| {
     let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
 
     tester
-        .load_private_keys([0, 1])
+        .load_private_keys(&[0, 1])
         .await
         .add_sig("MultiChainBroadcastNoLink", "deploy(string memory,string memory)")
-        .args(vec![handle1.http_endpoint(), handle2.http_endpoint()])
+        .args(&[&handle1.http_endpoint(), &handle2.http_endpoint()])
         .broadcast(ScriptOutcome::OkBroadcast);
 
     assert_eq!(
@@ -40,11 +40,11 @@ forgetest_async!(can_not_deploy_multi_chain_script_with_lib, |prj, cmd| {
     let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
 
     tester
-        .load_private_keys([0, 1])
+        .load_private_keys(&[0, 1])
         .await
         .add_deployer(0)
         .add_sig("MultiChainBroadcastLink", "deploy(string memory,string memory)")
-        .args(vec![handle1.http_endpoint(), handle2.http_endpoint()])
+        .args(&[&handle1.http_endpoint(), &handle2.http_endpoint()])
         .broadcast(ScriptOutcome::UnsupportedLibraries);
 });
 
@@ -54,10 +54,10 @@ forgetest_async!(can_not_change_fork_during_broadcast, |prj, cmd| {
     let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
 
     tester
-        .load_private_keys([0, 1])
+        .load_private_keys(&[0, 1])
         .await
         .add_deployer(0)
         .add_sig("MultiChainBroadcastNoLink", "deployError(string memory,string memory)")
-        .args(vec![handle1.http_endpoint(), handle2.http_endpoint()])
+        .args(&[&handle1.http_endpoint(), &handle2.http_endpoint()])
         .broadcast(ScriptOutcome::ErrorSelectForkOnBroadcast);
 });

@@ -5,9 +5,10 @@ use ethers_providers::Middleware;
 use eyre::Result;
 use foundry_common::{get_http_provider, RetryProvider};
 use foundry_utils::types::{ToAlloy, ToEthers};
-use std::{collections::BTreeMap, path::Path, str::FromStr};
+use std::{collections::BTreeMap, fs, path::Path, str::FromStr};
 
 const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
+const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata");
 
 /// A helper struct to test forge script scenarios
 pub struct ScriptTester {
@@ -71,9 +72,11 @@ impl ScriptTester {
         let target_contract = project_root.join(BROADCAST_TEST_PATH).to_string_lossy().to_string();
 
         // copy the broadcast test
-        let testdata = Self::testdata_path();
-        std::fs::copy(testdata + "/cheats/Broadcast.t.sol", project_root.join(BROADCAST_TEST_PATH))
-            .expect("Failed to initialize broadcast contract");
+        fs::copy(
+            Self::testdata_path().join("cheats/Broadcast.t.sol"),
+            project_root.join(BROADCAST_TEST_PATH),
+        )
+        .expect("Failed to initialize broadcast contract");
 
         Self::new(cmd, Some(endpoint), project_root, &target_contract)
     }
@@ -85,31 +88,27 @@ impl ScriptTester {
 
         // copy the broadcast test
         let testdata = Self::testdata_path();
-        std::fs::copy(testdata + "/cheats/Broadcast.t.sol", project_root.join(BROADCAST_TEST_PATH))
+        fs::copy(testdata.join("cheats/Broadcast.t.sol"), project_root.join(BROADCAST_TEST_PATH))
             .expect("Failed to initialize broadcast contract");
 
         Self::new(cmd, None, project_root, &target_contract)
     }
 
     /// Returns the path to the dir that contains testdata
-    fn testdata_path() -> String {
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata").into()
+    fn testdata_path() -> &'static Path {
+        Path::new(TESTDATA)
     }
 
     /// Initialises the test contracts by copying them into the workspace
     fn copy_testdata(current_dir: &Path) -> Result<()> {
         let testdata = Self::testdata_path();
-        std::fs::copy(testdata.clone() + "/cheats/Vm.sol", current_dir.join("src/Vm.sol"))?;
-        std::fs::copy(testdata + "/lib/ds-test/src/test.sol", current_dir.join("lib/test.sol"))?;
-
+        fs::copy(testdata.join("cheats/Vm.sol"), current_dir.join("src/Vm.sol"))?;
+        fs::copy(testdata.join("lib/ds-test/src/test.sol"), current_dir.join("lib/test.sol"))?;
         Ok(())
     }
 
-    pub async fn load_private_keys(
-        &mut self,
-        keys_indexes: impl IntoIterator<Item = u32>,
-    ) -> &mut Self {
-        for index in keys_indexes {
+    pub async fn load_private_keys(&mut self, keys_indexes: &[u32]) -> &mut Self {
+        for &index in keys_indexes {
             self.cmd.args(["--private-keys", &self.accounts_priv[index as usize]]);
 
             if let Some(provider) = &self.provider {
@@ -126,8 +125,8 @@ impl ScriptTester {
         self
     }
 
-    pub async fn load_addresses(&mut self, addresses: Vec<Address>) -> &mut Self {
-        for address in addresses {
+    pub async fn load_addresses(&mut self, addresses: &[Address]) -> &mut Self {
+        for &address in addresses {
             let nonce = self
                 .provider
                 .as_ref()
@@ -146,19 +145,16 @@ impl ScriptTester {
 
     /// Adds given address as sender
     pub fn sender(&mut self, addr: Address) -> &mut Self {
-        self.cmd.args(["--sender", addr.to_string().as_str()]);
-        self
+        self.args(&["--sender", addr.to_string().as_str()])
     }
 
     pub fn add_sig(&mut self, contract_name: &str, sig: &str) -> &mut Self {
-        self.cmd.args(["--tc", contract_name, "--sig", sig]);
-        self
+        self.args(&["--tc", contract_name, "--sig", sig])
     }
 
     /// Adds the `--unlocked` flag
     pub fn unlocked(&mut self) -> &mut Self {
-        self.cmd.arg("--unlocked");
-        self
+        self.arg("--unlocked")
     }
 
     pub fn simulate(&mut self, expected: ScriptOutcome) -> &mut Self {
@@ -166,21 +162,16 @@ impl ScriptTester {
     }
 
     pub fn broadcast(&mut self, expected: ScriptOutcome) -> &mut Self {
-        self.cmd.arg("--broadcast");
-        self.run(expected)
+        self.arg("--broadcast").run(expected)
     }
 
     pub fn resume(&mut self, expected: ScriptOutcome) -> &mut Self {
-        self.cmd.arg("--resume");
-        self.run(expected)
+        self.arg("--resume").run(expected)
     }
 
     /// `[(private_key_slot, expected increment)]`
-    pub async fn assert_nonce_increment(
-        &mut self,
-        keys_indexes: impl IntoIterator<Item = (u32, u32)>,
-    ) -> &mut Self {
-        for (private_key_slot, expected_increment) in keys_indexes {
+    pub async fn assert_nonce_increment(&mut self, keys_indexes: &[(u32, u32)]) -> &mut Self {
+        for &(private_key_slot, expected_increment) in keys_indexes {
             let addr = self.accounts_pub[private_key_slot as usize];
             let nonce = self
                 .provider
@@ -204,7 +195,7 @@ impl ScriptTester {
     /// In Vec<(address, expected increment)>
     pub async fn assert_nonce_increment_addresses(
         &mut self,
-        address_indexes: Vec<(Address, u32)>,
+        address_indexes: &[(Address, u32)],
     ) -> &mut Self {
         for (address, expected_increment) in address_indexes {
             let nonce = self
@@ -214,9 +205,9 @@ impl ScriptTester {
                 .get_transaction_count(NameOrAddress::Address(address.to_ethers()), None)
                 .await
                 .unwrap();
-            let prev_nonce = self.address_nonces.get(&address).unwrap();
+            let prev_nonce = self.address_nonces.get(address).unwrap();
 
-            assert_eq!(nonce, (prev_nonce + U256::from(expected_increment)).to_ethers());
+            assert_eq!(nonce, (prev_nonce + U256::from(*expected_increment)).to_ethers());
         }
         self
     }
@@ -238,11 +229,15 @@ impl ScriptTester {
     }
 
     pub fn slow(&mut self) -> &mut Self {
-        self.cmd.arg("--slow");
+        self.arg("--slow")
+    }
+
+    pub fn arg(&mut self, arg: &str) -> &mut Self {
+        self.cmd.arg(arg);
         self
     }
 
-    pub fn args(&mut self, args: Vec<String>) -> &mut Self {
+    pub fn args(&mut self, args: &[&str]) -> &mut Self {
         self.cmd.args(args);
         self
     }
