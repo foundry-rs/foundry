@@ -13,7 +13,6 @@ use std::{
     io::{Read, Write as _},
     path::{Path, PathBuf},
 };
-
 use yansi::Color;
 
 /// CLI arguments for `forge fmt`.

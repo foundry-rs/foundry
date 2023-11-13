@@ -37,7 +37,6 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-pub(crate) use NamedChain::Mainnet;
 
 // Macros useful for creating a figment.
 mod macros;
@@ -896,7 +895,7 @@ impl Config {
 
         // we treat the `etherscan_api_key` as actual API key
         // if no chain provided, we assume mainnet
-        let chain = self.chain_id.unwrap_or(Chain::Named(Mainnet));
+        let chain = self.chain_id.unwrap_or(Chain::Named(NamedChain::Mainnet));
         let api_key = self.etherscan_api_key.as_ref()?;
         ResolvedEtherscanConfig::create(api_key, chain).map(Ok)
     }
@@ -2980,7 +2979,7 @@ mod tests {
             assert!(!configs.has_unresolved());
 
             let mb_urls = Moonbeam.etherscan_urls().unwrap();
-            let mainnet_urls = Mainnet.etherscan_urls().unwrap();
+            let mainnet_urls = NamedChain::Mainnet.etherscan_urls().unwrap();
             assert_eq!(
                 configs,
                 ResolvedEtherscanConfigs::new([
@@ -2988,7 +2987,7 @@ mod tests {
                         "mainnet",
                         ResolvedEtherscanConfig {
                             api_url: mainnet_urls.0.to_string(),
-                            chain: Some(Mainnet.into()),
+                            chain: Some(NamedChain::Mainnet.into()),
                             browser_url: Some(mainnet_urls.1.to_string()),
                             key: "FX42Z3BBJJEWXWGYV2X1CIPRSCN".to_string(),
                         }
