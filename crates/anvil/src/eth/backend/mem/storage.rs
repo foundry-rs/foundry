@@ -12,9 +12,11 @@ use anvil_core::eth::{
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
 use ethers::{
-    prelude::{BlockId, BlockNumber, DefaultFrame, Trace, H256, H256 as TxHash, U64},
-    types::{ActionType, Bytes, GethDebugTracingOptions, TransactionReceipt, U256},
+    prelude::{DefaultFrame, Trace},
+    types::{ActionType, GethDebugTracingOptions},
 };
+use alloy_rpc_types::{BlockId, BlockNumberOrTag as BlockNumber, TransactionReceipt};
+use alloy_primitives::{B256, Bytes, TxHash, U64, U256};
 use foundry_evm::revm::{interpreter::InstructionResult, primitives::Env};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::RwLock;
@@ -37,9 +39,9 @@ const MAX_ON_DISK_HISTORY_LIMIT: usize = 3_600;
 /// Represents the complete state of single block
 pub struct InMemoryBlockStates {
     /// The states at a certain block
-    states: HashMap<H256, StateDb>,
+    states: HashMap<B256, StateDb>,
     /// states which data is moved to disk
-    on_disk_states: HashMap<H256, StateDb>,
+    on_disk_states: HashMap<B256, StateDb>,
     /// How many states to store at most
     in_memory_limit: usize,
     /// minimum amount of states we keep in memory
@@ -49,9 +51,9 @@ pub struct InMemoryBlockStates {
     /// Limiting the states will prevent disk blow up, especially in interval mining mode
     max_on_disk_limit: usize,
     /// the oldest states written to disk
-    oldest_on_disk: VecDeque<H256>,
+    oldest_on_disk: VecDeque<B256>,
     /// all states present, used to enforce `in_memory_limit`
-    present: VecDeque<H256>,
+    present: VecDeque<B256>,
     /// Stores old states on disk
     disk_cache: DiskStateCache,
 }
@@ -109,7 +111,7 @@ impl InMemoryBlockStates {
     /// the number of states/blocks until we reached the `min_limit`.
     ///
     /// When a state that was previously written to disk is requested, it is simply read from disk.
-    pub fn insert(&mut self, hash: H256, state: StateDb) {
+    pub fn insert(&mut self, hash: B256, state: StateDb) {
         if !self.is_memory_only() && self.present.len() >= self.in_memory_limit {
             // once we hit the max limit we gradually decrease it
             self.in_memory_limit =
@@ -153,7 +155,7 @@ impl InMemoryBlockStates {
     }
 
     /// Returns the state for the given `hash` if present
-    pub fn get(&mut self, hash: &H256) -> Option<&StateDb> {
+    pub fn get(&mut self, hash: &B256) -> Option<&StateDb> {
         self.states.get(hash).or_else(|| {
             if let Some(state) = self.on_disk_states.get_mut(hash) {
                 if let Some(cached) = self.disk_cache.read(*hash) {
@@ -204,15 +206,15 @@ impl Default for InMemoryBlockStates {
 #[derive(Clone)]
 pub struct BlockchainStorage {
     /// all stored blocks (block hash -> block)
-    pub blocks: HashMap<H256, Block>,
+    pub blocks: HashMap<B256, Block>,
     /// mapping from block number -> block hash
-    pub hashes: HashMap<U64, H256>,
+    pub hashes: HashMap<U64, B256>,
     /// The current best hash
-    pub best_hash: H256,
+    pub best_hash: B256,
     /// The current best block number
     pub best_number: U64,
     /// genesis hash of the chain
-    pub genesis_hash: H256,
+    pub genesis_hash: B256,
     /// Mapping from the transaction hash to a tuple containing the transaction as well as the
     /// transaction receipt
     pub transactions: HashMap<TxHash, MinedTransaction>,
@@ -226,7 +228,7 @@ impl BlockchainStorage {
         // create a dummy genesis block
         let partial_header = PartialHeader {
             timestamp,
-            base_fee,
+            base_fee: base_fee.map(|b| b.to_ethers()),
             gas_limit: env.block.gas_limit.to_ethers(),
             beneficiary: env.block.coinbase.to_ethers(),
             difficulty: env.block.difficulty.to_ethers(),
@@ -235,25 +237,25 @@ impl BlockchainStorage {
         let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![], vec![]);
         let genesis_hash = block.header.hash();
         let best_hash = genesis_hash;
-        let best_number: U64 = 0u64.into();
+        let best_number: U64 = U64::from(0u64);
 
         Self {
-            blocks: HashMap::from([(genesis_hash, block)]),
-            hashes: HashMap::from([(best_number, genesis_hash)]),
-            best_hash,
+            blocks: HashMap::from([(genesis_hash.to_alloy(), block)]),
+            hashes: HashMap::from([(best_number, genesis_hash.to_alloy())]),
+            best_hash: best_hash.to_alloy(),
             best_number,
-            genesis_hash,
+            genesis_hash: genesis_hash.to_alloy(),
             transactions: Default::default(),
             total_difficulty: Default::default(),
         }
     }
 
-    pub fn forked(block_number: u64, block_hash: H256, total_difficulty: U256) -> Self {
+    pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {
         BlockchainStorage {
             blocks: Default::default(),
-            hashes: HashMap::from([(block_number.into(), block_hash)]),
+            hashes: HashMap::from([(U64::from(block_number), block_hash)]),
             best_hash: block_hash,
-            best_number: block_number.into(),
+            best_number: U64::from(block_number),
             genesis_hash: Default::default(),
             transactions: Default::default(),
             total_difficulty,
@@ -275,16 +277,16 @@ impl BlockchainStorage {
 
     /// Removes all stored transactions for the given block number
     pub fn remove_block_transactions_by_number(&mut self, num: u64) {
-        if let Some(hash) = self.hashes.get(&(num.into())).copied() {
+        if let Some(hash) = self.hashes.get(&(U64::from(num))).copied() {
             self.remove_block_transactions(hash);
         }
     }
 
     /// Removes all stored transactions for the given block hash
-    pub fn remove_block_transactions(&mut self, block_hash: H256) {
+    pub fn remove_block_transactions(&mut self, block_hash: B256) {
         if let Some(block) = self.blocks.get_mut(&block_hash) {
             for tx in block.transactions.iter() {
-                self.transactions.remove(&tx.hash());
+                self.transactions.remove(&tx.hash().to_alloy());
             }
             block.transactions.clear();
         }
@@ -295,13 +297,13 @@ impl BlockchainStorage {
 
 impl BlockchainStorage {
     /// Returns the hash for [BlockNumber]
-    pub fn hash(&self, number: BlockNumber) -> Option<H256> {
+    pub fn hash(&self, number: BlockNumber) -> Option<B256> {
         let slots_in_an_epoch = U64::from(32u64);
         match number {
             BlockNumber::Latest => Some(self.best_hash),
             BlockNumber::Earliest => Some(self.genesis_hash),
             BlockNumber::Pending => None,
-            BlockNumber::Number(num) => self.hashes.get(&num).copied(),
+            BlockNumber::Number(num) => self.hashes.get(&U64::from(num)).copied(),
             BlockNumber::Safe => {
                 if self.best_number > (slots_in_an_epoch) {
                     self.hashes.get(&(self.best_number - (slots_in_an_epoch))).copied()
@@ -310,8 +312,8 @@ impl BlockchainStorage {
                 }
             }
             BlockNumber::Finalized => {
-                if self.best_number > (slots_in_an_epoch * 2) {
-                    self.hashes.get(&(self.best_number - (slots_in_an_epoch * 2))).copied()
+                if self.best_number > (slots_in_an_epoch * U64::from(2)) {
+                    self.hashes.get(&(self.best_number - (slots_in_an_epoch * U64::from(2)))).copied()
                 } else {
                     Some(self.genesis_hash)
                 }
@@ -335,7 +337,7 @@ impl Blockchain {
         Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(env, base_fee, timestamp))) }
     }
 
-    pub fn forked(block_number: u64, block_hash: H256, total_difficulty: U256) -> Self {
+    pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {
         Self {
             storage: Arc::new(RwLock::new(BlockchainStorage::forked(
                 block_number,
@@ -346,18 +348,18 @@ impl Blockchain {
     }
 
     /// returns the header hash of given block
-    pub fn hash(&self, id: BlockId) -> Option<H256> {
+    pub fn hash(&self, id: BlockId) -> Option<B256> {
         match id {
-            BlockId::Hash(h) => Some(h),
+            BlockId::Hash(h) => Some(h.block_hash),
             BlockId::Number(num) => self.storage.read().hash(num),
         }
     }
 
-    pub fn get_block_by_hash(&self, hash: &H256) -> Option<Block> {
+    pub fn get_block_by_hash(&self, hash: &B256) -> Option<Block> {
         self.storage.read().blocks.get(hash).cloned()
     }
 
-    pub fn get_transaction_by_hash(&self, hash: &H256) -> Option<MinedTransaction> {
+    pub fn get_transaction_by_hash(&self, hash: &B256) -> Option<MinedTransaction> {
         self.storage.read().transactions.get(hash).cloned()
     }
 
@@ -384,7 +386,7 @@ pub struct MinedBlockOutcome {
 pub struct MinedTransaction {
     pub info: TransactionInfo,
     pub receipt: TypedReceipt,
-    pub block_hash: H256,
+    pub block_hash: B256,
     pub block_number: u64,
 }
 
@@ -412,7 +414,7 @@ impl MinedTransaction {
                 transaction_position: Some(self.info.transaction_index as usize),
                 transaction_hash: Some(self.info.transaction_hash),
                 block_number: self.block_number,
-                block_hash: self.block_hash,
+                block_hash: self.block_hash.to_ethers(),
                 action_type,
                 error: None,
             };
@@ -440,7 +442,6 @@ pub struct MinedTransactionReceipt {
 mod tests {
     use super::*;
     use crate::eth::backend::db::Db;
-    use ethers::{abi::ethereum_types::BigEndianHash, types::Address};
     use foundry_evm::{
         backend::MemDb,
         revm::{
@@ -448,7 +449,7 @@ mod tests {
             primitives::{AccountInfo, U256 as rU256},
         },
     };
-    use foundry_utils::types::ToAlloy;
+    use alloy_primitives::{Address, B256, U256};
 
     #[test]
     fn test_interval_update() {
@@ -460,13 +461,13 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cached_state() {
         let mut storage = InMemoryBlockStates::new(1);
-        let one = H256::from_uint(&U256::from(1));
-        let two = H256::from_uint(&U256::from(2));
+        let one = B256::from(U256::from(1));
+        let two = B256::from(U256::from(2));
 
         let mut state = MemDb::default();
         let addr = Address::random();
         let info = AccountInfo::from_balance(rU256::from(1337));
-        state.insert_account(addr, info);
+        state.insert_account(addr.to_ethers(), info);
         storage.insert(one, StateDb::new(state));
         storage.insert(two, StateDb::new(MemDb::default()));
 
@@ -478,7 +479,7 @@ mod tests {
 
         let loaded = storage.get(&one).unwrap();
 
-        let acc = loaded.basic(addr.to_alloy()).unwrap().unwrap();
+        let acc = loaded.basic(addr).unwrap().unwrap();
         assert_eq!(acc.balance, rU256::from(1337u64));
     }
 
@@ -490,11 +491,11 @@ mod tests {
         let num_states = 30;
         for idx in 0..num_states {
             let mut state = MemDb::default();
-            let hash = H256::from_uint(&U256::from(idx));
-            let addr = Address::from(hash);
+            let hash = B256::from(U256::from(idx));
+            let addr = Address::from_word(hash);
             let balance = (idx * 2) as u64;
             let info = AccountInfo::from_balance(rU256::from(balance));
-            state.insert_account(addr, info);
+            state.insert_account(addr.to_ethers(), info);
             storage.insert(hash, StateDb::new(state));
         }
 
@@ -505,10 +506,10 @@ mod tests {
         assert_eq!(storage.present.len(), storage.min_in_memory_limit);
 
         for idx in 0..num_states {
-            let hash = H256::from_uint(&U256::from(idx));
-            let addr = Address::from(hash);
+            let hash = B256::from(U256::from(idx));
+            let addr = Address::from_word(hash);
             let loaded = storage.get(&hash).unwrap();
-            let acc = loaded.basic(addr.to_alloy()).unwrap().unwrap();
+            let acc = loaded.basic(addr).unwrap().unwrap();
             let balance = (idx * 2) as u64;
             assert_eq!(acc.balance, rU256::from(balance));
         }

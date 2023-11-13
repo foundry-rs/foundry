@@ -5,9 +5,10 @@ use alloy_primitives::{Address as B160, B256, U256 as rU256};
 use anvil_core::eth::trie::KeccakHasher;
 use ethers::{
     prelude::{Address, Bytes},
-    types::{BlockId, H256},
+    types::H256,
     utils::keccak256,
 };
+use alloy_rpc_types::BlockId;
 use foundry_common::errors::FsPathError;
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, MemDb, StateSnapshot},
