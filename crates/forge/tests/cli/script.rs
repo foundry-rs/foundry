@@ -3,7 +3,6 @@
 use crate::constants::TEMPLATE_CONTRACT;
 use alloy_primitives::Address;
 use anvil::{spawn, NodeConfig};
-use foundry_config::Config;
 use foundry_test_utils::{util::OutputExt, ScriptOutcome, ScriptTester};
 use foundry_utils::{rpc, types::ToEthers};
 use regex::Regex;
@@ -16,7 +15,6 @@ forgetest_init!(
     can_use_fork_cheat_codes_in_script,
     |prj, cmd| {
         let script = prj
-            
             .add_source(
                 "Foo",
                 r#"
@@ -43,7 +41,6 @@ contract ContractScript is Script {
 // Tests that the `run` command works correctly
 forgetest!(can_execute_script_command2, |prj, cmd| {
     let script = prj
-        
         .add_source(
             "Foo",
             r#"
@@ -67,7 +64,6 @@ contract Demo {
 // Tests that the `run` command works correctly when path *and* script name is specified
 forgetest!(can_execute_script_command_fqn, |prj, cmd| {
     let script = prj
-        
         .add_source(
             "Foo",
             r#"
@@ -91,7 +87,6 @@ contract Demo {
 // Tests that the run command can run arbitrary functions
 forgetest!(can_execute_script_command_with_sig, |prj, cmd| {
     let script = prj
-        
         .add_source(
             "Foo",
             r#"
@@ -116,7 +111,6 @@ contract Demo {
 forgetest_async!(can_execute_script_command_with_manual_gas_limit_unlocked, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let deploy_script = prj
-        
         .add_source(
             "Foo",
             r#"
@@ -170,7 +164,6 @@ contract DeployScript is Script {
 forgetest_async!(can_execute_script_command_with_manual_gas_limit, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let deploy_script = prj
-        
         .add_source(
             "Foo",
             r#"
@@ -223,7 +216,6 @@ contract DeployScript is Script {
 // Tests that the run command can run functions with arguments
 forgetest!(can_execute_script_command_with_args, |prj, cmd| {
     let script = prj
-        
         .add_source(
             "Foo",
             r#"
@@ -250,7 +242,6 @@ contract Demo {
 // Tests that the run command can run functions with return values
 forgetest!(can_execute_script_command_with_returned, |prj, cmd| {
     let script = prj
-        
         .add_source(
             "Foo",
             r#"
@@ -274,7 +265,6 @@ forgetest_async!(can_broadcast_script_skipping_simulation, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     // This example script would fail in on-chain simulation
     let deploy_script = prj
-        
         .add_source(
             "DeployScript",
             r#"
@@ -767,9 +757,7 @@ forgetest_async!(can_execute_script_with_arguments, |prj, cmd| {
     cmd.forge_fuse();
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let script = prj
-            
-            .add_script(
+    let script = prj            .add_script(
                 "Counter.s.sol",
                 r#"
 import "forge-std/Script.sol";
@@ -850,7 +838,6 @@ forgetest_async!(can_execute_script_with_arguments_nested_deploy, |prj, cmd| {
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let script = prj
-        
         .add_script(
             "Counter.s.sol",
             r#"
@@ -929,12 +916,7 @@ contract Script0 is Script {
 
 // checks that skipping build
 forgetest_init!(can_execute_script_and_skip_contracts, |prj, cmd| {
-    // explicitly set to run with 0.8.17 for consistent output
-    let config = Config { solc: Some("0.8.17".into()), ..Default::default() };
-    prj.write_config(config);
-
     let script = prj
-        
         .add_source(
             "Foo",
             r#"
@@ -973,7 +955,6 @@ forgetest_async!(assert_tx_origin_is_not_overritten, |prj, cmd| {
     cmd.forge_fuse();
 
     let script = prj
-        
         .add_script(
             "ScriptTxOrigin.s.sol",
             r#"
@@ -1037,7 +1018,6 @@ forgetest_async!(assert_can_create_multiple_contracts_with_correct_nonce, |prj, 
     cmd.forge_fuse();
 
     let script = prj
-        
         .add_script(
             "ScriptTxOrigin.s.sol",
             r#"
@@ -1080,7 +1060,6 @@ contract NestedCreateFail is Script {
 
 forgetest_async!(assert_can_detect_target_contract_with_interfaces, |prj, cmd| {
     let script = prj
-        
         .add_script(
             "ScriptWithInterface.s.sol",
             r#"

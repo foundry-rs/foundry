@@ -133,12 +133,12 @@ forgetest_async!(
     #[serial_test::serial]
     can_create_template_contract,
     |prj, cmd| {
+        foundry_test_utils::util::initialize(prj.root());
+
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let rpc = handle.http_endpoint();
         let wallet = handle.dev_wallets().next().unwrap();
         let pk = hex::encode(wallet.signer().to_bytes());
-        cmd.args(["init", "--force"]);
-        cmd.assert_non_empty_stdout();
 
         // explicitly byte code hash for consistent checks
         let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
@@ -147,8 +147,6 @@ forgetest_async!(
         cmd.forge_fuse().args([
             "create",
             format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
-            "--use",
-            "solc:0.8.15",
             "--rpc-url",
             rpc.as_str(),
             "--private-key",
@@ -172,11 +170,11 @@ forgetest_async!(
     #[serial_test::serial]
     can_create_using_unlocked,
     |prj, cmd| {
+        foundry_test_utils::util::initialize(prj.root());
+
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let rpc = handle.http_endpoint();
         let dev = handle.dev_accounts().next().unwrap();
-        cmd.args(["init", "--force"]);
-        cmd.assert_non_empty_stdout();
 
         // explicitly byte code hash for consistent checks
         let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
@@ -185,8 +183,6 @@ forgetest_async!(
         cmd.forge_fuse().args([
             "create",
             format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
-            "--use",
-            "solc:0.8.15",
             "--rpc-url",
             rpc.as_str(),
             "--from",
@@ -211,12 +207,12 @@ forgetest_async!(
     #[serial_test::serial]
     can_create_with_constructor_args,
     |prj, cmd| {
+        foundry_test_utils::util::initialize(prj.root());
+
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let rpc = handle.http_endpoint();
         let wallet = handle.dev_wallets().next().unwrap();
         let pk = hex::encode(wallet.signer().to_bytes());
-        cmd.args(["init", "--force"]);
-        cmd.assert_non_empty_stdout();
 
         // explicitly byte code hash for consistent checks
         let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
@@ -239,8 +235,6 @@ contract ConstructorContract {
         cmd.forge_fuse().args([
             "create",
             "./src/ConstructorContract.sol:ConstructorContract",
-            "--use",
-            "solc:0.8.15",
             "--rpc-url",
             rpc.as_str(),
             "--private-key",
@@ -272,8 +266,6 @@ contract TupleArrayConstructorContract {
         cmd.forge_fuse().args([
             "create",
             "./src/TupleArrayConstructorContract.sol:TupleArrayConstructorContract",
-            "--use",
-            "solc:0.8.15",
             "--rpc-url",
             rpc.as_str(),
             "--private-key",

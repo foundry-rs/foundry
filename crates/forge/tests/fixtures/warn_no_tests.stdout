@@ -1,5 +1,5 @@
-Compiling 1 files with 0.8.13
-Solc 0.8.13 
+Compiling 1 files with 0.8.23
+Solc 0.8.23 
 Compiler run successful!
 
 No tests found in project! Forge looks for functions that starts with `test`.

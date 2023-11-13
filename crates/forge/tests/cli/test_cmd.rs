@@ -1,6 +1,6 @@
 //! Contains various tests for checking `forge test`
 use foundry_config::Config;
-use foundry_test_utils::util::{template_lock, OutputExt};
+use foundry_test_utils::util::{template_lock, OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION};
 use foundry_utils::rpc;
 use std::{path::PathBuf, process::Command, str::FromStr};
 
@@ -223,7 +223,10 @@ forgetest!(runs_tests_exactly_once_with_changed_versions, |prj, cmd| {
     prj.add_source(
         "Contract.t.sol",
         r#"
+pragma solidity *;
+
 import "./test.sol";
+
 contract ContractTest is DSTest {
     function setUp() public {}
 
@@ -236,22 +239,22 @@ contract ContractTest is DSTest {
     .unwrap();
 
     // pin version
-    let config = Config { solc: Some("^0.8.4".into()), ..Default::default() };
+    let config = Config { solc: Some(SOLC_VERSION.into()), ..Default::default() };
     prj.write_config(config);
 
     cmd.arg("test");
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/runs_tests_exactly_once_with_changed_versions.^0.8.4.stdout"),
+            .join("tests/fixtures/runs_tests_exactly_once_with_changed_versions.1.stdout"),
     );
 
     // pin version
-    let config = Config { solc: Some("0.8.13".into()), ..Default::default() };
+    let config = Config { solc: Some(OTHER_SOLC_VERSION.into()), ..Default::default() };
     prj.write_config(config);
 
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/runs_tests_exactly_once_with_changed_versions.0.8.13.stdout"),
+            .join("tests/fixtures/runs_tests_exactly_once_with_changed_versions.2.stdout"),
     );
 });
 

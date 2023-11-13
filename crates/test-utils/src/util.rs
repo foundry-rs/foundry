@@ -44,7 +44,12 @@ static TEMPLATE_LOCK: Lazy<PathBuf> =
 /// Global test identifier.
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
-const SOLC_VERSION: &str = "0.8.23";
+/// The default Solc version used when compiling tests.
+pub const SOLC_VERSION: &str = "0.8.23";
+
+/// Another Solc version used when compiling tests. Necessary to avoid downloading multiple
+/// versions.
+pub const OTHER_SOLC_VERSION: &str = "0.8.22";
 
 /// Creates a file lock to the global template dir.
 pub fn template_lock() -> RwLock<File> {
@@ -96,12 +101,8 @@ pub fn initialize(target: &Path) {
         let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
         eprintln!("- initializing template dir in {}", prj.root().display());
 
-        // Explicitly set the Solc version for reproducible builds.
-        let config = Config { solc: Some(SOLC_VERSION.into()), ..Default::default() };
-        prj.write_config(config);
-
         cmd.args(["init", "--force"]).assert_success();
-        cmd.forge_fuse().arg("build").assert_success();
+        cmd.forge_fuse().args(["build", "--use", SOLC_VERSION]).assert_success();
 
         // Remove the existing template, if any.
         let _ = fs::remove_dir_all(tpath);
@@ -346,18 +347,27 @@ impl TestProject {
         pretty_err(&file, fs::write(&file, config.to_string_pretty().unwrap()));
     }
 
+    /// Adds a source file to the project.
     pub fn add_source(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
         self.inner.add_source(name, Self::add_source_prelude(contents))
     }
 
+    /// Adds a source file to the project. Prefer using `add_source` instead.
+    pub fn add_raw_source(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
+        self.inner.add_source(name, contents)
+    }
+
+    /// Adds a script file to the project.
     pub fn add_script(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
         self.inner.add_script(name, Self::add_source_prelude(contents))
     }
 
+    /// Adds a test file to the project.
     pub fn add_test(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
         self.inner.add_test(name, Self::add_source_prelude(contents))
     }
 
+    /// Adds a library file to the project.
     pub fn add_lib(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
         self.inner.add_lib(name, Self::add_source_prelude(contents))
     }
@@ -884,7 +894,22 @@ pub trait OutputExt {
 ///
 /// This should strip everything that can vary from run to run, like elapsed time, file paths
 static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(\r|finished in (.*)?s|-->(.*).sol|Location(.|\n)*\.rs(.|\n)*Backtrace|Installing solc version(.*?)\n|Successfully installed solc(.*?)\n|runs: \d+, μ: \d+, ~: \d+)").unwrap()
+    let re = &[
+        r"\r",
+        // solc version
+        r"\s*Solc(?: version)? \d+.\d+.\d+\s*",
+        r" files with \d+.\d+.\d+",
+        // solc runs
+        r"runs: \d+, μ: \d+, ~: \d+",
+        // elapsed time - note: must run after "Solc version finished in ..."
+        "finished in (.*)?s\n",
+        // file paths
+        r"-->(.*).sol",
+        r"Location(.|\n)*\.rs(.|\n)*Backtrace",
+        // other
+        r"Transaction hash: 0x[0-9A-Fa-f]{64}",
+    ];
+    Regex::new(&format!("({})", re.join("|"))).unwrap()
 });
 
 impl OutputExt for Output {

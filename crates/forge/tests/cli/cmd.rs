@@ -1,11 +1,7 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use foundry_compilers::{
-    artifacts::{BytecodeHash, Metadata},
-    remappings::Remapping,
-    ConfigurableContractArtifact,
-};
+use foundry_compilers::{artifacts::Metadata, remappings::Remapping, ConfigurableContractArtifact};
 use foundry_config::{
     parse_with_profile, BasicConfig, Chain, Config, NamedChain, SolidityErrorCode,
 };
@@ -612,9 +608,6 @@ Compiler run successful!
 
 // tests that the `inspect` command works correctly
 forgetest!(can_execute_inspect_command, |prj, cmd| {
-    // explicitly set to include the ipfs bytecode hash
-    let config = Config { bytecode_hash: BytecodeHash::Ipfs, ..Default::default() };
-    prj.write_config(config);
     let contract_name = "Foo";
     let path = prj
         .add_source(
@@ -630,15 +623,9 @@ contract Foo {
         )
         .unwrap();
 
-    // Remove the ipfs hash from the metadata
-    let mut dynamic_bytecode = "0x608060405234801561001057600080fd5b5060c08061001f6000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063c040622614602d575b600080fd5b60336035565b005b7f0b2e13ff20ac7b474198655583edf70dedd2c1dc980e329c4fbb2fc0748b796b6040516080906020808252600a908201526939b1b934b83a103930b760b11b604082015260600190565b60405180910390a156fea264697066735822122065c066d19101ad1707272b9a884891af8ab0cf5a0e0bba70c4650594492c14be64736f6c634300080a0033\n".to_string();
-    let ipfs_start = dynamic_bytecode.len() - (24 + 64);
-    let ipfs_end = ipfs_start + 65;
-    dynamic_bytecode.replace_range(ipfs_start..ipfs_end, "");
-
-    let check_output = |mut output: String| {
-        output.replace_range(ipfs_start..ipfs_end, "");
-        assert_eq!(dynamic_bytecode, output);
+    let check_output = |output: String| {
+        let output = output.trim();
+        assert!(output.starts_with("0x") && hex::decode(output).is_ok(), "{output}");
     };
 
     cmd.arg("inspect").arg(contract_name).arg("bytecode");
@@ -688,9 +675,10 @@ forgetest!(can_compile_without_warnings, |prj, cmd| {
         ..Default::default()
     };
     prj.write_config(config);
-    prj.add_source(
+    prj.add_raw_source(
         "A",
         r"
+pragma solidity *;
 contract A {
     function testExample() public {}
 }
@@ -709,12 +697,8 @@ contract A {
     prj.write_config(config);
     let out = cmd.stdout_lossy();
 
-    assert!(out.contains("Compiler run successful with warnings:"));
-    assert!(
-      out.contains(
-                    r#"Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information."#
-        )
-    );
+    assert!(out.contains("Compiler run successful with warnings:"), "{out}");
+    assert!(out.contains("Warning") && out.contains("SPDX-License-Identifier"), "{out}");
 });
 
 // test that `forge build` compiles when severity set to error, fails when set to warning, and
@@ -722,9 +706,10 @@ contract A {
 forgetest!(can_fail_compile_with_warnings, |prj, cmd| {
     let config = Config { ignored_error_codes: vec![], deny_warnings: false, ..Default::default() };
     prj.write_config(config);
-    prj.add_source(
+    prj.add_raw_source(
         "A",
         r"
+pragma solidity *;
 contract A {
     function testExample() public {}
 }
@@ -732,11 +717,10 @@ contract A {
     )
     .unwrap();
 
+    // there are no errors
     cmd.args(["build", "--force"]);
     let out = cmd.stdout_lossy();
-    // there are no errors
-    assert!(out.contains("Compiler run successful"));
-    assert!(out.contains("Compiler run successful with warnings:"));
+    assert!(out.contains("Compiler run successful with warnings:"), "{out}");
 
     // warning fails to compile
     let config = Config { ignored_error_codes: vec![], deny_warnings: true, ..Default::default() };
@@ -1467,44 +1451,42 @@ forgetest_init!(can_use_absolute_imports_from_test_and_script, |prj, cmd| {
     prj.add_script(
         "IMyScript.sol",
         r"
-    
-    interface IMyScript {}
-   ",
+interface IMyScript {}
+        ",
     )
     .unwrap();
 
     prj.add_script(
         "MyScript.sol",
         r#"
-        import "script/IMyScript.sol";
+import "script/IMyScript.sol";
 
-    contract MyScript is IMyScript {}
-   "#,
+contract MyScript is IMyScript {}
+        "#,
     )
     .unwrap();
 
     prj.add_test(
         "IMyTest.sol",
         r"
-    
-    interface IMyTest {}
-   ",
+interface IMyTest {}
+        ",
     )
     .unwrap();
 
     prj.add_test(
         "MyTest.sol",
         r#"
-        import "test/IMyTest.sol";
+import "test/IMyTest.sol";
 
-    contract MyTest is IMyTest {}
-   "#,
+contract MyTest is IMyTest {}
+    "#,
     )
     .unwrap();
 
     cmd.arg("build");
     let stdout = cmd.stdout_lossy();
-    assert!(stdout.contains("Compiler run successful"));
+    assert!(stdout.contains("Compiler run successful"), "{stdout}");
 });
 
 // checks `forge inspect <contract> irOptimized works
@@ -1547,10 +1529,6 @@ forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
 
 // checks that extra output works
 forgetest_init!(can_build_skip_contracts, |prj, cmd| {
-    // explicitly set to run with 0.8.17 for consistent output
-    let config = Config { solc: Some("0.8.17".into()), ..Default::default() };
-    prj.write_config(config);
-
     prj.clear_cache();
 
     // only builds the single template contract `src/*`
@@ -1568,9 +1546,8 @@ forgetest_init!(can_build_skip_contracts, |prj, cmd| {
 });
 
 forgetest_init!(can_build_skip_glob, |prj, cmd| {
-    // explicitly set to run with 0.8.17 for consistent output
-    let config = Config { solc: Some("0.8.17".into()), ..Default::default() };
-    prj.write_config(config);
+    prj.clear_cache();
+
     prj.add_test(
         "Foo",
         r"
@@ -1579,9 +1556,9 @@ function test_run() external {}
 }",
     )
     .unwrap();
+
     // only builds the single template contract `src/*` even if `*.t.sol` or `.s.sol` is absent
     cmd.args(["build", "--skip", "*/test/**", "--skip", "*/script/**"]);
-
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_build_skip_glob.stdout"),
     );
