@@ -898,13 +898,13 @@ static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
         r"\r",
         // solc version
         r"\s*Solc(?: version)? \d+.\d+.\d+\s*",
-        r" files with \d+.\d+.\d+",
+        r" with \d+.\d+.\d+",
         // solc runs
         r"runs: \d+, μ: \d+, ~: \d+",
         // elapsed time
-        "finished in (.*)?s\n",
+        "finished in .*?s",
         // file paths
-        r"-->(.*).sol",
+        r"-->.*\.sol",
         r"Location(.|\n)*\.rs(.|\n)*Backtrace",
         // other
         r"Transaction hash: 0x[0-9A-Fa-f]{64}",
