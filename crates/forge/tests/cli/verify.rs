@@ -17,9 +17,6 @@ fn add_unique(prj: &TestProject) {
             "unique",
             format!(
                 r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity >=0.4.0;
-
 contract Unique {{
     uint public _timestamp = {timestamp};
 }}
@@ -34,8 +31,6 @@ fn add_verify_target(prj: &TestProject) {
         .add_source(
             "Verify.sol",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity =0.8.10;
 import {Unique} from "./unique.sol";
 contract Verify is Unique {
 function doStuff() external {}

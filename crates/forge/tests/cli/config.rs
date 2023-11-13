@@ -323,15 +323,13 @@ forgetest!(can_set_solc_explicitly, |prj, cmd| {
         .add_source(
             "Foo",
             r"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity >0.8.9;
 contract Greeter {}
    ",
         )
         .unwrap();
 
-    // explicitly set to run with 0.8.10
-    let config = Config { solc: Some("0.8.10".into()), ..Default::default() };
+    // explicitly set to run with ^0.8.4
+    let config = Config { solc: Some("^0.8.4".into()), ..Default::default() };
     prj.write_config(config);
 
     cmd.arg("build");
@@ -349,8 +347,6 @@ forgetest!(can_use_solc, |prj, cmd| {
         .add_source(
             "Foo",
             r"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity >=0.7.0;
 contract Foo {}
    ",
         )
@@ -383,8 +379,6 @@ forgetest!(can_set_yul_optimizer, |prj, cmd| {
         .add_source(
             "Foo",
             r"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 contract Foo {
     function bar() public pure {
        assembly {

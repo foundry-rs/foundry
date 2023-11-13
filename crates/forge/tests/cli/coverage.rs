@@ -21,9 +21,6 @@ forgetest!(test_setup_coverage, |prj, cmd| {
         .add_source(
             "AContract.sol",
             r#"
-// SPDX-license-identifier: MIT
-pragma solidity ^0.8.0;
-
 contract AContract {
     int public i;
 
@@ -43,8 +40,6 @@ contract AContract {
         .add_source(
             "AContractTest.sol",
             r#"
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.10;
 import "./test.sol";
 import {AContract} from "./AContract.sol";
 

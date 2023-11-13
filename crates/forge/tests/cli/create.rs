@@ -35,7 +35,6 @@ fn setup_with_simple_remapping(prj: &TestProject) -> String {
         .add_source(
             "LinkTest",
             r#"
-// SPDX-License-Identifier: MIT
 import "remapping/MyLib.sol";
 contract LinkTest {
     function foo() public returns (uint256) {
@@ -50,7 +49,6 @@ contract LinkTest {
         .add_lib(
             "remapping/MyLib",
             r"
-// SPDX-License-Identifier: MIT
 library MyLib {
     function foobar(uint256 a) public view returns (uint256) {
     	return a * 100;
@@ -77,8 +75,6 @@ fn setup_oracle(prj: &TestProject) -> String {
         .add_source(
             "Contract",
             r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
 import {ChainlinkTWAP} from "./libraries/ChainlinkTWAP.sol";
 contract Contract {
     function getPrice() public view returns (int latest) {
@@ -93,9 +89,6 @@ contract Contract {
         .add_source(
             "libraries/ChainlinkTWAP",
             r"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
-
 library ChainlinkTWAP {
    function getLatestPrice(address base) public view returns (int256) {
         return 0;
@@ -237,8 +230,6 @@ forgetest_async!(
             .add_source(
                 "ConstructorContract",
                 r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
 contract ConstructorContract {
     string public name;
 
@@ -272,9 +263,6 @@ contract ConstructorContract {
             .add_source(
                 "TupleArrayConstructorContract",
                 r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
-
 struct Point {
     uint256 x;
     uint256 y;

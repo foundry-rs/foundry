@@ -37,9 +37,6 @@ forgetest!(warn_no_tests, |prj, cmd| {
         .add_source(
             "dummy",
             r"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity =0.8.13;
-
 contract Dummy {}
 ",
         )
@@ -59,9 +56,6 @@ forgetest!(warn_no_tests_match, |prj, cmd| {
         .add_source(
             "dummy",
             r"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity =0.8.13;
-
 contract Dummy {}
 ",
         )
@@ -85,9 +79,6 @@ forgetest!(suggest_when_no_tests_match, |prj, cmd| {
         .add_source(
             "TestE.t.sol",
             r"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
-
 contract TestC {
     function test1() public {
     }
@@ -116,8 +107,6 @@ forgetest!(can_fuzz_array_params, |prj, cmd| {
         .add_source(
             "ATest.t.sol",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "./test.sol";
 contract ATest is DSTest {
     function testArray(uint64[2] calldata values) external {
@@ -140,9 +129,7 @@ forgetest!(can_test_pre_bytecode_hash, |prj, cmd| {
         .add_source(
             "ATest.t.sol",
             r#"
-// SPDX-License-Identifier: UNLICENSED
 // pre bytecode hash version, was introduced in 0.6.0
-pragma solidity 0.5.17;
 import "./test.sol";
 contract ATest is DSTest {
     function testArray(uint64[2] calldata values) external {
@@ -165,8 +152,6 @@ forgetest!(can_test_with_match_path, |prj, cmd| {
         .add_source(
             "ATest.t.sol",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "./test.sol";
 contract ATest is DSTest {
     function testArray(uint64[2] calldata values) external {
@@ -181,8 +166,6 @@ contract ATest is DSTest {
         .add_source(
             "FailTest.t.sol",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "./test.sol";
 contract FailTest is DSTest {
     function testNothing() external {
@@ -211,8 +194,6 @@ forgetest!(can_run_test_in_custom_test_folder, |prj, cmd| {
         .add_source(
             "nested/forge-tests/MyTest.t.sol",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "../../test.sol";
 contract MyTest is DSTest {
     function testTrue() public {
@@ -251,8 +232,6 @@ forgetest!(runs_tests_exactly_once_with_changed_versions, |prj, cmd| {
         .add_source(
             "Contract.t.sol",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity >=0.8.10;
 import "./test.sol";
 contract ContractTest is DSTest {
     function setUp() public {}
@@ -266,13 +245,13 @@ contract ContractTest is DSTest {
         .unwrap();
 
     // pin version
-    let config = Config { solc: Some("0.8.10".into()), ..Default::default() };
+    let config = Config { solc: Some("^0.8.4".into()), ..Default::default() };
     prj.write_config(config);
 
     cmd.arg("test");
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/runs_tests_exactly_once_with_changed_versions.0.8.10.stdout"),
+            .join("tests/fixtures/runs_tests_exactly_once_with_changed_versions.^0.8.4.stdout"),
     );
 
     // pin version
@@ -320,9 +299,6 @@ forgetest_init!(can_use_libs_in_multi_fork, |prj, cmd| {
         .add_source(
             "Contract.sol",
             r"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity =0.8.13;
-
 library Library {
     function f(uint256 a, uint256 b) public pure returns (uint256) {
         return a + b;
@@ -346,9 +322,6 @@ contract Contract {
         .add_test(
             "Contract.t.sol",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity =0.8.13;
-
 import "forge-std/Test.sol";
 import "src/Contract.sol";
 
@@ -374,9 +347,6 @@ contract ContractTest is Test {
 });
 
 static FAILING_TEST: &str = r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.17;
-
 import "forge-std/Test.sol";
 
 contract FailingTest is Test {

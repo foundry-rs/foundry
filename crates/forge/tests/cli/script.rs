@@ -20,9 +20,6 @@ forgetest_init!(
             .add_source(
                 "Foo",
                 r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity >=0.8.10;
-
 import "forge-std/Script.sol";
 
 contract ContractScript is Script {
@@ -50,8 +47,6 @@ forgetest!(can_execute_script_command2, |prj, cmd| {
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 contract Demo {
     event log_string(string);
     function run() external {
@@ -76,8 +71,6 @@ forgetest!(can_execute_script_command_fqn, |prj, cmd| {
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 contract Demo {
     event log_string(string);
     function run() external {
@@ -102,8 +95,6 @@ forgetest!(can_execute_script_command_with_sig, |prj, cmd| {
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 contract Demo {
     event log_string(string);
     function myFunction() external {
@@ -129,8 +120,6 @@ forgetest_async!(can_execute_script_command_with_manual_gas_limit_unlocked, |prj
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "forge-std/Script.sol";
 
 contract GasWaster {
@@ -185,8 +174,6 @@ forgetest_async!(can_execute_script_command_with_manual_gas_limit, |prj, cmd| {
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "forge-std/Script.sol";
 
 contract GasWaster {
@@ -240,8 +227,6 @@ forgetest!(can_execute_script_command_with_args, |prj, cmd| {
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 contract Demo {
     event log_string(string);
     event log_uint(uint);
@@ -269,8 +254,6 @@ forgetest!(can_execute_script_command_with_returned, |prj, cmd| {
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 contract Demo {
     event log_string(string);
     function run() external returns (uint256 result, uint8) {
@@ -295,8 +278,6 @@ forgetest_async!(can_broadcast_script_skipping_simulation, |prj, cmd| {
         .add_source(
             "DeployScript",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "forge-std/Script.sol";
 
 contract HashChecker {
@@ -359,8 +340,6 @@ contract DeployScript is Script {
         .to_string();
 
     let run_code = r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "forge-std/Script.sol";
 import { HashChecker } from "./DeployScript.sol";
 
@@ -793,8 +772,6 @@ forgetest_async!(can_execute_script_with_arguments, |prj, cmd| {
             .add_script(
                 "Counter.s.sol",
                 r#"
-pragma solidity ^0.8.15;
-
 import "forge-std/Script.sol";
 
 struct Point {
@@ -877,8 +854,6 @@ forgetest_async!(can_execute_script_with_arguments_nested_deploy, |prj, cmd| {
         .add_script(
             "Counter.s.sol",
             r#"
-pragma solidity ^0.8.13;
-
 import "forge-std/Script.sol";
 
 contract A {
@@ -963,8 +938,6 @@ forgetest_init!(can_execute_script_and_skip_contracts, |prj, cmd| {
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.17;
 contract Demo {
     event log_string(string);
     function run() external returns (uint256 result, uint8) {
@@ -1004,8 +977,6 @@ forgetest_async!(assert_tx_origin_is_not_overritten, |prj, cmd| {
         .add_script(
             "ScriptTxOrigin.s.sol",
             r#"
-pragma solidity ^0.8.13;
-
 import { Script } from "forge-std/Script.sol";
 
 contract ScriptTxOrigin is Script {
@@ -1070,8 +1041,6 @@ forgetest_async!(assert_can_create_multiple_contracts_with_correct_nonce, |prj, 
         .add_script(
             "ScriptTxOrigin.s.sol",
             r#"
-pragma solidity ^0.8.17;
-
 import {Script, console} from "forge-std/Script.sol";
 
 contract Contract {
@@ -1115,8 +1084,6 @@ forgetest_async!(assert_can_detect_target_contract_with_interfaces, |prj, cmd| {
         .add_script(
             "ScriptWithInterface.s.sol",
             r#"
-pragma solidity ^0.8.22;
-
 contract Script {
   function run() external {}
 }

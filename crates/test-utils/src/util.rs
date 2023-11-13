@@ -43,6 +43,8 @@ static TEMPLATE_LOCK: Lazy<PathBuf> =
 /// Global test identifier.
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
+const SOLC_VERSION: &str = "0.8.23";
+
 /// Creates a file lock to the global template dir.
 pub fn template_lock() -> RwLock<File> {
     let lock_path = &*TEMPLATE_LOCK;
@@ -92,6 +94,11 @@ pub fn initialize(target: &Path) {
         // Initialize and build.
         let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
         eprintln!("- initializing template dir in {}", prj.root().display());
+
+        // Explicitly set the Solc version for reproducible builds.
+        let config = Config { solc: Some(SOLC_VERSION.into()), ..Default::default() };
+        prj.write_config(config);
+
         cmd.args(["init", "--force"]).assert_success();
         cmd.forge_fuse().arg("build").assert_success();
 
@@ -337,25 +344,25 @@ impl TestProject {
         let _ = fs::remove_dir_all(self.artifacts());
     }
 
-    /// Writes the given config as toml to `foundry.toml`
+    /// Writes the given config as toml to `foundry.toml`.
     pub fn write_config(&self, config: Config) {
         let file = self.config();
         pretty_err(&file, fs::write(&file, config.to_string_pretty().unwrap()));
     }
 
-    /// Asserts that the `<root>/foundry.toml` file exits
+    /// Asserts that the `<root>/foundry.toml` file exists.
     #[track_caller]
     pub fn assert_config_exists(&self) {
         assert!(self.config().exists());
     }
 
-    /// Asserts that the `<root>/cache/sol-files-cache.json` file exits
+    /// Asserts that the `<root>/cache/sol-files-cache.json` file exists.
     #[track_caller]
     pub fn assert_cache_exists(&self) {
         assert!(self.cache().exists());
     }
 
-    /// Asserts that the `<root>/out` file exits
+    /// Asserts that the `<root>/out` file exists.
     #[track_caller]
     pub fn assert_artifacts_dir_exists(&self) {
         assert!(self.paths().artifacts.exists());

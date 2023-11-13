@@ -531,8 +531,6 @@ forgetest!(can_print_warnings, |prj, cmd| {
         .add_source(
             "Foo",
             r"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity >0.8.9;
 contract Greeter {
     function foo(uint256 a) public {
         uint256 x = 1;
@@ -541,10 +539,6 @@ contract Greeter {
    ",
         )
         .unwrap();
-
-    // explicitly set to run with 0.8.10
-    let config = Config { solc: Some("0.8.10".into()), ..Default::default() };
-    prj.write_config(config);
 
     cmd.arg("build");
 
@@ -579,8 +573,6 @@ forgetest!(can_handle_direct_imports_into_src, |prj, cmd| {
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import {FooLib} from "src/FooLib.sol";
 struct Bar {
     uint8 x;
@@ -603,8 +595,6 @@ contract Foo {
         .add_source(
             "FooLib",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import {Foo, Bar} from "src/Foo.sol";
 library FooLib {
     function check(Bar memory b) public {}
@@ -634,8 +624,6 @@ forgetest!(can_execute_inspect_command, |prj, cmd| {
         .add_source(
             contract_name,
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 contract Foo {
     event log_string(string);
     function run() external {
@@ -676,8 +664,6 @@ forgetest!(
             .add_source(
                 "ATest.t.sol",
                 r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "./test.sol";
 contract ATest is DSTest {
     function testExample() public {
@@ -711,7 +697,6 @@ forgetest!(can_compile_without_warnings, |prj, cmd| {
         .add_source(
             "A",
             r"
-pragma solidity 0.8.10;
 contract A {
     function testExample() public {}
 }
@@ -747,7 +732,6 @@ forgetest!(can_fail_compile_with_warnings, |prj, cmd| {
         .add_source(
             "A",
             r"
-pragma solidity 0.8.10;
 contract A {
     function testExample() public {}
 }
@@ -818,8 +802,6 @@ forgetest!(can_build_after_failure, |prj, cmd| {
         .add_source(
             "ATest.t.sol",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "./test.sol";
 contract ATest is DSTest {
     function testExample() public {
@@ -833,8 +815,6 @@ contract ATest is DSTest {
         .add_source(
             "BTest.t.sol",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "./test.sol";
 contract BTest is DSTest {
     function testExample() public {
@@ -851,8 +831,6 @@ contract BTest is DSTest {
     prj.assert_artifacts_dir_exists();
 
     let syntax_err = r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "./test.sol";
 contract CTest is DSTest {
     function testExample() public {
@@ -881,8 +859,6 @@ contract CTest is DSTest {
         .add_source(
             "CTest.t.sol",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "./test.sol";
 contract CTest is DSTest {
     function testExample() public {
@@ -1058,8 +1034,6 @@ forgetest!(
             .add_source(
                 "CounterCopy",
                 r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.0;
 import "forge-5980-test/Counter.sol";
 contract CounterCopy is Counter {
 }
@@ -1081,7 +1055,6 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
             "Contracts.sol",
             r#"
 //SPDX-license-identifier: MIT
-pragma solidity ^0.8.0;
 
 import "./test.sol";
 
@@ -1210,7 +1183,6 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
             "Contracts.sol",
             r#"
 //SPDX-license-identifier: MIT
-pragma solidity ^0.8.0;
 
 import "./test.sol";
 
@@ -1336,7 +1308,6 @@ forgetest!(gas_ignore_some_contracts, |prj, cmd| {
             "Contracts.sol",
             r#"
 //SPDX-license-identifier: MIT
-pragma solidity ^0.8.0;
 
 import "./test.sol";
 
@@ -1475,8 +1446,7 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
         .add_lib(
             "myDepdendency/src/interfaces/IConfig.sol",
             r"
-    pragma solidity ^0.8.10;
-
+    
     interface IConfig {}
    ",
         )
@@ -1486,8 +1456,7 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
         .add_lib(
             "myDepdendency/src/Config.sol",
             r#"
-    pragma solidity ^0.8.10;
-    import "src/interfaces/IConfig.sol";
+        import "src/interfaces/IConfig.sol";
 
     contract Config {}
    "#,
@@ -1498,8 +1467,7 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
         .add_source(
             "Greeter",
             r#"
-    pragma solidity ^0.8.10;
-    import "myDepdendency/src/Config.sol";
+        import "myDepdendency/src/Config.sol";
 
     contract Greeter {}
    "#,
@@ -1517,8 +1485,7 @@ forgetest_init!(can_use_absolute_imports_from_test_and_script, |prj, cmd| {
         .add_script(
             "IMyScript.sol",
             r"
-    pragma solidity ^0.8.10;
-
+    
     interface IMyScript {}
    ",
         )
@@ -1528,8 +1495,7 @@ forgetest_init!(can_use_absolute_imports_from_test_and_script, |prj, cmd| {
         .add_script(
             "MyScript.sol",
             r#"
-    pragma solidity ^0.8.10;
-    import "script/IMyScript.sol";
+        import "script/IMyScript.sol";
 
     contract MyScript is IMyScript {}
    "#,
@@ -1540,8 +1506,7 @@ forgetest_init!(can_use_absolute_imports_from_test_and_script, |prj, cmd| {
         .add_test(
             "IMyTest.sol",
             r"
-    pragma solidity ^0.8.10;
-
+    
     interface IMyTest {}
    ",
         )
@@ -1551,8 +1516,7 @@ forgetest_init!(can_use_absolute_imports_from_test_and_script, |prj, cmd| {
         .add_test(
             "MyTest.sol",
             r#"
-    pragma solidity ^0.8.10;
-    import "test/IMyTest.sol";
+        import "test/IMyTest.sol";
 
     contract MyTest is IMyTest {}
    "#,
@@ -1632,8 +1596,6 @@ forgetest_init!(can_build_skip_glob, |prj, cmd| {
         .add_test(
             "Foo",
             r"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.17;
 contract TestDemo {
 function test_run() external {}
 }",
