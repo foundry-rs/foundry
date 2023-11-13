@@ -329,3 +329,9 @@ async fn test_issue_6170() {
 async fn test_issue_6180() {
     test_repro!("Issue6180");
 }
+
+// <https://github.com/foundry-rs/foundry/issues/6293>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_issue_6293() {
+    test_repro!("Issue6293");
+}
