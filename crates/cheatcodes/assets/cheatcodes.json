@@ -263,12 +263,17 @@
     },
     {
       "name": "AccountAccess",
-      "description": "The result of a `getRecordedAccountAccess` call.",
+      "description": "The result of a `getStateDiff` call.",
       "fields": [
+        {
+          "name": "accessor",
+          "ty": "address",
+          "description": "What accessed the account."
+        },
         {
           "name": "account",
           "ty": "address",
-          "description": "The account whose storage was accessed."
+          "description": "The account whose storage was accessed.\n It's either the account created, callee or a selfdestruct recipient for CREATE, CALL or SELFDESTRUCT."
         },
         {
           "name": "kind",
@@ -279,6 +284,21 @@
           "name": "initialized",
           "ty": "bool",
           "description": "If the account is initialized or empty"
+        },
+        {
+          "name": "oldBalance",
+          "ty": "uint256",
+          "description": "The previous account balance of the accessed account."
+        },
+        {
+          "name": "newBalance",
+          "ty": "uint256",
+          "description": "The new account balance of the accessed account. This represents the balance change ignoring any reverts that may have occurred."
+        },
+        {
+          "name": "deployedCode",
+          "ty": "bytes",
+          "description": "Code of the account deployed by CREATE."
         },
         {
           "name": "value",
@@ -294,12 +314,17 @@
           "name": "reverted",
           "ty": "bool",
           "description": "If this access was in a reverted context"
+        },
+        {
+          "name": "storageAccesses",
+          "ty": "StorageAccess[]",
+          "description": "An ordered list of storage accesses made during an account access operation."
         }
       ]
     },
     {
       "name": "StorageAccess",
-      "description": "The result of a `getRecordedStorageAccess` call.",
+      "description": "The storage accessed during an `AccountAccess`.",
       "fields": [
         {
           "name": "account",
@@ -2217,26 +2242,6 @@
     },
     {
       "func": {
-        "id": "getRecordedAccountAccesses",
-        "description": "Returns an ordered array of all account accesses from a `vm.recordAccountAccess` session.",
-        "declaration": "function getRecordedAccountAccesses() external returns (AccountAccess[] memory accesses);",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "getRecordedAccountAccesses()",
-        "selector": "0x4452c985",
-        "selectorBytes": [
-          68,
-          82,
-          201,
-          133
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "getRecordedLogs",
         "description": "Gets all the recorded logs.",
         "declaration": "function getRecordedLogs() external returns (Log[] memory logs);",
@@ -2257,18 +2262,18 @@
     },
     {
       "func": {
-        "id": "getRecordedStorageAccesses",
-        "description": "Returns an ordered array of all storage accesses from a `vm.recordStorageAccess` session.",
-        "declaration": "function getRecordedStorageAccesses() external returns (StorageAccess[] memory accesses);",
+        "id": "getStateDiff",
+        "description": "Returns an ordered array of all account accesses from a `vm.recordStateDiff` session.",
+        "declaration": "function getStateDiff() external returns (AccountAccess[] memory accesses);",
         "visibility": "external",
         "mutability": "",
-        "signature": "getRecordedStorageAccesses()",
-        "selector": "0x03f1500a",
+        "signature": "getStateDiff()",
+        "selector": "0x80df01cc",
         "selectorBytes": [
-          3,
-          241,
-          80,
-          10
+          128,
+          223,
+          1,
+          204
         ]
       },
       "group": "evm",
@@ -3317,26 +3322,6 @@
     },
     {
       "func": {
-        "id": "recordAccountAccesses",
-        "description": "Record all account accesses as part of CREATE or CALL opcodes in order,\nalong with the context of the calls",
-        "declaration": "function recordAccountAccesses() external;",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "recordAccountAccesses()",
-        "selector": "0xd9391303",
-        "selectorBytes": [
-          217,
-          57,
-          19,
-          3
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "recordLogs",
         "description": "Record all the transaction logs.",
         "declaration": "function recordLogs() external;",
@@ -3357,18 +3342,18 @@
     },
     {
       "func": {
-        "id": "recordStorageAccesses",
-        "description": "Record all storage accesses in order, along with the context of the accesses",
-        "declaration": "function recordStorageAccesses() external;",
+        "id": "recordStateDiff",
+        "description": "Record all account accesses as part of CREATE, CALL or SELFDESTRUCT opcodes in order,\nalong with the context of the calls",
+        "declaration": "function recordStateDiff() external;",
         "visibility": "external",
         "mutability": "",
-        "signature": "recordStorageAccesses()",
-        "selector": "0x71009b87",
+        "signature": "recordStateDiff()",
+        "selector": "0xc9140b4b",
         "selectorBytes": [
-          113,
-          0,
-          155,
-          135
+          201,
+          20,
+          11,
+          75
         ]
       },
       "group": "evm",

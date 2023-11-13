@@ -341,33 +341,18 @@ impl Cheatcode for revertToCall {
     }
 }
 
-impl Cheatcode for recordAccountAccessesCall {
+impl Cheatcode for recordStateDiffCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        state.recorded_account_accesses = Some(Default::default());
+        state.recorded_account_diffs = Some(Default::default());
         Ok(Default::default())
     }
 }
 
-impl Cheatcode for getRecordedAccountAccessesCall {
+impl Cheatcode for getStateDiffCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        get_recorded_account_accesses(state)
-    }
-}
-
-impl Cheatcode for recordStorageAccessesCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self {} = self;
-        state.recorded_storage_accesses = Some(Default::default());
-        Ok(Default::default())
-    }
-}
-
-impl Cheatcode for getRecordedStorageAccessesCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self {} = self;
-        get_recorded_storage_accesses(state)
+        get_state_diff(state)
     }
 }
 
@@ -439,32 +424,17 @@ pub(super) fn journaled_account<'a, DB: DatabaseExt>(
 /// array of [AccountAccess]. If there are no accounts were
 /// recorded as accessed, an abi encoded empty array is returned.
 ///
-/// In the case where `getRecordedAccountAccesses` is called at a lower
-/// depth than `recordAccountAccesses`, multiple `Vec<RecordedAccountAccesses>`
+/// In the case where `getStateDiff` is called at a lower
+/// depth than `recordStateDiff`, multiple `Vec<RecordedAccountAccesses>`
 /// will be flattened, preserving the order of the accesses.
-fn get_recorded_account_accesses(state: &mut Cheatcodes) -> Result {
-    let res = state.recorded_account_accesses
+fn get_state_diff(state: &mut Cheatcodes) -> Result {
+    let res = state
+        .recorded_account_diffs
         .replace(Default::default())
         .unwrap_or_default()
         .into_iter()
         .flatten()
-        .collect::<Vec<_>>();
-    Ok(res.abi_encode())
-}
-
-/// Consumes recorded storage accesses and returns them as an abi encoded
-/// array of [StorageAccess]. If there are no storage accesses recorded,
-/// an abi encoded empty array is returned.
-///
-/// In the case where `getRecordedStorageAccesses` is called at a lower
-/// depth than `recordStorageAccesses`, multiple `Vec<RecordedStorageAccesses>`
-/// will be flattened, preserving the order of the accesses.
-fn get_recorded_storage_accesses(state: &mut Cheatcodes) -> Result {
-    let res = state.recorded_storage_accesses
-        .replace(Default::default())
-        .unwrap_or_default()
-        .into_iter()
-        .flatten()
+        .map(|record| record.access)
         .collect::<Vec<_>>();
     Ok(res.abi_encode())
 }

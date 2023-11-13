@@ -144,23 +144,34 @@ interface Vm {
         bytes stderr;
     }
 
-    /// The result of a `getRecordedAccountAccess` call.
+    /// The result of a `getStateDiff` call.
     struct AccountAccess {
+        /// What accessed the account.
+        address accessor;
         /// The account whose storage was accessed.
+        /// It's either the account created, callee or a selfdestruct recipient for CREATE, CALL or SELFDESTRUCT.
         address account;
         /// The kind of account access.
         AccountAccessKind kind;
         /// If the account is initialized or empty
         bool initialized;
+        /// The previous account balance of the accessed account.
+        uint256 oldBalance;
+        /// The new account balance of the accessed account. This represents the balance change ignoring any reverts that may have occurred.
+        uint256 newBalance;
+        /// Code of the account deployed by CREATE.
+        bytes deployedCode;
         /// Value passed along with the account access
         uint256 value;
         /// Input data provided to the CREATE or CALL
         bytes data;
         /// If this access was in a reverted context
         bool reverted;
+        /// An ordered list of storage accesses made during an account access operation.
+        StorageAccess[] storageAccesses;
     }
 
-    /// The result of a `getRecordedStorageAccess` call.
+    /// The storage accessed during an `AccountAccess`.
     struct StorageAccess {
         /// The account whose storage was accessed.
         address account;
@@ -208,22 +219,14 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function accesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
 
-    /// Record all account accesses as part of CREATE or CALL opcodes in order,
+    /// Record all account accesses as part of CREATE, CALL or SELFDESTRUCT opcodes in order,
     /// along with the context of the calls
     #[cheatcode(group = Evm, safety = Safe)]
-    function recordAccountAccesses() external;
+    function recordStateDiff() external;
 
-    /// Returns an ordered array of all account accesses from a `vm.recordAccountAccess` session.
+    /// Returns an ordered array of all account accesses from a `vm.recordStateDiff` session.
     #[cheatcode(group = Evm, safety = Safe)]
-    function getRecordedAccountAccesses() external returns (AccountAccess[] memory accesses);
-
-    /// Record all storage accesses in order, along with the context of the accesses
-    #[cheatcode(group = Evm, safety = Safe)]
-    function recordStorageAccesses() external;
-
-    /// Returns an ordered array of all storage accesses from a `vm.recordStorageAccess` session.
-    #[cheatcode(group = Evm, safety = Safe)]
-    function getRecordedStorageAccesses() external returns (StorageAccess[] memory accesses);
+    function getStateDiff() external returns (AccountAccess[] memory accesses);
 
     // -------- Recording Map Writes --------
 

@@ -15,7 +15,7 @@ interface Vm {
     struct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created; }
     struct Wallet { address addr; uint256 publicKeyX; uint256 publicKeyY; uint256 privateKey; }
     struct FfiResult { int32 exitCode; bytes stdout; bytes stderr; }
-    struct AccountAccess { address account; AccountAccessKind kind; bool initialized; uint256 value; bytes data; bool reverted; }
+    struct AccountAccess { address accessor; address account; AccountAccessKind kind; bool initialized; uint256 oldBalance; uint256 newBalance; bytes deployedCode; uint256 value; bytes data; bool reverted; StorageAccess[] storageAccesses; }
     struct StorageAccess { address account; bytes32 slot; bool isWrite; bytes32 previousValue; bytes32 newValue; bool reverted; }
     function accesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
     function activeFork() external view returns (uint256 forkId);
@@ -111,9 +111,8 @@ interface Vm {
     function getMappingSlotAt(address target, bytes32 mappingSlot, uint256 idx) external returns (bytes32 value);
     function getNonce(address account) external view returns (uint64 nonce);
     function getNonce(Wallet calldata wallet) external returns (uint64 nonce);
-    function getRecordedAccountAccesses() external returns (AccountAccess[] memory accesses);
     function getRecordedLogs() external returns (Log[] memory logs);
-    function getRecordedStorageAccesses() external returns (StorageAccess[] memory accesses);
+    function getStateDiff() external returns (AccountAccess[] memory accesses);
     function isDir(string calldata path) external returns (bool result);
     function isFile(string calldata path) external returns (bool result);
     function isPersistent(address account) external view returns (bool persistent);
@@ -166,9 +165,8 @@ interface Vm {
     function readLine(string calldata path) external view returns (string memory line);
     function readLink(string calldata linkPath) external view returns (string memory targetPath);
     function record() external;
-    function recordAccountAccesses() external;
     function recordLogs() external;
-    function recordStorageAccesses() external;
+    function recordStateDiff() external;
     function rememberKey(uint256 privateKey) external returns (address keyAddr);
     function removeDir(string calldata path, bool recursive) external;
     function removeFile(string calldata path) external;
