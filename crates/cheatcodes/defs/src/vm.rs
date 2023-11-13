@@ -1155,5 +1155,17 @@ interface Vm {
     /// Gets the label for the specified address.
     #[cheatcode(group = Utilities)]
     function getLabel(address account) external returns (string memory currentLabel);
+
+    /// Compute the address a contract will be deployed at for a given deployer address and nonce.
+    #[cheatcode(group = Utilities)]
+    function computeCreateAddress(address deployer, uint256 nonce) external pure returns (address);
+
+    /// Compute the address of a contract created with CREATE2 using the given CREATE2 deployer.
+    #[cheatcode(group = Utilities)]
+    function computeCreate2Address(bytes32 salt, bytes32 initCodeHash, address deployer) external pure returns (address);
+
+    /// Compute the address of a contract created with CREATE2 using the default CREATE2 deployer.
+    #[cheatcode(group = Utilities)]
+    function computeCreate2Address(bytes32 salt, bytes32 initCodeHash) external pure returns (address);
 }
 }
