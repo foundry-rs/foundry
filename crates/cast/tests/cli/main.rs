@@ -72,7 +72,7 @@ casttest!(wallet_address_keystore_with_password_file, |_prj, cmd| {
 });
 
 // tests that `cast wallet sign message` outputs the expected signature
-casttest!(cast_wallet_sign_message_utf8_data, |_prj, cmd| {
+casttest!(wallet_sign_message_utf8_data, |_prj, cmd| {
     cmd.args([
         "wallet",
         "sign",
@@ -85,7 +85,7 @@ casttest!(cast_wallet_sign_message_utf8_data, |_prj, cmd| {
 });
 
 // tests that `cast wallet sign message` outputs the expected signature, given a 0x-prefixed data
-casttest!(cast_wallet_sign_message_hex_data, |_prj, cmd| {
+casttest!(wallet_sign_message_hex_data, |_prj, cmd| {
     cmd.args([
         "wallet",
         "sign",
@@ -98,7 +98,7 @@ casttest!(cast_wallet_sign_message_hex_data, |_prj, cmd| {
 });
 
 // tests that `cast wallet sign typed-data` outputs the expected signature, given a JSON string
-casttest!(cast_wallet_sign_typed_data_string, |_prj, cmd| {
+casttest!(wallet_sign_typed_data_string, |_prj, cmd| {
     cmd.args([
         "wallet",
         "sign",
@@ -112,7 +112,7 @@ casttest!(cast_wallet_sign_typed_data_string, |_prj, cmd| {
 });
 
 // tests that `cast wallet sign typed-data` outputs the expected signature, given a JSON file
-casttest!(cast_wallet_sign_typed_data_file, |_prj, cmd| {
+casttest!(wallet_sign_typed_data_file, |_prj, cmd| {
     cmd.args([
         "wallet",
         "sign",
@@ -219,7 +219,7 @@ casttest!(upload_signatures, |_prj, cmd| {
 });
 
 // tests that the `cast to-rlp` and `cast from-rlp` commands work correctly
-casttest!(cast_rlp, |_prj, cmd| {
+casttest!(rlp, |_prj, cmd| {
     cmd.args(["--to-rlp", "[\"0xaa\", [[\"bb\"]], \"0xcc\"]"]);
     let out = cmd.stdout_lossy();
     assert!(out.contains("0xc881aac3c281bb81cc"), "{}", out);
@@ -231,7 +231,7 @@ casttest!(cast_rlp, |_prj, cmd| {
 });
 
 // test for cast_rpc without arguments
-casttest!(cast_rpc_no_args, |_prj, cmd| {
+casttest!(rpc_no_args, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
 
     // Call `cast rpc eth_chainId`
@@ -241,7 +241,7 @@ casttest!(cast_rpc_no_args, |_prj, cmd| {
 });
 
 // test for cast_rpc without arguments using websocket
-casttest!(cast_ws_rpc_no_args, |_prj, cmd| {
+casttest!(ws_rpc_no_args, |_prj, cmd| {
     let eth_rpc_url = next_ws_rpc_endpoint();
 
     // Call `cast rpc eth_chainId`
@@ -251,7 +251,7 @@ casttest!(cast_ws_rpc_no_args, |_prj, cmd| {
 });
 
 // test for cast_rpc with arguments
-casttest!(cast_rpc_with_args, |_prj, cmd| {
+casttest!(rpc_with_args, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
 
     // Call `cast rpc eth_getBlockByNumber 0x123 false`
@@ -261,7 +261,7 @@ casttest!(cast_rpc_with_args, |_prj, cmd| {
 });
 
 // test for cast_rpc with raw params
-casttest!(cast_rpc_raw_params, |_prj, cmd| {
+casttest!(rpc_raw_params, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
 
     // Call `cast rpc eth_getBlockByNumber --raw '["0x123", false]'`
@@ -278,7 +278,7 @@ casttest!(cast_rpc_raw_params, |_prj, cmd| {
 });
 
 // test for cast_rpc with direct params
-casttest!(cast_rpc_raw_params_stdin, |_prj, cmd| {
+casttest!(rpc_raw_params_stdin, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
 
     // Call `echo "\n[\n\"0x123\",\nfalse\n]\n" | cast rpc  eth_getBlockByNumber --raw
@@ -300,7 +300,7 @@ casttest!(calldata_array, |_prj, cmd| {
 });
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
-casttest!(cast_run_succeeds, |_prj, cmd| {
+casttest!(run_succeeds, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
     cmd.args([
         "run",
@@ -316,7 +316,7 @@ casttest!(cast_run_succeeds, |_prj, cmd| {
 });
 
 // tests that `cast --to-base` commands are working correctly.
-casttest!(cast_to_base, |_prj, cmd| {
+casttest!(to_base, |_prj, cmd| {
     let values = [
         "1",
         "100",
@@ -344,7 +344,7 @@ casttest!(cast_to_base, |_prj, cmd| {
 });
 
 // tests that revert reason is only present if transaction has reverted.
-casttest!(cast_receipt_revert_reason, |_prj, cmd| {
+casttest!(receipt_revert_reason, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
 
     // <https://etherscan.io/tx/0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
@@ -379,7 +379,7 @@ casttest!(parse_bytes32_address, |_prj, cmd| {
     assert_eq!(output.trim(), "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 });
 
-casttest!(cast_access_list, |_prj, cmd| {
+casttest!(access_list, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
     cmd.args([
         "access-list",
@@ -398,7 +398,7 @@ casttest!(cast_access_list, |_prj, cmd| {
     assert!(output.contains("0x7fba2702a7d6e85ac783a88eacdc48e51310443458071f6db9ac66f8ca7068b8"));
 });
 
-casttest!(cast_logs_topics, |_prj, cmd| {
+casttest!(logs_topics, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
     cmd.args([
         "logs",
@@ -417,7 +417,7 @@ casttest!(cast_logs_topics, |_prj, cmd| {
     );
 });
 
-casttest!(cast_logs_topic_2, |_prj, cmd| {
+casttest!(logs_topic_2, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
     cmd.args([
         "logs",
@@ -438,7 +438,7 @@ casttest!(cast_logs_topic_2, |_prj, cmd| {
     );
 });
 
-casttest!(cast_logs_sig, |_prj, cmd| {
+casttest!(logs_sig, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
     cmd.args([
         "logs",
@@ -457,7 +457,7 @@ casttest!(cast_logs_sig, |_prj, cmd| {
     );
 });
 
-casttest!(cast_logs_sig_2, |_prj, cmd| {
+casttest!(logs_sig_2, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
     cmd.args([
         "logs",
@@ -478,7 +478,7 @@ casttest!(cast_logs_sig_2, |_prj, cmd| {
 });
 
 // tests that the raw encoded transaction is returned
-casttest!(cast_tx_raw, |_prj, cmd| {
+casttest!(tx_raw, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
 
     // <https://etherscan.io/tx/0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
@@ -509,7 +509,7 @@ casttest!(cast_tx_raw, |_prj, cmd| {
 });
 
 // ensure receipt or code is required
-casttest!(cast_send_requires_to, |_prj, cmd| {
+casttest!(send_requires_to, |_prj, cmd| {
     cmd.args([
         "send",
         "--private-key",
@@ -520,4 +520,23 @@ casttest!(cast_send_requires_to, |_prj, cmd| {
         output.trim(),
         "Error: \nMust specify a recipient address or contract code to deploy"
     );
+});
+
+casttest!(storage, |_prj, cmd| {
+    let empty = "0x0000000000000000000000000000000000000000000000000000000000000000";
+
+    let rpc = next_http_rpc_endpoint();
+    cmd.cast_fuse().args(["storage", "vitalik.eth", "1", "--rpc-url", &rpc]);
+    assert_eq!(cmd.stdout_lossy().trim(), empty);
+
+    let rpc = next_http_rpc_endpoint();
+    cmd.cast_fuse().args(["storage", "vitalik.eth", "0x01", "--rpc-url", &rpc]);
+    assert_eq!(cmd.stdout_lossy().trim(), empty);
+
+    let rpc = next_http_rpc_endpoint();
+    let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7";
+    let decimals_slot = "0x09";
+    let six = "0x0000000000000000000000000000000000000000000000000000000000000006";
+    cmd.cast_fuse().args(["storage", usdt, decimals_slot, "--rpc-url", &rpc]);
+    assert_eq!(cmd.stdout_lossy().trim(), six);
 });
