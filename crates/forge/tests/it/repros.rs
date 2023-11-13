@@ -1,13 +1,11 @@
 //! Tests for reproducing issues
 
-use crate::{
-    config::*,
-    test_helpers::{filter::Filter, PROJECT},
-};
+use crate::{config::*, test_helpers::PROJECT};
 use alloy_primitives::Address;
-use ethers::abi::{Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
+use ethers_core::abi::{Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
 use forge::result::TestStatus;
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
+use foundry_test_utils::Filter;
 use std::str::FromStr;
 
 /// A macro that tests a single pattern (".*/repros/<issue>")
@@ -302,6 +300,12 @@ async fn test_issue_6006() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_issue_5808() {
     test_repro!("Issue5808");
+}
+
+// <https://github.com/foundry-rs/foundry/issues/6070>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_issue_6070() {
+    test_repro!("Issue6070");
 }
 
 // <https://github.com/foundry-rs/foundry/issues/6115>

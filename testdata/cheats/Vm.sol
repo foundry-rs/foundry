@@ -1,6 +1,9 @@
 // Automatically generated from `foundry-cheatcodes` Vm definitions. Do not modify manually.
 // This interface is just for internal testing purposes. Use `forge-std` instead.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+pragma solidity ^0.8.4;
+
 interface Vm {
     error CheatcodeError(string message);
     enum CallerMode { None, Broadcast, RecurrentBroadcast, Prank, RecurrentPrank }
@@ -109,6 +112,7 @@ interface Vm {
     function keyExists(string calldata json, string calldata key) external view returns (bool);
     function label(address account, string calldata newLabel) external;
     function load(address target, bytes32 slot) external view returns (bytes32 data);
+    function loadAllocs(string calldata pathToAllocsJson) external;
     function makePersistent(address account) external;
     function makePersistent(address account0, address account1) external;
     function makePersistent(address account0, address account1, address account2) external;

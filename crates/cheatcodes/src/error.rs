@@ -15,13 +15,13 @@ pub type Result<T = Vec<u8>, E = Error> = std::result::Result<T, E>;
 
 macro_rules! fmt_err {
     ($msg:literal $(,)?) => {
-        $crate::impls::Error::fmt(::std::format_args!($msg))
+        $crate::Error::fmt(::std::format_args!($msg))
     };
     ($err:expr $(,)?) => {
-        <$crate::impls::Error as ::std::convert::From<_>>::from($err)
+        <$crate::Error as ::std::convert::From<_>>::from($err)
     };
     ($fmt:expr, $($arg:tt)*) => {
-        $crate::impls::Error::fmt(::std::format_args!($fmt, $($arg)*))
+        $crate::Error::fmt(::std::format_args!($fmt, $($arg)*))
     };
 }
 
@@ -40,7 +40,7 @@ macro_rules! bail {
 macro_rules! ensure {
     ($cond:expr $(,)?) => {
         if !$cond {
-            return ::std::result::Result::Err($crate::impls::Error::custom(
+            return ::std::result::Result::Err($crate::Error::custom(
                 ::std::concat!("Condition failed: `", ::std::stringify!($cond), "`")
             ));
         }
@@ -65,7 +65,7 @@ macro_rules! ensure {
 macro_rules! ensure_not_precompile {
     ($address:expr, $ctxt:expr) => {
         if $ctxt.is_precompile($address) {
-            return Err($crate::impls::error::precompile_error(
+            return Err($crate::error::precompile_error(
                 <Self as $crate::CheatcodeDef>::CHEATCODE.func.id,
                 $address,
             ))

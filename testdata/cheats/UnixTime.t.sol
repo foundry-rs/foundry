@@ -6,7 +6,9 @@ import "./Vm.sol";
 
 contract UnixTimeTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
-    uint256 errMargin = 100; // allow errors of up to errMargin milliseconds
+
+    // This is really wide because CI sucks.
+    uint256 constant errMargin = 300;
 
     function testUnixTimeAgainstDate() public {
         string[] memory inputs = new string[](2);

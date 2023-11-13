@@ -148,6 +148,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function load(address target, bytes32 slot) external view returns (bytes32 data);
 
+    /// Load a genesis JSON file's `allocs` into the in-memory revm state.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function loadAllocs(string calldata pathToAllocsJson) external;
+
     /// Signs data.
     #[cheatcode(group = Evm, safety = Safe)]
     function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
@@ -379,11 +383,11 @@ interface Vm {
     function transact(uint256 forkId, bytes32 txHash) external;
 
     /// Performs an Ethereum JSON-RPC request to the current fork URL.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Safe)]
     function rpc(string calldata method, string calldata params) external returns (bytes memory data);
 
     /// Gets all the logs according to specified filter.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Safe)]
     function eth_getLogs(uint256 fromBlock, uint256 toBlock, address addr, bytes32[] memory topics)
         external
         returns (EthGetLogs[] memory logs);

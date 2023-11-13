@@ -1,9 +1,8 @@
 use super::{multi::MultiChainSequence, sequence::ScriptSequence, verify::VerifyBundle, *};
 use alloy_primitives::Bytes;
-use ethers::{
-    prelude::{Middleware, Signer},
-    types::transaction::eip2718::TypedTransaction,
-};
+use ethers_core::types::transaction::eip2718::TypedTransaction;
+use ethers_providers::Middleware;
+use ethers_signers::Signer;
 use eyre::Result;
 use foundry_cli::utils::LoadConfig;
 use foundry_common::{contracts::flatten_contracts, try_get_http_provider};

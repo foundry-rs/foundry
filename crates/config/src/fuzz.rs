@@ -1,11 +1,10 @@
-//! Configuration for fuzz testing
-
-use alloy_primitives::U256;
-use serde::{Deserialize, Serialize};
+//! Configuration for fuzz testing.
 
 use crate::inline::{
     parse_config_u32, InlineConfigParser, InlineConfigParserError, INLINE_CONFIG_FUZZ_KEY,
 };
+use alloy_primitives::U256;
+use serde::{Deserialize, Serialize};
 
 /// Contains for fuzz testing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

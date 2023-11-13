@@ -1483,7 +1483,7 @@
       },
       "group": "evm",
       "status": "stable",
-      "safety": "unsafe"
+      "safety": "safe"
     },
     {
       "func": {
@@ -2204,6 +2204,26 @@
       "group": "evm",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "loadAllocs",
+        "description": "Load a genesis JSON file's `allocs` into the in-memory revm state.",
+        "declaration": "function loadAllocs(string calldata pathToAllocsJson) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "loadAllocs(string)",
+        "selector": "0xb3a056d7",
+        "selectorBytes": [
+          179,
+          160,
+          86,
+          215
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
     },
     {
       "func": {
@@ -3403,7 +3423,7 @@
       },
       "group": "evm",
       "status": "stable",
-      "safety": "unsafe"
+      "safety": "safe"
     },
     {
       "func": {

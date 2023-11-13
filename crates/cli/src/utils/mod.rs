@@ -1,5 +1,6 @@
 use alloy_primitives::U256;
-use ethers::{prelude::TransactionReceipt, providers::Middleware};
+use ethers_core::types::TransactionReceipt;
+use ethers_providers::Middleware;
 use eyre::{ContextCompat, Result};
 use foundry_common::units::format_units;
 use foundry_config::{Chain, Config};
@@ -88,8 +89,11 @@ pub fn get_provider(config: &Config) -> Result<foundry_common::RetryProvider> {
 /// Defaults to `http://localhost:8545` and `Mainnet`.
 pub fn get_provider_builder(config: &Config) -> Result<foundry_common::ProviderBuilder> {
     let url = config.get_rpc_url_or_localhost_http()?;
-    let chain = config.chain_id.unwrap_or_default();
-    let mut builder = foundry_common::ProviderBuilder::new(url.as_ref()).chain(chain);
+    let mut builder = foundry_common::ProviderBuilder::new(url.as_ref());
+
+    if let Ok(chain) = config.chain_id.unwrap_or_default().try_into() {
+        builder = builder.chain(chain);
+    }
 
     let jwt = config.get_rpc_jwt_secret()?;
     if let Some(jwt) = jwt {
@@ -264,12 +268,17 @@ impl CommandUtils for Command {
         if output.status.success() {
             Ok(output)
         } else {
-            let mut stderr = String::from_utf8_lossy(&output.stderr);
-            let mut msg = stderr.trim();
-            if msg.is_empty() {
-                stderr = String::from_utf8_lossy(&output.stdout);
-                msg = stderr.trim();
-            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stdout = stdout.trim();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = stderr.trim();
+            let msg = if stdout.is_empty() {
+                stderr.to_string()
+            } else if stderr.is_empty() {
+                stdout.to_string()
+            } else {
+                format!("stdout:\n{stdout}\n\nstderr:\n{stderr}")
+            };
 
             let mut name = self.get_program().to_string_lossy();
             if let Some(arg) = self.get_args().next() {
@@ -286,8 +295,9 @@ impl CommandUtils for Command {
                 None => format!("{name} terminated by a signal"),
             };
             if !msg.is_empty() {
-                err.push_str(": ");
-                err.push_str(msg);
+                err.push(':');
+                err.push(if msg.lines().count() == 0 { ' ' } else { '\n' });
+                err.push_str(&msg);
             }
             Err(eyre::eyre!(err))
         }

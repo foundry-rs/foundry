@@ -1,9 +1,8 @@
 //! Implementations of [`String`](crate::Group::String) cheatcodes.
 
-use super::{Cheatcode, Result};
-use crate::{Cheatcodes, Vm::*};
-use alloy_primitives::{Address, Bytes, B256, I256, U256};
-use alloy_sol_types::{SolType, SolValue};
+use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
+use alloy_dyn_abi::{DynSolType, DynSolValue};
+use alloy_sol_types::SolValue;
 
 // address
 impl Cheatcode for toString_0Call {
@@ -56,78 +55,99 @@ impl Cheatcode for toString_5Call {
 impl Cheatcode for parseBytesCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { stringifiedValue } = self;
-        parse::<Bytes>(stringifiedValue)
+        parse(stringifiedValue, &DynSolType::Bytes)
     }
 }
 
 impl Cheatcode for parseAddressCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { stringifiedValue } = self;
-        parse::<Address>(stringifiedValue)
+        parse(stringifiedValue, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for parseUintCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { stringifiedValue } = self;
-        parse::<U256>(stringifiedValue)
+        parse(stringifiedValue, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for parseIntCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { stringifiedValue } = self;
-        parse::<I256>(stringifiedValue)
+        parse(stringifiedValue, &DynSolType::Int(256))
     }
 }
 
 impl Cheatcode for parseBytes32Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { stringifiedValue } = self;
-        parse::<B256>(stringifiedValue)
+        parse(stringifiedValue, &DynSolType::FixedBytes(32))
     }
 }
 
 impl Cheatcode for parseBoolCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { stringifiedValue } = self;
-        parse::<bool>(stringifiedValue)
+        parse(stringifiedValue, &DynSolType::Bool)
     }
 }
 
-pub(super) fn parse<T>(s: &str) -> Result
-where
-    T: SolValue + std::str::FromStr,
-    T::Err: std::fmt::Display,
-{
-    parse_t::<T>(s).map(|v| v.abi_encode())
+pub(super) fn parse(s: &str, ty: &DynSolType) -> Result {
+    parse_value(s, ty).map(|v| v.abi_encode())
 }
 
-pub(super) fn parse_array<I, S, T>(values: I) -> Result
+pub(super) fn parse_array<I, S>(values: I, ty: &DynSolType) -> Result
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
-    T: SolValue + std::str::FromStr,
-    T::Err: std::fmt::Display,
 {
     let mut values = values.into_iter();
     match values.next() {
         Some(first) if !first.as_ref().is_empty() => std::iter::once(first)
             .chain(values)
-            .map(|s| parse_t::<T>(s.as_ref()))
+            .map(|s| parse_value(s.as_ref(), ty))
             .collect::<Result<Vec<_>, _>>()
-            .map(|vec| vec.abi_encode()),
+            .map(|vec| DynSolValue::Array(vec).abi_encode()),
         // return the empty encoded Bytes when values is empty or the first element is empty
         _ => Ok("".abi_encode()),
     }
 }
 
-fn parse_t<T>(s: &str) -> Result<T>
-where
-    T: SolValue + std::str::FromStr,
-    T::Err: std::fmt::Display,
-{
-    s.parse::<T>().map_err(|e| {
-        fmt_err!("failed parsing {s:?} as type `{}`: {e}", T::SolType::sol_type_name())
-    })
+fn parse_value(s: &str, ty: &DynSolType) -> Result<DynSolValue> {
+    match ty.coerce_str(s) {
+        Ok(value) => Ok(value),
+        Err(e) => match parse_value_fallback(s, ty) {
+            Some(Ok(value)) => Ok(value),
+            Some(Err(e2)) => Err(fmt_err!("failed parsing {s:?} as type `{ty}`: {e2}")),
+            None => Err(fmt_err!("failed parsing {s:?} as type `{ty}`: {e}")),
+        },
+    }
+}
+
+// More lenient parsers than `coerce_str`.
+fn parse_value_fallback(s: &str, ty: &DynSolType) -> Option<Result<DynSolValue, &'static str>> {
+    match ty {
+        DynSolType::Bool => {
+            let b = match s {
+                "1" => true,
+                "0" => false,
+                s if s.eq_ignore_ascii_case("true") => true,
+                s if s.eq_ignore_ascii_case("false") => false,
+                _ => return None,
+            };
+            return Some(Ok(DynSolValue::Bool(b)));
+        }
+        DynSolType::Int(_) |
+        DynSolType::Uint(_) |
+        DynSolType::FixedBytes(_) |
+        DynSolType::Bytes => {
+            if !s.starts_with("0x") && s.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Some(Err("missing hex prefix (\"0x\") for hex string"))
+            }
+        }
+        _ => {}
+    }
+    None
 }

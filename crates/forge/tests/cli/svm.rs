@@ -1,6 +1,5 @@
 //! svm sanity checks
 
-use foundry_test_utils::{forgetest_init, TestCommand, TestProject};
 use semver::Version;
 use svm::Platform;
 
@@ -11,7 +10,7 @@ use svm::Platform;
 ///     2. svm updated with all build info
 ///     3. svm bumped in ethers-rs
 ///     4. ethers bumped in foundry + update the `LATEST_SOLC`
-const LATEST_SOLC: Version = Version::new(0, 8, 22);
+const LATEST_SOLC: Version = Version::new(0, 8, 23);
 
 macro_rules! ensure_svm_releases {
     ($($test:ident => $platform:ident),* $(,)?) => {$(
@@ -42,7 +41,7 @@ ensure_svm_releases!(
 );
 
 // Ensures we can always test with the latest solc build
-forgetest_init!(can_test_with_latest_solc, |prj: TestProject, mut cmd: TestCommand| {
+forgetest_init!(can_test_with_latest_solc, |prj, cmd| {
     let src = format!(
         r#"
 // SPDX-License-Identifier: UNLICENSED
@@ -58,5 +57,5 @@ contract CounterTest is Test {{
     "#
     );
     prj.inner().add_test("Counter", src).unwrap();
-    cmd.arg("test").stdout_lossy().contains("[PASS]")
+    cmd.arg("test").stdout_lossy().contains("[PASS]");
 });

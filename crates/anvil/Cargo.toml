@@ -62,6 +62,7 @@ thiserror = "1"
 yansi = "0.5"
 tempfile = "3"
 itertools.workspace = true
+rand = "0.8"
 
 # cli
 clap = { version = "4", features = ["derive", "env", "wrap_help"], optional = true }

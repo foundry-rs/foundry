@@ -1,6 +1,6 @@
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use forge_fmt::{format, parse, print_diagnostics_report};
+use forge_fmt::{format_to, parse, print_diagnostics_report};
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
 use foundry_common::{fs, term::cli_warn};
 use foundry_config::impl_figment_convert_basic;
@@ -117,7 +117,7 @@ impl FmtArgs {
             }
 
             let mut output = String::new();
-            format(&mut output, parsed, config.fmt.clone()).unwrap();
+            format_to(&mut output, parsed, config.fmt.clone()).unwrap();
 
             solang_parser::parse(&output, 0).map_err(|diags| {
                 eyre::eyre!(

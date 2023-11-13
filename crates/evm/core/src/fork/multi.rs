@@ -151,7 +151,7 @@ impl MultiFork {
     }
 }
 
-type Handler = BackendHandler<Provider<BoxTransport>>;
+type Handler = BackendHandler<Arc<Provider<BoxTransport>>>;
 
 type CreateFuture = Pin<Box<dyn Future<Output = eyre::Result<(CreatedFork, Handler)>> + Send>>;
 type CreateSender = OneshotSender<eyre::Result<(ForkId, SharedBackend, Env)>>;

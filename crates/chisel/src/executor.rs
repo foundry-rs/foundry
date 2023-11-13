@@ -604,10 +604,9 @@ impl Type {
             // address
             pt::Expression::AddressLiteral(_, _) => Some(Self::Builtin(DynSolType::Address)),
             pt::Expression::HexNumberLiteral(_, s, _) => {
-                match s.parse() {
+                match s.parse::<Address>() {
                     Ok(addr) => {
-                        let checksummed = ethers::utils::to_checksum(&addr, None);
-                        if *s == checksummed {
+                        if *s == addr.to_checksum(None) {
                             Some(Self::Builtin(DynSolType::Address))
                         } else {
                             Some(Self::Builtin(DynSolType::Uint(256)))

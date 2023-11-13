@@ -1,9 +1,8 @@
 //! Implementations of [`Json`](crate::Group::Json) cheatcodes.
 
-use super::{string, Cheatcode, Result};
-use crate::{Cheatcodes, Vm::*};
-use alloy_dyn_abi::DynSolValue;
-use alloy_primitives::{Address, Bytes, B256, I256, U256};
+use crate::{string, Cheatcode, Cheatcodes, Result, Vm::*};
+use alloy_dyn_abi::{DynSolType, DynSolValue};
+use alloy_primitives::{Address, B256, I256};
 use alloy_sol_types::SolValue;
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
@@ -37,98 +36,98 @@ impl Cheatcode for parseJson_1Call {
 impl Cheatcode for parseJsonUintCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce::<U256>(json, key)
+        parse_json_coerce(json, key, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for parseJsonUintArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce::<U256>(json, key)
+        parse_json_coerce(json, key, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for parseJsonIntCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce::<I256>(json, key)
+        parse_json_coerce(json, key, &DynSolType::Int(256))
     }
 }
 
 impl Cheatcode for parseJsonIntArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce::<I256>(json, key)
+        parse_json_coerce(json, key, &DynSolType::Int(256))
     }
 }
 
 impl Cheatcode for parseJsonBoolCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce::<bool>(json, key)
+        parse_json_coerce(json, key, &DynSolType::Bool)
     }
 }
 
 impl Cheatcode for parseJsonBoolArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce::<bool>(json, key)
+        parse_json_coerce(json, key, &DynSolType::Bool)
     }
 }
 
 impl Cheatcode for parseJsonAddressCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce::<Address>(json, key)
+        parse_json_coerce(json, key, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for parseJsonAddressArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce::<Address>(json, key)
+        parse_json_coerce(json, key, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for parseJsonStringCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce::<String>(json, key)
+        parse_json_coerce(json, key, &DynSolType::String)
     }
 }
 
 impl Cheatcode for parseJsonStringArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce::<String>(json, key)
+        parse_json_coerce(json, key, &DynSolType::String)
     }
 }
 
 impl Cheatcode for parseJsonBytesCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce::<Bytes>(json, key)
+        parse_json_coerce(json, key, &DynSolType::Bytes)
     }
 }
 
 impl Cheatcode for parseJsonBytesArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce::<Bytes>(json, key)
+        parse_json_coerce(json, key, &DynSolType::Bytes)
     }
 }
 
 impl Cheatcode for parseJsonBytes32Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce::<B256>(json, key)
+        parse_json_coerce(json, key, &DynSolType::FixedBytes(32))
     }
 }
 
 impl Cheatcode for parseJsonBytes32ArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce::<B256>(json, key)
+        parse_json_coerce(json, key, &DynSolType::FixedBytes(32))
     }
 }
 
@@ -285,11 +284,7 @@ fn parse_json(json: &str, path: &str) -> Result {
     parse_json_inner(json, path, None::<fn(Vec<&Value>) -> Result>)
 }
 
-fn parse_json_coerce<T>(json: &str, path: &str) -> Result
-where
-    T: SolValue + std::str::FromStr,
-    T::Err: std::fmt::Display,
-{
+fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Result {
     parse_json_inner(
         json,
         path,
@@ -307,9 +302,9 @@ where
                 s
             };
             if let Some(array) = values[0].as_array() {
-                string::parse_array::<_, _, T>(array.iter().map(to_string))
+                string::parse_array(array.iter().map(to_string), ty)
             } else {
-                string::parse::<T>(&to_string(values[0]))
+                string::parse(&to_string(values[0]), ty)
             }
         }),
     )

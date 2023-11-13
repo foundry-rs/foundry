@@ -84,7 +84,6 @@ fn main() -> Result<()> {
         Subcommands::Config(cmd) => cmd.run(),
         Subcommands::Flatten(cmd) => cmd.run(),
         Subcommands::Inspect(cmd) => cmd.run(),
-        Subcommands::UploadSelectors(args) => utils::block_on(args.run()),
         Subcommands::Tree(cmd) => cmd.run(),
         Subcommands::Geiger(cmd) => {
             let check = cmd.check;

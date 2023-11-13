@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256};
-use ethers::types::transaction::eip2930::{AccessList, AccessListItem};
+use ethers_core::types::transaction::eip2930::{AccessList, AccessListItem};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use hashbrown::{HashMap, HashSet};
 use revm::{
@@ -35,6 +35,7 @@ impl AccessListTracer {
                 .collect(),
         }
     }
+
     pub fn access_list(&self) -> AccessList {
         AccessList::from(
             self.access_list
@@ -47,6 +48,7 @@ impl AccessListTracer {
         )
     }
 }
+
 impl<DB: Database> Inspector<DB> for AccessListTracer {
     #[inline]
     fn step(

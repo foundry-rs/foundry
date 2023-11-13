@@ -1,4 +1,4 @@
-use crate::{abi::HEVM_ABI, utils::CallKind};
+use crate::utils::CallKind;
 use alloy_primitives::{Address, U256};
 use revm::interpreter::{Memory, OpCode};
 use serde::{Deserialize, Serialize};
@@ -178,11 +178,12 @@ impl Display for Instruction {
             Instruction::Cheatcode(cheat) => write!(
                 f,
                 "VM_{}",
-                &*HEVM_ABI
-                    .functions()
-                    .find(|func| func.short_signature() == *cheat)
+                foundry_cheatcodes_defs::Vm::CHEATCODES
+                    .iter()
+                    .map(|c| &c.func)
+                    .find(|c| c.selector_bytes == *cheat)
                     .expect("unknown cheatcode found in debugger")
-                    .name
+                    .id
                     .to_uppercase()
             ),
         }

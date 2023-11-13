@@ -8,6 +8,7 @@ use ethers_core::types::Chain;
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use ethers_providers::{JwtAuth, JwtKey};
 use eyre::{Result, WrapErr};
+use foundry_config::NamedChain;
 use foundry_utils::types::ToAlloy;
 use reqwest::{header::HeaderValue, Url};
 use std::{
@@ -56,7 +57,7 @@ pub fn try_get_http_provider(builder: impl AsRef<str>) -> Result<RetryProvider> 
 pub struct ProviderBuilder {
     // Note: this is a result, so we can easily chain builder calls
     url: Result<Url>,
-    chain: Chain,
+    chain: NamedChain,
     max_retry: u32,
     timeout_retry: u32,
     initial_backoff: u64,
@@ -65,6 +66,7 @@ pub struct ProviderBuilder {
     compute_units_per_second: u64,
     /// JWT Secret
     jwt: Option<String>,
+    headers: Vec<String>,
 }
 
 // === impl ProviderBuilder ===
@@ -100,7 +102,7 @@ impl ProviderBuilder {
 
         Self {
             url,
-            chain: Chain::Mainnet,
+            chain: NamedChain::Mainnet,
             max_retry: 8,
             timeout_retry: 8,
             initial_backoff: 800,
@@ -108,6 +110,7 @@ impl ProviderBuilder {
             // alchemy max cpus <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
             jwt: None,
+            headers: vec![],
         }
     }
 
@@ -123,10 +126,8 @@ impl ProviderBuilder {
     }
 
     /// Sets the chain of the node the provider will connect to
-    pub fn chain(mut self, chain: impl Into<foundry_config::Chain>) -> Self {
-        if let foundry_config::Chain::Named(chain) = chain.into() {
-            self.chain = chain;
-        }
+    pub fn chain(mut self, chain: NamedChain) -> Self {
+        self.chain = chain;
         self
     }
 
@@ -192,16 +193,22 @@ impl ProviderBuilder {
         self
     }
 
+    /// Sets http headers
+    pub fn headers(mut self, headers: Vec<String>) -> Self {
+        self.headers = headers;
+
+        self
+    }
+
     /// Same as [`Self:build()`] but also retrieves the `chainId` in order to derive an appropriate
     /// interval.
     pub async fn connect(self) -> Result<RetryProvider> {
         let provider = self.build()?;
         // todo: port poll interval hint
         /*if let Some(blocktime) = provider.get_chainid().await.ok().and_then(|id| {
-            Chain::try_from(id).ok().and_then(|chain| chain.average_blocktime_hint())
-        }) {
-            provider = provider.interval(blocktime / 2);
-            }*/
+                }) {
+                    provider = provider.interval(blocktime / 2);
+                    }*/
         Ok(provider)
     }
 
@@ -216,6 +223,7 @@ impl ProviderBuilder {
             timeout,
             compute_units_per_second,
             jwt,
+            headers,
         } = self;
         let url = url?;
 
@@ -275,10 +283,10 @@ pub async fn estimate_eip1559_fees<P: TempProvider>(
             .to()
     };
 
-    if let Ok(chain) = Chain::try_from(chain) {
+    if let Ok(chain) = NamedChain::try_from(chain) {
         // handle chains that deviate from `eth_feeHistory` and have their own oracle
         match chain {
-            Chain::Polygon | Chain::PolygonMumbai => {
+            NamedChain::Polygon | NamedChain::PolygonMumbai => {
                 let estimator = Polygon::new(chain)?.category(GasCategory::Standard);
                 let (a, b) = estimator.estimate_eip1559_fees().await?;
                 return Ok((a.to_alloy(), b.to_alloy()));

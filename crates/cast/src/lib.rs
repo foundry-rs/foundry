@@ -1,31 +1,24 @@
-use crate::rlp_converter::Item;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
-use alloy_json_abi::Function;
+use alloy_json_abi::{ContractObject, Function};
 use alloy_primitives::{Address, I256, U256};
+use alloy_rlp::Decodable;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
-    abi::RawAbi,
     types::{transaction::eip2718::TypedTransaction, Chain, *},
     utils::{
-        format_bytes32_string, format_units, get_contract_address, keccak256, parse_bytes32_string,
-        parse_units, rlp, Units,
+        format_bytes32_string, format_units, keccak256, parse_bytes32_string, parse_units, rlp,
+        Units,
     },
 };
 use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
 use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, ContextCompat, Result};
-use foundry_block_explorers::{errors::EtherscanError, Client};
+use foundry_block_explorers::Client;
 use foundry_common::{abi::encode_function_args, fmt::*, TransactionReceiptWithRevertReason};
-pub use foundry_evm::*;
 use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
-pub use rusoto_core::{
-    credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
-    request::HttpClient as AwsHttpClient, Client as AwsClient,
-};
-pub use rusoto_kms::KmsClient;
 use std::{
     io,
     path::PathBuf,
@@ -33,13 +26,22 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use tokio::signal::ctrl_c;
-pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
+
+pub use foundry_evm::*;
+pub use rusoto_core::{
+    credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
+    request::HttpClient as AwsHttpClient, Client as AwsClient,
+};
+pub use rusoto_kms::KmsClient;
+pub use tx::TxBuilder;
 
 pub mod base;
 pub mod errors;
 mod rlp_converter;
 mod tx;
+
+use rlp_converter::Item;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
@@ -73,7 +75,7 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```
     /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Http, Provider};
@@ -469,14 +471,14 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers::types::NameOrAddress;
+    /// use ethers_core::types::Address;
     /// use ethers_providers::{Http, Provider};
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
-    /// let addr = NameOrAddress::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let nonce = cast.nonce(addr, None).await?;
     /// println!("{}", nonce);
     /// # Ok(())
@@ -486,8 +488,8 @@ where
         &self,
         who: T,
         block: Option<BlockId>,
-    ) -> Result<U256> {
-        Ok(self.provider.get_transaction_count(who, block).await?.to_alloy())
+    ) -> Result<u64> {
+        Ok(self.provider.get_transaction_count(who, block).await?.to_alloy().to())
     }
 
     /// # Example
@@ -553,38 +555,22 @@ where
     /// ```no_run
     /// use alloy_primitives::{Address, U256};
     /// use cast::Cast;
-    /// use ethers::types::NameOrAddress;
     /// use ethers_providers::{Http, Provider};
     /// use std::str::FromStr;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
-    /// let nonce_addr = NameOrAddress::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let addr = Address::from_str("7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
-    /// let nonce = cast.nonce(nonce_addr, None).await? + U256::from(5);
-    /// let computed_address = cast.compute_address(addr, Some(nonce)).await?;
-    /// println!("Computed address for address {} with nonce {}: {}", addr, nonce, computed_address);
-    /// let computed_address_no_nonce = cast.compute_address(addr, None).await?;
-    /// println!(
-    ///     "Computed address for address {} with nonce {}: {}",
-    ///     addr, nonce, computed_address_no_nonce
-    /// );
+    /// let computed_address = cast.compute_address(addr, None).await?;
+    /// println!("Computed address for address {addr}: {computed_address}");
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn compute_address<T: Into<Address> + Copy + Send + Sync>(
-        &self,
-        address: T,
-        nonce: Option<U256>,
-    ) -> Result<Address> {
-        let unpacked = if let Some(n) = nonce {
-            n
-        } else {
-            self.provider.get_transaction_count(address.into().to_ethers(), None).await?.to_alloy()
-        };
-
-        Ok(get_contract_address(address.into().to_ethers(), unpacked.to_ethers()).to_alloy())
+    pub async fn compute_address(&self, address: Address, nonce: Option<u64>) -> Result<Address> {
+        let unpacked =
+            if let Some(n) = nonce { n } else { self.nonce(address.to_ethers(), None).await? };
+        Ok(address.create(unpacked))
     }
 
     /// # Example
@@ -1126,7 +1112,7 @@ impl SimpleCast {
             let value_len = value_stripped.len();
             (sign, value_stripped, value_len)
         };
-        let decimals = NumberWithBase::parse_uint(decimals, None)?.number().low_u64() as usize;
+        let decimals = NumberWithBase::parse_uint(decimals, None)?.number().to::<usize>();
 
         let value = if decimals >= value_len {
             // Add "0." and pad with 0s
@@ -1294,8 +1280,7 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_wei(value: &str, unit: &str) -> Result<String> {
-        let value = NumberWithBase::parse_int(value, None)?.number();
-
+        let value = NumberWithBase::parse_int(value, None)?.number().to_ethers();
         Ok(match unit {
             "gwei" => format_units(value, 9),
             _ => format_units(value, 18),
@@ -1339,7 +1324,7 @@ impl SimpleCast {
     /// ```
     pub fn from_rlp(value: impl AsRef<str>) -> Result<String> {
         let bytes = hex::decode(value.as_ref()).wrap_err("Could not decode hex")?;
-        let item = rlp::decode::<Item>(&bytes).wrap_err("Could not decode rlp")?;
+        let item = Item::decode(&mut &bytes[..]).wrap_err("Could not decode rlp")?;
         Ok(item.to_string())
     }
 
@@ -1360,7 +1345,7 @@ impl SimpleCast {
         let val = serde_json::from_str(value)
             .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
         let item = Item::value_to_item(&val)?;
-        Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
+        Ok(format!("0x{}", hex::encode(alloy_rlp::encode(item))))
     }
 
     /// Converts a number of one base to another
@@ -1368,8 +1353,8 @@ impl SimpleCast {
     /// # Example
     ///
     /// ```
+    /// use alloy_primitives::I256;
     /// use cast::SimpleCast as Cast;
-    /// use ethers_core::types::{I256, U256};
     ///
     /// assert_eq!(Cast::to_base("100", Some("10"), "16")?, "0x64");
     /// assert_eq!(Cast::to_base("100", Some("10"), "oct")?, "0o144");
@@ -1594,8 +1579,8 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// assert_eq!(
-    ///     "0x693c61390000000000000000000000000000000000000000000000000000000000000001",
-    ///     Cast::calldata_encode("f(uint a)", &["1"]).unwrap().as_str()
+    ///     "0xb3de648b0000000000000000000000000000000000000000000000000000000000000001",
+    ///     Cast::calldata_encode("f(uint256 a)", &["1"]).unwrap().as_str()
     /// );
     /// # Ok::<_, eyre::Report>(())
     /// ```
@@ -1619,40 +1604,24 @@ impl SimpleCast {
     /// # }
     /// ```
     pub async fn generate_interface(address_or_path: AbiPath) -> Result<Vec<InterfaceSource>> {
-        let (contract_abis, contract_names): (Vec<RawAbi>, Vec<String>) = match address_or_path {
+        let (contract_abis, contract_names) = match address_or_path {
             AbiPath::Local { path, name } => {
-                let file = std::fs::read_to_string(path).wrap_err("unable to read abi file")?;
-                let mut json: serde_json::Value = serde_json::from_str(&file)?;
-                let json = if !json["abi"].is_null() { json["abi"].take() } else { json };
-                let abi: RawAbi =
-                    serde_json::from_value(json).wrap_err("unable to parse json ABI from file")?;
-
+                let file = std::fs::read_to_string(&path).wrap_err("unable to read abi file")?;
+                let obj: ContractObject = serde_json::from_str(&file)?;
+                let abi =
+                    obj.abi.ok_or_else(|| eyre::eyre!("could not find ABI in file {path}"))?;
                 (vec![abi], vec![name.unwrap_or_else(|| "Interface".to_owned())])
             }
             AbiPath::Etherscan { address, chain, api_key } => {
                 let client = Client::new(chain, api_key)?;
-
-                // get the source
-                let source = match client.contract_source_code(address).await {
-                    Ok(source) => source,
-                    Err(EtherscanError::InvalidApiKey) => {
-                        eyre::bail!("Invalid Etherscan API key. Did you set it correctly? You may be using an API key for another Etherscan API chain (e.g. Etherscan API key for Polygonscan).")
-                    }
-                    Err(EtherscanError::ContractCodeNotVerified(address)) => {
-                        eyre::bail!("Contract source code at {:?} on {} not verified. Maybe you have selected the wrong chain?", address, chain)
-                    }
-                    Err(err) => {
-                        eyre::bail!(err)
-                    }
-                };
-
+                let source = client.contract_source_code(address).await?;
                 let names = source
                     .items
                     .iter()
                     .map(|item| item.contract_name.clone())
                     .collect::<Vec<String>>();
 
-                let abis = source.raw_abis()?;
+                let abis = source.abis()?;
 
                 (abis, names)
             }
@@ -1830,7 +1799,7 @@ impl SimpleCast {
         let value = NumberWithBase::parse_uint(value, base_in)?;
         let bits = NumberWithBase::parse_uint(bits, None)?;
 
-        let res = value.number() >> bits.number();
+        let res = value.number().wrapping_shr(bits.number().saturating_to());
 
         Ok(res.to_base(base_out, true)?)
     }
@@ -1877,12 +1846,11 @@ impl SimpleCast {
     ///
     /// ```
     /// # use cast::SimpleCast as Cast;
-    /// # use ethers_core::types::Chain;
+    /// # use foundry_config::NamedChain;
     /// # use std::path::PathBuf;
-    ///
     /// # async fn expand() -> eyre::Result<()> {
     /// Cast::expand_etherscan_source_to_directory(
-    ///     Chain::Mainnet,
+    ///     NamedChain::Mainnet,
     ///     "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(),
     ///     "<etherscan_api_key>".to_string(),
     ///     PathBuf::from("output_dir"),
@@ -2015,8 +1983,8 @@ mod tests {
     #[test]
     fn calldata_uint() {
         assert_eq!(
-            "0x693c61390000000000000000000000000000000000000000000000000000000000000001",
-            Cast::calldata_encode("f(uint a)", &["1"]).unwrap().as_str()
+            "0xb3de648b0000000000000000000000000000000000000000000000000000000000000001",
+            Cast::calldata_encode("f(uint256 a)", &["1"]).unwrap().as_str()
         );
     }
 

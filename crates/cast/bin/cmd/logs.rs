@@ -1,20 +1,20 @@
-use std::{io, str::FromStr};
-
 use cast::Cast;
 use clap::Parser;
-use ethers::{providers::Middleware, types::NameOrAddress};
 use ethers_core::{
     abi::{
         token::{LenientTokenizer, StrictTokenizer, Tokenizer},
         Address, Event, HumanReadableParser, ParamType, RawTopicFilter, Token, Topic, TopicFilter,
     },
-    types::{BlockId, BlockNumber, Filter, FilterBlockOption, ValueOrArray, H256, U256},
+    types::{
+        BlockId, BlockNumber, Filter, FilterBlockOption, NameOrAddress, ValueOrArray, H256, U256,
+    },
 };
+use ethers_providers::Middleware;
 use eyre::{Result, WrapErr};
 use foundry_cli::{opts::EthereumOpts, utils};
-
 use foundry_config::Config;
 use itertools::Itertools;
+use std::{io, str::FromStr};
 
 /// CLI arguments for `cast logs`.
 #[derive(Debug, Parser)]
@@ -285,11 +285,9 @@ pub fn sanitize_token(token: Token) -> Token {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
     use super::*;
-    use ethers::types::H160;
-    use ethers_core::types::H256;
+    use ethers_core::types::{H160, H256};
+    use std::str::FromStr;
 
     const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
     const TRANSFER_SIG: &str = "Transfer(address indexed,address indexed,uint256)";

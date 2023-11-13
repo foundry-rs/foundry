@@ -2,9 +2,10 @@ use super::{InvariantFailures, InvariantFuzzError};
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use ethers::types::Log;
+use ethers_core::types::Log;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::constants::CALLER;
+use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::invariant::{BasicTxDetails, InvariantContract};
 use foundry_evm_traces::{load_contracts, TraceKind, Traces};
 use revm::primitives::U256;
@@ -72,6 +73,7 @@ pub fn replay_run(
     mut ided_contracts: ContractsByAddress,
     logs: &mut Vec<Log>,
     traces: &mut Traces,
+    coverage: &mut Option<HitMaps>,
     func: Function,
     inputs: Vec<BasicTxDetails>,
 ) {
@@ -88,6 +90,20 @@ pub fn replay_run(
 
         logs.extend(call_result.logs);
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
+
+        let old_coverage = std::mem::take(coverage);
+        match (old_coverage, call_result.coverage) {
+            (Some(old_coverage), Some(call_coverage)) => {
+                *coverage = Some(old_coverage.merge(call_coverage));
+            }
+            (None, Some(call_coverage)) => {
+                *coverage = Some(call_coverage);
+            }
+            (Some(old_coverage), None) => {
+                *coverage = Some(old_coverage);
+            }
+            (None, None) => {}
+        }
 
         // Identify newly generated contracts, if they exist.
         ided_contracts.extend(load_contracts(

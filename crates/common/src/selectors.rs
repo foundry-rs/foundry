@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 //! Support for handling/identifying selectors
 use crate::abi::abi_decode_calldata;
-use foundry_compilers::artifacts::LosslessAbi;
+use alloy_json_abi::JsonAbi;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
@@ -188,7 +188,7 @@ impl SignEthClient {
 
         Ok(decoded
             .get(selector)
-            .ok_or(eyre::eyre!("No signature found"))?
+            .ok_or_else(|| eyre::eyre!("No signature found"))?
             .iter()
             .filter(|&d| !d.filtered)
             .map(|d| d.name.clone())
@@ -299,18 +299,22 @@ impl SignEthClient {
 
         let request = match data {
             SelectorImportData::Abi(abis) => {
-                let names: Vec<String> = abis
+                let functions_and_errors: Vec<String> = abis
                     .iter()
                     .flat_map(|abi| {
-                        abi.abi
-                            .functions()
-                            .map(|func| {
-                                func.signature().split(':').next().unwrap_or("").to_string()
-                            })
+                        abi.functions()
+                            .map(|func| func.signature())
+                            .chain(abi.errors().map(|error| error.signature()))
                             .collect::<Vec<_>>()
                     })
                     .collect();
-                SelectorImportRequest { function: names, event: Default::default() }
+
+                let events = abis
+                    .iter()
+                    .flat_map(|abi| abi.events().map(|event| event.signature()))
+                    .collect::<Vec<_>>();
+
+                SelectorImportRequest { function: functions_and_errors, event: events }
             }
             SelectorImportData::Raw(raw) => {
                 SelectorImportRequest { function: raw.function, event: raw.event }
@@ -429,7 +433,7 @@ impl RawSelectorImportData {
 #[derive(Serialize)]
 #[serde(untagged)]
 pub enum SelectorImportData {
-    Abi(Vec<LosslessAbi>),
+    Abi(Vec<JsonAbi>),
     Raw(RawSelectorImportData),
 }
 
@@ -488,12 +492,12 @@ pub async fn import_selectors(data: SelectorImportData) -> eyre::Result<Selector
 #[derive(PartialEq, Default, Debug)]
 pub struct ParsedSignatures {
     pub signatures: RawSelectorImportData,
-    pub abis: Vec<LosslessAbi>,
+    pub abis: Vec<JsonAbi>,
 }
 
 #[derive(Deserialize)]
 struct Artifact {
-    abi: LosslessAbi,
+    abi: JsonAbi,
 }
 
 /// Parses a list of tokens into function, event, and error signatures.
@@ -589,7 +593,7 @@ mod tests {
             "0xa9059cbb"
         );
 
-        let abi: LosslessAbi = serde_json::from_str(r#"[{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function", "methodIdentifiers": {"transfer(address,uint256)(uint256)": "0xa9059cbb"}}]"#).unwrap();
+        let abi: JsonAbi = serde_json::from_str(r#"[{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function", "methodIdentifiers": {"transfer(address,uint256)(uint256)": "0xa9059cbb"}}]"#).unwrap();
         let result = import_selectors(SelectorImportData::Abi(vec![abi])).await;
         println!("{:?}", result);
         assert_eq!(

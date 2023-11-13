@@ -7,8 +7,8 @@ on:
     pull_request:
 
 concurrency:
+    group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
     cancel-in-progress: true
-    group: ${{github.workflow}}-${{github.ref}}
 
 env:
     CARGO_TERM_COLOR: always
@@ -18,10 +18,9 @@ jobs:
         name: build matrices
         runs-on: ubuntu-latest
         outputs:
-            build-matrix: ${{ steps.gen.outputs.build-matrix }}
             test-matrix: ${{ steps.gen.outputs.test-matrix }}
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: actions/setup-python@v4
               with:
                   python-version: "3.11"
@@ -31,66 +30,47 @@ jobs:
                   EVENT_NAME: ${{ github.event_name }}
               run: |
                   output=$(python3 .github/scripts/matrices.py)
-                  echo "::debug::build-matrix=$output"
-                  echo "build-matrix=$output" >> $GITHUB_OUTPUT
-
-                  export TEST=1
-
-                  output=$(python3 .github/scripts/matrices.py)
                   echo "::debug::test-matrix=$output"
                   echo "test-matrix=$output" >> $GITHUB_OUTPUT
-
-    build-tests:
-        name: build tests
-        runs-on: ${{ matrix.os }}
-        timeout-minutes: 30
-        needs: matrices
-        strategy:
-            fail-fast: false
-            matrix: ${{ fromJson(needs.matrices.outputs.build-matrix) }}
-        steps:
-            - uses: actions/checkout@v3
-            - uses: dtolnay/rust-toolchain@stable
-              with:
-                  target: ${{ matrix.target }}
-            - uses: Swatinem/rust-cache@v2
-              with:
-                  cache-on-failure: true
-            - uses: taiki-e/install-action@nextest
-            - name: Build archive
-              shell: bash
-              run: |
-                  cargo nextest archive \
-                    --workspace \
-                    --archive-file tests-${{ matrix.target }}.tar.zst
-            - name: Upload archive
-              uses: actions/upload-artifact@v3
-              with:
-                  name: tests-${{ matrix.target }}
-                  path: tests-${{ matrix.target }}.tar.zst
 
     test:
         name: test ${{ matrix.name }}
         runs-on: ${{ matrix.os }}
         timeout-minutes: 60
-        needs:
-            - matrices
-            - build-tests
+        needs: matrices
         strategy:
             fail-fast: false
             matrix: ${{ fromJson(needs.matrices.outputs.test-matrix) }}
         env:
             ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: dtolnay/rust-toolchain@stable
               with:
                   target: ${{ matrix.target }}
             - uses: taiki-e/install-action@nextest
-            - name: Download archive
-              uses: actions/download-artifact@v3
+
+            # External tests dependencies
+            - name: Setup Python
+              if: contains(matrix.name, 'external')
+              uses: actions/setup-python@v4
               with:
-                  name: tests-${{ matrix.target }}
+                  python-version: 3.11
+            - name: Setup Node.js
+              if: contains(matrix.name, 'external')
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 20
+            - name: Install pnpm
+              if: contains(matrix.name, 'external')
+              uses: pnpm/action-setup@v2
+              with:
+                  version: latest
+                  run_install: false
+            - name: Install Vyper
+              if: contains(matrix.name, 'external')
+              run: pip install vyper
+
             - name: Forge RPC cache
               uses: actions/cache@v3
               with:
@@ -98,41 +78,35 @@ jobs:
                       ~/.foundry/cache
                       ~/.config/.foundry/cache
                   key: rpc-cache-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
-            - name: Setup git config
+            - uses: Swatinem/rust-cache@v2
+              with:
+                  cache-on-failure: true
+            - name: Setup Git config
               run: |
                   git config --global user.name "GitHub Actions Bot"
                   git config --global user.email "<>"
-            - name: Force use of HTTPS for submodules
-              run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+                  git config --global url."https://github.com/".insteadOf "git@github.com:"
             - name: Test
-              shell: bash
-              run: |
-                  # see https://github.com/foundry-rs/foundry/pull/3959
-                  export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
-                  cargo nextest run \
-                    --retries 2 \
-                    --archive-file tests-${{ matrix.target }}.tar.zst \
-                    ${{ matrix.flags }}
+              env:
+                  SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
+              run: cargo nextest run ${{ matrix.flags }}
 
-    doctests:
-        name: doc tests
+    doctest:
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: dtolnay/rust-toolchain@stable
             - uses: Swatinem/rust-cache@v2
               with:
                   cache-on-failure: true
-            - name: cargo test
-              run: cargo test --doc
+            - run: cargo test --workspace --doc
 
     clippy:
-        name: clippy
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: dtolnay/rust-toolchain@clippy
             - uses: Swatinem/rust-cache@v2
               with:
@@ -141,23 +115,21 @@ jobs:
               env:
                   RUSTFLAGS: -Dwarnings
 
-    fmt:
-        name: fmt
+    rustfmt:
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: dtolnay/rust-toolchain@nightly
               with:
                   components: rustfmt
             - run: cargo fmt --all --check
 
     forge-fmt:
-        name: forge fmt
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: dtolnay/rust-toolchain@stable
             - uses: Swatinem/rust-cache@v2
               with:
@@ -170,16 +142,14 @@ jobs:
                   shopt -s extglob
                   cargo run --bin forge -- fmt --check testdata/**/!(Vm).sol
 
-    feature-checks:
-        name: feature checks
+    crate-checks:
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: dtolnay/rust-toolchain@stable
             - uses: taiki-e/install-action@cargo-hack
             - uses: Swatinem/rust-cache@v2
               with:
                   cache-on-failure: true
-            - name: cargo hack
-              run: cargo hack check
+            - run: cargo hack check

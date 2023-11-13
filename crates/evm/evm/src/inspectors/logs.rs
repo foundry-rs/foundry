@@ -1,7 +1,8 @@
 use alloy_primitives::{Address, Bytes, B256};
-use ethers::{
-    abi::{AbiDecode, Token},
-    types::{Bytes as ethersBytes, Log, H256},
+use alloy_sol_types::SolValue;
+use ethers_core::{
+    abi::AbiDecode,
+    types::{Log, H256},
 };
 use foundry_evm_core::{
     abi::{patch_hardhat_console_selector, HardhatConsoleCalls},
@@ -31,7 +32,7 @@ impl LogCollector {
             Err(err) => {
                 return (
                     InstructionResult::Revert,
-                    ethers::abi::encode(&[Token::String(err.to_string())]).into(),
+                    foundry_cheatcodes::Error::encode(err.to_string()),
                 )
             }
         };
@@ -48,7 +49,7 @@ impl<DB: Database> Inspector<DB> for LogCollector {
         self.logs.push(Log {
             address: address.to_ethers(),
             topics: topics.iter().copied().map(|t| t.to_ethers()).collect(),
-            data: ethersBytes::from(data.clone().0),
+            data: data.clone().0.into(),
             ..Default::default()
         });
     }
@@ -79,7 +80,5 @@ const TOPIC: H256 = H256([
 fn convert_hh_log_to_event(call: HardhatConsoleCalls) -> Log {
     // Convert the parameters of the call to their string representation using `ConsoleFmt`.
     let fmt = call.fmt(Default::default());
-    let token = Token::String(fmt);
-    let data = ethers::abi::encode(&[token]).into();
-    Log { topics: vec![TOPIC], data, ..Default::default() }
+    Log { topics: vec![TOPIC], data: fmt.abi_encode().into(), ..Default::default() }
 }

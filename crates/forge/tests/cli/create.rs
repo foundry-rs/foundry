@@ -4,8 +4,8 @@ use crate::{
     constants::*,
     utils::{self, EnvExternalities},
 };
+use alloy_primitives::Address;
 use anvil::{spawn, NodeConfig};
-use ethers::types::Address;
 use foundry_compilers::{artifacts::BytecodeHash, remappings::Remapping};
 use foundry_config::Config;
 use foundry_test_utils::{
@@ -125,17 +125,17 @@ where
 }
 
 // tests `forge` create on goerli if correct env vars are set
-forgetest!(can_create_simple_on_goerli, |prj: TestProject, cmd: TestCommand| {
+forgetest!(can_create_simple_on_goerli, |prj, cmd| {
     create_on_chain(EnvExternalities::goerli(), prj, cmd, setup_with_simple_remapping);
 });
 
 // tests `forge` create on goerli if correct env vars are set
-forgetest!(can_create_oracle_on_goerli, |prj: TestProject, cmd: TestCommand| {
+forgetest!(can_create_oracle_on_goerli, |prj, cmd| {
     create_on_chain(EnvExternalities::goerli(), prj, cmd, setup_oracle);
 });
 
 // tests `forge` create on mumbai if correct env vars are set
-forgetest!(can_create_oracle_on_mumbai, |prj: TestProject, cmd: TestCommand| {
+forgetest!(can_create_oracle_on_mumbai, |prj, cmd| {
     create_on_chain(EnvExternalities::mumbai(), prj, cmd, setup_oracle);
 });
 
@@ -143,7 +143,7 @@ forgetest!(can_create_oracle_on_mumbai, |prj: TestProject, cmd: TestCommand| {
 forgetest_async!(
     #[serial_test::serial]
     can_create_template_contract,
-    |prj: TestProject, mut cmd: TestCommand| async move {
+    |prj, cmd| {
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let rpc = handle.http_endpoint();
         let wallet = handle.dev_wallets().next().unwrap();
@@ -182,7 +182,7 @@ forgetest_async!(
 forgetest_async!(
     #[serial_test::serial]
     can_create_using_unlocked,
-    |prj: TestProject, mut cmd: TestCommand| async move {
+    |prj, cmd| {
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let rpc = handle.http_endpoint();
         let dev = handle.dev_accounts().next().unwrap();
@@ -221,7 +221,7 @@ forgetest_async!(
 forgetest_async!(
     #[serial_test::serial]
     can_create_with_constructor_args,
-    |prj: TestProject, mut cmd: TestCommand| async move {
+    |prj, cmd| {
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let rpc = handle.http_endpoint();
         let wallet = handle.dev_wallets().next().unwrap();

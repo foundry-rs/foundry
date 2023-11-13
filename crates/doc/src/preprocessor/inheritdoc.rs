@@ -1,11 +1,9 @@
-use std::collections::HashMap;
-
-use forge_fmt::solang_ext::SafeUnwrap;
-
 use super::{Preprocessor, PreprocessorId};
 use crate::{
     document::DocumentContent, Comments, Document, ParseItem, ParseSource, PreprocessorOutput,
 };
+use forge_fmt::solang_ext::SafeUnwrap;
+use std::collections::HashMap;
 
 /// [ContractInheritance] preprocessor id.
 pub const INHERITDOC_ID: PreprocessorId = PreprocessorId("inheritdoc");

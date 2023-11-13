@@ -3,15 +3,16 @@ use alloy_dyn_abi::{DynSolValue, JsonAbiExt, ResolveSolType};
 use alloy_json_abi::{Constructor, JsonAbi as Abi};
 use alloy_primitives::{Address, Bytes};
 use clap::{Parser, ValueHint};
-use ethers::{
+use ethers_contract::ContractError;
+use ethers_core::{
     abi::InvalidOutputType,
-    contract::ContractError,
-    prelude::{Middleware, MiddlewareBuilder},
     types::{
         transaction::eip2718::TypedTransaction, BlockNumber, Chain, Eip1559TransactionRequest,
         TransactionReceipt, TransactionRequest,
     },
 };
+use ethers_middleware::MiddlewareBuilder;
+use ethers_providers::Middleware;
 use eyre::{Context, Result};
 use foundry_cli::{
     opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
@@ -204,9 +205,9 @@ impl CreateArgs {
 
         let is_args_empty = args.is_empty();
         let deployer =
-            factory.deploy_tokens(args.clone()).context("Failed to deploy contract").map_err(|e| {
+            factory.deploy_tokens(args.clone()).context("failed to deploy contract").map_err(|e| {
                 if is_args_empty {
-                    e.wrap_err("No arguments provided for contract constructor. Consider --constructor-args or --constructor-args-path")
+                    e.wrap_err("no arguments provided for contract constructor; consider --constructor-args or --constructor-args-path")
                 } else {
                     e
                 }
@@ -466,12 +467,12 @@ where
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```
+/// # async fn foo() -> Result<(), Box<dyn std::error::Error>> {
+/// use alloy_primitives::Bytes;
 /// use ethers_contract::ContractFactory;
-/// use ethers_core::types::Bytes;
 /// use ethers_providers::{Provider, Http};
 ///
-/// # async fn foo() -> Result<(), Box<dyn std::error::Error>> {
 /// // get the contract ABI and bytecode
 /// let abi = Default::default();
 /// let bytecode = Bytes::from_static(b"...");

@@ -11,34 +11,26 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-# foundry internal
 forge-fmt.workspace = true
+foundry-compilers = { workspace = true, features = ["async"] }
 foundry-config.workspace = true
 foundry-utils.workspace = true
 
-foundry-compilers = { workspace = true, features = ["async"] }
+alloy-primitives.workspace = true
 
-# ethers
-ethers-core.workspace = true
-
-# tracing
-tracing.workspace = true
-
-# mdbook
-mdbook = { version = "0.4", default-features = false, features = ["search"] }
-warp = { version = "0.3", default-features = false, features = ["websocket"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-futures-util = "0.3"
-
-# misc
-solang-parser.workspace = true
-eyre.workspace = true
-thiserror = "1"
-rayon = "1"
-itertools.workspace = true
-toml.workspace = true
 auto_impl = "1"
 derive_more = "0.99"
+eyre.workspace = true
+futures-util = "0.3"
+itertools.workspace = true
+mdbook = { version = "0.4", default-features = false, features = ["search"] }
 once_cell = "1"
-serde.workspace = true
+rayon = "1"
 serde_json.workspace = true
+serde.workspace = true
+solang-parser.workspace = true
+thiserror = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+toml.workspace = true
+tracing.workspace = true
+warp = { version = "0.3", default-features = false, features = ["websocket"] }

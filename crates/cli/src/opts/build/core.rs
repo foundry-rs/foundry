@@ -26,6 +26,11 @@ pub struct CoreBuildArgs {
     #[serde(skip)]
     pub force: bool,
 
+    /// Disable the cache.
+    #[clap(long)]
+    #[serde(skip)]
+    pub no_cache: bool,
+
     /// Set pre-linked libraries.
     #[clap(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -201,6 +206,10 @@ impl Provider for CoreBuildArgs {
 
         if self.force {
             dict.insert("force".to_string(), self.force.into());
+        }
+        // we need to ensure no_cache set accordingly
+        if self.no_cache {
+            dict.insert("cache".to_string(), false.into());
         }
 
         if self.build_info {

@@ -8,7 +8,6 @@ use crate::cmd::{
     doc::DocArgs,
     flatten,
     fmt::FmtArgs,
-    fourbyte::UploadSelectorsArgs,
     geiger, generate,
     init::InitArgs,
     inspect,
@@ -147,11 +146,6 @@ pub enum Subcommands {
     /// Get specialized information about a smart contract.
     #[clap(visible_alias = "in")]
     Inspect(inspect::InspectArgs),
-
-    /// Uploads abi of given contract to the https://api.openchain.xyz
-    /// function selector database.
-    #[clap(visible_alias = "up")]
-    UploadSelectors(UploadSelectorsArgs),
 
     /// Display a tree visualization of the project's dependency graph.
     #[clap(visible_alias = "tr")]

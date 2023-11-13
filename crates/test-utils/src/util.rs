@@ -4,7 +4,7 @@ use fd_lock::RwLock;
 use foundry_compilers::{
     cache::SolFilesCache,
     project_util::{copy_dir, TempProject},
-    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig, Solc,
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
 };
 use foundry_config::Config;
 use once_cell::sync::Lazy;
@@ -18,7 +18,7 @@ use std::{
     fs::File,
     io::{BufWriter, IsTerminal, Write},
     path::{Path, PathBuf},
-    process::{self, Command, Stdio},
+    process::{ChildStdin, Command, Output, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -26,13 +26,6 @@ use std::{
 };
 
 static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-
-/// A lock used for pre-installing commonly used solc versions once.
-/// Pre-installing is useful, because if two forge test require a missing solc at the same time, one
-/// can encounter an OS error 26 textfile busy if it tries to write the freshly downloaded solc to
-/// the right location while the other test already did that and is currently executing this solc
-/// binary.
-static PRE_INSTALL_SOLC_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
 // This stores `true` if the current terminal is a tty
 pub static IS_TTY: Lazy<bool> = Lazy::new(|| std::io::stdout().is_terminal());
@@ -59,8 +52,9 @@ pub fn template_lock() -> RwLock<File> {
 }
 
 /// Copies an initialized project to the given path
-pub fn initialize(target: impl AsRef<Path>) {
-    let target = target.as_ref();
+pub fn initialize(target: &Path) {
+    eprintln!("initialize {}", target.display());
+
     let tpath = &*TEMPLATE_PATH;
     pretty_err(tpath, fs::create_dir_all(tpath));
 
@@ -83,21 +77,47 @@ pub fn initialize(target: impl AsRef<Path>) {
     }
 }
 
-/// Clones a remote repository into the specified directory.
-pub fn clone_remote(
-    repo_url: &str,
-    target_dir: impl AsRef<Path>,
-) -> std::io::Result<process::Output> {
-    Command::new("git")
-        .args([
-            "clone",
-            "--depth",
-            "1",
-            "--recursive",
-            repo_url,
-            target_dir.as_ref().to_str().expect("Target path for git clone does not exist"),
-        ])
-        .output()
+/// Clones a remote repository into the specified directory. Panics if the command fails.
+pub fn clone_remote(repo_url: &str, target_dir: &str) {
+    let mut cmd = Command::new("git");
+    cmd.args(["clone", "--depth=1", "--recursive", "--shallow-submodules", repo_url, target_dir]);
+    eprintln!("{cmd:?}");
+    let status = cmd.status().unwrap();
+    if !status.success() {
+        panic!("git clone failed: {status:?}");
+    }
+    eprintln!();
+}
+
+/// Runs common installation commands, such as `make` and `npm`. Continues if any command fails.
+pub fn run_install_commands(root: &Path) {
+    let root_files =
+        std::fs::read_dir(root).unwrap().flatten().map(|x| x.path()).collect::<Vec<_>>();
+    let contains = |path: &str| root_files.iter().any(|p| p.to_str().unwrap().contains(path));
+    let run = |args: &[&str]| {
+        let mut cmd = Command::new(args[0]);
+        cmd.args(&args[1..]).current_dir(root);
+        eprintln!("cd {}; {cmd:?}", root.display());
+        #[cfg(windows)]
+        let st = cmd.status();
+        #[cfg(not(windows))]
+        let st = cmd.status().unwrap();
+        eprintln!("\n\n{cmd:?}: {st:?}");
+    };
+    let maybe_run = |path: &str, args: &[&str]| {
+        let c = contains(path);
+        if c {
+            run(args);
+        }
+        c
+    };
+
+    maybe_run("Makefile", &["make", "install"]);
+    let pnpm = maybe_run("pnpm-lock.yaml", &["pnpm", "install", "--prefer-offline"]);
+    let yarn = maybe_run("yarn.lock", &["yarn", "install", "--prefer-offline"]);
+    if !pnpm && !yarn && contains("package.json") {
+        run(&["npm", "install"]);
+    }
 }
 
 /// Setup an empty test project and return a command pointing to the forge
@@ -111,10 +131,6 @@ pub fn setup_forge(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
 }
 
 pub fn setup_forge_project(test: TestProject) -> (TestProject, TestCommand) {
-    // preinstall commonly used solc once, we execute this here because this is the shared
-    // entrypoint used by all `forgetest!` macros
-    install_commonly_used_solc();
-
     let cmd = test.forge_command();
     (test, cmd)
 }
@@ -217,31 +233,6 @@ pub fn setup_cast(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
 pub fn setup_cast_project(test: TestProject) -> (TestProject, TestCommand) {
     let cmd = test.cast_command();
     (test, cmd)
-}
-
-/// pre-installs commonly used solc versions
-fn install_commonly_used_solc() {
-    let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock();
-    if !*is_preinstalled {
-        let v0_8_19 = std::thread::spawn(|| Solc::blocking_install(&"0.8.19".parse().unwrap()));
-        let v0_8_20 = std::thread::spawn(|| Solc::blocking_install(&"0.8.20".parse().unwrap()));
-        let v0_8_21 = std::thread::spawn(|| Solc::blocking_install(&"0.8.21".parse().unwrap()));
-
-        let wait = |res: std::thread::JoinHandle<_>| -> Result<(), ()> {
-            if let Err(err) = res.join().unwrap() {
-                eprintln!("{err:?}");
-                // there could be another process that's currently installing this version, so we
-                // sleep here for a bit and assume the other process will be finished then
-                std::thread::sleep(std::time::Duration::from_secs(15));
-                Err(())
-            } else {
-                Ok(())
-            }
-        };
-
-        // only set to installed if succeeded
-        *is_preinstalled = wait(v0_8_19).and(wait(v0_8_20)).and(wait(v0_8_21)).is_ok();
-    }
 }
 
 /// `TestProject` represents a temporary project to run tests against.
@@ -412,9 +403,9 @@ impl TestProject {
     }
 
     /// Returns the path to the forge executable.
-    pub fn forge_bin(&self) -> process::Command {
+    pub fn forge_bin(&self) -> Command {
         let forge = self.root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
-        let mut cmd = process::Command::new(forge);
+        let mut cmd = Command::new(forge);
         cmd.current_dir(self.inner.root());
         // disable color output for comparisons
         cmd.env("NO_COLOR", "1");
@@ -422,9 +413,9 @@ impl TestProject {
     }
 
     /// Returns the path to the cast executable.
-    pub fn cast_bin(&self) -> process::Command {
+    pub fn cast_bin(&self) -> Command {
         let cast = self.root.join(format!("../cast{}", env::consts::EXE_SUFFIX));
-        let mut cmd = process::Command::new(cast);
+        let mut cmd = Command::new(cast);
         // disable color output for comparisons
         cmd.env("NO_COLOR", "1");
         cmd
@@ -493,7 +484,7 @@ pub fn read_string(path: impl AsRef<Path>) -> String {
     pretty_err(path, std::fs::read_to_string(path))
 }
 
-/// A simple wrapper around a process::Command with some conveniences.
+/// A simple wrapper around a Command with some conveniences.
 pub struct TestCommand {
     saved_cwd: PathBuf,
     /// The project used to launch this command.
@@ -502,7 +493,7 @@ pub struct TestCommand {
     cmd: Command,
     // initial: Command,
     current_dir_lock: Option<parking_lot::lock_api::MutexGuard<'static, parking_lot::RawMutex, ()>>,
-    stdin_fun: Option<Box<dyn FnOnce(process::ChildStdin)>>,
+    stdin_fun: Option<Box<dyn FnOnce(ChildStdin)>>,
 }
 
 impl TestCommand {
@@ -552,7 +543,7 @@ impl TestCommand {
         self
     }
 
-    pub fn stdin(&mut self, fun: impl FnOnce(process::ChildStdin) + 'static) -> &mut TestCommand {
+    pub fn stdin(&mut self, fun: impl FnOnce(ChildStdin) + 'static) -> &mut TestCommand {
         self.stdin_fun = Some(Box::new(fun));
         self
     }
@@ -584,6 +575,7 @@ impl TestCommand {
     }
 
     /// Returns the `Config` as spit out by `forge config`
+    #[track_caller]
     pub fn config(&mut self) -> Config {
         self.cmd.args(["config", "--json"]);
         let output = self.output();
@@ -595,11 +587,12 @@ impl TestCommand {
 
     /// Runs `git init` inside the project's dir
     #[track_caller]
-    pub fn git_init(&self) -> process::Output {
+    pub fn git_init(&self) -> Output {
         let mut cmd = Command::new("git");
         cmd.arg("init").current_dir(self.project.root());
         let output = cmd.output().unwrap();
-        self.expect_success(output)
+        self.ensure_success(&output).unwrap();
+        output
     }
 
     /// Executes the command and returns the `(stdout, stderr)` of the output as lossy `String`s.
@@ -638,15 +631,16 @@ impl TestCommand {
 
     /// Returns the output but does not expect that the command was successful
     #[track_caller]
-    pub fn unchecked_output(&mut self) -> process::Output {
+    pub fn unchecked_output(&mut self) -> Output {
         self.execute()
     }
 
     /// Gets the output of a command. If the command failed, then this panics.
     #[track_caller]
-    pub fn output(&mut self) -> process::Output {
+    pub fn output(&mut self) -> Output {
         let output = self.execute();
-        self.expect_success(output)
+        self.ensure_success(&output).unwrap();
+        output
     }
 
     /// Runs the command and asserts that it resulted in success
@@ -657,13 +651,13 @@ impl TestCommand {
 
     /// Executes command, applies stdin function and returns output
     #[track_caller]
-    pub fn execute(&mut self) -> process::Output {
+    pub fn execute(&mut self) -> Output {
         self.try_execute().unwrap()
     }
 
     #[track_caller]
-    pub fn try_execute(&mut self) -> std::io::Result<process::Output> {
-        eprintln!("Executing {:?}\n", self.cmd);
+    pub fn try_execute(&mut self) -> std::io::Result<Output> {
+        eprintln!("executing {:?}", self.cmd);
         let mut child =
             self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::piped()).spawn()?;
         if let Some(fun) = self.stdin_fun.take() {
@@ -674,9 +668,10 @@ impl TestCommand {
 
     /// Executes command and expects an successful result
     #[track_caller]
-    pub fn ensure_execute_success(&mut self) -> Result<process::Output> {
+    pub fn ensure_execute_success(&mut self) -> Result<Output> {
         let out = self.try_execute()?;
-        self.ensure_success(out)
+        self.ensure_success(&out)?;
+        Ok(out)
     }
 
     /// Runs the command and prints its output
@@ -685,8 +680,8 @@ impl TestCommand {
     #[track_caller]
     pub fn print_output(&mut self) {
         let output = self.execute();
-        println!("stdout: {}", lossy_string(&output.stdout));
-        println!("stderr: {}", lossy_string(&output.stderr));
+        println!("stdout:\n{}", lossy_string(&output.stdout));
+        println!("\nstderr:\n{}", lossy_string(&output.stderr));
     }
 
     /// Writes the content of the output to new fixture files
@@ -704,136 +699,89 @@ impl TestCommand {
     /// Runs the command and asserts that it resulted in an error exit code.
     #[track_caller]
     pub fn assert_err(&mut self) {
-        let o = self.execute();
-        if o.status.success() {
-            panic!(
-                "\n\n===== {:?} =====\n\
-                 command succeeded but expected failure!\
-                 \n\ncwd: {}\
-                 \n\nstatus: {}\
-                 \n\nstdout: {}\n\nstderr: {}\
-                 \n\n=====\n",
-                self.cmd,
-                self.project.inner.paths(),
-                o.status,
-                lossy_string(&o.stdout),
-                lossy_string(&o.stderr)
-            );
+        let out = self.execute();
+        if out.status.success() {
+            self.make_panic(&out, true);
         }
     }
 
     /// Runs the command and asserts that something was printed to stderr.
     #[track_caller]
     pub fn assert_non_empty_stderr(&mut self) {
-        let o = self.execute();
-        if o.status.success() || o.stderr.is_empty() {
-            panic!(
-                "\n\n===== {:?} =====\n\
-                 command succeeded but expected failure!\
-                 \n\ncwd: {}\
-                 \n\nstatus: {}\
-                 \n\nstdout: {}\n\nstderr: {}\
-                 \n\n=====\n",
-                self.cmd,
-                self.project.inner.paths(),
-                o.status,
-                lossy_string(&o.stdout),
-                lossy_string(&o.stderr)
-            );
+        let out = self.execute();
+        if out.status.success() || out.stderr.is_empty() {
+            self.make_panic(&out, true);
         }
     }
 
     /// Runs the command and asserts that something was printed to stdout.
     #[track_caller]
     pub fn assert_non_empty_stdout(&mut self) {
-        let o = self.execute();
-        if !o.status.success() || o.stdout.is_empty() {
-            panic!(
-                "
-===== {:?} =====
-command failed but expected success!
-status: {}
-
-{}
-
-stdout:
-{}
-
-stderr:
-{}
-
-=====\n",
-                self.cmd,
-                o.status,
-                self.project.inner.paths(),
-                lossy_string(&o.stdout),
-                lossy_string(&o.stderr)
-            );
+        let out = self.execute();
+        if !out.status.success() || out.stdout.is_empty() {
+            self.make_panic(&out, false);
         }
     }
 
     /// Runs the command and asserts that nothing was printed to stdout.
     #[track_caller]
     pub fn assert_empty_stdout(&mut self) {
-        let o = self.execute();
-        if !o.status.success() || !o.stderr.is_empty() {
-            panic!(
-                "\n\n===== {:?} =====\n\
-                 command succeeded but expected failure!\
-                 \n\ncwd: {}\
-                 \n\nstatus: {}\
-                 \n\nstdout: {}\n\nstderr: {}\
-                 \n\n=====\n",
-                self.cmd,
-                self.project.inner.paths(),
-                o.status,
-                lossy_string(&o.stdout),
-                lossy_string(&o.stderr)
-            );
+        let out = self.execute();
+        if !out.status.success() || !out.stderr.is_empty() {
+            self.make_panic(&out, true);
         }
     }
 
     #[track_caller]
-    fn expect_success(&self, out: process::Output) -> process::Output {
-        self.ensure_success(out).unwrap()
+    pub fn ensure_success(&self, out: &Output) -> Result<()> {
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(self.make_error(out, false))
+        }
     }
 
     #[track_caller]
-    pub fn ensure_success(&self, out: process::Output) -> Result<process::Output> {
-        if !out.status.success() {
-            let suggest = if out.stderr.is_empty() {
-                "\n\nDid your forge command end up with no output?".to_string()
-            } else {
-                String::new()
-            };
-            eyre::bail!(
-                "
-===== {:?} =====
-command failed but expected success!{suggest}
+    fn make_panic(&self, out: &Output, expected_fail: bool) -> ! {
+        panic!("{}", self.make_error_message(out, expected_fail))
+    }
+
+    #[track_caller]
+    fn make_error(&self, out: &Output, expected_fail: bool) -> eyre::Report {
+        eyre::eyre!("{}", self.make_error_message(out, expected_fail))
+    }
+
+    fn make_error_message(&self, out: &Output, expected_fail: bool) -> String {
+        let msg = if expected_fail {
+            "expected failure but command succeeded!"
+        } else {
+            "command failed but expected success!"
+        };
+        format!(
+            "\
+--- {:?} ---
+{msg}
 
 status: {}
 
+paths:
 {}
 
 stdout:
 {}
 
 stderr:
-{}
-
-=====\n",
-                self.cmd,
-                out.status,
-                self.project.inner.paths(),
-                lossy_string(&out.stdout),
-                lossy_string(&out.stderr)
-            );
-        }
-        Ok(out)
+{}",
+            self.cmd,
+            out.status,
+            self.project.inner.paths(),
+            lossy_string(&out.stdout),
+            lossy_string(&out.stderr),
+        )
     }
 }
 
-/// Extension trait for `std::process::Output`
+/// Extension trait for [`Output`].
 ///
 /// These function will read the path's content and assert that the process' output matches the
 /// fixture. Since `forge` commands may emit colorized output depending on whether the current
@@ -853,7 +801,7 @@ static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(\r|finished in (.*)?s|-->(.*).sol|Location(.|\n)*\.rs(.|\n)*Backtrace|Installing solc version(.*?)\n|Successfully installed solc(.*?)\n|runs: \d+, μ: \d+, ~: \d+)").unwrap()
 });
 
-impl OutputExt for process::Output {
+impl OutputExt for Output {
     #[track_caller]
     fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
         let expected = fs::read_to_string(expected_path).unwrap();

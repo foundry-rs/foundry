@@ -5,7 +5,7 @@ use super::{
     *,
 };
 use alloy_primitives::{Address, Bytes, U256};
-use ethers::types::transaction::eip2718::TypedTransaction;
+use ethers_core::types::transaction::eip2718::TypedTransaction;
 use eyre::Result;
 use forge::{
     backend::Backend,
@@ -173,7 +173,7 @@ impl ScriptArgs {
                                         return Some(AdditionalContract {
                                             opcode: node.kind(),
                                             address: node.trace.address,
-                                            init_code: node.trace.data.to_raw(),
+                                            init_code: node.trace.data.as_bytes().to_vec(),
                                         })
                                     }
                                     None

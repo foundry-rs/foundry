@@ -5,13 +5,11 @@ use alloy_json_abi::{Function, InternalType, JsonAbi as Abi};
 use alloy_primitives::{Address, Bytes, U256};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
-use ethers::{
-    providers::{Http, Middleware},
-    signers::LocalWallet,
-    types::{
-        transaction::eip2718::TypedTransaction, Chain, Log, NameOrAddress, TransactionRequest,
-    },
+use ethers_core::types::{
+    transaction::eip2718::TypedTransaction, Chain, Log, NameOrAddress, TransactionRequest,
 };
+use ethers_providers::{Http, Middleware};
+use ethers_signers::LocalWallet;
 use eyre::{ContextCompat, Result, WrapErr};
 use forge::{
     backend::Backend,
@@ -20,8 +18,7 @@ use forge::{
     opts::EvmOpts,
     traces::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
-        CallTraceDecoder, CallTraceDecoderBuilder, RawOrDecodedCall, RawOrDecodedReturnData,
-        TraceKind, Traces,
+        CallTraceDecoder, CallTraceDecoderBuilder, TraceCallData, TraceKind, TraceRetData, Traces,
     },
     utils::CallKind,
 };
@@ -367,11 +364,10 @@ impl ScriptArgs {
         }
 
         if !result.success {
-            let revert_msg = decode::decode_revert(&result.returned[..], None, None)
-                .map(|err| format!("{err}\n"))
-                .unwrap_or_else(|_| "Script failed.\n".to_string());
-
-            eyre::bail!("{}", Paint::red(revert_msg));
+            return Err(eyre::eyre!(
+                "script failed: {}",
+                decode::decode_revert(&result.returned[..], None, None)
+            ))
         }
 
         Ok(())
@@ -442,7 +438,7 @@ impl ScriptArgs {
                 transaction: TypedTransaction::Legacy(TransactionRequest {
                     from: Some(from.to_ethers()),
                     data: Some(bytes.clone().0.into()),
-                    nonce: Some(ethers::types::U256::from(nonce + i as u64)),
+                    nonce: Some((nonce + i as u64).into()),
                     ..Default::default()
                 }),
             })
@@ -522,9 +518,9 @@ impl ScriptArgs {
         let mut unknown_c = 0usize;
         for node in create_nodes {
             // Calldata == init code
-            if let RawOrDecodedCall::Raw(ref init_code) = node.trace.data {
+            if let TraceCallData::Raw(ref init_code) = node.trace.data {
                 // Output is the runtime code
-                if let RawOrDecodedReturnData::Raw(ref deployed_code) = node.trace.output {
+                if let TraceRetData::Raw(ref deployed_code) = node.trace.output {
                     // Only push if it was not present already
                     if !bytecodes.iter().any(|(_, b, _)| *b == init_code.as_ref()) {
                         bytecodes.push((format!("Unknown{unknown_c}"), init_code, deployed_code));
@@ -701,7 +697,7 @@ impl ScriptConfig {
     /// If not, warns the user.
     async fn check_shanghai_support(&self) -> Result<()> {
         let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
-            if let Ok(provider) = ethers::providers::Provider::<Http>::try_from(rpc) {
+            if let Ok(provider) = ethers_providers::Provider::<Http>::try_from(rpc) {
                 match provider.get_chainid().await {
                     Ok(chain_id) => match TryInto::<Chain>::try_into(chain_id) {
                         Ok(chain) => return Some((SHANGHAI_ENABLED_CHAINS.contains(&chain), chain)),
@@ -742,9 +738,9 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855"#,
 mod tests {
     use super::*;
     use foundry_cli::utils::LoadConfig;
-    use foundry_config::UnresolvedEnvVarError;
-    use foundry_test_utils::tempfile::tempdir;
+    use foundry_config::{NamedChain, UnresolvedEnvVarError};
     use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn can_parse_sig() {
@@ -858,7 +854,7 @@ mod tests {
         ]);
 
         let config = args.load_config();
-        let mumbai = config.get_etherscan_api_key(Some(ethers::types::Chain::PolygonMumbai));
+        let mumbai = config.get_etherscan_api_key(Some(NamedChain::PolygonMumbai));
         assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
     }
 

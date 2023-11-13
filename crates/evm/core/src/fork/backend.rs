@@ -6,8 +6,6 @@ use crate::{
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{Block, BlockId, BlockNumberOrTag, Transaction};
-use alloy_transports::TransportError;
-use ethers::types::NameOrAddress;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
 use foundry_utils::types::ToEthers;
 use futures::{
@@ -37,9 +35,8 @@ type StorageFuture<Err> = Pin<Box<dyn Future<Output = (Result<U256, Err>, Addres
 type BlockHashFuture<Err> = Pin<Box<dyn Future<Output = (Result<B256, Err>, u64)> + Send>>;
 type FullBlockFuture<Err> =
     Pin<Box<dyn Future<Output = (FullBlockSender, Result<Option<Block>, Err>, BlockId)> + Send>>;
-type TransactionFuture<Err> = Pin<
-    Box<dyn Future<Output = (TransactionSender, Result<Option<Transaction>, Err>, B256)> + Send>,
->;
+type TransactionFuture<Err> =
+    Pin<Box<dyn Future<Output = (TransactionSender, Result<Transaction, Err>, B256)> + Send>>;
 
 type AccountInfoSender = OneshotSender<DatabaseResult<AccountInfo>>;
 type StorageSender = OneshotSender<DatabaseResult<U256>>;
@@ -83,7 +80,7 @@ pub struct BackendHandler<P> {
     /// Stores all the data.
     db: BlockchainDb,
     /// Requests currently in progress
-    pending_requests: Vec<ProviderRequest<TransportError>>,
+    pending_requests: Vec<ProviderRequest<eyre::Report>>,
     /// Listeners that wait for a `get_account` related response
     account_requests: HashMap<Address, Vec<AccountInfoSender>>,
     /// Listeners that wait for a `get_storage_at` response
@@ -185,13 +182,13 @@ where
                     // serialize & deserialize back to U256
                     let idx_req = B256::from(idx);
                     let storage = provider.get_storage_at(address, idx_req, block_id).await;
-                    Ok((
+                    (
                         storage.success().ok_or_else(|| {
                             eyre::eyre!("could not fetch slot {idx} from {address}")
-                        })?,
+                        }),
                         address,
                         idx,
-                    ))
+                    )
                 });
                 self.pending_requests.push(ProviderRequest::Storage(fut));
             }
@@ -199,7 +196,7 @@ where
     }
 
     /// returns the future that fetches the account data
-    fn get_account_req(&self, address: Address) -> ProviderRequest<TransportError> {
+    fn get_account_req(&self, address: Address) -> ProviderRequest<eyre::Report> {
         trace!(target: "backendhandler", "preparing account request, address={:?}", address);
         let provider = self.provider.clone();
         let block_id = self.block_id;
@@ -209,19 +206,22 @@ where
             let code =
                 provider.get_code_at(address, block_id.unwrap_or(BlockNumberOrTag::Latest.into()));
             let (balance, nonce, code) = tokio::join!(balance, nonce, code);
-            Ok((
-                (
-                    balance
-                        .success()
-                        .ok_or_else(|| eyre::eyre!("could not fetch balance for {address}"))?,
-                    nonce
-                        .success()
-                        .ok_or_else(|| eyre::eyre!("could not fetch nonce for {address}"))?,
-                    code.success()
-                        .ok_or_else(|| eyre::eyre!("could not fetch code for {address}"))?,
-                ),
+            (
+                balance
+                    .success()
+                    .ok_or_else(|| eyre::eyre!("could not fetch balance for {address}"))
+                    .and_then(|balance| {
+                        Ok((
+                            balance,
+                            nonce.success().ok_or_else(|| {
+                                eyre::eyre!("could not fetch nonce for {address}")
+                            })?,
+                            code.success()
+                                .ok_or_else(|| eyre::eyre!("could not fetch code for {address}"))?,
+                        ))
+                    }),
                 address,
-            ))
+            )
         });
         ProviderRequest::Account(fut)
     }
@@ -243,7 +243,11 @@ where
     fn request_full_block(&mut self, number: BlockId, sender: FullBlockSender) {
         let provider = self.provider.clone();
         let fut = Box::pin(async move {
-            let block = provider.get_block_by_number(number.into(), true).await;
+            let block = provider
+                .get_block(number, true)
+                .await
+                .success()
+                .ok_or_else(|| eyre::eyre!("could not fetch block {number:?}"));
             (sender, block, number)
         });
 
@@ -254,7 +258,11 @@ where
     fn request_transaction(&mut self, tx: B256, sender: TransactionSender) {
         let provider = self.provider.clone();
         let fut = Box::pin(async move {
-            let block = provider.get_transaction_by_hash(tx).await;
+            let block = provider
+                .get_transaction_by_hash(tx)
+                .await
+                .success()
+                .ok_or_else(|| eyre::eyre!("could not get transaction {tx}"));
             (sender, block, tx)
         });
 
@@ -272,24 +280,29 @@ where
                 entry.insert(vec![listener]);
                 let provider = self.provider.clone();
                 let fut = Box::pin(async move {
-                    let block = provider.get_block_by_number(number, false).await;
+                    let block = provider
+                        .get_block_by_number(number, false)
+                        .await
+                        .success()
+                        .ok_or_else(|| eyre::eyre!("failed to get block"));
 
                     let block_hash = match block {
                         Ok(Some(block)) => Ok(block
+                            .header
                             .hash
                             .expect("empty block hash on mined block, this should never happen")),
                         Ok(None) => {
                             warn!(target: "backendhandler", ?number, "block not found");
                             // if no block was returned then the block does not exist, in which case
                             // we return empty hash
-                            Ok(KECCAK_EMPTY.to_ethers())
+                            Ok(KECCAK_EMPTY)
                         }
                         Err(err) => {
                             error!(target: "backendhandler", ?err, ?number, "failed to get block");
                             Err(err)
                         }
                     };
-                    (block_hash.map(|h| h.to_alloy()), number)
+                    (block_hash, number)
                 });
                 self.pending_requests.push(ProviderRequest::BlockHash(fut));
             }
@@ -335,7 +348,7 @@ where
                             let (balance, nonce, code) = match resp {
                                 Ok(res) => res,
                                 Err(err) => {
-                                    let err = Arc::new(eyre::Error::new(err));
+                                    let err = Arc::new(err);
                                     if let Some(listeners) = pin.account_requests.remove(&addr) {
                                         listeners.into_iter().for_each(|l| {
                                             let _ = l.send(Err(DatabaseError::GetAccount(
@@ -379,7 +392,7 @@ where
                                 Ok(value) => value,
                                 Err(err) => {
                                     // notify all listeners
-                                    let err = Arc::new(eyre::Error::new(err));
+                                    let err = Arc::new(err);
                                     if let Some(listeners) =
                                         pin.storage_requests.remove(&(addr, idx))
                                     {
@@ -412,7 +425,7 @@ where
                             let value = match block_hash {
                                 Ok(value) => value,
                                 Err(err) => {
-                                    let err = Arc::new(eyre::Error::new(err));
+                                    let err = Arc::new(err);
                                     // notify all listeners
                                     if let Some(listeners) = pin.block_requests.remove(&number) {
                                         listeners.into_iter().for_each(|l| {
@@ -444,7 +457,7 @@ where
                                 Ok(Some(block)) => Ok(block),
                                 Ok(None) => Err(DatabaseError::BlockNotFound(number)),
                                 Err(err) => {
-                                    let err = Arc::new(eyre::Error::new(err));
+                                    let err = Arc::new(err);
                                     Err(DatabaseError::GetFullBlock(number, err))
                                 }
                             };
@@ -455,10 +468,9 @@ where
                     ProviderRequest::Transaction(fut) => {
                         if let Poll::Ready((sender, tx, tx_hash)) = fut.poll_unpin(cx) {
                             let msg = match tx {
-                                Ok(Some(tx)) => Ok(tx),
-                                Ok(None) => Err(DatabaseError::TransactionNotFound(tx_hash)),
+                                Ok(tx) => Ok(tx),
                                 Err(err) => {
-                                    let err = Arc::new(eyre::Error::new(err));
+                                    let err = Arc::new(err);
                                     Err(DatabaseError::GetTransaction(tx_hash, err))
                                 }
                             };
@@ -702,9 +714,8 @@ mod tests {
         fork::{BlockchainDbMeta, CreateFork, JsonBlockCacheDB},
         opts::EvmOpts,
     };
-    use ethers::types::Chain;
     use foundry_common::get_http_provider;
-    use foundry_config::Config;
+    use foundry_config::{Config, NamedChain};
     use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
     const ENDPOINT: &str = "https://mainnet.infura.io/v3/40bee2d557ed4b52908c3e62345a3d8b";
 
@@ -798,7 +809,7 @@ mod tests {
 
         let db = BlockchainDb::new(
             meta,
-            Some(Config::foundry_block_cache_dir(Chain::Mainnet, block_num).unwrap()),
+            Some(Config::foundry_block_cache_dir(NamedChain::Mainnet, block_num).unwrap()),
         );
         assert!(db.accounts().read().contains_key(&address));
         assert!(db.storage().read().contains_key(&address));

@@ -121,11 +121,11 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
 }
 
 // tests `create && contract-verify && verify-check` on Fantom testnet if correct env vars are set
-forgetest!(can_verify_random_contract_fantom_testnet, |prj: TestProject, cmd: TestCommand| {
+forgetest!(can_verify_random_contract_fantom_testnet, |prj, cmd| {
     verify_on_chain(EnvExternalities::ftm_testnet(), prj, cmd);
 });
 
 // tests `create && contract-verify && verify-check` on Optimism kovan if correct env vars are set
-forgetest!(can_verify_random_contract_optimism_kovan, |prj: TestProject, cmd: TestCommand| {
+forgetest!(can_verify_random_contract_optimism_kovan, |prj, cmd| {
     verify_on_chain(EnvExternalities::optimism_kovan(), prj, cmd);
 });

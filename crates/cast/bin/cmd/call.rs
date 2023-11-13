@@ -1,7 +1,7 @@
 use alloy_primitives::U256;
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::types::{BlockId, NameOrAddress};
+use ethers_core::types::{BlockId, NameOrAddress};
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
@@ -14,7 +14,7 @@ use foundry_evm::{executors::TracingExecutor, opts::EvmOpts};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use std::str::FromStr;
 
-type Provider = ethers::providers::Provider<RuntimeClient>;
+type Provider = ethers_providers::Provider<RuntimeClient>;
 
 /// CLI arguments for `cast call`.
 #[derive(Debug, Parser)]
@@ -205,11 +205,7 @@ impl CallArgs {
             }
         };
 
-        let builder_output: (
-            ethers::types::transaction::eip2718::TypedTransaction,
-            Option<alloy_json_abi::Function>,
-        ) = builder.build();
-
+        let builder_output = builder.build();
         println!("{}", Cast::new(provider).call(builder_output, block).await?);
 
         Ok(())
@@ -263,7 +259,7 @@ async fn fill_tx(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers::types::Address;
+    use alloy_primitives::Address;
 
     #[test]
     fn can_parse_call_data() {
@@ -279,10 +275,10 @@ mod tests {
     #[test]
     fn call_sig_and_data_exclusive() {
         let data = hex::encode("hello");
-        let to = Address::zero();
+        let to = Address::ZERO;
         let args = CallArgs::try_parse_from([
             "foundry-cli",
-            format!("{to:?}").as_str(),
+            to.to_string().as_str(),
             "signature",
             "--data",
             format!("0x{data}").as_str(),

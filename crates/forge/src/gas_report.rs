@@ -1,7 +1,7 @@
 use crate::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
     hashbrown::HashSet,
-    traces::{CallTraceArena, RawOrDecodedCall, TraceKind},
+    traces::{CallTraceArena, TraceCallData, TraceKind},
 };
 use alloy_primitives::U256;
 use comfy_table::{presets::ASCII_MARKDOWN, *};
@@ -77,22 +77,23 @@ impl GasReport {
                 let contract_info = self.contracts.entry(name.to_string()).or_default();
 
                 match &trace.data {
-                    RawOrDecodedCall::Raw(bytes) => {
+                    TraceCallData::Raw(bytes) => {
                         if trace.created() {
                             contract_info.gas = U256::from(trace.gas_cost);
                             contract_info.size = U256::from(bytes.len());
                         }
                     }
-                    RawOrDecodedCall::Decoded(func, sig, _) => {
+                    TraceCallData::Decoded { signature, .. } => {
+                        let name = signature.split('(').next().unwrap();
                         // ignore any test/setup functions
                         let should_include =
-                            !(func.is_test() || func.is_invariant_test() || func.is_setup());
+                            !(name.is_test() || name.is_invariant_test() || name.is_setup());
                         if should_include {
                             let gas_info = contract_info
                                 .functions
-                                .entry(func.clone())
+                                .entry(name.into())
                                 .or_default()
-                                .entry(sig.clone())
+                                .entry(signature.clone())
                                 .or_default();
                             gas_info.calls.push(U256::from(trace.gas_cost));
                         }

@@ -98,7 +98,7 @@ fn derive_calls_enum(name: &Ident, input: &syn::DataEnum) -> Result<TokenStream>
     }
 
     // keep original order for matching
-    let variants_names = input.variants.iter().map(|v| &v.ident);
+    let variant_names = input.variants.iter().map(|v| &v.ident);
 
     let mut variants = input.variants.iter().collect::<Vec<_>>();
     variants.sort_by(|a, b| a.ident.cmp(&b.ident));
@@ -110,16 +110,13 @@ fn derive_calls_enum(name: &Ident, input: &syn::DataEnum) -> Result<TokenStream>
         /// All the cheatcodes in [this contract](self).
         pub const CHEATCODES: &'static [&'static Cheatcode<'static>] = &[#(<#variant_tys as CheatcodeDef>::CHEATCODE,)*];
 
-        #[cfg(feature = "impls")]
-        impl #name {
-            pub(crate) fn apply<DB: foundry_evm_core::backend::DatabaseExt>(
-                &self,
-                ccx: &mut crate::impls::CheatsCtxt<DB>
-            ) -> crate::impls::Result {
-                match self {
-                    #(Self::#variants_names(c) => crate::impls::Cheatcode::apply_traced(c, ccx),)*
-                }
-            }
+        /// Internal macro to implement the `Cheatcode` trait for the Vm calls enum.
+        #[doc(hidden)]
+        #[macro_export]
+        macro_rules! vm_calls {
+            ($mac:ident) => {
+                $mac!(#(#variant_names),*)
+            };
         }
     })
 }

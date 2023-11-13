@@ -2,7 +2,7 @@ use super::{artifacts::ArtifactInfo, ScriptResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256};
-use ethers::{prelude::NameOrAddress, types::transaction::eip2718::TypedTransaction};
+use ethers_core::types::{transaction::eip2718::TypedTransaction, NameOrAddress};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{fmt::format_token_raw, RpcUrl, SELECTOR_LEN};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder, utils::CallKind};
@@ -211,10 +211,8 @@ impl TransactionWithMetadata {
                     // This CALL is made to an external contract. We can only decode it, if it has
                     // been verified and identified by etherscan.
 
-                    if let Some(Some(function)) = decoder
-                        .functions
-                        .get(&data.0[..SELECTOR_LEN])
-                        .map(|functions| functions.first())
+                    if let Some(function) =
+                        decoder.functions.get(&data.0[..SELECTOR_LEN]).and_then(|v| v.first())
                     {
                         self.contract_name = decoder.contracts.get(&target).cloned();
 
@@ -260,8 +258,7 @@ impl TransactionWithMetadata {
 // wrapper for modifying ethers-rs type serialization
 pub mod wrapper {
     pub use super::*;
-
-    use ethers::{
+    use ethers_core::{
         types::{Bloom, Bytes, Log, TransactionReceipt, H256, U256, U64},
         utils::to_checksum,
     };
@@ -298,11 +295,12 @@ pub mod wrapper {
     // copied from https://github.com/gakonst/ethers-rs
     #[derive(Serialize, Deserialize)]
     struct WrappedLog {
-        /// H160. the contract that emitted the log
+        /// The contract address that emitted the log.
         #[serde(serialize_with = "serialize_addr")]
         pub address: Address,
 
-        /// topics: Array of 0 to 4 32 Bytes of indexed log arguments.
+        /// Array of 0 to 4 32 Bytes of indexed log arguments.
+        ///
         /// (In solidity: The first topic is the hash of the signature of the event
         /// (e.g. `Deposit(address,bytes32,uint256)`), except you declared the event
         /// with the anonymous specifier.)

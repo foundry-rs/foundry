@@ -129,9 +129,9 @@ impl<'a> FuzzedExecutor<'a> {
                     // case.
                     let call_res = _counterexample.1.result.clone();
                     *counterexample.borrow_mut() = _counterexample;
-                    Err(TestCaseError::fail(
-                        decode::decode_revert(&call_res, errors, Some(status)).unwrap_or_default(),
-                    ))
+                    // HACK: we have to use an empty string here to denote `None`
+                    let reason = decode::maybe_decode_revert(&call_res, errors, Some(status));
+                    Err(TestCaseError::fail(reason.unwrap_or_default()))
                 }
             }
         });

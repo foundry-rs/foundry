@@ -28,6 +28,9 @@ impl Preprocessor for GitSource {
             let repo = repo.trim_end_matches('/');
             let commit = self.commit.clone().unwrap_or("master".to_owned());
             for document in documents.iter() {
+                if document.from_library {
+                    continue;
+                }
                 let git_url = format!(
                     "{repo}/blob/{commit}/{}",
                     document.item_path.strip_prefix(&self.root)?.display()
