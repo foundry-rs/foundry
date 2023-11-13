@@ -244,7 +244,7 @@ where
         let provider = self.provider.clone();
         let fut = Box::pin(async move {
             let block = provider
-                .get_block_by_number(number.into(), true)
+                .get_block(number, true)
                 .await
                 .success()
                 .ok_or_else(|| eyre::eyre!("could not fetch block {number:?}"));
@@ -280,24 +280,29 @@ where
                 entry.insert(vec![listener]);
                 let provider = self.provider.clone();
                 let fut = Box::pin(async move {
-                    let block = provider.get_block_by_number(number, false).await;
+                    let block = provider
+                        .get_block_by_number(number, false)
+                        .await
+                        .success()
+                        .ok_or_else(|| eyre::eyre!("failed to get block"));
 
                     let block_hash = match block {
                         Ok(Some(block)) => Ok(block
+                            .header
                             .hash
                             .expect("empty block hash on mined block, this should never happen")),
                         Ok(None) => {
                             warn!(target: "backendhandler", ?number, "block not found");
                             // if no block was returned then the block does not exist, in which case
                             // we return empty hash
-                            Ok(KECCAK_EMPTY.to_ethers())
+                            Ok(KECCAK_EMPTY)
                         }
                         Err(err) => {
                             error!(target: "backendhandler", ?err, ?number, "failed to get block");
                             Err(err)
                         }
                     };
-                    (block_hash.map(|h| h.to_alloy()), number)
+                    (block_hash, number)
                 });
                 self.pending_requests.push(ProviderRequest::BlockHash(fut));
             }
