@@ -13,6 +13,7 @@ use ethers_core::types::Log;
 use foundry_common::{calc, contracts::ContractsByAddress};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt};
 
@@ -92,8 +93,6 @@ impl BaseCounterExample {
 
 impl fmt::Display for BaseCounterExample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let args = foundry_common::fmt::format_tokens(&self.args).collect::<Vec<_>>().join(", ");
-
         if let Some(sender) = self.sender {
             write!(f, "sender={sender} addr=")?
         }
@@ -112,7 +111,7 @@ impl fmt::Display for BaseCounterExample {
             write!(f, "calldata={}", self.calldata)?
         }
 
-        write!(f, ", args=[{args}]")
+        write!(f, " args=[{}]", foundry_common::fmt::format_tokens(&self.args).format(", "))
     }
 }
 

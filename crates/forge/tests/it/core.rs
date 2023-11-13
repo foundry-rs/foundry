@@ -29,7 +29,7 @@ async fn test_core() {
                 vec![(
                     "setUp()",
                     false,
-                    Some("Multiple setUp functions".to_string()),
+                    Some("multiple setUp functions".to_string()),
                     None,
                     Some(1),
                 )],

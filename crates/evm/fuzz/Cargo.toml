@@ -37,6 +37,7 @@ ethers-core.workspace = true
 arbitrary = "1.3.1"
 eyre = "0.6"
 hashbrown = { version = "0.14", features = ["serde"] }
+itertools.workspace = true
 parking_lot = "0.12"
 proptest = "1"
 rand.workspace = true

@@ -17,6 +17,8 @@ pub struct Document {
     pub identity: String,
     /// The preprocessors results.
     context: Mutex<HashMap<PreprocessorId, PreprocessorOutput>>,
+    /// Whether the document is from external library.
+    pub from_library: bool,
 }
 
 /// The content of the document.
@@ -30,10 +32,11 @@ pub enum DocumentContent {
 
 impl Document {
     /// Create new instance of [Document].
-    pub fn new(item_path: PathBuf, target_path: PathBuf) -> Self {
+    pub fn new(item_path: PathBuf, target_path: PathBuf, from_library: bool) -> Self {
         Self {
             item_path,
             target_path,
+            from_library,
             item_content: String::default(),
             identity: String::default(),
             content: DocumentContent::Empty,

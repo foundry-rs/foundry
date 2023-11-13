@@ -205,9 +205,9 @@ impl CreateArgs {
 
         let is_args_empty = args.is_empty();
         let deployer =
-            factory.deploy_tokens(args.clone()).context("Failed to deploy contract").map_err(|e| {
+            factory.deploy_tokens(args.clone()).context("failed to deploy contract").map_err(|e| {
                 if is_args_empty {
-                    e.wrap_err("No arguments provided for contract constructor. Consider --constructor-args or --constructor-args-path")
+                    e.wrap_err("no arguments provided for contract constructor; consider --constructor-args or --constructor-args-path")
                 } else {
                     e
                 }
