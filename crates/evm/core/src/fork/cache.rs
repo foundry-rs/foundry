@@ -362,7 +362,7 @@ impl JsonBlockCacheDB {
     }
 
     /// Flushes the DB to disk if caching is enabled.
-    #[tracing::instrument(level = "warn", skip_all, fields(path = ?self.cache_path))]
+    #[instrument(level = "warn", skip_all, fields(path = ?self.cache_path))]
     pub fn flush(&self) {
         let Some(path) = &self.cache_path else { return };
         trace!(target: "cache", "saving json cache");

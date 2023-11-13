@@ -2,6 +2,9 @@
 
 #![warn(missing_docs, unused_crate_dependencies)]
 
+#[macro_use]
+extern crate tracing;
+
 use crate::cache::StorageCachingConfig;
 use alloy_primitives::{address, Address, B256, U256};
 use eyre::{ContextCompat, WrapErr};
@@ -34,8 +37,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-pub(crate) use tracing::trace;
-use NamedChain::Mainnet;
+pub(crate) use NamedChain::Mainnet;
 
 // Macros useful for creating a figment.
 mod macros;
@@ -78,7 +80,6 @@ pub mod fix;
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
 use revm_primitives::SpecId;
-use tracing::warn;
 
 /// config providers
 pub mod providers;

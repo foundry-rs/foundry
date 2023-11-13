@@ -8,7 +8,6 @@ use foundry_common::RetryProvider;
 use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::StreamExt;
 use std::sync::Arc;
-use tracing::{trace, warn};
 
 /// Convenience enum for internal signalling of transaction status
 enum TxStatus {

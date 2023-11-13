@@ -21,7 +21,6 @@ use std::{
     fmt::Debug,
     path::{Path, PathBuf},
 };
-use tracing::{error, trace, warn};
 
 mod flatten;
 mod standard_json;

@@ -21,7 +21,6 @@ use foundry_evm::{
     },
 };
 use serde::Serialize;
-use tracing::error;
 
 pub(crate) type Result<T> = std::result::Result<T, BlockchainError>;
 

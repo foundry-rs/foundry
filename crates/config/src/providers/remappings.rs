@@ -10,7 +10,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-use tracing::trace;
 
 /// Wrapper types over a `Vec<Remapping>` that only appends unique remappings.
 #[derive(Debug, Clone, Default)]

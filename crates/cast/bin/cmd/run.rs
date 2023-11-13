@@ -17,7 +17,6 @@ use foundry_evm::{
     utils::configure_tx_env,
 };
 use foundry_utils::types::ToAlloy;
-use tracing::trace;
 
 /// CLI arguments for `cast run`.
 #[derive(Debug, Clone, Parser)]

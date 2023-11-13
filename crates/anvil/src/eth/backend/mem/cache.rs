@@ -6,7 +6,6 @@ use std::{
     path::{Path, PathBuf},
 };
 use tempfile::TempDir;
-use tracing::{error, trace};
 
 /// On disk state cache
 ///

@@ -1,6 +1,9 @@
 #![doc = include_str!("../README.md")]
 #![warn(unused_crate_dependencies)]
 
+#[macro_use]
+extern crate tracing;
+
 use crate::types::{ToAlloy, ToEthers};
 use alloy_primitives::{Address, Bytes};
 use ethers_core::types::BlockId;
@@ -20,7 +23,6 @@ use std::{
     str::FromStr,
     time::Duration,
 };
-use tracing::trace;
 
 pub mod abi;
 pub mod error;
@@ -81,7 +83,7 @@ struct AllArtifactsBySlug {
 impl AllArtifactsBySlug {
     /// Finds the code for the target of the artifact and the matching key.
     fn find_code(&self, identifier: &String, version: &String) -> Option<CompactContractBytecode> {
-        trace!(target : "forge::link", identifier, "fetching artifact by identifier");
+        trace!(target: "forge::link", identifier, "fetching artifact by identifier");
         let code = self
             .inner
             .get(identifier)
@@ -461,11 +463,7 @@ impl Retry {
 
     fn handle_err(&mut self, err: eyre::Report) {
         self.retries -= 1;
-        tracing::warn!(
-            "erroneous attempt ({} tries remaining): {}",
-            self.retries,
-            err.root_cause()
-        );
+        warn!("erroneous attempt ({} tries remaining): {}", self.retries, err.root_cause());
         if let Some(delay) = self.delay {
             std::thread::sleep(Duration::from_secs(delay.into()));
         }

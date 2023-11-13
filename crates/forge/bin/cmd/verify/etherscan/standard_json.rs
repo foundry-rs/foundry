@@ -4,7 +4,6 @@ use foundry_block_explorers::verify::CodeFormat;
 use foundry_compilers::{artifacts::StandardJsonCompilerInput, Project};
 use semver::Version;
 use std::path::Path;
-use tracing::trace;
 
 #[derive(Debug)]
 pub struct EtherscanStandardJsonSource;

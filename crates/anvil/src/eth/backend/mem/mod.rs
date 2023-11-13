@@ -85,7 +85,6 @@ use std::{
 };
 use storage::{Blockchain, MinedTransaction};
 use tokio::sync::RwLock as AsyncRwLock;
-use tracing::{trace, warn};
 use trie_db::{Recorder, Trie};
 
 pub mod cache;

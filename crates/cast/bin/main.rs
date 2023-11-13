@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate tracing;
+
 use alloy_primitives::{keccak256, Address, B256};
 use cast::{Cast, SimpleCast};
 use clap::{CommandFactory, Parser};
