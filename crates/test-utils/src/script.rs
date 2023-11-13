@@ -8,6 +8,7 @@ use foundry_utils::types::{ToAlloy, ToEthers};
 use std::{collections::BTreeMap, fs, path::Path, str::FromStr};
 
 const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
+const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata");
 
 /// A helper struct to test forge script scenarios
 pub struct ScriptTester {
@@ -72,7 +73,7 @@ impl ScriptTester {
 
         // copy the broadcast test
         fs::copy(
-            Self::testdata_path().join("/cheats/Broadcast.t.sol"),
+            Self::testdata_path().join("cheats/Broadcast.t.sol"),
             project_root.join(BROADCAST_TEST_PATH),
         )
         .expect("Failed to initialize broadcast contract");
@@ -87,7 +88,7 @@ impl ScriptTester {
 
         // copy the broadcast test
         let testdata = Self::testdata_path();
-        fs::copy(testdata.join("/cheats/Broadcast.t.sol"), project_root.join(BROADCAST_TEST_PATH))
+        fs::copy(testdata.join("cheats/Broadcast.t.sol"), project_root.join(BROADCAST_TEST_PATH))
             .expect("Failed to initialize broadcast contract");
 
         Self::new(cmd, None, project_root, &target_contract)
@@ -95,14 +96,14 @@ impl ScriptTester {
 
     /// Returns the path to the dir that contains testdata
     fn testdata_path() -> &'static Path {
-        Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata"))
+        Path::new(TESTDATA)
     }
 
     /// Initialises the test contracts by copying them into the workspace
     fn copy_testdata(current_dir: &Path) -> Result<()> {
         let testdata = Self::testdata_path();
-        fs::copy(testdata.join("/cheats/Vm.sol"), current_dir.join("src/Vm.sol"))?;
-        fs::copy(testdata.join("/lib/ds-test/src/test.sol"), current_dir.join("lib/test.sol"))?;
+        fs::copy(testdata.join("cheats/Vm.sol"), current_dir.join("src/Vm.sol"))?;
+        fs::copy(testdata.join("lib/ds-test/src/test.sol"), current_dir.join("lib/test.sol"))?;
         Ok(())
     }
 
