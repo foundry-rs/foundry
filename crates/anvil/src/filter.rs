@@ -10,6 +10,7 @@ use ethers::{
     prelude::{Log as EthersLog, H256 as TxHash},
     types::{Filter, FilteredParams},
 };
+use foundry_utils::types::ToAlloy;
 use futures::{channel::mpsc::Receiver, Stream, StreamExt};
 use std::{
     collections::HashMap,
@@ -175,8 +176,8 @@ impl LogsFilter {
     pub fn poll(&mut self, cx: &mut Context<'_>) -> Vec<EthersLog> {
         let mut logs = self.historic.take().unwrap_or_default();
         while let Poll::Ready(Some(block)) = self.blocks.poll_next_unpin(cx) {
-            let b = self.storage.block(block.hash);
-            let receipts = self.storage.receipts(block.hash);
+            let b = self.storage.block(block.hash.to_alloy());
+            let receipts = self.storage.receipts(block.hash.to_alloy());
             if let (Some(receipts), Some(block)) = (receipts, b) {
                 logs.extend(filter_logs(block, receipts, &self.filter))
             }

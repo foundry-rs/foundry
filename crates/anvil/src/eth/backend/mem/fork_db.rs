@@ -6,7 +6,8 @@ use crate::{
     revm::primitives::AccountInfo,
     Address, U256,
 };
-use ethers::{prelude::H256, types::BlockId};
+use ethers::prelude::H256;
+use alloy_rpc_types::BlockId;
 use foundry_evm::{
     backend::{DatabaseResult, StateSnapshot},
     fork::{database::ForkDbSnapshot, BlockchainDb},

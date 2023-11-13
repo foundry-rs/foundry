@@ -1,21 +1,18 @@
+use super::types::{
+    OtsBlockDetails, OtsBlockTransactions, OtsContractCreator, OtsInternalOperation,
+    OtsSearchTransactions, OtsTrace,
+};
 use crate::eth::{
     error::{BlockchainError, Result},
     macros::node_info,
     EthApi,
 };
-
 use ethers::types::{
     Action, Call, Create, CreateResult, Res, Reward,
-    Transaction,
 };
-use alloy_rpc_types::{BlockNumberOrTag, BlockId, Block};
-use alloy_primitives::{Address, Bytes, B256, U256, U64};
+use alloy_rpc_types::{Block, BlockId, BlockNumberOrTag as BlockNumber, Transaction};
+use alloy_primitives::{Address, Bytes, TxHash, B256, U256, U64};
 use itertools::Itertools;
-
-use super::types::{
-    OtsBlockDetails, OtsBlockTransactions, OtsContractCreator, OtsInternalOperation,
-    OtsSearchTransactions, OtsTrace,
-};
 
 impl EthApi {
     /// Otterscan currently requires this endpoint, even though it's not part of the ots_*
@@ -25,7 +22,7 @@ impl EthApi {
     /// information), which is not relevant in the context of an anvil node
     pub async fn erigon_get_header_by_number(
         &self,
-        number: BlockNumberOrTag,
+        number: BlockNumber,
     ) -> Result<Option<Block>> {
         node_info!("ots_getApiLevel");
 
@@ -56,7 +53,7 @@ impl EthApi {
     }
 
     /// Check if an ETH address contains code at a certain block number.
-    pub async fn ots_has_code(&self, address: Address, block_number: BlockNumberOrTag) -> Result<bool> {
+    pub async fn ots_has_code(&self, address: Address, block_number: BlockNumber) -> Result<bool> {
         node_info!("ots_hasCode");
         let block_id = Some(BlockId::Number(block_number));
         Ok(self.get_code(address, block_id).await?.len() > 0)
@@ -75,7 +72,7 @@ impl EthApi {
 
         if let Some(receipt) = self.backend.mined_transaction_receipt(hash) {
             if receipt.inner.status == Some(U64::ZERO) {
-                return Ok(receipt.out)
+                return Ok(receipt.out.map(|b| b.0.into()))
             }
         }
 
@@ -85,7 +82,7 @@ impl EthApi {
     /// For simplicity purposes, we return the entire block instead of emptying the values that
     /// Otterscan doesn't want. This is the original purpose of the endpoint (to save bandwidth),
     /// but it doesn't seem necessary in the context of an anvil node
-    pub async fn ots_get_block_details(&self, number: BlockNumberOrTag) -> Result<OtsBlockDetails> {
+    pub async fn ots_get_block_details(&self, number: BlockNumber) -> Result<OtsBlockDetails> {
         node_info!("ots_getBlockDetails");
 
         if let Some(block) = self.backend.block_by_number(number).await? {

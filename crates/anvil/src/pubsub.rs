@@ -12,6 +12,7 @@ use ethers::{
     prelude::{Log as EthersLog, H256, H256 as TxHash, U64},
     types::FilteredParams,
 };
+use foundry_utils::types::ToAlloy;
 use futures::{channel::mpsc::Receiver, ready, Stream, StreamExt};
 use serde::Serialize;
 use std::{
@@ -44,8 +45,8 @@ impl LogsSubscription {
             }
 
             if let Some(block) = ready!(self.blocks.poll_next_unpin(cx)) {
-                let b = self.storage.block(block.hash);
-                let receipts = self.storage.receipts(block.hash);
+                let b = self.storage.block(block.hash.to_alloy());
+                let receipts = self.storage.receipts(block.hash.to_alloy());
                 if let (Some(receipts), Some(block)) = (receipts, b) {
                     let logs = filter_logs(block, receipts, &self.filter);
                     if logs.is_empty() {
@@ -110,7 +111,7 @@ impl EthSubscription {
                 // [`futures::channel::mpsc::UnboundedReceiver::poll_next()`]
                 loop {
                     if let Some(block) = ready!(blocks.poll_next_unpin(cx)) {
-                        if let Some(block) = storage.eth_block(block.hash) {
+                        if let Some(block) = storage.eth_block(block.hash.to_alloy()) {
                             let params = EthSubscriptionParams {
                                 subscription: id.clone(),
                                 result: to_rpc_result(block),

@@ -123,6 +123,8 @@ pub struct NodeConfig {
     pub eth_rpc_url: Option<String>,
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
+    /// headers to use with `eth_rpc_url`
+    pub fork_headers: Vec<String>,
     /// specifies chain id for cache to skip fetching from remote in offline-start mode
     pub fork_chain_id: Option<U256>,
     /// The generator used to generate the dev accounts
@@ -392,6 +394,7 @@ impl Default for NodeConfig {
             config_out: None,
             genesis: None,
             fork_request_timeout: REQUEST_TIMEOUT,
+            fork_headers: vec![],
             fork_request_retries: 5,
             fork_retry_backoff: Duration::from_millis(1_000),
             fork_chain_id: None,
@@ -659,6 +662,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the `fork_headers` to use with `eth_rpc_url`
+    #[must_use]
+    pub fn with_fork_headers(mut self, headers: Vec<String>) -> Self {
+        self.fork_headers = headers;
+        self
+    }
+
     /// Sets the `fork_request_timeout` to use for requests
     #[must_use]
     pub fn fork_request_timeout(mut self, fork_request_timeout: Option<Duration>) -> Self {
@@ -841,7 +851,7 @@ impl NodeConfig {
         // if the option is not disabled and we are not forking.
         if !self.disable_default_create2_deployer && self.eth_rpc_url.is_none() {
             backend
-                .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER.to_ethers())
+                .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER)
                 .await
                 .expect("Failed to create default create2 deployer");
         }
@@ -901,6 +911,7 @@ impl NodeConfig {
                 .compute_units_per_second(self.compute_units_per_second)
                 .max_retry(10)
                 .initial_backoff(1000)
+                .headers(self.fork_headers.clone())
                 .build()
                 .expect("Failed to establish provider to fork url"),
         );
@@ -1008,7 +1019,7 @@ latest block number: {latest_block}"
             }
         }
 
-        let block_hash = block.hash.unwrap_or_default();
+        let block_hash = block.hash.unwrap_or_default().to_alloy();
 
         let chain_id = if let Some(chain_id) = self.chain_id {
             chain_id
@@ -1051,12 +1062,12 @@ latest block number: {latest_block}"
             chain_id,
             override_chain_id,
             timestamp: block.timestamp.as_u64(),
-            base_fee: block.base_fee_per_gas,
+            base_fee: block.base_fee_per_gas.map(|g| g.to_alloy()),
             timeout: self.fork_request_timeout,
             retries: self.fork_request_retries,
             backoff: self.fork_retry_backoff,
             compute_units_per_second: self.compute_units_per_second,
-            total_difficulty: block.total_difficulty.unwrap_or_default(),
+            total_difficulty: block.total_difficulty.unwrap_or_default().to_alloy(),
         };
 
         (ForkedDatabase::new(backend, block_chain_db), config)

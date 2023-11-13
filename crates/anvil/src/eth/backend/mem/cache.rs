@@ -1,5 +1,5 @@
 use crate::config::anvil_tmp_dir;
-use ethers::prelude::H256;
+use alloy_primitives::B256;
 use foundry_evm::backend::StateSnapshot;
 use std::{
     io,
@@ -20,7 +20,7 @@ pub struct DiskStateCache {
 
 impl DiskStateCache {
     /// Returns the cache file for the given hash
-    fn with_cache_file<F, R>(&mut self, hash: H256, f: F) -> Option<R>
+    fn with_cache_file<F, R>(&mut self, hash: B256, f: F) -> Option<R>
     where
         F: FnOnce(PathBuf) -> R,
     {
@@ -57,7 +57,7 @@ impl DiskStateCache {
     /// Note: this writes the state on a new spawned task
     ///
     /// Caution: this requires a running tokio Runtime.
-    pub fn write(&mut self, hash: H256, state: StateSnapshot) {
+    pub fn write(&mut self, hash: B256, state: StateSnapshot) {
         self.with_cache_file(hash, |file| {
             tokio::task::spawn(async move {
                 match foundry_common::fs::write_json_file(&file, &state) {
@@ -75,7 +75,7 @@ impl DiskStateCache {
     /// Loads the snapshot file for the given hash
     ///
     /// Returns None if it doesn't exist or deserialization failed
-    pub fn read(&mut self, hash: H256) -> Option<StateSnapshot> {
+    pub fn read(&mut self, hash: B256) -> Option<StateSnapshot> {
         self.with_cache_file(hash, |file| {
             match foundry_common::fs::read_json_file::<StateSnapshot>(&file) {
                 Ok(state) => {
@@ -92,7 +92,7 @@ impl DiskStateCache {
     }
 
     /// Removes the cache file for the given hash, if it exists
-    pub fn remove(&mut self, hash: H256) {
+    pub fn remove(&mut self, hash: B256) {
         self.with_cache_file(hash, |file| {
             foundry_common::fs::remove_file(file).map_err(|err| {
                 error!(target: "backend", ?err, ?hash, "Failed to remove state snapshot");

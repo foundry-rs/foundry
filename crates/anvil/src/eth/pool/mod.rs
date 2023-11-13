@@ -41,6 +41,7 @@ use ethers::{
     prelude::TxpoolStatus,
     types::{TxHash, U64},
 };
+use foundry_utils::types::ToEthers;
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, fmt, sync::Arc};
@@ -94,7 +95,7 @@ impl Pool {
 
         // prune all the markers the mined transactions provide
         let res = self
-            .prune_markers(block_number, included.into_iter().flat_map(|tx| tx.provides.clone()));
+            .prune_markers(block_number.to_ethers(), included.into_iter().flat_map(|tx| tx.provides.clone()));
         trace!(target: "txpool", "pruned transaction markers {:?}", res);
         res
     }
