@@ -1,52 +1,53 @@
-# syntax=docker/dockerfile:1.4
-
-FROM alpine:3.18 as build-environment
-
-ARG TARGETARCH
+FROM lukemathwalker/cargo-chef:latest-rust-1.72.1 as chef
 WORKDIR /opt
 
-RUN apk add clang lld curl build-base linux-headers git \
-    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh \
-    && chmod +x ./rustup.sh \
-    && ./rustup.sh -y
+FROM chef as planner
 
-RUN [[ "$TARGETARCH" = "arm64" ]] && echo "export CFLAGS=-mno-outline-atomics" >> $HOME/.profile || true
+# Get the foundry project
+RUN git clone https://github.com/foundry-rs/foundry.git
 
 WORKDIR /opt/foundry
-COPY . .
 
-RUN --mount=type=cache,target=/root/.cargo/registry --mount=type=cache,target=/root/.cargo/git --mount=type=cache,target=/opt/foundry/target \
-    source $HOME/.profile && cargo build --release \
-    && mkdir out \
-    && mv target/release/forge out/forge \
-    && mv target/release/cast out/cast \
-    && mv target/release/anvil out/anvil \
-    && mv target/release/chisel out/chisel \
-    && strip out/forge \
-    && strip out/cast \
-    && strip out/chisel \
-    && strip out/anvil;
+# Compute a lock-like file for our project
+RUN cargo chef prepare  --recipe-path recipe.json
 
-FROM docker.io/frolvlad/alpine-glibc:alpine-3.16_glibc-2.34 as foundry-client
+FROM chef as builder
 
-RUN apk add --no-cache linux-headers git
+WORKDIR /opt/foundry
 
-COPY --from=build-environment /opt/foundry/out/forge /usr/local/bin/forge
-COPY --from=build-environment /opt/foundry/out/cast /usr/local/bin/cast
-COPY --from=build-environment /opt/foundry/out/anvil /usr/local/bin/anvil
-COPY --from=build-environment /opt/foundry/out/chisel /usr/local/bin/chisel
+# Get the foundry project
+COPY --from=planner /opt/foundry /opt/foundry
+# Get the lock-like file
+COPY --from=planner /opt/foundry/recipe.json recipe.json
 
-RUN adduser -Du 1000 foundry
+RUN apt-get update -y && apt-get install -y gcc-aarch64-linux-gnu
+
+# Build our project dependencies, not our application!
+RUN cargo chef cook --release --recipe-path recipe.json
+# Up to this point, if our dependency tree stays the same,
+# all layers should be cached.
+
+# Conditional for cross compliation
+RUN CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc CFLAGS=-mno-outline-atomics cargo build --release
+
+# Strip any debug symbols
+RUN strip /opt/foundry/target/release/forge \
+    && strip /opt/foundry/target/release/cast \
+    && strip /opt/foundry/target/release/anvil \
+    && strip /opt/foundry/target/release/chisel
+
+FROM debian:bookworm-slim AS foundry
+
+# Foundry tools
+COPY --from=builder /opt/foundry/target/release/forge /usr/local/bin/forge
+COPY --from=builder /opt/foundry/target/release/cast /usr/local/bin/cast
+COPY --from=builder /opt/foundry/target/release/anvil /usr/local/bin/anvil
+COPY --from=builder /opt/foundry/target/release/chisel /usr/local/bin/chisel
+
+RUN useradd -u 1000 -m foundry
+
+USER foundry
+
+# TODO(User and group here)
 
 ENTRYPOINT ["/bin/sh", "-c"]
-
-
-LABEL org.label-schema.build-date=$BUILD_DATE \
-      org.label-schema.name="Foundry" \
-      org.label-schema.description="Foundry" \
-      org.label-schema.url="https://getfoundry.sh" \
-      org.label-schema.vcs-ref=$VCS_REF \
-      org.label-schema.vcs-url="https://github.com/foundry-rs/foundry.git" \
-      org.label-schema.vendor="Foundry-rs" \
-      org.label-schema.version=$VERSION \
-      org.label-schema.schema-version="1.0"
