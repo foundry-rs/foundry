@@ -138,6 +138,11 @@ impl Executor {
         Ok(self)
     }
 
+    /// Gets the nonce of an account
+    pub fn get_nonce(&self, address: Address) -> DatabaseResult<u64> {
+        Ok(self.backend.basic(address)?.map(|acc| acc.nonce).unwrap_or_default())
+    }
+
     #[inline]
     pub fn set_tracing(&mut self, tracing: bool) -> &mut Self {
         self.inspector.tracing(tracing);
