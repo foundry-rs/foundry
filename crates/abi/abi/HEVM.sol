@@ -86,8 +86,8 @@ record()
 accesses(address)(bytes32[], bytes32[])
 skip(bool)
 
-recordStateDiff()
-getStateDiff()(AccountAccess[])
+startStateDiffRecording()
+stopAndReturnStateDiff()(AccountAccess[])
 
 recordLogs()
 getRecordedLogs()(Log[])

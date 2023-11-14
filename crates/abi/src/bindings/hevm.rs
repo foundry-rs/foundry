@@ -2340,55 +2340,6 @@ pub mod hevm {
                     ],
                 ),
                 (
-                    ::std::borrow::ToOwned::to_owned("getStateDiff"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Function {
-                            name: ::std::borrow::ToOwned::to_owned("getStateDiff"),
-                            inputs: ::std::vec![],
-                            outputs: ::std::vec![
-                                ::ethers_core::abi::ethabi::Param {
-                                    name: ::std::string::String::new(),
-                                    kind: ::ethers_core::abi::ethabi::ParamType::Array(
-                                        ::std::boxed::Box::new(
-                                            ::ethers_core::abi::ethabi::ParamType::Tuple(
-                                                ::std::vec![
-                                                    ::ethers_core::abi::ethabi::ParamType::Address,
-                                                    ::ethers_core::abi::ethabi::ParamType::Address,
-                                                    ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
-                                                    ::ethers_core::abi::ethabi::ParamType::Bool,
-                                                    ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
-                                                    ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
-                                                    ::ethers_core::abi::ethabi::ParamType::Bytes,
-                                                    ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
-                                                    ::ethers_core::abi::ethabi::ParamType::Bytes,
-                                                    ::ethers_core::abi::ethabi::ParamType::Bool,
-                                                    ::ethers_core::abi::ethabi::ParamType::Array(
-                                                        ::std::boxed::Box::new(
-                                                            ::ethers_core::abi::ethabi::ParamType::Tuple(
-                                                                ::std::vec![
-                                                                    ::ethers_core::abi::ethabi::ParamType::Address,
-                                                                    ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
-                                                                    ::ethers_core::abi::ethabi::ParamType::Bool,
-                                                                    ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
-                                                                    ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
-                                                                    ::ethers_core::abi::ethabi::ParamType::Bool,
-                                                                ],
-                                                            ),
-                                                        ),
-                                                    ),
-                                                ],
-                                            ),
-                                        ),
-                                    ),
-                                    internal_type: ::core::option::Option::None,
-                                },
-                            ],
-                            constant: ::core::option::Option::None,
-                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
-                        },
-                    ],
-                ),
-                (
                     ::std::borrow::ToOwned::to_owned("isDir"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -3770,18 +3721,6 @@ pub mod hevm {
                     ],
                 ),
                 (
-                    ::std::borrow::ToOwned::to_owned("recordStateDiff"),
-                    ::std::vec![
-                        ::ethers_core::abi::ethabi::Function {
-                            name: ::std::borrow::ToOwned::to_owned("recordStateDiff"),
-                            inputs: ::std::vec![],
-                            outputs: ::std::vec![],
-                            constant: ::core::option::Option::None,
-                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
-                        },
-                    ],
-                ),
-                (
                     ::std::borrow::ToOwned::to_owned("rememberKey"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -4947,6 +4886,71 @@ pub mod hevm {
                                 },
                             ],
                             outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
+                    ::std::borrow::ToOwned::to_owned("startStateDiffRecording"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned(
+                                "startStateDiffRecording",
+                            ),
+                            inputs: ::std::vec![],
+                            outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
+                    ::std::borrow::ToOwned::to_owned("stopAndReturnStateDiff"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned(
+                                "stopAndReturnStateDiff",
+                            ),
+                            inputs: ::std::vec![],
+                            outputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Array(
+                                        ::std::boxed::Box::new(
+                                            ::ethers_core::abi::ethabi::ParamType::Tuple(
+                                                ::std::vec![
+                                                    ::ethers_core::abi::ethabi::ParamType::Address,
+                                                    ::ethers_core::abi::ethabi::ParamType::Address,
+                                                    ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                                    ::ethers_core::abi::ethabi::ParamType::Bool,
+                                                    ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                                    ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                                    ::ethers_core::abi::ethabi::ParamType::Bytes,
+                                                    ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                                    ::ethers_core::abi::ethabi::ParamType::Bytes,
+                                                    ::ethers_core::abi::ethabi::ParamType::Bool,
+                                                    ::ethers_core::abi::ethabi::ParamType::Array(
+                                                        ::std::boxed::Box::new(
+                                                            ::ethers_core::abi::ethabi::ParamType::Tuple(
+                                                                ::std::vec![
+                                                                    ::ethers_core::abi::ethabi::ParamType::Address,
+                                                                    ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
+                                                                    ::ethers_core::abi::ethabi::ParamType::Bool,
+                                                                    ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
+                                                                    ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
+                                                                    ::ethers_core::abi::ethabi::ParamType::Bool,
+                                                                ],
+                                                            ),
+                                                        ),
+                                                    ),
+                                                ],
+                                            ),
+                                        ),
+                                    ),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
                             constant: ::core::option::Option::None,
                             state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
                         },
@@ -6395,40 +6399,6 @@ pub mod hevm {
                 .method_hash([25, 21, 83, 164], ())
                 .expect("method not found (this should never happen)")
         }
-        ///Calls the contract's `getStateDiff` (0x80df01cc) function
-        pub fn get_state_diff(
-            &self,
-        ) -> ::ethers_contract::builders::ContractCall<
-            M,
-            ::std::vec::Vec<
-                (
-                    ::ethers_core::types::Address,
-                    ::ethers_core::types::Address,
-                    ::ethers_core::types::U256,
-                    bool,
-                    ::ethers_core::types::U256,
-                    ::ethers_core::types::U256,
-                    ::ethers_core::types::Bytes,
-                    ::ethers_core::types::U256,
-                    ::ethers_core::types::Bytes,
-                    bool,
-                    ::std::vec::Vec<
-                        (
-                            ::ethers_core::types::Address,
-                            [u8; 32],
-                            bool,
-                            [u8; 32],
-                            [u8; 32],
-                            bool,
-                        ),
-                    >,
-                ),
-            >,
-        > {
-            self.0
-                .method_hash([128, 223, 1, 204], ())
-                .expect("method not found (this should never happen)")
-        }
         ///Calls the contract's `isDir` (0x7d15d019) function
         pub fn is_dir(
             &self,
@@ -6979,14 +6949,6 @@ pub mod hevm {
                 .method_hash([65, 175, 47, 82], ())
                 .expect("method not found (this should never happen)")
         }
-        ///Calls the contract's `recordStateDiff` (0xc9140b4b) function
-        pub fn record_state_diff(
-            &self,
-        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
-            self.0
-                .method_hash([201, 20, 11, 75], ())
-                .expect("method not found (this should never happen)")
-        }
         ///Calls the contract's `rememberKey` (0x22100064) function
         pub fn remember_key(
             &self,
@@ -7450,6 +7412,48 @@ pub mod hevm {
         ) -> ::ethers_contract::builders::ContractCall<M, ()> {
             self.0
                 .method_hash([69, 181, 96, 120], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `startStateDiffRecording` (0xcf22e3c9) function
+        pub fn start_state_diff_recording(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([207, 34, 227, 201], ())
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `stopAndReturnStateDiff` (0xaa5cf90e) function
+        pub fn stop_and_return_state_diff(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<
+                (
+                    ::ethers_core::types::Address,
+                    ::ethers_core::types::Address,
+                    ::ethers_core::types::U256,
+                    bool,
+                    ::ethers_core::types::U256,
+                    ::ethers_core::types::U256,
+                    ::ethers_core::types::Bytes,
+                    ::ethers_core::types::U256,
+                    ::ethers_core::types::Bytes,
+                    bool,
+                    ::std::vec::Vec<
+                        (
+                            ::ethers_core::types::Address,
+                            [u8; 32],
+                            bool,
+                            [u8; 32],
+                            [u8; 32],
+                            bool,
+                        ),
+                    >,
+                ),
+            >,
+        > {
+            self.0
+                .method_hash([170, 92, 249, 14], ())
                 .expect("method not found (this should never happen)")
         }
         ///Calls the contract's `stopBroadcast` (0x76eadd36) function
@@ -8983,19 +8987,6 @@ pub mod hevm {
     )]
     #[ethcall(name = "getRecordedLogs", abi = "getRecordedLogs()")]
     pub struct GetRecordedLogsCall;
-    ///Container type for all input parameters for the `getStateDiff` function with signature `getStateDiff()` and selector `0x80df01cc`
-    #[derive(
-        Clone,
-        ::ethers_contract::EthCall,
-        ::ethers_contract::EthDisplay,
-        Default,
-        Debug,
-        PartialEq,
-        Eq,
-        Hash
-    )]
-    #[ethcall(name = "getStateDiff", abi = "getStateDiff()")]
-    pub struct GetStateDiffCall;
     ///Container type for all input parameters for the `isDir` function with signature `isDir(string)` and selector `0x7d15d019`
     #[derive(
         Clone,
@@ -9752,19 +9743,6 @@ pub mod hevm {
     )]
     #[ethcall(name = "recordLogs", abi = "recordLogs()")]
     pub struct RecordLogsCall;
-    ///Container type for all input parameters for the `recordStateDiff` function with signature `recordStateDiff()` and selector `0xc9140b4b`
-    #[derive(
-        Clone,
-        ::ethers_contract::EthCall,
-        ::ethers_contract::EthDisplay,
-        Default,
-        Debug,
-        PartialEq,
-        Eq,
-        Hash
-    )]
-    #[ethcall(name = "recordStateDiff", abi = "recordStateDiff()")]
-    pub struct RecordStateDiffCall;
     ///Container type for all input parameters for the `rememberKey` function with signature `rememberKey(uint256)` and selector `0x22100064`
     #[derive(
         Clone,
@@ -10450,6 +10428,32 @@ pub mod hevm {
         pub ::ethers_core::types::Address,
         pub ::ethers_core::types::Address,
     );
+    ///Container type for all input parameters for the `startStateDiffRecording` function with signature `startStateDiffRecording()` and selector `0xcf22e3c9`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "startStateDiffRecording", abi = "startStateDiffRecording()")]
+    pub struct StartStateDiffRecordingCall;
+    ///Container type for all input parameters for the `stopAndReturnStateDiff` function with signature `stopAndReturnStateDiff()` and selector `0xaa5cf90e`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "stopAndReturnStateDiff", abi = "stopAndReturnStateDiff()")]
+    pub struct StopAndReturnStateDiffCall;
     ///Container type for all input parameters for the `stopBroadcast` function with signature `stopBroadcast()` and selector `0x76eadd36`
     #[derive(
         Clone,
@@ -10825,7 +10829,6 @@ pub mod hevm {
         GetNonce0(GetNonce0Call),
         GetNonce1(GetNonce1Call),
         GetRecordedLogs(GetRecordedLogsCall),
-        GetStateDiff(GetStateDiffCall),
         IsDir(IsDirCall),
         IsFile(IsFileCall),
         IsPersistent(IsPersistentCall),
@@ -10879,7 +10882,6 @@ pub mod hevm {
         ReadLink(ReadLinkCall),
         Record(RecordCall),
         RecordLogs(RecordLogsCall),
-        RecordStateDiff(RecordStateDiffCall),
         RememberKey(RememberKeyCall),
         RemoveDir(RemoveDirCall),
         RemoveFile(RemoveFileCall),
@@ -10927,6 +10929,8 @@ pub mod hevm {
         StartMappingRecording(StartMappingRecordingCall),
         StartPrank0(StartPrank0Call),
         StartPrank1(StartPrank1Call),
+        StartStateDiffRecording(StartStateDiffRecordingCall),
+        StopAndReturnStateDiff(StopAndReturnStateDiffCall),
         StopBroadcast(StopBroadcastCall),
         StopMappingRecording(StopMappingRecordingCall),
         StopPrank(StopPrankCall),
@@ -11414,11 +11418,6 @@ pub mod hevm {
             ) {
                 return Ok(Self::GetRecordedLogs(decoded));
             }
-            if let Ok(decoded) = <GetStateDiffCall as ::ethers_core::abi::AbiDecode>::decode(
-                data,
-            ) {
-                return Ok(Self::GetStateDiff(decoded));
-            }
             if let Ok(decoded) = <IsDirCall as ::ethers_core::abi::AbiDecode>::decode(
                 data,
             ) {
@@ -11684,11 +11683,6 @@ pub mod hevm {
             ) {
                 return Ok(Self::RecordLogs(decoded));
             }
-            if let Ok(decoded) = <RecordStateDiffCall as ::ethers_core::abi::AbiDecode>::decode(
-                data,
-            ) {
-                return Ok(Self::RecordStateDiff(decoded));
-            }
             if let Ok(decoded) = <RememberKeyCall as ::ethers_core::abi::AbiDecode>::decode(
                 data,
             ) {
@@ -11923,6 +11917,16 @@ pub mod hevm {
                 data,
             ) {
                 return Ok(Self::StartPrank1(decoded));
+            }
+            if let Ok(decoded) = <StartStateDiffRecordingCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
+                return Ok(Self::StartStateDiffRecording(decoded));
+            }
+            if let Ok(decoded) = <StopAndReturnStateDiffCall as ::ethers_core::abi::AbiDecode>::decode(
+                data,
+            ) {
+                return Ok(Self::StopAndReturnStateDiff(decoded));
             }
             if let Ok(decoded) = <StopBroadcastCall as ::ethers_core::abi::AbiDecode>::decode(
                 data,
@@ -12243,9 +12247,6 @@ pub mod hevm {
                 Self::GetRecordedLogs(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
-                Self::GetStateDiff(element) => {
-                    ::ethers_core::abi::AbiEncode::encode(element)
-                }
                 Self::IsDir(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::IsFile(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::IsPersistent(element) => {
@@ -12375,9 +12376,6 @@ pub mod hevm {
                 Self::RecordLogs(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
-                Self::RecordStateDiff(element) => {
-                    ::ethers_core::abi::AbiEncode::encode(element)
-                }
                 Self::RememberKey(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
@@ -12493,6 +12491,12 @@ pub mod hevm {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
                 Self::StartPrank1(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
+                Self::StartStateDiffRecording(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
+                Self::StopAndReturnStateDiff(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
                 Self::StopBroadcast(element) => {
@@ -12652,7 +12656,6 @@ pub mod hevm {
                 Self::GetNonce0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::GetNonce1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::GetRecordedLogs(element) => ::core::fmt::Display::fmt(element, f),
-                Self::GetStateDiff(element) => ::core::fmt::Display::fmt(element, f),
                 Self::IsDir(element) => ::core::fmt::Display::fmt(element, f),
                 Self::IsFile(element) => ::core::fmt::Display::fmt(element, f),
                 Self::IsPersistent(element) => ::core::fmt::Display::fmt(element, f),
@@ -12718,7 +12721,6 @@ pub mod hevm {
                 Self::ReadLink(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Record(element) => ::core::fmt::Display::fmt(element, f),
                 Self::RecordLogs(element) => ::core::fmt::Display::fmt(element, f),
-                Self::RecordStateDiff(element) => ::core::fmt::Display::fmt(element, f),
                 Self::RememberKey(element) => ::core::fmt::Display::fmt(element, f),
                 Self::RemoveDir(element) => ::core::fmt::Display::fmt(element, f),
                 Self::RemoveFile(element) => ::core::fmt::Display::fmt(element, f),
@@ -12768,6 +12770,12 @@ pub mod hevm {
                 }
                 Self::StartPrank0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::StartPrank1(element) => ::core::fmt::Display::fmt(element, f),
+                Self::StartStateDiffRecording(element) => {
+                    ::core::fmt::Display::fmt(element, f)
+                }
+                Self::StopAndReturnStateDiff(element) => {
+                    ::core::fmt::Display::fmt(element, f)
+                }
                 Self::StopBroadcast(element) => ::core::fmt::Display::fmt(element, f),
                 Self::StopMappingRecording(element) => {
                     ::core::fmt::Display::fmt(element, f)
@@ -13254,11 +13262,6 @@ pub mod hevm {
             Self::GetRecordedLogs(value)
         }
     }
-    impl ::core::convert::From<GetStateDiffCall> for HEVMCalls {
-        fn from(value: GetStateDiffCall) -> Self {
-            Self::GetStateDiff(value)
-        }
-    }
     impl ::core::convert::From<IsDirCall> for HEVMCalls {
         fn from(value: IsDirCall) -> Self {
             Self::IsDir(value)
@@ -13524,11 +13527,6 @@ pub mod hevm {
             Self::RecordLogs(value)
         }
     }
-    impl ::core::convert::From<RecordStateDiffCall> for HEVMCalls {
-        fn from(value: RecordStateDiffCall) -> Self {
-            Self::RecordStateDiff(value)
-        }
-    }
     impl ::core::convert::From<RememberKeyCall> for HEVMCalls {
         fn from(value: RememberKeyCall) -> Self {
             Self::RememberKey(value)
@@ -13762,6 +13760,16 @@ pub mod hevm {
     impl ::core::convert::From<StartPrank1Call> for HEVMCalls {
         fn from(value: StartPrank1Call) -> Self {
             Self::StartPrank1(value)
+        }
+    }
+    impl ::core::convert::From<StartStateDiffRecordingCall> for HEVMCalls {
+        fn from(value: StartStateDiffRecordingCall) -> Self {
+            Self::StartStateDiffRecording(value)
+        }
+    }
+    impl ::core::convert::From<StopAndReturnStateDiffCall> for HEVMCalls {
+        fn from(value: StopAndReturnStateDiffCall) -> Self {
+            Self::StopAndReturnStateDiff(value)
         }
     }
     impl ::core::convert::From<StopBroadcastCall> for HEVMCalls {
@@ -14531,43 +14539,6 @@ pub mod hevm {
     pub struct GetRecordedLogsReturn(
         pub ::std::vec::Vec<(::std::vec::Vec<[u8; 32]>, ::ethers_core::types::Bytes)>,
     );
-    ///Container type for all return fields from the `getStateDiff` function with signature `getStateDiff()` and selector `0x80df01cc`
-    #[derive(
-        Clone,
-        ::ethers_contract::EthAbiType,
-        ::ethers_contract::EthAbiCodec,
-        Default,
-        Debug,
-        PartialEq,
-        Eq,
-        Hash
-    )]
-    pub struct GetStateDiffReturn(
-        pub ::std::vec::Vec<
-            (
-                ::ethers_core::types::Address,
-                ::ethers_core::types::Address,
-                ::ethers_core::types::U256,
-                bool,
-                ::ethers_core::types::U256,
-                ::ethers_core::types::U256,
-                ::ethers_core::types::Bytes,
-                ::ethers_core::types::U256,
-                ::ethers_core::types::Bytes,
-                bool,
-                ::std::vec::Vec<
-                    (
-                        ::ethers_core::types::Address,
-                        [u8; 32],
-                        bool,
-                        [u8; 32],
-                        [u8; 32],
-                        bool,
-                    ),
-                >,
-            ),
-        >,
-    );
     ///Container type for all return fields from the `isDir` function with signature `isDir(string)` and selector `0x7d15d019`
     #[derive(
         Clone,
@@ -15322,6 +15293,43 @@ pub mod hevm {
         Hash
     )]
     pub struct SnapshotReturn(pub ::ethers_core::types::U256);
+    ///Container type for all return fields from the `stopAndReturnStateDiff` function with signature `stopAndReturnStateDiff()` and selector `0xaa5cf90e`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct StopAndReturnStateDiffReturn(
+        pub ::std::vec::Vec<
+            (
+                ::ethers_core::types::Address,
+                ::ethers_core::types::Address,
+                ::ethers_core::types::U256,
+                bool,
+                ::ethers_core::types::U256,
+                ::ethers_core::types::U256,
+                ::ethers_core::types::Bytes,
+                ::ethers_core::types::U256,
+                ::ethers_core::types::Bytes,
+                bool,
+                ::std::vec::Vec<
+                    (
+                        ::ethers_core::types::Address,
+                        [u8; 32],
+                        bool,
+                        [u8; 32],
+                        [u8; 32],
+                        bool,
+                    ),
+                >,
+            ),
+        >,
+    );
     ///Container type for all return fields from the `tryFfi` function with signature `tryFfi(string[])` and selector `0xf45c1ce7`
     #[derive(
         Clone,

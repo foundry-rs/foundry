@@ -43,12 +43,32 @@
           "description": "The account was called."
         },
         {
+          "name": "DelegateCall",
+          "description": "The account was called via delegatecall."
+        },
+        {
+          "name": "CallCode",
+          "description": "The account was called via callcode."
+        },
+        {
+          "name": "StaticCall",
+          "description": "THe account was called via staticcall."
+        },
+        {
           "name": "Create",
           "description": "THe account was created."
         },
         {
           "name": "SelfDestruct",
-          "description": "The account was selfdestruct."
+          "description": "The account was selfdestructed."
+        },
+        {
+          "name": "Resume",
+          "description": "Synthetic access indicating the current context has resumed after a previous sub-context AccountAccess sub-context."
+        },
+        {
+          "name": "Return",
+          "description": "Synthetic access indicating the current context has ended."
         }
       ]
     }
@@ -263,37 +283,42 @@
     },
     {
       "name": "AccountAccess",
-      "description": "The result of a `getStateDiff` call.",
+      "description": "The result of a `stopAndReturnStateDiff` call.",
       "fields": [
+        {
+          "name": "forkId",
+          "ty": "uint256",
+          "description": "The fork the access occurred. It's zero if no fork is active."
+        },
+        {
+          "name": "kind",
+          "ty": "AccountAccessKind",
+          "description": "The kind of account access that determines what the account is.\n If kind is Call, DelegateCall, StaticCall or CallCode, then the account is the callee.\n If kind is Create, then the account is the newly created account.\n If kind is SelfDestruct, then the account is the selfdestruct recipient.\n If kind is a Resume, then account represents a account context that has resumed."
+        },
+        {
+          "name": "account",
+          "ty": "address",
+          "description": "The account that was accessed.\n It's either the account created, callee or a selfdestruct recipient for CREATE, CALL or SELFDESTRUCT."
+        },
         {
           "name": "accessor",
           "ty": "address",
           "description": "What accessed the account."
         },
         {
-          "name": "account",
-          "ty": "address",
-          "description": "The account whose storage was accessed.\n It's either the account created, callee or a selfdestruct recipient for CREATE, CALL or SELFDESTRUCT."
-        },
-        {
-          "name": "kind",
-          "ty": "AccountAccessKind",
-          "description": "The kind of account access."
-        },
-        {
           "name": "initialized",
           "ty": "bool",
-          "description": "If the account is initialized or empty"
+          "description": "If the account was initialized or empty prior to the access.\n An account is considered initialized if it has code, a\n non-zero nonce, or a non-zero balance."
         },
         {
           "name": "oldBalance",
           "ty": "uint256",
-          "description": "The previous account balance of the accessed account."
+          "description": "The previous balance of the accessed account."
         },
         {
           "name": "newBalance",
           "ty": "uint256",
-          "description": "The new account balance of the accessed account. This represents the balance change ignoring any reverts that may have occurred."
+          "description": "The potential new balance of the accessed account.\n That is, all balance changes are recorded here, even if reverts occurred."
         },
         {
           "name": "deployedCode",
@@ -313,7 +338,7 @@
         {
           "name": "reverted",
           "ty": "bool",
-          "description": "If this access was in a reverted context"
+          "description": "If this access reverted in either the current or parent context."
         },
         {
           "name": "storageAccesses",
@@ -2262,26 +2287,6 @@
     },
     {
       "func": {
-        "id": "getStateDiff",
-        "description": "Returns an ordered array of all account accesses from a `vm.recordStateDiff` session.",
-        "declaration": "function getStateDiff() external returns (AccountAccess[] memory accesses);",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "getStateDiff()",
-        "selector": "0x80df01cc",
-        "selectorBytes": [
-          128,
-          223,
-          1,
-          204
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "isDir",
         "description": "Returns true if the path exists on disk and is pointing at a directory, else returns false.",
         "declaration": "function isDir(string calldata path) external returns (bool result);",
@@ -3342,26 +3347,6 @@
     },
     {
       "func": {
-        "id": "recordStateDiff",
-        "description": "Record all account accesses as part of CREATE, CALL or SELFDESTRUCT opcodes in order,\nalong with the context of the calls",
-        "declaration": "function recordStateDiff() external;",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "recordStateDiff()",
-        "selector": "0xc9140b4b",
-        "selectorBytes": [
-          201,
-          20,
-          11,
-          75
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "rememberKey",
         "description": "Adds a private key to the local forge wallet and returns the address.",
         "declaration": "function rememberKey(uint256 privateKey) external returns (address keyAddr);",
@@ -4299,6 +4284,46 @@
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "startStateDiffRecording",
+        "description": "Record all account accesses as part of CREATE, CALL or SELFDESTRUCT opcodes in order,\nalong with the context of the calls",
+        "declaration": "function startStateDiffRecording() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "startStateDiffRecording()",
+        "selector": "0xcf22e3c9",
+        "selectorBytes": [
+          207,
+          34,
+          227,
+          201
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "stopAndReturnStateDiff",
+        "description": "Returns an ordered array of all account accesses from a `vm.startStateDiffRecording` session.",
+        "declaration": "function stopAndReturnStateDiff() external returns (AccountAccess[] memory accesses);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopAndReturnStateDiff()",
+        "selector": "0xaa5cf90e",
+        "selectorBytes": [
+          170,
+          92,
+          249,
+          14
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
     },
     {
       "func": {

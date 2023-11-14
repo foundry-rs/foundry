@@ -341,7 +341,7 @@ impl Cheatcode for revertToCall {
     }
 }
 
-impl Cheatcode for recordStateDiffCall {
+impl Cheatcode for startStateDiffRecordingCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.recorded_account_diffs = Some(Default::default());
@@ -349,7 +349,7 @@ impl Cheatcode for recordStateDiffCall {
     }
 }
 
-impl Cheatcode for getStateDiffCall {
+impl Cheatcode for stopAndReturnStateDiffCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         get_state_diff(state)
@@ -424,8 +424,8 @@ pub(super) fn journaled_account<'a, DB: DatabaseExt>(
 /// array of [AccountAccess]. If there are no accounts were
 /// recorded as accessed, an abi encoded empty array is returned.
 ///
-/// In the case where `getStateDiff` is called at a lower
-/// depth than `recordStateDiff`, multiple `Vec<RecordedAccountAccesses>`
+/// In the case where `stopAndReturnStateDiff` is called at a lower
+/// depth than `startStateDiffRecording`, multiple `Vec<RecordedAccountAccesses>`
 /// will be flattened, preserving the order of the accesses.
 fn get_state_diff(state: &mut Cheatcodes) -> Result {
     let res = state

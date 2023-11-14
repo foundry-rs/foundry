@@ -121,6 +121,24 @@ contract NestedRunner {
     }
 }
 
+/// @notice Helper contract that writes to storage in a nested call
+contract NestedStorer {
+    mapping(bytes32 key => uint256 value) slots;
+
+    constructor() {}
+
+    function run() public payable {
+        slots[bytes32("nested_storer 1")]++;
+        this.run2();
+        slots[bytes32("nested_storer 2")]++;
+    }
+
+    function run2() external payable {
+        slots[bytes32("nested_storer 3")]++;
+        slots[bytes32("nested_storer 4")]++;
+    } 
+}
+
 /// @notice Helper contract that directly reads from and writes to storage
 contract StorageAccessor {
     function read(bytes32 slot) public view returns (bytes32 value) {
@@ -136,37 +154,102 @@ contract StorageAccessor {
     }
 }
 
+/// @notice Proxy contract
+contract Proxy {
+    bytes32 public constant IMPL_ADDR = bytes32(uint256(keccak256("ekans implementation")));
+
+    constructor(address _delegate) {
+        bytes32 impl = IMPL_ADDR;
+        assembly {
+            sstore(impl, _delegate)
+        }
+    }
+
+    receive() external payable {
+        doProxyCall();
+    }
+
+    fallback() external payable {
+        doProxyCall();
+    }
+
+    function doProxyCall() internal {
+        address _target;
+        bytes32 impl = IMPL_ADDR;
+        assembly {
+            _target := sload(impl)
+            calldatacopy(0x0, 0x0, calldatasize())
+            let result := delegatecall(gas(), _target, 0x0, calldatasize(), 0x0, 0)
+            returndatacopy(0x0, 0x0, returndatasize())
+            switch result case 0 { revert(0, 0) } default { return(0, returndatasize()) }
+        }
+    }
+}
+
 /// @notice Test that the cheatcode correctly records account accesses
 contract RecordAccountAccessesTest is DSTest {
     Vm constant cheats = Vm(HEVM_ADDRESS);
     NestedRunner runner;
+    NestedStorer nestedStorer;
     Create2or create2or;
     StorageAccessor test1;
     StorageAccessor test2;
 
     function setUp() public {
         runner = new NestedRunner();
+        nestedStorer = new NestedStorer();
         create2or = new Create2or();
         test1 = new StorageAccessor();
         test2 = new StorageAccessor();
+    }
+
+    function testStorageAccessesDelegateCall() public {
+        StorageAccessor one = test1;
+        Proxy proxy = new Proxy(address(one));
+
+        cheats.startStateDiffRecording();
+        address(proxy).call(abi.encodeCall(StorageAccessor.read, bytes32(uint256(1234))));
+        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
+
+        assertEq(called.length, 3, "incorrect length");
+
+        assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Call), "incorrect kind");
+        assertEq(called[0].accessor, address(this));
+        assertEq(called[0].account, address(proxy));
+
+        assertEq(toUint(called[1].kind), toUint(Vm.AccountAccessKind.DelegateCall), "incorrect kind");
+        assertEq(called[1].account, address(one), "incorrect account");
+        assertEq(called[1].accessor, address(this), "incorrect accessor");
+        assertEq(
+            called[1].storageAccesses[0],
+            Vm.StorageAccess({
+                account: address(proxy),
+                slot: bytes32(uint256(1234)),
+                isWrite: false,
+                previousValue: bytes32(uint256(0)),
+                newValue: bytes32(uint256(0)),
+                reverted: false
+            })
+        );
+
+        assertResumeEq(called[2], called[0]);
     }
 
     /// @notice Test normal, non-nested storage accesses
     function testStorageAccesses() public {
         StorageAccessor one = test1;
         StorageAccessor two = test2;
-        cheats.recordStateDiff();
+        cheats.startStateDiffRecording();
 
         one.read(bytes32(uint256(1234)));
         one.write(bytes32(uint256(1235)), bytes32(uint256(5678)));
         two.write(bytes32(uint256(5678)), bytes32(uint256(123469)));
         two.write(bytes32(uint256(5678)), bytes32(uint256(1234)));
 
-        Vm.AccountAccess[] memory called = cheats.getStateDiff();
-        // Empty since no record account is associated with the storage access
+        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
         assertEq(called.length, 4, "incorrect length");
 
-        assertEq(called[0].storageAccesses.length, 1, "incorrect length");
+        assertEq(called[0].storageAccesses.length, 1, "incorrect storage length");
         Vm.StorageAccess memory access = called[0].storageAccesses[0];
         assertEq(
             access,
@@ -180,7 +263,7 @@ contract RecordAccountAccessesTest is DSTest {
             })
         );
 
-        assertEq(called[1].storageAccesses.length, 1, "incorrect length");
+        assertEq(called[1].storageAccesses.length, 1, "incorrect storage length");
         access = called[1].storageAccesses[0];
         assertEq(
             access,
@@ -194,7 +277,7 @@ contract RecordAccountAccessesTest is DSTest {
             })
         );
 
-        assertEq(called[2].storageAccesses.length, 1, "incorrect length");
+        assertEq(called[2].storageAccesses.length, 1, "incorrect storage length");
         access = called[2].storageAccesses[0];
         assertEq(
             access,
@@ -208,7 +291,7 @@ contract RecordAccountAccessesTest is DSTest {
             })
         );
 
-        assertEq(called[3].storageAccesses.length, 1, "incorrect length");
+        assertEq(called[3].storageAccesses.length, 1, "incorrect storage length");
         access = called[3].storageAccesses[0];
         assertEq(
             access,
@@ -225,7 +308,7 @@ contract RecordAccountAccessesTest is DSTest {
 
     /// @notice Test that basic account accesses are correctly recorded
     function testRecordAccountAccesses() public {
-        cheats.recordStateDiff();
+        cheats.startStateDiffRecording();
 
         (bool succ,) = address(1234).call("");
         (succ,) = address(5678).call{value: 1 ether}("");
@@ -234,11 +317,12 @@ contract RecordAccountAccessesTest is DSTest {
         // contract calls to self in constructor
         SelfCaller caller = new SelfCaller{value: 2 ether}('hello2 world2');
 
-        Vm.AccountAccess[] memory called = cheats.getStateDiff();
+        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
         assertEq(called.length, 6);
         assertEq(
             called[0],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(this),
                 account: address(1234),
                 kind: Vm.AccountAccessKind.Call,
@@ -256,6 +340,7 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(
             called[1],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(this),
                 account: address(5678),
                 kind: Vm.AccountAccessKind.Call,
@@ -272,6 +357,7 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(
             called[2],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(this),
                 account: address(123469),
                 kind: Vm.AccountAccessKind.Call,
@@ -288,6 +374,7 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(
             called[3],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(this),
                 account: address(5678),
                 kind: Vm.AccountAccessKind.Call,
@@ -304,6 +391,7 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(
             called[4],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(this),
                 account: address(caller),
                 kind: Vm.AccountAccessKind.Create,
@@ -320,6 +408,7 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(
             called[5],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(caller),
                 account: address(caller),
                 kind: Vm.AccountAccessKind.Call,
@@ -339,13 +428,14 @@ contract RecordAccountAccessesTest is DSTest {
     ///         reverts
     function testRevertingCall() public {
         uint256 initBalance = address(this).balance;
-        cheats.recordStateDiff();
+        cheats.startStateDiffRecording();
         try this.revertingCall{value: 1 ether}(address(1234), "") {} catch {}
-        Vm.AccountAccess[] memory called = cheats.getStateDiff();
+        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
         assertEq(called.length, 2);
         assertEq(
             called[0],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(this),
                 account: address(this),
                 kind: Vm.AccountAccessKind.Call,
@@ -362,6 +452,7 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(
             called[1],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(this),
                 account: address(1234),
                 kind: Vm.AccountAccessKind.Call,
@@ -379,14 +470,14 @@ contract RecordAccountAccessesTest is DSTest {
 
     /// @notice Test that nested account accesses are correctly recorded
     function testNested() public {
-        cheats.recordStateDiff();
+        cheats.startStateDiffRecording();
         runNested(false, false);
     }
 
     /// @notice Test that nested account accesses are correctly recorded when
     ///         the first call reverts
     function testNested_Revert() public {
-        cheats.recordStateDiff();
+        cheats.startStateDiffRecording();
         runNested(true, false);
     }
 
@@ -394,7 +485,7 @@ contract RecordAccountAccessesTest is DSTest {
     /// @param shouldRevert Whether the first call should revert
     function runNested(bool shouldRevert, bool expectFirstCall) public {
         try runner.run{value: 1 ether}(shouldRevert) {} catch {}
-        Vm.AccountAccess[] memory called = cheats.getStateDiff();
+        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
         assertEq(called.length, 7 + toUint(expectFirstCall), "incorrect length");
 
         uint256 startingIndex = toUint(expectFirstCall);
@@ -402,6 +493,7 @@ contract RecordAccountAccessesTest is DSTest {
             assertEq(
                 called[0],
                 Vm.AccountAccess({
+                    forkId: 0,
                     accessor: address(this),
                     account: address(1234),
                     kind: Vm.AccountAccessKind.Call,
@@ -433,6 +525,7 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(
             called[startingIndex],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(this),
                 account: address(runner),
                 kind: Vm.AccountAccessKind.Call,
@@ -464,6 +557,7 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(
             called[startingIndex + 1],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(runner),
                 account: address(runner.reverter()),
                 kind: Vm.AccountAccessKind.Call,
@@ -495,6 +589,7 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(
             called[startingIndex + 2],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(runner.reverter()),
                 account: address(runner.doer()),
                 kind: Vm.AccountAccessKind.Call,
@@ -526,6 +621,7 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(
             called[startingIndex + 3],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(runner.doer()),
                 account: address(runner.doer()),
                 kind: Vm.AccountAccessKind.Call,
@@ -557,6 +653,7 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(
             called[startingIndex + 4],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(runner),
                 account: address(runner.succeeder()),
                 kind: Vm.AccountAccessKind.Call,
@@ -588,6 +685,7 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(
             called[startingIndex + 5],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(runner.succeeder()),
                 account: address(runner.doer()),
                 kind: Vm.AccountAccessKind.Call,
@@ -619,6 +717,7 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(
             called[startingIndex + 6],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(runner.doer()),
                 account: address(runner.doer()),
                 kind: Vm.AccountAccessKind.Call,
@@ -635,24 +734,138 @@ contract RecordAccountAccessesTest is DSTest {
         );
     }
 
+    function testNestedStorage() public {
+        cheats.startStateDiffRecording();
+        nestedStorer.run();
+        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
+        assertEq(called.length, 3, "incorrect account access length");
+
+        assertEq(called[0].storageAccesses.length, 2, "incorrect run storage length");
+        assertIncrementEq(
+            called[0].storageAccesses[0],
+            called[0].storageAccesses[1],
+            Vm.StorageAccess({
+                account: address(nestedStorer),
+                slot: keccak256(abi.encodePacked(bytes32("nested_storer 1"), bytes32(0))),
+                isWrite: true,
+                previousValue: bytes32(uint256(0)),
+                newValue: bytes32(uint256(1)),
+                reverted: false
+            })
+        );
+        assertEq(
+            called[0],
+            Vm.AccountAccess({
+                forkId: 0,
+                accessor: address(this),
+                account: address(nestedStorer),
+                kind: Vm.AccountAccessKind.Call,
+                oldBalance: 0,
+                newBalance: 0,
+                deployedCode: "",
+                initialized: true,
+                value: 0,
+                data: abi.encodeCall(NestedStorer.run, ()),
+                reverted: false,
+                storageAccesses: new Vm.StorageAccess[](0)
+            }),
+            false
+        );
+
+        assertEq(called[1].storageAccesses.length, 4, "incorrect run2 storage length");
+        assertIncrementEq(
+            called[1].storageAccesses[0],
+            called[1].storageAccesses[1],
+            Vm.StorageAccess({
+                account: address(nestedStorer),
+                slot: keccak256(abi.encodePacked(bytes32("nested_storer 3"), bytes32(0))),
+                isWrite: true,
+                previousValue: bytes32(uint256(0)),
+                newValue: bytes32(uint256(1)),
+                reverted: false 
+            })
+        );
+        assertIncrementEq(
+            called[1].storageAccesses[2],
+            called[1].storageAccesses[3],
+            Vm.StorageAccess({
+                account: address(nestedStorer),
+                slot: keccak256(abi.encodePacked(bytes32("nested_storer 4"), bytes32(0))),
+                isWrite: true,
+                previousValue: bytes32(uint256(0)),
+                newValue: bytes32(uint256(1)),
+                reverted: false 
+            })
+        );
+        assertEq(
+            called[1],
+            Vm.AccountAccess({
+                forkId: 0,
+                accessor: address(nestedStorer),
+                account: address(nestedStorer),
+                kind: Vm.AccountAccessKind.Call,
+                oldBalance: 0,
+                newBalance: 0,
+                deployedCode: "",
+                initialized: true,
+                value: 0,
+                data: abi.encodeCall(NestedStorer.run2, ()),
+                reverted: false,
+                storageAccesses: new Vm.StorageAccess[](0)
+            }),
+            false
+        );
+
+        assertEq(called[2].storageAccesses.length, 2, "incorrect resume storage length");
+        assertIncrementEq(
+            called[2].storageAccesses[0],
+            called[2].storageAccesses[1],
+            Vm.StorageAccess({
+                account: address(nestedStorer),
+                slot: keccak256(abi.encodePacked(bytes32("nested_storer 2"), bytes32(0))),
+                isWrite: true,
+                previousValue: bytes32(uint256(0)),
+                newValue: bytes32(uint256(1)),
+                reverted: false 
+            })
+        );
+        assertEq(
+            called[2],
+            Vm.AccountAccess({
+                forkId: 0,
+                accessor: address(this),
+                account: address(nestedStorer),
+                kind: Vm.AccountAccessKind.Resume,
+                oldBalance: 0,
+                newBalance: 0,
+                deployedCode: "",
+                initialized: true,
+                value: 0,
+                data: "",
+                reverted: false,
+                storageAccesses: new Vm.StorageAccess[](0)
+            }),
+            false
+        );
+    }
+
     /// @notice Test that constructor account and storage accesses are recorded, including reverts
     function testConstructorStorage() public {
-        cheats.recordStateDiff();
+        cheats.startStateDiffRecording();
         address storer = address(new ConstructorStorer(false));
         try create2or.create2(bytes32(0), abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(true))) {}
             catch {}
         bytes memory creationCode = abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(true));
         address hypotheticalStorer = deriveCreate2Address(address(create2or), bytes32(0), keccak256(creationCode));
 
-        Vm.AccountAccess[] memory called = cheats.getStateDiff();
+        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
         assertEq(called.length, 3, "incorrect account access length");
         assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Create), "incorrect kind");
         assertEq(toUint(called[1].kind), toUint(Vm.AccountAccessKind.Call), "incorrect kind");
         assertEq(toUint(called[2].kind), toUint(Vm.AccountAccessKind.Create), "incorrect kind");
 
-        Vm.StorageAccess[] memory storageAccesses = new Vm.StorageAccess[](1);
-
         assertEq(called[0].storageAccesses.length, 1, "incorrect storage access length");
+        Vm.StorageAccess[] memory storageAccesses = new Vm.StorageAccess[](1);
         storageAccesses[0] = Vm.StorageAccess({
             account: storer,
             slot: bytes32(uint256(0)),
@@ -664,6 +877,7 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(
             called[0],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(this),
                 account: address(storer),
                 kind: Vm.AccountAccessKind.Create,
@@ -679,17 +893,52 @@ contract RecordAccountAccessesTest is DSTest {
         );
 
         assertEq(called[1].storageAccesses.length, 0, "incorrect storage access length");
+        assertEq(
+            called[1],
+            Vm.AccountAccess({
+                forkId: 0,
+                accessor: address(this),
+                account: address(create2or),
+                kind: Vm.AccountAccessKind.Call,
+                oldBalance: 0,
+                newBalance: 0,
+                deployedCode: "",
+                initialized: true,
+                value: 0,
+                data: abi.encodeCall(
+                    Create2or.create2,
+                    (bytes32(0), abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(true)))
+                    ),
+                reverted: false,
+                storageAccesses: new Vm.StorageAccess[](0)
+            })
+        );
 
         assertEq(called[2].storageAccesses.length, 1, "incorrect storage access length");
+        storageAccesses = new Vm.StorageAccess[](1);
+        storageAccesses[0] = Vm.StorageAccess({
+            account: hypotheticalStorer,
+            slot: bytes32(uint256(0)),
+            isWrite: true,
+            previousValue: bytes32(uint256(0)),
+            newValue: bytes32(uint256(1)),
+            reverted: true
+        });
         assertEq(
-            called[2].storageAccesses[0],
-            Vm.StorageAccess({
+            called[2],
+            Vm.AccountAccess({
+                forkId: 0,
+                accessor: address(create2or),
                 account: hypotheticalStorer,
-                slot: bytes32(uint256(0)),
-                isWrite: true,
-                previousValue: bytes32(uint256(0)),
-                newValue: bytes32(uint256(1)),
-                reverted: true
+                kind: Vm.AccountAccessKind.Create,
+                oldBalance: 0,
+                newBalance: 0,
+                deployedCode: address(hypotheticalStorer).code,
+                initialized: true,
+                value: 0,
+                data: creationCode,
+                reverted: true,
+                storageAccesses: storageAccesses
             })
         );
     }
@@ -713,15 +962,16 @@ contract RecordAccountAccessesTest is DSTest {
     /// @notice Test that constructor calls and calls made within a constructor
     ///         are correctly recorded, even if it reverts
     function testCreateRevert() public {
-        cheats.recordStateDiff();
+        cheats.startStateDiffRecording();
         bytes memory creationCode = abi.encodePacked(type(SelfCaller).creationCode, abi.encode(""));
         try create2or.create2(bytes32(0), creationCode) {} catch {}
         address hypotheticalAddress = deriveCreate2Address(address(create2or), bytes32(0), keccak256(creationCode));
-        Vm.AccountAccess[] memory called = cheats.getStateDiff();
+        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
         assertEq(called.length, 3, "incorrect length");
         assertEq(
             called[1],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(create2or),
                 account: hypotheticalAddress,
                 kind: Vm.AccountAccessKind.Create,
@@ -738,6 +988,7 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(
             called[2],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: hypotheticalAddress,
                 account: hypotheticalAddress,
                 kind: Vm.AccountAccessKind.Call,
@@ -761,11 +1012,12 @@ contract RecordAccountAccessesTest is DSTest {
         this.startRecordingFromLowerDepth();
         address a = address(new SelfDestructor{value:1 ether}(address(this)));
         address b = address(new SelfDestructor{value:1 ether}(address(bytes20("doesn't exist yet"))));
-        Vm.AccountAccess[] memory called = cheats.getStateDiff();
+        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
         assertEq(called.length, 5, "incorrect length");
         assertEq(
             called[1],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(this),
                 account: a,
                 kind: Vm.AccountAccessKind.Create,
@@ -782,6 +1034,7 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(
             called[2],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(a),
                 account: address(this),
                 kind: Vm.AccountAccessKind.SelfDestruct,
@@ -798,6 +1051,7 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(
             called[3],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(this),
                 account: b,
                 kind: Vm.AccountAccessKind.Create,
@@ -814,6 +1068,7 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(
             called[4],
             Vm.AccountAccess({
+                forkId: 0,
                 accessor: address(b),
                 account: address(bytes20("doesn't exist yet")),
                 kind: Vm.AccountAccessKind.SelfDestruct,
@@ -830,7 +1085,7 @@ contract RecordAccountAccessesTest is DSTest {
     }
 
     function startRecordingFromLowerDepth() external {
-        cheats.recordStateDiff();
+        cheats.startStateDiffRecording();
         assembly {
             pop(call(gas(), 1234, 0, 0, 0, 0, 0))
         }
@@ -841,6 +1096,27 @@ contract RecordAccountAccessesTest is DSTest {
             pop(call(gas(), target, div(callvalue(), 10), add(data, 0x20), mload(data), 0, 0))
         }
         revert();
+    }
+
+    function assertResumeEq(Vm.AccountAccess memory actual, Vm.AccountAccess memory parent) internal {
+        assertEq(
+            actual,
+            Vm.AccountAccess({
+                forkId: 0,
+                accessor: parent.accessor,
+                account: parent.account,
+                kind: Vm.AccountAccessKind.Resume,
+                oldBalance: 0,
+                newBalance: 0,
+                deployedCode: "",
+                initialized: parent.initialized,
+                value: 0,
+                data: "",
+                reverted: parent.reverted,
+                storageAccesses: new Vm.StorageAccess[](0)
+            }),
+            false
+        );
     }
 
     function assertIncrementEq(
@@ -879,9 +1155,9 @@ contract RecordAccountAccessesTest is DSTest {
     function assertEq(Vm.AccountAccess memory actualAccess, Vm.AccountAccess memory expectedAccess, bool checkStorage)
         internal
     {
-        assertEq(actualAccess.accessor, expectedAccess.accessor, "incorrect accessor");
-        assertEq(actualAccess.account, expectedAccess.account, "incorrect account");
         assertEq(toUint(actualAccess.kind), toUint(expectedAccess.kind), "incorrect kind");
+        assertEq(actualAccess.account, expectedAccess.account, "incorrect account");
+        assertEq(actualAccess.accessor, expectedAccess.accessor, "incorrect accessor");
         assertEq(toUint(actualAccess.initialized), toUint(expectedAccess.initialized), "incorrect initialized");
         assertEq(actualAccess.oldBalance, expectedAccess.oldBalance, "incorrect oldBalance");
         assertEq(actualAccess.newBalance, expectedAccess.newBalance, "incorrect newBalance");

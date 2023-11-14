@@ -40,10 +40,20 @@ interface Vm {
     enum AccountAccessKind {
         /// The account was called.
         Call,
-        /// The account was created.
+        /// The account was called via delegatecall.
+        DelegateCall,
+        /// The account was called via callcode.
+        CallCode,
+        /// THe account was called via staticcall.
+        StaticCall,
+        /// THe account was created.
         Create,
         /// The account was selfdestructed.
         SelfDestruct,
+        /// Synthetic access indicating the current context has resumed after a previous sub-context AccountAccess sub-context.
+        Resume,
+        /// Synthetic access indicating the current context has ended.
+        Return,
     }
 
     /// An Ethereum log. Returned by `getRecordedLogs`.
@@ -144,15 +154,21 @@ interface Vm {
         bytes stderr;
     }
 
-    /// The result of a `getStateDiff` call.
+    /// The result of a `stopAndReturnStateDiff` call.
     struct AccountAccess {
-        /// What accessed the account.
-        address accessor;
+        /// The fork the access occurred. It's zero if no fork is active.
+        uint256 forkId;
+        /// The kind of account access that determines what the account is.
+        /// If kind is Call, DelegateCall, StaticCall or CallCode, then the account is the callee.
+        /// If kind is Create, then the account is the newly created account.
+        /// If kind is SelfDestruct, then the account is the selfdestruct recipient.
+        /// If kind is a Resume, then account represents a account context that has resumed.
+        AccountAccessKind kind;
         /// The account that was accessed.
         /// It's either the account created, callee or a selfdestruct recipient for CREATE, CALL or SELFDESTRUCT.
         address account;
-        /// The kind of account access.
-        AccountAccessKind kind;
+        /// What accessed the account.
+        address accessor;
         /// If the account was initialized or empty prior to the access.
         /// An account is considered initialized if it has code, a
         /// non-zero nonce, or a non-zero balance.
@@ -225,11 +241,11 @@ interface Vm {
     /// Record all account accesses as part of CREATE, CALL or SELFDESTRUCT opcodes in order,
     /// along with the context of the calls
     #[cheatcode(group = Evm, safety = Safe)]
-    function recordStateDiff() external;
+    function startStateDiffRecording() external;
 
-    /// Returns an ordered array of all account accesses from a `vm.recordStateDiff` session.
+    /// Returns an ordered array of all account accesses from a `vm.startStateDiffRecording` session.
     #[cheatcode(group = Evm, safety = Safe)]
-    function getStateDiff() external returns (AccountAccess[] memory accesses);
+    function stopAndReturnStateDiff() external returns (AccountAccess[] memory accesses);
 
     // -------- Recording Map Writes --------
 
