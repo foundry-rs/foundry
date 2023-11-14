@@ -316,7 +316,9 @@ impl SignEthClient {
                 SelectorImportRequest { function: functions_and_errors, event: events }
             }
             SelectorImportData::Raw(raw) => {
-                SelectorImportRequest { function: raw.function, event: raw.event }
+                let function_and_error =
+                    raw.function.iter().chain(raw.error.iter()).cloned().collect::<Vec<_>>();
+                SelectorImportRequest { function: function_and_error, event: raw.event }
             }
         };
 
