@@ -1,7 +1,7 @@
 //! test outcomes
 
 use alloy_primitives::Address;
-use ethers::prelude::Log;
+use ethers_core::types::Log;
 use foundry_common::evm::Breakpoints;
 use foundry_evm::{
     coverage::HitMaps,
@@ -11,7 +11,12 @@ use foundry_evm::{
     traces::{TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt, time::Duration};
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Write},
+    time::Duration,
+};
+use yansi::Paint;
 
 /// Results and duration for a set of tests included in the same test contract
 #[derive(Debug, Clone, Serialize)]
@@ -128,6 +133,39 @@ pub struct TestResult {
 
     /// pc breakpoint char map
     pub breakpoints: Breakpoints,
+}
+
+impl fmt::Display for TestResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.status {
+            TestStatus::Success => Paint::green("[PASS]").fmt(f),
+            TestStatus::Skipped => Paint::yellow("[SKIP]").fmt(f),
+            TestStatus::Failure => {
+                let mut s = String::from("[FAIL. Reason: ");
+
+                let reason = self.reason.as_deref().unwrap_or("assertion failed");
+                s.push_str(reason);
+
+                if let Some(counterexample) = &self.counterexample {
+                    match counterexample {
+                        CounterExample::Single(ex) => {
+                            write!(s, "; counterexample: {ex}]").unwrap();
+                        }
+                        CounterExample::Sequence(sequence) => {
+                            s.push_str("]\n\t[Sequence]\n");
+                            for ex in sequence {
+                                writeln!(s, "\t\t{ex}").unwrap();
+                            }
+                        }
+                    }
+                } else {
+                    s.push(']');
+                }
+
+                Paint::red(s).fmt(f)
+            }
+        }
+    }
 }
 
 impl TestResult {
@@ -253,7 +291,7 @@ impl TestSetup {
                 logs,
                 traces,
                 labeled_addresses,
-                format!("Failed to deploy contract: {e}"),
+                format!("failed to deploy contract: {e}"),
             ),
         }
     }

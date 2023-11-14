@@ -1,14 +1,14 @@
 use alloy_primitives::Address;
 use clap::Parser;
-use ethers::{
-    core::rand::thread_rng,
-    signers::{
-        coins_bip39::{English, Mnemonic},
-        LocalWallet, MnemonicBuilder, Signer,
-    },
+use ethers_core::{
+    rand::thread_rng,
     types::{transaction::eip712::TypedData, Signature},
+    utils::to_checksum,
 };
-use ethers_core::utils::to_checksum;
+use ethers_signers::{
+    coins_bip39::{English, Mnemonic},
+    LocalWallet, MnemonicBuilder, Signer,
+};
 use eyre::{Context, Result};
 use foundry_cli::opts::{RawWallet, Wallet};
 use foundry_common::fs;

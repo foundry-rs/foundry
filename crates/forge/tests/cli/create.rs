@@ -4,8 +4,8 @@ use crate::{
     constants::*,
     utils::{self, EnvExternalities},
 };
+use alloy_primitives::Address;
 use anvil::{spawn, NodeConfig};
-use ethers::types::Address;
 use foundry_compilers::{artifacts::BytecodeHash, remappings::Remapping};
 use foundry_config::Config;
 use foundry_test_utils::{
@@ -31,11 +31,9 @@ fn setup_with_simple_remapping(prj: &TestProject) -> String {
     };
     prj.write_config(config);
 
-    prj.inner()
-        .add_source(
-            "LinkTest",
-            r#"
-// SPDX-License-Identifier: MIT
+    prj.add_source(
+        "LinkTest",
+        r#"
 import "remapping/MyLib.sol";
 contract LinkTest {
     function foo() public returns (uint256) {
@@ -43,22 +41,20 @@ contract LinkTest {
     }
 }
 "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-    prj.inner()
-        .add_lib(
-            "remapping/MyLib",
-            r"
-// SPDX-License-Identifier: MIT
+    prj.add_lib(
+        "remapping/MyLib",
+        r"
 library MyLib {
     function foobar(uint256 a) public view returns (uint256) {
     	return a * 100;
     }
 }
 ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     "src/LinkTest.sol:LinkTest".to_string()
 }
@@ -73,12 +69,9 @@ fn setup_oracle(prj: &TestProject) -> String {
     };
     prj.write_config(config);
 
-    prj.inner()
-        .add_source(
-            "Contract",
-            r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+    prj.add_source(
+        "Contract",
+        r#"
 import {ChainlinkTWAP} from "./libraries/ChainlinkTWAP.sol";
 contract Contract {
     function getPrice() public view returns (int latest) {
@@ -86,24 +79,20 @@ contract Contract {
     }
 }
 "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-    prj.inner()
-        .add_source(
-            "libraries/ChainlinkTWAP",
-            r"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
-
+    prj.add_source(
+        "libraries/ChainlinkTWAP",
+        r"
 library ChainlinkTWAP {
    function getLatestPrice(address base) public view returns (int256) {
         return 0;
    }
 }
 ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     "src/Contract.sol:Contract".to_string()
 }
@@ -144,12 +133,12 @@ forgetest_async!(
     #[serial_test::serial]
     can_create_template_contract,
     |prj, cmd| {
+        foundry_test_utils::util::initialize(prj.root());
+
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let rpc = handle.http_endpoint();
         let wallet = handle.dev_wallets().next().unwrap();
         let pk = hex::encode(wallet.signer().to_bytes());
-        cmd.args(["init", "--force"]);
-        cmd.assert_non_empty_stdout();
 
         // explicitly byte code hash for consistent checks
         let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
@@ -158,8 +147,6 @@ forgetest_async!(
         cmd.forge_fuse().args([
             "create",
             format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
-            "--use",
-            "solc:0.8.15",
             "--rpc-url",
             rpc.as_str(),
             "--private-key",
@@ -183,11 +170,11 @@ forgetest_async!(
     #[serial_test::serial]
     can_create_using_unlocked,
     |prj, cmd| {
+        foundry_test_utils::util::initialize(prj.root());
+
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let rpc = handle.http_endpoint();
         let dev = handle.dev_accounts().next().unwrap();
-        cmd.args(["init", "--force"]);
-        cmd.assert_non_empty_stdout();
 
         // explicitly byte code hash for consistent checks
         let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
@@ -196,8 +183,6 @@ forgetest_async!(
         cmd.forge_fuse().args([
             "create",
             format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
-            "--use",
-            "solc:0.8.15",
             "--rpc-url",
             rpc.as_str(),
             "--from",
@@ -222,23 +207,20 @@ forgetest_async!(
     #[serial_test::serial]
     can_create_with_constructor_args,
     |prj, cmd| {
+        foundry_test_utils::util::initialize(prj.root());
+
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let rpc = handle.http_endpoint();
         let wallet = handle.dev_wallets().next().unwrap();
         let pk = hex::encode(wallet.signer().to_bytes());
-        cmd.args(["init", "--force"]);
-        cmd.assert_non_empty_stdout();
 
         // explicitly byte code hash for consistent checks
         let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
         prj.write_config(config);
 
-        prj.inner()
-            .add_source(
-                "ConstructorContract",
-                r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+        prj.add_source(
+            "ConstructorContract",
+            r#"
 contract ConstructorContract {
     string public name;
 
@@ -247,14 +229,12 @@ contract ConstructorContract {
     }
 }
 "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
         cmd.forge_fuse().args([
             "create",
             "./src/ConstructorContract.sol:ConstructorContract",
-            "--use",
-            "solc:0.8.15",
             "--rpc-url",
             rpc.as_str(),
             "--private-key",
@@ -268,13 +248,9 @@ contract ConstructorContract {
                 .join("tests/fixtures/can_create_with_constructor_args.stdout"),
         );
 
-        prj.inner()
-            .add_source(
-                "TupleArrayConstructorContract",
-                r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
-
+        prj.add_source(
+            "TupleArrayConstructorContract",
+            r#"
 struct Point {
     uint256 x;
     uint256 y;
@@ -284,14 +260,12 @@ contract TupleArrayConstructorContract {
     constructor(Point[] memory _points) {}
 }
 "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
         cmd.forge_fuse().args([
             "create",
             "./src/TupleArrayConstructorContract.sol:TupleArrayConstructorContract",
-            "--use",
-            "solc:0.8.15",
             "--rpc-url",
             rpc.as_str(),
             "--private-key",

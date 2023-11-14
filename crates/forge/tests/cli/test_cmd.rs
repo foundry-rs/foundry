@@ -1,6 +1,6 @@
 //! Contains various tests for checking `forge test`
 use foundry_config::Config;
-use foundry_test_utils::util::{template_lock, OutputExt};
+use foundry_test_utils::util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION};
 use foundry_utils::rpc;
 use std::{path::PathBuf, process::Command, str::FromStr};
 
@@ -33,17 +33,13 @@ forgetest!(can_set_filter_values, |prj, cmd| {
 
 // tests that warning is displayed when there are no tests in project
 forgetest!(warn_no_tests, |prj, cmd| {
-    prj.inner()
-        .add_source(
-            "dummy",
-            r"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity =0.8.13;
-
+    prj.add_source(
+        "dummy",
+        r"
 contract Dummy {}
 ",
-        )
-        .unwrap();
+    )
+    .unwrap();
     // set up command
     cmd.args(["test"]);
 
@@ -55,17 +51,13 @@ contract Dummy {}
 
 // tests that warning is displayed with pattern when no tests match
 forgetest!(warn_no_tests_match, |prj, cmd| {
-    prj.inner()
-        .add_source(
-            "dummy",
-            r"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity =0.8.13;
-
+    prj.add_source(
+        "dummy",
+        r"
 contract Dummy {}
 ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     // set up command
     cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
@@ -81,20 +73,16 @@ contract Dummy {}
 // tests that suggestion is provided with pattern when no tests match
 forgetest!(suggest_when_no_tests_match, |prj, cmd| {
     // set up project
-    prj.inner()
-        .add_source(
-            "TestE.t.sol",
-            r"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
-
+    prj.add_source(
+        "TestE.t.sol",
+        r"
 contract TestC {
     function test1() public {
     }
 }
    ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     // set up command
     cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
@@ -112,12 +100,9 @@ contract TestC {
 forgetest!(can_fuzz_array_params, |prj, cmd| {
     prj.insert_ds_test();
 
-    prj.inner()
-        .add_source(
-            "ATest.t.sol",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
+    prj.add_source(
+        "ATest.t.sol",
+        r#"
 import "./test.sol";
 contract ATest is DSTest {
     function testArray(uint64[2] calldata values) external {
@@ -125,8 +110,8 @@ contract ATest is DSTest {
     }
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.arg("test");
     cmd.stdout_lossy().contains("[PASS]");
@@ -136,11 +121,9 @@ contract ATest is DSTest {
 forgetest!(can_test_pre_bytecode_hash, |prj, cmd| {
     prj.insert_ds_test();
 
-    prj.inner()
-        .add_source(
-            "ATest.t.sol",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
+    prj.add_source(
+        "ATest.t.sol",
+        r#"
 // pre bytecode hash version, was introduced in 0.6.0
 pragma solidity 0.5.17;
 import "./test.sol";
@@ -150,8 +133,8 @@ contract ATest is DSTest {
     }
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.arg("test");
     cmd.stdout_lossy().contains("[PASS]");
@@ -161,12 +144,9 @@ contract ATest is DSTest {
 forgetest!(can_test_with_match_path, |prj, cmd| {
     prj.insert_ds_test();
 
-    prj.inner()
-        .add_source(
-            "ATest.t.sol",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
+    prj.add_source(
+        "ATest.t.sol",
+        r#"
 import "./test.sol";
 contract ATest is DSTest {
     function testArray(uint64[2] calldata values) external {
@@ -174,15 +154,12 @@ contract ATest is DSTest {
     }
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-    prj.inner()
-        .add_source(
-            "FailTest.t.sol",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
+    prj.add_source(
+        "FailTest.t.sol",
+        r#"
 import "./test.sol";
 contract FailTest is DSTest {
     function testNothing() external {
@@ -190,8 +167,8 @@ contract FailTest is DSTest {
     }
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.args(["test", "--match-path", "*src/ATest.t.sol"]);
     assert!(cmd.stdout_lossy().contains("[PASS]") && !cmd.stdout_lossy().contains("[FAIL]"));
@@ -207,12 +184,9 @@ forgetest!(can_run_test_in_custom_test_folder, |prj, cmd| {
     let config = cmd.config();
     assert_eq!(config.test, PathBuf::from("nested/forge-tests"));
 
-    prj.inner()
-        .add_source(
-            "nested/forge-tests/MyTest.t.sol",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
+    prj.add_source(
+        "nested/forge-tests/MyTest.t.sol",
+        r#"
 import "../../test.sol";
 contract MyTest is DSTest {
     function testTrue() public {
@@ -220,8 +194,8 @@ contract MyTest is DSTest {
     }
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.arg("test");
     cmd.unchecked_output().stdout_matches_path(
@@ -247,13 +221,13 @@ forgetest_init!(can_test_repeatedly, |_prj, cmd| {
 forgetest!(runs_tests_exactly_once_with_changed_versions, |prj, cmd| {
     prj.insert_ds_test();
 
-    prj.inner()
-        .add_source(
-            "Contract.t.sol",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity >=0.8.10;
+    prj.add_source(
+        "Contract.t.sol",
+        r#"
+pragma solidity *;
+
 import "./test.sol";
+
 contract ContractTest is DSTest {
     function setUp() public {}
 
@@ -262,26 +236,26 @@ contract ContractTest is DSTest {
     }
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     // pin version
-    let config = Config { solc: Some("0.8.10".into()), ..Default::default() };
+    let config = Config { solc: Some(SOLC_VERSION.into()), ..Default::default() };
     prj.write_config(config);
 
     cmd.arg("test");
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/runs_tests_exactly_once_with_changed_versions.0.8.10.stdout"),
+            .join("tests/fixtures/runs_tests_exactly_once_with_changed_versions.1.stdout"),
     );
 
     // pin version
-    let config = Config { solc: Some("0.8.13".into()), ..Default::default() };
+    let config = Config { solc: Some(OTHER_SOLC_VERSION.into()), ..Default::default() };
     prj.write_config(config);
 
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/runs_tests_exactly_once_with_changed_versions.0.8.13.stdout"),
+            .join("tests/fixtures/runs_tests_exactly_once_with_changed_versions.2.stdout"),
     );
 });
 
@@ -291,8 +265,6 @@ forgetest_init!(
     #[serial_test::serial]
     can_test_forge_std,
     |prj, cmd| {
-        let mut lock = template_lock();
-        let write = lock.write().unwrap();
         let forge_std_dir = prj.root().join("lib/forge-std");
         let status = Command::new("git")
             .current_dir(&forge_std_dir)
@@ -302,7 +274,6 @@ forgetest_init!(
         if !status.success() {
             panic!("failed to update forge-std");
         }
-        drop(write);
 
         // execute in subdir
         cmd.cmd().current_dir(forge_std_dir);
@@ -316,13 +287,9 @@ forgetest_init!(
 // tests that libraries are handled correctly in multiforking mode
 forgetest_init!(can_use_libs_in_multi_fork, |prj, cmd| {
     prj.wipe_contracts();
-    prj.inner()
-        .add_source(
-            "Contract.sol",
-            r"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity =0.8.13;
-
+    prj.add_source(
+        "Contract.sol",
+        r"
 library Library {
     function f(uint256 a, uint256 b) public pure returns (uint256) {
         return a + b;
@@ -337,18 +304,14 @@ contract Contract {
     }
 }
    ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     let endpoint = rpc::next_http_archive_rpc_endpoint();
 
-    prj.inner()
-        .add_test(
-            "Contract.t.sol",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity =0.8.13;
-
+    prj.add_test(
+        "Contract.t.sol",
+        &r#"
 import "forge-std/Test.sol";
 import "src/Contract.sol";
 
@@ -362,9 +325,9 @@ contract ContractTest is Test {
     }
 }
    "#
-            .replace("<url>", &endpoint),
-        )
-        .unwrap();
+        .replace("<url>", &endpoint),
+    )
+    .unwrap();
 
     cmd.arg("test");
     cmd.unchecked_output().stdout_matches_path(
@@ -374,9 +337,6 @@ contract ContractTest is Test {
 });
 
 static FAILING_TEST: &str = r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.17;
-
 import "forge-std/Test.sol";
 
 contract FailingTest is Test {
@@ -388,7 +348,7 @@ contract FailingTest is Test {
 
 forgetest_init!(exit_code_error_on_fail_fast, |prj, cmd| {
     prj.wipe_contracts();
-    prj.inner().add_source("failing_test", FAILING_TEST).unwrap();
+    prj.add_source("failing_test", FAILING_TEST).unwrap();
 
     // set up command
     cmd.args(["test", "--fail-fast"]);
@@ -400,7 +360,7 @@ forgetest_init!(exit_code_error_on_fail_fast, |prj, cmd| {
 forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
     prj.wipe_contracts();
 
-    prj.inner().add_source("failing_test", FAILING_TEST).unwrap();
+    prj.add_source("failing_test", FAILING_TEST).unwrap();
     // set up command
     cmd.args(["test", "--fail-fast", "--json"]);
 

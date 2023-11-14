@@ -372,7 +372,7 @@ impl SessionSource {
         // Construct variable definitions
         let variable_definitions = intermediate_contracts
             .get("REPL")
-            .ok_or(eyre::eyre!("Could not find intermediate REPL contract!"))?
+            .ok_or_else(|| eyre::eyre!("Could not find intermediate REPL contract!"))?
             .variable_definitions
             .clone()
             .into_iter()
@@ -609,13 +609,13 @@ impl IntermediateOutput {
         match self
             .intermediate_contracts
             .get("REPL")
-            .ok_or(eyre::eyre!("Could not find REPL intermediate contract!"))?
+            .ok_or_else(|| eyre::eyre!("Could not find REPL intermediate contract!"))?
             .function_definitions
             .get("run")
-            .ok_or(eyre::eyre!("Could not find run function definition in REPL contract!"))?
+            .ok_or_else(|| eyre::eyre!("Could not find run function definition in REPL contract!"))?
             .body
             .as_ref()
-            .ok_or(eyre::eyre!("Could not find run function body!"))?
+            .ok_or_else(|| eyre::eyre!("Could not find run function body!"))?
         {
             pt::Statement::Block { statements, .. } => Ok(statements),
             _ => eyre::bail!("Could not find statements within run function body!"),

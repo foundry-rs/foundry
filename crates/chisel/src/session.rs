@@ -4,9 +4,7 @@
 //! wrapper for a serializable REPL session.
 
 use crate::prelude::{SessionSource, SessionSourceConfig};
-
 use eyre::Result;
-
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use time::{format_description, OffsetDateTime};
@@ -147,9 +145,11 @@ impl ChiselSession {
     ///
     /// Optionally, the directory of the chisel cache.
     pub fn cache_dir() -> Result<String> {
-        let home_dir = dirs::home_dir().ok_or(eyre::eyre!("Failed to grab home directory"))?;
-        let home_dir_str =
-            home_dir.to_str().ok_or(eyre::eyre!("Failed to convert home directory to string"))?;
+        let home_dir =
+            dirs::home_dir().ok_or_else(|| eyre::eyre!("Failed to grab home directory"))?;
+        let home_dir_str = home_dir
+            .to_str()
+            .ok_or_else(|| eyre::eyre!("Failed to convert home directory to string"))?;
         Ok(format!("{home_dir_str}/.foundry/cache/chisel/"))
     }
 
@@ -224,14 +224,18 @@ impl ChiselSession {
     pub fn latest_cached_session() -> Result<String> {
         let cache_dir = Self::cache_dir()?;
         let mut entries = std::fs::read_dir(cache_dir)?;
-        let mut latest = entries.next().ok_or(eyre::eyre!("No entries found!"))??;
+        let mut latest = entries.next().ok_or_else(|| eyre::eyre!("No entries found!"))??;
         for entry in entries {
             let entry = entry?;
             if entry.metadata()?.modified()? > latest.metadata()?.modified()? {
                 latest = entry;
             }
         }
-        Ok(latest.path().to_str().ok_or(eyre::eyre!("Failed to get session path!"))?.to_string())
+        Ok(latest
+            .path()
+            .to_str()
+            .ok_or_else(|| eyre::eyre!("Failed to get session path!"))?
+            .to_string())
     }
 
     /// Loads the latest ChiselSession from the cache file

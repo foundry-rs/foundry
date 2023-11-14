@@ -142,16 +142,16 @@ impl<'a> ContractRunner<'a> {
                 .setup(None, address)
             {
                 Ok(CallResult { traces, labels, logs, coverage, .. }) => {
-                    trace!(contract = ?address, "successfully setUp test");
+                    trace!(contract=%address, "successfully setUp test");
                     (logs, traces, labels, None, coverage)
                 }
                 Err(EvmError::Execution(err)) => {
                     let ExecutionErr { traces, labels, logs, reason, .. } = *err;
-                    error!(reason = ?reason, contract = ?address, "setUp failed");
+                    error!(reason=%reason, contract=%address, "setUp failed");
                     (logs, traces, labels, Some(format!("setup failed: {reason}")), None)
                 }
                 Err(err) => {
-                    error!(reason=?err, contract= ?address, "setUp failed");
+                    error!(reason=%err, contract=%address, "setUp failed");
                     (Vec::new(), None, BTreeMap::new(), Some(format!("setup failed: {err}")), None)
                 }
             };
@@ -196,7 +196,7 @@ impl<'a> ContractRunner<'a> {
         if setup_fns.len() > 1 {
             return SuiteResult::new(
                 start.elapsed(),
-                [("setUp()".to_string(), TestResult::fail("Multiple setUp functions".to_string()))]
+                [("setUp()".to_string(), TestResult::fail("multiple setUp functions".to_string()))]
                     .into(),
                 warnings,
             )
@@ -463,7 +463,7 @@ impl<'a> ContractRunner<'a> {
             Err(e) => {
                 return TestResult {
                     status: TestStatus::Failure,
-                    reason: Some(format!("Failed to set up invariant testing environment: {e}")),
+                    reason: Some(format!("failed to set up invariant testing environment: {e}")),
                     decoded_logs: decode_console_logs(&logs),
                     traces,
                     labeled_addresses,
@@ -493,7 +493,7 @@ impl<'a> ContractRunner<'a> {
                 ) {
                     Ok(c) => counterexample = c,
                     Err(err) => {
-                        error!(?err, "Failed to replay invariant error")
+                        error!(%err, "Failed to replay invariant error");
                     }
                 };
             }

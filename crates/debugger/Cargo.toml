@@ -10,13 +10,14 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-foundry-evm.workspace = true
+foundry-evm-core.workspace = true
+foundry-evm-traces.workspace = true
 foundry-common.workspace = true
 
 alloy-primitives.workspace = true
 
 crossterm = "0.27"
 eyre.workspace = true
+ratatui = { version = "0.24.0", default-features = false, features = ["crossterm"] }
+revm.workspace = true
 tracing.workspace = true
-revm = { workspace = true, default-features = false, features = ["std", "serde", "arbitrary"] }
-ratatui = { version = "0.23.0", default-features = false, features = ["crossterm"] }

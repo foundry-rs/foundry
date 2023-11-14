@@ -92,7 +92,7 @@ impl<'a> FuzzedExecutor<'a> {
         }
 
         let strat = proptest::strategy::Union::new_weighted(weights);
-        debug!(func = ?func.name, should_fail, "fuzzing");
+        debug!(func=?func.name, should_fail, "fuzzing");
         let run_result = self.runner.clone().run(&strat, |calldata| {
             let fuzz_res = self.single_fuzz(&state, address, should_fail, calldata)?;
 
@@ -129,7 +129,9 @@ impl<'a> FuzzedExecutor<'a> {
                     // case.
                     let call_res = _counterexample.1.result.clone();
                     *counterexample.borrow_mut() = _counterexample;
-                    Err(TestCaseError::fail(decode::decode_revert(&call_res, errors, Some(status))))
+                    // HACK: we have to use an empty string here to denote `None`
+                    let reason = decode::maybe_decode_revert(&call_res, errors, Some(status));
+                    Err(TestCaseError::fail(reason.unwrap_or_default()))
                 }
             }
         });

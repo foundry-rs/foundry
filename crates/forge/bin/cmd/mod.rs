@@ -49,7 +49,6 @@ pub mod debug;
 pub mod doc;
 pub mod flatten;
 pub mod fmt;
-pub mod fourbyte;
 pub mod geiger;
 pub mod generate;
 pub mod init;

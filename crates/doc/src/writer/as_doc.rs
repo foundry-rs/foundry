@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use crate::{
     document::{read_context, DocumentContent},
     parser::ParseSource,
@@ -10,6 +8,7 @@ use crate::{
 use forge_fmt::solang_ext::SafeUnwrap;
 use itertools::Itertools;
 use solang_parser::pt::Base;
+use std::path::Path;
 
 /// The result of [Asdoc::as_doc] method.
 pub type AsDocResult = Result<String, std::fmt::Error>;
@@ -234,7 +233,8 @@ impl AsDoc for Document {
                             writer.write_subtitle("Events")?;
                             events.into_iter().try_for_each(|(item, comments, code)| {
                                 writer.write_heading(&item.name.safe_unwrap().name)?;
-                                writer.write_section(comments, code)
+                                writer.write_section(comments, code)?;
+                                writer.try_write_events_table(&item.fields, comments)
                             })?;
                         }
 
@@ -242,7 +242,8 @@ impl AsDoc for Document {
                             writer.write_subtitle("Errors")?;
                             errors.into_iter().try_for_each(|(item, comments, code)| {
                                 writer.write_heading(&item.name.safe_unwrap().name)?;
-                                writer.write_section(comments, code)
+                                writer.write_section(comments, code)?;
+                                writer.try_write_errors_table(&item.fields, comments)
                             })?;
                         }
 
@@ -250,7 +251,8 @@ impl AsDoc for Document {
                             writer.write_subtitle("Structs")?;
                             structs.into_iter().try_for_each(|(item, comments, code)| {
                                 writer.write_heading(&item.name.safe_unwrap().name)?;
-                                writer.write_section(comments, code)
+                                writer.write_section(comments, code)?;
+                                writer.try_write_properties_table(&item.fields, comments)
                             })?;
                         }
 
@@ -290,12 +292,19 @@ impl AsDoc for Document {
                         writer.writeln()?;
                     }
 
-                    ParseSource::Variable(_) |
-                    ParseSource::Event(_) |
-                    ParseSource::Error(_) |
-                    ParseSource::Struct(_) |
-                    ParseSource::Enum(_) |
-                    ParseSource::Type(_) => {
+                    ParseSource::Struct(ty) => {
+                        writer.write_section(&item.comments, &item.code)?;
+                        writer.try_write_properties_table(&ty.fields, &item.comments)?;
+                    }
+                    ParseSource::Event(ev) => {
+                        writer.write_section(&item.comments, &item.code)?;
+                        writer.try_write_events_table(&ev.fields, &item.comments)?;
+                    }
+                    ParseSource::Error(err) => {
+                        writer.write_section(&item.comments, &item.code)?;
+                        writer.try_write_errors_table(&err.fields, &item.comments)?;
+                    }
+                    ParseSource::Variable(_) | ParseSource::Enum(_) | ParseSource::Type(_) => {
                         writer.write_section(&item.comments, &item.code)?;
                     }
                 }

@@ -1,6 +1,6 @@
-//! commonly used calculations
+//! Commonly used calculations.
 
-use alloy_primitives::U256;
+use alloy_primitives::{Sign, U256};
 use std::ops::Div;
 
 /// Returns the mean of the slice
@@ -44,7 +44,7 @@ pub fn median_sorted(values: &[U256]) -> U256 {
 ///     10000000 -> 1e7
 /// ```
 #[inline]
-pub fn to_exp_notation(value: U256, precision: usize, trim_end_zeros: bool) -> String {
+pub fn to_exp_notation(value: U256, precision: usize, trim_end_zeros: bool, sign: Sign) -> String {
     let stringified = value.to_string();
     let exponent = stringified.len() - 1;
     let mut mantissa = stringified.chars().take(precision).collect::<String>();
@@ -61,7 +61,7 @@ pub fn to_exp_notation(value: U256, precision: usize, trim_end_zeros: bool) -> S
         mantissa.insert(1, '.');
     }
 
-    format!("{mantissa}e{exponent}")
+    format!("{sign}{mantissa}e{exponent}")
 }
 
 #[cfg(test)]
@@ -119,18 +119,18 @@ mod tests {
     fn test_format_to_exponential_notation() {
         let value = 1234124124u64;
 
-        let formatted = to_exp_notation(U256::from(value), 4, false);
+        let formatted = to_exp_notation(U256::from(value), 4, false, Sign::Positive);
         assert_eq!(formatted, "1.234e9");
 
-        let formatted = to_exp_notation(U256::from(value), 3, true);
+        let formatted = to_exp_notation(U256::from(value), 3, true, Sign::Positive);
         assert_eq!(formatted, "1.23e9");
 
         let value = 10000000u64;
 
-        let formatted = to_exp_notation(U256::from(value), 4, false);
+        let formatted = to_exp_notation(U256::from(value), 4, false, Sign::Positive);
         assert_eq!(formatted, "1.000e7");
 
-        let formatted = to_exp_notation(U256::from(value), 3, true);
+        let formatted = to_exp_notation(U256::from(value), 3, true, Sign::Positive);
         assert_eq!(formatted, "1e7");
     }
 }

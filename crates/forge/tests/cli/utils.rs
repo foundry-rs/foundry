@@ -1,6 +1,7 @@
 //! Various helper functions
 
-use ethers::prelude::{Address, Chain, LocalWallet, Signer};
+use ethers_core::types::{Address, Chain};
+use ethers_signers::{LocalWallet, Signer};
 
 /// Returns the current millis since unix epoch.
 ///

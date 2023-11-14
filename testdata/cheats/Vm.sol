@@ -28,6 +28,9 @@ interface Vm {
     function clearMockedCalls() external;
     function closeFile(string calldata path) external;
     function coinbase(address newCoinbase) external;
+    function computeCreate2Address(bytes32 salt, bytes32 initCodeHash, address deployer) external pure returns (address);
+    function computeCreate2Address(bytes32 salt, bytes32 initCodeHash) external pure returns (address);
+    function computeCreateAddress(address deployer, uint256 nonce) external pure returns (address);
     function cool(address target) external;
     function copyFile(string calldata from, string calldata to) external returns (uint64 copied);
     function createDir(string calldata path, bool recursive) external;

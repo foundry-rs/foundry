@@ -3,9 +3,9 @@
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{AbiItem, Event, Function};
 use alloy_primitives::{hex, Address, Log};
-use ethers_core::types::Chain;
 use eyre::{ContextCompat, Result};
 use foundry_block_explorers::{contract::ContractMetadata, errors::EtherscanError, Client};
+use foundry_config::NamedChain;
 use std::{future::Future, pin::Pin};
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
@@ -132,7 +132,7 @@ pub async fn get_func_etherscan(
     function_name: &str,
     contract: Address,
     args: &[String],
-    chain: Chain,
+    chain: NamedChain,
     etherscan_api_key: &str,
 ) -> Result<Function> {
     let client = Client::new(chain, etherscan_api_key)?;
@@ -158,7 +158,7 @@ pub fn find_source(
     address: Address,
 ) -> Pin<Box<dyn Future<Output = Result<ContractMetadata>>>> {
     Box::pin(async move {
-        tracing::trace!("find etherscan source for: {:?}", address);
+        trace!(%address, "find Etherscan source");
         let source = client.contract_source_code(address).await?;
         let metadata = source.items.first().wrap_err("Etherscan returned no data")?;
         if metadata.proxy == 0 {
@@ -173,7 +173,7 @@ pub fn find_source(
                 Err(e) => {
                     let err = EtherscanError::ContractCodeNotVerified(address).to_string();
                     if e.to_string() == err {
-                        tracing::error!("{}", err);
+                        error!(%err);
                         Ok(source)
                     } else {
                         Err(e)

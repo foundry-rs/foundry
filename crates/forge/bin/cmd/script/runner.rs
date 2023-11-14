@@ -1,6 +1,6 @@
 use super::*;
 use alloy_primitives::{Address, Bytes, U256};
-use ethers::types::NameOrAddress;
+use ethers_core::types::NameOrAddress;
 use eyre::Result;
 use forge::{
     constants::CALLER,
@@ -8,7 +8,6 @@ use forge::{
     revm::interpreter::{return_ok, InstructionResult},
     traces::{TraceKind, Traces},
 };
-use tracing::log::trace;
 
 /// Represents which simulation stage is the script execution at.
 pub enum SimulationStage {

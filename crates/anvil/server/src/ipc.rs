@@ -11,7 +11,6 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use tracing::{error, trace, warn};
 
 /// An IPC connection for anvil
 ///
@@ -33,22 +32,22 @@ impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
     ///
     /// This establishes the ipc endpoint, converts the incoming connections into handled eth
     /// connections, See [`PubSubConnection`] that should be spawned
-    #[tracing::instrument(target = "ipc", skip_all)]
+    #[instrument(target = "ipc", skip_all)]
     pub fn incoming(self) -> io::Result<impl Stream<Item = impl Future<Output = ()>>> {
         let IpcEndpoint { handler, endpoint } = self;
-        trace!( endpoint=?endpoint.path(), "starting ipc server" );
+        trace!(endpoint=?endpoint.path(), "starting IPC server" );
 
         if cfg!(unix) {
             // ensure the file does not exist
             if std::fs::remove_file(endpoint.path()).is_ok() {
-                warn!( endpoint=?endpoint.path(), "removed existing file");
+                warn!(endpoint=?endpoint.path(), "removed existing file");
             }
         }
 
         let connections = match endpoint.incoming() {
             Ok(connections) => connections,
             Err(err) => {
-                error!(?err, "Failed to create ipc listener");
+                error!(%err, "Failed to create IPC listener");
                 return Err(err)
             }
         };

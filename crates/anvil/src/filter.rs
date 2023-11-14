@@ -19,7 +19,6 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::Mutex;
-use tracing::{trace, warn};
 
 /// Type alias for filters identified by their id and their expiration timestamp
 type FilterMap = Arc<Mutex<HashMap<String, (EthFilter, Instant)>>>;

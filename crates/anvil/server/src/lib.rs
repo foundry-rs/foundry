@@ -1,6 +1,9 @@
 //! Bootstrap [axum] RPC servers
 
-#![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
+#![warn(missing_docs, unused_crate_dependencies)]
+
+#[macro_use]
+extern crate tracing;
 
 use anvil_rpc::{
     error::RpcError,
@@ -17,7 +20,6 @@ use hyper::server::conn::AddrIncoming;
 use serde::de::DeserializeOwned;
 use std::{fmt, net::SocketAddr};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::{error, trace};
 
 mod config;
 

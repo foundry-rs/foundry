@@ -21,7 +21,6 @@ use std::{
     fmt::Debug,
     path::{Path, PathBuf},
 };
-use tracing::{error, trace, warn};
 
 mod flatten;
 mod standard_json;
@@ -69,7 +68,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             return Ok(())
         }
 
-        trace!(target : "forge::verify", ?verify_args,  "submitting verification request");
+        trace!(target: "forge::verify", ?verify_args, "submitting verification request");
 
         let retry: Retry = args.retry.into();
         let resp = retry.run_async(|| {
@@ -81,11 +80,11 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     .wrap_err_with(|| {
                         // valid json
                         let args = serde_json::to_string(&verify_args).unwrap();
-                        error!(target : "forge::verify",  ?args, "Failed to submit verification");
+                        error!(target: "forge::verify", ?args, "Failed to submit verification");
                         format!("Failed to submit contract verification, payload:\n{args}")
                     })?;
 
-                trace!(target : "forge::verify",  ?resp, "Received verification response");
+                trace!(target: "forge::verify", ?resp, "Received verification response");
 
                 if resp.status == "0" {
                     if resp.result == "Contract source code already verified" {
@@ -154,7 +153,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         .await
                         .wrap_err("Failed to request verification status")?;
 
-                    trace!(target : "forge::verify",  ?resp, "Received verification response");
+                    trace!(target: "forge::verify", ?resp, "Received verification response");
 
                     eprintln!(
                         "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
@@ -408,10 +407,11 @@ impl EtherscanVerificationProvider {
             let (_, _, contract) = self.cache_entry(project, &args.contract.name).wrap_err(
                 "Cache must be enabled in order to use the `--constructor-args-path` option",
             )?;
-            let abi = contract.abi.as_ref().ok_or(eyre!("Can't find ABI in cached artifact."))?;
+            let abi =
+                contract.abi.as_ref().ok_or_else(|| eyre!("Can't find ABI in cached artifact."))?;
             let constructor = abi
                 .constructor()
-                .ok_or(eyre!("Can't retrieve constructor info from artifact ABI."))?;
+                .ok_or_else(|| eyre!("Can't retrieve constructor info from artifact ABI."))?;
             #[allow(deprecated)]
             let func = Function {
                 name: "constructor".to_string(),

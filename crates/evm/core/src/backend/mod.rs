@@ -7,9 +7,8 @@ use crate::{
     utils::configure_tx_env,
 };
 use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
-use ethers::{
-    prelude::Block,
-    types::{BlockNumber, Transaction},
+use ethers_core::{
+    types::{Block, BlockNumber, Transaction},
     utils::GenesisAccount,
 };
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
@@ -771,7 +770,7 @@ impl Backend {
 
         match revm::evm_inner::<Self, true>(env, self, &mut inspector).transact() {
             Ok(res) => Ok(res),
-            Err(e) => eyre::bail!("backend: failed while inspecting: {:?}", e),
+            Err(e) => eyre::bail!("backend: failed while inspecting: {e}"),
         }
     }
 
@@ -1316,6 +1315,9 @@ impl DatabaseExt for Backend {
             // Set the account's nonce and balance.
             state_acc.info.nonce = acc.nonce.unwrap_or_default();
             state_acc.info.balance = acc.balance.to_alloy();
+
+            // Touch the account to ensure the loaded information persists if called in `setUp`.
+            journaled_state.touch(addr);
         }
 
         Ok(())
@@ -1872,7 +1874,7 @@ fn commit_transaction<I: Inspector<Backend>>(
 
         match evm.inspect(inspector) {
             Ok(res) => res.state,
-            Err(e) => eyre::bail!("backend: failed committing transaction: {:?}", e),
+            Err(e) => eyre::bail!("backend: failed committing transaction: {e}"),
         }
     };
 

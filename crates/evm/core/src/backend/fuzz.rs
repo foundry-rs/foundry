@@ -7,7 +7,7 @@ use crate::{
     fork::{CreateFork, ForkId},
 };
 use alloy_primitives::{Address, B256, U256};
-use ethers::utils::GenesisAccount;
+use ethers_core::utils::GenesisAccount;
 use revm::{
     db::DatabaseRef,
     primitives::{AccountInfo, Bytecode, Env, ResultAndState},
@@ -65,7 +65,7 @@ impl<'a> FuzzBackendWrapper<'a> {
         self.is_initialized = false;
         match revm::evm_inner::<Self, true>(env, self, &mut inspector).transact() {
             Ok(result) => Ok(result),
-            Err(e) => eyre::bail!("fuzz: failed to inspect: {:?}", e),
+            Err(e) => eyre::bail!("fuzz: failed to inspect: {e}"),
         }
     }
 

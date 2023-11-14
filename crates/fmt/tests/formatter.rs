@@ -1,4 +1,4 @@
-use forge_fmt::{format, parse, solang_ext::AstEq, FormatterConfig};
+use forge_fmt::{format_to, parse, solang_ext::AstEq, FormatterConfig};
 use itertools::Itertools;
 use std::{fs, path::PathBuf};
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
@@ -115,7 +115,7 @@ fn test_formatter(filename: &str, config: FormatterConfig, source: &str, expecte
     let expected = PrettyString(expected_source.to_string());
 
     let mut source_formatted = String::new();
-    format(&mut source_formatted, source_parsed, config.clone()).unwrap();
+    format_to(&mut source_formatted, source_parsed, config.clone()).unwrap();
     assert_eof(&source_formatted);
 
     // println!("{}", source_formatted);
@@ -129,7 +129,7 @@ fn test_formatter(filename: &str, config: FormatterConfig, source: &str, expecte
     );
 
     let mut expected_formatted = String::new();
-    format(&mut expected_formatted, expected_parsed, config).unwrap();
+    format_to(&mut expected_formatted, expected_parsed, config).unwrap();
     assert_eof(&expected_formatted);
 
     let expected_formatted = PrettyString(expected_formatted);

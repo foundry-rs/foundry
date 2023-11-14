@@ -1,7 +1,7 @@
 use crate::{TUIExitReason, Tui, Ui};
 use foundry_common::{compile::ContractSources, evm::Breakpoints, get_contract_name};
-use foundry_evm::{debug::DebugArena, traces::CallTraceDecoder};
-use tracing::{error, trace};
+use foundry_evm_core::debug::DebugArena;
+use foundry_evm_traces::CallTraceDecoder;
 
 /// Standardized way of firing up the debugger
 pub struct DebuggerArgs<'a> {

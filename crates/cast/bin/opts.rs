@@ -5,10 +5,9 @@ use crate::cmd::{
 };
 use alloy_primitives::{Address, B256, U256};
 use clap::{Parser, Subcommand, ValueHint};
-use ethers::types::{BlockId, NameOrAddress};
+use ethers_core::types::{BlockId, NameOrAddress};
 use eyre::Result;
 use foundry_cli::opts::{EtherscanOpts, RpcOpts};
-use foundry_common::serde_helpers::Numeric;
 use std::{path::PathBuf, str::FromStr};
 
 const VERSION_MESSAGE: &str = concat!(
@@ -368,7 +367,7 @@ pub enum Subcommands {
 
         /// The nonce of the deployer address.
         #[clap(long)]
-        nonce: Option<U256>,
+        nonce: Option<u64>,
 
         #[clap(flatten)]
         rpc: RpcOpts,
@@ -558,7 +557,7 @@ pub enum Subcommands {
     },
 
     /// Get the event signature for a given topic 0 from https://openchain.xyz.
-    #[clap(name = "4byte-event", visible_aliases = &["4e", "4be"])]
+    #[clap(name = "4byte-event", visible_aliases = &["4e", "4be", "topic0-event", "t0e"])]
     FourByteEvent {
         /// Topic 0
         #[clap(value_name = "TOPIC_0")]
@@ -874,8 +873,7 @@ pub struct ToBaseArgs {
 }
 
 pub fn parse_slot(s: &str) -> Result<B256> {
-    let slot = Numeric::from_str(s).map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))?;
-    let slot: U256 = slot.into();
+    let slot = U256::from_str(s).map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))?;
     Ok(B256::from(slot))
 }
 
@@ -883,7 +881,7 @@ pub fn parse_slot(s: &str) -> Result<B256> {
 mod tests {
     use super::*;
     use cast::SimpleCast;
-    use ethers::types::BlockNumber;
+    use ethers_core::types::BlockNumber;
 
     #[test]
     fn parse_call_data() {

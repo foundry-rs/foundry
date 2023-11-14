@@ -2,14 +2,13 @@ use super::{artifacts::ArtifactInfo, ScriptResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256};
-use ethers::{prelude::NameOrAddress, types::transaction::eip2718::TypedTransaction};
+use ethers_core::types::{transaction::eip2718::TypedTransaction, NameOrAddress};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{fmt::format_token_raw, RpcUrl, SELECTOR_LEN};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder, utils::CallKind};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use tracing::error;
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
@@ -211,10 +210,8 @@ impl TransactionWithMetadata {
                     // This CALL is made to an external contract. We can only decode it, if it has
                     // been verified and identified by etherscan.
 
-                    if let Some(Some(function)) = decoder
-                        .functions
-                        .get(&data.0[..SELECTOR_LEN])
-                        .map(|functions| functions.first())
+                    if let Some(function) =
+                        decoder.functions.get(&data.0[..SELECTOR_LEN]).and_then(|v| v.first())
                     {
                         self.contract_name = decoder.contracts.get(&target).cloned();
 
@@ -260,8 +257,7 @@ impl TransactionWithMetadata {
 // wrapper for modifying ethers-rs type serialization
 pub mod wrapper {
     pub use super::*;
-
-    use ethers::{
+    use ethers_core::{
         types::{Bloom, Bytes, Log, TransactionReceipt, H256, U256, U64},
         utils::to_checksum,
     };

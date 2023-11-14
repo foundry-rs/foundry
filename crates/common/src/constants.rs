@@ -1,4 +1,4 @@
-//! Commonly used constants
+//! Commonly used constants.
 
 use alloy_primitives::{address, Address};
 use std::time::Duration;

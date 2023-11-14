@@ -1,6 +1,6 @@
 use alloy_primitives::U256;
 use clap::Parser;
-use ethers::prelude::Middleware;
+use ethers_providers::Middleware;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     init_progress,
@@ -17,7 +17,6 @@ use foundry_evm::{
     utils::configure_tx_env,
 };
 use foundry_utils::types::ToAlloy;
-use tracing::trace;
 
 /// CLI arguments for `cast run`.
 #[derive(Debug, Clone, Parser)]
@@ -196,7 +195,7 @@ impl RunArgs {
             configure_tx_env(&mut env, &tx);
 
             if let Some(to) = tx.to {
-                trace!(tx=?tx.hash,to=?to, "executing call transaction");
+                trace!(tx=?tx.hash, to=?to, "executing call transaction");
                 TraceResult::from(executor.commit_tx_with_env(env)?)
             } else {
                 trace!(tx=?tx.hash, "executing create transaction");

@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate tracing;
+
 use crate::{
     eth::{
         backend::{info::StorageInfo, mem},

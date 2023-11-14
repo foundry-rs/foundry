@@ -49,9 +49,28 @@ jobs:
               with:
                   target: ${{ matrix.target }}
             - uses: taiki-e/install-action@nextest
-            # - uses: taiki-e/setup-cross-toolchain-action@v1
-            #   with:
-            #       target: ${{ matrix.target }}
+
+            # External tests dependencies
+            - name: Setup Python
+              if: contains(matrix.name, 'external')
+              uses: actions/setup-python@v4
+              with:
+                  python-version: 3.11
+            - name: Setup Node.js
+              if: contains(matrix.name, 'external')
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 20
+            - name: Install pnpm
+              if: contains(matrix.name, 'external')
+              uses: pnpm/action-setup@v2
+              with:
+                  version: latest
+                  run_install: false
+            - name: Install Vyper
+              if: contains(matrix.name, 'external')
+              run: pip install vyper
+
             - name: Forge RPC cache
               uses: actions/cache@v3
               with:
@@ -61,7 +80,6 @@ jobs:
                   key: rpc-cache-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
             - uses: Swatinem/rust-cache@v2
               with:
-                  #   key: ${{ matrix.target }}
                   cache-on-failure: true
             - name: Setup Git config
               run: |

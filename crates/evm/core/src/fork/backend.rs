@@ -4,11 +4,11 @@ use crate::{
     fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
 };
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
-use ethers::{
-    core::abi::ethereum_types::BigEndianHash,
-    providers::Middleware,
+use ethers_core::{
+    abi::ethereum_types::BigEndianHash,
     types::{Block, BlockId, NameOrAddress, Transaction},
 };
+use ethers_providers::Middleware;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
 use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::{
@@ -282,7 +282,7 @@ where
                             Ok(KECCAK_EMPTY.to_ethers())
                         }
                         Err(err) => {
-                            error!(target: "backendhandler", ?err, ?number, "failed to get block");
+                            error!(target: "backendhandler", %err, ?number, "failed to get block");
                             Err(err)
                         }
                     };
@@ -643,9 +643,9 @@ impl DatabaseRef for SharedBackend {
     type Error = DatabaseError;
 
     fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        trace!( target: "sharedbackend", "request basic {:?}", address);
+        trace!(target: "sharedbackend", %address, "request basic");
         self.do_get_basic(address).map_err(|err| {
-            error!(target: "sharedbackend",  ?err, ?address,  "Failed to send/recv `basic`");
+            error!(target: "sharedbackend", %err, %address, "Failed to send/recv `basic`");
             if err.is_possibly_non_archive_node_error() {
                 error!(target: "sharedbackend", "{NON_ARCHIVE_NODE_WARNING}");
             }
@@ -658,9 +658,9 @@ impl DatabaseRef for SharedBackend {
     }
 
     fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        trace!( target: "sharedbackend", "request storage {:?} at {:?}", address, index);
+        trace!(target: "sharedbackend", "request storage {:?} at {:?}", address, index);
         match self.do_get_storage(address, index).map_err(|err| {
-            error!( target: "sharedbackend", ?err, ?address, ?index, "Failed to send/recv `storage`");
+            error!(target: "sharedbackend", %err, %address, %index, "Failed to send/recv `storage`");
             if err.is_possibly_non_archive_node_error() {
                 error!(target: "sharedbackend", "{NON_ARCHIVE_NODE_WARNING}");
             }
@@ -677,9 +677,9 @@ impl DatabaseRef for SharedBackend {
         }
         let number: U256 = number;
         let number = number.to();
-        trace!( target: "sharedbackend", "request block hash for number {:?}", number);
+        trace!(target: "sharedbackend", "request block hash for number {:?}", number);
         match self.do_get_block_hash(number).map_err(|err| {
-            error!(target: "sharedbackend",?err, ?number, "Failed to send/recv `block_hash`");
+            error!(target: "sharedbackend", %err, %number, "Failed to send/recv `block_hash`");
             if err.is_possibly_non_archive_node_error() {
                 error!(target: "sharedbackend", "{NON_ARCHIVE_NODE_WARNING}");
             }
@@ -699,9 +699,8 @@ mod tests {
         fork::{BlockchainDbMeta, CreateFork, JsonBlockCacheDB},
         opts::EvmOpts,
     };
-    use ethers::types::Chain;
     use foundry_common::get_http_provider;
-    use foundry_config::Config;
+    use foundry_config::{Config, NamedChain};
     use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
     const ENDPOINT: &str = "https://mainnet.infura.io/v3/40bee2d557ed4b52908c3e62345a3d8b";
 
@@ -795,7 +794,7 @@ mod tests {
 
         let db = BlockchainDb::new(
             meta,
-            Some(Config::foundry_block_cache_dir(Chain::Mainnet, block_num).unwrap()),
+            Some(Config::foundry_block_cache_dir(NamedChain::Mainnet, block_num).unwrap()),
         );
         assert!(db.accounts().read().contains_key(&address));
         assert!(db.storage().read().contains_key(&address));

@@ -27,7 +27,7 @@ pub struct ParseItem {
 macro_rules! filter_children_fn {
     ($vis:vis fn $name:ident(&self, $variant:ident) -> $ret:ty) => {
         /// Filter children items for [ParseSource::$variant] variants.
-        $vis fn $name(&self) -> Option<Vec<(&$ret,  &Comments, &String)>> {
+        $vis fn $name(&self) -> Option<Vec<(&$ret, &Comments, &String)>> {
             let items = self.children.iter().filter_map(|item| match item.source {
                 ParseSource::$variant(ref inner) => Some((inner, &item.comments, &item.code)),
                 _ => None,

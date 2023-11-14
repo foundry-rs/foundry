@@ -5,7 +5,7 @@ use super::{
     *,
 };
 use alloy_primitives::{Address, Bytes, U256};
-use ethers::types::transaction::eip2718::TypedTransaction;
+use ethers_core::types::transaction::eip2718::TypedTransaction;
 use eyre::Result;
 use forge::{
     backend::Backend,
@@ -21,7 +21,6 @@ use foundry_utils::types::ToEthers;
 use futures::future::join_all;
 use parking_lot::RwLock;
 use std::{collections::VecDeque, sync::Arc};
-use tracing::trace;
 
 /// Helper alias type for the processed result of a runner onchain simulation.
 type RunnerResult = (Option<TransactionWithMetadata>, Traces);

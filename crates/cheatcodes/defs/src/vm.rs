@@ -383,11 +383,11 @@ interface Vm {
     function transact(uint256 forkId, bytes32 txHash) external;
 
     /// Performs an Ethereum JSON-RPC request to the current fork URL.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Safe)]
     function rpc(string calldata method, string calldata params) external returns (bytes memory data);
 
     /// Gets all the logs according to specified filter.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Safe)]
     function eth_getLogs(uint256 fromBlock, uint256 toBlock, address addr, bytes32[] memory topics)
         external
         returns (EthGetLogs[] memory logs);
@@ -1155,5 +1155,17 @@ interface Vm {
     /// Gets the label for the specified address.
     #[cheatcode(group = Utilities)]
     function getLabel(address account) external returns (string memory currentLabel);
+
+    /// Compute the address a contract will be deployed at for a given deployer address and nonce.
+    #[cheatcode(group = Utilities)]
+    function computeCreateAddress(address deployer, uint256 nonce) external pure returns (address);
+
+    /// Compute the address of a contract created with CREATE2 using the given CREATE2 deployer.
+    #[cheatcode(group = Utilities)]
+    function computeCreate2Address(bytes32 salt, bytes32 initCodeHash, address deployer) external pure returns (address);
+
+    /// Compute the address of a contract created with CREATE2 using the default CREATE2 deployer.
+    #[cheatcode(group = Utilities)]
+    function computeCreate2Address(bytes32 salt, bytes32 initCodeHash) external pure returns (address);
 }
 }

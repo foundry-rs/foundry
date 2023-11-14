@@ -24,12 +24,11 @@ use foundry_evm::{
         interpreter::InstructionResult,
         primitives::{BlockEnv, CfgEnv, EVMError, Env, ExecutionResult, Output, SpecId},
     },
-    traces::{node::CallTraceNode, CallTraceArena},
+    traces::{CallTraceArena, CallTraceNode},
     utils::{eval_to_instruction_result, halt_to_instruction_result},
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
 use std::sync::Arc;
-use tracing::{trace, warn};
 
 /// Represents an executed transaction (transacted on the DB)
 pub struct ExecutedTransaction {

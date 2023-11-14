@@ -68,7 +68,7 @@ jobs:
     release:
         name: ${{ matrix.target }} (${{ matrix.os }})
         runs-on: ${{ matrix.os }}
-        timeout-minutes: 90
+        timeout-minutes: 240
         needs: prepare
         strategy:
             fail-fast: false
@@ -133,7 +133,7 @@ jobs:
               # Windows runs out of RAM when building binaries with LLVM
               run: |
                   flags=()
-                  [[ "${{ matrix.target }}" == *windows* ]] && flags+=(-j2)
+                  [[ "${{ matrix.target }}" == *windows* ]] && flags+=(-j1)
                   cargo build --release --bins --target ${{ matrix.target }} "${flags[@]}"
 
             - name: Archive binaries

@@ -28,7 +28,6 @@ use std::{
     time::Duration,
 };
 use tokio::time::{Instant, Interval};
-use tracing::{error, trace};
 
 #[derive(Clone, Debug, Parser)]
 pub struct NodeArgs {
@@ -667,9 +666,8 @@ impl FromStr for ForkUrl {
 
 #[cfg(test)]
 mod tests {
-    use std::{env, net::Ipv4Addr};
-
     use super::*;
+    use std::{env, net::Ipv4Addr};
 
     #[test]
     fn test_parse_fork_url() {

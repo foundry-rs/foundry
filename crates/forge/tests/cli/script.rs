@@ -1,13 +1,10 @@
-//! Contains various tests related to forge script
+//! Contains various tests related to `forge script`.
+
 use crate::constants::TEMPLATE_CONTRACT;
+use alloy_primitives::Address;
 use anvil::{spawn, NodeConfig};
-use ethers::abi::Address;
-use foundry_config::Config;
 use foundry_test_utils::{util::OutputExt, ScriptOutcome, ScriptTester};
-use foundry_utils::{
-    rpc,
-    types::{ToAlloy, ToEthers},
-};
+use foundry_utils::{rpc, types::ToEthers};
 use regex::Regex;
 use serde_json::Value;
 use std::{env, path::PathBuf, str::FromStr};
@@ -18,13 +15,9 @@ forgetest_init!(
     can_use_fork_cheat_codes_in_script,
     |prj, cmd| {
         let script = prj
-            .inner()
             .add_source(
                 "Foo",
                 r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity >=0.8.10;
-
 import "forge-std/Script.sol";
 
 contract ContractScript is Script {
@@ -41,19 +34,16 @@ contract ContractScript is Script {
 
         let rpc = foundry_utils::rpc::next_http_rpc_endpoint();
 
-        cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvv"]);
+        cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvvv"]).assert_success();
     }
 );
 
 // Tests that the `run` command works correctly
 forgetest!(can_execute_script_command2, |prj, cmd| {
     let script = prj
-        .inner()
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 contract Demo {
     event log_string(string);
     function run() external {
@@ -74,12 +64,9 @@ contract Demo {
 // Tests that the `run` command works correctly when path *and* script name is specified
 forgetest!(can_execute_script_command_fqn, |prj, cmd| {
     let script = prj
-        .inner()
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 contract Demo {
     event log_string(string);
     function run() external {
@@ -100,12 +87,9 @@ contract Demo {
 // Tests that the run command can run arbitrary functions
 forgetest!(can_execute_script_command_with_sig, |prj, cmd| {
     let script = prj
-        .inner()
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 contract Demo {
     event log_string(string);
     function myFunction() external {
@@ -127,17 +111,14 @@ contract Demo {
 forgetest_async!(can_execute_script_command_with_manual_gas_limit_unlocked, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let deploy_script = prj
-        .inner()
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "forge-std/Script.sol";
 
 contract GasWaster {
     function wasteGas(uint256 minGas) public {
-        require(gasleft() >= minGas,  "Gas left needs to be higher");
+        require(gasleft() >= minGas, "Gas left needs to be higher");
     }
 }
 contract DeployScript is Script {
@@ -183,17 +164,14 @@ contract DeployScript is Script {
 forgetest_async!(can_execute_script_command_with_manual_gas_limit, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let deploy_script = prj
-        .inner()
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "forge-std/Script.sol";
 
 contract GasWaster {
     function wasteGas(uint256 minGas) public {
-        require(gasleft() >= minGas,  "Gas left needs to be higher");
+        require(gasleft() >= minGas, "Gas left needs to be higher");
     }
 }
 contract DeployScript is Script {
@@ -238,12 +216,9 @@ contract DeployScript is Script {
 // Tests that the run command can run functions with arguments
 forgetest!(can_execute_script_command_with_args, |prj, cmd| {
     let script = prj
-        .inner()
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 contract Demo {
     event log_string(string);
     event log_uint(uint);
@@ -267,12 +242,9 @@ contract Demo {
 // Tests that the run command can run functions with return values
 forgetest!(can_execute_script_command_with_returned, |prj, cmd| {
     let script = prj
-        .inner()
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 contract Demo {
     event log_string(string);
     function run() external returns (uint256 result, uint8) {
@@ -293,12 +265,9 @@ forgetest_async!(can_broadcast_script_skipping_simulation, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     // This example script would fail in on-chain simulation
     let deploy_script = prj
-        .inner()
         .add_source(
             "DeployScript",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "forge-std/Script.sol";
 
 contract HashChecker {
@@ -310,7 +279,7 @@ contract HashChecker {
     }
 
     function checkLastHash() public {
-        require(lastHash != bytes32(0),  "Hash shouldn't be zero");
+        require(lastHash != bytes32(0), "Hash shouldn't be zero");
     }
 }
 contract DeployScript is Script {
@@ -353,14 +322,14 @@ contract DeployScript is Script {
 
     let run_log = std::fs::read_to_string("broadcast/DeployScript.sol/1/run-latest.json").unwrap();
     let run_object: Value = serde_json::from_str(&run_log).unwrap();
-    let contract_address = ethers::utils::to_checksum(
-        &run_object["receipts"][0]["contractAddress"].as_str().unwrap().parse().unwrap(),
-        None,
-    );
+    let contract_address = &run_object["receipts"][0]["contractAddress"]
+        .as_str()
+        .unwrap()
+        .parse::<Address>()
+        .unwrap()
+        .to_string();
 
     let run_code = r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "forge-std/Script.sol";
 import { HashChecker } from "./DeployScript.sol";
 
@@ -377,9 +346,9 @@ contract RunScript is Script {
         }
     }
 }"#
-    .replace("CONTRACT_ADDRESS", &contract_address);
+    .replace("CONTRACT_ADDRESS", contract_address);
 
-    let run_script = prj.inner().add_source("RunScript", run_code).unwrap();
+    let run_script = prj.add_source("RunScript", &run_code).unwrap();
     let run_contract = run_script.display().to_string() + ":RunScript";
 
     cmd.forge_fuse();
@@ -411,12 +380,12 @@ forgetest_async!(can_deploy_script_without_lib, |prj, cmd| {
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
-        .load_private_keys([0, 1])
+        .load_private_keys(&[0, 1])
         .await
         .add_sig("BroadcastTestNoLinking", "deployDoesntPanic()")
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment([(0, 1), (1, 2)])
+        .assert_nonce_increment(&[(0, 1), (1, 2)])
         .await;
 });
 
@@ -425,12 +394,12 @@ forgetest_async!(can_deploy_script_with_lib, |prj, cmd| {
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
-        .load_private_keys([0, 1])
+        .load_private_keys(&[0, 1])
         .await
         .add_sig("BroadcastTest", "deploy()")
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment([(0, 2), (1, 1)])
+        .assert_nonce_increment(&[(0, 2), (1, 1)])
         .await;
 });
 
@@ -442,15 +411,15 @@ forgetest_async!(
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
-            .load_addresses(vec![Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906")
-                .unwrap()
-                .to_alloy()])
+            .load_addresses(&[
+                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
+            ])
             .await
             .add_sig("BroadcastTest", "deployPrivateKey()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment_addresses(vec![(
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap().to_alloy(),
+            .assert_nonce_increment_addresses(&[(
+                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
                 3,
             )])
             .await;
@@ -481,15 +450,15 @@ forgetest_async!(
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
-            .load_addresses(vec![Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906")
-                .unwrap()
-                .to_alloy()])
+            .load_addresses(&[
+                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
+            ])
             .await
             .add_sig("BroadcastTest", "deployRememberKey()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment_addresses(vec![(
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap().to_alloy(),
+            .assert_nonce_increment_addresses(&[(
+                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
                 2,
             )])
             .await;
@@ -505,23 +474,23 @@ forgetest_async!(
 
         tester
             .add_deployer(0)
-            .load_addresses(vec![Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906")
-                .unwrap()
-                .to_alloy()])
+            .load_addresses(&[
+                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
+            ])
             .await
             .add_sig("BroadcastTest", "deployRememberKeyResume()")
             .simulate(ScriptOutcome::OkSimulation)
             .resume(ScriptOutcome::MissingWallet)
             // load missing wallet
-            .load_private_keys([0])
+            .load_private_keys(&[0])
             .await
             .run(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment_addresses(vec![(
-                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap().to_alloy(),
+            .assert_nonce_increment_addresses(&[(
+                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
                 1,
             )])
             .await
-            .assert_nonce_increment([(0, 2)])
+            .assert_nonce_increment(&[(0, 2)])
             .await;
     }
 );
@@ -531,16 +500,16 @@ forgetest_async!(can_resume_script, |prj, cmd| {
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
-        .load_private_keys([0])
+        .load_private_keys(&[0])
         .await
         .add_sig("BroadcastTest", "deploy()")
         .simulate(ScriptOutcome::OkSimulation)
         .resume(ScriptOutcome::MissingWallet)
         // load missing wallet
-        .load_private_keys([1])
+        .load_private_keys(&[1])
         .await
         .run(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment([(0, 2), (1, 1)])
+        .assert_nonce_increment(&[(0, 2), (1, 1)])
         .await;
 });
 
@@ -550,12 +519,12 @@ forgetest_async!(can_deploy_broadcast_wrap, |prj, cmd| {
 
     tester
         .add_deployer(2)
-        .load_private_keys([0, 1, 2])
+        .load_private_keys(&[0, 1, 2])
         .await
         .add_sig("BroadcastTest", "deployOther()")
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment([(0, 4), (1, 4), (2, 1)])
+        .assert_nonce_increment(&[(0, 4), (1, 4), (2, 1)])
         .await;
 });
 
@@ -564,7 +533,7 @@ forgetest_async!(panic_no_deployer_set, |prj, cmd| {
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
-        .load_private_keys([0, 1])
+        .load_private_keys(&[0, 1])
         .await
         .add_sig("BroadcastTest", "deployOther()")
         .simulate(ScriptOutcome::WarnSpecifyDeployer)
@@ -577,12 +546,12 @@ forgetest_async!(can_deploy_no_arg_broadcast, |prj, cmd| {
 
     tester
         .add_deployer(0)
-        .load_private_keys([0])
+        .load_private_keys(&[0])
         .await
         .add_sig("BroadcastTest", "deployNoArgs()")
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment([(0, 3)])
+        .assert_nonce_increment(&[(0, 3)])
         .await;
 });
 
@@ -593,7 +562,7 @@ forgetest_async!(can_deploy_with_create2, |prj, cmd| {
     // Prepare CREATE2 Deployer
     api.anvil_set_code(
         foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER.to_ethers(),
-        ethers::types::Bytes::from_static(
+        ethers_core::types::Bytes::from_static(
             foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
         ),
     )
@@ -602,12 +571,12 @@ forgetest_async!(can_deploy_with_create2, |prj, cmd| {
 
     tester
         .add_deployer(0)
-        .load_private_keys([0])
+        .load_private_keys(&[0])
         .await
         .add_sig("BroadcastTestNoLinking", "deployCreate2()")
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment([(0, 2)])
+        .assert_nonce_increment(&[(0, 2)])
         .await
         // Running again results in error, since we're repeating the salt passed to CREATE2
         .run(ScriptOutcome::ScriptFailed);
@@ -621,12 +590,12 @@ forgetest_async!(
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
-            .load_private_keys([0])
+            .load_private_keys(&[0])
             .await
             .add_sig("BroadcastTestNoLinking", "deployMany()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment([(0, 25)])
+            .assert_nonce_increment(&[(0, 25)])
             .await;
     }
 );
@@ -639,12 +608,12 @@ forgetest_async!(
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
-            .load_private_keys([0])
+            .load_private_keys(&[0])
             .await
             .add_sig("BroadcastMix", "deployMix()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment([(0, 15)])
+            .assert_nonce_increment(&[(0, 15)])
             .await;
     }
 );
@@ -654,12 +623,12 @@ forgetest_async!(deploy_with_setup, |prj, cmd| {
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
-        .load_private_keys([0])
+        .load_private_keys(&[0])
         .await
         .add_sig("BroadcastTestSetup", "run()")
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment([(0, 6)])
+        .assert_nonce_increment(&[(0, 6)])
         .await;
 });
 
@@ -668,7 +637,7 @@ forgetest_async!(fail_broadcast_staticcall, |prj, cmd| {
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
-        .load_private_keys([0])
+        .load_private_keys(&[0])
         .await
         .add_sig("BroadcastTestNoLinking", "errorStaticCall()")
         .simulate(ScriptOutcome::StaticCallNotAllowed);
@@ -684,15 +653,15 @@ forgetest_async!(
         // Prepare CREATE2 Deployer
         let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
         let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
-        api.anvil_set_code(addr, code).await.unwrap();
+        api.anvil_set_code(addr.to_ethers(), code).await.unwrap();
 
         tester
-            .load_private_keys([0])
+            .load_private_keys(&[0])
             .await
             .add_sig("BroadcastTestSetup", "run()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment([(0, 6)])
+            .assert_nonce_increment(&[(0, 6)])
             .await;
 
         // Uncomment to recreate the broadcast log
@@ -788,13 +757,9 @@ forgetest_async!(can_execute_script_with_arguments, |prj, cmd| {
     cmd.forge_fuse();
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let script = prj
-            .inner()
-            .add_script(
+    let script = prj            .add_script(
                 "Counter.s.sol",
                 r#"
-pragma solidity ^0.8.15;
-
 import "forge-std/Script.sol";
 
 struct Point {
@@ -860,7 +825,7 @@ contract Script0 is Script {
             "true".to_string(),
             "0x616263646566".to_string(),
             "(10, 99)".to_string(),
-            "hello".to_string(),
+            "\"hello\"".to_string(),
         ]
     );
 });
@@ -873,12 +838,9 @@ forgetest_async!(can_execute_script_with_arguments_nested_deploy, |prj, cmd| {
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let script = prj
-        .inner()
         .add_script(
             "Counter.s.sol",
             r#"
-pragma solidity ^0.8.13;
-
 import "forge-std/Script.sol";
 
 contract A {
@@ -947,24 +909,17 @@ contract Script0 is Script {
             "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6".to_string(),
             "true".to_string(),
             "0x616263646566".to_string(),
-            "hello".to_string(),
+            "\"hello\"".to_string(),
         ]
     );
 });
 
 // checks that skipping build
 forgetest_init!(can_execute_script_and_skip_contracts, |prj, cmd| {
-    // explicitly set to run with 0.8.17 for consistent output
-    let config = Config { solc: Some("0.8.17".into()), ..Default::default() };
-    prj.write_config(config);
-
     let script = prj
-        .inner()
         .add_source(
             "Foo",
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.17;
 contract Demo {
     event log_string(string);
     function run() external returns (uint256 result, uint8) {
@@ -1000,12 +955,9 @@ forgetest_async!(assert_tx_origin_is_not_overritten, |prj, cmd| {
     cmd.forge_fuse();
 
     let script = prj
-        .inner()
         .add_script(
             "ScriptTxOrigin.s.sol",
             r#"
-pragma solidity ^0.8.13;
-
 import { Script } from "forge-std/Script.sol";
 
 contract ScriptTxOrigin is Script {
@@ -1066,12 +1018,9 @@ forgetest_async!(assert_can_create_multiple_contracts_with_correct_nonce, |prj, 
     cmd.forge_fuse();
 
     let script = prj
-        .inner()
         .add_script(
             "ScriptTxOrigin.s.sol",
             r#"
-pragma solidity ^0.8.17;
-
 import {Script, console} from "forge-std/Script.sol";
 
 contract Contract {
@@ -1106,5 +1055,23 @@ contract NestedCreateFail is Script {
         .unwrap();
 
     cmd.arg("script").arg(script).args(["--tc", "NestedCreateFail"]);
+    assert!(cmd.stdout_lossy().contains("Script ran successfully."));
+});
+
+forgetest_async!(assert_can_detect_target_contract_with_interfaces, |prj, cmd| {
+    let script = prj
+        .add_script(
+            "ScriptWithInterface.s.sol",
+            r#"
+contract Script {
+  function run() external {}
+}
+
+interface Interface {}
+            "#,
+        )
+        .unwrap();
+
+    cmd.arg("script").arg(script);
     assert!(cmd.stdout_lossy().contains("Script ran successfully."));
 });

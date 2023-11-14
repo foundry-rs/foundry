@@ -1,11 +1,12 @@
+#[macro_use]
+extern crate tracing;
+
 use alloy_primitives::{keccak256, Address, B256};
 use cast::{Cast, SimpleCast};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use ethers::{
-    core::types::{BlockId, BlockNumber::Latest},
-    providers::Middleware,
-};
+use ethers_core::types::{BlockId, BlockNumber::Latest};
+use ethers_providers::Middleware;
 use eyre::Result;
 use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
@@ -451,7 +452,7 @@ async fn main() -> Result<()> {
         Subcommands::SigEvent { event_string } => {
             let event_string = stdin::unwrap_line(event_string)?;
             let parsed_event = get_event(&event_string)?;
-            println!("{:?}", parsed_event.signature());
+            println!("{:?}", parsed_event.selector());
         }
         Subcommands::LeftShift { value, bits, base_in, base_out } => {
             println!("{}", SimpleCast::left_shift(&value, &bits, base_in.as_deref(), &base_out)?);

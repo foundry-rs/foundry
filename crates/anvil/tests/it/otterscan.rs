@@ -232,9 +232,12 @@ async fn can_call_ots_has_code() {
         .await
         .unwrap());
 
-    client.send_transaction(deploy_tx, None).await.unwrap();
+    let pending = client.send_transaction(deploy_tx, None).await.unwrap();
+    let receipt = pending.await.unwrap().unwrap();
 
     let num = client.get_block_number().await.unwrap();
+    assert_eq!(num, receipt.block_number.unwrap());
+
     // code is detected after deploying
     assert!(api.ots_has_code(pending_contract_address, BlockNumber::Number(num)).await.unwrap());
 

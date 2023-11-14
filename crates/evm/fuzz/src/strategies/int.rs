@@ -1,12 +1,9 @@
-use std::ops::{Add, Shl, Sub};
-
-use ethers::core::rand::Rng;
+use alloy_primitives::{Sign, I256, U256};
 use proptest::{
     strategy::{NewTree, Strategy, ValueTree},
     test_runner::TestRunner,
 };
-
-use alloy_primitives::{Sign, I256, U256};
+use rand::Rng;
 
 /// Value tree for signed ints (up to int256).
 /// This is very similar to [proptest::BinarySearch]
@@ -106,13 +103,12 @@ impl IntStrategy {
         let rng = runner.rng();
 
         let offset = I256::from_raw(U256::from(rng.gen_range(0..4)));
-        let umax: U256 = (U256::from(1u8).shl(self.bits - 1)).sub(U256::from(1u8));
+        let umax: U256 = (U256::from(1) << (self.bits - 1)) - U256::from(1);
         // Choose if we want values around min, -0, +0, or max
         let kind = rng.gen_range(0..4);
         let start = match kind {
             0 => {
-                I256::overflowing_from_sign_and_abs(Sign::Negative, umax.add(U256::from(1))).0 +
-                    offset
+                I256::overflowing_from_sign_and_abs(Sign::Negative, umax + U256::from(1)).0 + offset
             }
             1 => -offset - I256::ONE,
             2 => offset,

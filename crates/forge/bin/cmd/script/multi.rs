@@ -4,8 +4,8 @@ use super::{
     verify::VerifyBundle,
     ScriptArgs,
 };
-use ethers::signers::LocalWallet;
-use eyre::{ContextCompat, Result, WrapErr};
+use ethers_signers::LocalWallet;
+use eyre::{ContextCompat, Report, Result, WrapErr};
 use foundry_cli::utils::now;
 use foundry_common::{fs, get_http_provider};
 use foundry_compilers::{artifacts::Libraries, ArtifactId};
@@ -17,7 +17,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use tracing::log::trace;
 
 /// Holds the sequences of multiple chain deployments.
 #[derive(Deserialize, Serialize, Clone, Default)]
@@ -139,37 +138,35 @@ impl ScriptArgs {
                 join_all(futs).await.into_iter().filter(|res| res.is_err()).collect::<Vec<_>>();
 
             if !errors.is_empty() {
-                return Err(eyre::eyre!("{errors:?}"))
+                return Err(eyre::eyre!("{errors:?}"));
             }
         }
 
         trace!(target: "script", "broadcasting multi chain deployments");
 
-        let futs = deployments
-            .deployments
-            .iter_mut()
-            .map(|sequence| async {
-                match self
-                    .send_transactions(
-                        sequence,
-                        &sequence.typed_transactions().first().unwrap().0.clone(),
-                        &script_wallets,
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        if self.verify {
-                            return sequence.verify_contracts(config, verify.clone()).await
-                        }
-                        Ok(())
-                    }
-                    Err(err) => Err(err),
-                }
-            })
-            .collect::<Vec<_>>();
+        let mut results: Vec<Result<(), Report>> = Vec::new();
 
-        let errors =
-            join_all(futs).await.into_iter().filter(|res| res.is_err()).collect::<Vec<_>>();
+        for sequence in deployments.deployments.iter_mut() {
+            let result = match self
+                .send_transactions(
+                    sequence,
+                    &sequence.typed_transactions().first().unwrap().0.clone(),
+                    &script_wallets,
+                )
+                .await
+            {
+                Ok(_) => {
+                    if self.verify {
+                        return sequence.verify_contracts(config, verify.clone()).await
+                    }
+                    Ok(())
+                }
+                Err(err) => Err(err),
+            };
+            results.push(result);
+        }
+
+        let errors = results.into_iter().filter(|res| res.is_err()).collect::<Vec<_>>();
 
         if !errors.is_empty() {
             return Err(eyre::eyre!("{errors:?}"))

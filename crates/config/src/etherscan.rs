@@ -1,7 +1,8 @@
-//! Support for multiple etherscan keys
+//! Support for multiple Etherscan keys.
+
 use crate::{
     resolve::{interpolate, UnresolvedEnvVarError, RE_PLACEHOLDER},
-    Chain, Config,
+    Chain, Config, NamedChain,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -10,7 +11,6 @@ use std::{
     ops::{Deref, DerefMut},
     time::Duration,
 };
-use tracing::warn;
 
 /// The user agent to use when querying the etherscan API.
 pub const ETHERSCAN_USER_AGENT: &str = concat!("foundry/", env!("CARGO_PKG_VERSION"));
@@ -258,14 +258,13 @@ impl ResolvedEtherscanConfig {
     ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError>
     {
         let ResolvedEtherscanConfig { api_url, browser_url, key: api_key, chain } = self;
-        let (mainnet_api, mainnet_url) =
-            ethers_core::types::Chain::Mainnet.etherscan_urls().expect("exist; qed");
+        let (mainnet_api, mainnet_url) = NamedChain::Mainnet.etherscan_urls().expect("exist; qed");
 
         let cache = chain
             .or_else(|| {
                 if api_url == mainnet_api {
                     // try to match against mainnet, which is usually the most common target
-                    Some(ethers_core::types::Chain::Mainnet.into())
+                    Some(NamedChain::Mainnet.into())
                 } else {
                     None
                 }
@@ -378,7 +377,7 @@ impl fmt::Display for EtherscanApiKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers_core::types::Chain::Mainnet;
+    use NamedChain::Mainnet;
 
     #[test]
     fn can_create_client_via_chain() {

@@ -1,12 +1,10 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use foundry_compilers::{
-    artifacts::{BytecodeHash, Metadata},
-    remappings::Remapping,
-    ConfigurableContractArtifact,
+use foundry_compilers::{artifacts::Metadata, remappings::Remapping, ConfigurableContractArtifact};
+use foundry_config::{
+    parse_with_profile, BasicConfig, Chain, Config, NamedChain, SolidityErrorCode,
 };
-use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
     util::{pretty_err, read_string, OutputExt, TestCommand},
@@ -37,7 +35,7 @@ forgetest!(
     #[ignore]
     can_cache_ls,
     |_prj, cmd| {
-        let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
+        let chain = Chain::Named(NamedChain::Mainnet);
         let block1 = 100;
         let block2 = 101;
 
@@ -134,7 +132,7 @@ forgetest!(
     #[ignore]
     can_cache_clean_chain,
     |_prj, cmd| {
-        let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
+        let chain = Chain::Named(NamedChain::Mainnet);
         let cache_dir = Config::foundry_chain_cache_dir(chain).unwrap();
         let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
         let path = cache_dir.as_path();
@@ -157,7 +155,7 @@ forgetest!(
     #[ignore]
     can_cache_clean_blocks,
     |_prj, cmd| {
-        let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
+        let chain = Chain::Named(NamedChain::Mainnet);
         let block1 = 100;
         let block2 = 101;
         let block3 = 102;
@@ -191,12 +189,9 @@ forgetest!(
     #[ignore]
     can_cache_clean_chain_etherscan,
     |_prj, cmd| {
-        let cache_dir =
-            Config::foundry_chain_cache_dir(Chain::Named(ethers::prelude::Chain::Mainnet)).unwrap();
-        let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(Chain::Named(
-            ethers::prelude::Chain::Mainnet,
-        ))
-        .unwrap();
+        let cache_dir = Config::foundry_chain_cache_dir(Chain::Named(NamedChain::Mainnet)).unwrap();
+        let etherscan_cache_dir =
+            Config::foundry_etherscan_chain_cache_dir(Chain::Named(NamedChain::Mainnet)).unwrap();
         let path = cache_dir.as_path();
         let etherscan_path = etherscan_cache_dir.as_path();
         fs::create_dir_all(path).unwrap();
@@ -528,24 +523,17 @@ forgetest_init!(can_emit_multiple_extra_output, |prj, cmd| {
 });
 
 forgetest!(can_print_warnings, |prj, cmd| {
-    prj.inner()
-        .add_source(
-            "Foo",
-            r"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity >0.8.9;
+    prj.add_source(
+        "Foo",
+        r"
 contract Greeter {
     function foo(uint256 a) public {
         uint256 x = 1;
     }
 }
    ",
-        )
-        .unwrap();
-
-    // explicitly set to run with 0.8.10
-    let config = Config { solc: Some("0.8.10".into()), ..Default::default() };
-    prj.write_config(config);
+    )
+    .unwrap();
 
     cmd.arg("build");
 
@@ -576,12 +564,9 @@ Warning (5667): Warning: Unused function parameter. Remove or comment out the va
 //    |                       ^^^^
 #[cfg(not(target_os = "windows"))]
 forgetest!(can_handle_direct_imports_into_src, |prj, cmd| {
-    prj.inner()
-        .add_source(
-            "Foo",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
+    prj.add_source(
+        "Foo",
+        r#"
 import {FooLib} from "src/FooLib.sol";
 struct Bar {
     uint8 x;
@@ -597,23 +582,20 @@ contract Foo {
     }
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-    prj.inner()
-        .add_source(
-            "FooLib",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
+    prj.add_source(
+        "FooLib",
+        r#"
 import {Foo, Bar} from "src/Foo.sol";
 library FooLib {
     function check(Bar memory b) public {}
     function check2(Foo f) public {}
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.arg("build");
 
@@ -626,17 +608,11 @@ Compiler run successful!
 
 // tests that the `inspect` command works correctly
 forgetest!(can_execute_inspect_command, |prj, cmd| {
-    // explicitly set to include the ipfs bytecode hash
-    let config = Config { bytecode_hash: BytecodeHash::Ipfs, ..Default::default() };
-    prj.write_config(config);
     let contract_name = "Foo";
     let path = prj
-        .inner()
         .add_source(
             contract_name,
             r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 contract Foo {
     event log_string(string);
     function run() external {
@@ -647,15 +623,9 @@ contract Foo {
         )
         .unwrap();
 
-    // Remove the ipfs hash from the metadata
-    let mut dynamic_bytecode = "0x608060405234801561001057600080fd5b5060c08061001f6000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063c040622614602d575b600080fd5b60336035565b005b7f0b2e13ff20ac7b474198655583edf70dedd2c1dc980e329c4fbb2fc0748b796b6040516080906020808252600a908201526939b1b934b83a103930b760b11b604082015260600190565b60405180910390a156fea264697066735822122065c066d19101ad1707272b9a884891af8ab0cf5a0e0bba70c4650594492c14be64736f6c634300080a0033\n".to_string();
-    let ipfs_start = dynamic_bytecode.len() - (24 + 64);
-    let ipfs_end = ipfs_start + 65;
-    dynamic_bytecode.replace_range(ipfs_start..ipfs_end, "");
-
-    let check_output = |mut output: String| {
-        output.replace_range(ipfs_start..ipfs_end, "");
-        assert_eq!(dynamic_bytecode, output);
+    let check_output = |output: String| {
+        let output = output.trim();
+        assert!(output.starts_with("0x") && hex::decode(output).is_ok(), "{output}");
     };
 
     cmd.arg("inspect").arg(contract_name).arg("bytecode");
@@ -673,12 +643,9 @@ forgetest!(
     |prj, cmd| {
         prj.insert_ds_test();
 
-        prj.inner()
-            .add_source(
-                "ATest.t.sol",
-                r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
+        prj.add_source(
+            "ATest.t.sol",
+            r#"
 import "./test.sol";
 contract ATest is DSTest {
     function testExample() public {
@@ -686,8 +653,8 @@ contract ATest is DSTest {
     }
 }
    "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
         cmd.arg("snapshot");
 
@@ -708,35 +675,30 @@ forgetest!(can_compile_without_warnings, |prj, cmd| {
         ..Default::default()
     };
     prj.write_config(config);
-    prj.inner()
-        .add_source(
-            "A",
-            r"
-pragma solidity 0.8.10;
+    prj.add_raw_source(
+        "A",
+        r"
+pragma solidity *;
 contract A {
     function testExample() public {}
 }
    ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.args(["build", "--force"]);
     let out = cmd.stdout_lossy();
     // no warnings
-    assert!(out.trim().contains("Compiler run successful!"));
-    assert!(!out.trim().contains("Compiler run successful with warnings:"));
+    assert!(out.contains("Compiler run successful!"));
+    assert!(!out.contains("Compiler run successful with warnings:"));
 
     // don't ignore errors
     let config = Config { ignored_error_codes: vec![], ..Default::default() };
     prj.write_config(config);
     let out = cmd.stdout_lossy();
 
-    assert!(out.trim().contains("Compiler run successful with warnings:"));
-    assert!(
-      out.contains(
-                    r#"Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information."#
-        )
-    );
+    assert!(out.contains("Compiler run successful with warnings:"), "{out}");
+    assert!(out.contains("Warning") && out.contains("SPDX-License-Identifier"), "{out}");
 });
 
 // test that `forge build` compiles when severity set to error, fails when set to warning, and
@@ -744,23 +706,21 @@ contract A {
 forgetest!(can_fail_compile_with_warnings, |prj, cmd| {
     let config = Config { ignored_error_codes: vec![], deny_warnings: false, ..Default::default() };
     prj.write_config(config);
-    prj.inner()
-        .add_source(
-            "A",
-            r"
-pragma solidity 0.8.10;
+    prj.add_raw_source(
+        "A",
+        r"
+pragma solidity *;
 contract A {
     function testExample() public {}
 }
    ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
+    // there are no errors
     cmd.args(["build", "--force"]);
     let out = cmd.stdout_lossy();
-    // there are no errors
-    assert!(out.trim().contains("Compiler run successful"));
-    assert!(out.trim().contains("Compiler run successful with warnings:"));
+    assert!(out.contains("Compiler run successful with warnings:"), "{out}");
 
     // warning fails to compile
     let config = Config { ignored_error_codes: vec![], deny_warnings: true, ..Default::default() };
@@ -776,8 +736,8 @@ contract A {
     prj.write_config(config);
     let out = cmd.stdout_lossy();
 
-    assert!(out.trim().contains("Compiler run successful!"));
-    assert!(!out.trim().contains("Compiler run successful with warnings:"));
+    assert!(out.contains("Compiler run successful!"));
+    assert!(!out.contains("Compiler run successful with warnings:"));
 });
 
 // test against a local checkout, useful to debug with local ethers-rs patch
@@ -805,9 +765,9 @@ forgetest!(
             "14435000",
             "--libraries",
             dss_exec_lib,
-            "-vvv",
+            "-vvvvv",
         ]);
-        cmd.print_output();
+        cmd.assert_non_empty_stdout();
     }
 );
 
@@ -815,12 +775,9 @@ forgetest!(
 forgetest!(can_build_after_failure, |prj, cmd| {
     prj.insert_ds_test();
 
-    prj.inner()
-        .add_source(
-            "ATest.t.sol",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
+    prj.add_source(
+        "ATest.t.sol",
+        r#"
 import "./test.sol";
 contract ATest is DSTest {
     function testExample() public {
@@ -828,14 +785,11 @@ contract ATest is DSTest {
     }
 }
    "#,
-        )
-        .unwrap();
-    prj.inner()
-        .add_source(
-            "BTest.t.sol",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
+    )
+    .unwrap();
+    prj.add_source(
+        "BTest.t.sol",
+        r#"
 import "./test.sol";
 contract BTest is DSTest {
     function testExample() public {
@@ -843,8 +797,8 @@ contract BTest is DSTest {
     }
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.arg("build");
     cmd.assert_non_empty_stdout();
@@ -852,8 +806,6 @@ contract BTest is DSTest {
     prj.assert_artifacts_dir_exists();
 
     let syntax_err = r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
 import "./test.sol";
 contract CTest is DSTest {
     function testExample() public {
@@ -863,7 +815,7 @@ contract CTest is DSTest {
    "#;
 
     // introduce contract with syntax error
-    prj.inner().add_source("CTest.t.sol", syntax_err).unwrap();
+    prj.add_source("CTest.t.sol", syntax_err).unwrap();
 
     // `forge build --force` which should fail
     cmd.arg("--force");
@@ -871,19 +823,16 @@ contract CTest is DSTest {
 
     // but ensure this cleaned cache and artifacts
     assert!(!prj.paths().artifacts.exists());
-    assert!(!prj.cache_path().exists());
+    assert!(!prj.cache().exists());
 
     // still errors
     cmd.forge_fuse().arg("build");
     cmd.assert_err();
 
     // resolve the error by replacing the file
-    prj.inner()
-        .add_source(
-            "CTest.t.sol",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
+    prj.add_source(
+        "CTest.t.sol",
+        r#"
 import "./test.sol";
 contract CTest is DSTest {
     function testExample() public {
@@ -891,22 +840,22 @@ contract CTest is DSTest {
     }
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.assert_non_empty_stdout();
     prj.assert_cache_exists();
     prj.assert_artifacts_dir_exists();
 
     // ensure cache is unchanged after error
-    let cache = fs::read_to_string(prj.cache_path()).unwrap();
+    let cache = fs::read_to_string(prj.cache()).unwrap();
 
     // introduce the error again but building without force
-    prj.inner().add_source("CTest.t.sol", syntax_err).unwrap();
+    prj.add_source("CTest.t.sol", syntax_err).unwrap();
     cmd.assert_err();
 
     // ensure unchanged cache file
-    let cache_after = fs::read_to_string(prj.cache_path()).unwrap();
+    let cache_after = fs::read_to_string(prj.cache()).unwrap();
     assert_eq!(cache, cache_after);
 });
 
@@ -1055,18 +1004,15 @@ forgetest!(
 
         // create test file that uses the top-level dependency; if the sub-dependency is updated,
         // compilation will fail
-        prj.inner()
-            .add_source(
-                "CounterCopy",
-                r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.0;
+        prj.add_source(
+            "CounterCopy",
+            r#"
 import "forge-5980-test/Counter.sol";
 contract CounterCopy is Counter {
 }
    "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
         // build and check output
         cmd.forge_fuse().arg("build");
@@ -1077,12 +1023,10 @@ contract CounterCopy is Counter {
 
 forgetest!(gas_report_all_contracts, |prj, cmd| {
     prj.insert_ds_test();
-    prj.inner()
-        .add_source(
-            "Contracts.sol",
-            r#"
+    prj.add_source(
+        "Contracts.sol",
+        r#"
 //SPDX-license-identifier: MIT
-pragma solidity ^0.8.0;
 
 import "./test.sol";
 
@@ -1165,8 +1109,8 @@ contract ContractThreeTest is DSTest {
     }
 }
     "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     // report for all
     prj.write_config(Config {
@@ -1177,21 +1121,18 @@ contract ContractThreeTest is DSTest {
     cmd.forge_fuse();
     let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
-    // cmd.arg("test").arg("--gas-report").print_output();
 
     cmd.forge_fuse();
     prj.write_config(Config { gas_reports: (vec![]), ..Default::default() });
     cmd.forge_fuse();
     let second_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(second_out.contains("foo") && second_out.contains("bar") && second_out.contains("baz"));
-    // cmd.arg("test").arg("--gas-report").print_output();
 
     cmd.forge_fuse();
     prj.write_config(Config { gas_reports: (vec!["*".to_string()]), ..Default::default() });
     cmd.forge_fuse();
     let third_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
-    // cmd.arg("test").arg("--gas-report").print_output();
 
     cmd.forge_fuse();
     prj.write_config(Config {
@@ -1205,17 +1146,14 @@ contract ContractThreeTest is DSTest {
     cmd.forge_fuse();
     let fourth_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(fourth_out.contains("foo") && fourth_out.contains("bar") && fourth_out.contains("baz"));
-    // cmd.arg("test").arg("--gas-report").print_output();
 });
 
 forgetest!(gas_report_some_contracts, |prj, cmd| {
     prj.insert_ds_test();
-    prj.inner()
-        .add_source(
-            "Contracts.sol",
-            r#"
+    prj.add_source(
+        "Contracts.sol",
+        r#"
 //SPDX-license-identifier: MIT
-pragma solidity ^0.8.0;
 
 import "./test.sol";
 
@@ -1298,8 +1236,8 @@ contract ContractThreeTest is DSTest {
     }
 }
     "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     // report for One
     prj.write_config(Config {
@@ -1310,7 +1248,6 @@ contract ContractThreeTest is DSTest {
     cmd.forge_fuse();
     let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(first_out.contains("foo") && !first_out.contains("bar") && !first_out.contains("baz"));
-    // cmd.arg("test").arg("--gas-report").print_output();
 
     // report for Two
     cmd.forge_fuse();
@@ -1323,7 +1260,6 @@ contract ContractThreeTest is DSTest {
     assert!(
         !second_out.contains("foo") && second_out.contains("bar") && !second_out.contains("baz")
     );
-    // cmd.arg("test").arg("--gas-report").print_output();
 
     // report for Three
     cmd.forge_fuse();
@@ -1334,17 +1270,14 @@ contract ContractThreeTest is DSTest {
     cmd.forge_fuse();
     let third_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(!third_out.contains("foo") && !third_out.contains("bar") && third_out.contains("baz"));
-    // cmd.arg("test").arg("--gas-report").print_output();
 });
 
 forgetest!(gas_ignore_some_contracts, |prj, cmd| {
     prj.insert_ds_test();
-    prj.inner()
-        .add_source(
-            "Contracts.sol",
-            r#"
+    prj.add_source(
+        "Contracts.sol",
+        r#"
 //SPDX-license-identifier: MIT
-pragma solidity ^0.8.0;
 
 import "./test.sol";
 
@@ -1427,8 +1360,8 @@ contract ContractThreeTest is DSTest {
     }
 }
     "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     // ignore ContractOne
     prj.write_config(Config {
@@ -1439,7 +1372,6 @@ contract ContractThreeTest is DSTest {
     cmd.forge_fuse();
     let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(!first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
-    // cmd.arg("test").arg("--gas-report").print_output();
 
     // ignore ContractTwo
     cmd.forge_fuse();
@@ -1453,7 +1385,6 @@ contract ContractThreeTest is DSTest {
     assert!(
         second_out.contains("foo") && !second_out.contains("bar") && second_out.contains("baz")
     );
-    // cmd.arg("test").arg("--gas-report").print_output();
 
     // ignore ContractThree
     cmd.forge_fuse();
@@ -1481,40 +1412,34 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
     };
     prj.write_config(config);
 
-    prj.inner()
-        .add_lib(
-            "myDepdendency/src/interfaces/IConfig.sol",
-            r"
-    pragma solidity ^0.8.10;
-
+    prj.add_lib(
+        "myDepdendency/src/interfaces/IConfig.sol",
+        r"
+    
     interface IConfig {}
    ",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-    prj.inner()
-        .add_lib(
-            "myDepdendency/src/Config.sol",
-            r#"
-    pragma solidity ^0.8.10;
-    import "src/interfaces/IConfig.sol";
+    prj.add_lib(
+        "myDepdendency/src/Config.sol",
+        r#"
+        import "src/interfaces/IConfig.sol";
 
     contract Config {}
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-    prj.inner()
-        .add_source(
-            "Greeter",
-            r#"
-    pragma solidity ^0.8.10;
-    import "myDepdendency/src/Config.sol";
+    prj.add_source(
+        "Greeter",
+        r#"
+        import "myDepdendency/src/Config.sol";
 
     contract Greeter {}
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.arg("build");
     let stdout = cmd.stdout_lossy();
@@ -1523,55 +1448,45 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
 
 // <https://github.com/foundry-rs/foundry/issues/3440>
 forgetest_init!(can_use_absolute_imports_from_test_and_script, |prj, cmd| {
-    prj.inner()
-        .add_script(
-            "IMyScript.sol",
-            r"
-    pragma solidity ^0.8.10;
+    prj.add_script(
+        "IMyScript.sol",
+        r"
+interface IMyScript {}
+        ",
+    )
+    .unwrap();
 
-    interface IMyScript {}
-   ",
-        )
-        .unwrap();
+    prj.add_script(
+        "MyScript.sol",
+        r#"
+import "script/IMyScript.sol";
 
-    prj.inner()
-        .add_script(
-            "MyScript.sol",
-            r#"
-    pragma solidity ^0.8.10;
-    import "script/IMyScript.sol";
+contract MyScript is IMyScript {}
+        "#,
+    )
+    .unwrap();
 
-    contract MyScript is IMyScript {}
-   "#,
-        )
-        .unwrap();
+    prj.add_test(
+        "IMyTest.sol",
+        r"
+interface IMyTest {}
+        ",
+    )
+    .unwrap();
 
-    prj.inner()
-        .add_test(
-            "IMyTest.sol",
-            r"
-    pragma solidity ^0.8.10;
+    prj.add_test(
+        "MyTest.sol",
+        r#"
+import "test/IMyTest.sol";
 
-    interface IMyTest {}
-   ",
-        )
-        .unwrap();
-
-    prj.inner()
-        .add_test(
-            "MyTest.sol",
-            r#"
-    pragma solidity ^0.8.10;
-    import "test/IMyTest.sol";
-
-    contract MyTest is IMyTest {}
-   "#,
-        )
-        .unwrap();
+contract MyTest is IMyTest {}
+    "#,
+    )
+    .unwrap();
 
     cmd.arg("build");
     let stdout = cmd.stdout_lossy();
-    assert!(stdout.contains("Compiler run successful"));
+    assert!(stdout.contains("Compiler run successful"), "{stdout}");
 });
 
 // checks `forge inspect <contract> irOptimized works
@@ -1609,54 +1524,50 @@ forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
 
     let output = cmd.stdout_lossy();
     assert!(output.contains("Missing dependencies found. Installing now"), "{}", output);
-    assert!(output.contains("Compiler run successful"), "{}", output);
+    assert!(output.contains("No files changed, compilation skipped"), "{}", output);
 });
 
 // checks that extra output works
 forgetest_init!(can_build_skip_contracts, |prj, cmd| {
-    // explicitly set to run with 0.8.17 for consistent output
-    let config = Config { solc: Some("0.8.17".into()), ..Default::default() };
-    prj.write_config(config);
+    prj.clear_cache();
 
     // only builds the single template contract `src/*`
     cmd.args(["build", "--skip", "tests", "--skip", "scripts"]);
-
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/can_build_skip_contracts.stdout"),
     );
+
     // re-run command
     let out = cmd.stdout_lossy();
 
     // unchanged
-    assert!(out.trim().contains("No files changed, compilation skipped"), "{}", out);
+    assert!(out.contains("No files changed, compilation skipped"), "{}", out);
 });
 
 forgetest_init!(can_build_skip_glob, |prj, cmd| {
-    // explicitly set to run with 0.8.17 for consistent output
-    let config = Config { solc: Some("0.8.17".into()), ..Default::default() };
-    prj.write_config(config);
-    prj.inner()
-        .add_test(
-            "Foo",
-            r"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.17;
+    prj.clear_cache();
+
+    prj.add_test(
+        "Foo",
+        r"
 contract TestDemo {
 function test_run() external {}
 }",
-        )
-        .unwrap();
+    )
+    .unwrap();
+
     // only builds the single template contract `src/*` even if `*.t.sol` or `.s.sol` is absent
     cmd.args(["build", "--skip", "*/test/**", "--skip", "*/script/**"]);
-
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_build_skip_glob.stdout"),
     );
 });
 
 // checks that build --sizes includes all contracts even if unchanged
-forgetest_init!(can_build_sizes_repeatedly, |_prj, cmd| {
+forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
+    prj.clear_cache();
+
     cmd.args(["build", "--sizes"]);
     let out = cmd.stdout_lossy();
 
@@ -1671,7 +1582,9 @@ forgetest_init!(can_build_sizes_repeatedly, |_prj, cmd| {
 });
 
 // checks that build --names includes all contracts even if unchanged
-forgetest_init!(can_build_names_repeatedly, |_prj, cmd| {
+forgetest_init!(can_build_names_repeatedly, |prj, cmd| {
+    prj.clear_cache();
+
     cmd.args(["build", "--names"]);
     let out = cmd.stdout_lossy();
 

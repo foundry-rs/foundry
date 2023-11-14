@@ -1,6 +1,5 @@
 use crate::{
-    CallTrace, CallTraceArena, CallTraceStep, LogCallOrder, RawOrDecodedLog, TraceCallData,
-    TraceRetData,
+    CallTrace, CallTraceArena, CallTraceStep, LogCallOrder, TraceCallData, TraceLog, TraceRetData,
 };
 use alloy_primitives::{Address, Bytes, Log as RawLog, B256, U256};
 use foundry_evm_core::{
@@ -162,9 +161,8 @@ impl<DB: Database> Inspector<DB> for Tracer {
         let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
         node.ordering.push(LogCallOrder::Log(node.logs.len()));
         let data = data.clone();
-        node.logs.push(RawOrDecodedLog::Raw(
-            RawLog::new(topics.to_vec(), data).expect("Received invalid log"),
-        ));
+        node.logs
+            .push(TraceLog::Raw(RawLog::new(topics.to_vec(), data).expect("Received invalid log")));
     }
 
     #[inline]

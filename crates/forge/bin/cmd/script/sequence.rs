@@ -8,7 +8,7 @@ use crate::cmd::{
     verify::provider::VerificationProviderType,
 };
 use alloy_primitives::{Address, TxHash};
-use ethers::{prelude::TransactionReceipt, types::transaction::eip2718::TypedTransaction};
+use ethers_core::types::{transaction::eip2718::TypedTransaction, TransactionReceipt};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_cli::utils::now;
 use foundry_common::{fs, shell, SELECTOR_LEN};
@@ -21,7 +21,6 @@ use std::{
     io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
-use tracing::trace;
 use yansi::Paint;
 
 pub const DRY_RUN_DIR: &str = "dry-run";
