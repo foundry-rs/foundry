@@ -10,12 +10,13 @@ use foundry_evm::{
     opts::{Env, EvmOpts},
     revm::db::DatabaseRef,
 };
+use foundry_test_utils::fd_lock;
 use once_cell::sync::Lazy;
+use std::{env, io::Write};
 
 pub const RE_PATH_SEPARATOR: &str = "/";
 
 const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata");
-// const TESTDATA_LOCK: Lazy<PathBuf> = Lazy::new(|| {});
 
 pub static PROJECT: Lazy<Project> = Lazy::new(|| {
     let paths = ProjectPathsConfig::builder().root(TESTDATA).sources(TESTDATA).build().unwrap();
@@ -29,7 +30,26 @@ pub static PROJECT: Lazy<Project> = Lazy::new(|| {
 });
 
 pub static COMPILED: Lazy<ProjectCompileOutput> = Lazy::new(|| {
-    let out = PROJECT.compile().unwrap();
+    const LOCK: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/.lock");
+
+    let project = &*PROJECT;
+    assert!(project.cached);
+
+    let mut lock = fd_lock::new_lock(LOCK);
+    let read = lock.read().unwrap();
+    let out;
+    if project.cache_path().exists() && std::fs::read(LOCK).unwrap() == b"1" {
+        out = project.compile();
+        drop(read);
+    } else {
+        drop(read);
+        let mut write = lock.write().unwrap();
+        write.write_all(b"1").unwrap();
+        out = project.compile();
+        drop(write);
+    };
+
+    let out = out.unwrap();
     if out.has_compiler_errors() {
         panic!("Compiled with errors:\n{out}");
     }
