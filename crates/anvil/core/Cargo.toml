@@ -30,10 +30,10 @@ reference-trie = { version = "0.25" }
 keccak-hasher = { version = "0.15" }
 
 [dev-dependencies]
-serde.workspace = true
+anvil-core = { path = ".", features = ["serde"] }
 
 [features]
-default = []
+default = ["serde"]
 impersonated-tx = []
 fastrlp = ["dep:open-fastrlp"]
 serde = ["dep:serde"]
