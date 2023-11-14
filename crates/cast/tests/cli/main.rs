@@ -188,8 +188,12 @@ casttest!(upload_signatures, |_prj, cmd| {
     cmd.args(["upload-signature", "error ERC20InsufficientBalance(address,uint256,uint256)"]);
     let output = cmd.stdout_lossy();
 
-    assert!(output.contains("Function ERC20InsufficientBalance(address,uint256,uint256): 0xe450d38c"), "{}", output); // Custom error is interpreted as function
-    
+    assert!(
+        output.contains("Function ERC20InsufficientBalance(address,uint256,uint256): 0xe450d38c"),
+        "{}",
+        output
+    ); // Custom error is interpreted as function
+
     // test multiple sigs
     cmd.args([
         "upload-signature",
@@ -223,7 +227,11 @@ casttest!(upload_signatures, |_prj, cmd| {
     assert!(output.contains("Function approve(address,uint256): 0x095ea7b3"), "{}", output);
     assert!(output.contains("Function decimals(): 0x313ce567"), "{}", output);
     assert!(output.contains("Function allowance(address,address): 0xdd62ed3e"), "{}", output);
-    assert!(output.contains("Function ERC20InsufficientBalance(address,uint256,uint256): 0xe450d38c"), "{}", output);
+    assert!(
+        output.contains("Function ERC20InsufficientBalance(address,uint256,uint256): 0xe450d38c"),
+        "{}",
+        output
+    );
 });
 
 // tests that the `cast to-rlp` and `cast from-rlp` commands work correctly
