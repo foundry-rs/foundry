@@ -527,6 +527,66 @@
     },
     {
       "func": {
+        "id": "computeCreate2Address_0",
+        "description": "Compute the address of a contract created with CREATE2 using the given CREATE2 deployer.",
+        "declaration": "function computeCreate2Address(bytes32 salt, bytes32 initCodeHash, address deployer) external pure returns (address);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "computeCreate2Address(bytes32,bytes32,address)",
+        "selector": "0xd323826a",
+        "selectorBytes": [
+          211,
+          35,
+          130,
+          106
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "computeCreate2Address_1",
+        "description": "Compute the address of a contract created with CREATE2 using the default CREATE2 deployer.",
+        "declaration": "function computeCreate2Address(bytes32 salt, bytes32 initCodeHash) external pure returns (address);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "computeCreate2Address(bytes32,bytes32)",
+        "selector": "0x890c283b",
+        "selectorBytes": [
+          137,
+          12,
+          40,
+          59
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "computeCreateAddress",
+        "description": "Compute the address a contract will be deployed at for a given deployer address and nonce.",
+        "declaration": "function computeCreateAddress(address deployer, uint256 nonce) external pure returns (address);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "computeCreateAddress(address,uint256)",
+        "selector": "0x74637a7a",
+        "selectorBytes": [
+          116,
+          99,
+          122,
+          122
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "cool",
         "description": "Marks the slots of an account and the account address as cold.",
         "declaration": "function cool(address target) external;",

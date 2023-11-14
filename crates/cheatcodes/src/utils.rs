@@ -15,6 +15,7 @@ use ethers_signers::{
     },
     LocalWallet, MnemonicBuilder, Signer,
 };
+use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
 use foundry_utils::types::{ToAlloy, ToEthers};
 
 /// The BIP32 default derivation path prefix.
@@ -108,6 +109,28 @@ impl Cheatcode for getLabelCall {
             Some(label) => label.abi_encode(),
             None => format!("unlabeled:{account}").abi_encode(),
         })
+    }
+}
+
+impl Cheatcode for computeCreateAddressCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { nonce, deployer } = self;
+        ensure!(*nonce <= U256::from(u64::MAX), "nonce must be less than 2^64 - 1");
+        Ok(deployer.create(nonce.to()).abi_encode())
+    }
+}
+
+impl Cheatcode for computeCreate2Address_0Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { salt, initCodeHash, deployer } = self;
+        Ok(deployer.create2(salt, initCodeHash).abi_encode())
+    }
+}
+
+impl Cheatcode for computeCreate2Address_1Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { salt, initCodeHash } = self;
+        Ok(DEFAULT_CREATE2_DEPLOYER.create2(salt, initCodeHash).abi_encode())
     }
 }
 
