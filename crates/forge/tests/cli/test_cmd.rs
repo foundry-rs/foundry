@@ -1,6 +1,6 @@
 //! Contains various tests for checking `forge test`
 use foundry_config::Config;
-use foundry_test_utils::util::{template_lock, OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION};
+use foundry_test_utils::util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION};
 use foundry_utils::rpc;
 use std::{path::PathBuf, process::Command, str::FromStr};
 
@@ -265,8 +265,6 @@ forgetest_init!(
     #[serial_test::serial]
     can_test_forge_std,
     |prj, cmd| {
-        let mut lock = template_lock();
-        let write = lock.write().unwrap();
         let forge_std_dir = prj.root().join("lib/forge-std");
         let status = Command::new("git")
             .current_dir(&forge_std_dir)
@@ -276,7 +274,6 @@ forgetest_init!(
         if !status.success() {
             panic!("failed to update forge-std");
         }
-        drop(write);
 
         // execute in subdir
         cmd.cmd().current_dir(forge_std_dir);

@@ -1,6 +1,5 @@
 use crate::init_tracing;
 use eyre::{Result, WrapErr};
-use fd_lock::RwLock;
 use foundry_compilers::{
     cache::SolFilesCache,
     error::Result as SolcResult,
@@ -51,16 +50,6 @@ pub const SOLC_VERSION: &str = "0.8.23";
 /// versions.
 pub const OTHER_SOLC_VERSION: &str = "0.8.22";
 
-/// Creates a file lock to the global template dir.
-pub fn template_lock() -> RwLock<File> {
-    let lock_path = &*TEMPLATE_LOCK;
-    let lock_file = pretty_err(
-        lock_path,
-        fs::OpenOptions::new().read(true).write(true).create(true).open(lock_path),
-    );
-    RwLock::new(lock_file)
-}
-
 /// Initializes a project with `forge init` at the given path.
 ///
 /// This should be called after an empty project is created like in
@@ -81,9 +70,9 @@ pub fn initialize(target: &Path) {
     pretty_err(tpath, fs::create_dir_all(tpath));
 
     // Initialize the global template if necessary.
-    let mut lock = template_lock();
+    let mut lock = crate::fd_lock::new_lock(TEMPLATE_LOCK.as_path());
     let mut _read = Some(lock.read().unwrap());
-    if fs::read_to_string(&*TEMPLATE_LOCK).unwrap() != "1" {
+    if fs::read(&*TEMPLATE_LOCK).unwrap() != b"1" {
         // We are the first to acquire the lock:
         // - initialize a new empty temp project;
         // - run `forge init`;
@@ -571,7 +560,7 @@ fn config_paths_exist(paths: &ProjectPathsConfig, cached: bool) {
 pub fn pretty_err<T, E: std::error::Error>(path: impl AsRef<Path>, res: Result<T, E>) -> T {
     match res {
         Ok(t) => t,
-        Err(err) => panic!("{}: {err:?}", path.as_ref().display()),
+        Err(err) => panic!("{}: {err}", path.as_ref().display()),
     }
 }
 
