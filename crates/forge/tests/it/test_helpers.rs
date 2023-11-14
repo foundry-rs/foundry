@@ -35,6 +35,10 @@ pub static COMPILED: Lazy<ProjectCompileOutput> = Lazy::new(|| {
     let project = &*PROJECT;
     assert!(project.cached);
 
+    // Compile only once per test run.
+    // We need to use a file lock because `cargo-nextest` runs tests in different processes.
+    // This is similar to [`foundry_test_utils::util::initialize`], see its comments for more
+    // details.
     let mut lock = fd_lock::new_lock(LOCK);
     let read = lock.read().unwrap();
     let out;
