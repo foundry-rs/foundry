@@ -11,7 +11,6 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
-use tracing::{debug, info};
 use url::Url;
 
 /// Represents a remote repository.

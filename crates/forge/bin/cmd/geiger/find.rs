@@ -60,7 +60,7 @@ impl<'a, 'b> fmt::Display for SolFileMetricsPrinter<'a, 'b> {
                     for &loc in $field {
                         let content = &metrics.contents[loc.range()];
                         let (line, col) = offset_to_line_column(&metrics.contents, loc.start());
-                        let pos = format!("  --> {}:{}:{}", file.display(),  line, col);
+                        let pos = format!("  --> {}:{}:{}", file.display(), line, col);
                         writeln!(f,"{}", Paint::red(pos))?;
                         for line in content.lines() {
                             writeln!(f, "      {}", Paint::red(line))?;

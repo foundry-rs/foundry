@@ -158,7 +158,7 @@ pub fn find_source(
     address: Address,
 ) -> Pin<Box<dyn Future<Output = Result<ContractMetadata>>>> {
     Box::pin(async move {
-        tracing::trace!("find etherscan source for: {:?}", address);
+        trace!(%address, "find Etherscan source");
         let source = client.contract_source_code(address).await?;
         let metadata = source.items.first().wrap_err("Etherscan returned no data")?;
         if metadata.proxy == 0 {
@@ -173,7 +173,7 @@ pub fn find_source(
                 Err(e) => {
                     let err = EtherscanError::ContractCodeNotVerified(address).to_string();
                     if e.to_string() == err {
-                        tracing::error!("{}", err);
+                        error!(%err);
                         Ok(source)
                     } else {
                         Err(e)

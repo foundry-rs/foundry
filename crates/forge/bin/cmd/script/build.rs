@@ -16,7 +16,6 @@ use foundry_compilers::{
 };
 use foundry_utils::{PostLinkInput, ResolvedDependency};
 use std::{collections::BTreeMap, str::FromStr};
-use tracing::{trace, warn};
 
 impl ScriptArgs {
     /// Compiles the file or project and the verify metadata.

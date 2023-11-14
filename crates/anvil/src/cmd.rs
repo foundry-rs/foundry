@@ -28,7 +28,6 @@ use std::{
     time::Duration,
 };
 use tokio::time::{Instant, Interval};
-use tracing::{error, trace};
 
 #[derive(Clone, Debug, Parser)]
 pub struct NodeArgs {

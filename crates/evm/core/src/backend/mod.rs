@@ -770,7 +770,7 @@ impl Backend {
 
         match revm::evm_inner::<Self>(env, self, Some(&mut inspector)).transact() {
             Ok(res) => Ok(res),
-            Err(e) => eyre::bail!("backend: failed while inspecting: {:?}", e),
+            Err(e) => eyre::bail!("backend: failed while inspecting: {e}"),
         }
     }
 
@@ -1315,6 +1315,9 @@ impl DatabaseExt for Backend {
             // Set the account's nonce and balance.
             state_acc.info.nonce = acc.nonce.unwrap_or_default();
             state_acc.info.balance = acc.balance.to_alloy();
+
+            // Touch the account to ensure the loaded information persists if called in `setUp`.
+            journaled_state.touch(addr);
         }
 
         Ok(())
@@ -1836,7 +1839,7 @@ fn commit_transaction<I: Inspector<Backend>>(
 
         match evm.inspect(inspector) {
             Ok(res) => res.state,
-            Err(e) => eyre::bail!("backend: failed committing transaction: {:?}", e),
+            Err(e) => eyre::bail!("backend: failed committing transaction: {e}"),
         }
     };
 

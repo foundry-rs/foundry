@@ -15,7 +15,6 @@ use foundry_evm::{
     fork::BlockchainDb,
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
-use tracing::{trace, warn};
 
 // reexport for convenience
 pub use foundry_evm::{backend::MemDb, revm::db::DatabaseRef};

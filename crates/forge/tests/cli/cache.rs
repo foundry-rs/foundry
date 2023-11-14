@@ -16,11 +16,11 @@ forgetest!(can_list_specific_chain, |_prj, cmd| {
 });
 
 forgetest_init!(can_test_no_cache, |prj, cmd| {
-    let _ = std::fs::remove_dir_all(prj.cache_path());
+    prj.clear_cache();
 
     cmd.args(["test", "--no-cache"]).assert_success();
-    assert!(!prj.cache_path().exists(), "cache file should not exist");
+    assert!(!prj.cache().exists(), "cache file should not exist");
 
-    cmd.forge_fuse().args(["test"]).assert_success();
-    assert!(prj.cache_path().exists(), "cache file should exist");
+    cmd.forge_fuse().arg("test").assert_success();
+    assert!(prj.cache().exists(), "cache file should exist");
 });

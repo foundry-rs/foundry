@@ -13,7 +13,6 @@ extern crate tracing;
 use alloy_primitives::Address;
 use foundry_evm_core::backend::DatabaseExt;
 use revm::EVMData;
-use tracing::Level;
 
 pub use defs::{CheatcodeDef, Vm};
 
@@ -67,7 +66,7 @@ pub(crate) trait Cheatcode: CheatcodeDef {
 
         // Separate functions to avoid inline and monomorphization bloat.
         fn trace_span<T: Cheatcode>(cheat: &T) -> tracing::Span {
-            if enabled!(Level::TRACE) {
+            if enabled!(tracing::Level::TRACE) {
                 trace_span!(target: "cheatcodes", "apply", cheat=?cheat)
             } else {
                 debug_span!(target: "cheatcodes", "apply", id=%T::CHEATCODE.func.id)

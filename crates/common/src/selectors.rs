@@ -13,7 +13,6 @@ use std::{
     },
     time::Duration,
 };
-use tracing::warn;
 
 static SELECTOR_DATABASE_URL: &str = "https://api.openchain.xyz/signature-database/v1/";
 static SELECTOR_IMPORT_URL: &str = "https://api.openchain.xyz/signature-database/v1/import";

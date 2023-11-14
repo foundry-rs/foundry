@@ -1,5 +1,8 @@
 #![warn(unused_crate_dependencies)]
 
+#[macro_use]
+extern crate tracing;
+
 use alloy_primitives::{Address, U256};
 use crossterm::{
     event::{

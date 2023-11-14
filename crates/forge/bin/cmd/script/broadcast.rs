@@ -15,7 +15,6 @@ use foundry_cli::{
 use foundry_common::{estimate_eip1559_fees, shell, try_get_http_provider, RetryProvider};
 use futures::StreamExt;
 use std::{cmp::min, collections::HashSet, ops::Mul, sync::Arc};
-use tracing::trace;
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.
@@ -244,7 +243,7 @@ impl ScriptArgs {
 
         match kind {
             SendTransactionKind::Unlocked(addr) => {
-                tracing::debug!("sending transaction from unlocked account {:?}: {:?}", addr, tx);
+                debug!("sending transaction from unlocked account {:?}: {:?}", addr, tx);
 
                 // Chains which use `eth_estimateGas` are being sent sequentially and require their
                 // gas to be re-estimated right before broadcasting.
@@ -574,7 +573,7 @@ impl ScriptArgs {
         signer: &WalletSigner,
         mut legacy_or_1559: TypedTransaction,
     ) -> Result<TxHash> {
-        tracing::debug!("sending transaction: {:?}", legacy_or_1559);
+        debug!("sending transaction: {:?}", legacy_or_1559);
 
         // Chains which use `eth_estimateGas` are being sent sequentially and require their gas
         // to be re-estimated right before broadcasting.

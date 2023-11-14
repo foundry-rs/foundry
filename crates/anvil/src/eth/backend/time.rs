@@ -4,7 +4,6 @@ use crate::eth::error::BlockchainError;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use parking_lot::RwLock;
 use std::{sync::Arc, time::Duration};
-use tracing::trace;
 
 /// Returns the `Utc` datetime for the given seconds since unix epoch
 pub fn utc_from_secs(secs: u64) -> DateTime<Utc> {
