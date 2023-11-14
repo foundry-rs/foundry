@@ -1,7 +1,7 @@
 //! Implementations of [`Utils`](crate::Group::Utils) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
-use alloy_primitives::{keccak256, Address, Uint, B256, U256};
+use alloy_primitives::{keccak256, B256, U256};
 use alloy_sol_types::SolValue;
 use ethers_core::k256::{
     ecdsa::SigningKey,
@@ -115,53 +115,21 @@ impl Cheatcode for getLabelCall {
 impl Cheatcode for computeCreateAddressCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { nonce, deployer } = self;
-        if *nonce == Uint::from(0x00) {
-            return address_from_last_20_bytes(&keccak256(
-                &[&[0xd6], &[0x94], deployer.as_slice(), &[0x80]].abi_encode_packed(),
-            ));
-        }
-        if *nonce <= Uint::from(0x7f) {
-            return address_from_last_20_bytes(&keccak256(
-                &[&[0xd6], &[0x94], deployer.as_slice(), &nonce.to_be_bytes::<1>()]
-                    .abi_encode_packed(),
-            ));
-        }
-        if *nonce <= Uint::from(0xff) {
-            return address_from_last_20_bytes(&keccak256(
-                &[&[0xd7], &[0x94], deployer.as_slice(), &[0x81], &nonce.to_be_bytes::<1>()]
-                    .abi_encode_packed(),
-            ));
-        }
-        if *nonce <= Uint::from(0xffff) {
-            return address_from_last_20_bytes(&keccak256(
-                &[&[0xd8], &[0x94], deployer.as_slice(), &[0x82], &nonce.to_be_bytes::<2>()]
-                    .abi_encode_packed(),
-            ));
-        }
-        if *nonce <= Uint::from(0xffffff) {
-            return address_from_last_20_bytes(&keccak256(
-                &[&[0xd9], &[0x94], deployer.as_slice(), &[0x83], &nonce.to_be_bytes::<3>()]
-                    .abi_encode_packed(),
-            ));
-        }
-        address_from_last_20_bytes(&keccak256(
-            &[&[0xda], &[0x94], deployer.as_slice(), &[0x84], &nonce.to_be_bytes::<4>()]
-                .abi_encode_packed(),
-        ))
+        Ok(deployer.create(nonce.to()).abi_encode())
     }
 }
 
 impl Cheatcode for computeCreate2Address_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { salt, initCodeHash, deployer } = self;
-        compute_create2_address(salt, initCodeHash, deployer)
+        Ok(deployer.create2(salt, initCodeHash).abi_encode())
     }
 }
 
 impl Cheatcode for computeCreate2Address_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { salt, initCodeHash } = self;
-        compute_create2_address(salt, initCodeHash, &DEFAULT_CREATE2_DEPLOYER)
+        Ok(DEFAULT_CREATE2_DEPLOYER.create2(salt, initCodeHash).abi_encode())
     }
 }
 
@@ -249,19 +217,4 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
         .build()?;
     let private_key = U256::from_be_bytes(wallet.signer().to_bytes().into());
     Ok(private_key.abi_encode())
-}
-
-fn compute_create2_address(salt: &B256, init_code_hash: &B256, deployer: &Address) -> Result {
-    let mut data = Vec::with_capacity(1 + 20 + 32 + 32);
-    data.extend_from_slice(&[0xff]);
-    data.extend_from_slice(deployer.as_slice());
-    data.extend_from_slice(salt.as_slice());
-    data.extend_from_slice(init_code_hash.as_slice());
-    address_from_last_20_bytes(&keccak256(&data))
-}
-
-fn address_from_last_20_bytes(bytes: &B256) -> Result {
-    let mut addr_bytes = [0u8; 20];
-    addr_bytes.copy_from_slice(&bytes[12..]);
-    Ok(addr_bytes.abi_encode())
 }
