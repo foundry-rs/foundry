@@ -115,6 +115,7 @@ impl Cheatcode for getLabelCall {
 impl Cheatcode for computeCreateAddressCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { nonce, deployer } = self;
+        ensure!(*nonce <= U256::from(u64::MAX), "nonce must be less than 2^64 - 1");
         Ok(deployer.create(nonce.to()).abi_encode())
     }
 }
