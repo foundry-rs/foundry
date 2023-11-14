@@ -502,7 +502,7 @@ pub struct AnvilEvmArgs {
     #[clap(long, visible_alias = "auto-impersonate")]
     pub auto_impersonate: bool,
 
-    /// Enable autoImpersonate on startup
+    /// Run an Optimism chain
     #[clap(long, visible_alias = "optimism")]
     pub optimism: bool,
 }
