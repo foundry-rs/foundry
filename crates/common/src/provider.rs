@@ -204,7 +204,7 @@ impl ProviderBuilder {
     pub async fn connect(self) -> Result<RetryProvider> {
         let mut provider = self.build()?;
         if let Some(blocktime) = provider.get_chainid().await.ok().and_then(|id| {
-            NamedChain::try_from(id).ok().and_then(|chain| chain.average_blocktime_hint())
+            NamedChain::try_from(id.as_u64()).ok().and_then(|chain| chain.average_blocktime_hint())
         }) {
             provider = provider.interval(blocktime / 2);
         }
@@ -274,6 +274,12 @@ where
         // handle chains that deviate from `eth_feeHistory` and have their own oracle
         match chain {
             NamedChain::Polygon | NamedChain::PolygonMumbai => {
+                // TODO: phase this out somehow
+                let chain = match chain {
+                    NamedChain::Polygon => ethers_core::types::Chain::Polygon,
+                    NamedChain::PolygonMumbai => ethers_core::types::Chain::PolygonMumbai,
+                    _ => unreachable!(),
+                };
                 let estimator = Polygon::new(chain)?.category(GasCategory::Standard);
                 return Ok(estimator.estimate_eip1559_fees().await?)
             }

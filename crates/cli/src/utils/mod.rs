@@ -91,7 +91,7 @@ pub fn get_provider_builder(config: &Config) -> Result<foundry_common::ProviderB
     let url = config.get_rpc_url_or_localhost_http()?;
     let mut builder = foundry_common::ProviderBuilder::new(url.as_ref());
 
-    if let Ok(chain) = config.chain_id.unwrap_or_default().try_into() {
+    if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
         builder = builder.chain(chain);
     }
 
@@ -110,7 +110,7 @@ where
 {
     match chain {
         Some(chain) => Ok(chain),
-        None => Ok(Chain::Id(provider.get_chainid().await?.as_u64())),
+        None => Ok(Chain::from_id(provider.get_chainid().await?.as_u64())),
     }
 }
 
