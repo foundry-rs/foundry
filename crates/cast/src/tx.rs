@@ -183,15 +183,11 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
             // if only calldata is provided, returning a dummy function
             get_func("x()")?
         } else {
-            let chain = self
-                .chain
-                .try_into()
-                .map_err(|_| FunctionSignatureError::UnknownChain(self.chain))?;
             get_func_etherscan(
                 sig,
                 self.to.ok_or(FunctionSignatureError::MissingToAddress)?,
                 &args,
-                chain,
+                self.chain,
                 self.etherscan_api_key.as_ref().ok_or_else(|| {
                     FunctionSignatureError::MissingEtherscan { sig: sig.to_string() }
                 })?,
