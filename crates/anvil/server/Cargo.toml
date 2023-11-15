@@ -14,7 +14,7 @@ repository.workspace = true
 anvil-rpc = { path = "../rpc" }
 
 # axum related
-axum = { version = "0.5", features = ["ws"] }
+axum = { version = "0.6", features = ["ws"] }
 hyper = "0.14"
 tower-http = { version = "0.4", features = ["trace", "cors"] }
 
