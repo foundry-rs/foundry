@@ -481,19 +481,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         newValue: present_value.into(),
                         reverted: false,
                     };
-                    // If there is a "last" entry in the recorded storage accesses, push the current
-                    // access onto it
-                    if let Some(last) = recorded_account_diffs.last_mut() {
-                        if let Some(last) = last.last_mut() {
-                            // Assert that we're on the correct depth before recording post-call
-                            // state changes. Depending on the depth the
-                            // cheat was called at, there may not be any pending calls
-                            // to update if execution has percolated up to a higher depth.
-                            if last.depth < data.journaled_state.depth() {
-                                last.access.storageAccesses.push(access);
-                            }
-                        }
-                    }
+                    append_storage_access(recorded_account_diffs, access, data.journaled_state.depth());
                 }
                 opcode::SSTORE => {
                     let key = try_or_continue!(interpreter.stack().peek(0));
@@ -517,19 +505,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         newValue: value.into(),
                         reverted: false,
                     };
-                    // If there is a "last" entry in the recorded storage accesses, push the current
-                    // access onto it
-                    if let Some(last) = recorded_account_diffs.last_mut() {
-                        if let Some(last) = last.last_mut() {
-                            // Assert that we're on the correct depth before recording post-call
-                            // state changes. Depending on the depth the
-                            // cheat was called at, there may not be any pending calls
-                            // to update if execution has percolated up to a higher depth.
-                            if last.depth < data.journaled_state.depth() {
-                                last.access.storageAccesses.push(access);
-                            }
-                        }
-                    }
+                    append_storage_access(recorded_account_diffs, access, data.journaled_state.depth());
                 }
                 _ => (),
             }
@@ -973,33 +949,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         call_access.access.newBalance = acc.info.balance;
                     }
                 }
-                println!("*** call_end {:?}", last_recorded_depth);
                 // Merge the last depth's AccountAccesses into the AccountAccesses at the current
                 // depth, or push them back onto the pending vector if higher depths were not
                 // recorded. This preserves ordering of accesses.
                 if let Some(last) = recorded_account_diffs.last_mut() {
                     last.append(&mut last_recorded_depth);
-                    // Add a synthetic AccountAccess to store future storage accesses for the parent context.
-                    if let Some(parent) = last.first() {
-                        // Depending on the depth the cheat was called at, there may not be a parent context available.
-                        if parent.depth == data.journaled_state.depth() - 1 && access_is_call(parent.access.kind) {
-                            let call_access_resume = crate::Vm::AccountAccess {
-                                forkId: parent.access.forkId,
-                                accessor: parent.access.accessor,
-                                account: parent.access.account,
-                                kind: crate::Vm::AccountAccessKind::Resume,
-                                initialized: parent.access.initialized,
-                                oldBalance: U256::ZERO,
-                                newBalance: U256::ZERO,
-                                value: U256::ZERO,
-                                data: Bytes::new().to_vec(),
-                                reverted: parent.access.reverted,
-                                deployedCode: Bytes::new().to_vec(),
-                                storageAccesses: Vec::new(),
-                            };
-                            last.push(AccountAccess{access: call_access_resume, depth: parent.depth});
-                        }
-                    }
                 } else {
                     recorded_account_diffs.push(last_recorded_depth);
                 }
@@ -1320,9 +1274,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // may not be any pending calls to update if execution has
                 // percolated up to a higher depth.
                 if create_access.depth == data.journaled_state.depth() {
-                    debug_assert!(
-                        access_is_call(create_access.access.kind)
-                    );
+                    debug_assert_eq!(create_access.access.kind as u8, crate::Vm::AccountAccessKind::Create as u8);
                     if let Some(address) = address {
                         if let Ok((created_acc, _)) =
                             data.journaled_state.load_account(address, data.db)
@@ -1343,27 +1295,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // recorded. This preserves ordering of accesses.
                 if let Some(last) = recorded_account_diffs.last_mut() {
                     last.append(&mut last_depth);
-                    // Add a synthetic AccountAccess to store future storage accesses for the parent context.
-                    if let Some(parent) = last.first() {
-                        // Depending on the depth the cheat was called at, there may not be a parent context available.
-                        if parent.depth == data.journaled_state.depth() - 1 && parent.access.kind as u8 == crate::Vm::AccountAccessKind::Create as u8 {
-                            let call_access_resume = crate::Vm::AccountAccess {
-                                forkId: parent.access.forkId,
-                                accessor: parent.access.accessor,
-                                account: parent.access.account,
-                                kind: crate::Vm::AccountAccessKind::Resume,
-                                initialized: parent.access.initialized,
-                                oldBalance: U256::ZERO,
-                                newBalance: U256::ZERO,
-                                value: U256::ZERO,
-                                data: Bytes::new().to_vec(),
-                                reverted: parent.access.reverted,
-                                deployedCode: Bytes::new().to_vec(),
-                                storageAccesses: Vec::new(),
-                            };
-                            last.push(AccountAccess{access: call_access_resume, depth: parent.depth});
-                        }
-                    }
                 } else {
                     recorded_account_diffs.push(last_depth);
                 }
@@ -1467,6 +1398,7 @@ fn apply_dispatch<DB: DatabaseExt>(calls: &Vm::VmCalls, ccx: &mut CheatsCtxt<DB>
     vm_calls!(match_)
 }
 
+/// Returns true if the kind of account access is a call.
 fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
     match kind {
         crate::Vm::AccountAccessKind::Call
@@ -1475,5 +1407,44 @@ fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
          | crate::Vm::AccountAccessKind::DelegateCall
            => true,
         _ => false,
+    }
+}
+
+/// Appends an AccountAccess that resumes the recording of its context.
+fn append_storage_access(accesses: &mut Vec<Vec<AccountAccess>>, storage_access: crate::Vm::StorageAccess, storage_depth: u64) {
+    if let Some(last) = accesses.last_mut() {
+        // Assert that there's an existing record for the current context.
+        if !last.is_empty() && last.first().unwrap().depth < storage_depth {
+            // Three cases to consider:
+            // 1. If there hasn't been a context switch since the start of this context, then add the storage access to the current context record.
+            // 2. If there's an existing Resume record, then add the storage access to it.
+            // 3. Otherwise, create a new Resume record based on the current context.
+            if last.len() == 1 {
+                last.first_mut().unwrap().access.storageAccesses.push(storage_access);
+            } else {
+                let last_record = last.last_mut().unwrap();
+                if last_record.access.kind as u8 == crate::Vm::AccountAccessKind::Resume as u8 {
+                    last_record.access.storageAccesses.push(storage_access);
+                } else {
+                    let entry = last.first().unwrap();
+                    let resume_record = crate::Vm::AccountAccess {
+                        forkId: entry.access.forkId,
+                        accessor: entry.access.accessor,
+                        account: entry.access.account,
+                        kind: crate::Vm::AccountAccessKind::Resume,
+                        initialized: entry.access.initialized,
+                        storageAccesses: vec![storage_access],
+                        reverted: entry.access.reverted,
+                        // The remaining fields are defaults
+                        oldBalance: U256::ZERO,
+                        newBalance: U256::ZERO,
+                        value: U256::ZERO,
+                        data: Bytes::new().to_vec(),
+                        deployedCode: Bytes::new().to_vec(),
+                    };
+                    last.push(AccountAccess { access: resume_record, depth: entry.depth });
+                }
+            }
+        }
     }
 }

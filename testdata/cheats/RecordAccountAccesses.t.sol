@@ -203,7 +203,7 @@ contract RecordAccountAccessesTest is DSTest {
         test2 = new StorageAccessor();
     }
 
-    function testStorageAccessesDelegateCall() public {
+    function testStorageAccessDelegateCall() public {
         StorageAccessor one = test1;
         Proxy proxy = new Proxy(address(one));
 
@@ -211,7 +211,7 @@ contract RecordAccountAccessesTest is DSTest {
         address(proxy).call(abi.encodeCall(StorageAccessor.read, bytes32(uint256(1234))));
         Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
 
-        assertEq(called.length, 3, "incorrect length");
+        assertEq(called.length, 2, "incorrect length");
 
         assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Call), "incorrect kind");
         assertEq(called[0].accessor, address(this));
@@ -231,8 +231,6 @@ contract RecordAccountAccessesTest is DSTest {
                 reverted: false
             })
         );
-
-        assertResumeEq(called[2], called[0]);
     }
 
     /// @notice Test normal, non-nested storage accesses
@@ -966,6 +964,7 @@ contract RecordAccountAccessesTest is DSTest {
         bytes memory creationCode = abi.encodePacked(type(SelfCaller).creationCode, abi.encode(""));
         try create2or.create2(bytes32(0), creationCode) {} catch {}
         address hypotheticalAddress = deriveCreate2Address(address(create2or), bytes32(0), keccak256(creationCode));
+
         Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
         assertEq(called.length, 3, "incorrect length");
         assertEq(
@@ -1098,21 +1097,22 @@ contract RecordAccountAccessesTest is DSTest {
         revert();
     }
 
-    function assertResumeEq(Vm.AccountAccess memory actual, Vm.AccountAccess memory parent) internal {
+    /// Asserts that the given account access is a resume of the given parent
+    function assertResumeEq(Vm.AccountAccess memory actual, Vm.AccountAccess memory expected) internal {
         assertEq(
             actual,
             Vm.AccountAccess({
                 forkId: 0,
-                accessor: parent.accessor,
-                account: parent.account,
+                accessor: expected.accessor,
+                account: expected.account,
                 kind: Vm.AccountAccessKind.Resume,
                 oldBalance: 0,
                 newBalance: 0,
                 deployedCode: "",
-                initialized: parent.initialized,
+                initialized: expected.initialized,
                 value: 0,
                 data: "",
-                reverted: parent.reverted,
+                reverted: expected.reverted,
                 storageAccesses: new Vm.StorageAccess[](0)
             }),
             false
