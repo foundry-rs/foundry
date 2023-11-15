@@ -201,6 +201,8 @@ ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
 
+alloy-chains = { git = "https://github.com/alloy-rs/chains/", branch = "dani/fix-serde" }
+
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/" }
 alloy-primitives = { git = "https://github.com/alloy-rs/core/" }
 alloy-json-abi = { git = "https://github.com/alloy-rs/core/" }
