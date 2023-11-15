@@ -83,7 +83,7 @@ impl EstimateArgs {
         let config = Config::from_provider(figment);
 
         let provider = utils::get_provider(&config)?;
-        let chain = utils::get_chain(config.chain_id, &provider).await?;
+        let chain = utils::get_chain(config.chain, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain));
 
         let mut builder = TxBuilder::new(&provider, from, to, chain, false).await?;

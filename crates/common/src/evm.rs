@@ -192,10 +192,10 @@ pub struct EnvArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code_size_limit: Option<usize>,
 
-    /// The chain ID.
-    #[clap(long, alias = "chain", value_name = "CHAIN_ID")]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub chain_id: Option<Chain>,
+    /// The chain name or EIP-155 chain ID.
+    #[clap(long, visible_alias = "chain-id", value_name = "CHAIN")]
+    #[serde(rename = "chain_id", skip_serializing_if = "Option::is_none", serialize_with = "id")]
+    pub chain: Option<Chain>,
 
     /// The gas price.
     #[clap(long, value_name = "GAS_PRICE")]
@@ -255,6 +255,18 @@ impl EvmArgs {
     }
 }
 
+/// We have to serialize chain IDs and not names because when extracting an EVM `Env`, it expects
+/// `chain_id` to be `u64`.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn id<S: serde::Serializer>(chain: &Option<Chain>, s: S) -> Result<S::Ok, S::Error> {
+    if let Some(chain) = chain {
+        s.serialize_u64(chain.id())
+    } else {
+        // skip_serializing_if = "Option::is_none" should prevent this branch from being taken
+        unreachable!()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,20 +275,20 @@ mod tests {
     #[test]
     fn can_parse_chain_id() {
         let args = EvmArgs {
-            env: EnvArgs { chain_id: Some(NamedChain::Mainnet.into()), ..Default::default() },
+            env: EnvArgs { chain: Some(NamedChain::Mainnet.into()), ..Default::default() },
             ..Default::default()
         };
         let config = Config::from_provider(Config::figment().merge(args));
-        assert_eq!(config.chain_id, Some(NamedChain::Mainnet.into()));
+        assert_eq!(config.chain, Some(NamedChain::Mainnet.into()));
 
         let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "goerli"]);
-        assert_eq!(env.chain_id, Some(NamedChain::Goerli.into()));
+        assert_eq!(env.chain, Some(NamedChain::Goerli.into()));
     }
 
     #[test]
     fn test_memory_limit() {
         let args = EvmArgs {
-            env: EnvArgs { chain_id: Some(NamedChain::Mainnet.into()), ..Default::default() },
+            env: EnvArgs { chain: Some(NamedChain::Mainnet.into()), ..Default::default() },
             ..Default::default()
         };
         let config = Config::from_provider(Config::figment().merge(args));
@@ -284,5 +296,17 @@ mod tests {
 
         let env = EnvArgs::parse_from(["foundry-common", "--memory-limit", "100"]);
         assert_eq!(env.memory_limit, Some(100));
+    }
+
+    #[test]
+    fn test_chain_id() {
+        let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "1"]);
+        assert_eq!(env.chain, Some(Chain::mainnet()));
+
+        let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "mainnet"]);
+        assert_eq!(env.chain, Some(Chain::mainnet()));
+        let args = EvmArgs { env, ..Default::default() };
+        let config = Config::from_provider(Config::figment().merge(args));
+        assert_eq!(config.chain, Some(Chain::mainnet()));
     }
 }

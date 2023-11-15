@@ -462,7 +462,7 @@ async fn main() -> Result<()> {
         }
         Subcommands::EtherscanSource { address, directory, etherscan } => {
             let config = Config::from(&etherscan);
-            let chain = config.chain_id.unwrap_or_default();
+            let chain = config.chain.unwrap_or_default();
             let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
             match directory {
                 Some(dir) => {

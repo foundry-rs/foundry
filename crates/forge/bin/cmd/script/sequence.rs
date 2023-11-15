@@ -80,7 +80,7 @@ impl ScriptSequence {
         broadcasted: bool,
         is_multi: bool,
     ) -> Result<Self> {
-        let chain = config.chain_id.unwrap_or_default().id();
+        let chain = config.chain.unwrap_or_default().id();
 
         let (path, sensitive_path) = ScriptSequence::get_paths(
             &config.broadcast,

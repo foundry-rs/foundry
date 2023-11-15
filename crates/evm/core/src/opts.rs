@@ -195,11 +195,11 @@ impl EvmOpts {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Env {
-    /// the block gas limit
+    /// The block gas limit.
     #[serde(deserialize_with = "string_or_number")]
     pub gas_limit: u64,
 
-    /// the chainid opcode value
+    /// The `CHAINID` opcode value.
     pub chain_id: Option<u64>,
 
     /// the tx.gasprice value during EVM execution

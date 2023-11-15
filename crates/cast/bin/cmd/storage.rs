@@ -126,7 +126,7 @@ impl StorageArgs {
             eyre::bail!("You must provide an Etherscan API key if you're fetching a remote contract's storage.");
         }
 
-        let chain = utils::get_chain(config.chain_id, &provider).await?;
+        let chain = utils::get_chain(config.chain, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
         let client = Client::new(chain, api_key)?;
         let addr = address
