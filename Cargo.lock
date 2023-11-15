@@ -2737,6 +2737,7 @@ dependencies = [
  "const-hex",
  "dunce",
  "ethers-core",
+ "ethers-middleware",
  "ethers-providers",
  "eyre",
  "foundry-block-explorers",

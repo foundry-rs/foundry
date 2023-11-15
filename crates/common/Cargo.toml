@@ -16,7 +16,7 @@ foundry-config.workspace = true
 foundry-macros.workspace = true
 
 ethers-core.workspace = true
-# ethers-middleware.workspace = true
+ethers-middleware.workspace = true
 ethers-providers = { workspace = true, features = ["ws", "ipc"] }
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
