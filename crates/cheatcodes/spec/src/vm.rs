@@ -148,7 +148,7 @@ interface Vm {
     struct AccountAccess {
         /// What accessed the account.
         address accessor;
-        /// The account whose storage was accessed.
+        /// The account that was accessed.
         /// It's either the account created, callee or a selfdestruct recipient for CREATE, CALL or SELFDESTRUCT.
         address account;
         /// The kind of account access.
