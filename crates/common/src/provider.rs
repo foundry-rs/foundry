@@ -4,7 +4,6 @@ use crate::{ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
 use alloy_primitives::U256;
 use alloy_providers::provider::{Provider, TempProvider};
 use alloy_transports::{Authorization, BoxTransport, Http, Transport};
-use ethers_core::types::Chain;
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use ethers_providers::{JwtAuth, JwtKey};
 use eyre::{Result, WrapErr};

@@ -7,7 +7,6 @@ use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{Block, BlockId, BlockNumberOrTag, Transaction};
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
-use foundry_utils::types::ToEthers;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     stream::Stream,

@@ -31,7 +31,7 @@ pub async fn environment<P: TempProvider>(
         let (fork_gas_price, rpc_chain_id, block) = tokio::join!(
             provider.get_gas_price(),
             provider.get_chain_id(),
-            provider.get_block_by_number(BlockNumberOrTag::Number(block_number.to::<U64>()), false)
+            provider.get_block_by_number(BlockNumberOrTag::Number(block_number.to()), false)
         );
         (
             fork_gas_price.success().ok_or_else(|| eyre::eyre!("Failed to get gas price"))?,

@@ -8,7 +8,7 @@ use crate::{
 };
 use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
 use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
-use ethers::{types::BlockNumber, utils::GenesisAccount};
+use ethers::utils::GenesisAccount;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use foundry_utils::types::ToAlloy;
 use revm::{
