@@ -278,8 +278,9 @@ mod tests {
     use crate::TxBuilder;
     use alloy_primitives::{Address, U256};
     use async_trait::async_trait;
-    use ethers_core::types::{transaction::eip2718::TypedTransaction, Chain, NameOrAddress, H160};
+    use ethers_core::types::{transaction::eip2718::TypedTransaction, NameOrAddress, H160};
     use ethers_providers::{JsonRpcClient, Middleware, ProviderError};
+    use foundry_config::NamedChain;
     use foundry_utils::types::ToEthers;
     use serde::{de::DeserializeOwned, Serialize};
     use std::str::FromStr;
@@ -326,7 +327,7 @@ mod tests {
     async fn builder_new_non_legacy() -> eyre::Result<()> {
         let provider = MyProvider {};
         let builder =
-            TxBuilder::new(&provider, "a.eth", Some("b.eth"), Chain::Mainnet, false).await?;
+            TxBuilder::new(&provider, "a.eth", Some("b.eth"), NamedChain::Mainnet, false).await?;
         let (tx, args) = builder.build();
         assert_eq!(*tx.from().unwrap(), Address::from_str(ADDR_1).unwrap().to_ethers());
         assert_eq!(
@@ -348,7 +349,7 @@ mod tests {
     async fn builder_new_legacy() -> eyre::Result<()> {
         let provider = MyProvider {};
         let builder =
-            TxBuilder::new(&provider, "a.eth", Some("b.eth"), Chain::Mainnet, true).await?;
+            TxBuilder::new(&provider, "a.eth", Some("b.eth"), NamedChain::Mainnet, true).await?;
         // don't check anything other than the tx type - the rest is covered in the non-legacy case
         let (tx, _) = builder.build();
         match tx {
@@ -364,7 +365,9 @@ mod tests {
     async fn builder_fields() -> eyre::Result<()> {
         let provider = MyProvider {};
         let mut builder =
-            TxBuilder::new(&provider, "a.eth", Some("b.eth"), Chain::Mainnet, false).await.unwrap();
+            TxBuilder::new(&provider, "a.eth", Some("b.eth"), NamedChain::Mainnet, false)
+                .await
+                .unwrap();
         builder
             .gas(Some(U256::from(12u32)))
             .gas_price(Some(U256::from(34u32)))
@@ -386,7 +389,9 @@ mod tests {
     async fn builder_args() -> eyre::Result<()> {
         let provider = MyProvider {};
         let mut builder =
-            TxBuilder::new(&provider, "a.eth", Some("b.eth"), Chain::Mainnet, false).await.unwrap();
+            TxBuilder::new(&provider, "a.eth", Some("b.eth"), NamedChain::Mainnet, false)
+                .await
+                .unwrap();
         builder.args(Some(("what_a_day(int)", vec![String::from("31337")]))).await?;
         let (_, function_maybe) = builder.build();
 

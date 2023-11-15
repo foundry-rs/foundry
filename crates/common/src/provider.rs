@@ -5,7 +5,7 @@ use crate::{
     ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
 };
 use ethers_core::types::U256;
-use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
+// use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use ethers_providers::{is_local_endpoint, Middleware, Provider, DEFAULT_LOCAL_POLL_INTERVAL};
 use eyre::{Result, WrapErr};
 use foundry_config::NamedChain;
@@ -204,7 +204,7 @@ impl ProviderBuilder {
     pub async fn connect(self) -> Result<RetryProvider> {
         let mut provider = self.build()?;
         if let Some(blocktime) = provider.get_chainid().await.ok().and_then(|id| {
-            NamedChain::try_from(id).ok().and_then(|chain| chain.average_blocktime_hint())
+            NamedChain::try_from(id.as_u64()).ok().and_then(|chain| chain.average_blocktime_hint())
         }) {
             provider = provider.interval(blocktime / 2);
         }
@@ -274,8 +274,9 @@ where
         // handle chains that deviate from `eth_feeHistory` and have their own oracle
         match chain {
             NamedChain::Polygon | NamedChain::PolygonMumbai => {
-                let estimator = Polygon::new(chain)?.category(GasCategory::Standard);
-                return Ok(estimator.estimate_eip1559_fees().await?)
+                // TODO: ethers Chain
+                // let estimator = Polygon::new(chain)?.category(GasCategory::Standard);
+                // return Ok(estimator.estimate_eip1559_fees().await?)
             }
             _ => {}
         }

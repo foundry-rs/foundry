@@ -110,7 +110,7 @@ where
 {
     match chain {
         Some(chain) => Ok(chain),
-        None => Ok(Chain::Id(provider.get_chainid().await?.as_u64())),
+        None => Ok(Chain::from_id(provider.get_chainid().await?.as_u64())),
     }
 }
 

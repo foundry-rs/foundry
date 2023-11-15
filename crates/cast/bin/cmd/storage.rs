@@ -128,7 +128,7 @@ impl StorageArgs {
 
         let chain = utils::get_chain(config.chain_id, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-        let client = Client::new(chain.named()?, api_key)?;
+        let client = Client::new(chain, api_key)?;
         let addr = address
             .as_address()
             .ok_or_else(|| eyre::eyre!("Could not resolve address"))?

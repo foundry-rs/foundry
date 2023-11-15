@@ -13,12 +13,11 @@ use figment::{
     value::{Dict, Map, Value},
     Error, Figment, Metadata, Profile, Provider,
 };
-pub use foundry_compilers::{self, artifacts::OptimizerDetails};
 use foundry_compilers::{
     artifacts::{
         output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
-        Libraries, ModelCheckerSettings, ModelCheckerTarget, Optimizer, RevertStrings, Settings,
-        SettingsMetadata, Severity,
+        Libraries, ModelCheckerSettings, ModelCheckerTarget, Optimizer, OptimizerDetails,
+        RevertStrings, Settings, SettingsMetadata, Severity,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
@@ -28,6 +27,7 @@ use foundry_compilers::{
 use inflector::Inflector;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use revm_primitives::SpecId;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -55,9 +55,6 @@ pub use resolve::UnresolvedEnvVarError;
 pub mod cache;
 use cache::{Cache, ChainCache};
 
-mod chain;
-pub use chain::{Chain, NamedChain};
-
 pub mod fmt;
 pub use fmt::FormatterConfig;
 
@@ -77,8 +74,8 @@ pub use warning::*;
 pub mod fix;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
+pub use alloy_chains::{Chain, NamedChain};
 pub use figment;
-use revm_primitives::SpecId;
 
 /// config providers
 pub mod providers;
@@ -895,7 +892,7 @@ impl Config {
 
         // we treat the `etherscan_api_key` as actual API key
         // if no chain provided, we assume mainnet
-        let chain = self.chain_id.unwrap_or(Chain::Named(NamedChain::Mainnet));
+        let chain = self.chain_id.unwrap_or(Chain::mainnet());
         let api_key = self.etherscan_api_key.as_ref()?;
         ResolvedEtherscanConfig::create(api_key, chain).map(Ok)
     }
@@ -908,9 +905,8 @@ impl Config {
     /// over the chain's entry in the table.
     pub fn get_etherscan_config_with_chain(
         &self,
-        chain: Option<impl Into<Chain>>,
+        chain: Option<Chain>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
-        let chain = chain.map(Into::into);
         if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref()) {
             if self.etherscan.contains_key(maybe_alias) {
                 return self.etherscan.clone().resolved().remove(maybe_alias).transpose()
@@ -946,7 +942,7 @@ impl Config {
     }
 
     /// Helper function to just get the API key
-    pub fn get_etherscan_api_key(&self, chain: Option<impl Into<Chain>>) -> Option<String> {
+    pub fn get_etherscan_api_key(&self, chain: Option<Chain>) -> Option<String> {
         self.get_etherscan_config_with_chain(chain).ok().flatten().map(|c| c.key)
     }
 
@@ -1132,7 +1128,7 @@ impl Config {
     /// Returns the default config that uses dapptools style paths
     pub fn dapptools() -> Self {
         Config {
-            chain_id: Some(Chain::Id(99)),
+            chain_id: Some(Chain::from_id(99)),
             block_timestamp: 0,
             block_number: 0,
             ..Config::default()
@@ -2922,16 +2918,15 @@ mod tests {
             )?;
 
             let config = Config::load();
-            assert!(config.get_etherscan_config_with_chain(None::<u64>).unwrap().is_none());
             assert!(config
-                .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain))
+                .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain.into()))
                 .is_err());
 
             std::env::set_var(env_key, env_value);
 
             assert_eq!(
                 config
-                    .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain))
+                    .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain.into()))
                     .unwrap()
                     .unwrap()
                     .key,
@@ -2943,7 +2938,7 @@ mod tests {
 
             assert_eq!(
                 with_key
-                    .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain))
+                    .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain.into()))
                     .unwrap()
                     .unwrap()
                     .key,
@@ -3159,12 +3154,12 @@ mod tests {
 
             let mut config = Config::load();
 
-            let optimism = config.get_etherscan_api_key(Some(NamedChain::Optimism));
+            let optimism = config.get_etherscan_api_key(Some(NamedChain::Optimism.into()));
             assert_eq!(optimism, Some("https://etherscan-optimism.com/".to_string()));
 
             config.etherscan_api_key = Some("mumbai".to_string());
 
-            let mumbai = config.get_etherscan_api_key(Some(NamedChain::PolygonMumbai));
+            let mumbai = config.get_etherscan_api_key(Some(NamedChain::PolygonMumbai.into()));
             assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
 
             Ok(())
@@ -3187,7 +3182,7 @@ mod tests {
             let config = Config::load();
 
             let mumbai = config
-                .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai))
+                .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai.into()))
                 .unwrap()
                 .unwrap();
             assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
@@ -3212,7 +3207,7 @@ mod tests {
             let config = Config::load();
 
             let mumbai = config
-                .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai))
+                .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai.into()))
                 .unwrap()
                 .unwrap();
             assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
@@ -3241,8 +3236,7 @@ mod tests {
 
             let config = Config::load();
 
-            let mumbai =
-                config.get_etherscan_config_with_chain(Option::<u64>::None).unwrap().unwrap();
+            let mumbai = config.get_etherscan_config_with_chain(None).unwrap().unwrap();
             assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
 
             let mumbai_rpc = config.get_rpc_url().unwrap().unwrap();
@@ -3294,9 +3288,9 @@ mod tests {
                     via_ir: true,
                     rpc_storage_caching: StorageCachingConfig {
                         chains: CachedChains::Chains(vec![
-                            Chain::Named(NamedChain::Mainnet),
-                            Chain::Named(NamedChain::Optimism),
-                            Chain::Id(999999)
+                            Chain::mainnet(),
+                            Chain::optimism_mainnet(),
+                            Chain::from_id(999999)
                         ]),
                         endpoints: CachedEndpoints::All
                     },
