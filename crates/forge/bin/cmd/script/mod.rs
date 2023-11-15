@@ -70,12 +70,12 @@ mod verify;
 
 /// List of Chains that support Shanghai.
 static SHANGHAI_ENABLED_CHAINS: &[Chain] = &[
-    // Ethereum Mainnet
     Chain::Mainnet,
-    // Goerli
     Chain::Goerli,
-    // Sepolia
     Chain::Sepolia,
+    Chain::OptimismGoerli,
+    Chain::OptimismSepolia,
+    Chain::BaseGoerli,
 ];
 
 // Loads project's figment and merges the build cli arguments into it
