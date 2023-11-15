@@ -112,7 +112,7 @@ pub struct EvmArgs {
     ///
     /// default value: 330
     ///
-    /// See also --fork-url and https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    /// See also --fork-url and https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
     #[clap(
         long,
         requires = "fork_url",
@@ -124,7 +124,7 @@ pub struct EvmArgs {
 
     /// Disables rate limiting for this node's provider.
     ///
-    /// See also --fork-url and https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    /// See also --fork-url and https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
     #[clap(
         long,
         requires = "fork_url",

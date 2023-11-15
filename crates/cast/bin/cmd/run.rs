@@ -60,7 +60,7 @@ pub struct RunArgs {
     ///
     /// default value: 330
     ///
-    /// See also, https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
     #[clap(long, alias = "cups", value_name = "CUPS")]
     pub compute_units_per_second: Option<u64>,
 
@@ -68,7 +68,7 @@ pub struct RunArgs {
     ///
     /// default value: false
     ///
-    /// See also, https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
     #[clap(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
     pub no_rate_limit: bool,
 }
