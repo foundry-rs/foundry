@@ -73,6 +73,12 @@ thiserror = "1"
 tokio = { version = "1", features = ["time"] }
 watchexec = "2"
 
+# doc server
+axum = { workspace = true, features = ["ws"] }
+hyper.workspace = true
+tower-http = { workspace = true, features = ["fs"] }
+opener = "0.6"
+
 [dev-dependencies]
 anvil.workspace = true
 foundry-test-utils.workspace = true

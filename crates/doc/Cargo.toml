@@ -12,7 +12,7 @@ repository.workspace = true
 
 [dependencies]
 forge-fmt.workspace = true
-foundry-compilers = { workspace = true, features = ["async"] }
+foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-utils.workspace = true
 
@@ -29,11 +29,5 @@ serde_json.workspace = true
 serde.workspace = true
 solang-parser.workspace = true
 thiserror = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 toml.workspace = true
 tracing.workspace = true
-
-axum = { workspace = true, features = ["ws"] }
-hyper.workspace = true
-tower-http = { workspace = true, features = ["fs"] }
-opener = "0.6"

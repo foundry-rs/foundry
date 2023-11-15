@@ -1,5 +1,5 @@
 use axum::{routing::get_service, Router};
-use mdbook::{utils::fs::get_404_output_file, MDBook};
+use forge_doc::mdbook::{utils::fs::get_404_output_file, MDBook};
 use std::{
     net::{SocketAddr, ToSocketAddrs},
     path::PathBuf,
