@@ -21,7 +21,6 @@ alloy-primitives.workspace = true
 auto_impl = "1"
 derive_more = "0.99"
 eyre.workspace = true
-futures-util = "0.3"
 itertools.workspace = true
 mdbook = { version = "0.4", default-features = false, features = ["search"] }
 once_cell = "1"
@@ -33,4 +32,8 @@ thiserror = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 toml.workspace = true
 tracing.workspace = true
-warp = { version = "0.3", default-features = false, features = ["websocket"] }
+
+axum = { workspace = true, features = ["ws"] }
+hyper.workspace = true
+tower-http = { workspace = true, features = ["fs"] }
+opener = "0.6"

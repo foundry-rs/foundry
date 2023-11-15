@@ -33,6 +33,10 @@ pub struct DocArgs {
     #[clap(long, short)]
     serve: bool,
 
+    /// Open the documentation in the browser.
+    #[clap(long)]
+    open: bool,
+
     /// Hostname for serving documentation.
     #[clap(long, requires = "serve")]
     hostname: Option<String>,
@@ -108,6 +112,7 @@ impl DocArgs {
             Server::new(doc_config.out)
                 .with_hostname(self.hostname.unwrap_or("localhost".to_owned()))
                 .with_port(self.port.unwrap_or(3000))
+                .open(self.open)
                 .serve()?;
         }
 

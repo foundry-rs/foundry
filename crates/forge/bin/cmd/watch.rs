@@ -299,9 +299,9 @@ fn clean_cmd_args(num: usize, mut cmd_args: Vec<String>) -> Vec<String> {
 /// Returns the Initialisation configuration for [`Watchexec`].
 pub fn init() -> Result<InitConfig> {
     let mut config = InitConfig::default();
-    config.on_error(SyncFnHandler::from(|data| -> std::result::Result<(), Infallible> {
+    config.on_error(SyncFnHandler::from(|data| {
         trace!("[[{:?}]]", data);
-        Ok(())
+        Ok::<_, Infallible>(())
     }));
 
     Ok(config)
