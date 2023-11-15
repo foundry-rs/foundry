@@ -1,17 +1,19 @@
 //! Support for forking off another client
 
 use crate::eth::{backend::db::Db, error::BlockchainError};
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, StorageKey, StorageValue, B256, U256, U64};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{
-    AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber, CallRequest,
-    FeeHistory, Filter, Log, Transaction, TransactionReceipt,
+    AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
+    CallRequest, EIP1186AccountProofResponse, FeeHistory, Filter, Log, Transaction,
+    TransactionReceipt,
 };
 use anvil_core::eth::proof::AccountProof;
 use ethers::{
     providers::ProviderError,
     types::{GethDebugTracingOptions, GethTrace, Trace},
 };
+use eyre::Context;
 use foundry_common::{ProviderBuilder, RetryProvider};
 use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
@@ -20,6 +22,8 @@ use parking_lot::{
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
 use tracing::trace;
+
+use super::mem::storage::Blockchain;
 
 /// Represents a fork of a remote client
 ///
@@ -66,21 +70,30 @@ impl ClientFork {
             let chain_id = if let Some(chain_id) = override_chain_id {
                 chain_id.into()
             } else {
-                self.provider().get_chainid().await?
+                self.provider()
+                    .get_chain_id()
+                    .await
+                    .success()
+                    .ok_or(BlockchainError::ChainIdNotAvailable)?
+                    .to::<u64>()
             };
-            self.config.write().chain_id = chain_id.as_u64();
+            self.config.write().chain_id = chain_id;
         }
 
         let provider = self.provider();
-        let block =
-            provider.get_block(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
-        let block_hash = block.hash.ok_or(BlockchainError::BlockNotFound)?;
-        let timestamp = block.timestamp.as_u64();
-        let base_fee = block.base_fee_per_gas;
+        let block = provider
+            .get_block(block_number, false)
+            .await
+            .success()
+            .ok_or(BlockchainError::BlockNotFound)?
+            .ok_or(BlockchainError::BlockNotFound)?;
+        let block_hash = block.header.hash.ok_or(BlockchainError::BlockNotFound)?;
+        let timestamp = block.header.timestamp.to::<u64>();
+        let base_fee = block.header.base_fee_per_gas;
         let total_difficulty = block.total_difficulty.unwrap_or_default();
 
         self.config.write().update_block(
-            block.number.ok_or(BlockchainError::BlockNotFound)?.as_u64(),
+            block.header.number.ok_or(BlockchainError::BlockNotFound)?.to::<u64>(),
             block_hash,
             timestamp,
             base_fee,
@@ -152,8 +165,12 @@ impl ClientFork {
         block_count: U256,
         newest_block: BlockNumber,
         reward_percentiles: &[f64],
-    ) -> Result<FeeHistory, ProviderError> {
-        self.provider().fee_history(block_count, newest_block, reward_percentiles).await
+    ) -> Result<FeeHistory, eyre::Report> {
+        self.provider()
+            .get_fee_history(block_count, newest_block, reward_percentiles)
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("Could not fetch fee history for {:?}", newest_block))
     }
 
     /// Sends `eth_getProof`
@@ -162,8 +179,12 @@ impl ClientFork {
         address: Address,
         keys: Vec<B256>,
         block_number: Option<BlockId>,
-    ) -> Result<AccountProof, ProviderError> {
-        self.provider().get_proof(address, keys, block_number).await
+    ) -> Result<EIP1186AccountProofResponse, eyre::Report> {
+        self.provider()
+            .get_proof(address, keys, block_number)
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("Could not fetch proof for {:?}", address))
     }
 
     /// Sends `eth_call`
@@ -171,7 +192,7 @@ impl ClientFork {
         &self,
         request: &CallRequest,
         block: Option<BlockNumber>,
-    ) -> Result<Bytes, ProviderError> {
+    ) -> Result<Bytes, eyre::Report> {
         let request = Arc::new(request.clone());
         let block = block.unwrap_or(BlockNumber::Latest);
 
@@ -183,15 +204,21 @@ impl ClientFork {
             }
         }
 
-        let tx = ethers::utils::serialize(request.as_ref());
-        let block_value = ethers::utils::serialize(&block);
-        let res: Bytes = self.provider().request("eth_call", [tx, block_value]).await?;
+        let block_id: BlockId = block.into();
+
+        let res: Bytes = self
+            .provider()
+            .call((*request).clone(), Some(block_id))
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("Could not fetch call for {:?}", request))?;
 
         if let BlockNumber::Number(num) = block {
             // cache result
             let mut storage = self.storage_write();
             storage.eth_call.insert((request, num.to::<u64>()), res.clone());
         }
+
         Ok(res)
     }
 
@@ -200,7 +227,7 @@ impl ClientFork {
         &self,
         request: &CallRequest,
         block: Option<BlockNumber>,
-    ) -> Result<U256, ProviderError> {
+    ) -> Result<U256, eyre::Report> {
         let request = Arc::new(request.clone());
         let block = block.unwrap_or(BlockNumber::Latest);
 
@@ -211,9 +238,15 @@ impl ClientFork {
                 return Ok(res);
             }
         }
-        let tx = ethers::utils::serialize(request.as_ref());
-        let block_value = ethers::utils::serialize(&block);
-        let res = self.provider().request("eth_estimateGas", [tx, block_value]).await?;
+
+        let block_id: BlockId = block.into();
+
+        let res = self
+            .provider()
+            .estimate_gas((*request).clone(), Some(block_id))
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("Could not fetch call for {:?}", request))?;
 
         if let BlockNumber::Number(num) = block {
             // cache result
@@ -229,28 +262,39 @@ impl ClientFork {
         &self,
         request: &CallRequest,
         block: Option<BlockNumber>,
-    ) -> Result<AccessListWithGasUsed, ProviderError> {
-        let tx = ethers::utils::serialize(request);
-        let block = ethers::utils::serialize(&block.unwrap_or(BlockNumber::Latest));
-        self.provider().request("eth_createAccessList", [tx, block]).await
+    ) -> Result<AccessListWithGasUsed, eyre::Report> {
+        self.provider()
+            .create_access_list(request.clone(), block.map(|b| b.into()))
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("Could not fetch call for {:?}", request))
     }
 
     pub async fn storage_at(
         &self,
         address: Address,
-        index: U256,
+        index: StorageKey,
         number: Option<BlockNumber>,
-    ) -> Result<B256, ProviderError> {
+    ) -> Result<StorageValue, eyre::Report> {
         let index = B256::from(index);
-        self.provider().get_storage_at(address, index, number.map(Into::into)).await
+        self.provider()
+            .get_storage_at(address, index.into(), number.map(Into::into))
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("Could not fetch storage for {:?}", address))
     }
 
-    pub async fn logs(&self, filter: &Filter) -> Result<Vec<Log>, ProviderError> {
+    pub async fn logs(&self, filter: &Filter) -> Result<Vec<Log>, eyre::Report> {
         if let Some(logs) = self.storage_read().logs.get(filter).cloned() {
             return Ok(logs);
         }
 
-        let logs = self.provider().get_logs(filter).await?;
+        let logs = self
+            .provider()
+            .get_logs(filter.clone())
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("Could not fetch logs for {:?}", filter))?;
 
         let mut storage = self.storage_write();
         // TODO: Intermediate struct to insert filters, or fix the filtering
@@ -262,13 +306,20 @@ impl ClientFork {
         &self,
         address: Address,
         blocknumber: u64,
-    ) -> Result<Bytes, ProviderError> {
+    ) -> Result<Bytes, eyre::Report> {
         trace!(target: "backend::fork", "get_code={:?}", address);
         if let Some(code) = self.storage_read().code_at.get(&(address, blocknumber)).cloned() {
             return Ok(code);
         }
 
-        let code = self.provider().get_code(address, Some(blocknumber.into())).await?;
+        let block_id = BlockId::Number(blocknumber.into());
+
+        let code = self
+            .provider()
+            .get_code_at(address, block_id)
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("Could not fetch storage for {:?}", address))?;
         let mut storage = self.storage_write();
         storage.code_at.insert((address, blocknumber), code.clone().0.into());
 
@@ -279,28 +330,49 @@ impl ClientFork {
         &self,
         address: Address,
         blocknumber: u64,
-    ) -> Result<U256, ProviderError> {
+    ) -> Result<U256, eyre::Report> {
         trace!(target: "backend::fork", "get_balance={:?}", address);
-        self.provider().get_balance(address, Some(blocknumber.into())).await
+        self.provider()
+            .get_balance(address, Some(blocknumber.into()))
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("Could not fetch balance for {address}"))
     }
 
     pub async fn get_nonce(
         &self,
         address: Address,
         blocknumber: u64,
-    ) -> Result<U256, ProviderError> {
+    ) -> Result<U256, eyre::Report> {
         trace!(target: "backend::fork", "get_nonce={:?}", address);
-        self.provider().get_transaction_count(address, Some(blocknumber.into())).await
+        self.provider()
+            .get_transaction_count(address, Some(blocknumber.into()))
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("Could not fetch storage for {:?}", address))
     }
 
     pub async fn transaction_by_block_number_and_index(
         &self,
         number: u64,
         index: usize,
-    ) -> Result<Option<Transaction>, ProviderError> {
+    ) -> Result<Option<Transaction>, eyre::Report> {
         if let Some(block) = self.block_by_number(number).await? {
-            if let Some(tx_hash) = block.transactions.get(index) {
-                return self.transaction_by_hash(*tx_hash).await;
+            match block.transactions {
+                BlockTransactions::Full(txs) => {
+                    if let Some(tx) = txs.get(index) {
+                        return Ok(Some(tx.clone()))
+                    }
+                }
+                BlockTransactions::Hashes(hashes) => {
+                    if let Some(tx_hash) = hashes.get(index) {
+                        return self
+                            .transaction_by_hash(*tx_hash)
+                            .await
+                            .wrap_err("Could not fetch transaction")
+                    }
+                }
+                BlockTransactions::Uncle => return Err(eyre::eyre!("Uncles not supported")),
             }
         }
         Ok(None)
@@ -310,10 +382,23 @@ impl ClientFork {
         &self,
         hash: B256,
         index: usize,
-    ) -> Result<Option<Transaction>, ProviderError> {
+    ) -> Result<Option<Transaction>, eyre::Report> {
         if let Some(block) = self.block_by_hash(hash).await? {
-            if let Some(tx_hash) = block.transactions.get(index) {
-                return self.transaction_by_hash(*tx_hash).await;
+            match block.transactions {
+                BlockTransactions::Full(txs) => {
+                    if let Some(tx) = txs.get(index) {
+                        return Ok(Some(tx.clone()))
+                    }
+                }
+                BlockTransactions::Hashes(hashes) => {
+                    if let Some(tx_hash) = hashes.get(index) {
+                        return self
+                            .transaction_by_hash(*tx_hash)
+                            .await
+                            .wrap_err("Could not fetch transaction")
+                    }
+                }
+                BlockTransactions::Uncle => return Err(eyre::eyre!("Uncles not supported")),
             }
         }
         Ok(None)
@@ -322,18 +407,21 @@ impl ClientFork {
     pub async fn transaction_by_hash(
         &self,
         hash: B256,
-    ) -> Result<Option<Transaction>, ProviderError> {
+    ) -> Result<Option<Transaction>, eyre::Report> {
         trace!(target: "backend::fork", "transaction_by_hash={:?}", hash);
         if let tx @ Some(_) = self.storage_read().transactions.get(&hash).cloned() {
             return Ok(tx);
         }
 
-        if let Some(tx) = self.provider().get_transaction(hash).await? {
-            let mut storage = self.storage_write();
-            storage.transactions.insert(hash, tx.clone());
-            return Ok(Some(tx));
-        }
-        Ok(None)
+        let tx = self
+            .provider()
+            .get_transaction_by_hash(hash)
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("Could not fetch balance for {address}"))?;
+        let mut storage = self.storage_write();
+        storage.transactions.insert(hash, tx.clone());
+        return Ok(Some(tx));
     }
 
     pub async fn trace_transaction(&self, hash: B256) -> Result<Vec<Trace>, ProviderError> {
@@ -379,12 +467,18 @@ impl ClientFork {
     pub async fn transaction_receipt(
         &self,
         hash: B256,
-    ) -> Result<Option<TransactionReceipt>, ProviderError> {
+    ) -> Result<Option<TransactionReceipt>, eyre::Report> {
         if let Some(receipt) = self.storage_read().transaction_receipts.get(&hash).cloned() {
             return Ok(Some(receipt));
         }
 
-        if let Some(receipt) = self.provider().get_transaction_receipt(hash).await? {
+        if let Some(receipt) = self
+            .provider()
+            .get_transaction_receipt(hash)
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("Could not fetch tx receipt for hash {hash}"))?
+        {
             let mut storage = self.storage_write();
             storage.transaction_receipts.insert(hash, receipt.clone());
             return Ok(Some(receipt));
@@ -393,7 +487,7 @@ impl ClientFork {
         Ok(None)
     }
 
-    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<Block>, ProviderError> {
+    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<Block>, eyre::Report> {
         if let Some(block) = self.storage_read().blocks.get(&hash).cloned() {
             return Ok(Some(block));
         }
@@ -401,14 +495,14 @@ impl ClientFork {
         Ok(block)
     }
 
-    pub async fn block_by_hash_full(&self, hash: B256) -> Result<Option<Block>, ProviderError> {
+    pub async fn block_by_hash_full(&self, hash: B256) -> Result<Option<Block>, eyre::Report> {
         if let Some(block) = self.storage_read().blocks.get(&hash).cloned() {
             return Ok(Some(self.convert_to_full_block(block)));
         }
         self.fetch_full_block(hash).await
     }
 
-    pub async fn block_by_number(&self, block_number: u64) -> Result<Option<Block>, ProviderError> {
+    pub async fn block_by_number(&self, block_number: u64) -> Result<Option<Block>, eyre::Report> {
         if let Some(block) = self
             .storage_read()
             .hashes
@@ -426,7 +520,7 @@ impl ClientFork {
     pub async fn block_by_number_full(
         &self,
         block_number: u64,
-    ) -> Result<Option<Block>, ProviderError> {
+    ) -> Result<Option<Block>, eyre::Report> {
         if let Some(block) = self
             .storage_read()
             .hashes
@@ -443,13 +537,23 @@ impl ClientFork {
     async fn fetch_full_block(
         &self,
         block_id: impl Into<BlockId>,
-    ) -> Result<Option<Block>, ProviderError> {
-        if let Some(block) = self.provider().get_block_with_txs(block_id.into()).await? {
-            let hash = block.hash.unwrap();
-            let block_number = block.number.unwrap().as_u64();
+    ) -> Result<Option<Block>, eyre::Report> {
+        if let Some(block) = self
+            .provider()
+            .get_block(block_id.into(), true)
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("Could not fetch full block"))?
+        {
+            let hash = block.header.hash.unwrap();
+            let block_number = block.header.number.unwrap().to::<u64>();
             let mut storage = self.storage_write();
             // also insert all transactions
-            storage.transactions.extend(block.transactions.iter().map(|tx| (tx.hash, tx.clone())));
+            let block_txs = match block.clone().transactions {
+                BlockTransactions::Full(txs) => txs,
+                _ => panic!("expected full block. This is a bug."),
+            };
+            storage.transactions.extend(block_txs.iter().map(|tx| (tx.hash, tx.clone())));
             storage.hashes.insert(block_number, hash);
             storage.blocks.insert(hash, block.clone().into());
             return Ok(Some(block));
@@ -462,7 +566,7 @@ impl ClientFork {
         &self,
         hash: B256,
         index: usize,
-    ) -> Result<Option<Block>, ProviderError> {
+    ) -> Result<Option<Block>, eyre::Report> {
         if let Some(block) = self.block_by_hash(hash).await? {
             return self.uncles_by_block_and_index(block, index).await;
         }
@@ -473,7 +577,7 @@ impl ClientFork {
         &self,
         number: u64,
         index: usize,
-    ) -> Result<Option<Block>, ProviderError> {
+    ) -> Result<Option<Block>, eyre::Report> {
         if let Some(block) = self.block_by_number(number).await? {
             return self.uncles_by_block_and_index(block, index).await;
         }
@@ -484,7 +588,7 @@ impl ClientFork {
         &self,
         block: Block,
         index: usize,
-    ) -> Result<Option<Block>, ProviderError> {
+    ) -> Result<Option<Block>, eyre::Report> {
         let block_hash = block
             .header
             .hash
@@ -495,7 +599,13 @@ impl ClientFork {
 
         let mut uncles = Vec::with_capacity(block.uncles.len());
         for (uncle_idx, _) in block.uncles.iter().enumerate() {
-            let uncle = match self.provider().get_uncle(block_hash, uncle_idx.into()).await? {
+            let uncle = match self
+                .provider()
+                .get_uncle(block_hash, U64::from(uncle_idx))
+                .await
+                .success()
+                .ok_or_else(|| eyre::eyre!("Could not fetch full block"))?
+            {
                 Some(u) => u,
                 None => return Ok(None),
             };
@@ -508,7 +618,13 @@ impl ClientFork {
     /// Converts a block of hashes into a full block
     fn convert_to_full_block(&self, block: Block) -> Block {
         let storage = self.storage.read();
-        let mut transactions = Vec::with_capacity(block.transactions.len());
+        let block_txs_len = match block.transactions {
+            BlockTransactions::Full(txs) => txs.len(),
+            BlockTransactions::Hashes(hashes) => hashes.len(),
+            // TODO: Should this be supported at all?
+            BlockTransactions::Uncle => 0,
+        };
+        let mut transactions = Vec::with_capacity(block_txs_len);
         for tx in block.transactions.iter() {
             if let Some(tx) = storage.transactions.get(&tx).cloned() {
                 transactions.push(tx);
