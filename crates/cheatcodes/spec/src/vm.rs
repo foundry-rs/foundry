@@ -40,9 +40,9 @@ interface Vm {
     enum AccountAccessKind {
         /// The account was called.
         Call,
-        /// THe account was created.
+        /// The account was created.
         Create,
-        /// The account was selfdestruct.
+        /// The account was selfdestructed.
         SelfDestruct,
     }
 
