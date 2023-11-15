@@ -78,8 +78,9 @@ checksum = "0942ffc6dcaadf03badf6e6a2d0228460359d5e34b57ccdc720b7382dfbd5ec5"
 
 [[package]]
 name = "alloy-chains"
-version = "0.1.1"
-source = "git+https://github.com/alloy-rs/chains/?branch=dani/fix-serde#bd022b904897cf71333db9e96e73f6abb363688e"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c18b3ecf1746f0eac255374bdf899dd217dd1b301e4a3f146592234243e1bc66"
 dependencies = [
  "num_enum",
  "serde",
