@@ -1,9 +1,9 @@
 //! Handler that can get current storage related data
 
 use crate::mem::Backend;
-use anvil_core::eth::{block::Block, receipt::TypedReceipt};
-use alloy_rpc_types::Block as AlloyBlock;
 use alloy_primitives::B256;
+use alloy_rpc_types::Block as AlloyBlock;
+use anvil_core::eth::{block::Block, receipt::TypedReceipt};
 use std::{fmt, sync::Arc};
 
 /// A type that can fetch data related to the ethereum storage.

@@ -36,12 +36,10 @@ use crate::{
     },
     mem::storage::MinedBlockOutcome,
 };
+use alloy_primitives::{TxHash, U64};
+use alloy_rpc_types::TxpoolStatus;
 use anvil_core::eth::transaction::PendingTransaction;
-use ethers::{
-    prelude::TxpoolStatus,
-    types::{TxHash, U64},
-};
-use foundry_utils::types::ToEthers;
+use foundry_utils::types::ToAlloy;
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, fmt, sync::Arc};
@@ -79,8 +77,8 @@ impl Pool {
     /// Returns the number of tx that are ready and queued for further execution
     pub fn txpool_status(&self) -> TxpoolStatus {
         // Note: naming differs here compared to geth's `TxpoolStatus`
-        let pending = self.ready_transactions().count().into();
-        let queued = self.inner.read().pending_transactions.len().into();
+        let pending = U64::from(self.ready_transactions().count());
+        let queued = U64::from(self.inner.read().pending_transactions.len());
         TxpoolStatus { pending, queued }
     }
 
@@ -95,7 +93,7 @@ impl Pool {
 
         // prune all the markers the mined transactions provide
         let res = self
-            .prune_markers(block_number.to_ethers(), included.into_iter().flat_map(|tx| tx.provides.clone()));
+            .prune_markers(block_number, included.into_iter().flat_map(|tx| tx.provides.clone()));
         trace!(target: "txpool", "pruned transaction markers {:?}", res);
         res
     }
@@ -160,7 +158,7 @@ impl Pool {
 
         let mut dropped = None;
         if !removed.is_empty() {
-            dropped = removed.into_iter().find(|t| *t.pending_transaction.hash() == tx);
+            dropped = removed.into_iter().find(|t| t.pending_transaction.hash().to_alloy() == tx);
         }
         dropped
     }

@@ -7,11 +7,10 @@ use crate::eth::{
     macros::node_info,
     EthApi,
 };
-use ethers::types::{
-    Action, Call, Create, CreateResult, Res, Reward,
-};
+use alloy_primitives::{Address, Bytes, B256, U256, U64};
 use alloy_rpc_types::{Block, BlockId, BlockNumberOrTag as BlockNumber, Transaction};
-use alloy_primitives::{Address, Bytes, TxHash, B256, U256, U64};
+use ethers::types::{Action, Call, Create, CreateResult, Res, Reward};
+use foundry_utils::types::ToAlloy;
 use itertools::Itertools;
 
 impl EthApi {
@@ -20,10 +19,7 @@ impl EthApi {
     ///
     /// As a faster alternative to eth_getBlockByNumber (by excluding uncle block
     /// information), which is not relevant in the context of an anvil node
-    pub async fn erigon_get_header_by_number(
-        &self,
-        number: BlockNumber,
-    ) -> Result<Option<Block>> {
+    pub async fn erigon_get_header_by_number(&self, number: BlockNumber) -> Result<Option<Block>> {
         node_info!("ots_getApiLevel");
 
         self.backend.block_by_number(number).await
@@ -71,7 +67,7 @@ impl EthApi {
         node_info!("ots_getTransactionError");
 
         if let Some(receipt) = self.backend.mined_transaction_receipt(hash) {
-            if receipt.inner.status == Some(U64::ZERO) {
+            if receipt.inner.status_code == Some(U64::ZERO) {
                 return Ok(receipt.out.map(|b| b.0.into()))
             }
         }
@@ -155,8 +151,10 @@ impl EthApi {
                     .into_iter()
                     .rev()
                     .filter_map(|trace| match trace.action {
-                        Action::Call(Call { from, to, .. }) if from == address || to == address => {
-                            trace.transaction_hash
+                        Action::Call(Call { from, to, .. })
+                            if from.to_alloy() == address || to.to_alloy() == address =>
+                        {
+                            trace.transaction_hash.map(|t| t.to_alloy())
                         }
                         _ => None,
                     })
@@ -206,14 +204,16 @@ impl EthApi {
                     .into_iter()
                     .rev()
                     .filter_map(|trace| match trace.action {
-                        Action::Call(Call { from, to, .. }) if from == address || to == address => {
-                            trace.transaction_hash
+                        Action::Call(Call { from, to, .. })
+                            if from.to_alloy() == address || to.to_alloy() == address =>
+                        {
+                            trace.transaction_hash.map(|t| t.to_alloy())
                         }
-                        Action::Create(Create { from, .. }) if from == address => {
-                            trace.transaction_hash
+                        Action::Create(Create { from, .. }) if from.to_alloy() == address => {
+                            trace.transaction_hash.map(|t| t.to_alloy())
                         }
-                        Action::Reward(Reward { author, .. }) if author == address => {
-                            trace.transaction_hash
+                        Action::Reward(Reward { author, .. }) if author.to_alloy() == address => {
+                            trace.transaction_hash.map(|t| t.to_alloy())
                         }
                         _ => None,
                     })
@@ -246,7 +246,7 @@ impl EthApi {
         for n in (from..=to).rev() {
             if let Some(txs) = self.backend.mined_transactions_by_block_number(n.into()).await {
                 for tx in txs {
-                    if tx.nonce == nonce && tx.from == address {
+                    if U256::from(tx.nonce) == nonce && tx.from == address {
                         return Ok(Some(tx))
                     }
                 }
@@ -275,10 +275,10 @@ impl EthApi {
                         (
                             Action::Create(Create { from, .. }),
                             Some(Res::Create(CreateResult { address, .. })),
-                        ) if address == addr => {
+                        ) if address.to_alloy() == addr => {
                             return Ok(Some(OtsContractCreator {
-                                hash: trace.transaction_hash.unwrap(),
-                                creator: from,
+                                hash: trace.transaction_hash.unwrap().to_alloy(),
+                                creator: from.to_alloy(),
                             }))
                         }
                         _ => {}

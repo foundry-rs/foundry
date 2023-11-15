@@ -65,10 +65,14 @@ impl GenesisConfig {
             for (addr, mut acc) in genesis.alloc.accounts.clone() {
                 let storage = std::mem::take(&mut acc.storage);
                 // insert all accounts
-                db.insert_account(addr, acc.into());
+                db.insert_account(addr.to_alloy(), acc.into());
                 // insert all storage values
                 for (k, v) in storage.iter() {
-                    db.set_storage_at(addr, k.into_uint(), v.into_uint())?;
+                    db.set_storage_at(
+                        addr.to_alloy(),
+                        k.into_uint().to_alloy(),
+                        v.into_uint().to_alloy(),
+                    )?;
                 }
             }
         }

@@ -1,7 +1,7 @@
 //! Support for generating the state root for memdb storage
 
 use crate::eth::{backend::db::AsHashDB, error::BlockchainError};
-use alloy_primitives::{Address, Bytes, U256 as rU256, B256};
+use alloy_primitives::{Address, Bytes, B256, U256 as rU256};
 use alloy_rpc_types::state::StateOverride;
 use anvil_core::eth::trie::RefSecTrieDBMut;
 use ethers::utils::{rlp, rlp::RlpStream};
@@ -149,11 +149,7 @@ where
             }
             (None, Some(account_state_diff)) => {
                 for (key, value) in account_state_diff.iter() {
-                    cache_db.insert_account_storage(
-                        *account,
-                        (*key).into(),
-                        (*value).into(),
-                    )?;
+                    cache_db.insert_account_storage(*account, (*key).into(), (*value).into())?;
                 }
             }
         };

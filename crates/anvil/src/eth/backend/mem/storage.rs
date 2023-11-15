@@ -6,6 +6,8 @@ use crate::eth::{
     },
     pool::transactions::PoolTransaction,
 };
+use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag as BlockNumber, TransactionReceipt};
 use anvil_core::eth::{
     block::{Block, PartialHeader},
     receipt::TypedReceipt,
@@ -15,8 +17,6 @@ use ethers::{
     prelude::{DefaultFrame, Trace},
     types::{ActionType, GethDebugTracingOptions},
 };
-use alloy_rpc_types::{BlockId, BlockNumberOrTag as BlockNumber, TransactionReceipt};
-use alloy_primitives::{B256, Bytes, TxHash, U64, U256};
 use foundry_evm::revm::{interpreter::InstructionResult, primitives::Env};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::RwLock;
@@ -313,7 +313,9 @@ impl BlockchainStorage {
             }
             BlockNumber::Finalized => {
                 if self.best_number > (slots_in_an_epoch * U64::from(2)) {
-                    self.hashes.get(&(self.best_number - (slots_in_an_epoch * U64::from(2)))).copied()
+                    self.hashes
+                        .get(&(self.best_number - (slots_in_an_epoch * U64::from(2))))
+                        .copied()
                 } else {
                     Some(self.genesis_hash)
                 }
@@ -442,6 +444,7 @@ pub struct MinedTransactionReceipt {
 mod tests {
     use super::*;
     use crate::eth::backend::db::Db;
+    use alloy_primitives::{Address, B256, U256};
     use foundry_evm::{
         backend::MemDb,
         revm::{
@@ -449,7 +452,6 @@ mod tests {
             primitives::{AccountInfo, U256 as rU256},
         },
     };
-    use alloy_primitives::{Address, B256, U256};
 
     #[test]
     fn test_interval_update() {
@@ -467,7 +469,7 @@ mod tests {
         let mut state = MemDb::default();
         let addr = Address::random();
         let info = AccountInfo::from_balance(rU256::from(1337));
-        state.insert_account(addr.to_ethers(), info);
+        state.insert_account(addr, info);
         storage.insert(one, StateDb::new(state));
         storage.insert(two, StateDb::new(MemDb::default()));
 
@@ -495,7 +497,7 @@ mod tests {
             let addr = Address::from_word(hash);
             let balance = (idx * 2) as u64;
             let info = AccountInfo::from_balance(rU256::from(balance));
-            state.insert_account(addr.to_ethers(), info);
+            state.insert_account(addr, info);
             storage.insert(hash, StateDb::new(state));
         }
 

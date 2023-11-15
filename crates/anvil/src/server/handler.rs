@@ -4,13 +4,13 @@ use crate::{
     pubsub::{EthSubscription, LogsSubscription},
     EthApi,
 };
-use anvil_core::eth::{
-    subscription::{SubscriptionId, SubscriptionKind},
-    EthPubSub, EthRequest, EthRpcCall,
+use alloy_rpc_types::{
+    pubsub::{Params, SubscriptionKind},
+    FilteredParams,
 };
+use anvil_core::eth::{subscription::SubscriptionId, EthPubSub, EthRequest, EthRpcCall};
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use anvil_server::{PubSubContext, PubSubRpcHandler, RpcHandler};
-use ethers::types::FilteredParams;
 use tracing::trace;
 
 /// A `RpcHandler` that expects `EthRequest` rpc calls via http
@@ -62,7 +62,16 @@ impl PubSubEthRpcHandler {
                 ResponseResult::Success(canceled.into())
             }
             EthPubSub::EthSubscribe(kind, params) => {
-                let params = FilteredParams::new(params.filter);
+                let filter = match *params {
+                    Params::None => None,
+                    Params::Logs(filter) => Some(*filter),
+                    Params::Bool(_) => {
+                        return ResponseResult::Error(RpcError::invalid_params(
+                            "Expected params for logs subscription",
+                        ))
+                    }
+                };
+                let params = FilteredParams::new(filter);
 
                 let subscription = match kind {
                     SubscriptionKind::Logs => {

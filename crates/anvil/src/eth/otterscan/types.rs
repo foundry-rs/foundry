@@ -2,13 +2,11 @@ use crate::eth::{
     backend::mem::{storage::MinedTransaction, Backend},
     error::{BlockchainError, Result},
 };
-use alloy_primitives::U256 as rU256;
-use ethers::types::{
-    Action, CallType, Trace,
-};
-use alloy_rpc_types::{Block, Transaction, TransactionReceipt, BlockTransactions};
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256 as rU256, U256};
+use alloy_rpc_types::{Block, BlockTransactions, Transaction, TransactionReceipt};
+use ethers::types::{Action, CallType, Trace};
 use foundry_evm::{revm::interpreter::InstructionResult, utils::CallKind};
+use foundry_utils::types::ToAlloy;
 use futures::future::join_all;
 use serde::Serialize;
 use serde_repr::Serialize_repr;
@@ -126,8 +124,13 @@ impl OtsBlockDetails {
     ///   based on the existing list.
     /// Therefore we keep it simple by keeping the data in the response
     pub async fn build(block: Block, backend: &Backend) -> Result<Self> {
+        let block_txs = match block.transactions.clone() {
+            BlockTransactions::Full(txs) => txs.into_iter().map(|tx| tx.hash).collect(),
+            BlockTransactions::Hashes(txs) => txs,
+            BlockTransactions::Uncle => return Err(BlockchainError::DataUnavailable),
+        };
         let receipts_futs =
-            block.transactions.iter().map(|tx| async { backend.transaction_receipt(tx.clone()).await });
+            block_txs.iter().map(|tx| async { backend.transaction_receipt(*tx).await });
 
         // fetch all receipts
         let receipts: Vec<TransactionReceipt> = join_all(receipts_futs)
@@ -169,18 +172,20 @@ impl From<Block> for OtsBlock {
 impl OtsBlockTransactions {
     /// Fetches all receipts for the blocks's transactions, as required by the [`ots_getBlockTransactions`](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_getblockdetails) endpoint spec, and returns the final response object.
     pub async fn build(
-        mut block: Block,
+        block: Block,
         backend: &Backend,
         page: usize,
         page_size: usize,
     ) -> Result<Self> {
-        block.transactions =
-            block.transactions.iter().skip(page * page_size).take(page_size).collect();
+        let block_txs = match block.transactions.clone() {
+            BlockTransactions::Full(txs) => txs.into_iter().map(|tx| tx.hash).collect(),
+            BlockTransactions::Hashes(txs) => txs,
+            BlockTransactions::Uncle => return Err(BlockchainError::DataUnavailable),
+        };
+        let block_txs = block_txs.iter().skip(page * page_size).take(page_size).collect::<Vec<_>>();
 
-        let receipt_futs = block
-            .transactions
-            .iter()
-            .map(|tx| async { backend.transaction_receipt(tx.hash).await });
+        let receipt_futs =
+            block_txs.iter().map(|tx| async { backend.transaction_receipt(*tx.clone()).await });
 
         let receipts: Vec<TransactionReceipt> = join_all(receipt_futs)
             .await
@@ -221,8 +226,11 @@ impl OtsSearchTransactions {
         join_all(hashes.iter().map(|hash| async {
             match backend.transaction_receipt(*hash).await {
                 Ok(Some(receipt)) => {
-                    let timestamp =
-                        backend.get_block(receipt.block_number.unwrap().to::<u64>()).unwrap().header.timestamp;
+                    let timestamp = backend
+                        .get_block(receipt.block_number.unwrap().to::<u64>())
+                        .unwrap()
+                        .header
+                        .timestamp;
                     Ok(OtsTransactionReceipt { receipt, timestamp })
                 }
                 Ok(None) => Err(BlockchainError::DataUnavailable),
@@ -293,10 +301,10 @@ impl OtsTrace {
                         Some(OtsTrace {
                             r#type: ots_type,
                             depth: trace.trace_address.len(),
-                            from: call.from,
-                            to: call.to,
-                            value: call.value,
-                            input: call.input,
+                            from: call.from.to_alloy(),
+                            to: call.to.to_alloy(),
+                            value: call.value.to_alloy(),
+                            input: call.input.0.into(),
                         })
                     } else {
                         None

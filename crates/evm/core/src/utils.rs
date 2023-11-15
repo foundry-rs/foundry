@@ -250,12 +250,7 @@ pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
         .clone()
         .unwrap_or_default()
         .into_iter()
-        .map(|item| {
-            (
-                item.address,
-                item.storage_keys
-            )
-        })
+        .map(|item| (item.address, item.storage_keys))
         .collect();
     env.tx.value = tx.value.to();
     env.tx.data = alloy_primitives::Bytes(tx.input.0.clone());

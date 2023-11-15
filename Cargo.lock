@@ -353,6 +353,7 @@ name = "anvil"
 version = "0.2.0"
 dependencies = [
  "alloy-primitives",
+ "alloy-providers",
  "alloy-rpc-types",
  "anvil-core",
  "anvil-rpc",
@@ -407,6 +408,7 @@ dependencies = [
  "alloy-rpc-types",
  "bytes",
  "ethers-core",
+ "foundry-common",
  "foundry-evm",
  "foundry-utils",
  "hash-db",

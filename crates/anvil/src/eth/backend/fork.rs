@@ -1,17 +1,17 @@
 //! Support for forking off another client
 
 use crate::eth::{backend::db::Db, error::BlockchainError};
-use anvil_core::eth::{proof::AccountProof, transaction::EthTransactionRequest};
-use ethers::{
-    providers::{Middleware, ProviderError},
-    types::{
-        GethDebugTracingOptions, GethTrace, Trace,
-    },
-};
-use alloy_rpc_types::{
-    AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber, FeeHistory, Filter, Log, Transaction, TransactionReceipt, CallRequest
-};
 use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_providers::provider::TempProvider;
+use alloy_rpc_types::{
+    AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber, CallRequest,
+    FeeHistory, Filter, Log, Transaction, TransactionReceipt,
+};
+use anvil_core::eth::proof::AccountProof;
+use ethers::{
+    providers::ProviderError,
+    types::{GethDebugTracingOptions, GethTrace, Trace},
+};
 use foundry_common::{ProviderBuilder, RetryProvider};
 use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
@@ -177,7 +177,7 @@ impl ClientFork {
 
         if let BlockNumber::Number(num) = block {
             // check if this request was already been sent
-            let key = (request.clone(), num.as_u64());
+            let key = (request.clone(), num.to::<u64>());
             if let Some(res) = self.storage_read().eth_call.get(&key).cloned() {
                 return Ok(res)
             }
@@ -190,7 +190,7 @@ impl ClientFork {
         if let BlockNumber::Number(num) = block {
             // cache result
             let mut storage = self.storage_write();
-            storage.eth_call.insert((request, num), res.clone());
+            storage.eth_call.insert((request, num.to::<u64>()), res.clone());
         }
         Ok(res)
     }
@@ -206,7 +206,7 @@ impl ClientFork {
 
         if let BlockNumber::Number(num) = block {
             // check if this request was already been sent
-            let key = (request.clone(), num);
+            let key = (request.clone(), num.to::<u64>());
             if let Some(res) = self.storage_read().eth_gas_estimations.get(&key).cloned() {
                 return Ok(res)
             }
@@ -218,7 +218,7 @@ impl ClientFork {
         if let BlockNumber::Number(num) = block {
             // cache result
             let mut storage = self.storage_write();
-            storage.eth_gas_estimations.insert((request, num), res);
+            storage.eth_gas_estimations.insert((request, num.to::<u64>()), res);
         }
 
         Ok(res)
@@ -401,20 +401,14 @@ impl ClientFork {
         Ok(block)
     }
 
-    pub async fn block_by_hash_full(
-        &self,
-        hash: B256,
-    ) -> Result<Option<Block>, ProviderError> {
+    pub async fn block_by_hash_full(&self, hash: B256) -> Result<Option<Block>, ProviderError> {
         if let Some(block) = self.storage_read().blocks.get(&hash).cloned() {
             return Ok(Some(self.convert_to_full_block(block)))
         }
         self.fetch_full_block(hash).await
     }
 
-    pub async fn block_by_number(
-        &self,
-        block_number: u64,
-    ) -> Result<Option<Block>, ProviderError> {
+    pub async fn block_by_number(&self, block_number: u64) -> Result<Option<Block>, ProviderError> {
         if let Some(block) = self
             .storage_read()
             .hashes
@@ -492,7 +486,8 @@ impl ClientFork {
         index: usize,
     ) -> Result<Option<Block>, ProviderError> {
         let block_hash = block
-            .header.hash
+            .header
+            .hash
             .ok_or_else(|| ProviderError::CustomError("missing block-hash".to_string()))?;
         if let Some(uncles) = self.storage_read().uncles.get(&block_hash) {
             return Ok(uncles.get(index).cloned())

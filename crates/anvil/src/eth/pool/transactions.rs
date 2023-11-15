@@ -1,6 +1,7 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
+use alloy_primitives::{Address, TxHash, U256};
 use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
-use ethers::types::{Address, TxHash, U256};
+use foundry_utils::types::ToAlloy;
 use parking_lot::RwLock;
 use std::{
     cmp::Ordering,
@@ -45,7 +46,7 @@ impl TransactionOrder {
     pub fn priority(&self, tx: &TypedTransaction) -> TransactionPriority {
         match self {
             TransactionOrder::Fifo => TransactionPriority::default(),
-            TransactionOrder::Fees => TransactionPriority(tx.gas_price()),
+            TransactionOrder::Fees => TransactionPriority(tx.gas_price().to_alloy()),
         }
     }
 }
@@ -89,12 +90,12 @@ pub struct PoolTransaction {
 impl PoolTransaction {
     /// Returns the hash of this transaction
     pub fn hash(&self) -> &TxHash {
-        self.pending_transaction.hash()
+        &self.pending_transaction.hash().to_alloy()
     }
 
     /// Returns the gas pric of this transaction
     pub fn gas_price(&self) -> U256 {
-        self.pending_transaction.transaction.gas_price()
+        self.pending_transaction.transaction.gas_price().to_alloy()
     }
 }
 
@@ -474,12 +475,14 @@ impl ReadyTransactions {
             // construct a list of unlocked transactions
             // also check for transactions that shouldn't be replaced because underpriced
             let ready = self.ready_tx.read();
-            for to_remove in remove_hashes.iter().filter_map(|hash| ready.get(hash)) {
+            for to_remove in remove_hashes.iter().filter_map(|hash| ready.get(*hash)) {
                 // if we're attempting to replace a transaction that provides the exact same markers
                 // (addr + nonce) then we check for gas price
                 if to_remove.provides() == tx.provides {
                     // check if underpriced
-                    if tx.pending_transaction.transaction.gas_price() <= to_remove.gas_price() {
+                    if tx.pending_transaction.transaction.gas_price().to_alloy() <=
+                        to_remove.gas_price()
+                    {
                         warn!(target: "txpool", "ready replacement transaction underpriced [{:?}]", tx.hash());
                         return Err(PoolError::ReplacementUnderpriced(Box::new(tx.clone())))
                     } else {

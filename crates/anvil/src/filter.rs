@@ -4,12 +4,10 @@ use crate::{
     pubsub::filter_logs,
     StorageInfo,
 };
+use alloy_primitives::TxHash;
+use alloy_rpc_types::{Filter, FilteredParams, Log as AlloyLog};
 use anvil_core::eth::subscription::SubscriptionId;
 use anvil_rpc::response::ResponseResult;
-use ethers::{
-    prelude::{Log as EthersLog, H256 as TxHash},
-    types::{Filter, FilteredParams},
-};
 use foundry_utils::types::ToAlloy;
 use futures::{channel::mpsc::Receiver, Stream, StreamExt};
 use std::{
@@ -166,14 +164,14 @@ pub struct LogsFilter {
     /// existing logs that matched the filter when the listener was installed
     ///
     /// They'll be returned on the first pill
-    pub historic: Option<Vec<EthersLog>>,
+    pub historic: Option<Vec<AlloyLog>>,
 }
 
 // === impl LogsFilter ===
 
 impl LogsFilter {
     /// Returns all the logs since the last time this filter was polled
-    pub fn poll(&mut self, cx: &mut Context<'_>) -> Vec<EthersLog> {
+    pub fn poll(&mut self, cx: &mut Context<'_>) -> Vec<AlloyLog> {
         let mut logs = self.historic.take().unwrap_or_default();
         while let Poll::Ready(Some(block)) = self.blocks.poll_next_unpin(cx) {
             let b = self.storage.block(block.hash.to_alloy());

@@ -5,71 +5,97 @@ use crate::eth::transaction::{
     EIP1559TransactionRequest, EIP2930TransactionRequest, LegacyTransactionRequest,
     MaybeImpersonatedTransaction, TypedTransaction, TypedTransactionRequest,
 };
-use alloy_rpc_types::{TransactionRequest as AlloyTransactionRequest, AccessList as AlloyAccessList, AccessListItem as AlloyAccessListItem, CallRequest, Transaction as AlloyTransaction, Signature};
-use alloy_primitives::{U256 as rU256, U64 as rU64, U128 as rU128};
+use alloy_primitives::{U128 as rU128, U256 as rU256, U64 as rU64};
+use alloy_rpc_types::{
+    AccessList as AlloyAccessList, AccessListItem as AlloyAccessListItem, CallRequest, Signature,
+    Transaction as AlloyTransaction, TransactionRequest as AlloyTransactionRequest,
+};
 use ethers_core::types::{
-    transaction::eip2718::TypedTransaction as EthersTypedTransactionRequest, Address,
-    Eip1559TransactionRequest as EthersEip1559TransactionRequest,
+    transaction::{
+        eip2718::TypedTransaction as EthersTypedTransactionRequest,
+        eip2930::{AccessList, AccessListItem},
+    },
+    Address, BigEndianHash, Eip1559TransactionRequest as EthersEip1559TransactionRequest,
     Eip2930TransactionRequest as EthersEip2930TransactionRequest, NameOrAddress,
     Transaction as EthersTransaction, TransactionRequest as EthersLegacyTransactionRequest,
-    TransactionRequest, H256, U256, U64, transaction::eip2930::{AccessList, AccessListItem}, BigEndianHash,
+    TransactionRequest, H256, U256, U64,
 };
-use foundry_utils::types::{ToEthers, ToAlloy};
+use foundry_utils::types::{ToAlloy, ToEthers};
 
 pub fn to_internal_tx_request(request: &AlloyTransactionRequest) -> EthTransactionRequest {
-    EthTransactionRequest { 
-        from: request.from.map(|a| a.to_ethers()), 
-        to: request.to.map(|a| a.to_ethers()), 
-        gas_price: request.gas_price.map(|g| alloy_primitives::U256::from(g).to_ethers()), 
-        max_fee_per_gas: request.max_fee_per_gas.map(|g| alloy_primitives::U256::from(g).to_ethers()), 
-        max_priority_fee_per_gas: request.max_priority_fee_per_gas.map(|g| alloy_primitives::U256::from(g).to_ethers()), 
-        gas: request.gas.map(|g| g.to_ethers()), 
-        value: request.value.map(|v| v.to_ethers()), 
-        data: request.data.clone().map(|b| b.clone().0.into()), 
-        nonce: request.nonce.map(|n| n.to::<u64>().into()), 
-        chain_id: None, 
-        access_list: request.access_list.clone().map(|a| to_ethers_access_list(a.clone()).0), 
+    EthTransactionRequest {
+        from: request.from.map(|a| a.to_ethers()),
+        to: request.to.map(|a| a.to_ethers()),
+        gas_price: request.gas_price.map(|g| alloy_primitives::U256::from(g).to_ethers()),
+        max_fee_per_gas: request
+            .max_fee_per_gas
+            .map(|g| alloy_primitives::U256::from(g).to_ethers()),
+        max_priority_fee_per_gas: request
+            .max_priority_fee_per_gas
+            .map(|g| alloy_primitives::U256::from(g).to_ethers()),
+        gas: request.gas.map(|g| g.to_ethers()),
+        value: request.value.map(|v| v.to_ethers()),
+        data: request.data.clone().map(|b| b.clone().0.into()),
+        nonce: request.nonce.map(|n| n.to::<u64>().into()),
+        chain_id: None,
+        access_list: request.access_list.clone().map(|a| to_ethers_access_list(a.clone()).0),
         transaction_type: request.transaction_type.map(|t| t.to::<u64>().into()),
     }
 }
 
 pub fn call_to_internal_tx_request(request: &CallRequest) -> EthTransactionRequest {
-    EthTransactionRequest { 
-        from: request.from.map(|a| a.to_ethers()), 
-        to: request.to.map(|a| a.to_ethers()), 
-        gas_price: request.gas_price.map(|g| alloy_primitives::U256::from(g).to_ethers()), 
-        max_fee_per_gas: request.max_fee_per_gas.map(|g| alloy_primitives::U256::from(g).to_ethers()), 
-        max_priority_fee_per_gas: request.max_priority_fee_per_gas.map(|g| alloy_primitives::U256::from(g).to_ethers()), 
-        gas: request.gas.map(|g| g.to_ethers()), 
-        value: request.value.map(|v| v.to_ethers()), 
-        data: request.input.unique_input().unwrap().map(|b| b.clone().0.into()), 
-        nonce: request.nonce.map(|n| n.to::<u64>().into()), 
-        chain_id: request.chain_id.map(|c| c.to::<u64>().into()), 
-        access_list: request.access_list.clone().map(|a| to_ethers_access_list(a.clone()).0), 
+    EthTransactionRequest {
+        from: request.from.map(|a| a.to_ethers()),
+        to: request.to.map(|a| a.to_ethers()),
+        gas_price: request.gas_price.map(|g| alloy_primitives::U256::from(g).to_ethers()),
+        max_fee_per_gas: request
+            .max_fee_per_gas
+            .map(|g| alloy_primitives::U256::from(g).to_ethers()),
+        max_priority_fee_per_gas: request
+            .max_priority_fee_per_gas
+            .map(|g| alloy_primitives::U256::from(g).to_ethers()),
+        gas: request.gas.map(|g| g.to_ethers()),
+        value: request.value.map(|v| v.to_ethers()),
+        data: request.input.unique_input().unwrap().map(|b| b.clone().0.into()),
+        nonce: request.nonce.map(|n| n.to::<u64>().into()),
+        chain_id: request.chain_id.map(|c| c.to::<u64>().into()),
+        access_list: request.access_list.clone().map(|a| to_ethers_access_list(a.clone()).0),
         transaction_type: request.transaction_type.map(|t| t.to::<u64>().into()),
     }
 }
 
-pub fn to_ethers_access_list(
-    access_list: AlloyAccessList
-) -> AccessList {
-    AccessList(access_list.0.into_iter().map(|item| {
-        AccessListItem {
-            address: item.address.to_ethers(),
-            storage_keys: item.storage_keys.into_iter().map(|k| BigEndianHash::from_uint(&k.to_ethers())).collect()
-        }
-    }).collect())
+pub fn to_ethers_access_list(access_list: AlloyAccessList) -> AccessList {
+    AccessList(
+        access_list
+            .0
+            .into_iter()
+            .map(|item| AccessListItem {
+                address: item.address.to_ethers(),
+                storage_keys: item
+                    .storage_keys
+                    .into_iter()
+                    .map(|k| BigEndianHash::from_uint(&k.to_ethers()))
+                    .collect(),
+            })
+            .collect(),
+    )
 }
 
-pub fn from_ethers_access_list(
-    access_list: AccessList
-) -> AlloyAccessList {
-    AlloyAccessList(access_list.0.into_iter().map(|item| {
-        AlloyAccessListItem {
-            address: item.address.to_alloy(),
-            storage_keys: item.storage_keys.into_iter().map(|k| rU256::from_be_bytes(k.to_alloy().0)).collect()
-        }
-    }).collect())
+pub fn from_ethers_access_list(access_list: AccessList) -> AlloyAccessList {
+    AlloyAccessList(
+        access_list
+            .0
+            .into_iter()
+            .map(|item| AlloyAccessListItem {
+                address: item.address.to_alloy(),
+                storage_keys: item
+                    .storage_keys
+                    .into_iter()
+                    .map(|k| rU256::from_be_bytes(k.to_alloy().0))
+                    .collect(),
+            })
+            .collect(),
+    )
 }
 
 impl From<TypedTransactionRequest> for EthersTypedTransactionRequest {
@@ -256,6 +282,7 @@ fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: None,
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: vec![],
+            ..Default::default()
         },
         TypedTransaction::EIP2930(t) => AlloyTransaction {
             hash: hash.to_alloy(),
@@ -282,6 +309,7 @@ fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: Some(rU64::from(1)),
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: vec![],
+            ..Default::default()
         },
         TypedTransaction::EIP1559(t) => AlloyTransaction {
             hash: hash.to_alloy(),
@@ -308,6 +336,7 @@ fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: Some(rU64::from(2)),
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: vec![],
+            ..Default::default()
         },
     }
 }
