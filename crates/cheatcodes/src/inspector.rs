@@ -28,7 +28,9 @@ use foundry_evm_core::{
 use foundry_utils::types::ToEthers;
 use itertools::Itertools;
 use revm::{
-    interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, CallScheme},
+    interpreter::{
+        opcode, CallInputs, CallScheme, CreateInputs, Gas, InstructionResult, Interpreter,
+    },
     primitives::{BlockEnv, CreateScheme, TransactTo},
     EVMData, Inspector,
 };
@@ -481,7 +483,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         newValue: present_value.into(),
                         reverted: false,
                     };
-                    append_storage_access(recorded_account_diffs, access, data.journaled_state.depth());
+                    append_storage_access(
+                        recorded_account_diffs,
+                        access,
+                        data.journaled_state.depth(),
+                    );
                 }
                 opcode::SSTORE => {
                     let key = try_or_continue!(interpreter.stack().peek(0));
@@ -505,7 +511,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         newValue: value.into(),
                         reverted: false,
                     };
-                    append_storage_access(recorded_account_diffs, access, data.journaled_state.depth());
+                    append_storage_access(
+                        recorded_account_diffs,
+                        access,
+                        data.journaled_state.depth(),
+                    );
                 }
                 _ => (),
             }
@@ -837,7 +847,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     forkId: data.db.active_fork_id().unwrap_or_default(),
                     accessor: call.context.caller,
                     account: call.contract,
-                    kind: kind,
+                    kind,
                     initialized,
                     oldBalance: old_balance,
                     newBalance: U256::ZERO, // updated on call_end
@@ -943,9 +953,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 if call_access.depth == data.journaled_state.depth() {
                     if let Ok((acc, _)) = data.journaled_state.load_account(call.contract, data.db)
                     {
-                        debug_assert!(
-                            access_is_call(call_access.access.kind)
-                        );
+                        debug_assert!(access_is_call(call_access.access.kind));
                         call_access.access.newBalance = acc.info.balance;
                     }
                 }
@@ -1274,7 +1282,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // may not be any pending calls to update if execution has
                 // percolated up to a higher depth.
                 if create_access.depth == data.journaled_state.depth() {
-                    debug_assert_eq!(create_access.access.kind as u8, crate::Vm::AccountAccessKind::Create as u8);
+                    debug_assert_eq!(
+                        create_access.access.kind as u8,
+                        crate::Vm::AccountAccessKind::Create as u8
+                    );
                     if let Some(address) = address {
                         if let Ok((created_acc, _)) =
                             data.journaled_state.load_account(address, data.db)
@@ -1401,22 +1412,26 @@ fn apply_dispatch<DB: DatabaseExt>(calls: &Vm::VmCalls, ccx: &mut CheatsCtxt<DB>
 /// Returns true if the kind of account access is a call.
 fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
     match kind {
-        crate::Vm::AccountAccessKind::Call
-         | crate::Vm::AccountAccessKind::StaticCall
-         | crate::Vm::AccountAccessKind::CallCode
-         | crate::Vm::AccountAccessKind::DelegateCall
-           => true,
+        crate::Vm::AccountAccessKind::Call |
+        crate::Vm::AccountAccessKind::StaticCall |
+        crate::Vm::AccountAccessKind::CallCode |
+        crate::Vm::AccountAccessKind::DelegateCall => true,
         _ => false,
     }
 }
 
-/// Appends an AccountAccess that resumes the recording of its context.
-fn append_storage_access(accesses: &mut Vec<Vec<AccountAccess>>, storage_access: crate::Vm::StorageAccess, storage_depth: u64) {
+/// Appends an AccountAccess that resumes the recording of the current context.
+fn append_storage_access(
+    accesses: &mut Vec<Vec<AccountAccess>>,
+    storage_access: crate::Vm::StorageAccess,
+    storage_depth: u64,
+) {
     if let Some(last) = accesses.last_mut() {
         // Assert that there's an existing record for the current context.
         if !last.is_empty() && last.first().unwrap().depth < storage_depth {
             // Three cases to consider:
-            // 1. If there hasn't been a context switch since the start of this context, then add the storage access to the current context record.
+            // 1. If there hasn't been a context switch since the start of this context, then add
+            //    the storage access to the current context record.
             // 2. If there's an existing Resume record, then add the storage access to it.
             // 3. Otherwise, create a new Resume record based on the current context.
             if last.len() == 1 {

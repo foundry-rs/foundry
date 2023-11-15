@@ -136,7 +136,7 @@ contract NestedStorer {
     function run2() external payable {
         slots[bytes32("nested_storer 3")]++;
         slots[bytes32("nested_storer 4")]++;
-    } 
+    }
 }
 
 /// @notice Helper contract that directly reads from and writes to storage
@@ -181,7 +181,9 @@ contract Proxy {
             calldatacopy(0x0, 0x0, calldatasize())
             let result := delegatecall(gas(), _target, 0x0, calldatasize(), 0x0, 0)
             returndatacopy(0x0, 0x0, returndatasize())
-            switch result case 0 { revert(0, 0) } default { return(0, returndatasize()) }
+            switch result
+            case 0 { revert(0, 0) }
+            default { return(0, returndatasize()) }
         }
     }
 }
@@ -780,7 +782,7 @@ contract RecordAccountAccessesTest is DSTest {
                 isWrite: true,
                 previousValue: bytes32(uint256(0)),
                 newValue: bytes32(uint256(1)),
-                reverted: false 
+                reverted: false
             })
         );
         assertIncrementEq(
@@ -792,7 +794,7 @@ contract RecordAccountAccessesTest is DSTest {
                 isWrite: true,
                 previousValue: bytes32(uint256(0)),
                 newValue: bytes32(uint256(1)),
-                reverted: false 
+                reverted: false
             })
         );
         assertEq(
@@ -824,7 +826,7 @@ contract RecordAccountAccessesTest is DSTest {
                 isWrite: true,
                 previousValue: bytes32(uint256(0)),
                 newValue: bytes32(uint256(1)),
-                reverted: false 
+                reverted: false
             })
         );
         assertEq(
