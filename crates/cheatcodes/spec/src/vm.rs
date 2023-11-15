@@ -153,7 +153,9 @@ interface Vm {
         address account;
         /// The kind of account access.
         AccountAccessKind kind;
-        /// If the account is initialized or empty
+        /// If the account was initialized or empty prior to the access.
+        /// An account is considered initialized if it has code, a
+        /// non-zero nonce, or a non-zero balance.
         bool initialized;
         /// The previous balance of the accessed account.
         uint256 oldBalance;
