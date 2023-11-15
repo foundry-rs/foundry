@@ -165,7 +165,7 @@ interface Vm {
         uint256 value;
         /// Input data provided to the CREATE or CALL
         bytes data;
-        /// If this access was in a reverted context
+        /// If this access reverted in either the current or parent context.
         bool reverted;
         /// An ordered list of storage accesses made during an account access operation.
         StorageAccess[] storageAccesses;
