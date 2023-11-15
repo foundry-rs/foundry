@@ -158,7 +158,7 @@ alloy-json-abi = "0.4.1"
 alloy-sol-types = "0.4.1"
 syn-solidity = "0.4.1"
 
-alloy-chains = "0.1.0"
+alloy-chains = "0.1.2"
 alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
 
@@ -200,8 +200,6 @@ ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1cc
 ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
-
-alloy-chains = { git = "https://github.com/alloy-rs/chains/", branch = "dani/fix-serde" }
 
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/" }
 alloy-primitives = { git = "https://github.com/alloy-rs/core/" }
