@@ -155,9 +155,10 @@ interface Vm {
         AccountAccessKind kind;
         /// If the account is initialized or empty
         bool initialized;
-        /// The previous account balance of the accessed account.
+        /// The previous balance of the accessed account.
         uint256 oldBalance;
-        /// The new account balance of the accessed account. This represents the balance change ignoring any reverts that may have occurred.
+        /// The potential new balance of the accessed account.
+        /// That is, all balance changes are recorded here, even if reverts occurred.
         uint256 newBalance;
         /// Code of the account deployed by CREATE.
         bytes deployedCode;
