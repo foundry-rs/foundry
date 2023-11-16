@@ -421,7 +421,7 @@ impl ChiselDispatcher {
                                                 i + 32
                                             )),
                                             Paint::cyan(hex::encode_prefixed(
-                                                &mem.data()[i..i + 32]
+                                                &mem.context_memory()[i..i + 32]
                                             ))
                                         );
                                     });

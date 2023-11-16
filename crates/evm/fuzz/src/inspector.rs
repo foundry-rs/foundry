@@ -20,17 +20,12 @@ pub struct Fuzzer {
 
 impl<DB: Database> Inspector<DB> for Fuzzer {
     #[inline]
-    fn step(
-        &mut self,
-        interpreter: &mut Interpreter,
-        _: &mut EVMData<'_, DB>,
-    ) -> InstructionResult {
+    fn step(&mut self, interpreter: &mut Interpreter<'_>, _: &mut EVMData<'_, DB>) {
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
             self.collect_data(interpreter);
             self.collect = false;
         }
-        InstructionResult::Continue
     }
 
     #[inline]
@@ -74,7 +69,7 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
 
 impl Fuzzer {
     /// Collects `stack` and `memory` values into the fuzz dictionary.
-    fn collect_data(&mut self, interpreter: &Interpreter) {
+    fn collect_data(&mut self, interpreter: &Interpreter<'_>) {
         let mut state = self.fuzz_state.write();
 
         for slot in interpreter.stack().data() {
@@ -82,9 +77,9 @@ impl Fuzzer {
         }
 
         // TODO: disabled for now since it's flooding the dictionary
-        // for index in 0..interpreter.memory.len() / 32 {
+        // for index in 0..interpreter.shared_memory.len() / 32 {
         //     let mut slot = [0u8; 32];
-        //     slot.clone_from_slice(interpreter.memory.get_slice(index * 32, 32));
+        //     slot.clone_from_slice(interpreter.shared_memory.get_slice(index * 32, 32));
 
         //     state.insert(slot);
         // }
