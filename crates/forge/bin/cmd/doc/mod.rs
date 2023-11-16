@@ -1,9 +1,12 @@
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use forge_doc::{ContractInheritance, Deployments, DocBuilder, GitSource, Inheritdoc, Server};
+use forge_doc::{ContractInheritance, Deployments, DocBuilder, GitSource, Inheritdoc};
 use foundry_cli::opts::GH_REPO_PREFIX_REGEX;
 use foundry_config::{find_project_root_path, load_config_with_root};
 use std::{path::PathBuf, process::Command};
+
+mod server;
+use server::Server;
 
 #[derive(Debug, Clone, Parser)]
 pub struct DocArgs {
@@ -32,6 +35,10 @@ pub struct DocArgs {
     /// Serve the documentation.
     #[clap(long, short)]
     serve: bool,
+
+    /// Open the documentation in a browser after serving.
+    #[clap(long, requires = "serve")]
+    open: bool,
 
     /// Hostname for serving documentation.
     #[clap(long, requires = "serve")]
@@ -108,6 +115,7 @@ impl DocArgs {
             Server::new(doc_config.out)
                 .with_hostname(self.hostname.unwrap_or("localhost".to_owned()))
                 .with_port(self.port.unwrap_or(3000))
+                .open(self.open)
                 .serve()?;
         }
 

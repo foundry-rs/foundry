@@ -31,20 +31,19 @@ foundry-utils.workspace = true
 # evm support
 bytes = "1.4.0"
 ethers = { workspace = true, features = ["rustls", "ws", "ipc"] }
-trie-db = { version = "0.23" }
-hash-db = { version = "0.15" }
-memory-db = { version = "0.29" }
+trie-db = "0.23"
+hash-db = "0.15"
+memory-db = "0.29"
 alloy-primitives = { workspace = true, features = ["serde"] }
 
 # axum related
-axum = { version = "0.5", features = ["ws"] }
-hyper = "0.14"
-tower = "0.4"
-tower-http = { version = "0.4", features = ["trace"] }
+axum.workspace = true
+hyper.workspace = true
+tower.workspace = true
 
 # tracing
 tracing.workspace = true
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 # async
 tokio = { version = "1", features = ["time"] }
@@ -69,7 +68,7 @@ clap_complete = { version = "4", optional = true }
 chrono.workspace = true
 auto_impl = "1"
 ctrlc = { version = "3", optional = true }
-fdlimit = { version = "0.2", optional = true }
+fdlimit = { version = "0.3", optional = true }
 clap_complete_fig = "4"
 ethereum-forkid = "0.12"
 

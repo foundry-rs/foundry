@@ -92,7 +92,7 @@ interface Vm {
 
     /// Metadata information about a file.
     ///
-    /// This structure is returned from the [`fsMetadata`] function and represents known
+    /// This structure is returned from the `fsMetadata` function and represents known
     /// metadata about a file such as its permissions, size, modification
     /// times, etc.
     struct FsMetadata {
@@ -124,7 +124,7 @@ interface Vm {
         uint256 privateKey;
     }
 
-    /// The result of a [`tryFfi`](tryFfiCall) call.
+    /// The result of a `tryFfi` call.
     struct FfiResult {
         /// The exit code of the call.
         int32 exitCode;
@@ -1155,5 +1155,17 @@ interface Vm {
     /// Gets the label for the specified address.
     #[cheatcode(group = Utilities)]
     function getLabel(address account) external returns (string memory currentLabel);
+
+    /// Compute the address a contract will be deployed at for a given deployer address and nonce.
+    #[cheatcode(group = Utilities)]
+    function computeCreateAddress(address deployer, uint256 nonce) external pure returns (address);
+
+    /// Compute the address of a contract created with CREATE2 using the given CREATE2 deployer.
+    #[cheatcode(group = Utilities)]
+    function computeCreate2Address(bytes32 salt, bytes32 initCodeHash, address deployer) external pure returns (address);
+
+    /// Compute the address of a contract created with CREATE2 using the default CREATE2 deployer.
+    #[cheatcode(group = Utilities)]
+    function computeCreate2Address(bytes32 salt, bytes32 initCodeHash) external pure returns (address);
 }
 }

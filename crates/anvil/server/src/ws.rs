@@ -3,10 +3,9 @@ use anvil_rpc::request::Request;
 use axum::{
     extract::{
         ws::{Message, WebSocket},
-        WebSocketUpgrade,
+        State, WebSocketUpgrade,
     },
-    response::IntoResponse,
-    Extension,
+    response::Response,
 };
 use futures::{ready, Sink, Stream};
 use std::{
@@ -17,10 +16,10 @@ use std::{
 /// Handles incoming Websocket upgrade
 ///
 /// This is the entrypoint invoked by the axum server for a websocket request
-pub async fn handle_ws<Handler: PubSubRpcHandler>(
+pub async fn handle_ws<Http, Ws: PubSubRpcHandler>(
     ws: WebSocketUpgrade,
-    Extension(handler): Extension<Handler>,
-) -> impl IntoResponse {
+    State((_, handler)): State<(Http, Ws)>,
+) -> Response {
     ws.on_upgrade(|socket| PubSubConnection::new(SocketConn(socket), handler))
 }
 

@@ -2,10 +2,10 @@
 
 use alloy_primitives::{Address, B256, U256};
 use foundry_cli::utils as forge_utils;
-use foundry_compilers::artifacts::{RevertStrings, YulDetails};
+use foundry_compilers::artifacts::{OptimizerDetails, RevertStrings, YulDetails};
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
-    Config, FuzzConfig, InvariantConfig, OptimizerDetails, SolcReq,
+    Config, FuzzConfig, InvariantConfig, SolcReq,
 };
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
@@ -69,7 +69,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         initial_balance: U256::from(0xffffffffffffffffffffffffu128),
         block_number: 10,
         fork_block_number: Some(200),
-        chain_id: Some(9999.into()),
+        chain: Some(9999.into()),
         gas_limit: 99_000_000u64.into(),
         code_size_limit: Some(100000),
         gas_price: Some(999),

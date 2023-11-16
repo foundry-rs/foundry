@@ -169,8 +169,7 @@ fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<TopicFilter
         .partition(|(_, (_, arg))| !arg.is_empty());
 
     // Only parse the inputs with arguments
-    let indexed_tokens =
-        parse_params(with_args.clone().into_iter().map(|(_, p)| p).collect::<Vec<_>>(), true)?;
+    let indexed_tokens = parse_params(with_args.iter().map(|(_, p)| *p), true)?;
 
     // Merge the inputs restoring the original ordering
     let mut tokens = with_args
@@ -217,7 +216,7 @@ fn parse_params<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
 ) -> eyre::Result<Vec<Token>> {
     let mut tokens = Vec::new();
 
-    for (param, value) in params.into_iter() {
+    for (param, value) in params {
         let mut token = if lenient {
             LenientTokenizer::tokenize(param, value)
         } else {

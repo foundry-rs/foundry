@@ -207,7 +207,7 @@ impl Display for SizeReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         let mut table = Table::new();
         table.load_preset(ASCII_MARKDOWN);
-        table.set_header(vec![
+        table.set_header([
             Cell::new("Contract").add_attribute(Attribute::Bold).fg(Color::Blue),
             Cell::new("Size (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
             Cell::new("Margin (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
@@ -222,7 +222,7 @@ impl Display for SizeReport {
                 _ => Color::Red,
             };
 
-            table.add_row(vec![
+            table.add_row([
                 Cell::new(name).fg(color),
                 Cell::new(contract.size as f64 / 1000.0).fg(color),
                 Cell::new(margin as f64 / 1000.0).fg(color),

@@ -11,7 +11,6 @@ use anvil_rpc::{
     response::{ResponseResult, RpcResponse},
 };
 use axum::{
-    extract::Extension,
     http::{header, HeaderValue, Method},
     routing::{post, IntoMakeService},
     Router, Server,
@@ -52,9 +51,8 @@ where
     let ServerConfig { allow_origin, no_cors } = config;
 
     let svc = Router::new()
-        .route("/", post(handler::handle::<Http>).get(ws::handle_ws::<Ws>))
-        .layer(Extension(http))
-        .layer(Extension(ws))
+        .route("/", post(handler::handle).get(ws::handle_ws))
+        .with_state((http, ws))
         .layer(TraceLayer::new_for_http());
 
     let svc = if no_cors {
@@ -81,8 +79,8 @@ where
     let ServerConfig { allow_origin, no_cors } = config;
 
     let svc = Router::new()
-        .route("/", post(handler::handle::<Http>))
-        .layer(Extension(http))
+        .route("/", post(handler::handle))
+        .with_state((http, ()))
         .layer(TraceLayer::new_for_http());
     let svc = if no_cors {
         svc

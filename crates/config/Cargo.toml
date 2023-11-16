@@ -12,12 +12,11 @@ repository.workspace = true
 
 [dependencies]
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
-foundry-compilers = { workspace = true, features = ["async", "svm-solc"] }
+foundry-compilers = { workspace = true, features = ["svm-solc"] }
 
-alloy-primitives = { workspace = true, features = ["std", "serde"] }
+alloy-chains = { workspace = true, features = ["serde"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
 revm-primitives = { workspace = true, default-features = false, features = ["std"] }
-
-ethers-core.workspace = true
 
 dirs-next = "2"
 eyre.workspace = true

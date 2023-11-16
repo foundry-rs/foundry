@@ -128,7 +128,7 @@ impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(mut self) -> Result<()> {
         let config = self.load_config_emit_warnings();
-        let chain = config.chain_id.unwrap_or_default();
+        let chain = config.chain.unwrap_or_default();
         self.etherscan.chain = Some(chain);
         self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
 

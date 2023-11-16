@@ -398,7 +398,7 @@ impl Default for NodeConfig {
             fork_request_retries: 5,
             fork_retry_backoff: Duration::from_millis(1_000),
             fork_chain_id: None,
-            // alchemy max cpus <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
+            // alchemy max cpus <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
             ipc_path: None,
             code_size_limit: None,
@@ -698,7 +698,7 @@ impl NodeConfig {
 
     /// Sets the number of assumed available compute units per second
     ///
-    /// See also, <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
+    /// See also, <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     #[must_use]
     pub fn fork_compute_units_per_second(mut self, compute_units_per_second: Option<u64>) -> Self {
         if let Some(compute_units_per_second) = compute_units_per_second {

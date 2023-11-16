@@ -62,7 +62,7 @@ impl ProviderInfo {
         let provider = Arc::new(get_http_provider(rpc));
         let chain = provider.get_chainid().await?.as_u64();
 
-        if let Chain::Named(chain) = Chain::from(chain) {
+        if let Some(chain) = Chain::from(chain).named() {
             is_legacy |= chain.is_legacy();
         };
 

@@ -5,12 +5,12 @@ Foundry cheatcodes definitions and implementations.
 ## Structure
 
 - [`assets/`](./assets/): JSON interface and specification
-- [`defs/`](./defs/src/lib.rs): Defines common traits and structs
+- [`spec/`](./spec/src/lib.rs): Defines common traits and structs
 - [`src/`](./src/lib.rs): Rust implementations of the cheatcodes
 
 ## Overview
 
-All cheatcodes are defined in a single [`sol!`] macro call in [`defs/src/vm.rs`].
+All cheatcodes are defined in a single [`sol!`] macro call in [`spec/src/vm.rs`].
 
 This, combined with the use of an internal [`Cheatcode`](../macros/impl/src/cheatcodes.rs) derive macro,
 allows us to generate both the Rust definitions and the JSON specification of the cheatcodes.
@@ -38,4 +38,4 @@ If you are making use of the JSON interface, please don't hesitate to open a PR 
 Please see the [cheatcodes dev documentation](../../docs/dev/cheatcodes.md#adding-a-new-cheatcode) on how to add new cheatcodes.
 
 [`sol!`]: https://docs.rs/alloy-sol-macro/latest/alloy_sol_macro/macro.sol.html
-[`defs/src/vm.rs`]: ./defs/src/vm.rs
+[`spec/src/vm.rs`]: ./spec/src/vm.rs
