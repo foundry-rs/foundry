@@ -7,7 +7,7 @@ use crate::eth::{
 use ethers_core::{
     types::{
         transaction::eip2930::{AccessList, AccessListItem},
-        Address, Bloom, Bytes, RecoveryMessage, Signature, SignatureError, TxHash, H256, U256, U64,
+        Address, Bloom, Bytes, Signature, SignatureError, TxHash, H256, U256, U64,
     },
     utils::{
         keccak256, rlp,
@@ -883,10 +883,7 @@ impl LegacyTransaction {
 
     /// Recovers the Ethereum address which was used to sign the transaction.
     pub fn recover(&self) -> Result<Address, SignatureError> {
-        dbg!(ethers_core::utils::hex::encode(self.signature.to_vec()));
-        self.signature.recover(dbg!(RecoveryMessage::Hash(
-            LegacyTransactionRequest::from(self.clone()).hash()
-        )))
+        self.signature.recover(LegacyTransactionRequest::from(self.clone()).hash())
     }
 
     pub fn chain_id(&self) -> Option<u64> {
