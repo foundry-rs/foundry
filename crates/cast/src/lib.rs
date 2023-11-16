@@ -5,7 +5,7 @@ use alloy_rlp::Decodable;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
-    types::{transaction::eip2718::TypedTransaction, Chain, *},
+    types::{transaction::eip2718::TypedTransaction, *},
     utils::{
         format_bytes32_string, format_units, keccak256, parse_bytes32_string, parse_units, rlp,
         Units,
@@ -16,6 +16,7 @@ use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{abi::encode_function_args, fmt::*, TransactionReceiptWithRevertReason};
+use foundry_config::Chain;
 use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
@@ -75,9 +76,9 @@ where
     ///
     /// # Example
     ///
-    /// ```
+    /// ```ignore
     /// use cast::{Cast, TxBuilder};
-    /// use ethers_core::types::{Address, Chain};
+    /// use ethers_core::types::Address;
     /// use ethers_providers::{Http, Provider};
     /// use std::str::FromStr;
     ///
@@ -142,9 +143,9 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use cast::{Cast, TxBuilder};
-    /// use ethers_core::types::{Address, Chain};
+    /// use ethers_core::types::Address;
     /// use ethers_providers::{Http, Provider};
     /// use std::str::FromStr;
     ///
@@ -203,10 +204,9 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
-    /// use alloy_primitives::{Address, U256};
+    /// ```ignore
     /// use cast::{Cast, TxBuilder};
-    /// use ethers_core::types::{Address as eAddress, Chain};
+    /// use ethers_core::types::{Address, U256};
     /// use ethers_providers::{Http, Provider};
     /// use std::str::FromStr;
     ///
@@ -242,7 +242,7 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use cast::Cast;
     /// use ethers_providers::{Http, Provider};
     ///
@@ -269,10 +269,10 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use alloy_primitives::U256;
     /// use cast::{Cast, TxBuilder};
-    /// use ethers_core::types::{Address, Chain};
+    /// use ethers_core::types::Address;
     /// use ethers_providers::{Http, Provider};
     /// use std::str::FromStr;
     ///
@@ -302,7 +302,7 @@ where
 
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use cast::Cast;
     /// use ethers_providers::{Http, Provider};
     ///
@@ -469,7 +469,7 @@ where
 
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use cast::Cast;
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Http, Provider};
@@ -494,7 +494,7 @@ where
 
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use cast::Cast;
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Http, Provider};
@@ -523,7 +523,7 @@ where
 
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use cast::Cast;
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Http, Provider};
@@ -552,7 +552,7 @@ where
 
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use alloy_primitives::{Address, U256};
     /// use cast::Cast;
     /// use ethers_providers::{Http, Provider};
@@ -575,7 +575,7 @@ where
 
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use cast::Cast;
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Http, Provider};
@@ -606,7 +606,7 @@ where
 
     /// Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use cast::Cast;
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Http, Provider};
@@ -632,7 +632,7 @@ where
 
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use cast::Cast;
     /// use ethers_providers::{Http, Provider};
     ///
@@ -674,7 +674,7 @@ where
 
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use cast::Cast;
     /// use ethers_providers::{Http, Provider};
     ///
@@ -736,7 +736,7 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use cast::Cast;
     /// use ethers_providers::{Http, Provider};
     ///
@@ -762,7 +762,7 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use cast::Cast;
     /// use ethers_core::types::{Address, H256};
     /// use ethers_providers::{Http, Provider};
@@ -814,7 +814,7 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use cast::Cast;
     /// use ethers_core::types::{BlockId, BlockNumber};
     /// use ethers_providers::{Http, Provider};
@@ -857,7 +857,7 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use cast::Cast;
     /// use ethers_core::{abi::Address, types::Filter};
     /// use ethers_providers::{Provider, Ws};
@@ -1593,7 +1593,7 @@ impl SimpleCast {
     /// Generates an interface in solidity from either a local file ABI or a verified contract on
     /// Etherscan. It returns a vector of [`InterfaceSource`] structs that contain the source of the
     /// interface and their name.
-    /// ```no_run
+    /// ```ignore
     /// use cast::{AbiPath, SimpleCast as Cast};
     /// # async fn foo() -> eyre::Result<()> {
     /// let path =
@@ -1810,15 +1810,14 @@ impl SimpleCast {
     ///
     /// ```
     /// # use cast::SimpleCast as Cast;
-    /// # use ethers_core::types::Chain;
-    ///
+    /// # use foundry_config::NamedChain;
     /// # async fn foo() -> eyre::Result<()> {
     /// assert_eq!(
     ///     "/*
     ///             - Bytecode Verification performed was compared on second iteration -
     ///             This file is part of the DAO.....",
     ///     Cast::etherscan_source(
-    ///         Chain::Mainnet,
+    ///         NamedChain::Mainnet.into(),
     ///         "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(),
     ///         "<etherscan_api_key>".to_string()
     ///     )
@@ -1850,7 +1849,7 @@ impl SimpleCast {
     /// # use std::path::PathBuf;
     /// # async fn expand() -> eyre::Result<()> {
     /// Cast::expand_etherscan_source_to_directory(
-    ///     NamedChain::Mainnet,
+    ///     NamedChain::Mainnet.into(),
     ///     "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(),
     ///     "<etherscan_api_key>".to_string(),
     ///     PathBuf::from("output_dir"),
@@ -1876,7 +1875,7 @@ impl SimpleCast {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use cast::SimpleCast as Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {

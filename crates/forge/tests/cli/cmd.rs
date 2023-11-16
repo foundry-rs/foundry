@@ -2,9 +2,7 @@
 
 use crate::constants::*;
 use foundry_compilers::{artifacts::Metadata, remappings::Remapping, ConfigurableContractArtifact};
-use foundry_config::{
-    parse_with_profile, BasicConfig, Chain, Config, NamedChain, SolidityErrorCode,
-};
+use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
     util::{pretty_err, read_string, OutputExt, TestCommand},
@@ -35,7 +33,7 @@ forgetest!(
     #[ignore]
     can_cache_ls,
     |_prj, cmd| {
-        let chain = Chain::Named(NamedChain::Mainnet);
+        let chain = Chain::mainnet();
         let block1 = 100;
         let block2 = 101;
 
@@ -132,7 +130,7 @@ forgetest!(
     #[ignore]
     can_cache_clean_chain,
     |_prj, cmd| {
-        let chain = Chain::Named(NamedChain::Mainnet);
+        let chain = Chain::mainnet();
         let cache_dir = Config::foundry_chain_cache_dir(chain).unwrap();
         let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
         let path = cache_dir.as_path();
@@ -155,7 +153,7 @@ forgetest!(
     #[ignore]
     can_cache_clean_blocks,
     |_prj, cmd| {
-        let chain = Chain::Named(NamedChain::Mainnet);
+        let chain = Chain::mainnet();
         let block1 = 100;
         let block2 = 101;
         let block3 = 102;
@@ -189,9 +187,9 @@ forgetest!(
     #[ignore]
     can_cache_clean_chain_etherscan,
     |_prj, cmd| {
-        let cache_dir = Config::foundry_chain_cache_dir(Chain::Named(NamedChain::Mainnet)).unwrap();
+        let cache_dir = Config::foundry_chain_cache_dir(Chain::mainnet()).unwrap();
         let etherscan_cache_dir =
-            Config::foundry_etherscan_chain_cache_dir(Chain::Named(NamedChain::Mainnet)).unwrap();
+            Config::foundry_etherscan_chain_cache_dir(Chain::mainnet()).unwrap();
         let path = cache_dir.as_path();
         let etherscan_path = etherscan_cache_dir.as_path();
         fs::create_dir_all(path).unwrap();

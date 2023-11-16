@@ -82,7 +82,7 @@ impl Cheatcode for loadAllocsCall {
         ccx.data
             .db
             .load_allocs(&allocs, &mut ccx.data.journaled_state)
-            .map(|_| Vec::default())
+            .map(|()| Vec::default())
             .map_err(|e| fmt_err!("failed to load allocs: {e}"))
     }
 }

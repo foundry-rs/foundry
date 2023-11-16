@@ -3,7 +3,6 @@ use clap::Parser;
 use ethers_core::{
     rand::thread_rng,
     types::{transaction::eip712::TypedData, Signature},
-    utils::to_checksum,
 };
 use ethers_signers::{
     coins_bip39::{English, Mnemonic},
@@ -226,7 +225,7 @@ impl WalletSubcommands {
                 println!("\nAccounts:");
                 for (i, wallet) in wallets.iter().enumerate() {
                     println!("- Account {i}:");
-                    println!("Address:     {}", to_checksum(&wallet.address(), None));
+                    println!("Address:     {}", wallet.address().to_alloy());
                     println!("Private key: 0x{}\n", hex::encode(wallet.signer().to_bytes()));
                 }
             }

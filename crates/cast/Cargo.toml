@@ -19,9 +19,9 @@ vergen = { version = "8", default-features = false, features = ["build", "git", 
 
 [dependencies]
 # lib
-foundry-block-explorers = { workspace = true }
+foundry-block-explorers.workspace = true
 foundry-common.workspace = true
-foundry-compilers = { workspace = true, default-features = false }
+foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-utils.workspace = true
