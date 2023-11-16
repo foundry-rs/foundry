@@ -50,7 +50,7 @@ interface Vm {
         Create,
         /// The account was selfdestructed.
         SelfDestruct,
-        /// Synthetic access indicating the current context has resumed after a previous sub-context AccountAccess sub-context.
+        /// Synthetic access indicating the current context has resumed after a previous sub-context (AccountAccess).
         Resume,
     }
 
