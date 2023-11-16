@@ -52,8 +52,6 @@ interface Vm {
         SelfDestruct,
         /// Synthetic access indicating the current context has resumed after a previous sub-context AccountAccess sub-context.
         Resume,
-        /// Synthetic access indicating the current context has ended.
-        Return,
     }
 
     /// An Ethereum log. Returned by `getRecordedLogs`.

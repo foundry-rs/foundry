@@ -65,10 +65,6 @@
         {
           "name": "Resume",
           "description": "Synthetic access indicating the current context has resumed after a previous sub-context AccountAccess sub-context."
-        },
-        {
-          "name": "Return",
-          "description": "Synthetic access indicating the current context has ended."
         }
       ]
     }
