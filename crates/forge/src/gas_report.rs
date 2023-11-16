@@ -134,16 +134,16 @@ impl Display for GasReport {
 
             let mut table = Table::new();
             table.load_preset(ASCII_MARKDOWN);
-            table.set_header(vec![Cell::new(format!("{name} contract"))
+            table.set_header([Cell::new(format!("{name} contract"))
                 .add_attribute(Attribute::Bold)
                 .fg(Color::Green)]);
-            table.add_row(vec![
+            table.add_row([
                 Cell::new("Deployment Cost").add_attribute(Attribute::Bold).fg(Color::Cyan),
                 Cell::new("Deployment Size").add_attribute(Attribute::Bold).fg(Color::Cyan),
             ]);
-            table.add_row(vec![contract.gas.to_string(), contract.size.to_string()]);
+            table.add_row([contract.gas.to_string(), contract.size.to_string()]);
 
-            table.add_row(vec![
+            table.add_row([
                 Cell::new("Function Name").add_attribute(Attribute::Bold).fg(Color::Magenta),
                 Cell::new("min").add_attribute(Attribute::Bold).fg(Color::Green),
                 Cell::new("avg").add_attribute(Attribute::Bold).fg(Color::Yellow),
@@ -157,7 +157,7 @@ impl Display for GasReport {
                     let fn_display =
                         if sigs.len() == 1 { fname.clone() } else { sig.replace(':', "") };
 
-                    table.add_row(vec![
+                    table.add_row([
                         Cell::new(fn_display).add_attribute(Attribute::Bold),
                         Cell::new(gas_info.min.to_string()).fg(Color::Green),
                         Cell::new(gas_info.mean.to_string()).fg(Color::Yellow),
