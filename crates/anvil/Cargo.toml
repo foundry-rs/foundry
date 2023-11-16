@@ -37,7 +37,7 @@ memory-db = "0.29"
 alloy-primitives = { workspace = true, features = ["serde"] }
 
 # axum related
-axum = { workspace = true, features = ["ws"] }
+axum.workspace = true
 hyper.workspace = true
 tower.workspace = true
 
