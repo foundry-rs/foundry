@@ -2662,7 +2662,7 @@ dependencies = [
  "ethers-providers",
  "ethers-signers",
  "eyre",
- "foundry-cheatcodes-defs",
+ "foundry-cheatcodes-spec",
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
@@ -2677,7 +2677,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "foundry-cheatcodes-defs"
+name = "foundry-cheatcodes-spec"
 version = "0.2.0"
 dependencies = [
  "alloy-sol-types",
@@ -2895,7 +2895,7 @@ dependencies = [
  "ethers-providers",
  "eyre",
  "foundry-abi",
- "foundry-cheatcodes-defs",
+ "foundry-cheatcodes-spec",
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
