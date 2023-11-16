@@ -444,8 +444,8 @@ impl Encodable for EIP1559TransactionRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DepositTransactionRequest {
-    pub source_hash: H256,
     pub from: Address,
+    pub source_hash: H256,
     pub kind: TransactionKind,
     pub mint: U256,
     pub value: U256,
@@ -465,8 +465,8 @@ impl DepositTransactionRequest {
 impl From<DepositTransaction> for DepositTransactionRequest {
     fn from(tx: DepositTransaction) -> Self {
         Self {
-            source_hash: tx.source_hash,
             from: tx.from,
+            source_hash: tx.source_hash,
             kind: tx.kind,
             mint: tx.mint,
             value: tx.value,
@@ -480,8 +480,8 @@ impl From<DepositTransaction> for DepositTransactionRequest {
 impl Encodable for DepositTransactionRequest {
     fn rlp_append(&self, s: &mut RlpStream) {
         s.begin_list(8);
-        s.append(&self.source_hash);
         s.append(&self.from);
+        s.append(&self.source_hash);
         s.append(&self.kind);
         s.append(&self.mint);
         s.append(&self.value);
@@ -862,15 +862,9 @@ impl Decodable for TypedTransaction {
         match *first {
             0x01 => rlp::decode(s).map(TypedTransaction::EIP2930),
             0x02 => rlp::decode(s).map(TypedTransaction::EIP1559),
+            0x7E => rlp::decode(s).map(TypedTransaction::Deposit),
             _ => Err(DecoderError::Custom("invalid tx type")),
         }
-        if first == 0x02 {
-            return rlp::decode(s).map(TypedTransaction::EIP1559)
-        }
-        if first == 0x7E {
-            return rlp::decode(s).map(TypedTransaction::Deposit)
-        }
-        Err(DecoderError::Custom("invalid tx type"))
     }
 }
 
@@ -1285,7 +1279,8 @@ impl DepositTransaction {
 
 impl Encodable for DepositTransaction {
     fn rlp_append(&self, s: &mut RlpStream) {
-        s.begin_list(8);
+        s.begin_list(9);
+        s.append(&self.nonce);
         s.append(&self.source_hash);
         s.append(&self.from);
         s.append(&self.kind);
@@ -1299,20 +1294,20 @@ impl Encodable for DepositTransaction {
 
 impl Decodable for DepositTransaction {
     fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-        if rlp.item_count()? != 8 {
+        if rlp.item_count()? != 9 {
             return Err(DecoderError::RlpIncorrectListLen)
         }
 
         Ok(Self {
-            source_hash: rlp.val_at(0)?,
-            from: rlp.val_at(1)?,
-            kind: rlp.val_at(2)?,
-            mint: rlp.val_at(3)?,
-            value: rlp.val_at(4)?,
-            gas_limit: rlp.val_at(5)?,
-            is_system_tx: rlp.val_at(6)?,
-            input: rlp.val_at::<Vec<u8>>(7)?.into(),
-            nonce: U256::from(0),
+            nonce: rlp.val_at(0)?,
+            source_hash: rlp.val_at(1)?,
+            from: rlp.val_at(2)?,
+            kind: rlp.val_at(3)?,
+            mint: rlp.val_at(4)?,
+            value: rlp.val_at(5)?,
+            gas_limit: rlp.val_at(6)?,
+            is_system_tx: rlp.val_at(7)?,
+            input: rlp.val_at::<Vec<u8>>(8)?.into(),
         })
     }
 }
@@ -1539,7 +1534,7 @@ impl TransactionInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers_core::utils::hex;
+    use ethers_core::{types::H160, utils::hex};
 
     #[test]
     fn can_recover_sender() {
@@ -1802,6 +1797,28 @@ mod tests {
         assert_eq!(
             expected,
             <TypedTransaction as open_fastrlp::Decodable>::decode(bytes_fifth).unwrap()
+        );
+
+        let bytes_sixth = &mut &hex::decode("b8587ef85507a0000000000000000000000000000000000000000000000000000000000000000094cf7f9e66af820a19257a2108375b180b0ec491679461815774383099e24810ab832a5b2a5425c154d5808230398287fb0180").unwrap()[..];
+        let expected: TypedTransaction = TypedTransaction::Deposit(DepositTransaction {
+            nonce: 7u64.into(),
+            source_hash: H256::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
+            from: H160::from_str("cf7f9e66af820a19257a2108375b180b0ec49167").unwrap(),
+            kind: TransactionKind::Call(Address::from_slice(
+                &hex::decode("61815774383099e24810ab832a5b2a5425c154d5").unwrap()[..],
+            )),
+            mint: U256::zero(),
+            value: 12345u64.into(),
+            gas_limit: 34811u64.into(),
+            input: Bytes::default(),
+            is_system_tx: true,
+        });
+        let rlpbytes =  expected.rlp_bytes();
+        let bytes = rlpbytes.as_ref();
+        println!("{}", hex::encode(bytes));
+        assert_eq!(
+            expected,
+            <TypedTransaction as open_fastrlp::Decodable>::decode(bytes_sixth).unwrap()
         );
     }
 

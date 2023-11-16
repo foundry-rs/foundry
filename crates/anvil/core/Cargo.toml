@@ -16,7 +16,10 @@ foundry-utils.workspace = true
 revm = { workspace = true, default-features = false, features = ["std", "serde", "memory_limit"] }
 
 alloy-primitives = { workspace = true, features = ["serde"] }
-ethers-core.workspace = true
+ethers-core = { workspace = true, features = ["optimism"], optional = true }
+ethers-contract = { workspace = true, features = ["optimism"], optional = true }
+ethers-providers = { workspace = true, features = ["optimism"], optional = true }
+ethers-middleware = { workspace = true, features = ["optimism"], optional = true  }
 serde = { workspace = true, optional = true }
 serde_json.workspace = true
 bytes = { version = "1.4" }
@@ -33,7 +36,8 @@ keccak-hasher = "0.15"
 anvil-core = { path = ".", features = ["serde"] }
 
 [features]
-default = ["serde"]
+default = ["serde","optimism"]
 impersonated-tx = []
 fastrlp = ["dep:open-fastrlp"]
 serde = ["dep:serde"]
+optimism = ["dep:ethers-core", "dep:ethers-contract", "dep:ethers-providers", "dep:ethers-middleware"]
