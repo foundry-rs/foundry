@@ -92,7 +92,7 @@ interface Vm {
 
     /// Metadata information about a file.
     ///
-    /// This structure is returned from the [`fsMetadata`] function and represents known
+    /// This structure is returned from the `fsMetadata` function and represents known
     /// metadata about a file such as its permissions, size, modification
     /// times, etc.
     struct FsMetadata {
@@ -124,7 +124,7 @@ interface Vm {
         uint256 privateKey;
     }
 
-    /// The result of a [`tryFfi`](tryFfiCall) call.
+    /// The result of a `tryFfi` call.
     struct FfiResult {
         /// The exit code of the call.
         int32 exitCode;
