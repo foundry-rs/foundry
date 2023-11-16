@@ -39,6 +39,7 @@ use alloy_rpc_types::{
     BlockNumberOrTag as BlockNumber,
     BlockTransactions,
     CallRequest,
+    EIP1186AccountProofResponse,
     FeeHistory,
     Filter,
     FilteredParams,
@@ -59,9 +60,9 @@ use anvil_core::{
         block::BlockInfo,
         proof::AccountProof,
         transaction::{
-            call_to_internal_tx_request, to_ethers_access_list, to_internal_tx_request,
-            EthTransactionRequest, LegacyTransaction, PendingTransaction, TransactionKind,
-            TypedTransaction, TypedTransactionRequest,
+            call_to_internal_tx_request, to_alloy_proof, to_ethers_access_list,
+            to_internal_tx_request, EthTransactionRequest, LegacyTransaction, PendingTransaction,
+            TransactionKind, TypedTransaction, TypedTransactionRequest,
         },
         EthRequest,
     },
@@ -606,7 +607,10 @@ impl EthApi {
         if let BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number.to::<u64>()) {
-                    return Ok(fork.get_balance(address, number.to::<u64>()).await?)
+                    return Ok(fork
+                        .get_balance(address, number.to::<u64>())
+                        .await
+                        .map_err(|_| BlockchainError::DataUnavailable)?)
                 }
             }
         }
@@ -630,9 +634,15 @@ impl EthApi {
         if let BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number.to::<u64>()) {
-                    return Ok(fork
-                        .storage_at(address, index, Some(BlockNumber::Number(*number)))
-                        .await?)
+                    return Ok(B256::from(
+                        fork.storage_at(
+                            address,
+                            B256::from(index),
+                            Some(BlockNumber::Number(*number)),
+                        )
+                        .await
+                        .map_err(|_| BlockchainError::DataUnavailable)?,
+                    ))
                 }
             }
         }
@@ -763,7 +773,10 @@ impl EthApi {
         if let BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number.to::<u64>()) {
-                    return Ok(fork.get_code(address, number.to::<u64>()).await?)
+                    return Ok(fork
+                        .get_code(address, number.to::<u64>())
+                        .await
+                        .map_err(|_| BlockchainError::DataUnavailable)?)
                 }
             }
         }
@@ -779,7 +792,7 @@ impl EthApi {
         address: Address,
         keys: Vec<B256>,
         block_number: Option<BlockId>,
-    ) -> Result<AccountProof> {
+    ) -> Result<EIP1186AccountProofResponse> {
         node_info!("eth_getProof");
         let block_request = self.block_request(block_number).await?;
 
@@ -788,13 +801,16 @@ impl EthApi {
                 // if we're in forking mode, or still on the forked block (no blocks mined yet) then
                 // we can delegate the call
                 if fork.predates_fork_inclusive(number.to::<u64>()) {
-                    return Ok(fork.get_proof(address, keys, Some((*number).into())).await?)
+                    return Ok(fork
+                        .get_proof(address, keys, Some((*number).into()))
+                        .await
+                        .map_err(|_| BlockchainError::DataUnavailable)?)
                 }
             }
         }
 
         let proof = self.backend.prove_account_at(address, keys, Some(block_request)).await?;
-        Ok(proof)
+        Ok(to_alloy_proof(proof))
     }
 
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).
@@ -973,7 +989,10 @@ impl EthApi {
                             "not available on past forked blocks".to_string(),
                         ))
                     }
-                    return Ok(fork.call(&request, Some(number.to::<u64>().into())).await?)
+                    return Ok(fork
+                        .call(&request, Some(number.to::<u64>().into()))
+                        .await
+                        .map_err(|_| BlockchainError::DataUnavailable)?)
                 }
             }
         }
@@ -1023,7 +1042,8 @@ impl EthApi {
                 if fork.predates_fork(number.to::<u64>()) {
                     return Ok(fork
                         .create_access_list(&request, Some(number.to::<u64>().into()))
-                        .await?)
+                        .await
+                        .map_err(|_| BlockchainError::DataUnavailable)?)
                 }
             }
         }
@@ -1151,7 +1171,10 @@ impl EthApi {
             self.backend.ensure_block_number(Some(BlockId::Hash(block_hash.into()))).await?;
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork.uncle_by_block_hash_and_index(block_hash, idx.into()).await?)
+                return Ok(fork
+                    .uncle_by_block_hash_and_index(block_hash, idx.into())
+                    .await
+                    .map_err(|_| BlockchainError::DataUnavailable)?)
             }
         }
         // It's impossible to have uncles outside of fork mode
@@ -1170,7 +1193,10 @@ impl EthApi {
         let number = self.backend.ensure_block_number(Some(BlockId::Number(block_number))).await?;
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork.uncle_by_block_number_and_index(number, idx.into()).await?)
+                return Ok(fork
+                    .uncle_by_block_number_and_index(number, idx.into())
+                    .await
+                    .map_err(|_| BlockchainError::DataUnavailable)?)
             }
         }
         // It's impossible to have uncles outside of fork mode
@@ -1251,7 +1277,8 @@ impl EthApi {
                         BlockNumber::Number(U64::from(number)),
                         &reward_percentiles,
                     )
-                    .await?)
+                    .await
+                    .map_err(|_| BlockchainError::DataUnavailable)?)
             }
         }
 
@@ -1575,7 +1602,7 @@ impl EthApi {
     /// Handler for RPC call: `anvil_dropTransaction`
     pub async fn anvil_drop_transaction(&self, tx_hash: B256) -> Result<Option<B256>> {
         node_info!("anvil_dropTransaction");
-        Ok(self.pool.drop_transaction(tx_hash).map(|tx| *tx.hash()))
+        Ok(self.pool.drop_transaction(tx_hash).map(|tx| tx.hash()))
     }
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config.
@@ -1928,16 +1955,11 @@ impl EthApi {
         node_info!("anvil_setRpcUrl");
         if let Some(fork) = self.backend.get_fork() {
             let mut config = fork.config.write();
-            let interval = config.provider.get_interval();
+            // let interval = config.provider.get_interval();
             let new_provider = Arc::new(
-                ProviderBuilder::new(&url)
-                    .max_retry(10)
-                    .initial_backoff(1000)
-                    .build()
-                    .map_err(|_| {
-                        ProviderError::CustomError(format!("Failed to parse invalid url {url}"))
-                    })?
-                    .interval(interval),
+                ProviderBuilder::new(&url).max_retry(10).initial_backoff(1000).build().map_err(
+                    |_| ProviderError::CustomError(format!("Failed to parse invalid url {url}")),
+                )?, // .interval(interval),
             );
             config.provider = new_provider;
             trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url, url);
@@ -2051,7 +2073,7 @@ impl EthApi {
         fn convert(tx: Arc<PoolTransaction>) -> Transaction {
             let from = *tx.pending_transaction.sender();
             let mut tx = transaction_build(
-                Some(*tx.hash()),
+                Some(tx.hash()),
                 tx.pending_transaction.transaction.clone(),
                 None,
                 None,
@@ -2141,7 +2163,10 @@ impl EthApi {
         if let BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number.to::<u64>()) {
-                    return Ok(fork.estimate_gas(&request, Some((*number).into())).await?)
+                    return Ok(fork
+                        .estimate_gas(&request, Some((*number).into()))
+                        .await
+                        .map_err(|_| BlockchainError::DataUnavailable)?)
                 }
             }
         }
@@ -2516,7 +2541,10 @@ impl EthApi {
         if let BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork_inclusive(number.to::<u64>()) {
-                    return Ok(fork.get_nonce(address, (*number).to::<u64>()).await?)
+                    return Ok(fork
+                        .get_nonce(address, (*number).to::<u64>())
+                        .await
+                        .map_err(|_| BlockchainError::DataUnavailable)?)
                 }
             }
         }

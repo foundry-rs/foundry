@@ -1,14 +1,18 @@
 //! ethers compatibility, this is mainly necessary so we can use all of `ethers` signers
 
 use super::EthTransactionRequest;
-use crate::eth::transaction::{
-    EIP1559TransactionRequest, EIP2930TransactionRequest, LegacyTransactionRequest,
-    MaybeImpersonatedTransaction, TypedTransaction, TypedTransactionRequest,
+use crate::eth::{
+    proof::AccountProof,
+    transaction::{
+        EIP1559TransactionRequest, EIP2930TransactionRequest, LegacyTransactionRequest,
+        MaybeImpersonatedTransaction, TypedTransaction, TypedTransactionRequest,
+    },
 };
 use alloy_primitives::{U128 as rU128, U256 as rU256, U64 as rU64};
 use alloy_rpc_types::{
-    AccessList as AlloyAccessList, AccessListItem as AlloyAccessListItem, CallRequest, Signature,
-    Transaction as AlloyTransaction, TransactionRequest as AlloyTransactionRequest,
+    AccessList as AlloyAccessList, AccessListItem as AlloyAccessListItem, CallRequest,
+    EIP1186StorageProof, Signature, Transaction as AlloyTransaction,
+    TransactionRequest as AlloyTransactionRequest,
 };
 use ethers_core::types::{
     transaction::{
@@ -16,11 +20,31 @@ use ethers_core::types::{
         eip2930::{AccessList, AccessListItem},
     },
     Address, BigEndianHash, Eip1559TransactionRequest as EthersEip1559TransactionRequest,
-    Eip2930TransactionRequest as EthersEip2930TransactionRequest, NameOrAddress,
+    Eip2930TransactionRequest as EthersEip2930TransactionRequest, NameOrAddress, StorageProof,
     Transaction as EthersTransaction, TransactionRequest as EthersLegacyTransactionRequest,
     TransactionRequest, H256, U256, U64,
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
+
+pub fn to_alloy_proof(proof: AccountProof) -> alloy_rpc_types::EIP1186AccountProofResponse {
+    alloy_rpc_types::EIP1186AccountProofResponse {
+        address: proof.address.to_alloy(),
+        account_proof: proof.account_proof.into_iter().map(|b| b.0.into()).collect(),
+        balance: proof.balance.to_alloy(),
+        code_hash: proof.code_hash.to_alloy(),
+        nonce: proof.nonce.to_alloy().to::<rU64>(),
+        storage_hash: proof.storage_hash.to_alloy(),
+        storage_proof: proof.storage_proof.iter().map(to_alloy_storage_proof).collect(),
+    }
+}
+
+pub fn to_alloy_storage_proof(proof: &StorageProof) -> alloy_rpc_types::EIP1186StorageProof {
+    alloy_rpc_types::EIP1186StorageProof {
+        key: rU256::from_be_bytes(proof.key.to_alloy().0).into(),
+        proof: proof.proof.iter().map(|b| b.clone().0.into()).collect(),
+        value: proof.value.to_alloy(),
+    }
+}
 
 pub fn to_internal_tx_request(request: &AlloyTransactionRequest) -> EthTransactionRequest {
     EthTransactionRequest {

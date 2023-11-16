@@ -26,7 +26,7 @@ use std::ops::Deref;
 mod ethers_compat;
 
 pub use ethers_compat::{
-    call_to_internal_tx_request, from_ethers_access_list, to_ethers_access_list,
+    call_to_internal_tx_request, from_ethers_access_list, to_alloy_proof, to_ethers_access_list,
     to_internal_tx_request,
 };
 

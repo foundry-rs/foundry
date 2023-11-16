@@ -89,7 +89,7 @@ impl Pool {
         let MinedBlockOutcome { block_number, included, invalid } = outcome;
 
         // remove invalid transactions from the pool
-        self.remove_invalid(invalid.into_iter().map(|tx| *tx.hash()).collect());
+        self.remove_invalid(invalid.into_iter().map(|tx| tx.hash()).collect());
 
         // prune all the markers the mined transactions provide
         let res = self
@@ -226,7 +226,7 @@ impl PoolInner {
     }
 
     fn add_transaction(&mut self, tx: PoolTransaction) -> Result<AddedTransaction, PoolError> {
-        if self.contains(tx.hash()) {
+        if self.contains(&tx.hash()) {
             warn!(target: "txpool", "[{:?}] Already imported", tx.hash());
             return Err(PoolError::AlreadyImported(Box::new(tx)))
         }
@@ -236,7 +236,7 @@ impl PoolInner {
 
         // If all markers are not satisfied import to future
         if !tx.is_ready() {
-            let hash = *tx.transaction.hash();
+            let hash = tx.transaction.hash();
             self.pending_transactions.add_transaction(tx)?;
             return Ok(AddedTransaction::Pending { hash })
         }
@@ -248,7 +248,7 @@ impl PoolInner {
         &mut self,
         tx: PendingPoolTransaction,
     ) -> Result<AddedTransaction, PoolError> {
-        let hash = *tx.transaction.hash();
+        let hash = tx.transaction.hash();
         trace!(target: "txpool", "adding ready transaction [{:?}]", hash);
         let mut ready = ReadyTransaction::new(hash);
 
@@ -263,7 +263,7 @@ impl PoolInner {
                 self.pending_transactions.mark_and_unlock(&current_tx.transaction.provides),
             );
 
-            let current_hash = *current_tx.transaction.hash();
+            let current_hash = current_tx.transaction.hash();
             // try to add the transaction to the ready pool
             match self.ready_transactions.add_transaction(current_tx) {
                 Ok(replaced_transactions) => {
@@ -316,7 +316,7 @@ impl PoolInner {
         let mut promoted = vec![];
         let mut failed = vec![];
         for tx in imports {
-            let hash = *tx.transaction.hash();
+            let hash = tx.transaction.hash();
             match self.add_ready_transaction(tx) {
                 Ok(res) => promoted.push(res),
                 Err(e) => {

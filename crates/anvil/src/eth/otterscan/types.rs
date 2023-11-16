@@ -160,8 +160,8 @@ impl OtsBlockDetails {
 impl From<Block> for OtsBlock {
     fn from(block: Block) -> Self {
         let transaction_count = match block.transactions {
-            BlockTransactions::Full(txs) => txs.len(),
-            BlockTransactions::Hashes(txs) => txs.len(),
+            BlockTransactions::Full(ref txs) => txs.len(),
+            BlockTransactions::Hashes(ref txs) => txs.len(),
             BlockTransactions::Uncle => 0,
         };
 

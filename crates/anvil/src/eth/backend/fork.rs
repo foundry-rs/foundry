@@ -4,14 +4,14 @@ use crate::eth::{backend::db::Db, error::BlockchainError};
 use alloy_primitives::{Address, Bytes, StorageKey, StorageValue, B256, U256, U64};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{
+    trace::{GethDebugTracingOptions, GethTrace, LocalizedTransactionTrace as Trace},
     AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
     CallRequest, EIP1186AccountProofResponse, FeeHistory, Filter, Log, Transaction,
     TransactionReceipt,
 };
-use anvil_core::eth::proof::AccountProof;
 use ethers::{
     providers::ProviderError,
-    types::{GethDebugTracingOptions, GethTrace, Trace},
+    // types::{GethDebugTracingOptions, GethTrace, Trace},
 };
 use eyre::Context;
 use foundry_common::{ProviderBuilder, RetryProvider};
@@ -418,18 +418,23 @@ impl ClientFork {
             .get_transaction_by_hash(hash)
             .await
             .success()
-            .ok_or_else(|| eyre::eyre!("Could not fetch balance for {address}"))?;
+            .ok_or_else(|| eyre::eyre!("Could not fetch transaction for {hash}"))?;
         let mut storage = self.storage_write();
         storage.transactions.insert(hash, tx.clone());
         return Ok(Some(tx));
     }
 
-    pub async fn trace_transaction(&self, hash: B256) -> Result<Vec<Trace>, ProviderError> {
+    pub async fn trace_transaction(&self, hash: B256) -> Result<Vec<Trace>, eyre::Report> {
         if let Some(traces) = self.storage_read().transaction_traces.get(&hash).cloned() {
             return Ok(traces);
         }
 
-        let traces = self.provider().trace_transaction(hash).await?;
+        let traces = self
+            .provider()
+            .trace_transaction(hash)
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("Could not trace transaction for {hash}"))?;
         let mut storage = self.storage_write();
         storage.transaction_traces.insert(hash, traces.clone());
 
@@ -440,24 +445,34 @@ impl ClientFork {
         &self,
         hash: B256,
         opts: GethDebugTracingOptions,
-    ) -> Result<GethTrace, ProviderError> {
+    ) -> Result<GethTrace, eyre::Report> {
         if let Some(traces) = self.storage_read().geth_transaction_traces.get(&hash).cloned() {
             return Ok(traces);
         }
 
-        let trace = self.provider().debug_trace_transaction(hash, opts).await?;
+        let trace = self
+            .provider()
+            .debug_trace_transaction(hash, opts)
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("Could not debug_trace transaction for {hash}"))?;
         let mut storage = self.storage_write();
         storage.geth_transaction_traces.insert(hash, trace.clone());
 
         Ok(trace)
     }
 
-    pub async fn trace_block(&self, number: u64) -> Result<Vec<Trace>, ProviderError> {
+    pub async fn trace_block(&self, number: u64) -> Result<Vec<Trace>, eyre::Report> {
         if let Some(traces) = self.storage_read().block_traces.get(&number).cloned() {
             return Ok(traces);
         }
 
-        let traces = self.provider().trace_block(number.into()).await?;
+        let traces = self
+            .provider()
+            .trace_block(number.into())
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("Could not trace block {number}"))?;
         let mut storage = self.storage_write();
         storage.block_traces.insert(number, traces.clone());
 
@@ -619,8 +634,8 @@ impl ClientFork {
     fn convert_to_full_block(&self, block: Block) -> Block {
         let storage = self.storage.read();
         let block_txs_len = match block.transactions {
-            BlockTransactions::Full(txs) => txs.len(),
-            BlockTransactions::Hashes(hashes) => hashes.len(),
+            BlockTransactions::Full(ref txs) => txs.len(),
+            BlockTransactions::Hashes(ref hashes) => hashes.len(),
             // TODO: Should this be supported at all?
             BlockTransactions::Uncle => 0,
         };
@@ -669,7 +684,7 @@ impl ClientForkConfig {
     ///
     /// This will fail if no new provider could be established (erroneous URL)
     fn update_url(&mut self, url: String) -> Result<(), BlockchainError> {
-        let interval = self.provider.get_interval();
+        // let interval = self.provider.get_interval();
         self.provider = Arc::new(
             ProviderBuilder::new(url.as_str())
                 .timeout(self.timeout)
@@ -678,8 +693,7 @@ impl ClientForkConfig {
                 .initial_backoff(self.backoff.as_millis() as u64)
                 .compute_units_per_second(self.compute_units_per_second)
                 .build()
-                .map_err(|_| BlockchainError::InvalidUrl(url.clone()))?
-                .interval(interval),
+                .map_err(|_| BlockchainError::InvalidUrl(url.clone()))?, // .interval(interval),
         );
         trace!(target: "fork", "Updated rpc url  {}", url);
         self.eth_rpc_url = url;

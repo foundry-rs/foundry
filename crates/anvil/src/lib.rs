@@ -268,10 +268,8 @@ impl NodeHandle {
 
     /// Constructs a [`RetryProvider`] for this handle's HTTP endpoint.
     pub fn http_provider(&self) -> RetryProvider {
-        ProviderBuilder::new(&self.http_endpoint())
-            .build()
-            .expect("failed to build HTTP provider")
-            .interval(Duration::from_millis(500))
+        ProviderBuilder::new(&self.http_endpoint()).build().expect("failed to build HTTP provider")
+        // .interval(Duration::from_millis(500))
     }
 
     /// Constructs a [`RetryProvider`] for this handle's WS endpoint.
