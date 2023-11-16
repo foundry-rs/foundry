@@ -417,28 +417,21 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             if interpreter.current_opcode() == opcode::SELFDESTRUCT {
                 let target = try_or_continue!(interpreter.stack().peek(0));
                 // load balance of this account
-                let value: U256;
-                if let Ok((account, _)) =
+                let value = if let Ok((account, _)) =
                     data.journaled_state.load_account(interpreter.contract().address, data.db)
                 {
-                    value = account.info.balance;
+                    account.info.balance
                 } else {
-                    value = U256::ZERO;
-                }
-                // previous balance of the target account
-                let old_balance: U256;
-                // get initialized status of target account
-                let initialized: bool;
-                if let Ok((account, _)) =
-                    data.journaled_state.load_account(Address::from(U160::from(target)), data.db)
-                {
-                    initialized = account.info.exists();
-                    old_balance = account.info.balance;
-                } else {
-                    initialized = false;
-                    old_balance = U256::ZERO;
-                }
-
+                    U256::ZERO
+                };
+                let account = Address::from_word(B256::from(target));
+                // get previous balance and initialized status of the target account
+                let (initialized, old_balance) =
+                    if let Ok((account, _)) = data.journaled_state.load_account(account, data.db) {
+                        (account.info.exists(), account.info.balance)
+                    } else {
+                        (false, U256::ZERO)
+                    };
                 // register access for the target account
                 let access = crate::Vm::AccountAccess {
                     chainInfo: crate::Vm::ChainInfo {
@@ -446,7 +439,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         chainId: U256::from(data.env.cfg.chain_id),
                     },
                     accessor: interpreter.contract().address,
-                    account: Address::from(U160::from(target)),
+                    account,
                     kind: crate::Vm::AccountAccessKind::SelfDestruct,
                     initialized,
                     oldBalance: old_balance,
