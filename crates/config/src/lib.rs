@@ -1795,7 +1795,7 @@ impl Default for Config {
             block_difficulty: 0,
             block_prevrandao: Default::default(),
             block_gas_limit: None,
-            memory_limit: 2u64.pow(25),
+            memory_limit: 1 << 25, // 32MiB = 33554432 bytes
             eth_rpc_url: None,
             eth_rpc_jwt: None,
             etherscan_api_key: None,
