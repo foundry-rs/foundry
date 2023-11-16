@@ -13,7 +13,7 @@ use crate::{
     },
     CheatsConfig, CheatsCtxt, Error, Result, Vm,
 };
-use alloy_primitives::{Address, Bytes, B256, U160, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{SolInterface, SolValue};
 use ethers_core::types::{
     transaction::eip2718::TypedTransaction, NameOrAddress, TransactionRequest,
