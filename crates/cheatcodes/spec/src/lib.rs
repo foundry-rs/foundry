@@ -80,6 +80,7 @@ impl Cheatcodes<'static> {
                 Vm::FsMetadata::STRUCT.clone(),
                 Vm::Wallet::STRUCT.clone(),
                 Vm::FfiResult::STRUCT.clone(),
+                Vm::ChainInfo::STRUCT.clone(),
                 Vm::AccountAccess::STRUCT.clone(),
                 Vm::StorageAccess::STRUCT.clone(),
             ]),

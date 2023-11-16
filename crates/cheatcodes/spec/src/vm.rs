@@ -44,9 +44,9 @@ interface Vm {
         DelegateCall,
         /// The account was called via callcode.
         CallCode,
-        /// THe account was called via staticcall.
+        /// The account was called via staticcall.
         StaticCall,
-        /// THe account was created.
+        /// The account was created.
         Create,
         /// The account was selfdestructed.
         SelfDestruct,
@@ -152,12 +152,18 @@ interface Vm {
         bytes stderr;
     }
 
+    /// Information on the chain and fork.
+    struct ChainInfo {
+        /// The fork identifier. Set to zero if no fork is active.
+        uint256 forkId;
+        /// The chain ID of the current fork.
+        uint256 chainId;
+    }
+
     /// The result of a `stopAndReturnStateDiff` call.
     struct AccountAccess {
-        /// The fork the access occurred. It's zero if no fork is active.
-        uint256 forkId;
-        /// The chain ID the access occurred.
-        uint256 chainId;
+        /// The chain and fork the access occurred.
+        ChainInfo chainInfo;
         /// The kind of account access that determines what the account is.
         /// If kind is Call, DelegateCall, StaticCall or CallCode, then the account is the callee.
         /// If kind is Create, then the account is the newly created account.

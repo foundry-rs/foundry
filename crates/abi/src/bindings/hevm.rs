@@ -4920,9 +4920,15 @@ pub mod hevm {
                                         ::std::boxed::Box::new(
                                             ::ethers_core::abi::ethabi::ParamType::Tuple(
                                                 ::std::vec![
-                                                    ::ethers_core::abi::ethabi::ParamType::Address,
-                                                    ::ethers_core::abi::ethabi::ParamType::Address,
+                                                    ::ethers_core::abi::ethabi::ParamType::Tuple(
+                                                        ::std::vec![
+                                                            ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                                            ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                                        ],
+                                                    ),
                                                     ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                                    ::ethers_core::abi::ethabi::ParamType::Address,
+                                                    ::ethers_core::abi::ethabi::ParamType::Address,
                                                     ::ethers_core::abi::ethabi::ParamType::Bool,
                                                     ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
                                                     ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
@@ -7429,9 +7435,10 @@ pub mod hevm {
             M,
             ::std::vec::Vec<
                 (
-                    ::ethers_core::types::Address,
-                    ::ethers_core::types::Address,
+                    (::ethers_core::types::U256, ::ethers_core::types::U256),
                     ::ethers_core::types::U256,
+                    ::ethers_core::types::Address,
+                    ::ethers_core::types::Address,
                     bool,
                     ::ethers_core::types::U256,
                     ::ethers_core::types::U256,
@@ -15307,9 +15314,10 @@ pub mod hevm {
     pub struct StopAndReturnStateDiffReturn(
         pub ::std::vec::Vec<
             (
-                ::ethers_core::types::Address,
-                ::ethers_core::types::Address,
+                (::ethers_core::types::U256, ::ethers_core::types::U256),
                 ::ethers_core::types::U256,
+                ::ethers_core::types::Address,
+                ::ethers_core::types::Address,
                 bool,
                 ::ethers_core::types::U256,
                 ::ethers_core::types::U256,
@@ -15356,7 +15364,7 @@ pub mod hevm {
         Hash
     )]
     pub struct UnixTimeReturn(pub ::ethers_core::types::U256);
-    ///`AccountAccess(address,address,uint256,bool,uint256,uint256,bytes,uint256,bytes,bool,(address,bytes32,bool,bytes32,bytes32,bool)[])`
+    ///`AccountAccess((uint256,uint256),uint256,address,address,bool,uint256,uint256,bytes,uint256,bytes,bool,(address,bytes32,bool,bytes32,bytes32,bool)[])`
     #[derive(
         Clone,
         ::ethers_contract::EthAbiType,
@@ -15368,9 +15376,10 @@ pub mod hevm {
         Hash
     )]
     pub struct AccountAccess {
-        pub accessor: ::ethers_core::types::Address,
-        pub account: ::ethers_core::types::Address,
+        pub chain_info: ChainInfo,
         pub kind: ::ethers_core::types::U256,
+        pub account: ::ethers_core::types::Address,
+        pub accessor: ::ethers_core::types::Address,
         pub initialized: bool,
         pub old_balance: ::ethers_core::types::U256,
         pub new_balance: ::ethers_core::types::U256,
@@ -15379,6 +15388,21 @@ pub mod hevm {
         pub data: ::ethers_core::types::Bytes,
         pub reverted: bool,
         pub storage_accesses: ::std::vec::Vec<StorageAccess>,
+    }
+    ///`ChainInfo(uint256,uint256)`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct ChainInfo {
+        pub fork_id: ::ethers_core::types::U256,
+        pub chain_id: ::ethers_core::types::U256,
     }
     ///`DirEntry(string,string,uint64,bool,bool)`
     #[derive(

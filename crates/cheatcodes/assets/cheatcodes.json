@@ -52,11 +52,11 @@
         },
         {
           "name": "StaticCall",
-          "description": "THe account was called via staticcall."
+          "description": "The account was called via staticcall."
         },
         {
           "name": "Create",
-          "description": "THe account was created."
+          "description": "The account was created."
         },
         {
           "name": "SelfDestruct",
@@ -64,7 +64,7 @@
         },
         {
           "name": "Resume",
-          "description": "Synthetic access indicating the current context has resumed after a previous sub-context AccountAccess sub-context."
+          "description": "Synthetic access indicating the current context has resumed after a previous sub-context (AccountAccess)."
         }
       ]
     }
@@ -278,18 +278,29 @@
       ]
     },
     {
-      "name": "AccountAccess",
-      "description": "The result of a `stopAndReturnStateDiff` call.",
+      "name": "ChainInfo",
+      "description": "Information on the chain and fork.",
       "fields": [
         {
           "name": "forkId",
           "ty": "uint256",
-          "description": "The fork the access occurred. It's zero if no fork is active."
+          "description": "The fork identifier. Set to zero if no fork is active."
         },
         {
           "name": "chainId",
           "ty": "uint256",
-          "description": "The chain ID the access occurred."
+          "description": "The chain ID of the current fork."
+        }
+      ]
+    },
+    {
+      "name": "AccountAccess",
+      "description": "The result of a `stopAndReturnStateDiff` call.",
+      "fields": [
+        {
+          "name": "chainInfo",
+          "ty": "ChainInfo",
+          "description": "The chain and fork the access occurred."
         },
         {
           "name": "kind",

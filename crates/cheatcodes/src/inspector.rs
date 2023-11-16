@@ -147,7 +147,11 @@ pub struct Cheatcodes {
     /// Recorded storage reads and writes
     pub accesses: Option<RecordAccess>,
 
-    /// Recorded account accesses (calls, creates) by relative call depth
+    /// Recorded account accesses (calls, creates) organized by relative call depth, where the
+    /// topmost vector corresponds to accesses at the depth at which account access recording
+    /// began. Each vector in the matrix represents a list of accesses at a specific call
+    /// depth. Once that call context has ended, the last vector is removed from the matrix and
+    /// merged into the previous vector.
     pub recorded_account_diffs: Option<Vec<Vec<AccountAccess>>>,
 
     /// Recorded logs
@@ -409,7 +413,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
 
         // Record account access via SELFDESTRUCT if `recordAccountAccesses` has been called
-        if let Some(account_accesses) = &mut self.recorded_account_diffs {
+        if let Some(ref mut account_accesses) = self.recorded_account_diffs {
             if interpreter.current_opcode() == opcode::SELFDESTRUCT {
                 let target = try_or_continue!(interpreter.stack().peek(0));
                 // load balance of this account
@@ -437,8 +441,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
                 // register access for the target account
                 let access = crate::Vm::AccountAccess {
-                    forkId: data.db.active_fork_id().unwrap_or_default(),
-                    chainId: U256::from(data.env.cfg.chain_id),
+                    chainInfo: crate::Vm::ChainInfo {
+                        forkId: data.db.active_fork_id().unwrap_or_default(),
+                        chainId: U256::from(data.env.cfg.chain_id),
+                    },
                     accessor: interpreter.contract().address,
                     account: Address::from(U160::from(target)),
                     kind: crate::Vm::AccountAccessKind::SelfDestruct,
@@ -446,13 +452,13 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     oldBalance: old_balance,
                     newBalance: old_balance + value,
                     value,
-                    data: Bytes::new().to_vec(),
+                    data: vec![],
                     reverted: false,
-                    deployedCode: Bytes::new().to_vec(),
-                    storageAccesses: Vec::new(),
+                    deployedCode: vec![],
+                    storageAccesses: vec![],
                 };
                 // append access
-                if let Some(last) = &mut account_accesses.last_mut() {
+                if let Some(ref mut last) = account_accesses.last_mut() {
                     last.push(AccountAccess { access, depth: data.journaled_state.depth() });
                 } else {
                     unreachable!("selfdestruct in a non-existent call frame");
@@ -460,8 +466,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
-        // Record granular ordered storage accesses if `recordStateDiff` has been called
-        if let Some(recorded_account_diffs) = &mut self.recorded_account_diffs {
+        // Record granular ordered storage accesses if `startStateDiffRecording` has been called
+        if let Some(ref mut recorded_account_diffs) = self.recorded_account_diffs {
             match interpreter.current_opcode() {
                 opcode::SLOAD => {
                     let key = try_or_continue!(interpreter.stack().peek(0));
@@ -489,7 +495,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         recorded_account_diffs,
                         access,
                         data.journaled_state.depth(),
-                        data.env.cfg.chain_id,
                     );
                 }
                 opcode::SSTORE => {
@@ -518,7 +523,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         recorded_account_diffs,
                         access,
                         data.journaled_state.depth(),
-                        data.env.cfg.chain_id,
                     );
                 }
                 _ => (),
@@ -822,8 +826,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
-        // Record called accounts if `recordStateDiff` has been called
-        if let Some(recorded_account_diffs) = &mut self.recorded_account_diffs {
+        // Record called accounts if `startStateDiffRecording` has been called
+        if let Some(ref mut recorded_account_diffs) = self.recorded_account_diffs {
             // Determine if account is "initialized," ie, it has a non-zero balance, a non-zero
             // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
             let initialized;
@@ -848,8 +852,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             // as "warm" if the call from which they were accessed is reverted
             recorded_account_diffs.push(vec![AccountAccess {
                 access: crate::Vm::AccountAccess {
-                    forkId: data.db.active_fork_id().unwrap_or_default(),
-                    chainId: U256::from(data.env.cfg.chain_id),
+                    chainInfo: crate::Vm::ChainInfo {
+                        forkId: data.db.active_fork_id().unwrap_or_default(),
+                        chainId: U256::from(data.env.cfg.chain_id),
+                    },
                     accessor: call.context.caller,
                     account: call.contract,
                     kind,
@@ -859,8 +865,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     value: call.transfer.value,
                     data: call.input.to_vec(),
                     reverted: false,
-                    deployedCode: Bytes::new().to_vec(),
-                    storageAccesses: Vec::new(), // updated on step
+                    deployedCode: vec![],
+                    storageAccesses: vec![], // updated on step
                 },
                 depth: data.journaled_state.depth(),
             }]);
@@ -932,9 +938,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
-        // If `recordStateDiff` has been called, update the `reverted` status of the previous
-        // call depth's recorded accesses, if any
-        if let Some(recorded_account_diffs) = &mut self.recorded_account_diffs {
+        // If `startStateDiffRecording` has been called, update the `reverted` status of the
+        // previous call depth's recorded accesses, if any
+        if let Some(ref mut recorded_account_diffs) = self.recorded_account_diffs {
             // The root call cannot be recorded.
             if data.journaled_state.depth() > 0 {
                 let mut last_recorded_depth =
@@ -1184,13 +1190,15 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
 
         // If `recordAccountAccesses` has been called, record the create
-        if let Some(recorded_account_diffs) = &mut self.recorded_account_diffs {
+        if let Some(ref mut recorded_account_diffs) = self.recorded_account_diffs {
             // Record the create context as an account access and create a new vector to record all
             // subsequent account accesses
             recorded_account_diffs.push(vec![AccountAccess {
                 access: crate::Vm::AccountAccess {
-                    forkId: data.db.active_fork_id().unwrap_or_default(),
-                    chainId: U256::from(data.env.cfg.chain_id),
+                    chainInfo: crate::Vm::ChainInfo {
+                        forkId: data.db.active_fork_id().unwrap_or_default(),
+                        chainId: U256::from(data.env.cfg.chain_id),
+                    },
                     accessor: call.caller,
                     account: address,
                     kind: crate::Vm::AccountAccessKind::Create,
@@ -1200,8 +1208,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     value: call.value,
                     data: call.init_code.to_vec(),
                     reverted: false,
-                    deployedCode: Bytes::new().to_vec(), // updated on create_end
-                    storageAccesses: Vec::new(),         // updated on create_end
+                    deployedCode: vec![],    // updated on create_end
+                    storageAccesses: vec![], // updated on create_end
                 },
                 depth: data.journaled_state.depth(),
             }]);
@@ -1263,9 +1271,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
-        // If `recordStateDiff` has been called, update the `reverted` status of the previous
-        // call depth's recorded accesses, if any
-        if let Some(recorded_account_diffs) = &mut self.recorded_account_diffs {
+        // If `startStateDiffRecording` has been called, update the `reverted` status of the
+        // previous call depth's recorded accesses, if any
+        if let Some(ref mut recorded_account_diffs) = self.recorded_account_diffs {
             // The root call cannot be recorded.
             if data.journaled_state.depth() > 0 {
                 let mut last_depth =
@@ -1431,7 +1439,6 @@ fn append_storage_access(
     accesses: &mut [Vec<AccountAccess>],
     storage_access: crate::Vm::StorageAccess,
     storage_depth: u64,
-    chain_id: u64,
 ) {
     if let Some(last) = accesses.last_mut() {
         // Assert that there's an existing record for the current context.
@@ -1450,8 +1457,10 @@ fn append_storage_access(
                 } else {
                     let entry = last.first().unwrap();
                     let resume_record = crate::Vm::AccountAccess {
-                        forkId: entry.access.forkId,
-                        chainId: U256::from(chain_id),
+                        chainInfo: crate::Vm::ChainInfo {
+                            forkId: entry.access.chainInfo.forkId,
+                            chainId: entry.access.chainInfo.chainId,
+                        },
                         accessor: entry.access.accessor,
                         account: entry.access.account,
                         kind: crate::Vm::AccountAccessKind::Resume,
@@ -1462,8 +1471,8 @@ fn append_storage_access(
                         oldBalance: U256::ZERO,
                         newBalance: U256::ZERO,
                         value: U256::ZERO,
-                        data: Bytes::new().to_vec(),
-                        deployedCode: Bytes::new().to_vec(),
+                        data: vec![],
+                        deployedCode: vec![],
                     };
                     last.push(AccountAccess { access: resume_record, depth: entry.depth });
                 }
