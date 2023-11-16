@@ -413,7 +413,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
 
         // Record account access via SELFDESTRUCT if `recordAccountAccesses` has been called
-        if let Some(ref mut account_accesses) = self.recorded_account_diffs {
+        if let Some(account_accesses) = &mut self.recorded_account_diffs {
             if interpreter.current_opcode() == opcode::SELFDESTRUCT {
                 let target = try_or_continue!(interpreter.stack().peek(0));
                 // load balance of this account
@@ -458,7 +458,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     storageAccesses: vec![],
                 };
                 // append access
-                if let Some(ref mut last) = account_accesses.last_mut() {
+                if let Some(last) = &mut account_accesses.last_mut() {
                     last.push(AccountAccess { access, depth: data.journaled_state.depth() });
                 } else {
                     unreachable!("selfdestruct in a non-existent call frame");
@@ -467,7 +467,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
 
         // Record granular ordered storage accesses if `startStateDiffRecording` has been called
-        if let Some(ref mut recorded_account_diffs) = self.recorded_account_diffs {
+        if let Some(recorded_account_diffs) = &mut self.recorded_account_diffs {
             match interpreter.current_opcode() {
                 opcode::SLOAD => {
                     let key = try_or_continue!(interpreter.stack().peek(0));
@@ -827,7 +827,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
 
         // Record called accounts if `startStateDiffRecording` has been called
-        if let Some(ref mut recorded_account_diffs) = self.recorded_account_diffs {
+        if let Some(recorded_account_diffs) = &mut self.recorded_account_diffs {
             // Determine if account is "initialized," ie, it has a non-zero balance, a non-zero
             // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
             let initialized;
@@ -940,7 +940,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
         // previous call depth's recorded accesses, if any
-        if let Some(ref mut recorded_account_diffs) = self.recorded_account_diffs {
+        if let Some(recorded_account_diffs) = &mut self.recorded_account_diffs {
             // The root call cannot be recorded.
             if data.journaled_state.depth() > 0 {
                 let mut last_recorded_depth =
@@ -1190,7 +1190,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
 
         // If `recordAccountAccesses` has been called, record the create
-        if let Some(ref mut recorded_account_diffs) = self.recorded_account_diffs {
+        if let Some(recorded_account_diffs) = &mut self.recorded_account_diffs {
             // Record the create context as an account access and create a new vector to record all
             // subsequent account accesses
             recorded_account_diffs.push(vec![AccountAccess {
@@ -1273,7 +1273,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
         // previous call depth's recorded accesses, if any
-        if let Some(ref mut recorded_account_diffs) = self.recorded_account_diffs {
+        if let Some(recorded_account_diffs) = &mut self.recorded_account_diffs {
             // The root call cannot be recorded.
             if data.journaled_state.depth() > 0 {
                 let mut last_depth =
