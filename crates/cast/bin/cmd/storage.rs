@@ -227,13 +227,16 @@ fn print_storage(layout: StorageLayout, values: Vec<B256>, pretty: bool) -> Resu
 
     for (slot, value) in layout.storage.into_iter().zip(values) {
         let storage_type = layout.types.get(&slot.storage_type);
+        let raw_value_bytes = value.0;
+        let converted_value = U256::from_be_bytes(raw_value_bytes);
+
         table.add_row([
             slot.label.as_str(),
             storage_type.map_or("?", |t| &t.label),
             &slot.slot,
             &slot.offset.to_string(),
             &storage_type.map_or("?", |t| &t.number_of_bytes),
-            &value.to_string(),
+            &converted_value.to_string(),
             &slot.contract,
         ]);
     }
