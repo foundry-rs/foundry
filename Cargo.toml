@@ -196,16 +196,16 @@ tower-http = "0.4"
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
-ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
-ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
-ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
-ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
-ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "0543e1ccbaab70996ab21b5ceeff2fe599728b74" }
+ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
+ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
+ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
+ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
+ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
+ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
+ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
 
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/" }
 alloy-primitives = { git = "https://github.com/alloy-rs/core/" }
