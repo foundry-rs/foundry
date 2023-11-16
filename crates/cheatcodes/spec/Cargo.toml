@@ -1,6 +1,6 @@
 [package]
-name = "foundry-cheatcodes-defs"
-description = "Foundry cheatcodes definitions"
+name = "foundry-cheatcodes-spec"
+description = "Foundry cheatcodes specification"
 
 version.workspace = true
 edition.workspace = true

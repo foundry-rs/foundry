@@ -157,7 +157,7 @@
     },
     {
       "name": "FsMetadata",
-      "description": "Metadata information about a file.\n This structure is returned from the [`fsMetadata`] function and represents known\n metadata about a file such as its permissions, size, modification\n times, etc.",
+      "description": "Metadata information about a file.\n This structure is returned from the `fsMetadata` function and represents known\n metadata about a file such as its permissions, size, modification\n times, etc.",
       "fields": [
         {
           "name": "isDir",
@@ -224,7 +224,7 @@
     },
     {
       "name": "FfiResult",
-      "description": "The result of a [`tryFfi`](tryFfiCall) call.",
+      "description": "The result of a `tryFfi` call.",
       "fields": [
         {
           "name": "exitCode",

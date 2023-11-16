@@ -70,7 +70,7 @@ implementation handler for the cheatcode. This is also automatically generated, 
 
 ## Cheatcodes implementation
 
-All the cheatcodes are defined in a large [`sol!`] macro call in [`cheatcodes/defs/src/vm.rs`](../../crates/cheatcodes/defs/src/vm.rs):
+All the cheatcodes are defined in a large [`sol!`] macro call in [`cheatcodes/spec/src/vm.rs`]:
 
 ```rust
 sol! {
@@ -160,11 +160,16 @@ update of the files.
 
 ### Adding a new cheatcode
 
-1. Add its Solidity definition(s) in [`defs/src/vm.rs`]. Ensure that all structs and functions are documented, and that all function parameters are named. This will initially fail to compile because of the automatically generated `match { ... }` expression. This is expected, and will be fixed in the next step
-2. Implement the cheatcode in [`cheatcodes`](cheatcodes) in its category's respective module. Follow the existing implementations as a guide.
-3. Update the JSON interface by running `cargo cheats` twice. This is expected to fail the first time that this is run after adding a new cheatcode; see [JSON interface](#json-interface)
-4. Write an integration test for the cheatcode in [`testdata/cheats/`](../../testdata/cheats/)
-5. Submit a PR to [`forge-std`](https://github.com/foundry-rs/forge-std) updating the Solidity interfaces as necessary. Note that this step won't be necessary once the Solidity interfaces are generated using the JSON interface
+1. Add its Solidity definition(s) in [`cheatcodes/spec/src/vm.rs`]. Ensure that all structs and functions are documented, and that all function parameters are named. This will initially fail to compile because of the automatically generated `match { ... }` expression. This is expected, and will be fixed in the next step
+2. Implement the cheatcode in [`cheatcodes`] in its category's respective module. Follow the existing implementations as a guide.
+3. If a struct, enum, error, or event was added to `Vm`, update [`spec::Cheatcodes::new`]
+4. Update the JSON interface by running `cargo cheats` twice. This is expected to fail the first time that this is run after adding a new cheatcode; see [JSON interface](#json-interface)
+5. Write an integration test for the cheatcode in [`testdata/cheats/`]
+6. Submit a PR to [`forge-std`] updating the Solidity interfaces as necessary. Note that this step won't be necessary once the Solidity interfaces are generated using the JSON interface
 
 [`sol!`]: https://docs.rs/alloy-sol-macro/latest/alloy_sol_macro/macro.sol.html
-[`defs/src/vm.rs`]: ./defs/src/vm.rs
+[`cheatcodes/spec/src/vm.rs`]: ../../crates/cheatcodes/spec/src/vm.rs
+[`cheatcodes`]: ../../crates/cheatcodes/
+[`spec::Cheatcodes::new`]: ../../crates/cheatcodes/spec/src/lib.rs#L74
+[`testdata/cheats/`]: ../../testdata/cheats/
+[`forge-std`]: https://github.com/foundry-rs/forge-std
