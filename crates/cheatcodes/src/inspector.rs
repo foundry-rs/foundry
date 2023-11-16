@@ -434,9 +434,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     initialized = false;
                     old_balance = U256::ZERO;
                 }
+
                 // register access for the target account
                 let access = crate::Vm::AccountAccess {
                     forkId: data.db.active_fork_id().unwrap_or_default(),
+                    chainId: U256::from(data.env.cfg.chain_id),
                     accessor: interpreter.contract().address,
                     account: Address::from(U160::from(target)),
                     kind: crate::Vm::AccountAccessKind::SelfDestruct,
@@ -487,6 +489,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         recorded_account_diffs,
                         access,
                         data.journaled_state.depth(),
+                        data.env.cfg.chain_id,
                     );
                 }
                 opcode::SSTORE => {
@@ -515,6 +518,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         recorded_account_diffs,
                         access,
                         data.journaled_state.depth(),
+                        data.env.cfg.chain_id,
                     );
                 }
                 _ => (),
@@ -845,6 +849,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             recorded_account_diffs.push(vec![AccountAccess {
                 access: crate::Vm::AccountAccess {
                     forkId: data.db.active_fork_id().unwrap_or_default(),
+                    chainId: U256::from(data.env.cfg.chain_id),
                     accessor: call.context.caller,
                     account: call.contract,
                     kind,
@@ -1185,6 +1190,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             recorded_account_diffs.push(vec![AccountAccess {
                 access: crate::Vm::AccountAccess {
                     forkId: data.db.active_fork_id().unwrap_or_default(),
+                    chainId: U256::from(data.env.cfg.chain_id),
                     accessor: call.caller,
                     account: address,
                     kind: crate::Vm::AccountAccessKind::Create,
@@ -1411,20 +1417,21 @@ fn apply_dispatch<DB: DatabaseExt>(calls: &Vm::VmCalls, ccx: &mut CheatsCtxt<DB>
 
 /// Returns true if the kind of account access is a call.
 fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
-    match kind {
+    matches!(
+        kind,
         crate::Vm::AccountAccessKind::Call |
-        crate::Vm::AccountAccessKind::StaticCall |
-        crate::Vm::AccountAccessKind::CallCode |
-        crate::Vm::AccountAccessKind::DelegateCall => true,
-        _ => false,
-    }
+            crate::Vm::AccountAccessKind::StaticCall |
+            crate::Vm::AccountAccessKind::CallCode |
+            crate::Vm::AccountAccessKind::DelegateCall
+    )
 }
 
 /// Appends an AccountAccess that resumes the recording of the current context.
 fn append_storage_access(
-    accesses: &mut Vec<Vec<AccountAccess>>,
+    accesses: &mut [Vec<AccountAccess>],
     storage_access: crate::Vm::StorageAccess,
     storage_depth: u64,
+    chain_id: u64,
 ) {
     if let Some(last) = accesses.last_mut() {
         // Assert that there's an existing record for the current context.
@@ -1444,6 +1451,7 @@ fn append_storage_access(
                     let entry = last.first().unwrap();
                     let resume_record = crate::Vm::AccountAccess {
                         forkId: entry.access.forkId,
+                        chainId: U256::from(chain_id),
                         accessor: entry.access.accessor,
                         account: entry.access.account,
                         kind: crate::Vm::AccountAccessKind::Resume,

@@ -323,6 +323,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[0],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(this),
                 account: address(1234),
                 kind: Vm.AccountAccessKind.Call,
@@ -341,6 +342,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[1],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(this),
                 account: address(5678),
                 kind: Vm.AccountAccessKind.Call,
@@ -358,6 +360,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[2],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(this),
                 account: address(123469),
                 kind: Vm.AccountAccessKind.Call,
@@ -375,6 +378,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[3],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(this),
                 account: address(5678),
                 kind: Vm.AccountAccessKind.Call,
@@ -392,6 +396,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[4],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(this),
                 account: address(caller),
                 kind: Vm.AccountAccessKind.Create,
@@ -409,6 +414,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[5],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(caller),
                 account: address(caller),
                 kind: Vm.AccountAccessKind.Call,
@@ -436,6 +442,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[0],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(this),
                 account: address(this),
                 kind: Vm.AccountAccessKind.Call,
@@ -453,6 +460,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[1],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(this),
                 account: address(1234),
                 kind: Vm.AccountAccessKind.Call,
@@ -494,6 +502,7 @@ contract RecordAccountAccessesTest is DSTest {
                 called[0],
                 Vm.AccountAccess({
                     forkId: 0,
+                    chainId: 0,
                     accessor: address(this),
                     account: address(1234),
                     kind: Vm.AccountAccessKind.Call,
@@ -526,6 +535,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[startingIndex],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(this),
                 account: address(runner),
                 kind: Vm.AccountAccessKind.Call,
@@ -558,6 +568,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[startingIndex + 1],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(runner),
                 account: address(runner.reverter()),
                 kind: Vm.AccountAccessKind.Call,
@@ -590,6 +601,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[startingIndex + 2],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(runner.reverter()),
                 account: address(runner.doer()),
                 kind: Vm.AccountAccessKind.Call,
@@ -622,6 +634,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[startingIndex + 3],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(runner.doer()),
                 account: address(runner.doer()),
                 kind: Vm.AccountAccessKind.Call,
@@ -654,6 +667,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[startingIndex + 4],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(runner),
                 account: address(runner.succeeder()),
                 kind: Vm.AccountAccessKind.Call,
@@ -686,6 +700,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[startingIndex + 5],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(runner.succeeder()),
                 account: address(runner.doer()),
                 kind: Vm.AccountAccessKind.Call,
@@ -718,6 +733,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[startingIndex + 6],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(runner.doer()),
                 account: address(runner.doer()),
                 kind: Vm.AccountAccessKind.Call,
@@ -757,6 +773,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[0],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(this),
                 account: address(nestedStorer),
                 kind: Vm.AccountAccessKind.Call,
@@ -801,6 +818,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[1],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(nestedStorer),
                 account: address(nestedStorer),
                 kind: Vm.AccountAccessKind.Call,
@@ -833,6 +851,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[2],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(this),
                 account: address(nestedStorer),
                 kind: Vm.AccountAccessKind.Resume,
@@ -878,6 +897,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[0],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(this),
                 account: address(storer),
                 kind: Vm.AccountAccessKind.Create,
@@ -897,6 +917,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[1],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(this),
                 account: address(create2or),
                 kind: Vm.AccountAccessKind.Call,
@@ -928,6 +949,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[2],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(create2or),
                 account: hypotheticalStorer,
                 kind: Vm.AccountAccessKind.Create,
@@ -973,6 +995,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[1],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(create2or),
                 account: hypotheticalAddress,
                 kind: Vm.AccountAccessKind.Create,
@@ -990,6 +1013,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[2],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: hypotheticalAddress,
                 account: hypotheticalAddress,
                 kind: Vm.AccountAccessKind.Call,
@@ -1019,6 +1043,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[1],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(this),
                 account: a,
                 kind: Vm.AccountAccessKind.Create,
@@ -1036,6 +1061,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[2],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(a),
                 account: address(this),
                 kind: Vm.AccountAccessKind.SelfDestruct,
@@ -1053,6 +1079,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[3],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(this),
                 account: b,
                 kind: Vm.AccountAccessKind.Create,
@@ -1070,6 +1097,7 @@ contract RecordAccountAccessesTest is DSTest {
             called[4],
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: address(b),
                 account: address(bytes20("doesn't exist yet")),
                 kind: Vm.AccountAccessKind.SelfDestruct,
@@ -1105,6 +1133,7 @@ contract RecordAccountAccessesTest is DSTest {
             actual,
             Vm.AccountAccess({
                 forkId: 0,
+                chainId: 0,
                 accessor: expected.accessor,
                 account: expected.account,
                 kind: Vm.AccountAccessKind.Resume,

@@ -287,6 +287,11 @@
           "description": "The fork the access occurred. It's zero if no fork is active."
         },
         {
+          "name": "chainId",
+          "ty": "uint256",
+          "description": "The chain ID the access occurred."
+        },
+        {
           "name": "kind",
           "ty": "AccountAccessKind",
           "description": "The kind of account access that determines what the account is.\n If kind is Call, DelegateCall, StaticCall or CallCode, then the account is the callee.\n If kind is Create, then the account is the newly created account.\n If kind is SelfDestruct, then the account is the selfdestruct recipient.\n If kind is a Resume, then account represents a account context that has resumed."

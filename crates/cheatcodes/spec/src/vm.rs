@@ -156,6 +156,8 @@ interface Vm {
     struct AccountAccess {
         /// The fork the access occurred. It's zero if no fork is active.
         uint256 forkId;
+        /// The chain ID the access occurred.
+        uint256 chainId;
         /// The kind of account access that determines what the account is.
         /// If kind is Call, DelegateCall, StaticCall or CallCode, then the account is the callee.
         /// If kind is Create, then the account is the newly created account.
