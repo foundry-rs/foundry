@@ -13,29 +13,22 @@
 extern crate tracing;
 
 mod builder;
-mod document;
-mod helpers;
-mod parser;
-mod preprocessor;
-mod server;
-mod writer;
-
-/// The documentation builder.
 pub use builder::DocBuilder;
 
-/// The documentation server.
-pub use server::Server;
-
-/// The document output.
+mod document;
 pub use document::Document;
 
-/// Solidity parser and related output items.
+mod helpers;
+
+mod parser;
 pub use parser::{
     error, Comment, CommentTag, Comments, CommentsRef, ParseItem, ParseSource, Parser,
 };
 
-/// Preprocessors.
+mod preprocessor;
 pub use preprocessor::*;
 
-/// Traits for formatting items into doc output.
+mod writer;
 pub use writer::{AsDoc, AsDocResult, BufWriter, Markdown};
+
+pub use mdbook;

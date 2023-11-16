@@ -37,14 +37,13 @@ memory-db = "0.29"
 alloy-primitives = { workspace = true, features = ["serde"] }
 
 # axum related
-axum = { version = "0.6", features = ["ws"] }
-hyper = "0.14"
-tower = "0.4"
-tower-http = { version = "0.4", features = ["trace"] }
+axum.workspace = true
+hyper.workspace = true
+tower.workspace = true
 
 # tracing
 tracing.workspace = true
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 # async
 tokio = { version = "1", features = ["time"] }
