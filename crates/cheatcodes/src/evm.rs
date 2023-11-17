@@ -344,7 +344,7 @@ impl Cheatcode for revertToCall {
 impl Cheatcode for startStateDiffRecordingCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        state.recorded_account_diffs = Some(Default::default());
+        state.recorded_account_diffs_stack = Some(Default::default());
         Ok(Default::default())
     }
 }
@@ -429,7 +429,7 @@ pub(super) fn journaled_account<'a, DB: DatabaseExt>(
 /// will be flattened, preserving the order of the accesses.
 fn get_state_diff(state: &mut Cheatcodes) -> Result {
     let res = state
-        .recorded_account_diffs
+        .recorded_account_diffs_stack
         .replace(Default::default())
         .unwrap_or_default()
         .into_iter()

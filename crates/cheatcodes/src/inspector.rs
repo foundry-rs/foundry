@@ -152,7 +152,7 @@ pub struct Cheatcodes {
     /// began. Each vector in the matrix represents a list of accesses at a specific call
     /// depth. Once that call context has ended, the last vector is removed from the matrix and
     /// merged into the previous vector.
-    pub recorded_account_diffs: Option<Vec<Vec<AccountAccess>>>,
+    pub recorded_account_diffs_stack: Option<Vec<Vec<AccountAccess>>>,
 
     /// Recorded logs
     pub recorded_logs: Option<Vec<crate::Vm::Log>>,
@@ -413,7 +413,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
 
         // Record account access via SELFDESTRUCT if `recordAccountAccesses` has been called
-        if let Some(account_accesses) = &mut self.recorded_account_diffs {
+        if let Some(account_accesses) = &mut self.recorded_account_diffs_stack {
             if interpreter.current_opcode() == opcode::SELFDESTRUCT {
                 let target = try_or_continue!(interpreter.stack().peek(0));
                 // load balance of this account
@@ -451,7 +451,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     storageAccesses: vec![],
                 };
                 // append access
-                if let Some(last) = &mut account_accesses.last_mut() {
+                if let Some(last) = account_accesses.last_mut() {
                     last.push(AccountAccess { access, depth: data.journaled_state.depth() });
                 } else {
                     unreachable!("selfdestruct in a non-existent call frame");
@@ -460,7 +460,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
 
         // Record granular ordered storage accesses if `startStateDiffRecording` has been called
-        if let Some(recorded_account_diffs) = &mut self.recorded_account_diffs {
+        if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             match interpreter.current_opcode() {
                 opcode::SLOAD => {
                     let key = try_or_continue!(interpreter.stack().peek(0));
@@ -485,7 +485,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         reverted: false,
                     };
                     append_storage_access(
-                        recorded_account_diffs,
+                        recorded_account_diffs_stack,
                         access,
                         data.journaled_state.depth(),
                     );
@@ -513,7 +513,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         reverted: false,
                     };
                     append_storage_access(
-                        recorded_account_diffs,
+                        recorded_account_diffs_stack,
                         access,
                         data.journaled_state.depth(),
                     );
@@ -820,7 +820,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
 
         // Record called accounts if `startStateDiffRecording` has been called
-        if let Some(recorded_account_diffs) = &mut self.recorded_account_diffs {
+        if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // Determine if account is "initialized," ie, it has a non-zero balance, a non-zero
             // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
             let initialized;
@@ -843,7 +843,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             // RecordedAccountAccess (and all subsequent RecordedAccountAccesses) will be
             // updated with the revert status of this call, since the EVM does not mark accounts
             // as "warm" if the call from which they were accessed is reverted
-            recorded_account_diffs.push(vec![AccountAccess {
+            recorded_account_diffs_stack.push(vec![AccountAccess {
                 access: crate::Vm::AccountAccess {
                     chainInfo: crate::Vm::ChainInfo {
                         forkId: data.db.active_fork_id().unwrap_or_default(),
@@ -933,11 +933,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
         // previous call depth's recorded accesses, if any
-        if let Some(recorded_account_diffs) = &mut self.recorded_account_diffs {
+        if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // The root call cannot be recorded.
             if data.journaled_state.depth() > 0 {
                 let mut last_recorded_depth =
-                    recorded_account_diffs.pop().expect("missing CALL account accesses");
+                    recorded_account_diffs_stack.pop().expect("missing CALL account accesses");
                 // Update the reverted status of all deeper calls if this call reverted, in
                 // accordance with EVM behavior
                 if status.is_revert() {
@@ -964,10 +964,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // Merge the last depth's AccountAccesses into the AccountAccesses at the current
                 // depth, or push them back onto the pending vector if higher depths were not
                 // recorded. This preserves ordering of accesses.
-                if let Some(last) = recorded_account_diffs.last_mut() {
+                if let Some(last) = recorded_account_diffs_stack.last_mut() {
                     last.append(&mut last_recorded_depth);
                 } else {
-                    recorded_account_diffs.push(last_recorded_depth);
+                    recorded_account_diffs_stack.push(last_recorded_depth);
                 }
             }
         }
@@ -1183,10 +1183,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
 
         // If `recordAccountAccesses` has been called, record the create
-        if let Some(recorded_account_diffs) = &mut self.recorded_account_diffs {
+        if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // Record the create context as an account access and create a new vector to record all
             // subsequent account accesses
-            recorded_account_diffs.push(vec![AccountAccess {
+            recorded_account_diffs_stack.push(vec![AccountAccess {
                 access: crate::Vm::AccountAccess {
                     chainInfo: crate::Vm::ChainInfo {
                         forkId: data.db.active_fork_id().unwrap_or_default(),
@@ -1266,11 +1266,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
         // previous call depth's recorded accesses, if any
-        if let Some(recorded_account_diffs) = &mut self.recorded_account_diffs {
+        if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // The root call cannot be recorded.
             if data.journaled_state.depth() > 0 {
                 let mut last_depth =
-                    recorded_account_diffs.pop().expect("missing CREATE account accesses");
+                    recorded_account_diffs_stack.pop().expect("missing CREATE account accesses");
                 // Update the reverted status of all deeper calls if this call reverted, in
                 // accordance with EVM behavior
                 if status.is_revert() {
@@ -1311,10 +1311,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // Merge the last depth's AccountAccesses into the AccountAccesses at the current
                 // depth, or push them back onto the pending vector if higher depths were not
                 // recorded. This preserves ordering of accesses.
-                if let Some(last) = recorded_account_diffs.last_mut() {
+                if let Some(last) = recorded_account_diffs_stack.last_mut() {
                     last.append(&mut last_depth);
                 } else {
-                    recorded_account_diffs.push(last_depth);
+                    recorded_account_diffs_stack.push(last_depth);
                 }
             }
         }
