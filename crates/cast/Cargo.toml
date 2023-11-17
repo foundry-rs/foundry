@@ -32,6 +32,7 @@ alloy-primitives.workspace = true
 alloy-rlp.workspace = true
 alloy-providers.workspace = true
 alloy-rpc-types.workspace = true
+alloy-transport.workspace = true
 
 ethers-core.workspace = true
 ethers-providers.workspace = true

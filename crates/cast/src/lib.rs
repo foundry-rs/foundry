@@ -1,13 +1,14 @@
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::{ContractObject, Function};
-use alloy_primitives::{Address, I256, U256};
+use alloy_primitives::{Address, B160, B256, I256, U256, U64};
 use alloy_providers::provider::TempProvider;
 use alloy_rlp::Decodable;
-use alloy_rpc_types::BlockId;
+use alloy_rpc_types::{BlockId, BlockNumberOrTag};
+use alloy_transport::TransportResult;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
-    types::{transaction::eip2718::TypedTransaction, *},
+    types::transaction::eip2718::TypedTransaction,
     utils::{
         format_bytes32_string, format_units, keccak256, parse_bytes32_string, parse_units, rlp,
         Units,
@@ -44,6 +45,58 @@ mod rlp_converter;
 mod tx;
 
 use rlp_converter::Item;
+
+/// ENS name or Ethereum Address. Not RLP encoded/serialized if it's a name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NameOrAddress {
+    /// An ENS Name (format does not get checked)
+    Name(String),
+    /// An Ethereum Address
+    Address(Address),
+}
+
+impl From<&str> for NameOrAddress {
+    fn from(s: &str) -> Self {
+        Self::from_str(s).unwrap()
+    }
+}
+
+impl From<String> for NameOrAddress {
+    fn from(s: String) -> Self {
+        Self::Name(s)
+    }
+}
+
+impl From<&String> for NameOrAddress {
+    fn from(s: &String) -> Self {
+        Self::Name(s.clone())
+    }
+}
+
+impl From<Address> for NameOrAddress {
+    fn from(s: Address) -> Self {
+        Self::Address(s)
+    }
+}
+
+impl FromStr for NameOrAddress {
+    type Err = <Address as FromStr>::Err;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.starts_with("0x") {
+            s.parse().map(Self::Address)
+        } else {
+            Ok(Self::Name(s.to_string()))
+        }
+    }
+}
+
+impl NameOrAddress {
+    async fn resolve<P: TempProvider>(&self, _provider: P) -> TransportResult<Address> {
+        // todo
+        Ok(Address::ZERO)
+    }
+}
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
@@ -226,6 +279,7 @@ impl<P: TempProvider> Cast<P> {
     /// # Ok(())
     /// # }
     /// ```
+    fn todo3() {}
     /*pub async fn send<'a>(
         &self,
         builder_output: TxBuilderOutput,
@@ -252,6 +306,7 @@ impl<P: TempProvider> Cast<P> {
     /// # Ok(())
     /// # }
     /// ```
+    fn todo2() {}
     /*
     pub async fn publish(&self, mut raw_tx: String) -> Result<PendingTransaction<'_, M::Provider>> {
         raw_tx = match raw_tx.strip_prefix("0x") {
@@ -296,7 +351,7 @@ impl<P: TempProvider> Cast<P> {
 
         let res = self.provider.estimate_gas(tx, None).await?;
 
-        Ok::<_, eyre::Error>(res.to_alloy())
+        Ok::<_, eyre::Error>(res)
     }
 
     /// # Example
@@ -454,8 +509,8 @@ impl<P: TempProvider> Cast<P> {
         })
     }
 
-    pub async fn chain_id(&self) -> Result<U256> {
-        Ok(self.provider.get_chainid().await?.to_alloy())
+    pub async fn chain_id(&self) -> Result<U64> {
+        Ok(self.provider.get_chain_id().await?)
     }
 
     pub async fn block_number(&self) -> Result<U64> {
@@ -463,7 +518,7 @@ impl<P: TempProvider> Cast<P> {
     }
 
     pub async fn gas_price(&self) -> Result<U256> {
-        Ok(self.provider.get_gas_price().await?.to_alloy())
+        Ok(self.provider.get_gas_price().await?)
     }
 
     /// # Example
@@ -488,7 +543,11 @@ impl<P: TempProvider> Cast<P> {
         who: T,
         block: Option<BlockId>,
     ) -> Result<u64> {
-        Ok(self.provider.get_transaction_count(who, block).await?.to_alloy().to())
+        Ok(self
+            .provider
+            .get_transaction_count(who.into().resolve(&self.provider).await?, block)
+            .await?
+            .to())
     }
 
     /// # Example
@@ -514,9 +573,12 @@ impl<P: TempProvider> Cast<P> {
         block: Option<BlockId>,
     ) -> Result<String> {
         let slot =
-            H256::from_str("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")?;
-        let value = self.provider.get_storage_at(who, slot, block).await?;
-        let addr: H160 = value.into();
+            B256::from_str("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")?;
+        let value = self
+            .provider
+            .get_storage_at(who.into().resolve(&self.provider).await?, slot, block)
+            .await?;
+        let addr: B160 = value.into();
         Ok(format!("{addr:?}"))
     }
 
@@ -543,9 +605,12 @@ impl<P: TempProvider> Cast<P> {
         block: Option<BlockId>,
     ) -> Result<String> {
         let slot =
-            H256::from_str("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103")?;
-        let value = self.provider.get_storage_at(who, slot, block).await?;
-        let addr: H160 = value.into();
+            B256::from_str("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103")?;
+        let value = self
+            .provider
+            .get_storage_at(who.into().resolve(&self.provider).await?, slot, block)
+            .await?;
+        let addr: B160 = value.into();
         Ok(format!("{addr:?}"))
     }
 
@@ -567,8 +632,7 @@ impl<P: TempProvider> Cast<P> {
     /// # }
     /// ```
     pub async fn compute_address(&self, address: Address, nonce: Option<u64>) -> Result<Address> {
-        let unpacked =
-            if let Some(n) = nonce { n } else { self.nonce(address.to_ethers(), None).await? };
+        let unpacked = if let Some(n) = nonce { n } else { self.nonce(address, None).await? };
         Ok(address.create(unpacked))
     }
 
@@ -595,11 +659,17 @@ impl<P: TempProvider> Cast<P> {
         block: Option<BlockId>,
         disassemble: bool,
     ) -> Result<String> {
+        let code = self
+            .provider
+            .get_code_at(
+                who.into().resolve(&self.provider).await?,
+                block.unwrap_or(BlockNumberOrTag::Latest.into()),
+            )
+            .await?;
         if disassemble {
-            let code = self.provider.get_code(who, block).await?.to_vec();
-            Ok(format_operations(disassemble_bytes(code)?)?)
+            Ok(format_operations(disassemble_bytes(code.to_vec())?)?)
         } else {
-            Ok(format!("{}", self.provider.get_code(who, block).await?))
+            Ok(format!("{}", code))
         }
     }
 
@@ -625,8 +695,14 @@ impl<P: TempProvider> Cast<P> {
         who: T,
         block: Option<BlockId>,
     ) -> Result<String> {
-        let code = self.provider.get_code(who, block).await?.to_vec();
-        Ok(format!("{}", code.len()))
+        let code = self
+            .provider
+            .get_code_at(
+                who.into().resolve(&self.provider).await?,
+                block.unwrap_or(BlockNumberOrTag::Latest.into()),
+            )
+            .await?;
+        Ok(format!("{}", code.to_vec().len()))
     }
 
     /// # Example
@@ -651,12 +727,12 @@ impl<P: TempProvider> Cast<P> {
         raw: bool,
         to_json: bool,
     ) -> Result<String> {
-        let tx_hash = H256::from_str(&tx_hash).wrap_err("invalid tx hash")?;
+        let tx_hash = B256::from_str(&tx_hash).wrap_err("invalid tx hash")?;
         let tx = self
             .provider
-            .get_transaction(tx_hash)
-            .await?
-            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
+            .get_transaction_by_hash(tx_hash)
+            .await
+            .wrap_err(format!("tx not found: {:?}", tx_hash))?;
 
         Ok(if raw {
             format!("0x{}", hex::encode(tx.rlp()))
@@ -694,7 +770,7 @@ impl<P: TempProvider> Cast<P> {
         cast_async: bool,
         to_json: bool,
     ) -> Result<String> {
-        let tx_hash = H256::from_str(&tx_hash).wrap_err("invalid tx hash")?;
+        let tx_hash = B256::from_str(&tx_hash).wrap_err("invalid tx hash")?;
 
         let mut receipt: TransactionReceiptWithRevertReason =
             match self.provider.get_transaction_receipt(tx_hash).await? {
@@ -873,6 +949,7 @@ impl<P: TempProvider> Cast<P> {
     /// # Ok(())
     /// # }
     /// ```
+    fn todo1() {}
     /*
     pub async fn subscribe(
         &self,
@@ -1058,7 +1135,7 @@ impl SimpleCast {
     pub fn to_ascii(hex: &str) -> Result<String> {
         let bytes = hex::decode(hex)?;
         if !bytes.iter().all(u8::is_ascii) {
-            return Err(eyre::eyre!("Invalid ASCII bytes"))
+            return Err(eyre::eyre!("Invalid ASCII bytes"));
         }
         Ok(String::from_utf8(bytes).unwrap())
     }
@@ -1380,7 +1457,7 @@ impl SimpleCast {
         let base_in = Base::unwrap_or_detect(base_in, value)?;
         let base_out: Base = base_out.parse()?;
         if base_in == base_out {
-            return Ok(value.to_string())
+            return Ok(value.to_string());
         }
 
         let mut n = NumberWithBase::parse_int(value, Some(&base_in.to_string()))?;
@@ -1446,7 +1523,7 @@ impl SimpleCast {
         let s = if let Some(stripped) = s.strip_prefix("000000000000000000000000") {
             stripped
         } else {
-            return Err(eyre::eyre!("Not convertible to address, there are non-zero bytes"))
+            return Err(eyre::eyre!("Not convertible to address, there are non-zero bytes"));
         };
 
         let lowercase_address_string = format!("0x{s}");
@@ -1483,7 +1560,7 @@ impl SimpleCast {
     ///         decoded[1].as_address().unwrap().to_string().to_lowercase(),
     ///         decoded[2].as_uint().unwrap().0.to_string(),
     ///         decoded[3].as_uint().unwrap().0.to_string(),
-    ///         hex::encode(decoded[4].as_bytes().unwrap())    
+    ///         hex::encode(decoded[4].as_bytes().unwrap())
     ///     ]
     ///     .into_iter()
     ///     .collect::<Vec<_>>();
@@ -1906,7 +1983,7 @@ impl SimpleCast {
         }
         if optimize == 0 {
             let selector = Function::parse(signature)?.selector();
-            return Ok((selector.to_string(), String::from(signature)))
+            return Ok((selector.to_string(), String::from(signature)));
         }
         let Some((name, params)) = signature.split_once('(') else {
             eyre::bail!("invalid function signature");
@@ -1928,7 +2005,7 @@ impl SimpleCast {
 
                     if selector.iter().take_while(|&&byte| byte == 0).count() == optimize {
                         found.store(true, Ordering::Relaxed);
-                        return Some((nonce, hex::encode_prefixed(selector), input))
+                        return Some((nonce, hex::encode_prefixed(selector), input));
                     }
 
                     nonce += nonce_step;

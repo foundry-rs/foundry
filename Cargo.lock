@@ -1085,6 +1085,7 @@ dependencies = [
  "alloy-providers",
  "alloy-rlp",
  "alloy-rpc-types",
+ "alloy-transport",
  "async-trait",
  "chrono",
  "clap",
