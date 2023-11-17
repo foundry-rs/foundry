@@ -13,10 +13,8 @@ use foundry_evm::{
     decode::decode_console_logs, inspectors::CheatsConfig, revm::primitives::SpecId,
 };
 use foundry_test_utils::Filter;
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use itertools::Itertools;
+use std::{collections::BTreeMap, path::Path};
 
 /// How to execute a a test run
 pub struct TestConfig {
@@ -82,11 +80,12 @@ impl TestConfig {
                     let outcome = if self.should_fail { "fail" } else { "pass" };
 
                     eyre::bail!(
-                        "Test {} did not {} as expected.\nReason: {:?}\nLogs:\n{}",
+                        "Test {} did not {} as expected.\nReason: {:?}\nLogs:\n{}\n\nTraces:\n{}",
                         test_name,
                         outcome,
                         result.reason,
-                        logs.join("\n")
+                        logs.join("\n"),
+                        result.traces.iter().map(|(_, a)| a).format("\n"),
                     )
                 }
             }
@@ -136,14 +135,14 @@ pub(crate) fn init_tracing() {
         .try_init();
 }
 
-pub fn manifest_root() -> PathBuf {
+pub fn manifest_root() -> &'static Path {
     let mut root = Path::new(env!("CARGO_MANIFEST_DIR"));
     // need to check here where we're executing the test from, if in `forge` we need to also allow
     // `testdata`
     if root.ends_with("forge") {
         root = root.parent().unwrap();
     }
-    root.to_path_buf()
+    root
 }
 
 /// Builds a base runner
@@ -161,7 +160,7 @@ pub async fn runner() -> MultiContractRunner {
 /// Builds a non-tracing runner
 pub async fn runner_with_config(mut config: Config) -> MultiContractRunner {
     config.rpc_endpoints = rpc_endpoints();
-    config.allow_paths.push(manifest_root());
+    config.allow_paths.push(manifest_root().to_path_buf());
 
     let root = &PROJECT.paths.root;
     let opts = &*EVM_OPTS;

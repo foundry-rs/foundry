@@ -46,7 +46,7 @@ macro_rules! try_or_continue {
     ($e:expr) => {
         match $e {
             Ok(v) => v,
-            Err(_) => return InstructionResult::Continue,
+            Err(_) => return,
         }
     };
 }
@@ -281,11 +281,7 @@ impl Cheatcodes {
 
 impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     #[inline]
-    fn initialize_interp(
-        &mut self,
-        _: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-    ) -> InstructionResult {
+    fn initialize_interp(&mut self, _: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
         if let Some(block) = self.block.take() {
@@ -294,15 +290,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(gas_price) = self.gas_price.take() {
             data.env.tx.gas_price = gas_price;
         }
-
-        InstructionResult::Continue
     }
 
-    fn step(
-        &mut self,
-        interpreter: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-    ) -> InstructionResult {
+    fn step(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
         self.pc = interpreter.program_counter();
 
         // reset gas if gas metering is turned off
@@ -422,7 +412,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                                 range.contains(&offset) && range.contains(&(offset + 31))
                             }) {
                                 disallowed_mem_write(offset, 32, interpreter, ranges);
-                                return InstructionResult::Revert
+                                interpreter.instruction_result = InstructionResult::Revert;
+                                return
                             }
                         }
                         opcode::MSTORE8 => {
@@ -433,7 +424,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             // unexpectedly mutated.
                             if !ranges.iter().any(|range| range.contains(&offset)) {
                                 disallowed_mem_write(offset, 1, interpreter, ranges);
-                                return InstructionResult::Revert
+                                interpreter.instruction_result = InstructionResult::Revert;
+                                return
                             }
                         }
 
@@ -448,11 +440,12 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             // If the offset being loaded is >= than the memory size, the
                             // memory is being expanded. If none of the allowed ranges contain
                             // [offset, offset + 32), memory has been unexpectedly mutated.
-                            if offset >= interpreter.memory.len() as u64 && !ranges.iter().any(|range| {
+                            if offset >= interpreter.shared_memory.len() as u64 && !ranges.iter().any(|range| {
                                 range.contains(&offset) && range.contains(&(offset + 31))
                             }) {
                                 disallowed_mem_write(offset, 32, interpreter, ranges);
-                                return InstructionResult::Revert
+                                interpreter.instruction_result = InstructionResult::Revert;
+                                return
                             }
                         }
 
@@ -475,7 +468,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                                         range.contains(&(dest_offset + size.saturating_sub(1)))
                                 }) && ($writes ||
                                     [dest_offset, (dest_offset + size).saturating_sub(1)].into_iter().any(|offset| {
-                                        offset >= interpreter.memory.len() as u64
+                                        offset >= interpreter.shared_memory.len() as u64
                                     })
                                 );
 
@@ -483,7 +476,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             // that gives information about the allowed ranges and revert.
                             if fail_cond {
                                 disallowed_mem_write(dest_offset, size, interpreter, ranges);
-                                return InstructionResult::Revert
+                                interpreter.instruction_result = InstructionResult::Revert;
+                                return
                             }
                         })*
                         _ => ()
@@ -519,8 +513,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(mapping_slots) = &mut self.mapping_slots {
             mapping::step(mapping_slots, interpreter);
         }
-
-        InstructionResult::Continue
     }
 
     fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[B256], data: &Bytes) {
@@ -1030,7 +1022,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 fn disallowed_mem_write(
     dest_offset: u64,
     size: u64,
-    interpreter: &mut Interpreter,
+    interpreter: &mut Interpreter<'_>,
     ranges: &[Range<u64>],
 ) {
     let revert_string = format!(
@@ -1045,12 +1037,12 @@ fn disallowed_mem_write(
 
 /// Expands memory, stores a revert string, and sets the return range to the revert
 /// string's location in memory.
-fn mstore_revert_string(interpreter: &mut Interpreter, bytes: &[u8]) {
-    let starting_offset = interpreter.memory.len();
-    interpreter.memory.resize(starting_offset + bytes.len());
-    interpreter.memory.set_data(starting_offset, 0, bytes.len(), bytes);
+fn mstore_revert_string(interpreter: &mut Interpreter<'_>, bytes: &[u8]) {
+    let starting_offset = interpreter.shared_memory.len();
+    interpreter.shared_memory.resize(starting_offset + bytes.len());
+    interpreter.shared_memory.set_data(starting_offset, 0, bytes.len(), bytes);
     interpreter.return_offset = starting_offset;
-    interpreter.return_len = interpreter.memory.len() - starting_offset
+    interpreter.return_len = interpreter.shared_memory.len() - starting_offset
 }
 
 fn process_create<DB: DatabaseExt>(

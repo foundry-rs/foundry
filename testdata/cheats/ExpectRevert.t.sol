@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Unlicense
+// SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
@@ -8,7 +8,7 @@ contract Reverter {
     error CustomError();
 
     function revertWithMessage(string memory message) public pure {
-        require(false, message);
+        revert(message);
     }
 
     function doNotRevert() public pure {}
@@ -27,7 +27,7 @@ contract Reverter {
 
     function callThenRevert(Dummy dummy, string memory message) public pure {
         dummy.callMe();
-        require(false, message);
+        revert(message);
     }
 
     function revertWithoutReason() public pure {
@@ -37,7 +37,7 @@ contract Reverter {
 
 contract ConstructorReverter {
     constructor(string memory message) {
-        require(false, message);
+        revert(message);
     }
 }
 
@@ -63,7 +63,7 @@ contract Dummy {
     }
 
     function largeReturnType() public pure returns (LargeDummyStruct memory) {
-        require(false, "reverted with large return type");
+        revert("reverted with large return type");
     }
 }
 
@@ -78,6 +78,12 @@ contract ExpectRevertTest is DSTest {
         Reverter reverter = new Reverter();
         vm.expectRevert("revert");
         reverter.revertWithMessage("revert");
+    }
+
+    function testFailExpectRevertWrongString() public {
+        Reverter reverter = new Reverter();
+        vm.expectRevert("my not so cool error");
+        reverter.revertWithMessage("my cool error");
     }
 
     function testFailRevertNotOnImmediateNextCall() public {

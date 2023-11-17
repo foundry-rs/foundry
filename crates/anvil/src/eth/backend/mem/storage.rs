@@ -478,7 +478,7 @@ mod tests {
 
         let loaded = storage.get(&one).unwrap();
 
-        let acc = loaded.basic(addr.to_alloy()).unwrap().unwrap();
+        let acc = loaded.basic_ref(addr.to_alloy()).unwrap().unwrap();
         assert_eq!(acc.balance, rU256::from(1337u64));
     }
 
@@ -508,7 +508,7 @@ mod tests {
             let hash = H256::from_uint(&U256::from(idx));
             let addr = Address::from(hash);
             let loaded = storage.get(&hash).unwrap();
-            let acc = loaded.basic(addr.to_alloy()).unwrap().unwrap();
+            let acc = loaded.basic_ref(addr.to_alloy()).unwrap().unwrap();
             let balance = (idx * 2) as u64;
             assert_eq!(acc.balance, rU256::from(balance));
         }
