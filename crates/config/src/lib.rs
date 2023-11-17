@@ -252,48 +252,55 @@ pub struct Config {
     /// The chain name or EIP-155 chain ID.
     #[serde(rename = "chain_id", alias = "chain")]
     pub chain: Option<Chain>,
-    /// Block gas limit
+    /// Block gas limit.
     pub gas_limit: GasLimit,
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests.
     pub code_size_limit: Option<usize>,
-    /// `tx.gasprice` value during EVM execution"
+    /// `tx.gasprice` value during EVM execution.
     ///
     /// This is an Option, so we can determine in fork mode whether to use the config's gas price
-    /// (if set by user) or the remote client's gas price
+    /// (if set by user) or the remote client's gas price.
     pub gas_price: Option<u64>,
-    /// the base fee in a block
+    /// The base fee in a block.
     pub block_base_fee_per_gas: u64,
-    /// the `block.coinbase` value during EVM execution
+    /// The `block.coinbase` value during EVM execution.
     pub block_coinbase: Address,
-    /// the `block.timestamp` value during EVM execution
+    /// The `block.timestamp` value during EVM execution.
     pub block_timestamp: u64,
-    /// the `block.difficulty` value during EVM execution
+    /// The `block.difficulty` value during EVM execution.
     pub block_difficulty: u64,
-    /// Before merge the `block.max_hash` after merge it is `block.prevrandao`
+    /// Before merge the `block.max_hash`, after merge it is `block.prevrandao`.
     pub block_prevrandao: B256,
     /// the `block.gaslimit` value during EVM execution
     pub block_gas_limit: Option<GasLimit>,
-    /// The memory limit of the EVM (32 MB by default)
-    pub memory_limit: u64,
-    /// Additional output selection for all contracts
-    /// such as "ir", "devdoc", "storageLayout", etc.
-    /// See [Solc Compiler Api](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-api)
+    /// The memory limit per EVM execution in bytes.
+    /// If this limit is exceeded, a `MemoryLimitOOG` result is thrown.
     ///
-    /// The following values are always set because they're required by `forge`
-    //{
-    //   "*": [
-    //       "abi",
-    //       "evm.bytecode",
-    //       "evm.deployedBytecode",
-    //       "evm.methodIdentifiers"
-    //     ]
-    // }
-    // "#
+    /// The default is 128MiB.
+    pub memory_limit: u64,
+    /// Additional output selection for all contracts, such as "ir", "devdoc", "storageLayout",
+    /// etc.
+    ///
+    /// See the [Solc Compiler Api](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-api) for more information.
+    ///
+    /// The following values are always set because they're required by `forge`:
+    /// ```json
+    /// {
+    ///   "*": [
+    ///       "abi",
+    ///       "evm.bytecode",
+    ///       "evm.deployedBytecode",
+    ///       "evm.methodIdentifiers"
+    ///     ]
+    /// }
+    /// ```
     #[serde(default)]
     pub extra_output: Vec<ContractOutputSelection>,
-    /// If set , a separate `json` file will be emitted for every contract depending on the
+    /// If set, a separate JSON file will be emitted for every contract depending on the
     /// selection, eg. `extra_output_files = ["metadata"]` will create a `metadata.json` for
-    /// each contract in the project. See [Contract Metadata](https://docs.soliditylang.org/en/latest/metadata.html)
+    /// each contract in the project.
+    ///
+    /// See [Contract Metadata](https://docs.soliditylang.org/en/latest/metadata.html) for more information.
     ///
     /// The difference between `extra_output = ["metadata"]` and
     /// `extra_output_files = ["metadata"]` is that the former will include the
@@ -301,9 +308,9 @@ pub struct Config {
     /// output selection as separate files.
     #[serde(default)]
     pub extra_output_files: Vec<ContractOutputSelection>,
-    /// Print the names of the compiled contracts
+    /// Whether to print the names of the compiled contracts.
     pub names: bool,
-    /// Print the sizes of the compiled contracts
+    /// Whether to print the sizes of the compiled contracts.
     pub sizes: bool,
     /// If set to true, changes compilation pipeline to go through the Yul intermediate
     /// representation.
@@ -1795,7 +1802,7 @@ impl Default for Config {
             block_difficulty: 0,
             block_prevrandao: Default::default(),
             block_gas_limit: None,
-            memory_limit: 1 << 25, // 32MiB = 33554432 bytes
+            memory_limit: 1 << 27, // 2**27 = 128MiB = 134_217_728 bytes
             eth_rpc_url: None,
             eth_rpc_jwt: None,
             etherscan_api_key: None,
@@ -3379,7 +3386,7 @@ mod tests {
                 initial_balance = '0xffffffffffffffffffffffff'
                 libraries = []
                 libs = ['lib']
-                memory_limit = 33554432
+                memory_limit = 134217728
                 names = false
                 no_storage_caching = false
                 no_rpc_rate_limit = false

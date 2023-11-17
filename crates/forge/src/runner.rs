@@ -183,7 +183,7 @@ impl<'a> ContractRunner<'a> {
         let needs_setup = setup_fns.len() == 1 && setup_fns[0].name == "setUp";
 
         // There is a single miss-cased `setUp` function, so we add a warning
-        for setup_fn in setup_fns.iter() {
+        for &setup_fn in setup_fns.iter() {
             if setup_fn.name != "setUp" {
                 warnings.push(format!(
                     "Found invalid setup function \"{}\" did you mean \"setUp()\"?",
@@ -387,8 +387,10 @@ impl<'a> ContractRunner<'a> {
         // Record test execution time
         debug!(
             duration = ?start.elapsed(),
-            %success,
-            %gas
+            gas,
+            reverted,
+            should_fail,
+            success,
         );
 
         TestResult {
