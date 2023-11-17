@@ -44,7 +44,6 @@ ensure_svm_releases!(
 forgetest_init!(can_test_with_latest_solc, |prj, cmd| {
     let src = format!(
         r#"
-// SPDX-License-Identifier: UNLICENSED
 pragma solidity ={LATEST_SOLC};
 
 import "forge-std/Test.sol";
