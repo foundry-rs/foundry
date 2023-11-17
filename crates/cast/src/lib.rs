@@ -1,6 +1,6 @@
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::{ContractObject, Function};
-use alloy_primitives::{Address, B160, B256, I256, U256, U64};
+use alloy_primitives::{Address, BlockNumber, B160, B256, I256, U256, U64};
 use alloy_providers::provider::TempProvider;
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
@@ -916,15 +916,11 @@ impl<P: TempProvider> Cast<P> {
         &self,
         block: Option<BlockId>,
     ) -> Result<Option<BlockNumber>, eyre::Error> {
-        match block {
-            Some(block) => match block {
-                BlockId::Number(block_number) => Ok(Some(block_number)),
-                BlockId::Hash(hash) => {
-                    let block = self.provider.get_block(hash, false).await?;
-                    Ok(block.map(|block| block.header.number))
-                }
-            },
-            None => Ok(None),
+        if let Some(tag) = block {
+            let block = self.provider.get_block(tag, false).await?;
+            Ok(block.and_then(|block| block.header.number).map(|number| number.to()))
+        } else {
+            Ok(None)
         }
     }
 
