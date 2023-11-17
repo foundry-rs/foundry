@@ -13,9 +13,11 @@ repository.workspace = true
 # foundry internal
 foundry-evm.workspace = true
 foundry-utils.workspace = true
+foundry-common.workspace = true
 revm = { workspace = true, default-features = false, features = ["std", "serde", "memory_limit"] }
 
 alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-rpc-types = { workspace = true }
 ethers-core.workspace = true
 serde = { workspace = true, optional = true }
 serde_json.workspace = true

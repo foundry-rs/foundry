@@ -158,7 +158,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
 
             let transaction_index = transaction_infos.len() as u32;
             let info = TransactionInfo {
-                transaction_hash: *transaction.hash(),
+                transaction_hash: transaction.hash().to_ethers(),
                 transaction_index,
                 from: *transaction.pending_transaction.sender(),
                 to: transaction.pending_transaction.transaction.to().copied(),
@@ -185,7 +185,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         let partial_header = PartialHeader {
             parent_hash,
             beneficiary: beneficiary.to_ethers(),
-            state_root: self.db.maybe_state_root().unwrap_or_default(),
+            state_root: self.db.maybe_state_root().unwrap_or_default().to_ethers(),
             receipts_root,
             logs_bloom: bloom,
             difficulty: difficulty.to_ethers(),

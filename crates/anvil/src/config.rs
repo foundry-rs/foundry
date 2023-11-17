@@ -15,16 +15,17 @@ use crate::{
     mem::in_memory_db::MemDb,
     FeeManager, Hardfork,
 };
+use alloy_primitives::U64;
+use alloy_providers::provider::TempProvider;
+use alloy_rpc_types::BlockNumberOrTag;
 use anvil_server::ServerConfig;
 use ethers::{
     core::k256::ecdsa::SigningKey,
     prelude::{rand::thread_rng, Wallet, U256},
-    providers::Middleware,
     signers::{
         coins_bip39::{English, Mnemonic},
         MnemonicBuilder, Signer,
     },
-    types::BlockNumber,
     utils::{format_ether, hex, to_checksum, WEI_IN_ETHER},
 };
 use foundry_common::{
@@ -851,7 +852,7 @@ impl NodeConfig {
         // if the option is not disabled and we are not forking.
         if !self.disable_default_create2_deployer && self.eth_rpc_url.is_none() {
             backend
-                .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER.to_ethers())
+                .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER)
                 .await
                 .expect("Failed to create default create2 deployer");
         }
@@ -924,8 +925,14 @@ impl NodeConfig {
             } else if self.hardfork.is_none() {
                 // auto adjust hardfork if not specified
                 // but only if we're forking mainnet
-                let chain_id =
-                    provider.get_chainid().await.expect("Failed to fetch network chain id");
+                let chain_id = U256::from(
+                    provider
+                        .get_chain_id()
+                        .await
+                        .success()
+                        .expect("Failed to fetch network chain id")
+                        .to::<u64>(),
+                );
                 if chain_id == ethers::types::Chain::Mainnet.into() {
                     let hardfork: Hardfork = fork_block_number.into();
                     env.cfg.spec_id = hardfork.into();
@@ -946,14 +953,15 @@ impl NodeConfig {
         };
 
         let block = provider
-            .get_block(BlockNumber::Number(fork_block_number.into()))
+            .get_block(BlockNumberOrTag::Number(U64::from(fork_block_number)).into(), false)
             .await
+            .success()
             .expect("Failed to get fork block");
 
         let block = if let Some(block) = block {
             block
         } else {
-            if let Ok(latest_block) = provider.get_block_number().await {
+            if let Some(latest_block) = provider.get_block_number().await.success() {
                 let mut message = format!(
                     "Failed to get block for block number: {fork_block_number}\n\
 latest block number: {latest_block}"
@@ -961,7 +969,7 @@ latest block number: {latest_block}"
                 // If the `eth_getBlockByNumber` call succeeds, but returns null instead of
                 // the block, and the block number is less than equal the latest block, then
                 // the user is forking from a non-archive node with an older block number.
-                if fork_block_number <= latest_block.as_u64() {
+                if fork_block_number <= latest_block.to::<u64>() {
                     message.push_str(&format!("\n{}", NON_ARCHIVE_NODE_WARNING));
                 }
                 panic!("{}", message);
@@ -972,18 +980,18 @@ latest block number: {latest_block}"
         // we only use the gas limit value of the block if it is non-zero and the block gas
         // limit is enabled, since there are networks where this is not used and is always
         // `0x0` which would inevitably result in `OutOfGas` errors as soon as the evm is about to record gas, See also <https://github.com/foundry-rs/foundry/issues/3247>
-        let gas_limit = if self.disable_block_gas_limit || block.gas_limit.is_zero() {
+        let gas_limit = if self.disable_block_gas_limit || block.header.gas_limit.is_zero() {
             rU256::from(u64::MAX)
         } else {
-            block.gas_limit.to_alloy()
+            block.header.gas_limit
         };
 
         env.block = BlockEnv {
             number: rU256::from(fork_block_number),
-            timestamp: block.timestamp.to_alloy(),
-            difficulty: block.difficulty.to_alloy(),
+            timestamp: block.header.timestamp,
+            difficulty: block.header.difficulty,
             // ensures prevrandao is set
-            prevrandao: Some(block.mix_hash.unwrap_or_default()).map(|h| h.to_alloy()),
+            prevrandao: Some(block.header.mix_hash),
             gas_limit,
             // Keep previous `coinbase` and `basefee` value
             coinbase: env.block.coinbase,
@@ -996,15 +1004,15 @@ latest block number: {latest_block}"
 
         // if not set explicitly we use the base fee of the latest block
         if self.base_fee.is_none() {
-            if let Some(base_fee) = block.base_fee_per_gas {
-                self.base_fee = Some(base_fee);
-                env.block.basefee = base_fee.to_alloy();
+            if let Some(base_fee) = block.header.base_fee_per_gas {
+                self.base_fee = Some(base_fee.to_ethers());
+                env.block.basefee = base_fee;
                 // this is the base fee of the current block, but we need the base fee of
                 // the next block
                 let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
-                    block.gas_used,
-                    block.gas_limit,
-                    block.base_fee_per_gas.unwrap_or_default(),
+                    block.header.gas_used.to_ethers(),
+                    block.header.gas_limit.to_ethers(),
+                    block.header.base_fee_per_gas.unwrap_or_default().to_ethers(),
                 );
                 // update next base fee
                 fees.set_base_fee(next_block_base_fee.into());
@@ -1013,23 +1021,22 @@ latest block number: {latest_block}"
 
         // use remote gas price
         if self.gas_price.is_none() {
-            if let Ok(gas_price) = provider.get_gas_price().await {
-                self.gas_price = Some(gas_price);
-                fees.set_gas_price(gas_price);
+            if let Some(gas_price) = provider.get_gas_price().await.success() {
+                self.gas_price = Some(gas_price.to_ethers());
+                fees.set_gas_price(gas_price.to_ethers());
             }
         }
 
-        let block_hash = block.hash.unwrap_or_default();
+        let block_hash = block.header.hash.unwrap_or_default();
 
         let chain_id = if let Some(chain_id) = self.chain_id {
             chain_id
         } else {
             let chain_id = if let Some(fork_chain_id) = fork_chain_id {
-                fork_chain_id
+                fork_chain_id.as_u64()
             } else {
-                provider.get_chainid().await.unwrap()
-            }
-            .as_u64();
+                provider.get_chain_id().await.success().unwrap().to::<u64>()
+            };
 
             // need to update the dev signers and env with the chain id
             self.set_chain_id(Some(chain_id));
@@ -1061,8 +1068,8 @@ latest block number: {latest_block}"
             provider,
             chain_id,
             override_chain_id,
-            timestamp: block.timestamp.as_u64(),
-            base_fee: block.base_fee_per_gas,
+            timestamp: block.header.timestamp.to::<u64>(),
+            base_fee: block.header.base_fee_per_gas,
             timeout: self.fork_request_timeout,
             retries: self.fork_request_retries,
             backoff: self.fork_retry_backoff,
@@ -1181,14 +1188,24 @@ pub fn anvil_tmp_dir() -> Option<PathBuf> {
 ///
 /// This fetches the "latest" block and checks whether the `Block` is fully populated (`hash` field
 /// is present). This prevents edge cases where anvil forks the "latest" block but `eth_getBlockByNumber` still returns a pending block, <https://github.com/foundry-rs/foundry/issues/2036>
-async fn find_latest_fork_block<M: Middleware>(provider: M) -> Result<u64, M::Error> {
-    let mut num = provider.get_block_number().await?.as_u64();
+async fn find_latest_fork_block<P: TempProvider>(provider: P) -> Result<u64, eyre::Report> {
+    let mut num = provider
+        .get_block_number()
+        .await
+        .success()
+        .ok_or_else(|| eyre::eyre!("Could not get block number"))?
+        .to::<u64>();
 
     // walk back from the head of the chain, but at most 2 blocks, which should be more than enough
     // leeway
     for _ in 0..2 {
-        if let Some(block) = provider.get_block(num).await? {
-            if block.hash.is_some() {
+        if let Some(block) = provider
+            .get_block(num.into(), false)
+            .await
+            .success()
+            .ok_or_else(|| eyre::eyre!("Could not get block number"))?
+        {
+            if block.header.hash.is_some() {
                 break
             }
         }

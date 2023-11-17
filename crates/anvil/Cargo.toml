@@ -35,6 +35,9 @@ trie-db = { version = "0.23" }
 hash-db = { version = "0.15" }
 memory-db = { version = "0.29" }
 alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-rpc-types.workspace = true
+alloy-providers.workspace = true
+alloy-transports.workspace = true
 
 # axum related
 axum = { version = "0.5", features = ["ws"] }
@@ -62,6 +65,7 @@ yansi = "0.5"
 tempfile = "3"
 itertools.workspace = true
 rand = "0.8"
+eyre.workspace = true
 
 # cli
 clap = { version = "4", features = ["derive", "env", "wrap_help"], optional = true }

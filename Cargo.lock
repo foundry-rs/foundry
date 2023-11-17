@@ -353,6 +353,9 @@ name = "anvil"
 version = "0.2.0"
 dependencies = [
  "alloy-primitives",
+ "alloy-providers",
+ "alloy-rpc-types",
+ "alloy-transports",
  "anvil-core",
  "anvil-rpc",
  "anvil-server",
@@ -369,6 +372,7 @@ dependencies = [
  "ethereum-forkid",
  "ethers",
  "ethers-solc",
+ "eyre",
  "fdlimit",
  "flate2",
  "foundry-common",
@@ -403,8 +407,10 @@ name = "anvil-core"
 version = "0.2.0"
 dependencies = [
  "alloy-primitives",
+ "alloy-rpc-types",
  "bytes",
  "ethers-core",
+ "foundry-common",
  "foundry-evm",
  "foundry-utils",
  "hash-db",

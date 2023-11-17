@@ -1,17 +1,16 @@
 use crate::{
     eth::{backend::notifications::NewBlockNotifications, error::to_rpc_result},
-    StorageInfo, U256,
+    StorageInfo,
 };
+use alloy_primitives::{TxHash, B256, U256, U64};
+use alloy_rpc_types::{pubsub::SubscriptionResult, FilteredParams, Log as AlloyLog};
 use anvil_core::eth::{
     block::Block,
     receipt::{EIP658Receipt, Log, TypedReceipt},
-    subscription::{SubscriptionId, SubscriptionResult},
+    subscription::SubscriptionId,
 };
 use anvil_rpc::{request::Version, response::ResponseResult};
-use ethers::{
-    prelude::{Log as EthersLog, H256, H256 as TxHash, U64},
-    types::FilteredParams,
-};
+use foundry_utils::types::ToAlloy;
 use futures::{channel::mpsc::Receiver, ready, Stream, StreamExt};
 use serde::Serialize;
 use std::{
@@ -26,7 +25,7 @@ pub struct LogsSubscription {
     pub blocks: NewBlockNotifications,
     pub storage: StorageInfo,
     pub filter: FilteredParams,
-    pub queued: VecDeque<EthersLog>,
+    pub queued: VecDeque<AlloyLog>,
     pub id: SubscriptionId,
 }
 
@@ -44,8 +43,8 @@ impl LogsSubscription {
             }
 
             if let Some(block) = ready!(self.blocks.poll_next_unpin(cx)) {
-                let b = self.storage.block(block.hash);
-                let receipts = self.storage.receipts(block.hash);
+                let b = self.storage.block(block.hash.to_alloy());
+                let receipts = self.storage.receipts(block.hash.to_alloy());
                 if let (Some(receipts), Some(block)) = (receipts, b) {
                     let logs = filter_logs(block, receipts, &self.filter);
                     if logs.is_empty() {
@@ -110,7 +109,7 @@ impl EthSubscription {
                 // [`futures::channel::mpsc::UnboundedReceiver::poll_next()`]
                 loop {
                     if let Some(block) = ready!(blocks.poll_next_unpin(cx)) {
-                        if let Some(block) = storage.eth_block(block.hash) {
+                        if let Some(block) = storage.eth_block(block.hash.to_alloy()) {
                             let params = EthSubscriptionParams {
                                 subscription: id.clone(),
                                 result: to_rpc_result(block),
@@ -153,25 +152,23 @@ pub fn filter_logs(
     block: Block,
     receipts: Vec<TypedReceipt>,
     filter: &FilteredParams,
-) -> Vec<EthersLog> {
+) -> Vec<AlloyLog> {
     /// Determines whether to add this log
-    fn add_log(block_hash: H256, l: &Log, block: &Block, params: &FilteredParams) -> bool {
-        let log = EthersLog {
-            address: l.address,
-            topics: l.topics.clone(),
-            data: l.data.clone(),
+    fn add_log(block_hash: B256, l: &Log, block: &Block, params: &FilteredParams) -> bool {
+        let log = AlloyLog {
+            address: l.address.to_alloy(),
+            topics: l.topics.clone().into_iter().map(|t| t.to_alloy()).collect::<Vec<_>>(),
+            data: l.data.clone().0.into(),
             block_hash: None,
             block_number: None,
             transaction_hash: None,
             transaction_index: None,
             log_index: None,
-            transaction_log_index: None,
-            log_type: None,
-            removed: Some(false),
+            removed: false,
         };
         if params.filter.is_some() {
             let block_number = block.header.number.as_u64();
-            if !params.filter_block_range(block_number) ||
+            if !params.filter_block_range(U64::from(block_number)) ||
                 !params.filter_block_hash(block_hash) ||
                 !params.filter_address(&log) ||
                 !params.filter_topics(&log)
@@ -188,25 +185,23 @@ pub fn filter_logs(
     for (receipt_index, receipt) in receipts.into_iter().enumerate() {
         let receipt: EIP658Receipt = receipt.into();
         let receipt_logs = receipt.logs;
-        let transaction_hash: Option<H256> = if !receipt_logs.is_empty() {
-            Some(block.transactions[receipt_index].hash())
+        let transaction_hash: Option<B256> = if !receipt_logs.is_empty() {
+            Some(block.transactions[receipt_index].hash().to_alloy())
         } else {
             None
         };
         for (transaction_log_index, log) in receipt_logs.into_iter().enumerate() {
-            if add_log(block_hash, &log, &block, filter) {
-                logs.push(EthersLog {
-                    address: log.address,
-                    topics: log.topics,
-                    data: log.data,
-                    block_hash: Some(block_hash),
-                    block_number: Some(block.header.number.as_u64().into()),
+            if add_log(block_hash.to_alloy(), &log, &block, filter) {
+                logs.push(AlloyLog {
+                    address: log.address.to_alloy(),
+                    topics: log.topics.into_iter().map(|t| t.to_alloy()).collect::<Vec<_>>(),
+                    data: log.data.0.into(),
+                    block_hash: Some(block_hash.to_alloy()),
+                    block_number: Some(U256::from(block.header.number.as_u64())),
                     transaction_hash,
-                    transaction_index: Some(U64::from(receipt_index)),
+                    transaction_index: Some(U256::from(receipt_index)),
                     log_index: Some(U256::from(log_index)),
-                    transaction_log_index: Some(U256::from(transaction_log_index)),
-                    log_type: None,
-                    removed: Some(false),
+                    removed: false,
                 });
             }
             log_index += 1;

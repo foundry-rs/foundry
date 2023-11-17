@@ -5,6 +5,7 @@ use crate::eth::{
 use anvil_core::eth::transaction::TypedTransaction;
 use ethers::types::{H256, U256};
 use foundry_evm::revm::primitives::SpecId;
+use foundry_utils::types::ToAlloy;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use std::{
@@ -227,8 +228,8 @@ impl FeeHistoryService {
             rewards: Vec::new(),
         };
 
-        let current_block = self.storage_info.block(hash);
-        let current_receipts = self.storage_info.receipts(hash);
+        let current_block = self.storage_info.block(hash.to_alloy());
+        let current_receipts = self.storage_info.receipts(hash.to_alloy());
 
         if let (Some(block), Some(receipts)) = (current_block, current_receipts) {
             block_number = Some(block.header.number.as_u64());

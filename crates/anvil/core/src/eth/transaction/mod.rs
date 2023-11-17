@@ -25,6 +25,11 @@ use std::ops::Deref;
 /// compatibility with `ethers-rs` types
 mod ethers_compat;
 
+pub use ethers_compat::{
+    call_to_internal_tx_request, from_ethers_access_list, to_alloy_proof, to_ethers_access_list,
+    to_internal_tx_request,
+};
+
 /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
 #[cfg(feature = "impersonated-tx")]
 pub const IMPERSONATED_SIGNATURE: Signature =

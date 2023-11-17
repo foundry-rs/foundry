@@ -1,7 +1,7 @@
 //! Mines transactions
 
 use crate::eth::pool::{transactions::PoolTransaction, Pool};
-use ethers::prelude::TxHash;
+use alloy_primitives::TxHash;
 use futures::{
     channel::mpsc::Receiver,
     stream::{Fuse, Stream, StreamExt},

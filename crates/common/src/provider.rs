@@ -205,11 +205,9 @@ impl ProviderBuilder {
         let provider = self.build()?;
         // todo: port poll interval hint
         /*if let Some(blocktime) = provider.get_chainid().await.ok().and_then(|id| {
-                    Chain::try_from(id).ok().and_then(|chain| chain.average_blocktime_hint())
-        >>>>>>> c5ce7950 (wip)
-                }) {
-                    provider = provider.interval(blocktime / 2);
-                    }*/
+        }) {
+            provider = provider.interval(blocktime / 2);
+            }*/
         Ok(provider)
     }
 
