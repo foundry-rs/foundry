@@ -33,6 +33,40 @@
           "description": "A recurrent prank triggered by a `vm.startPrank()` call is currently active."
         }
       ]
+    },
+    {
+      "name": "AccountAccessKind",
+      "description": "The kind of account access that occurred.",
+      "variants": [
+        {
+          "name": "Call",
+          "description": "The account was called."
+        },
+        {
+          "name": "DelegateCall",
+          "description": "The account was called via delegatecall."
+        },
+        {
+          "name": "CallCode",
+          "description": "The account was called via callcode."
+        },
+        {
+          "name": "StaticCall",
+          "description": "The account was called via staticcall."
+        },
+        {
+          "name": "Create",
+          "description": "The account was created."
+        },
+        {
+          "name": "SelfDestruct",
+          "description": "The account was selfdestructed."
+        },
+        {
+          "name": "Resume",
+          "description": "Synthetic access indicating the current context has resumed after a previous sub-context (AccountAccess)."
+        }
+      ]
     }
   ],
   "structs": [
@@ -240,6 +274,124 @@
           "name": "stderr",
           "ty": "bytes",
           "description": "The `stderr` data."
+        }
+      ]
+    },
+    {
+      "name": "ChainInfo",
+      "description": "Information on the chain and fork.",
+      "fields": [
+        {
+          "name": "forkId",
+          "ty": "uint256",
+          "description": "The fork identifier. Set to zero if no fork is active."
+        },
+        {
+          "name": "chainId",
+          "ty": "uint256",
+          "description": "The chain ID of the current fork."
+        }
+      ]
+    },
+    {
+      "name": "AccountAccess",
+      "description": "The result of a `stopAndReturnStateDiff` call.",
+      "fields": [
+        {
+          "name": "chainInfo",
+          "ty": "ChainInfo",
+          "description": "The chain and fork the access occurred."
+        },
+        {
+          "name": "kind",
+          "ty": "AccountAccessKind",
+          "description": "The kind of account access that determines what the account is.\n If kind is Call, DelegateCall, StaticCall or CallCode, then the account is the callee.\n If kind is Create, then the account is the newly created account.\n If kind is SelfDestruct, then the account is the selfdestruct recipient.\n If kind is a Resume, then account represents a account context that has resumed."
+        },
+        {
+          "name": "account",
+          "ty": "address",
+          "description": "The account that was accessed.\n It's either the account created, callee or a selfdestruct recipient for CREATE, CALL or SELFDESTRUCT."
+        },
+        {
+          "name": "accessor",
+          "ty": "address",
+          "description": "What accessed the account."
+        },
+        {
+          "name": "initialized",
+          "ty": "bool",
+          "description": "If the account was initialized or empty prior to the access.\n An account is considered initialized if it has code, a\n non-zero nonce, or a non-zero balance."
+        },
+        {
+          "name": "oldBalance",
+          "ty": "uint256",
+          "description": "The previous balance of the accessed account."
+        },
+        {
+          "name": "newBalance",
+          "ty": "uint256",
+          "description": "The potential new balance of the accessed account.\n That is, all balance changes are recorded here, even if reverts occurred."
+        },
+        {
+          "name": "deployedCode",
+          "ty": "bytes",
+          "description": "Code of the account deployed by CREATE."
+        },
+        {
+          "name": "value",
+          "ty": "uint256",
+          "description": "Value passed along with the account access"
+        },
+        {
+          "name": "data",
+          "ty": "bytes",
+          "description": "Input data provided to the CREATE or CALL"
+        },
+        {
+          "name": "reverted",
+          "ty": "bool",
+          "description": "If this access reverted in either the current or parent context."
+        },
+        {
+          "name": "storageAccesses",
+          "ty": "StorageAccess[]",
+          "description": "An ordered list of storage accesses made during an account access operation."
+        }
+      ]
+    },
+    {
+      "name": "StorageAccess",
+      "description": "The storage accessed during an `AccountAccess`.",
+      "fields": [
+        {
+          "name": "account",
+          "ty": "address",
+          "description": "The account whose storage was accessed."
+        },
+        {
+          "name": "slot",
+          "ty": "bytes32",
+          "description": "The slot that was accessed."
+        },
+        {
+          "name": "isWrite",
+          "ty": "bool",
+          "description": "If the access was a write."
+        },
+        {
+          "name": "previousValue",
+          "ty": "bytes32",
+          "description": "The previous value of the slot."
+        },
+        {
+          "name": "newValue",
+          "ty": "bytes32",
+          "description": "The new value of the slot."
+        },
+        {
+          "name": "reverted",
+          "ty": "bool",
+          "description": "If the access was reverted."
         }
       ]
     }
@@ -4144,6 +4296,46 @@
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "startStateDiffRecording",
+        "description": "Record all account accesses as part of CREATE, CALL or SELFDESTRUCT opcodes in order,\nalong with the context of the calls",
+        "declaration": "function startStateDiffRecording() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "startStateDiffRecording()",
+        "selector": "0xcf22e3c9",
+        "selectorBytes": [
+          207,
+          34,
+          227,
+          201
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "stopAndReturnStateDiff",
+        "description": "Returns an ordered array of all account accesses from a `vm.startStateDiffRecording` session.",
+        "declaration": "function stopAndReturnStateDiff() external returns (AccountAccess[] memory accesses);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopAndReturnStateDiff()",
+        "selector": "0xaa5cf90e",
+        "selectorBytes": [
+          170,
+          92,
+          249,
+          14
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
     },
     {
       "func": {
