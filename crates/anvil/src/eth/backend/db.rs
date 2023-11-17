@@ -284,7 +284,7 @@ impl StateDb {
 impl DatabaseRef for StateDb {
     type Error = DatabaseError;
     fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
-        self.0.basic(address)
+        self.0.basic_ref(address)
     }
 
     fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {

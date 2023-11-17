@@ -1727,7 +1727,7 @@ impl Backend {
         self.with_database_at(block_request, |db, _| {
             trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
             let val = db.storage_ref(address, index)?;
-            Ok(u256_to_h256_be(val.to_ethers()))
+            Ok(u256_to_h256_be(val.to_ethers()).to_alloy())
         })
         .await?
     }

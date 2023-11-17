@@ -2,10 +2,7 @@ use super::fork::environment;
 use crate::fork::CreateFork;
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::Block;
-use ethers::{
-    providers::{Middleware, Provider},
-    types::Chain,
-};
+use ethers::providers::{Middleware, Provider};
 use eyre::WrapErr;
 use foundry_common::{self, ProviderBuilder, RpcUrl, ALCHEMY_FREE_TIER_CUPS};
 use foundry_compilers::utils::RuntimeOrHandle;
@@ -181,7 +178,7 @@ impl EvmOpts {
         if let Some(ref url) = self.fork_url {
             if url.contains("mainnet") {
                 trace!(?url, "auto detected mainnet chain");
-                return Some(Chain::Mainnet);
+                return Some(Chain::mainnet());
             }
             trace!(?url, "retrieving chain via eth_chainId");
             let provider = Provider::try_from(url.as_str())

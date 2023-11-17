@@ -3,7 +3,6 @@ use alloy_primitives::{Address, U256};
 use alloy_providers::provider::TempProvider;
 use eyre::Result;
 use foundry_common::{get_http_provider, RetryProvider};
-use foundry_utils::types::{ToAlloy, ToEthers};
 use std::{collections::BTreeMap, fs, path::Path, str::FromStr};
 
 const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
@@ -185,10 +184,10 @@ impl ScriptTester {
     ) -> &mut Self {
         for (address, expected_increment) in address_indexes {
             let nonce =
-                self.provider.as_ref().unwrap().get_transaction_count(address, None).await.unwrap();
-            let prev_nonce = self.address_nonces.get(&address).unwrap();
+                self.provider.as_ref().unwrap().get_transaction_count(*address, None).await.unwrap();
+            let prev_nonce = self.address_nonces.get(address).unwrap();
 
-            assert_eq!(nonce, (prev_nonce + U256::from(expected_increment)));
+            assert_eq!(nonce, (prev_nonce + U256::from(*expected_increment)));
         }
         self
     }
