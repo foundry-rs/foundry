@@ -49,7 +49,9 @@ pub struct EvmOpts {
     /// Verbosity mode of EVM output as number of occurrences
     pub verbosity: u8,
 
-    /// The memory limit of the EVM in bytes.
+    /// The memory limit per EVM execution in bytes.
+    ///
+    /// The default is 128MiB.
     pub memory_limit: u64,
 }
 

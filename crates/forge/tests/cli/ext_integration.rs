@@ -16,11 +16,7 @@ forgetest_external!(
     // `run: pnpm --version` is ok, `Command::new("pnpm")` isn't. Good job Windows.
     #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
     snekmate,
-    "pcaversaccio/snekmate",
-    // 64MiB memory limit:
-    // - https://github.com/foundry-rs/foundry/pull/6281
-    // - https://github.com/bluealloy/revm/issues/865
-    &["--memory-limit", &(1u64 << 26).to_string()]
+    "pcaversaccio/snekmate"
 );
 
 // Forking tests
