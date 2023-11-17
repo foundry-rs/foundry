@@ -1,7 +1,9 @@
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::{ContractObject, Function};
 use alloy_primitives::{Address, I256, U256};
+use alloy_providers::provider::TempProvider;
 use alloy_rlp::Decodable;
+use alloy_rpc_types::BlockId;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
@@ -11,15 +13,21 @@ use ethers_core::{
         Units,
     },
 };
-use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
+use ethers_providers::{PendingTransaction, PubsubClient};
 use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{abi::encode_function_args, fmt::*, TransactionReceiptWithRevertReason};
 use foundry_config::Chain;
+pub use foundry_evm::*;
 use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
+pub use rusoto_core::{
+    credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
+    request::HttpClient as AwsHttpClient, Client as AwsClient,
+};
+pub use rusoto_kms::KmsClient;
 use std::{
     io,
     path::PathBuf,
@@ -27,15 +35,8 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use tokio::signal::ctrl_c;
-use tx::{TxBuilderOutput, TxBuilderPeekOutput};
-
-pub use foundry_evm::*;
-pub use rusoto_core::{
-    credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
-    request::HttpClient as AwsHttpClient, Client as AwsClient,
-};
-pub use rusoto_kms::KmsClient;
 pub use tx::TxBuilder;
+use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
 pub mod base;
 pub mod errors;
@@ -46,14 +47,11 @@ use rlp_converter::Item;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
-pub struct Cast<M> {
-    provider: M,
+pub struct Cast<P> {
+    provider: P,
 }
 
-impl<M: Middleware> Cast<M>
-where
-    M::Error: 'static,
-{
+impl<P: TempProvider> Cast<P> {
     /// Creates a new Cast instance from the provided client
     ///
     /// # Example
@@ -68,7 +66,7 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new(provider: M) -> Self {
+    pub fn new(provider: P) -> Self {
         Self { provider }
     }
 
@@ -228,7 +226,7 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn send<'a>(
+    /*pub async fn send<'a>(
         &self,
         builder_output: TxBuilderOutput,
     ) -> Result<PendingTransaction<'_, M::Provider>> {
@@ -236,7 +234,7 @@ where
         let res = self.provider.send_transaction(tx, None).await?;
 
         Ok::<_, eyre::Error>(res)
-    }
+    }*/
 
     /// Publishes a raw transaction to the network
     ///
@@ -254,6 +252,7 @@ where
     /// # Ok(())
     /// # }
     /// ```
+    /*
     pub async fn publish(&self, mut raw_tx: String) -> Result<PendingTransaction<'_, M::Provider>> {
         raw_tx = match raw_tx.strip_prefix("0x") {
             Some(s) => s.to_string(),
@@ -263,7 +262,7 @@ where
         let res = self.provider.send_raw_transaction(tx).await?;
 
         Ok::<_, eyre::Error>(res)
-    }
+    }*/
 
     /// Estimates the gas cost of a transaction
     ///
@@ -845,8 +844,8 @@ where
             Some(block) => match block {
                 BlockId::Number(block_number) => Ok(Some(block_number)),
                 BlockId::Hash(hash) => {
-                    let block = self.provider.get_block(hash).await?;
-                    Ok(block.map(|block| block.number.unwrap()).map(BlockNumber::from))
+                    let block = self.provider.get_block(hash, false).await?;
+                    Ok(block.map(|block| block.header.number))
                 }
             },
             None => Ok(None),
@@ -874,6 +873,7 @@ where
     /// # Ok(())
     /// # }
     /// ```
+    /*
     pub async fn subscribe(
         &self,
         filter: Filter,
@@ -946,7 +946,7 @@ where
         }
 
         Ok(())
-    }
+    }*/
 }
 
 pub struct InterfaceSource {
