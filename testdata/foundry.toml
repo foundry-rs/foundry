@@ -1,5 +1,5 @@
 [profile.default]
-solc = "0.8.19"
+solc = "0.8.18"
 block_base_fee_per_gas = 0
 block_coinbase = "0x0000000000000000000000000000000000000000"
 block_difficulty = 0
@@ -36,10 +36,10 @@ remappings = ["ds-test/=lib/ds-test/src/"]
 sender = "0x00a329c0648769a73afac7f9381e08fb43dbea72"
 sizes = false
 sparse_mode = false
-src = "src"
-test = "test"
+src = "./"
+test = "./"
 tx_origin = "0x00a329c0648769a73afac7f9381e08fb43dbea72"
-verbosity = 0
+verbosity = 3
 via_ir = false
 fs_permissions = [{ access = "read-write", path = "./" }]
 

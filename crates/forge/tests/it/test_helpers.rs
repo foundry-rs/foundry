@@ -72,6 +72,7 @@ pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
     sender: Config::DEFAULT_SENDER,
     initial_balance: U256::MAX,
     ffi: true,
+    verbosity: 3,
     ..Default::default()
 });
 
