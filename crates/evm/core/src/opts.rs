@@ -54,8 +54,6 @@ pub struct EvmOpts {
 
     /// The memory limit per EVM execution in bytes.
     /// If this limit is exceeded, a `MemoryLimitOOG` result is thrown.
-    ///
-    /// The default is 128MiB.
     pub memory_limit: u64,
 }
 
