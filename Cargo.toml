@@ -157,9 +157,10 @@ alloy-dyn-abi = "0.4.1"
 alloy-json-abi = "0.4.1"
 alloy-sol-types = "0.4.1"
 syn-solidity = "0.4.1"
-alloy-providers = { path = "../alloy/crates/providers" }
-alloy-transports = { path = "../alloy/crates/transports" }
-alloy-rpc-types = { path = "../alloy/crates/rpc-types" }
+alloy-providers = { path = "../../alloy-rs/alloy/crates/providers" }
+alloy-transport = { path = "../../alloy-rs/alloy/crates/transport" }
+alloy-transport-http = { path = "../../alloy-rs/alloy/crates/transport-http" }
+alloy-rpc-types = { path = "../../alloy-rs/alloy/crates/rpc-types" }
 
 alloy-chains = "0.1.2"
 alloy-rlp = "0.3.3"

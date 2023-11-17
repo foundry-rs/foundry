@@ -5,7 +5,7 @@
 
 use crate::fork::{BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend};
 use alloy_providers::provider::Provider;
-use alloy_transports::BoxTransport;
+use alloy_transport::BoxTransport;
 use ethers::types::BlockNumber;
 use foundry_common::ProviderBuilder;
 use foundry_config::Config;
