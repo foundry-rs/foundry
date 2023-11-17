@@ -2,6 +2,7 @@ use crate::utils::apply_chain_and_block_specific_env_changes;
 use alloy_primitives::{Address, U256, U64};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{Block, BlockNumberOrTag};
+use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
 use revm::primitives::{BlockEnv, CfgEnv, Env, TxEnv};
 
@@ -17,32 +18,19 @@ pub async fn environment<P: TempProvider>(
     origin: Address,
 ) -> eyre::Result<(Env, Block)> {
     let block_number = if let Some(pin_block) = pin_block {
-        U256::from(pin_block)
+        U64::from(pin_block)
     } else {
-        provider
-            .get_block_number()
-            .await
-            .success()
-            .ok_or_else(|| eyre::eyre!("Failed to get latest block number"))?
+        provider.get_block_number().await.wrap_err("Failed to get latest block number")?
     };
-    let (fork_gas_price, rpc_chain_id, block) = {
-        // todo(onbjerg): we can't use try_join! because the results returned by alloy's provider
-        // are not actual `Result`s
-        let (fork_gas_price, rpc_chain_id, block) = tokio::join!(
-            provider.get_gas_price(),
-            provider.get_chain_id(),
-            provider.get_block_by_number(BlockNumberOrTag::Number(block_number.to()), false)
-        );
-        (
-            fork_gas_price.success().ok_or_else(|| eyre::eyre!("Failed to get gas price"))?,
-            rpc_chain_id.success().ok_or_else(|| eyre::eyre!("Failed to get chain id"))?,
-            block.success().ok_or_else(|| eyre::eyre!("Failed to get block {block_number}"))?,
-        )
-    };
+    let (fork_gas_price, rpc_chain_id, block) = tokio::try_join!(
+        provider.get_gas_price(),
+        provider.get_chain_id(),
+        provider.get_block_by_number(BlockNumberOrTag::Number(block_number.to()), false)
+    )?;
     let block = if let Some(block) = block {
         block
     } else {
-        if let Some(latest_block) = provider.get_block_number().await.success() {
+        if let Ok(latest_block) = provider.get_block_number().await {
             // If the `eth_getBlockByNumber` call succeeds, but returns null instead of
             // the block, and the block number is less than equal the latest block, then
             // the user is forking from a non-archive node with an older block number.

@@ -3,6 +3,7 @@ use alloy_primitives::{FixedBytes, B256, U256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{Filter, Topic};
 use alloy_sol_types::SolValue;
+use eyre::WrapErr;
 use foundry_common::ProviderBuilder;
 use foundry_compilers::utils::RuntimeOrHandle;
 use foundry_evm_core::fork::CreateFork;
@@ -273,8 +274,7 @@ impl Cheatcode for eth_getLogsCall {
         // todo: handle the errors somehow
         let logs = RuntimeOrHandle::new()
             .block_on(provider.get_logs(filter))
-            .success()
-            .ok_or_else(|| eyre::eyre!("failed to get logs"))?;
+            .wrap_err("failed to get logs")?;
 
         let eth_logs = logs
             .into_iter()
