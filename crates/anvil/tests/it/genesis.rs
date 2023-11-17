@@ -40,10 +40,10 @@ async fn can_apply_genesis() {
 
     let provider = handle.http_provider();
 
-    assert_eq!(provider.get_chain_id().await.success().unwrap(), U64::from(19763u64));
+    assert_eq!(provider.get_chain_id().await.unwrap(), U64::from(19763u64));
 
     let addr: Address = Address::from_str("71562b71999873db5b286df957af199ec94617f7").unwrap();
-    let balance = provider.get_balance(addr, None).await.success().unwrap();
+    let balance = provider.get_balance(addr, None).await.unwrap();
 
     let expected: U256 = U256::from_str_radix("ffffffffffffffffffffffffff", 16).unwrap();
     assert_eq!(balance, expected);
