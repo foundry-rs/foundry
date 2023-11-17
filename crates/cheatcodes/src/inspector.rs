@@ -450,11 +450,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     deployedCode: vec![],
                     storageAccesses: vec![],
                 };
-                // append access
+                // Ensure that we're not selfdestructing a context recording was initiated on
                 if let Some(last) = account_accesses.last_mut() {
                     last.push(AccountAccess { access, depth: data.journaled_state.depth() });
-                } else {
-                    unreachable!("selfdestruct in a non-existent call frame");
                 }
             }
         }
