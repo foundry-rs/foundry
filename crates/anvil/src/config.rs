@@ -18,6 +18,7 @@ use crate::{
 use alloy_primitives::U64;
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::BlockNumberOrTag;
+use alloy_transport::TransportError;
 use anvil_server::ServerConfig;
 use ethers::{
     core::k256::ecdsa::SigningKey,
@@ -929,7 +930,6 @@ impl NodeConfig {
                     provider
                         .get_chain_id()
                         .await
-                        .success()
                         .expect("Failed to fetch network chain id")
                         .to::<u64>(),
                 );
@@ -955,13 +955,12 @@ impl NodeConfig {
         let block = provider
             .get_block(BlockNumberOrTag::Number(U64::from(fork_block_number)).into(), false)
             .await
-            .success()
             .expect("Failed to get fork block");
 
         let block = if let Some(block) = block {
             block
         } else {
-            if let Some(latest_block) = provider.get_block_number().await.success() {
+            if let Ok(latest_block) = provider.get_block_number().await {
                 let mut message = format!(
                     "Failed to get block for block number: {fork_block_number}\n\
 latest block number: {latest_block}"
@@ -1021,7 +1020,7 @@ latest block number: {latest_block}"
 
         // use remote gas price
         if self.gas_price.is_none() {
-            if let Some(gas_price) = provider.get_gas_price().await.success() {
+            if let Ok(gas_price) = provider.get_gas_price().await {
                 self.gas_price = Some(gas_price.to_ethers());
                 fees.set_gas_price(gas_price.to_ethers());
             }
@@ -1035,7 +1034,7 @@ latest block number: {latest_block}"
             let chain_id = if let Some(fork_chain_id) = fork_chain_id {
                 fork_chain_id.as_u64()
             } else {
-                provider.get_chain_id().await.success().unwrap().to::<u64>()
+                provider.get_chain_id().await.unwrap().to::<u64>()
             };
 
             // need to update the dev signers and env with the chain id
@@ -1188,23 +1187,13 @@ pub fn anvil_tmp_dir() -> Option<PathBuf> {
 ///
 /// This fetches the "latest" block and checks whether the `Block` is fully populated (`hash` field
 /// is present). This prevents edge cases where anvil forks the "latest" block but `eth_getBlockByNumber` still returns a pending block, <https://github.com/foundry-rs/foundry/issues/2036>
-async fn find_latest_fork_block<P: TempProvider>(provider: P) -> Result<u64, eyre::Report> {
-    let mut num = provider
-        .get_block_number()
-        .await
-        .success()
-        .ok_or_else(|| eyre::eyre!("Could not get block number"))?
-        .to::<u64>();
+async fn find_latest_fork_block<P: TempProvider>(provider: P) -> Result<u64, TransportError> {
+    let mut num = provider.get_block_number().await?.to::<u64>();
 
     // walk back from the head of the chain, but at most 2 blocks, which should be more than enough
     // leeway
     for _ in 0..2 {
-        if let Some(block) = provider
-            .get_block(num.into(), false)
-            .await
-            .success()
-            .ok_or_else(|| eyre::eyre!("Could not get block number"))?
-        {
+        if let Some(block) = provider.get_block(num.into(), false).await? {
             if block.header.hash.is_some() {
                 break
             }

@@ -1916,18 +1916,19 @@ impl EthApi {
                     if let Some(receipt) = self.backend.mined_transaction_receipt(tx.hash) {
                         if let Some(output) = receipt.out {
                             // insert revert reason if failure
-                            if receipt.inner.status_code.unwrap_or_default().to::<u64>() == 0 {
-                                if let Some(reason) = decode_revert_reason(&output) {
-                                    tx.other.insert(
-                                        "revertReason".to_string(),
-                                        serde_json::to_value(reason).expect("Infallible"),
-                                    );
-                                }
-                            }
-                            tx.other.insert(
-                                "output".to_string(),
-                                serde_json::to_value(output).expect("Infallible"),
-                            );
+                            // TODO: Support for additional fields
+                            // if receipt.inner.status_code.unwrap_or_default().to::<u64>() == 0 {
+                            //     if let Some(reason) = decode_revert_reason(&output) {
+                            //         tx.other.insert(
+                            //             "revertReason".to_string(),
+                            //             serde_json::to_value(reason).expect("Infallible"),
+                            //         );
+                            //     }
+                            // }
+                            // tx.other.insert(
+                            //     "output".to_string(),
+                            //     serde_json::to_value(output).expect("Infallible"),
+                            // );
                         }
                     }
                 }
