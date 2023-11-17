@@ -63,9 +63,9 @@ impl<'a> FuzzBackendWrapper<'a> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
         self.is_initialized = false;
-        match revm::evm_inner::<Self, true>(env, self, &mut inspector).transact() {
+        match revm::evm_inner::<Self>(env, self, Some(&mut inspector)).transact() {
             Ok(result) => Ok(result),
-            Err(e) => eyre::bail!("fuzz: failed to inspect: {:?}", e),
+            Err(e) => eyre::bail!("fuzz: failed to inspect: {e}"),
         }
     }
 
@@ -235,20 +235,20 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
 impl<'a> DatabaseRef for FuzzBackendWrapper<'a> {
     type Error = DatabaseError;
 
-    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        DatabaseRef::basic(self.backend.as_ref(), address)
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        DatabaseRef::basic_ref(self.backend.as_ref(), address)
     }
 
-    fn code_by_hash(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        DatabaseRef::code_by_hash(self.backend.as_ref(), code_hash)
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        DatabaseRef::code_by_hash_ref(self.backend.as_ref(), code_hash)
     }
 
-    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        DatabaseRef::storage(self.backend.as_ref(), address, index)
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        DatabaseRef::storage_ref(self.backend.as_ref(), address, index)
     }
 
-    fn block_hash(&self, number: U256) -> Result<B256, Self::Error> {
-        DatabaseRef::block_hash(self.backend.as_ref(), number)
+    fn block_hash_ref(&self, number: U256) -> Result<B256, Self::Error> {
+        DatabaseRef::block_hash_ref(self.backend.as_ref(), number)
     }
 }
 
@@ -256,18 +256,18 @@ impl<'a> Database for FuzzBackendWrapper<'a> {
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        DatabaseRef::basic(self, address)
+        DatabaseRef::basic_ref(self, address)
     }
 
     fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        DatabaseRef::code_by_hash(self, code_hash)
+        DatabaseRef::code_by_hash_ref(self, code_hash)
     }
 
     fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        DatabaseRef::storage(self, address, index)
+        DatabaseRef::storage_ref(self, address, index)
     }
 
     fn block_hash(&mut self, number: U256) -> Result<B256, Self::Error> {
-        DatabaseRef::block_hash(self, number)
+        DatabaseRef::block_hash_ref(self, number)
     }
 }

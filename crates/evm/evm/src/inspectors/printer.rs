@@ -11,7 +11,7 @@ pub struct TracePrinter;
 impl<DB: Database> Inspector<DB> for TracePrinter {
     // get opcode by calling `interp.contract.opcode(interp.program_counter())`.
     // all other information can be obtained from interp.
-    fn step(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>) -> InstructionResult {
+    fn step(&mut self, interp: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
         let opcode = interp.current_opcode();
         let opcode_str = opcode::OPCODE_JUMPMAP[opcode as usize];
         let gas_remaining = interp.gas.remaining();
@@ -26,11 +26,9 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
             interp.gas.refunded(),
             interp.gas.refunded(),
             interp.stack.data(),
-            interp.memory.data().len(),
-            hex::encode(interp.memory.data()),
+            interp.shared_memory.len(),
+            hex::encode(interp.shared_memory.context_memory()),
         );
-
-        InstructionResult::Continue
     }
 
     fn call(

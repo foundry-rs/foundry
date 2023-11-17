@@ -31,13 +31,13 @@ impl TestConfig {
         Self::with_filter(runner, Filter::matches_all())
     }
 
+    pub async fn filter(filter: Filter) -> Self {
+        Self::with_filter(runner().await, filter)
+    }
+
     pub fn with_filter(runner: MultiContractRunner, filter: Filter) -> Self {
         init_tracing();
         Self { runner, should_fail: false, filter, opts: test_opts() }
-    }
-
-    pub async fn filter(filter: Filter) -> Self {
-        Self::with_filter(runner().await, filter)
     }
 
     pub fn evm_spec(mut self, spec: SpecId) -> Self {

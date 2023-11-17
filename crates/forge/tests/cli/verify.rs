@@ -12,37 +12,30 @@ use foundry_utils::Retry;
 /// `import {Unique} from "./unique.sol";`
 fn add_unique(prj: &TestProject) {
     let timestamp = utils::millis_since_epoch();
-    prj.inner()
-        .add_source(
-            "unique",
-            format!(
-                r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity >=0.4.0;
-
+    prj.add_source(
+        "unique",
+        &format!(
+            r#"
 contract Unique {{
     uint public _timestamp = {timestamp};
 }}
 "#
-            ),
-        )
-        .unwrap();
+        ),
+    )
+    .unwrap();
 }
 
 fn add_verify_target(prj: &TestProject) {
-    prj.inner()
-        .add_source(
-            "Verify.sol",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity =0.8.10;
+    prj.add_source(
+        "Verify.sol",
+        r#"
 import {Unique} from "./unique.sol";
 contract Verify is Unique {
 function doStuff() external {}
 }
 "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 }
 
 fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Result<()> {

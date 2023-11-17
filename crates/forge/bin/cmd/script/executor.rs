@@ -21,7 +21,6 @@ use foundry_utils::types::ToEthers;
 use futures::future::join_all;
 use parking_lot::RwLock;
 use std::{collections::VecDeque, sync::Arc};
-use tracing::trace;
 
 /// Helper alias type for the processed result of a runner onchain simulation.
 type RunnerResult = (Option<TransactionWithMetadata>, Traces);

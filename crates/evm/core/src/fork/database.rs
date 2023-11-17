@@ -172,20 +172,20 @@ impl Database for ForkedDatabase {
 impl DatabaseRef for ForkedDatabase {
     type Error = DatabaseError;
 
-    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        self.cache_db.basic(address)
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        self.cache_db.basic_ref(address)
     }
 
-    fn code_by_hash(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        self.cache_db.code_by_hash(code_hash)
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        self.cache_db.code_by_hash_ref(code_hash)
     }
 
-    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        DatabaseRef::storage(&self.cache_db, address, index)
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        DatabaseRef::storage_ref(&self.cache_db, address, index)
     }
 
-    fn block_hash(&self, number: U256) -> Result<B256, Self::Error> {
-        self.cache_db.block_hash(number)
+    fn block_hash_ref(&self, number: U256) -> Result<B256, Self::Error> {
+        self.cache_db.block_hash_ref(number)
     }
 }
 
@@ -218,43 +218,43 @@ impl ForkDbSnapshot {
 impl DatabaseRef for ForkDbSnapshot {
     type Error = DatabaseError;
 
-    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         match self.local.accounts.get(&address) {
             Some(account) => Ok(Some(account.info.clone())),
             None => {
                 let mut acc = self.snapshot.accounts.get(&address).cloned();
 
                 if acc.is_none() {
-                    acc = self.local.basic(address)?;
+                    acc = self.local.basic_ref(address)?;
                 }
                 Ok(acc)
             }
         }
     }
 
-    fn code_by_hash(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        self.local.code_by_hash(code_hash)
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        self.local.code_by_hash_ref(code_hash)
     }
 
-    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
         match self.local.accounts.get(&address) {
             Some(account) => match account.storage.get(&index) {
                 Some(entry) => Ok(*entry),
                 None => match self.get_storage(address, index) {
-                    None => DatabaseRef::storage(&self.local, address, index),
+                    None => DatabaseRef::storage_ref(&self.local, address, index),
                     Some(storage) => Ok(storage),
                 },
             },
             None => match self.get_storage(address, index) {
-                None => DatabaseRef::storage(&self.local, address, index),
+                None => DatabaseRef::storage_ref(&self.local, address, index),
                 Some(storage) => Ok(storage),
             },
         }
     }
 
-    fn block_hash(&self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash_ref(&self, number: U256) -> Result<B256, Self::Error> {
         match self.snapshot.block_hashes.get(&number).copied() {
-            None => self.local.block_hash(number),
+            None => self.local.block_hash_ref(number),
             Some(block_hash) => Ok(block_hash),
         }
     }

@@ -2,6 +2,9 @@
 
 #![warn(missing_docs, unused_crate_dependencies)]
 
+#[macro_use]
+extern crate tracing;
+
 pub mod abi;
 pub mod calc;
 pub mod clap_helpers;
@@ -16,7 +19,6 @@ pub mod glob;
 pub mod provider;
 pub mod runtime_client;
 pub mod selectors;
-pub mod serde_helpers;
 pub mod shell;
 pub mod term;
 pub mod traits;

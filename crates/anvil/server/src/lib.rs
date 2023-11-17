@@ -1,6 +1,9 @@
 //! Bootstrap [axum] RPC servers
 
-#![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
+#![warn(missing_docs, unused_crate_dependencies)]
+
+#[macro_use]
+extern crate tracing;
 
 use anvil_rpc::{
     error::RpcError,
@@ -8,7 +11,6 @@ use anvil_rpc::{
     response::{ResponseResult, RpcResponse},
 };
 use axum::{
-    extract::Extension,
     http::{header, HeaderValue, Method},
     routing::{post, IntoMakeService},
     Router, Server,
@@ -17,7 +19,6 @@ use hyper::server::conn::AddrIncoming;
 use serde::de::DeserializeOwned;
 use std::{fmt, net::SocketAddr};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::{error, trace};
 
 mod config;
 
@@ -50,9 +51,8 @@ where
     let ServerConfig { allow_origin, no_cors } = config;
 
     let svc = Router::new()
-        .route("/", post(handler::handle::<Http>).get(ws::handle_ws::<Ws>))
-        .layer(Extension(http))
-        .layer(Extension(ws))
+        .route("/", post(handler::handle).get(ws::handle_ws))
+        .with_state((http, ws))
         .layer(TraceLayer::new_for_http());
 
     let svc = if no_cors {
@@ -79,8 +79,8 @@ where
     let ServerConfig { allow_origin, no_cors } = config;
 
     let svc = Router::new()
-        .route("/", post(handler::handle::<Http>))
-        .layer(Extension(http))
+        .route("/", post(handler::handle))
+        .with_state((http, ()))
         .layer(TraceLayer::new_for_http());
     let svc = if no_cors {
         svc

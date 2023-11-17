@@ -223,7 +223,7 @@ impl SessionSource {
         // the file compiled correctly, thus the last stack item must be the memory offset of
         // the `bytes memory inspectoor` value
         let mut offset = stack.data().last().unwrap().to_ethers().as_usize();
-        let mem = memory.data();
+        let mem = memory.context_memory();
         let mem_offset = &mem[offset..offset + 32];
         let len = U256::try_from_be_slice(mem_offset).unwrap().to::<usize>();
         offset += 32;

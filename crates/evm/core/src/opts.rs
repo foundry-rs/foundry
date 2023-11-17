@@ -9,7 +9,7 @@ use ethers::{
 use eyre::WrapErr;
 use foundry_common::{self, ProviderBuilder, RpcUrl, ALCHEMY_FREE_TIER_CUPS};
 use foundry_compilers::utils::RuntimeOrHandle;
-use foundry_config::Config;
+use foundry_config::{Chain, Config};
 use revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -159,7 +159,7 @@ impl EvmOpts {
         if let Some(id) = self.env.chain_id {
             return id;
         }
-        self.get_remote_chain_id().map_or(Chain::Mainnet as u64, |id| id as u64)
+        self.get_remote_chain_id().unwrap_or(Chain::mainnet()).id()
     }
 
     /// Returns the available compute units per second, which will be
@@ -198,11 +198,11 @@ impl EvmOpts {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Env {
-    /// the block gas limit
+    /// The block gas limit.
     #[serde(deserialize_with = "string_or_number")]
     pub gas_limit: u64,
 
-    /// the chainid opcode value
+    /// The `CHAINID` opcode value.
     pub chain_id: Option<u64>,
 
     /// the tx.gasprice value during EVM execution

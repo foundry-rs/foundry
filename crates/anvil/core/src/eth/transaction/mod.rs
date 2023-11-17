@@ -751,19 +751,19 @@ impl Encodable for TypedTransaction {
 
 impl Decodable for TypedTransaction {
     fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-        let data = rlp.data()?;
-        let first = *data.first().ok_or(DecoderError::Custom("empty slice"))?;
         if rlp.is_list() {
             return Ok(TypedTransaction::Legacy(rlp.as_val()?))
         }
-        let s = data.get(1..).ok_or(DecoderError::Custom("no tx body"))?;
-        if first == 0x01 {
-            return rlp::decode(s).map(TypedTransaction::EIP2930)
+        let [first, s @ ..] = rlp.data()? else {
+            return Err(DecoderError::Custom("empty slice"));
+        };
+        // "advance" the header, see comments in fastrlp impl below
+        let s = if s.is_empty() { &rlp.as_raw()[1..] } else { s };
+        match *first {
+            0x01 => rlp::decode(s).map(TypedTransaction::EIP2930),
+            0x02 => rlp::decode(s).map(TypedTransaction::EIP1559),
+            _ => Err(DecoderError::Custom("invalid tx type")),
         }
-        if first == 0x02 {
-            return rlp::decode(s).map(TypedTransaction::EIP1559)
-        }
-        Err(DecoderError::Custom("invalid tx type"))
     }
 }
 
@@ -1330,26 +1330,19 @@ mod tests {
 
     #[test]
     fn can_recover_sender() {
-        let bytes = hex::decode("f85f800182520894095e7baea6a6c7c4c2dfeb977efac326af552d870a801ba048b55bfa915ac795c431978d8a6a992b628d557da5ff759b307d495a36649353a0efffd310ac743f371de3b9f7f9cb56c0b28ad43601b4ab949f53faa07bd2c804").unwrap();
+        // random mainnet tx: https://etherscan.io/tx/0x86718885c4b4218c6af87d3d0b0d83e3cc465df2a05c048aa4db9f1a6f9de91f
+        let bytes = hex::decode("02f872018307910d808507204d2cb1827d0094388c818ca8b9251b393131c08a736a67ccb19297880320d04823e2701c80c001a0cf024f4815304df2867a1a74e9d2707b6abda0337d2d54a4438d453f4160f190a07ac0e6b3bc9395b5b9c8b9e6d77204a236577a5b18467b9175c01de4faa208d9").unwrap();
 
-        let tx: TypedTransaction = rlp::decode(&bytes).expect("decoding TypedTransaction failed");
-        let tx = match tx {
-            TypedTransaction::Legacy(tx) => tx,
-            _ => panic!("Invalid typed transaction"),
+        let Ok(TypedTransaction::EIP1559(tx)) = rlp::decode(&bytes) else {
+            panic!("decoding TypedTransaction failed");
         };
-        assert_eq!(tx.input, Bytes::from(b""));
-        assert_eq!(tx.gas_price, U256::from(0x01u64));
-        assert_eq!(tx.gas_limit, U256::from(0x5208u64));
-        assert_eq!(tx.nonce, U256::from(0x00u64));
-        if let TransactionKind::Call(ref to) = tx.kind {
-            assert_eq!(*to, "095e7baea6a6c7c4c2dfeb977efac326af552d87".parse().unwrap());
-        } else {
-            panic!();
-        }
-        assert_eq!(tx.value, U256::from(0x0au64));
+        assert_eq!(
+            tx.hash(),
+            "0x86718885c4b4218c6af87d3d0b0d83e3cc465df2a05c048aa4db9f1a6f9de91f".parse().unwrap()
+        );
         assert_eq!(
             tx.recover().unwrap(),
-            "0f65fe9276bc9a24ae7083ae28e2660ef72df99e".parse().unwrap()
+            "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5".parse().unwrap()
         );
     }
 

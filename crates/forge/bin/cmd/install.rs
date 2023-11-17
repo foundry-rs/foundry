@@ -15,7 +15,6 @@ use std::{
     path::{Path, PathBuf},
     str,
 };
-use tracing::{trace, warn};
 use yansi::Paint;
 
 static DEPENDENCY_VERSION_TAG_REGEX: Lazy<Regex> =

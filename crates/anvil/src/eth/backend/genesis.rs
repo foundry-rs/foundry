@@ -107,21 +107,21 @@ pub(crate) struct AtGenesisStateDb<'a> {
 
 impl<'a> DatabaseRef for AtGenesisStateDb<'a> {
     type Error = DatabaseError;
-    fn basic(&self, address: aAddress) -> DatabaseResult<Option<AccountInfo>> {
+    fn basic_ref(&self, address: aAddress) -> DatabaseResult<Option<AccountInfo>> {
         if let Some(acc) = self.accounts.get(&(address.to_ethers())).cloned() {
             return Ok(Some(acc))
         }
-        self.db.basic(address)
+        self.db.basic_ref(address)
     }
 
-    fn code_by_hash(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
+    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
         if let Some((_, acc)) = self.accounts.iter().find(|(_, acc)| acc.code_hash == code_hash) {
             return Ok(acc.code.clone().unwrap_or_default())
         }
-        self.db.code_by_hash(code_hash)
+        self.db.code_by_hash_ref(code_hash)
     }
 
-    fn storage(&self, address: aAddress, index: U256) -> DatabaseResult<U256> {
+    fn storage_ref(&self, address: aAddress, index: U256) -> DatabaseResult<U256> {
         if let Some(acc) = self
             .genesis
             .as_ref()
@@ -134,11 +134,11 @@ impl<'a> DatabaseRef for AtGenesisStateDb<'a> {
                 .unwrap_or_default();
             return Ok(value.into_uint().to_alloy())
         }
-        self.db.storage(address, index)
+        self.db.storage_ref(address, index)
     }
 
-    fn block_hash(&self, number: U256) -> DatabaseResult<B256> {
-        self.db.block_hash(number)
+    fn block_hash_ref(&self, number: U256) -> DatabaseResult<B256> {
+        self.db.block_hash_ref(number)
     }
 }
 

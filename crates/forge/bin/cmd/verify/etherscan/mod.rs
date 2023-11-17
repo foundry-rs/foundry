@@ -21,7 +21,6 @@ use std::{
     fmt::Debug,
     path::{Path, PathBuf},
 };
-use tracing::{error, trace, warn};
 
 mod flatten;
 mod standard_json;
@@ -69,7 +68,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             return Ok(())
         }
 
-        trace!(target : "forge::verify", ?verify_args,  "submitting verification request");
+        trace!(target: "forge::verify", ?verify_args, "submitting verification request");
 
         let retry: Retry = args.retry.into();
         let resp = retry.run_async(|| {
@@ -81,11 +80,11 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     .wrap_err_with(|| {
                         // valid json
                         let args = serde_json::to_string(&verify_args).unwrap();
-                        error!(target : "forge::verify",  ?args, "Failed to submit verification");
+                        error!(target: "forge::verify", ?args, "Failed to submit verification");
                         format!("Failed to submit contract verification, payload:\n{args}")
                     })?;
 
-                trace!(target : "forge::verify",  ?resp, "Received verification response");
+                trace!(target: "forge::verify", ?resp, "Received verification response");
 
                 if resp.status == "0" {
                     if resp.result == "Contract source code already verified" {
@@ -154,7 +153,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         .await
                         .wrap_err("Failed to request verification status")?;
 
-                    trace!(target : "forge::verify",  ?resp, "Received verification response");
+                    trace!(target: "forge::verify", ?resp, "Received verification response");
 
                     eprintln!(
                         "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
@@ -270,7 +269,7 @@ impl EtherscanVerificationProvider {
         let base_url = etherscan_config
             .as_ref()
             .and_then(|c| c.browser_url.as_deref())
-            .or_else(|| chain.etherscan_urls().map(|urls| urls.1));
+            .or_else(|| chain.etherscan_urls().map(|(_, url)| url));
 
         let etherscan_key =
             etherscan_key.or_else(|| etherscan_config.as_ref().map(|c| c.key.as_str()));
@@ -280,7 +279,7 @@ impl EtherscanVerificationProvider {
         builder = if let Some(api_url) = api_url {
             builder.with_api_url(api_url)?.with_url(base_url.unwrap_or(api_url))?
         } else {
-            builder.chain(chain.to_owned().try_into()?)?
+            builder.chain(chain)?
         };
 
         builder

@@ -5,27 +5,26 @@ use anvil_rpc::{
     response::{Response, RpcResponse},
 };
 use axum::{
-    extract::{rejection::JsonRejection, Extension},
+    extract::{rejection::JsonRejection, State},
     Json,
 };
 use futures::{future, FutureExt};
-use tracing::{trace, warn};
 
-/// Handles incoming JSON-RPC Request
-pub async fn handle<Handler: RpcHandler>(
+/// Handles incoming JSON-RPC Request.
+// NOTE: `handler` must come first because the `request` extractor consumes the request body.
+pub async fn handle<Http: RpcHandler, Ws>(
+    State((handler, _)): State<(Http, Ws)>,
     request: Result<Json<Request>, JsonRejection>,
-    Extension(handler): Extension<Handler>,
 ) -> Json<Response> {
-    match request {
+    Json(match request {
+        Ok(Json(req)) => handle_request(req, handler)
+            .await
+            .unwrap_or_else(|| Response::error(RpcError::invalid_request())),
         Err(err) => {
             warn!(target: "rpc", ?err, "invalid request");
-            Response::error(RpcError::invalid_request()).into()
+            Response::error(RpcError::invalid_request())
         }
-        Ok(req) => handle_request(req.0, handler)
-            .await
-            .unwrap_or_else(|| Response::error(RpcError::invalid_request()))
-            .into(),
-    }
+    })
 }
 
 /// Handle the JSON-RPC [Request]

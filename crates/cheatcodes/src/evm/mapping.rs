@@ -119,7 +119,7 @@ pub(crate) fn step(mapping_slots: &mut HashMap<Address, MappingSlots>, interpret
             if interpreter.stack.peek(1) == Ok(U256::from(0x40)) {
                 let address = interpreter.contract.address;
                 let offset = interpreter.stack.peek(0).expect("stack size > 1").saturating_to();
-                let data = interpreter.memory.slice(offset, 0x40);
+                let data = interpreter.shared_memory.slice(offset, 0x40);
                 let low = B256::from_slice(&data[..0x20]);
                 let high = B256::from_slice(&data[0x20..]);
                 let result = keccak256(data);

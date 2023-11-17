@@ -17,7 +17,6 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
-use tracing::{error, trace};
 
 /// The general purpose trait for handling RPC requests and subscriptions
 #[async_trait::async_trait]

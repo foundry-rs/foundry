@@ -8,7 +8,6 @@ use clap::{Parser, Subcommand, ValueHint};
 use ethers_core::types::{BlockId, NameOrAddress};
 use eyre::Result;
 use foundry_cli::opts::{EtherscanOpts, RpcOpts};
-use foundry_common::serde_helpers::Numeric;
 use std::{path::PathBuf, str::FromStr};
 
 const VERSION_MESSAGE: &str = concat!(
@@ -874,8 +873,7 @@ pub struct ToBaseArgs {
 }
 
 pub fn parse_slot(s: &str) -> Result<B256> {
-    let slot = Numeric::from_str(s).map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))?;
-    let slot: U256 = slot.into();
+    let slot = U256::from_str(s).map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))?;
     Ok(B256::from(slot))
 }
 

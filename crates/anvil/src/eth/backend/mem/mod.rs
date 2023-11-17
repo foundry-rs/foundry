@@ -100,7 +100,6 @@ use std::{
 };
 use storage::{Blockchain, MinedTransaction};
 use tokio::sync::RwLock as AsyncRwLock;
-use tracing::{trace, warn};
 use trie_db::{Recorder, Trie};
 
 pub mod cache;
@@ -283,7 +282,7 @@ impl Backend {
                 // accounts concurrently by spawning the job to a new task
                 genesis_accounts_futures.push(tokio::task::spawn(async move {
                     let db = db.read().await;
-                    let info = db.basic(address.to_alloy())?.unwrap_or_default();
+                    let info = db.basic_ref(address.to_alloy())?.unwrap_or_default();
                     Ok::<_, DatabaseError>((address, info))
                 }));
             }
@@ -357,7 +356,7 @@ impl Backend {
 
     /// Returns the `AccountInfo` from the database
     pub async fn get_account(&self, address: Address) -> DatabaseResult<AccountInfo> {
-        Ok(self.db.read().await.basic(address)?.unwrap_or_default())
+        Ok(self.db.read().await.basic_ref(address)?.unwrap_or_default())
     }
 
     /// Whether we're forked off some remote client
@@ -1170,7 +1169,7 @@ impl Backend {
         let to = if let Some(to) = request.to {
             to.to_alloy()
         } else {
-            let nonce = state.basic(from)?.unwrap_or_default().nonce;
+            let nonce = state.basic_ref(from)?.unwrap_or_default().nonce;
             from.create(nonce)
         };
 
@@ -1727,8 +1726,8 @@ impl Backend {
     ) -> Result<B256, BlockchainError> {
         self.with_database_at(block_request, |db, _| {
             trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
-            let val = db.storage(address, index)?;
-            Ok(u256_to_h256_be(val.to_ethers()).to_alloy())
+            let val = db.storage_ref(address, index)?;
+            Ok(u256_to_h256_be(val.to_ethers()))
         })
         .await?
     }
@@ -1754,7 +1753,7 @@ impl Backend {
         D: DatabaseRef<Error = DatabaseError>,
     {
         trace!(target: "backend", "get code for {:?}", address);
-        let account = state.basic(address)?.unwrap_or_default();
+        let account = state.basic_ref(address)?.unwrap_or_default();
         if account.code_hash == KECCAK_EMPTY {
             // if the code hash is `KECCAK_EMPTY`, we check no further
             return Ok(Default::default())
@@ -1762,7 +1761,7 @@ impl Backend {
         let code = if let Some(code) = account.code {
             code
         } else {
-            state.code_by_hash(account.code_hash)?
+            state.code_by_hash_ref(account.code_hash)?
         };
         Ok(code.bytes()[..code.len()].to_vec().into())
     }
@@ -1788,7 +1787,7 @@ impl Backend {
         D: DatabaseRef<Error = DatabaseError>,
     {
         trace!(target: "backend", "get balance for {:?}", address);
-        Ok(state.basic(address)?.unwrap_or_default().balance)
+        Ok(state.basic_ref(address)?.unwrap_or_default().balance)
     }
 
     /// Returns the nonce of the address
@@ -1812,7 +1811,7 @@ impl Backend {
         };
         self.with_database_at(final_block_request, |db, _| {
             trace!(target: "backend", "get nonce for {:?}", address);
-            Ok(U256::from(db.basic(address)?.unwrap_or_default().nonce))
+            Ok(U256::from(db.basic_ref(address)?.unwrap_or_default().nonce))
         })
         .await?
     }

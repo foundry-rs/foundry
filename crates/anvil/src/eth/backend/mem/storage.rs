@@ -481,7 +481,7 @@ mod tests {
 
         let loaded = storage.get(&one).unwrap();
 
-        let acc = loaded.basic(addr).unwrap().unwrap();
+        let acc = loaded.basic_ref(addr).unwrap().unwrap();
         assert_eq!(acc.balance, rU256::from(1337u64));
     }
 
@@ -511,7 +511,7 @@ mod tests {
             let hash = B256::from(U256::from(idx));
             let addr = Address::from_word(hash);
             let loaded = storage.get(&hash).unwrap();
-            let acc = loaded.basic(addr).unwrap().unwrap();
+            let acc = loaded.basic_ref(addr).unwrap().unwrap();
             let balance = (idx * 2) as u64;
             assert_eq!(acc.balance, rU256::from(balance));
         }

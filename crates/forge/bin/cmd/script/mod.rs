@@ -70,12 +70,12 @@ mod verify;
 
 /// List of Chains that support Shanghai.
 static SHANGHAI_ENABLED_CHAINS: &[Chain] = &[
-    // Ethereum Mainnet
     Chain::Mainnet,
-    // Goerli
     Chain::Goerli,
-    // Sepolia
     Chain::Sepolia,
+    Chain::OptimismGoerli,
+    Chain::OptimismSepolia,
+    Chain::BaseGoerli,
 ];
 
 // Loads project's figment and merges the build cli arguments into it
@@ -806,7 +806,7 @@ mod tests {
             "blacksmith",
             "--broadcast",
             "--verify",
-            "-vvvv",
+            "-vvvvv",
         ]);
         assert_eq!(
             args.verifier.verifier_url,
@@ -854,7 +854,7 @@ mod tests {
         ]);
 
         let config = args.load_config();
-        let mumbai = config.get_etherscan_api_key(Some(NamedChain::PolygonMumbai));
+        let mumbai = config.get_etherscan_api_key(Some(NamedChain::PolygonMumbai.into()));
         assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
     }
 
@@ -933,9 +933,9 @@ mod tests {
             evm_opts.fork_url,
             Some("https://polygon-mumbai.g.alchemy.com/v2/123456".to_string())
         );
-        let etherscan = config.get_etherscan_api_key(Some(80001u64));
+        let etherscan = config.get_etherscan_api_key(Some(80001u64.into()));
         assert_eq!(etherscan, Some("polygonkey".to_string()));
-        let etherscan = config.get_etherscan_api_key(Option::<u64>::None);
+        let etherscan = config.get_etherscan_api_key(None);
         assert_eq!(etherscan, Some("polygonkey".to_string()));
     }
 
@@ -975,9 +975,9 @@ mod tests {
             evm_opts.fork_url,
             Some("https://polygon-mumbai.g.alchemy.com/v2/123456".to_string())
         );
-        let etherscan = config.get_etherscan_api_key(Some(80001u64));
+        let etherscan = config.get_etherscan_api_key(Some(80001u64.into()));
         assert_eq!(etherscan, Some("polygonkey".to_string()));
-        let etherscan = config.get_etherscan_api_key(Option::<u64>::None);
+        let etherscan = config.get_etherscan_api_key(None);
         assert_eq!(etherscan, Some("polygonkey".to_string()));
     }
 

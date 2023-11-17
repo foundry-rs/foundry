@@ -5,7 +5,6 @@ use ethers::types::{Address, Signature};
 use foundry_evm::hashbrown::HashSet;
 use parking_lot::RwLock;
 use std::sync::Arc;
-use tracing::trace;
 
 /// Manages user modifications that may affect the node's behavior
 ///

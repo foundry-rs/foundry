@@ -45,7 +45,7 @@ impl CommentTag {
                 }
             }
             _ => {
-                tracing::warn!(target: "forge::doc", tag = trimmed, "unknown comment tag. custom tags must be preceded by `custom:`");
+                warn!(target: "forge::doc", tag=trimmed, "unknown comment tag. custom tags must be preceded by `custom:`");
                 return None
             }
         };

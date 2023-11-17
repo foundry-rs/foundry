@@ -29,7 +29,6 @@ use foundry_evm::{
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
 use std::sync::Arc;
-use tracing::{trace, warn};
 
 /// Represents an executed transaction (transacted on the DB)
 pub struct ExecutedTransaction {

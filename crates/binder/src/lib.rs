@@ -2,6 +2,9 @@
 
 #![warn(unused_crate_dependencies)]
 
+#[macro_use]
+extern crate tracing;
+
 use crate::utils::{GitReference, GitRemote};
 use ethers_contract::MultiAbigen;
 pub use foundry_config::Config;
@@ -10,7 +13,7 @@ use std::{
     process::{Command, Stdio},
 };
 use tempfile::{tempdir, TempDir};
-use tracing::trace;
+
 pub use url::Url;
 
 pub mod utils;

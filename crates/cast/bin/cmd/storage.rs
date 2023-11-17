@@ -3,10 +3,7 @@ use alloy_primitives::{B256, U256};
 use cast::Cast;
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
-use ethers_core::{
-    abi::ethabi::ethereum_types::BigEndianHash,
-    types::{BlockId, NameOrAddress},
-};
+use ethers_core::types::{BlockId, NameOrAddress};
 use ethers_providers::Middleware;
 use eyre::Result;
 use foundry_block_explorers::Client;
@@ -126,9 +123,9 @@ impl StorageArgs {
             eyre::bail!("You must provide an Etherscan API key if you're fetching a remote contract's storage.");
         }
 
-        let chain = utils::get_chain(config.chain_id, &provider).await?;
+        let chain = utils::get_chain(config.chain, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-        let client = Client::new(chain.named()?, api_key)?;
+        let client = Client::new(chain, api_key)?;
         let addr = address
             .as_address()
             .ok_or_else(|| eyre::eyre!("Could not resolve address"))?
@@ -195,52 +192,53 @@ async fn fetch_and_print_storage(
         Ok(())
     } else {
         let layout = artifact.storage_layout.as_ref().unwrap().clone();
-        let values = fetch_storage_values(provider, address, &layout).await?;
+        let values = fetch_storage_slots(provider, address, &layout).await?;
         print_storage(layout, values, pretty)
     }
 }
 
-/// Overrides the `value` field in [StorageLayout] with the slot's value to avoid creating new data
-/// structures.
-async fn fetch_storage_values(
+async fn fetch_storage_slots(
     provider: RetryProvider,
     address: NameOrAddress,
     layout: &StorageLayout,
-) -> Result<Vec<String>> {
-    // TODO: Batch request; handle array values
+) -> Result<Vec<B256>> {
+    // TODO: Batch request
     let futures: Vec<_> = layout
         .storage
         .iter()
         .map(|slot| {
-            let slot_h256 = B256::from(U256::from_str(&slot.slot)?);
-            Ok(provider.get_storage_at(address.clone(), slot_h256.to_ethers(), None))
+            let slot = B256::from(U256::from_str(&slot.slot)?);
+            Ok(provider.get_storage_at(address.clone(), slot.to_ethers(), None))
         })
         .collect::<Result<_>>()?;
 
-    // TODO: Better format values according to their Solidity type
-    join_all(futures).await.into_iter().map(|value| Ok(format!("{}", value?.into_uint()))).collect()
+    join_all(futures).await.into_iter().map(|r| Ok(r?.to_alloy())).collect()
 }
 
-fn print_storage(layout: StorageLayout, values: Vec<String>, pretty: bool) -> Result<()> {
+fn print_storage(layout: StorageLayout, values: Vec<B256>, pretty: bool) -> Result<()> {
     if !pretty {
         println!("{}", serde_json::to_string_pretty(&serde_json::to_value(layout)?)?);
-        return Ok(())
+        return Ok(());
     }
 
     let mut table = Table::new();
     table.load_preset(ASCII_MARKDOWN);
-    table.set_header(vec!["Name", "Type", "Slot", "Offset", "Bytes", "Value", "Contract"]);
+    table.set_header(["Name", "Type", "Slot", "Offset", "Bytes", "Value", "Hex Value", "Contract"]);
 
     for (slot, value) in layout.storage.into_iter().zip(values) {
         let storage_type = layout.types.get(&slot.storage_type);
-        table.add_row(vec![
-            slot.label,
-            storage_type.as_ref().map_or("?".to_string(), |t| t.label.clone()),
-            slot.slot,
-            slot.offset.to_string(),
-            storage_type.as_ref().map_or("?".to_string(), |t| t.number_of_bytes.clone()),
-            value,
-            slot.contract,
+        let raw_value_bytes = value.0;
+        let converted_value = U256::from_be_bytes(raw_value_bytes);
+
+        table.add_row([
+            slot.label.as_str(),
+            storage_type.map_or("?", |t| &t.label),
+            &slot.slot,
+            &slot.offset.to_string(),
+            &storage_type.map_or("?", |t| &t.number_of_bytes),
+            &converted_value.to_string(),
+            &value.to_string(),
+            &slot.contract,
         ]);
     }
 

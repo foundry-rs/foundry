@@ -99,8 +99,7 @@ use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::channel::{mpsc::Receiver, oneshot};
 use itertools::Itertools;
 use parking_lot::RwLock;
-use std::{clone, collections::HashSet, future::Future, sync::Arc, time::Duration};
-use tracing::{trace, warn};
+use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
@@ -1784,12 +1783,13 @@ impl EthApi {
     pub async fn anvil_metadata(&self) -> Result<AnvilMetadata> {
         node_info!("anvil_metadata");
         let fork_config = self.backend.get_fork();
-
+        let chain_id_uint = U256::from(self.backend.chain_id().low_u64());
+        let latest_block_number_uint = U64::from(self.backend.best_number().low_u64());
         Ok(AnvilMetadata {
             client_version: CLIENT_VERSION,
-            chain_id: self.backend.chain_id(),
+            chain_id: chain_id_uint,
             latest_block_hash: self.backend.best_hash(),
-            latest_block_number: self.backend.best_number(),
+            latest_block_number: latest_block_number_uint,
             instance_id: *self.instance_id.read(),
             forked_network: fork_config.map(|cfg| ForkedNetwork {
                 chain_id: U256::from(cfg.chain_id()).into(),

@@ -106,7 +106,7 @@ impl ProviderBuilder {
             timeout_retry: 8,
             initial_backoff: 800,
             timeout: REQUEST_TIMEOUT,
-            // alchemy max cpus <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
+            // alchemy max cpus <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
             jwt: None,
             headers: vec![],
@@ -163,7 +163,7 @@ impl ProviderBuilder {
 
     /// Sets the number of assumed available compute units per second
     ///
-    /// See also, <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
+    /// See also, <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     pub fn compute_units_per_second(mut self, compute_units_per_second: u64) -> Self {
         self.compute_units_per_second = compute_units_per_second;
         self
@@ -171,7 +171,7 @@ impl ProviderBuilder {
 
     /// Sets the number of assumed available compute units per second
     ///
-    /// See also, <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
+    /// See also, <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     pub fn compute_units_per_second_opt(mut self, compute_units_per_second: Option<u64>) -> Self {
         if let Some(cups) = compute_units_per_second {
             self.compute_units_per_second = cups;
@@ -286,6 +286,12 @@ pub async fn estimate_eip1559_fees<P: TempProvider>(
         // handle chains that deviate from `eth_feeHistory` and have their own oracle
         match chain {
             NamedChain::Polygon | NamedChain::PolygonMumbai => {
+                // TODO: phase this out somehow
+                let chain = match chain {
+                    NamedChain::Polygon => ethers_core::types::Chain::Polygon,
+                    NamedChain::PolygonMumbai => ethers_core::types::Chain::PolygonMumbai,
+                    _ => unreachable!(),
+                };
                 let estimator = Polygon::new(chain)?.category(GasCategory::Standard);
                 let (a, b) = estimator.estimate_eip1559_fees().await?;
                 return Ok((a.to_alloy(), b.to_alloy()));

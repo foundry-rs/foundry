@@ -16,7 +16,6 @@ use std::{
     time::Duration,
 };
 use tokio::time::Interval;
-use tracing::trace;
 
 #[derive(Debug, Clone)]
 pub struct Miner {
