@@ -275,12 +275,7 @@ pub async fn estimate_eip1559_fees<P: TempProvider>(
     let chain = if let Some(chain) = chain {
         chain
     } else {
-        provider
-            .get_chain_id()
-            .await
-            .success()
-            .ok_or_else(|| eyre::eyre!("Failed to get chain id"))?
-            .to()
+        provider.get_chain_id().await.wrap_err("Failed to get chain id")?.to()
     };
 
     if let Ok(chain) = NamedChain::try_from(chain) {
@@ -300,11 +295,7 @@ pub async fn estimate_eip1559_fees<P: TempProvider>(
             _ => {}
         }
     }
-    provider
-        .estimate_eip1559_fees(None)
-        .await
-        .success()
-        .ok_or_else(|| eyre::eyre!("Failed fetch EIP1559 fees"))
+    provider.estimate_eip1559_fees(None).await.wrap_err("Failed fetch EIP1559 fees")
 }
 
 #[cfg(not(windows))]

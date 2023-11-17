@@ -6,6 +6,7 @@ use crate::{
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{Block, BlockId, BlockNumberOrTag, Transaction};
+use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
@@ -181,13 +182,7 @@ where
                     // serialize & deserialize back to U256
                     let idx_req = B256::from(idx);
                     let storage = provider.get_storage_at(address, idx_req, block_id).await;
-                    (
-                        storage.success().ok_or_else(|| {
-                            eyre::eyre!("could not fetch slot {idx} from {address}")
-                        }),
-                        address,
-                        idx,
-                    )
+                    (storage.wrap_err("could not fetch slot {idx} from {address}"), address, idx)
                 });
                 self.pending_requests.push(ProviderRequest::Storage(fut));
             }
@@ -204,23 +199,8 @@ where
             let nonce = provider.get_transaction_count(address, block_id);
             let code =
                 provider.get_code_at(address, block_id.unwrap_or(BlockNumberOrTag::Latest.into()));
-            let (balance, nonce, code) = tokio::join!(balance, nonce, code);
-            (
-                balance
-                    .success()
-                    .ok_or_else(|| eyre::eyre!("could not fetch balance for {address}"))
-                    .and_then(|balance| {
-                        Ok((
-                            balance,
-                            nonce.success().ok_or_else(|| {
-                                eyre::eyre!("could not fetch nonce for {address}")
-                            })?,
-                            code.success()
-                                .ok_or_else(|| eyre::eyre!("could not fetch code for {address}"))?,
-                        ))
-                    }),
-                address,
-            )
+            let resp = tokio::try_join!(balance, nonce, code).map_err(Into::into);
+            (resp, address)
         });
         ProviderRequest::Account(fut)
     }
@@ -242,11 +222,8 @@ where
     fn request_full_block(&mut self, number: BlockId, sender: FullBlockSender) {
         let provider = self.provider.clone();
         let fut = Box::pin(async move {
-            let block = provider
-                .get_block(number, true)
-                .await
-                .success()
-                .ok_or_else(|| eyre::eyre!("could not fetch block {number:?}"));
+            let block =
+                provider.get_block(number, true).await.wrap_err("could not fetch block {number:?}");
             (sender, block, number)
         });
 
@@ -260,8 +237,7 @@ where
             let block = provider
                 .get_transaction_by_hash(tx)
                 .await
-                .success()
-                .ok_or_else(|| eyre::eyre!("could not get transaction {tx}"));
+                .wrap_err("could not get transaction {tx}");
             (sender, block, tx)
         });
 
@@ -282,8 +258,7 @@ where
                     let block = provider
                         .get_block_by_number(number, false)
                         .await
-                        .success()
-                        .ok_or_else(|| eyre::eyre!("failed to get block"));
+                        .wrap_err("failed to get block");
 
                     let block_hash = match block {
                         Ok(Some(block)) => Ok(block
@@ -772,7 +747,7 @@ mod tests {
     async fn can_read_write_cache() {
         let provider = get_http_provider(ENDPOINT);
 
-        let block_num = provider.get_block_number().await.success().unwrap().to();
+        let block_num = provider.get_block_number().await.unwrap().to();
 
         let config = Config::figment();
         let mut evm_opts = config.extract::<EvmOpts>().unwrap();
