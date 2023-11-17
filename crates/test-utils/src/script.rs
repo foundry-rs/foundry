@@ -183,8 +183,13 @@ impl ScriptTester {
         address_indexes: &[(Address, u32)],
     ) -> &mut Self {
         for (address, expected_increment) in address_indexes {
-            let nonce =
-                self.provider.as_ref().unwrap().get_transaction_count(*address, None).await.unwrap();
+            let nonce = self
+                .provider
+                .as_ref()
+                .unwrap()
+                .get_transaction_count(*address, None)
+                .await
+                .unwrap();
             let prev_nonce = self.address_nonces.get(address).unwrap();
 
             assert_eq!(nonce, (prev_nonce + U256::from(*expected_increment)));

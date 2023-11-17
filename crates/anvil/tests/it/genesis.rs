@@ -2,9 +2,9 @@
 
 use std::str::FromStr;
 
-use anvil::{genesis::Genesis, spawn, NodeConfig};
-use alloy_providers::provider::TempProvider;
 use alloy_primitives::{Address, U256, U64};
+use alloy_providers::provider::TempProvider;
+use anvil::{genesis::Genesis, spawn, NodeConfig};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_apply_genesis() {

@@ -125,6 +125,7 @@ dependencies = [
  "alloy-primitives",
  "serde",
  "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -134,9 +135,6 @@ dependencies = [
  "alloy-json-rpc",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-transports",
- "pin-project",
- "tower",
 ]
 
 [[package]]
@@ -167,19 +165,16 @@ dependencies = [
 name = "alloy-providers"
 version = "0.1.0"
 dependencies = [
- "alloy-json-rpc",
  "alloy-networks",
  "alloy-primitives",
+ "alloy-rpc-client",
  "alloy-rpc-types",
- "alloy-transports",
+ "alloy-transport",
+ "alloy-transport-http",
  "async-trait",
  "auto_impl",
- "futures-util",
- "once_cell",
  "reqwest",
  "serde",
- "serde_json",
- "serial_test",
  "thiserror",
 ]
 
@@ -207,19 +202,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-rpc-client"
+version = "0.1.0"
+dependencies = [
+ "alloy-json-rpc",
+ "alloy-transport",
+ "alloy-transport-http",
+ "futures",
+ "pin-project",
+ "reqwest",
+ "serde_json",
+ "tower",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "alloy-rpc-types"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
- "bytes",
  "itertools 0.11.0",
  "jsonrpsee-types",
  "serde",
  "serde_json",
  "serde_with",
  "thiserror",
- "url",
 ]
 
 [[package]]
@@ -259,15 +268,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "alloy-transports"
+name = "alloy-transport"
 version = "0.1.0"
 dependencies = [
  "alloy-json-rpc",
  "base64 0.21.5",
- "futures-channel",
- "hyper",
- "pin-project",
- "reqwest",
  "serde",
  "serde_json",
  "thiserror",
@@ -275,6 +280,18 @@ dependencies = [
  "tower",
  "url",
  "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "alloy-transport-http"
+version = "0.1.0"
+dependencies = [
+ "alloy-json-rpc",
+ "alloy-transport",
+ "reqwest",
+ "serde_json",
+ "tower",
+ "url",
 ]
 
 [[package]]
@@ -366,7 +383,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-providers",
  "alloy-rpc-types",
- "alloy-transports",
+ "alloy-transport",
  "anvil-core",
  "anvil-rpc",
  "anvil-server",
@@ -2875,7 +2892,8 @@ dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-providers",
- "alloy-transports",
+ "alloy-transport",
+ "alloy-transport-http",
  "async-trait",
  "auto_impl",
  "clap",
@@ -3033,7 +3051,7 @@ dependencies = [
  "alloy-providers",
  "alloy-rpc-types",
  "alloy-sol-types",
- "alloy-transports",
+ "alloy-transport",
  "const-hex",
  "ethers",
  "ethers-contract",

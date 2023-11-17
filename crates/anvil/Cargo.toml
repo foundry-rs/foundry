@@ -37,7 +37,7 @@ memory-db = "0.29"
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types.workspace = true
 alloy-providers.workspace = true
-alloy-transports.workspace = true
+alloy-transport.workspace = true
 
 # axum related
 axum.workspace = true
