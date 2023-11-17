@@ -73,6 +73,12 @@ thiserror = "1"
 tokio = { version = "1", features = ["time"] }
 watchexec = "2"
 
+# doc server
+axum = { workspace = true, features = ["ws"] }
+hyper.workspace = true
+tower-http = { workspace = true, features = ["fs"] }
+opener = "0.6"
+
 [dev-dependencies]
 anvil.workspace = true
 foundry-test-utils.workspace = true
@@ -84,7 +90,7 @@ pretty_assertions.workspace = true
 serial_test = "2"
 svm = { package = "svm-rs", version = "0.3", default-features = false, features = ["rustls"] }
 tempfile = "3"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [features]
 default = ["rustls"]

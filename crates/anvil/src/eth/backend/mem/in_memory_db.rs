@@ -15,7 +15,6 @@ use foundry_evm::{
     fork::BlockchainDb,
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
-use tracing::{trace, warn};
 
 // reexport for convenience
 pub use foundry_evm::{backend::MemDb, revm::db::DatabaseRef};
@@ -43,7 +42,7 @@ impl Db for MemDb {
                 let code = if let Some(code) = v.info.code {
                     code
                 } else {
-                    self.inner.code_by_hash(v.info.code_hash)?
+                    self.inner.code_by_hash_ref(v.info.code_hash)?
                 }
                 .to_checked();
                 Ok((
@@ -178,13 +177,13 @@ mod tests {
 
         load_db.load_state(state).unwrap();
 
-        let loaded_account = load_db.basic(test_addr.to_alloy()).unwrap().unwrap();
+        let loaded_account = load_db.basic_ref(test_addr.to_alloy()).unwrap().unwrap();
 
         assert_eq!(loaded_account.balance, rU256::from(123456));
-        assert_eq!(load_db.code_by_hash(loaded_account.code_hash).unwrap(), contract_code);
+        assert_eq!(load_db.code_by_hash_ref(loaded_account.code_hash).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
         assert_eq!(
-            load_db.storage(test_addr.to_alloy(), rU256::from(1234567)).unwrap(),
+            load_db.storage_ref(test_addr.to_alloy(), rU256::from(1234567)).unwrap(),
             rU256::from(1)
         );
     }
@@ -242,15 +241,21 @@ mod tests {
 
         db.load_state(new_state).unwrap();
 
-        let loaded_account = db.basic(test_addr.to_alloy()).unwrap().unwrap();
-        let loaded_account2 = db.basic(test_addr2.to_alloy()).unwrap().unwrap();
+        let loaded_account = db.basic_ref(test_addr.to_alloy()).unwrap().unwrap();
+        let loaded_account2 = db.basic_ref(test_addr2.to_alloy()).unwrap().unwrap();
 
         assert_eq!(loaded_account2.nonce, 1);
 
         assert_eq!(loaded_account.balance, rU256::from(100100));
-        assert_eq!(db.code_by_hash(loaded_account.code_hash).unwrap(), contract_code);
+        assert_eq!(db.code_by_hash_ref(loaded_account.code_hash).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
-        assert_eq!(db.storage(test_addr.to_alloy(), rU256::from(1234567)).unwrap(), rU256::from(1));
-        assert_eq!(db.storage(test_addr.to_alloy(), rU256::from(1234568)).unwrap(), rU256::from(5));
+        assert_eq!(
+            db.storage_ref(test_addr.to_alloy(), rU256::from(1234567)).unwrap(),
+            rU256::from(1)
+        );
+        assert_eq!(
+            db.storage_ref(test_addr.to_alloy(), rU256::from(1234568)).unwrap(),
+            rU256::from(5)
+        );
     }
 }

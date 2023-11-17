@@ -17,13 +17,9 @@ forgetest!(report_file_coverage, |prj, cmd| {
 
 forgetest!(test_setup_coverage, |prj, cmd| {
     prj.insert_ds_test();
-    prj.inner()
-        .add_source(
-            "AContract.sol",
-            r#"
-// SPDX-license-identifier: MIT
-pragma solidity ^0.8.0;
-
+    prj.add_source(
+        "AContract.sol",
+        r#"
 contract AContract {
     int public i;
 
@@ -36,15 +32,12 @@ contract AContract {
     }
 }
     "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-    prj.inner()
-        .add_source(
-            "AContractTest.sol",
-            r#"
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.10;
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
 import "./test.sol";
 import {AContract} from "./AContract.sol";
 
@@ -61,8 +54,8 @@ contract AContractTest is DSTest {
     }
 }
     "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     let lcov_info = prj.root().join("lcov.info");
     cmd.arg("coverage").args([

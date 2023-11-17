@@ -1,7 +1,4 @@
-//! # foundry-cheatcode-defs
-//!
-//! Foundry cheatcode definitions.
-
+#![doc = include_str!("../README.md")]
 #![warn(missing_docs, unreachable_pub, unused_crate_dependencies, rust_2018_idioms)]
 
 use serde::{Deserialize, Serialize};
@@ -134,7 +131,7 @@ interface Vm {{
     }
 
     #[test]
-    fn defs_up_to_date() {
+    fn spec_up_to_date() {
         ensure_file_contents(Path::new(JSON_PATH), &json_cheatcodes());
     }
 

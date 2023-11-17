@@ -138,8 +138,6 @@ contract Contract {
     let call = contract.method::<_, ()>("deploy", ()).unwrap();
 
     let receipt = call.send().await.unwrap().await.unwrap().unwrap();
-    dbg!(&receipt);
-
     let res = api.ots_get_internal_operations(receipt.transaction_hash).await.unwrap();
 
     assert_eq!(res.len(), 1);

@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate tracing;
+
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;

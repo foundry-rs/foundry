@@ -163,8 +163,8 @@ macro_rules! update_progress {
 }
 
 /// True if the network calculates gas costs differently.
-pub fn has_different_gas_calc(chain: u64) -> bool {
-    if let Chain::Named(chain) = Chain::from(chain) {
+pub fn has_different_gas_calc(chain_id: u64) -> bool {
+    if let Some(chain) = Chain::from(chain_id).named() {
         return matches!(
             chain,
             NamedChain::Arbitrum |
@@ -177,8 +177,8 @@ pub fn has_different_gas_calc(chain: u64) -> bool {
 }
 
 /// True if it supports broadcasting in batches.
-pub fn has_batch_support(chain: u64) -> bool {
-    if let Chain::Named(chain) = Chain::from(chain) {
+pub fn has_batch_support(chain_id: u64) -> bool {
+    if let Some(chain) = Chain::from(chain_id).named() {
         return !matches!(
             chain,
             NamedChain::Arbitrum |
@@ -368,7 +368,7 @@ impl TryFrom<EvmError> for TraceResult {
 pub async fn handle_traces(
     mut result: TraceResult,
     config: &Config,
-    chain: Option<NamedChain>,
+    chain: Option<Chain>,
     labels: Vec<String>,
     verbose: bool,
     debug: bool,

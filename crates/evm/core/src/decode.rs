@@ -7,7 +7,7 @@ use alloy_primitives::B256;
 use alloy_sol_types::{SolCall, SolError, SolInterface, SolValue};
 use ethers_contract::EthLogDecode;
 use ethers_core::{abi::RawLog, types::Log, utils::format_units};
-use foundry_cheatcodes_defs::Vm;
+use foundry_cheatcodes_spec::Vm;
 use foundry_common::SELECTOR_LEN;
 use itertools::Itertools;
 use revm::interpreter::InstructionResult;

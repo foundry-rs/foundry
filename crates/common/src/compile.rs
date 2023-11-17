@@ -85,7 +85,7 @@ impl ProjectCompiler {
     ///     .compile_with(&config.project().unwrap(), |prj| Ok(prj.compile()?))
     ///     .unwrap();
     /// ```
-    #[tracing::instrument(target = "forge::compile", skip_all)]
+    #[instrument(target = "forge::compile", skip_all)]
     pub fn compile_with<F>(self, project: &Project, f: F) -> Result<ProjectCompileOutput>
     where
         F: FnOnce(&Project) -> Result<ProjectCompileOutput>,
@@ -97,15 +97,15 @@ impl ProjectCompiler {
         }
 
         let now = std::time::Instant::now();
-        tracing::trace!("start compiling project");
+        trace!("start compiling project");
 
         let output = term::with_spinner_reporter(|| f(project))?;
 
         let elapsed = now.elapsed();
-        tracing::trace!(?elapsed, "finished compiling");
+        trace!(?elapsed, "finished compiling");
 
         if output.has_compiler_errors() {
-            tracing::warn!("compiled with errors");
+            warn!("compiled with errors");
             eyre::bail!(output.to_string())
         } else if output.is_unchanged() {
             println!("No files changed, compilation skipped");
@@ -207,7 +207,7 @@ impl Display for SizeReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         let mut table = Table::new();
         table.load_preset(ASCII_MARKDOWN);
-        table.set_header(vec![
+        table.set_header([
             Cell::new("Contract").add_attribute(Attribute::Bold).fg(Color::Blue),
             Cell::new("Size (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
             Cell::new("Margin (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
@@ -222,7 +222,7 @@ impl Display for SizeReport {
                 _ => Color::Red,
             };
 
-            table.add_row(vec![
+            table.add_row([
                 Cell::new(name).fg(color),
                 Cell::new(contract.size as f64 / 1000.0).fg(color),
                 Cell::new(margin as f64 / 1000.0).fg(color),

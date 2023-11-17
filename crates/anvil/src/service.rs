@@ -19,7 +19,6 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::time::Interval;
-use tracing::trace;
 
 /// The type that drives the blockchain's state
 ///

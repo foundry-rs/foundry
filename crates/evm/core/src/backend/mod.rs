@@ -594,7 +594,7 @@ impl Backend {
             bool private _failed;
          }
         */
-        let value = self.storage(address, U256::ZERO).unwrap_or_default();
+        let value = self.storage_ref(address, U256::ZERO).unwrap_or_default();
         value.as_le_bytes()[1] != 0
     }
 
@@ -747,11 +747,11 @@ impl Backend {
         let test_contract = match env.tx.transact_to {
             TransactTo::Call(to) => to,
             TransactTo::Create(CreateScheme::Create) => {
-                revm::primitives::create_address(env.tx.caller, env.tx.nonce.unwrap_or_default())
+                env.tx.caller.create(env.tx.nonce.unwrap_or_default())
             }
             TransactTo::Create(CreateScheme::Create2 { salt }) => {
                 let code_hash = B256::from_slice(keccak256(&env.tx.data).as_slice());
-                revm::primitives::create2_address(env.tx.caller, code_hash, salt)
+                env.tx.caller.create2(B256::from(salt), code_hash)
             }
         };
         self.set_test_contract(test_contract);
@@ -768,9 +768,9 @@ impl Backend {
     {
         self.initialize(env);
 
-        match revm::evm_inner::<Self, true>(env, self, &mut inspector).transact() {
+        match revm::evm_inner::<Self>(env, self, Some(&mut inspector)).transact() {
             Ok(res) => Ok(res),
-            Err(e) => eyre::bail!("backend: failed while inspecting: {:?}", e),
+            Err(e) => eyre::bail!("backend: failed while inspecting: {e}"),
         }
     }
 
@@ -1315,6 +1315,9 @@ impl DatabaseExt for Backend {
             // Set the account's nonce and balance.
             state_acc.info.nonce = acc.nonce.unwrap_or_default();
             state_acc.info.balance = acc.balance.to_alloy();
+
+            // Touch the account to ensure the loaded information persists if called in `setUp`.
+            journaled_state.touch(addr);
         }
 
         Ok(())
@@ -1352,70 +1355,35 @@ impl DatabaseExt for Backend {
 impl DatabaseRef for Backend {
     type Error = DatabaseError;
 
-    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         if let Some(db) = self.active_fork_db() {
-            db.basic(address)
+            db.basic_ref(address)
         } else {
-            Ok(self.mem_db.basic(address)?)
+            Ok(self.mem_db.basic_ref(address)?)
         }
     }
 
-    fn code_by_hash(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
         if let Some(db) = self.active_fork_db() {
-            db.code_by_hash(code_hash)
+            db.code_by_hash_ref(code_hash)
         } else {
-            Ok(self.mem_db.code_by_hash(code_hash)?)
+            Ok(self.mem_db.code_by_hash_ref(code_hash)?)
         }
     }
 
-    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
         if let Some(db) = self.active_fork_db() {
-            DatabaseRef::storage(db, address, index)
+            DatabaseRef::storage_ref(db, address, index)
         } else {
-            Ok(DatabaseRef::storage(&self.mem_db, address, index)?)
+            Ok(DatabaseRef::storage_ref(&self.mem_db, address, index)?)
         }
     }
 
-    fn block_hash(&self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash_ref(&self, number: U256) -> Result<B256, Self::Error> {
         if let Some(db) = self.active_fork_db() {
-            db.block_hash(number)
+            db.block_hash_ref(number)
         } else {
-            Ok(self.mem_db.block_hash(number)?)
-        }
-    }
-}
-
-impl<'a> DatabaseRef for &'a mut Backend {
-    type Error = DatabaseError;
-    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        if let Some(db) = self.active_fork_db() {
-            DatabaseRef::basic(db, address)
-        } else {
-            Ok(DatabaseRef::basic(&self.mem_db, address)?)
-        }
-    }
-
-    fn code_by_hash(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        if let Some(db) = self.active_fork_db() {
-            DatabaseRef::code_by_hash(db, code_hash)
-        } else {
-            Ok(DatabaseRef::code_by_hash(&self.mem_db, code_hash)?)
-        }
-    }
-
-    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        if let Some(db) = self.active_fork_db() {
-            DatabaseRef::storage(db, address, index)
-        } else {
-            Ok(DatabaseRef::storage(&self.mem_db, address, index)?)
-        }
-    }
-
-    fn block_hash(&self, number: U256) -> Result<B256, Self::Error> {
-        if let Some(db) = self.active_fork_db() {
-            DatabaseRef::block_hash(db, number)
-        } else {
-            Ok(DatabaseRef::block_hash(&self.mem_db, number)?)
+            Ok(self.mem_db.block_hash_ref(number)?)
         }
     }
 }
@@ -1486,7 +1454,7 @@ pub struct Fork {
 impl Fork {
     /// Returns true if the account is a contract
     pub fn is_contract(&self, acc: Address) -> bool {
-        if let Ok(Some(acc)) = self.db.basic(acc) {
+        if let Ok(Some(acc)) = self.db.basic_ref(acc) {
             if acc.code_hash != KECCAK_EMPTY {
                 return true
             }
@@ -1732,8 +1700,8 @@ impl BackendInner {
             }
         }
         JournaledState::new(
-            self.precompiles().len(),
             precompiles_spec_id_to_primitives_spec_id(self.precompile_id),
+            self.precompiles().addresses().into_iter().copied().collect(),
         )
     }
 }
@@ -1871,7 +1839,7 @@ fn commit_transaction<I: Inspector<Backend>>(
 
         match evm.inspect(inspector) {
             Ok(res) => res.state,
-            Err(e) => eyre::bail!("backend: failed committing transaction: {:?}", e),
+            Err(e) => eyre::bail!("backend: failed committing transaction: {e}"),
         }
     };
 

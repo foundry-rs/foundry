@@ -28,7 +28,7 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
     db::{DatabaseCommit, DatabaseRef},
-    interpreter::{return_ok, CreateScheme, InstructionResult, Memory, Stack},
+    interpreter::{return_ok, CreateScheme, InstructionResult, SharedMemory, Stack},
     primitives::{
         BlockEnv, Bytecode, Env, ExecutionResult, Output, ResultAndState, SpecId, TransactTo, TxEnv,
     },
@@ -94,7 +94,7 @@ impl Executor {
         trace!("deploying local create2 deployer");
         let create2_deployer_account = self
             .backend
-            .basic(DEFAULT_CREATE2_DEPLOYER)?
+            .basic_ref(DEFAULT_CREATE2_DEPLOYER)?
             .ok_or_else(|| DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
         // if the deployer is not currently deployed, deploy the default one
@@ -117,7 +117,7 @@ impl Executor {
     /// Set the balance of an account.
     pub fn set_balance(&mut self, address: Address, amount: U256) -> DatabaseResult<&mut Self> {
         trace!(?address, ?amount, "setting account balance");
-        let mut account = self.backend.basic(address)?.unwrap_or_default();
+        let mut account = self.backend.basic_ref(address)?.unwrap_or_default();
         account.balance = amount;
 
         self.backend.insert_account_info(address, account);
@@ -126,12 +126,12 @@ impl Executor {
 
     /// Gets the balance of an account
     pub fn get_balance(&self, address: Address) -> DatabaseResult<U256> {
-        Ok(self.backend.basic(address)?.map(|acc| acc.balance).unwrap_or_default())
+        Ok(self.backend.basic_ref(address)?.map(|acc| acc.balance).unwrap_or_default())
     }
 
     /// Set the nonce of an account.
     pub fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<&mut Self> {
-        let mut account = self.backend.basic(address)?.unwrap_or_default();
+        let mut account = self.backend.basic_ref(address)?.unwrap_or_default();
         account.nonce = nonce;
 
         self.backend.insert_account_info(address, account);
@@ -488,7 +488,7 @@ impl Executor {
         // we only clone the test contract and cheatcode accounts, that's all we need to evaluate
         // success
         for addr in [address, CHEATCODE_ADDRESS] {
-            let acc = self.backend.basic(addr)?.unwrap_or_default();
+            let acc = self.backend.basic_ref(addr)?.unwrap_or_default();
             backend.insert_account_info(addr, acc);
         }
 
@@ -687,7 +687,7 @@ pub struct RawCallResult {
     /// The raw output of the execution
     pub out: Option<Output>,
     /// The chisel state
-    pub chisel_state: Option<(Stack, Memory, InstructionResult)>,
+    pub chisel_state: Option<(Stack, SharedMemory, InstructionResult)>,
 }
 
 impl Default for RawCallResult {

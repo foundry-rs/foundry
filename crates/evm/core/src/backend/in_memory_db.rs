@@ -29,20 +29,20 @@ impl Default for MemDb {
 
 impl DatabaseRef for MemDb {
     type Error = DatabaseError;
-    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        DatabaseRef::basic(&self.inner, address)
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        DatabaseRef::basic_ref(&self.inner, address)
     }
 
-    fn code_by_hash(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        DatabaseRef::code_by_hash(&self.inner, code_hash)
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        DatabaseRef::code_by_hash_ref(&self.inner, code_hash)
     }
 
-    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        DatabaseRef::storage(&self.inner, address, index)
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        DatabaseRef::storage_ref(&self.inner, address, index)
     }
 
-    fn block_hash(&self, number: U256) -> Result<B256, Self::Error> {
-        DatabaseRef::block_hash(&self.inner, number)
+    fn block_hash_ref(&self, number: U256) -> Result<B256, Self::Error> {
+        DatabaseRef::block_hash_ref(&self.inner, number)
     }
 }
 
@@ -93,20 +93,20 @@ pub struct EmptyDBWrapper(EmptyDB);
 impl DatabaseRef for EmptyDBWrapper {
     type Error = DatabaseError;
 
-    fn basic(&self, _address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic_ref(&self, _address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         // Note: this will always return `Some(AccountInfo)`, for the reason explained above
         Ok(Some(AccountInfo::default()))
     }
 
-    fn code_by_hash(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        Ok(self.0.code_by_hash(code_hash)?)
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        Ok(self.0.code_by_hash_ref(code_hash)?)
     }
-    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        Ok(self.0.storage(address, index)?)
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        Ok(self.0.storage_ref(address, index)?)
     }
 
-    fn block_hash(&self, number: U256) -> Result<B256, Self::Error> {
-        Ok(self.0.block_hash(number)?)
+    fn block_hash_ref(&self, number: U256) -> Result<B256, Self::Error> {
+        Ok(self.0.block_hash_ref(number)?)
     }
 }
 
@@ -143,7 +143,7 @@ mod tests {
         let mut db = CacheDB::new(EmptyDB::default());
         let address = Address::random();
 
-        let info = DatabaseRef::basic(&db, address).unwrap();
+        let info = DatabaseRef::basic_ref(&db, address).unwrap();
         assert!(info.is_none());
         let mut info = info.unwrap_or_default();
         info.balance = U256::from(500u64);

@@ -13,7 +13,6 @@ use std::{
     },
     time::Duration,
 };
-use tracing::warn;
 
 static SELECTOR_DATABASE_URL: &str = "https://api.openchain.xyz/signature-database/v1/";
 static SELECTOR_IMPORT_URL: &str = "https://api.openchain.xyz/signature-database/v1/import";
@@ -317,7 +316,9 @@ impl SignEthClient {
                 SelectorImportRequest { function: functions_and_errors, event: events }
             }
             SelectorImportData::Raw(raw) => {
-                SelectorImportRequest { function: raw.function, event: raw.event }
+                let function_and_error =
+                    raw.function.iter().chain(raw.error.iter()).cloned().collect::<Vec<_>>();
+                SelectorImportRequest { function: function_and_error, event: raw.event }
             }
         };
 
@@ -637,6 +638,7 @@ mod tests {
         let result = parse_signatures(vec![
             "transfer(address,uint256)".to_string(),
             "event Approval(address,address,uint256)".to_string(),
+            "error ERC20InsufficientBalance(address,uint256,uint256)".to_string(),
         ]);
         assert_eq!(
             result,
@@ -644,7 +646,7 @@ mod tests {
                 signatures: RawSelectorImportData {
                     function: vec!["transfer(address,uint256)".to_string()],
                     event: vec!["Approval(address,address,uint256)".to_string()],
-                    ..Default::default()
+                    error: vec!["ERC20InsufficientBalance(address,uint256,uint256)".to_string()]
                 },
                 ..Default::default()
             }

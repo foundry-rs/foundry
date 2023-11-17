@@ -6,6 +6,8 @@ extern crate tracing;
 // Macros useful for testing.
 mod macros;
 
+pub mod fd_lock;
+
 mod filter;
 pub use filter::Filter;
 
@@ -17,7 +19,6 @@ mod script;
 pub use script::{ScriptOutcome, ScriptTester};
 
 // re-exports for convenience
-pub use fd_lock;
 pub use foundry_compilers;
 
 /// Initializes tracing for tests.

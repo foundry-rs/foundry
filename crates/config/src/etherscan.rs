@@ -11,7 +11,6 @@ use std::{
     ops::{Deref, DerefMut},
     time::Duration,
 };
-use tracing::warn;
 
 /// The user agent to use when querying the etherscan API.
 pub const ETHERSCAN_USER_AGENT: &str = concat!("foundry/", env!("CARGO_PKG_VERSION"));
@@ -141,7 +140,7 @@ impl DerefMut for ResolvedEtherscanConfigs {
 /// Represents all info required to create an etherscan client
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EtherscanConfig {
-    /// Chain name/id that can be used to derive the api url
+    /// The chain name or EIP-155 chain ID used to derive the API URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain: Option<Chain>,
     /// Etherscan API URL
@@ -205,15 +204,15 @@ impl EtherscanConfig {
 /// Contains required url + api key to set up an etherscan client
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedEtherscanConfig {
-    /// Etherscan API URL
+    /// Etherscan API URL.
     #[serde(rename = "url")]
     pub api_url: String,
-    /// Optional browser url
+    /// Optional browser URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_url: Option<String>,
-    /// Resolved api key
+    /// The resolved API key.
     pub key: String,
-    /// The chain if set
+    /// The chain name or EIP-155 chain ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain: Option<Chain>,
 }

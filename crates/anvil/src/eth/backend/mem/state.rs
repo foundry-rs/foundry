@@ -116,7 +116,7 @@ where
 {
     let mut cache_db = CacheDB::new(state);
     for (account, account_overrides) in overrides.iter() {
-        let mut account_info = cache_db.basic((*account).to_alloy())?.unwrap_or_default();
+        let mut account_info = cache_db.basic_ref((*account).to_alloy())?.unwrap_or_default();
 
         if let Some(nonce) = account_overrides.nonce {
             account_info.nonce = nonce;

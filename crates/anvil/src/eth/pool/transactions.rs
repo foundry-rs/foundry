@@ -10,7 +10,6 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use tracing::{trace, warn};
 
 /// A unique identifying marker for a transaction
 pub type TxMarker = Vec<u8>;

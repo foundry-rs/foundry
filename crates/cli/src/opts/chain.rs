@@ -30,7 +30,7 @@ impl TypedValueParser for ChainValueParser {
         let s =
             value.to_str().ok_or_else(|| clap::Error::new(clap::error::ErrorKind::InvalidUtf8))?;
         if let Ok(id) = s.parse() {
-            Ok(Chain::Id(id))
+            Ok(Chain::from_id(id))
         } else {
             // NamedChain::VARIANTS is a subset of all possible variants, since there are aliases:
             // mumbai instead of polygon-mumbai etc
@@ -39,7 +39,7 @@ impl TypedValueParser for ChainValueParser {
             // the error to the user
             s.parse()
                 .map_err(|_| self.inner.parse_ref(cmd, arg, value).unwrap_err())
-                .map(Chain::Named)
+                .map(Chain::from_named)
         }
     }
 }

@@ -8,7 +8,6 @@ use forge::{
     revm::interpreter::{return_ok, InstructionResult},
     traces::{TraceKind, Traces},
 };
-use tracing::log::trace;
 
 /// Represents which simulation stage is the script execution at.
 pub enum SimulationStage {

@@ -85,12 +85,12 @@ impl RpcOpts {
 
 #[derive(Clone, Debug, Default, Parser, Serialize)]
 pub struct EtherscanOpts {
-    /// The Etherscan (or equivalent) API key
+    /// The Etherscan (or equivalent) API key.
     #[clap(short = 'e', long = "etherscan-api-key", alias = "api-key", env = "ETHERSCAN_API_KEY")]
     #[serde(rename = "etherscan_api_key", skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
 
-    /// The chain name or EIP-155 chain ID
+    /// The chain name or EIP-155 chain ID.
     #[clap(
         short,
         long,

@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate tracing;
+
 use alloy_primitives::{keccak256, Address, B256};
 use cast::{Cast, SimpleCast};
 use clap::{CommandFactory, Parser};
@@ -459,9 +462,8 @@ async fn main() -> Result<()> {
         }
         Subcommands::EtherscanSource { address, directory, etherscan } => {
             let config = Config::from(&etherscan);
-            let chain = config.chain_id.unwrap_or_default();
+            let chain = config.chain.unwrap_or_default();
             let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-            let chain = chain.named()?;
             match directory {
                 Some(dir) => {
                     SimpleCast::expand_etherscan_source_to_directory(chain, address, api_key, dir)

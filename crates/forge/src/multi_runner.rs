@@ -191,7 +191,7 @@ impl MultiContractRunner {
                     filter,
                     test_options.clone(),
                 );
-                trace!(contract= ?identifier, "executed all tests in contract");
+                trace!(contract=?identifier, "executed all tests in contract");
 
                 if let Some(stream_result) = stream_result {
                     let _ = stream_result.send((identifier.clone(), result.clone()));

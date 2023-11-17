@@ -1,6 +1,6 @@
 //! Support types for configuring storage caching
 
-use crate::chain::Chain;
+use crate::Chain;
 use number_prefix::NumberPrefix;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{fmt, fmt::Formatter, str::FromStr};
@@ -230,7 +230,6 @@ pub struct ChainCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chain::NamedChain;
     use pretty_assertions::assert_str_eq;
 
     #[test]
@@ -255,9 +254,9 @@ mod tests {
             w.rpc_storage_caching,
             StorageCachingConfig {
                 chains: CachedChains::Chains(vec![
-                    Chain::Named(NamedChain::Mainnet),
-                    Chain::Named(NamedChain::Optimism),
-                    Chain::Id(999999)
+                    Chain::mainnet(),
+                    Chain::optimism_mainnet(),
+                    Chain::from_id(999999)
                 ]),
                 endpoints: CachedEndpoints::All
             }

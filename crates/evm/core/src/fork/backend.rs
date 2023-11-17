@@ -282,7 +282,7 @@ where
                             Ok(KECCAK_EMPTY.to_ethers())
                         }
                         Err(err) => {
-                            error!(target: "backendhandler", ?err, ?number, "failed to get block");
+                            error!(target: "backendhandler", %err, ?number, "failed to get block");
                             Err(err)
                         }
                     };
@@ -642,10 +642,10 @@ impl SharedBackend {
 impl DatabaseRef for SharedBackend {
     type Error = DatabaseError;
 
-    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        trace!( target: "sharedbackend", "request basic {:?}", address);
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        trace!(target: "sharedbackend", %address, "request basic");
         self.do_get_basic(address).map_err(|err| {
-            error!(target: "sharedbackend",  ?err, ?address,  "Failed to send/recv `basic`");
+            error!(target: "sharedbackend", %err, %address, "Failed to send/recv `basic`");
             if err.is_possibly_non_archive_node_error() {
                 error!(target: "sharedbackend", "{NON_ARCHIVE_NODE_WARNING}");
             }
@@ -653,14 +653,14 @@ impl DatabaseRef for SharedBackend {
         })
     }
 
-    fn code_by_hash(&self, hash: B256) -> Result<Bytecode, Self::Error> {
+    fn code_by_hash_ref(&self, hash: B256) -> Result<Bytecode, Self::Error> {
         Err(DatabaseError::MissingCode(hash))
     }
 
-    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        trace!( target: "sharedbackend", "request storage {:?} at {:?}", address, index);
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        trace!(target: "sharedbackend", "request storage {:?} at {:?}", address, index);
         match self.do_get_storage(address, index).map_err(|err| {
-            error!( target: "sharedbackend", ?err, ?address, ?index, "Failed to send/recv `storage`");
+            error!(target: "sharedbackend", %err, %address, %index, "Failed to send/recv `storage`");
             if err.is_possibly_non_archive_node_error() {
                 error!(target: "sharedbackend", "{NON_ARCHIVE_NODE_WARNING}");
             }
@@ -671,15 +671,15 @@ impl DatabaseRef for SharedBackend {
         }
     }
 
-    fn block_hash(&self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash_ref(&self, number: U256) -> Result<B256, Self::Error> {
         if number > U256::from(u64::MAX) {
             return Ok(KECCAK_EMPTY)
         }
         let number: U256 = number;
         let number = number.to();
-        trace!( target: "sharedbackend", "request block hash for number {:?}", number);
+        trace!(target: "sharedbackend", "request block hash for number {:?}", number);
         match self.do_get_block_hash(number).map_err(|err| {
-            error!(target: "sharedbackend",?err, ?number, "Failed to send/recv `block_hash`");
+            error!(target: "sharedbackend", %err, %number, "Failed to send/recv `block_hash`");
             if err.is_possibly_non_archive_node_error() {
                 error!(target: "sharedbackend", "{NON_ARCHIVE_NODE_WARNING}");
             }
@@ -720,8 +720,8 @@ mod tests {
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 
         let idx = U256::from(0u64);
-        let value = backend.storage(address, idx).unwrap();
-        let account = backend.basic(address).unwrap().unwrap();
+        let value = backend.storage_ref(address, idx).unwrap();
+        let account = backend.basic_ref(address).unwrap().unwrap();
 
         let mem_acc = db.accounts().read().get(&address).unwrap().clone();
         assert_eq!(account.balance, mem_acc.balance);
@@ -731,7 +731,7 @@ mod tests {
         assert_eq!(slots.get(&idx).copied().unwrap(), value);
 
         let num = U256::from(10u64);
-        let hash = backend.block_hash(num).unwrap();
+        let hash = backend.block_hash_ref(num).unwrap();
         let mem_hash = *db.block_hashes().read().get(&num).unwrap();
         assert_eq!(hash, mem_hash);
 
@@ -739,7 +739,7 @@ mod tests {
         let handle = std::thread::spawn(move || {
             for i in 1..max_slots {
                 let idx = U256::from(i);
-                let _ = backend.storage(address, idx);
+                let _ = backend.storage_ref(address, idx);
             }
         });
         handle.join().unwrap();
@@ -779,13 +779,13 @@ mod tests {
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 
         let idx = U256::from(0u64);
-        let _value = backend.storage(address, idx);
-        let _account = backend.basic(address);
+        let _value = backend.storage_ref(address, idx);
+        let _account = backend.basic_ref(address);
 
         // fill some slots
         let num_slots = 10u64;
         for idx in 1..num_slots {
-            let _ = backend.storage(address, U256::from(idx));
+            let _ = backend.storage_ref(address, U256::from(idx));
         }
         drop(backend);
 

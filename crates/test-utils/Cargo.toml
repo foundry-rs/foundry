@@ -30,7 +30,7 @@ pretty_assertions.workspace = true
 regex = "1"
 serde_json.workspace = true
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 walkdir = "2"
 
 [features]

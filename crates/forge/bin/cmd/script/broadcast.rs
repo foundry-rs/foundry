@@ -15,7 +15,6 @@ use foundry_cli::{
 use foundry_common::{estimate_eip1559_fees, shell, try_get_http_provider, RetryProvider};
 use futures::StreamExt;
 use std::{cmp::min, collections::HashSet, ops::Mul, sync::Arc};
-use tracing::trace;
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.
@@ -244,7 +243,7 @@ impl ScriptArgs {
 
         match kind {
             SendTransactionKind::Unlocked(addr) => {
-                tracing::debug!("sending transaction from unlocked account {:?}: {:?}", addr, tx);
+                debug!("sending transaction from unlocked account {:?}: {:?}", addr, tx);
 
                 // Chains which use `eth_estimateGas` are being sent sequentially and require their
                 // gas to be re-estimated right before broadcasting.
@@ -449,7 +448,7 @@ impl ScriptArgs {
 
         // Config is used to initialize the sequence chain, so we need to change when handling a new
         // sequence. This makes sure we don't lose the original value.
-        let original_config_chain = config.chain_id;
+        let original_config_chain = config.chain;
 
         // Peeking is used to check if the next rpc url is different. If so, it creates a
         // [`ScriptSequence`] from all the collected transactions up to this point.
@@ -511,7 +510,7 @@ impl ScriptArgs {
                 }
             }
 
-            config.chain_id = Some(provider_info.chain.into());
+            config.chain = Some(provider_info.chain.into());
             let sequence = ScriptSequence::new(
                 new_sequence,
                 returns.clone(),
@@ -528,7 +527,7 @@ impl ScriptArgs {
         }
 
         // Restore previous config chain.
-        config.chain_id = original_config_chain;
+        config.chain = original_config_chain;
 
         if !self.skip_simulation {
             // Present gas information on a per RPC basis.
@@ -574,7 +573,7 @@ impl ScriptArgs {
         signer: &WalletSigner,
         mut legacy_or_1559: TypedTransaction,
     ) -> Result<TxHash> {
-        tracing::debug!("sending transaction: {:?}", legacy_or_1559);
+        debug!("sending transaction: {:?}", legacy_or_1559);
 
         // Chains which use `eth_estimateGas` are being sent sequentially and require their gas
         // to be re-estimated right before broadcasting.

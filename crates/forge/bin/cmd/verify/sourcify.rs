@@ -8,7 +8,6 @@ use foundry_utils::Retry;
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf};
-use tracing::{trace, warn};
 
 pub static SOURCIFY_URL: &str = "https://sourcify.dev/server/";
 

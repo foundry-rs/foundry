@@ -2,6 +2,9 @@
 
 #![warn(missing_docs, unused_crate_dependencies)]
 
+#[macro_use]
+extern crate tracing;
+
 use crate::cache::StorageCachingConfig;
 use alloy_primitives::{address, Address, B256, U256};
 use eyre::{ContextCompat, WrapErr};
@@ -10,12 +13,11 @@ use figment::{
     value::{Dict, Map, Value},
     Error, Figment, Metadata, Profile, Provider,
 };
-pub use foundry_compilers::{self, artifacts::OptimizerDetails};
 use foundry_compilers::{
     artifacts::{
         output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
-        Libraries, ModelCheckerSettings, ModelCheckerTarget, Optimizer, RevertStrings, Settings,
-        SettingsMetadata, Severity,
+        Libraries, ModelCheckerSettings, ModelCheckerTarget, Optimizer, OptimizerDetails,
+        RevertStrings, Settings, SettingsMetadata, Severity,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
@@ -25,6 +27,7 @@ use foundry_compilers::{
 use inflector::Inflector;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use revm_primitives::SpecId;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -34,8 +37,6 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-pub(crate) use tracing::trace;
-use NamedChain::Mainnet;
 
 // Macros useful for creating a figment.
 mod macros;
@@ -53,9 +54,6 @@ pub use resolve::UnresolvedEnvVarError;
 
 pub mod cache;
 use cache::{Cache, ChainCache};
-
-mod chain;
-pub use chain::{Chain, NamedChain};
 
 pub mod fmt;
 pub use fmt::FormatterConfig;
@@ -76,9 +74,8 @@ pub use warning::*;
 pub mod fix;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
+pub use alloy_chains::{Chain, NamedChain};
 pub use figment;
-use revm_primitives::SpecId;
-use tracing::warn;
 
 /// config providers
 pub mod providers;
@@ -252,8 +249,9 @@ pub struct Config {
     pub block_number: u64,
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
-    /// The chain id to use
-    pub chain_id: Option<Chain>,
+    /// The chain name or EIP-155 chain ID.
+    #[serde(rename = "chain_id", alias = "chain")]
+    pub chain: Option<Chain>,
     /// Block gas limit
     pub gas_limit: GasLimit,
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests.
@@ -895,7 +893,7 @@ impl Config {
 
         // we treat the `etherscan_api_key` as actual API key
         // if no chain provided, we assume mainnet
-        let chain = self.chain_id.unwrap_or(Chain::Named(Mainnet));
+        let chain = self.chain.unwrap_or(Chain::mainnet());
         let api_key = self.etherscan_api_key.as_ref()?;
         ResolvedEtherscanConfig::create(api_key, chain).map(Ok)
     }
@@ -908,9 +906,8 @@ impl Config {
     /// over the chain's entry in the table.
     pub fn get_etherscan_config_with_chain(
         &self,
-        chain: Option<impl Into<Chain>>,
+        chain: Option<Chain>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
-        let chain = chain.map(Into::into);
         if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref()) {
             if self.etherscan.contains_key(maybe_alias) {
                 return self.etherscan.clone().resolved().remove(maybe_alias).transpose()
@@ -938,7 +935,7 @@ impl Config {
 
         // etherscan fallback via API key
         if let Some(key) = self.etherscan_api_key.as_ref() {
-            let chain = chain.or(self.chain_id).unwrap_or_default();
+            let chain = chain.or(self.chain).unwrap_or_default();
             return Ok(ResolvedEtherscanConfig::create(key, chain))
         }
 
@@ -946,7 +943,7 @@ impl Config {
     }
 
     /// Helper function to just get the API key
-    pub fn get_etherscan_api_key(&self, chain: Option<impl Into<Chain>>) -> Option<String> {
+    pub fn get_etherscan_api_key(&self, chain: Option<Chain>) -> Option<String> {
         self.get_etherscan_config_with_chain(chain).ok().flatten().map(|c| c.key)
     }
 
@@ -1132,7 +1129,7 @@ impl Config {
     /// Returns the default config that uses dapptools style paths
     pub fn dapptools() -> Self {
         Config {
-            chain_id: Some(Chain::Id(99)),
+            chain: Some(Chain::from_id(99)),
             block_timestamp: 0,
             block_number: 0,
             ..Config::default()
@@ -1788,7 +1785,7 @@ impl Default for Config {
             initial_balance: U256::from(0xffffffffffffffffffffffffu128),
             block_number: 1,
             fork_block_number: None,
-            chain_id: None,
+            chain: None,
             gas_limit: i64::MAX.into(),
             code_size_limit: None,
             gas_price: None,
@@ -1798,7 +1795,7 @@ impl Default for Config {
             block_difficulty: 0,
             block_prevrandao: Default::default(),
             block_gas_limit: None,
-            memory_limit: 2u64.pow(25),
+            memory_limit: 1 << 25, // 32MiB = 33554432 bytes
             eth_rpc_url: None,
             eth_rpc_jwt: None,
             etherscan_api_key: None,
@@ -2156,7 +2153,7 @@ impl Provider for DappEnvCompatProvider {
             let val = val.parse::<u8>().map_err(figment::Error::custom)?;
             if val > 1 {
                 return Err(
-                    format!("Invalid $DAPP_BUILD_OPTIMIZE value `{val}`,  expected 0 or 1").into()
+                    format!("Invalid $DAPP_BUILD_OPTIMIZE value `{val}`, expected 0 or 1").into()
                 )
             }
             dict.insert("optimizer".to_string(), (val == 1).into());
@@ -2922,16 +2919,15 @@ mod tests {
             )?;
 
             let config = Config::load();
-            assert!(config.get_etherscan_config_with_chain(None::<u64>).unwrap().is_none());
             assert!(config
-                .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain))
+                .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain.into()))
                 .is_err());
 
             std::env::set_var(env_key, env_value);
 
             assert_eq!(
                 config
-                    .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain))
+                    .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain.into()))
                     .unwrap()
                     .unwrap()
                     .key,
@@ -2943,7 +2939,7 @@ mod tests {
 
             assert_eq!(
                 with_key
-                    .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain))
+                    .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain.into()))
                     .unwrap()
                     .unwrap()
                     .key,
@@ -2979,7 +2975,7 @@ mod tests {
             assert!(!configs.has_unresolved());
 
             let mb_urls = Moonbeam.etherscan_urls().unwrap();
-            let mainnet_urls = Mainnet.etherscan_urls().unwrap();
+            let mainnet_urls = NamedChain::Mainnet.etherscan_urls().unwrap();
             assert_eq!(
                 configs,
                 ResolvedEtherscanConfigs::new([
@@ -2987,7 +2983,7 @@ mod tests {
                         "mainnet",
                         ResolvedEtherscanConfig {
                             api_url: mainnet_urls.0.to_string(),
-                            chain: Some(Mainnet.into()),
+                            chain: Some(NamedChain::Mainnet.into()),
                             browser_url: Some(mainnet_urls.1.to_string()),
                             key: "FX42Z3BBJJEWXWGYV2X1CIPRSCN".to_string(),
                         }
@@ -3159,12 +3155,12 @@ mod tests {
 
             let mut config = Config::load();
 
-            let optimism = config.get_etherscan_api_key(Some(NamedChain::Optimism));
+            let optimism = config.get_etherscan_api_key(Some(NamedChain::Optimism.into()));
             assert_eq!(optimism, Some("https://etherscan-optimism.com/".to_string()));
 
             config.etherscan_api_key = Some("mumbai".to_string());
 
-            let mumbai = config.get_etherscan_api_key(Some(NamedChain::PolygonMumbai));
+            let mumbai = config.get_etherscan_api_key(Some(NamedChain::PolygonMumbai.into()));
             assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
 
             Ok(())
@@ -3187,7 +3183,7 @@ mod tests {
             let config = Config::load();
 
             let mumbai = config
-                .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai))
+                .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai.into()))
                 .unwrap()
                 .unwrap();
             assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
@@ -3212,7 +3208,7 @@ mod tests {
             let config = Config::load();
 
             let mumbai = config
-                .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai))
+                .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai.into()))
                 .unwrap()
                 .unwrap();
             assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
@@ -3241,8 +3237,7 @@ mod tests {
 
             let config = Config::load();
 
-            let mumbai =
-                config.get_etherscan_config_with_chain(Option::<u64>::None).unwrap().unwrap();
+            let mumbai = config.get_etherscan_config_with_chain(None).unwrap().unwrap();
             assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
 
             let mumbai_rpc = config.get_rpc_url().unwrap().unwrap();
@@ -3294,9 +3289,9 @@ mod tests {
                     via_ir: true,
                     rpc_storage_caching: StorageCachingConfig {
                         chains: CachedChains::Chains(vec![
-                            Chain::Named(NamedChain::Mainnet),
-                            Chain::Named(NamedChain::Optimism),
-                            Chain::Id(999999)
+                            Chain::mainnet(),
+                            Chain::optimism_mainnet(),
+                            Chain::from_id(999999)
                         ]),
                         endpoints: CachedEndpoints::All
                     },

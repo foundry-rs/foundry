@@ -17,7 +17,6 @@ use foundry_compilers::{
 };
 use serde_json::{to_value, Value};
 use std::fmt;
-use tracing::trace;
 
 /// CLI arguments for `forge inspect`.
 #[derive(Debug, Clone, Parser)]
@@ -128,7 +127,7 @@ impl InspectArgs {
                 println!("{}", serde_json::to_string_pretty(&to_value(&artifact.gas_estimates)?)?);
             }
             ContractArtifactField::StorageLayout => {
-                print_storage_layout(&artifact.storage_layout, pretty)?;
+                print_storage_layout(artifact.storage_layout.as_ref(), pretty)?;
             }
             ContractArtifactField::DevDoc => {
                 println!("{}", serde_json::to_string_pretty(&to_value(&artifact.devdoc)?)?);
@@ -211,12 +210,10 @@ pub fn print_abi(abi: &JsonAbi, pretty: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn print_storage_layout(storage_layout: &Option<StorageLayout>, pretty: bool) -> Result<()> {
-    if storage_layout.is_none() {
-        eyre::bail!("Could not get storage layout")
-    }
-
-    let storage_layout = storage_layout.as_ref().unwrap();
+pub fn print_storage_layout(storage_layout: Option<&StorageLayout>, pretty: bool) -> Result<()> {
+    let Some(storage_layout) = storage_layout else {
+        eyre::bail!("Could not get storage layout");
+    };
 
     if !pretty {
         println!("{}", serde_json::to_string_pretty(&to_value(storage_layout)?)?);
@@ -225,17 +222,17 @@ pub fn print_storage_layout(storage_layout: &Option<StorageLayout>, pretty: bool
 
     let mut table = Table::new();
     table.load_preset(ASCII_MARKDOWN);
-    table.set_header(vec!["Name", "Type", "Slot", "Offset", "Bytes", "Contract"]);
+    table.set_header(["Name", "Type", "Slot", "Offset", "Bytes", "Contract"]);
 
     for slot in &storage_layout.storage {
         let storage_type = storage_layout.types.get(&slot.storage_type);
-        table.add_row(vec![
-            slot.label.clone(),
-            storage_type.as_ref().map_or("?".to_string(), |t| t.label.clone()),
-            slot.slot.clone(),
-            slot.offset.to_string(),
-            storage_type.as_ref().map_or("?".to_string(), |t| t.number_of_bytes.clone()),
-            slot.contract.clone(),
+        table.add_row([
+            slot.label.as_str(),
+            storage_type.map_or("?", |t| &t.label),
+            &slot.slot,
+            &slot.offset.to_string(),
+            &storage_type.map_or("?", |t| &t.number_of_bytes),
+            &slot.contract,
         ]);
     }
 

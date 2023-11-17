@@ -3,7 +3,7 @@ use ethers_core::types::transaction::eip2930::{AccessList, AccessListItem};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use hashbrown::{HashMap, HashSet};
 use revm::{
-    interpreter::{opcode, InstructionResult, Interpreter},
+    interpreter::{opcode, Interpreter},
     Database, EVMData, Inspector,
 };
 
@@ -51,11 +51,7 @@ impl AccessListTracer {
 
 impl<DB: Database> Inspector<DB> for AccessListTracer {
     #[inline]
-    fn step(
-        &mut self,
-        interpreter: &mut Interpreter,
-        _data: &mut EVMData<'_, DB>,
-    ) -> InstructionResult {
+    fn step(&mut self, interpreter: &mut Interpreter<'_>, _data: &mut EVMData<'_, DB>) {
         match interpreter.current_opcode() {
             opcode::SLOAD | opcode::SSTORE => {
                 if let Ok(slot) = interpreter.stack().peek(0) {
@@ -85,6 +81,5 @@ impl<DB: Database> Inspector<DB> for AccessListTracer {
             }
             _ => (),
         }
-        InstructionResult::Continue
     }
 }

@@ -1,6 +1,9 @@
 #![doc = include_str!("../README.md")]
 #![warn(unused_crate_dependencies)]
 
+#[macro_use]
+extern crate tracing;
+
 use crate::types::{ToAlloy, ToEthers};
 use alloy_primitives::{Address, Bytes};
 use ethers_core::types::BlockId;
@@ -20,7 +23,6 @@ use std::{
     str::FromStr,
     time::Duration,
 };
-use tracing::trace;
 
 pub mod abi;
 pub mod error;
@@ -81,7 +83,7 @@ struct AllArtifactsBySlug {
 impl AllArtifactsBySlug {
     /// Finds the code for the target of the artifact and the matching key.
     fn find_code(&self, identifier: &String, version: &String) -> Option<CompactContractBytecode> {
-        trace!(target : "forge::link", identifier, "fetching artifact by identifier");
+        trace!(target: "forge::link", identifier, "fetching artifact by identifier");
         let code = self
             .inner
             .get(identifier)
@@ -211,7 +213,7 @@ pub fn link_with_nonce_or_address<T, U>(
 
             match bytecode.object {
                 BytecodeObject::Unlinked(_) => {
-                    trace!(target : "forge::link", target=id.identifier(), version=?id.version, "unlinked contract");
+                    trace!(target: "forge::link", target=id.identifier(), version=?id.version, "unlinked contract");
 
                     // link needed
                     recurse_link(
@@ -295,7 +297,7 @@ fn recurse_link<'a>(
 ) {
     // check if we have dependencies
     if let Some(dependencies) = dependency_tree.get(&target) {
-        trace!(target : "forge::link", ?target, "linking contract");
+        trace!(target: "forge::link", ?target, "linking contract");
 
         // for each dependency, try to link
         dependencies.dependencies.iter().for_each(|dep| {
@@ -303,7 +305,7 @@ fn recurse_link<'a>(
             let next_target = format!("{file}:{key}");
             let root = PathBuf::from(root.as_ref().to_str().unwrap());
             // get the dependency
-            trace!(target : "forge::link", dependency = next_target, file, key, version=?dependencies.artifact_id.version,  "get dependency");
+            trace!(target: "forge::link", dependency=next_target, file, key, version=?dependencies.artifact_id.version, "get dependency");
             let  artifact = match artifacts
                 .find_code(&next_target, version) {
                     Some(artifact) => artifact,
@@ -315,7 +317,7 @@ fn recurse_link<'a>(
                         let fallback_path = fallback_path.to_str().unwrap_or("No artifact for contract \"{next_target}\". Attempted to compose fallback path but could not create valid string");
                         let fallback_target = format!("{fallback_path}:{key}");
 
-                        trace!(target : "forge::link", fallback_dependency = fallback_target, file, key, version=?dependencies.artifact_id.version,  "get dependency with fallback path");
+                        trace!(target: "forge::link", fallback_dependency=fallback_target, file, key, version=?dependencies.artifact_id.version, "get dependency with fallback path");
 
                         match artifacts.find_code(&fallback_target, version) {
                         Some(artifact) => artifact,
@@ -334,7 +336,7 @@ fn recurse_link<'a>(
             // make sure dependency is fully linked
             if let Some(deps) = dependency_tree.get(&format!("{file}:{key}")) {
                 if !deps.dependencies.is_empty() {
-                    trace!(target : "forge::link", dependency = next_target, file, key, version=?dependencies.artifact_id.version,  "dependency has dependencies");
+                    trace!(target: "forge::link", dependency=next_target, file, key, version=?dependencies.artifact_id.version, "dependency has dependencies");
 
                     // actually link the nested dependencies to this dependency
                     recurse_link(
@@ -365,12 +367,12 @@ fn recurse_link<'a>(
             }
 
             let address = if let Some(deployed_address) = deployed_address {
-                trace!(target : "forge::link", dependency = next_target, file, key, "dependency has pre-defined address");
+                trace!(target: "forge::link", dependency=next_target, file, key, "dependency has pre-defined address");
 
                 // the user specified the library address
                 deployed_address
             } else if let Some((cached_nonce, deployed_address)) = internally_deployed_libraries.get(&format!("{file}:{key}")) {
-                trace!(target : "forge::link", dependency = next_target, file, key, "dependency was previously deployed");
+                trace!(target: "forge::link", dependency=next_target, file, key, "dependency was previously deployed");
 
                 // we previously deployed the library
                 let library = format!("{file}:{key}:0x{deployed_address:x}");
@@ -380,11 +382,11 @@ fn recurse_link<'a>(
                     id: library,
                     address: *deployed_address,
                     nonce: *cached_nonce,
-                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!( "Bytecode should be linked for {next_target}")).0.into(),
+                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!("Bytecode should be linked for {next_target}")).0.into(),
                 });
                 *deployed_address
             } else {
-                trace!(target : "forge::link", dependency = next_target, file, key, "dependency has to be deployed");
+                trace!(target: "forge::link", dependency=next_target, file, key, "dependency has to be deployed");
 
                 // we need to deploy the library
                 let used_nonce = *nonce;
@@ -397,7 +399,7 @@ fn recurse_link<'a>(
                     id: library,
                     address: computed_address,
                     nonce: used_nonce,
-                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!( "Bytecode should be linked for {next_target}")).0.into(),
+                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!("Bytecode should be linked for {next_target}")).0.into(),
                 });
 
                 // remember this library for later
@@ -409,7 +411,7 @@ fn recurse_link<'a>(
             // link the dependency to the target
             target_bytecode.0.link(file.clone(), key.clone(), address);
             target_bytecode.1.link(file.clone(), key.clone(), address);
-            trace!(target : "forge::link", ?target, dependency = next_target, file, key, "linking dependency done");
+            trace!(target: "forge::link", ?target, dependency=next_target, file, key, "linking dependency done");
         });
     }
 }
@@ -461,11 +463,7 @@ impl Retry {
 
     fn handle_err(&mut self, err: eyre::Report) {
         self.retries -= 1;
-        tracing::warn!(
-            "erroneous attempt ({} tries remaining): {}",
-            self.retries,
-            err.root_cause()
-        );
+        warn!("erroneous attempt ({} tries remaining): {}", self.retries, err.root_cause());
         if let Some(delay) = self.delay {
             std::thread::sleep(Duration::from_secs(delay.into()));
         }

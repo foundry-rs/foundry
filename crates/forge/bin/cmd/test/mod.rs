@@ -34,7 +34,6 @@ use foundry_config::{
 use foundry_debugger::DebuggerArgs;
 use regex::Regex;
 use std::{collections::BTreeMap, fs, sync::mpsc::channel, time::Duration};
-use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 
@@ -545,9 +544,7 @@ fn short_test_result(name: &str, result: &TestResult) {
     println!("{result} {name} {}", result.kind.report());
 }
 
-/**
- * Formats the aggregated summary of all test suites into a string (for printing)
- */
+/// Formats the aggregated summary of all test suites into a string (for printing).
 fn format_aggregated_summary(
     num_test_suites: usize,
     total_passed: usize,
@@ -787,58 +784,38 @@ async fn test(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Sanity test that unknown args are rejected
-    #[test]
-    fn test_verbosity() {
-        #[derive(Debug, Parser)]
-        pub struct VerbosityArgs {
-            #[clap(long, short, action = clap::ArgAction::Count)]
-            verbosity: u8,
-        }
-        let res = VerbosityArgs::try_parse_from(["foundry-cli", "-vw"]);
-        assert!(res.is_err());
-
-        let res = VerbosityArgs::try_parse_from(["foundry-cli", "-vv"]);
-        assert!(res.is_ok());
-    }
+    use foundry_config::Chain;
 
     #[test]
-    fn test_verbosity_multi_short() {
-        #[derive(Debug, Parser)]
-        pub struct VerbosityArgs {
-            #[clap(long, short)]
-            verbosity: bool,
-            #[clap(
-                long,
-                short,
-                num_args(0..),
-                value_name = "PATH",
-            )]
-            watch: Option<Vec<String>>,
-        }
-        // this is supported by clap
-        let res = VerbosityArgs::try_parse_from(["foundry-cli", "-vw"]);
-        assert!(res.is_ok())
-    }
-
-    #[test]
-    fn test_watch_parse() {
+    fn watch_parse() {
         let args: TestArgs = TestArgs::parse_from(["foundry-cli", "-vw"]);
         assert!(args.watch.watch.is_some());
     }
 
     #[test]
-    fn test_fuzz_seed() {
+    fn fuzz_seed() {
         let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--fuzz-seed", "0x10"]);
         assert!(args.fuzz_seed.is_some());
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5913>
     #[test]
-    fn test_5913() {
+    fn issue_5913() {
         let args: TestArgs =
             TestArgs::parse_from(["foundry-cli", "-vvv", "--gas-report", "--fuzz-seed", "0x10"]);
         assert!(args.fuzz_seed.is_some());
+    }
+
+    #[test]
+    fn extract_chain() {
+        let test = |arg: &str, expected: Chain| {
+            let args = TestArgs::parse_from(["foundry-cli", arg]);
+            assert_eq!(args.evm_opts.env.chain, Some(expected));
+            let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
+            assert_eq!(config.chain, Some(expected));
+            assert_eq!(evm_opts.env.chain_id, Some(expected.id()));
+        };
+        test("--chain-id=1", Chain::mainnet());
+        test("--chain-id=42", Chain::from_id(42));
     }
 }
