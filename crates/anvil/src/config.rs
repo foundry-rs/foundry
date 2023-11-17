@@ -1,3 +1,43 @@
+use std::{
+    collections::HashMap,
+    fmt::Write as FmtWrite,
+    fs::File,
+    net::{IpAddr, Ipv4Addr},
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
+
+use ethers::{
+    core::k256::ecdsa::SigningKey,
+    prelude::{rand::thread_rng, Provider, Wallet, U256},
+    providers::Middleware,
+    signers::{
+        coins_bip39::{English, Mnemonic},
+        MnemonicBuilder, Signer,
+    },
+    types::BlockNumber,
+    utils::{format_ether, hex, to_checksum, WEI_IN_ETHER},
+};
+use parking_lot::RwLock;
+use serde_json::{json, to_writer, Value};
+use yansi::Paint;
+
+use anvil_server::ServerConfig;
+use foundry_common::{
+    runtime_client::RuntimeClient, ProviderBuilder, ALCHEMY_FREE_TIER_CUPS,
+    NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
+};
+use foundry_config::Config;
+use foundry_evm::{
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
+    revm,
+    revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv, U256 as rU256},
+    utils::apply_chain_and_block_specific_env_changes,
+};
+use foundry_utils::types::{ToAlloy, ToEthers};
+
 use crate::{
     eth::{
         backend::{
@@ -15,42 +55,6 @@ use crate::{
     mem::in_memory_db::MemDb,
     FeeManager, Hardfork,
 };
-use anvil_server::ServerConfig;
-use ethers::{
-    core::k256::ecdsa::SigningKey,
-    prelude::{rand::thread_rng, Wallet, U256},
-    providers::Middleware,
-    signers::{
-        coins_bip39::{English, Mnemonic},
-        MnemonicBuilder, Signer,
-    },
-    types::BlockNumber,
-    utils::{format_ether, hex, to_checksum, WEI_IN_ETHER},
-};
-use foundry_common::{
-    ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
-};
-use foundry_config::Config;
-use foundry_evm::{
-    constants::DEFAULT_CREATE2_DEPLOYER,
-    fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
-    revm,
-    revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv, U256 as rU256},
-    utils::apply_chain_and_block_specific_env_changes,
-};
-use foundry_utils::types::{ToAlloy, ToEthers};
-use parking_lot::RwLock;
-use serde_json::{json, to_writer, Value};
-use std::{
-    collections::HashMap,
-    fmt::Write as FmtWrite,
-    fs::File,
-    net::{IpAddr, Ipv4Addr},
-    path::PathBuf,
-    sync::Arc,
-    time::Duration,
-};
-use yansi::Paint;
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -169,6 +173,8 @@ pub struct NodeConfig {
     pub transaction_block_keeper: Option<usize>,
     /// Disable the default CREATE2 deployer
     pub disable_default_create2_deployer: bool,
+    /// Disregard all other fork provider config and pass your own provider
+    pub fork_override_provider: Option<Arc<Provider<RuntimeClient>>>,
 }
 
 impl NodeConfig {
@@ -406,6 +412,7 @@ impl Default for NodeConfig {
             init_state: None,
             transaction_block_keeper: None,
             disable_default_create2_deployer: false,
+            fork_override_provider: None,
         }
     }
 }
@@ -696,6 +703,14 @@ impl NodeConfig {
         self
     }
 
+    pub fn with_fork_override_provider(
+        mut self,
+        override_fork_provider: Option<Arc<Provider<RuntimeClient>>>,
+    ) -> Self {
+        self.fork_override_provider = override_fork_provider;
+        self
+    }
+
     /// Sets the number of assumed available compute units per second
     ///
     /// See also, <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
@@ -815,6 +830,8 @@ impl NodeConfig {
         let (db, fork): (Arc<tokio::sync::RwLock<Box<dyn Db>>>, Option<ClientFork>) =
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
                 self.setup_fork_db(eth_rpc_url, &mut env, &fees).await
+            } else if self.fork_override_provider.is_some() {
+                self.setup_fork_db("Using Given Override Provider".to_string(), &mut env, &fees).await
             } else {
                 (Arc::new(tokio::sync::RwLock::new(Box::<MemDb>::default())), None)
             };
@@ -849,7 +866,10 @@ impl NodeConfig {
 
         // Writes the default create2 deployer to the backend,
         // if the option is not disabled and we are not forking.
-        if !self.disable_default_create2_deployer && self.eth_rpc_url.is_none() {
+        if !self.disable_default_create2_deployer &&
+            self.eth_rpc_url.is_none() &&
+            self.fork_override_provider.is_none()
+        {
             backend
                 .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER.to_ethers())
                 .await
@@ -902,19 +922,20 @@ impl NodeConfig {
         env: &mut revm::primitives::Env,
         fees: &FeeManager,
     ) -> (ForkedDatabase, ClientForkConfig) {
-        // TODO make provider agnostic
-        let provider = Arc::new(
-            ProviderBuilder::new(&eth_rpc_url)
-                .timeout(self.fork_request_timeout)
-                .timeout_retry(self.fork_request_retries)
-                .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
-                .compute_units_per_second(self.compute_units_per_second)
-                .max_retry(10)
-                .initial_backoff(1000)
-                .headers(self.fork_headers.clone())
-                .build()
-                .expect("Failed to establish provider to fork url"),
-        );
+        let provider = match self.fork_override_provider.clone() {
+            Some(p) => p,
+            None => Arc::new(
+                ProviderBuilder::new(&eth_rpc_url)
+                    .timeout(self.fork_request_timeout)
+                    .timeout_retry(self.fork_request_retries)
+                    .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
+                    .compute_units_per_second(self.compute_units_per_second)
+                    .max_retry(10)
+                    .headers(self.fork_headers.clone())
+                    .build()
+                    .expect("Failed to establish provider to fork url"),
+            ),
+        };
 
         let (fork_block_number, fork_chain_id) = if let Some(fork_block_number) =
             self.fork_block_number

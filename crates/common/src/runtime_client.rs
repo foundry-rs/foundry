@@ -1,18 +1,15 @@
 //! Wrap different providers
 
+use std::{fmt::Debug, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
+
 use async_trait::async_trait;
 use ethers_core::types::U256;
-use ethers_providers::{
-    Authorization, ConnectionDetails, Http, HttpRateLimitRetryPolicy, Ipc, JsonRpcClient,
-    JsonRpcError, JwtAuth, JwtKey, ProviderError, PubsubClient, RetryClient, RetryClientBuilder,
-    RpcError, Ws,
-};
+use ethers_providers::{Authorization, ConnectionDetails, Http, HttpClientError, HttpRateLimitRetryPolicy, Ipc, JsonRpcClient, JsonRpcError, JwtAuth, JwtKey, ProviderError, PubsubClient, RetryClient, RetryClientBuilder, RetryPolicy, RpcError, Ws};
 use reqwest::{
     header::{HeaderName, HeaderValue},
     Url,
 };
 use serde::{de::DeserializeOwned, Serialize};
-use std::{fmt::Debug, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::sync::RwLock;
 
@@ -90,6 +87,7 @@ pub struct RuntimeClient {
     compute_units_per_second: u64,
     jwt: Option<String>,
     headers: Vec<String>,
+    retry_policy: Arc<RwLock<Option<Box<dyn RetryPolicy<HttpClientError>>>>>
 }
 
 /// Builder for RuntimeClient
@@ -163,13 +161,19 @@ impl RuntimeClient {
                     .map_err(|e| RuntimeClientError::ProviderError(e.into()))?;
                 let provider = Http::new_with_client(self.url.clone(), client);
 
+                let policy = match self.get_retry_policy().await {
+                    Some(policy) => policy,
+                    None => Box::new(HttpRateLimitRetryPolicy)
+                };
+
                 #[allow(clippy::box_default)]
                 let provider = RetryClientBuilder::default()
                     .initial_backoff(Duration::from_millis(self.initial_backoff))
                     .rate_limit_retries(self.max_retry)
                     .timeout_retries(self.timeout_retry)
                     .compute_units_per_second(self.compute_units_per_second)
-                    .build(provider, Box::new(HttpRateLimitRetryPolicy));
+                    .build(provider, policy);
+
                 Ok(InnerClient::Http(provider))
             }
             "ws" | "wss" => {
@@ -196,6 +200,10 @@ impl RuntimeClient {
             }
             _ => Err(RuntimeClientError::BadScheme(self.url.to_string())),
         }
+    }
+
+    async fn get_retry_policy(&self) -> Option<Box<dyn RetryPolicy<HttpClientError>>> {
+        self.retry_policy.write().await.take()
     }
 }
 
@@ -246,6 +254,23 @@ impl RuntimeClientBuilder {
             compute_units_per_second: self.compute_units_per_second,
             jwt: self.jwt,
             headers: self.headers,
+            retry_policy: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Build a RuntimeClient with a custom retry policy
+    pub fn build_with_retry_policy(self, policy: Box<dyn RetryPolicy<HttpClientError>>) -> RuntimeClient {
+        RuntimeClient {
+            client: Arc::new(RwLock::new(None)),
+            url: self.url,
+            max_retry: self.max_retry,
+            timeout_retry: self.timeout_retry,
+            initial_backoff: self.initial_backoff,
+            timeout: self.timeout,
+            compute_units_per_second: self.compute_units_per_second,
+            jwt: self.jwt,
+            headers: self.headers,
+            retry_policy: Arc::new(RwLock::new(Some(policy)))
         }
     }
 }

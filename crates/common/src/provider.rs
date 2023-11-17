@@ -59,6 +59,7 @@ pub struct ProviderBuilder {
     chain: NamedChain,
     max_retry: u32,
     timeout_retry: u32,
+    /// Milliseconds
     initial_backoff: u64,
     timeout: Duration,
     /// available CUPS
@@ -224,6 +225,7 @@ impl ProviderBuilder {
             jwt,
             headers,
         } = self;
+
         let url = url?;
 
         let client_builder = RuntimeClientBuilder::new(
