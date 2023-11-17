@@ -218,7 +218,7 @@ async fn fetch_storage_slots(
 fn print_storage(layout: StorageLayout, values: Vec<B256>, pretty: bool) -> Result<()> {
     if !pretty {
         println!("{}", serde_json::to_string_pretty(&serde_json::to_value(layout)?)?);
-        return Ok(())
+        return Ok(());
     }
 
     let mut table = Table::new();
@@ -230,8 +230,6 @@ fn print_storage(layout: StorageLayout, values: Vec<B256>, pretty: bool) -> Resu
         let raw_value_bytes = value.0;
         let converted_value = U256::from_be_bytes(raw_value_bytes);
 
-        // Convert the raw value bytes to a hexadecimal string
-        let hex_value = format!("{:x}", &value);
         table.add_row([
             slot.label.as_str(),
             storage_type.map_or("?", |t| &t.label),
@@ -239,7 +237,7 @@ fn print_storage(layout: StorageLayout, values: Vec<B256>, pretty: bool) -> Resu
             &slot.offset.to_string(),
             &storage_type.map_or("?", |t| &t.number_of_bytes),
             &converted_value.to_string(),
-            &hex_value,
+            &value.to_string(),
             &slot.contract,
         ]);
     }
