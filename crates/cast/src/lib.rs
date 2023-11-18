@@ -219,14 +219,14 @@ impl<P: TempProvider> Cast<P> {
         to_json: bool,
     ) -> Result<String> {
         let (tx, _) = builder_output;
-        let access_list = self.provider.create_access_list(tx, block).await?;
+        let access_list = self.provider.create_access_list(tx.clone(), block).await?;
         let res = if to_json {
             serde_json::to_string(&access_list)?
         } else {
             let mut s =
                 vec![format!("gas used: {}", access_list.gas_used), "access list:".to_string()];
             for al in access_list.access_list.0 {
-                s.push(format!("- address: {}", &al.address.to_alloy().to_checksum(None)));
+                s.push(format!("- address: {}", &al.address.to_checksum(None)));
                 if !al.storage_keys.is_empty() {
                     s.push("  keys:".to_string());
                     for key in al.storage_keys {
