@@ -132,7 +132,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
     }
 
     /// Set nonce
-    pub fn set_nonce(&mut self, v: U256) -> &mut Self {
+    pub fn set_nonce(&mut self, v: U64) -> &mut Self {
         self.tx.nonce = Some(v);
         self
     }
@@ -214,7 +214,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         args: Vec<String>,
     ) -> Result<&mut TxBuilder<'a, M>> {
         let (data, func) = self.create_args(sig, args).await?;
-        self.tx.set_data(data.into());
+        self.set_data(data.into());
         self.func = Some(func);
         Ok(self)
     }
