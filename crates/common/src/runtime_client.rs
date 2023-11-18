@@ -128,7 +128,9 @@ impl RuntimeClient {
     async fn connect(&self) -> Result<InnerClient, RuntimeClientError> {
         match self.url.scheme() {
             "http" | "https" => {
-                let mut client_builder = reqwest::Client::builder().timeout(self.timeout);
+                let mut client_builder = reqwest::Client::builder()
+                    .timeout(self.timeout)
+                    .tls_built_in_root_certs(self.url.scheme() == "https");
                 let mut headers = reqwest::header::HeaderMap::new();
 
                 if let Some(jwt) = self.jwt.as_ref() {
