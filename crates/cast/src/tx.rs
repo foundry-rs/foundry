@@ -1,19 +1,15 @@
-use crate::errors::FunctionSignatureError;
+use crate::{errors::FunctionSignatureError, NameOrAddress};
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, U256};
-use ethers_core::types::{
-    transaction::eip2718::TypedTransaction, Eip1559TransactionRequest, NameOrAddress,
-    TransactionRequest,
-};
+use alloy_primitives::{Address, U256, U64};
+use alloy_rpc_types::{CallInput, CallRequest};
 use ethers_providers::Middleware;
-use eyre::{eyre, Result};
+use eyre::Result;
 use foundry_common::abi::{encode_function_args, get_func, get_func_etherscan};
 use foundry_config::Chain;
-use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::future::join_all;
 
-pub type TxBuilderOutput = (TypedTransaction, Option<Function>);
-pub type TxBuilderPeekOutput<'a> = (&'a TypedTransaction, &'a Option<Function>);
+pub type TxBuilderOutput = (CallRequest, Option<Function>);
+pub type TxBuilderPeekOutput<'a> = (&'a CallRequest, &'a Option<Function>);
 
 /// Transaction builder
 ///
@@ -35,7 +31,7 @@ pub type TxBuilderPeekOutput<'a> = (&'a TypedTransaction, &'a Option<Function>);
 pub struct TxBuilder<'a, M: Middleware> {
     to: Option<Address>,
     chain: Chain,
-    tx: TypedTransaction,
+    tx: CallRequest,
     func: Option<Function>,
     etherscan_api_key: Option<String>,
     provider: &'a M,
@@ -56,17 +52,22 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         legacy: bool,
     ) -> Result<TxBuilder<'a, M>> {
         let chain = chain.into();
-        let from_addr = resolve_ens(provider, from).await?;
+        let from = resolve_ens(provider, from).await?;
 
-        let mut tx: TypedTransaction = if chain.is_legacy() || legacy {
-            TransactionRequest::new().from(from_addr.to_ethers()).chain_id(chain.id()).into()
-        } else {
-            Eip1559TransactionRequest::new().from(from_addr.to_ethers()).chain_id(chain.id()).into()
+        // todo: tx type?
+        // todo: address
+        // todo: to
+        let tx = CallRequest {
+            from: Some(Address::ZERO),
+            to: Some(Address::ZERO),
+            chain_id: Some(U64::from(chain.id())),
+            ..Default::default()
         };
 
         let to_addr = if let Some(to) = to {
             let addr = resolve_ens(provider, to).await?;
-            tx.set_to(addr.to_ethers());
+            // todo
+            // tx.set_to(addr.to_ethers());
             Some(addr)
         } else {
             None
@@ -76,7 +77,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
 
     /// Set gas for tx
     pub fn set_gas(&mut self, v: U256) -> &mut Self {
-        self.tx.set_gas(v.to_ethers());
+        self.tx.gas = Some(v);
         self
     }
 
@@ -90,7 +91,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
 
     /// Set gas price
     pub fn set_gas_price(&mut self, v: U256) -> &mut Self {
-        self.tx.set_gas_price(v.to_ethers());
+        self.tx.gas_price = Some(v);
         self
     }
 
@@ -104,9 +105,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
 
     /// Set priority gas price
     pub fn set_priority_gas_price(&mut self, v: U256) -> &mut Self {
-        if let TypedTransaction::Eip1559(tx) = &mut self.tx {
-            tx.max_priority_fee_per_gas = Some(v.to_ethers())
-        }
+        self.tx.max_priority_fee_per_gas = Some(v);
         self
     }
 
@@ -120,7 +119,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
 
     /// Set value
     pub fn set_value(&mut self, v: U256) -> &mut Self {
-        self.tx.set_value(v.to_ethers());
+        self.tx.value = Some(v);
         self
     }
 
@@ -134,7 +133,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
 
     /// Set nonce
     pub fn set_nonce(&mut self, v: U256) -> &mut Self {
-        self.tx.set_nonce(v.to_ethers());
+        self.tx.nonce = Some(v);
         self
     }
 
@@ -161,7 +160,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
     }
 
     pub fn set_data(&mut self, v: Vec<u8>) -> &mut Self {
-        self.tx.set_data(v.into());
+        self.tx.input = CallInput::new(v.into());
         self
     }
 
@@ -171,7 +170,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         args: Vec<String>,
     ) -> Result<(Vec<u8>, Function)> {
         if sig.trim().is_empty() {
-            return Err(FunctionSignatureError::MissingSignature.into())
+            return Err(FunctionSignatureError::MissingSignature.into());
         }
 
         let args = resolve_name_args(&args, self.provider).await;
@@ -226,7 +225,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         value: Option<(&str, Vec<String>)>,
     ) -> Result<&mut TxBuilder<'a, M>> {
         if let Some((sig, args)) = value {
-            return self.set_args(sig, args).await
+            return self.set_args(sig, args).await;
         }
         Ok(self)
     }
@@ -242,16 +241,20 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
     }
 }
 
+#[deprecated]
 async fn resolve_ens<M: Middleware, T: Into<NameOrAddress>>(
     provider: &M,
     addr: T,
 ) -> Result<Address> {
+    /*
     let from_addr = match addr.into() {
         NameOrAddress::Name(ref ens_name) => provider.resolve_name(ens_name).await,
         NameOrAddress::Address(addr) => Ok(addr),
     }
     .map_err(|x| eyre!("Failed to resolve ENS name: {x}"))?;
     Ok(from_addr.to_alloy())
+    */
+    todo!()
 }
 
 async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<String> {

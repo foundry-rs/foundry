@@ -21,7 +21,7 @@ use foundry_block_explorers::Client;
 use foundry_common::{abi::encode_function_args, fmt::*, TransactionReceiptWithRevertReason};
 use foundry_config::Chain;
 pub use foundry_evm::*;
-use foundry_utils::types::{ToAlloy, ToEthers};
+use foundry_utils::types::ToEthers;
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
 pub use rusoto_core::{
@@ -248,7 +248,7 @@ impl<P: TempProvider> Cast<P> {
         who: T,
         block: Option<BlockId>,
     ) -> Result<U256> {
-        Ok(self.provider.get_balance(who, block).await?.to_alloy())
+        Ok(self.provider.get_balance(who.into().resolve(&self.provider).await?, block).await?)
     }
 
     /// Sends a transaction to the specified address

@@ -351,7 +351,7 @@ impl Future for NodeHandle {
         // poll the ipc task
         if let Some(mut ipc) = pin.ipc_task.take() {
             if let Poll::Ready(res) = ipc.poll_unpin(cx) {
-                return Poll::Ready(res.map(|res| res.map_err(NodeError::from)))
+                return Poll::Ready(res.map(|res| res.map_err(NodeError::from)));
             } else {
                 pin.ipc_task = Some(ipc);
             }
@@ -359,13 +359,13 @@ impl Future for NodeHandle {
 
         // poll the node service task
         if let Poll::Ready(res) = pin.node_service.poll_unpin(cx) {
-            return Poll::Ready(res)
+            return Poll::Ready(res);
         }
 
         // poll the axum server handles
         for server in pin.servers.iter_mut() {
             if let Poll::Ready(res) = server.poll_unpin(cx) {
-                return Poll::Ready(res)
+                return Poll::Ready(res);
             }
         }
 

@@ -10,10 +10,7 @@ use alloy_rpc_types::{
     TransactionReceipt,
 };
 use alloy_transport::TransportError;
-use ethers::{
-    providers::ProviderError,
-    // types::{GethDebugTracingOptions, GethTrace, Trace},
-};
+use ethers::providers::ProviderError;
 use eyre::Context;
 use foundry_common::{ProviderBuilder, RetryProvider};
 use parking_lot::{
@@ -308,12 +305,12 @@ impl ClientFork {
             match block.transactions {
                 BlockTransactions::Full(txs) => {
                     if let Some(tx) = txs.get(index) {
-                        return Ok(Some(tx.clone()))
+                        return Ok(Some(tx.clone()));
                     }
                 }
                 BlockTransactions::Hashes(hashes) => {
                     if let Some(tx_hash) = hashes.get(index) {
-                        return self.transaction_by_hash(*tx_hash).await
+                        return self.transaction_by_hash(*tx_hash).await;
                     }
                 }
                 // TODO(evalir): Is it possible to reach this case? Should we support it
@@ -332,12 +329,12 @@ impl ClientFork {
             match block.transactions {
                 BlockTransactions::Full(txs) => {
                     if let Some(tx) = txs.get(index) {
-                        return Ok(Some(tx.clone()))
+                        return Ok(Some(tx.clone()));
                     }
                 }
                 BlockTransactions::Hashes(hashes) => {
                     if let Some(tx_hash) = hashes.get(index) {
-                        return self.transaction_by_hash(*tx_hash).await
+                        return self.transaction_by_hash(*tx_hash).await;
                     }
                 }
                 // TODO(evalir): Is it possible to reach this case? Should we support it
