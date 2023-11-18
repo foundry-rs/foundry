@@ -11,6 +11,7 @@ mod ipc;
 mod logs;
 mod proof;
 mod pubsub;
+mod optimism;
 // mod revert; // TODO uncomment <https://github.com/gakonst/ethers-rs/issues/2186>
 mod otterscan;
 mod sign;

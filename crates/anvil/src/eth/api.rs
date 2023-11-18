@@ -57,7 +57,7 @@ use ethers::{
         },
         Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams,
         GethDebugTracingOptions, GethTrace, Log, Trace, Transaction, TransactionReceipt, TxHash,
-        TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
+        TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256, U64, Signature
     },
     utils::rlp,
 };
@@ -409,11 +409,18 @@ impl EthApi {
         from: &Address,
         request: TypedTransactionRequest,
     ) -> Result<TypedTransaction> {
-        for signer in self.signers.iter() {
-            if signer.accounts().contains(from) {
-                let signature = signer.sign_transaction(request.clone(), from)?;
-                return build_typed_transaction(request, signature)
-            }
+        match request {
+            TypedTransactionRequest::Deposit(_) => {
+                return build_typed_transaction(request, Signature { r: U256([0, 0, 0, 0]), s: U256([0, 0, 0, 0]), v: 0 })
+            },
+            _ => {
+                for signer in self.signers.iter() {
+                    if signer.accounts().contains(from) {
+                        let signature = signer.sign_transaction(request.clone(), from)?;
+                        return build_typed_transaction(request, signature)
+                    }
+                }
+            },
         }
         Err(BlockchainError::NoSignerAvailable)
     }
@@ -836,7 +843,6 @@ impl EthApi {
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
         let request = self.build_typed_tx_request(request, nonce)?;
-
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
             let bypass_signature = self.backend.cheats().bypass_signature();

@@ -142,14 +142,14 @@ revm = { version = "3", default-features = false }
 revm-primitives = { version = "1", default-features = false }
 
 ## ethers
-ethers = { version = "2.0", default-features = false }
-ethers-core = { version = "2.0", default-features = false }
-ethers-contract = { version = "2.0", default-features = false }
-ethers-contract-abigen = { version = "2.0", default-features = false }
-ethers-providers = { version = "2.0", default-features = false }
-ethers-signers = { version = "2.0", default-features = false }
-ethers-middleware = { version = "2.0", default-features = false }
-ethers-solc = { version = "2.0", default-features = false }
+ethers = { git = "https://github.com/gakonst/ethers-rs", version = "2.0.11", default-features = false }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", version = "2.0.11", default-features = false }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs", version = "2.0.11", default-features = false }
+ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", version = "2.0.11", default-features = false }
+ethers-providers = { git = "https://github.com/gakonst/ethers-rs", version = "2.0.11", default-features = false }
+ethers-signers = { git = "https://github.com/gakonst/ethers-rs", version = "2.0.11", default-features = false }
+ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", version = "2.0.11", default-features = false }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", version = "2.0.11", default-features = false }
 
 ## alloy
 alloy-primitives = "0.4.1"
