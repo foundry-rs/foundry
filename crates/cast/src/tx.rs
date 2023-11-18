@@ -1,6 +1,7 @@
 use crate::{errors::FunctionSignatureError, NameOrAddress};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, U256, U64};
+use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{CallInput, CallRequest};
 use ethers_providers::Middleware;
 use eyre::Result;
@@ -28,16 +29,16 @@ pub type TxBuilderPeekOutput<'a> = (&'a CallRequest, &'a Option<Function>);
 /// # Ok(())
 /// # }
 /// ```
-pub struct TxBuilder<'a, M: Middleware> {
+pub struct TxBuilder<'a, P: TempProvider> {
     to: Option<Address>,
     chain: Chain,
     tx: CallRequest,
     func: Option<Function>,
     etherscan_api_key: Option<String>,
-    provider: &'a M,
+    provider: &'a P,
 }
 
-impl<'a, M: Middleware> TxBuilder<'a, M> {
+impl<'a, P: TempProvider> TxBuilder<'a, P> {
     /// Create a new TxBuilder
     /// `provider` - provider to use
     /// `from` - 'from' field. Could be an ENS name
@@ -45,29 +46,25 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
     /// `chain` - chain to construct the tx for
     /// `legacy` - use type 1 transaction
     pub async fn new<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
-        provider: &'a M,
+        provider: &'a P,
         from: F,
         to: Option<T>,
         chain: impl Into<Chain>,
         legacy: bool,
-    ) -> Result<TxBuilder<'a, M>> {
+    ) -> Result<TxBuilder<'a, P>> {
         let chain = chain.into();
         let from = resolve_ens(provider, from).await?;
 
         // todo: tx type?
-        // todo: address
-        // todo: to
-        let tx = CallRequest {
-            from: Some(Address::ZERO),
-            to: Some(Address::ZERO),
+        let mut tx = CallRequest {
+            from: Some(from),
             chain_id: Some(U64::from(chain.id())),
             ..Default::default()
         };
 
         let to_addr = if let Some(to) = to {
             let addr = resolve_ens(provider, to).await?;
-            // todo
-            // tx.set_to(addr.to_ethers());
+            tx.to = Some(addr);
             Some(addr)
         } else {
             None
@@ -173,7 +170,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
             return Err(FunctionSignatureError::MissingSignature.into());
         }
 
-        let args = resolve_name_args(&args, self.provider).await;
+        let args = resolve_name_args(&args, &self.provider).await;
 
         let func = if sig.contains('(') {
             // a regular function signature with parentheses
@@ -212,7 +209,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         &mut self,
         sig: &str,
         args: Vec<String>,
-    ) -> Result<&mut TxBuilder<'a, M>> {
+    ) -> Result<&mut TxBuilder<'a, P>> {
         let (data, func) = self.create_args(sig, args).await?;
         self.set_data(data.into());
         self.func = Some(func);
@@ -223,7 +220,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
     pub async fn args(
         &mut self,
         value: Option<(&str, Vec<String>)>,
-    ) -> Result<&mut TxBuilder<'a, M>> {
+    ) -> Result<&mut TxBuilder<'a, P>> {
         if let Some((sig, args)) = value {
             return self.set_args(sig, args).await;
         }
@@ -241,9 +238,8 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
     }
 }
 
-#[deprecated]
-async fn resolve_ens<M: Middleware, T: Into<NameOrAddress>>(
-    provider: &M,
+pub async fn resolve_ens<P: TempProvider, T: Into<NameOrAddress>>(
+    provider: &P,
     addr: T,
 ) -> Result<Address> {
     /*
@@ -257,7 +253,7 @@ async fn resolve_ens<M: Middleware, T: Into<NameOrAddress>>(
     todo!()
 }
 
-async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<String> {
+async fn resolve_name_args<P: TempProvider>(args: &[String], provider: &P) -> Vec<String> {
     join_all(args.iter().map(|arg| async {
         if arg.contains('.') {
             let addr = provider.resolve_name(arg).await;

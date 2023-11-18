@@ -37,7 +37,7 @@ use std::{
 };
 use tokio::signal::ctrl_c;
 pub use tx::TxBuilder;
-use tx::{TxBuilderOutput, TxBuilderPeekOutput};
+use tx::{resolve_ens, TxBuilderOutput, TxBuilderPeekOutput};
 
 pub mod base;
 pub mod errors;
@@ -88,13 +88,6 @@ impl FromStr for NameOrAddress {
         } else {
             Ok(Self::Name(s.to_string()))
         }
-    }
-}
-
-impl NameOrAddress {
-    async fn resolve<P: TempProvider>(&self, _provider: P) -> TransportResult<Address> {
-        // todo
-        Ok(Address::ZERO)
     }
 }
 
@@ -248,7 +241,7 @@ impl<P: TempProvider> Cast<P> {
         who: T,
         block: Option<BlockId>,
     ) -> Result<U256> {
-        Ok(self.provider.get_balance(who.into().resolve(&self.provider).await?, block).await?)
+        Ok(self.provider.get_balance(resolve_ens(&self.provider, who).await?, block).await?)
     }
 
     /// Sends a transaction to the specified address
@@ -545,7 +538,7 @@ impl<P: TempProvider> Cast<P> {
     ) -> Result<u64> {
         Ok(self
             .provider
-            .get_transaction_count(who.into().resolve(&self.provider).await?, block)
+            .get_transaction_count(resolve_ens(&self.provider, who).await?, block)
             .await?
             .to())
     }
@@ -576,7 +569,7 @@ impl<P: TempProvider> Cast<P> {
             B256::from_str("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")?;
         let value = self
             .provider
-            .get_storage_at(who.into().resolve(&self.provider).await?, slot, block)
+            .get_storage_at(resolve_ens(&self.provider, who).await?, slot, block)
             .await?;
         let addr: B160 = value.into();
         Ok(format!("{addr:?}"))
@@ -608,7 +601,7 @@ impl<P: TempProvider> Cast<P> {
             B256::from_str("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103")?;
         let value = self
             .provider
-            .get_storage_at(who.into().resolve(&self.provider).await?, slot, block)
+            .get_storage_at(resolve_ens(&self.provider, who).await?, slot, block)
             .await?;
         let addr: B160 = value.into();
         Ok(format!("{addr:?}"))
@@ -662,7 +655,7 @@ impl<P: TempProvider> Cast<P> {
         let code = self
             .provider
             .get_code_at(
-                who.into().resolve(&self.provider).await?,
+                resolve_ens(&self.provider, who).await?,
                 block.unwrap_or(BlockNumberOrTag::Latest.into()),
             )
             .await?;
@@ -698,7 +691,7 @@ impl<P: TempProvider> Cast<P> {
         let code = self
             .provider
             .get_code_at(
-                who.into().resolve(&self.provider).await?,
+                resolve_ens(&self.provider, who).await?,
                 block.unwrap_or(BlockNumberOrTag::Latest.into()),
             )
             .await?;
