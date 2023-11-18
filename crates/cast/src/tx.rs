@@ -275,8 +275,7 @@ async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<
 #[cfg(test)]
 mod tests {
     use crate::TxBuilder;
-    use alloy_primitives::U64;
-    use alloy_primitives::{Address, U256};
+    use alloy_primitives::{Address, U256, U64};
     use async_trait::async_trait;
     use ethers_core::types::{transaction::eip2718::TypedTransaction, NameOrAddress, H160};
     use ethers_providers::{JsonRpcClient, Middleware, ProviderError};

@@ -238,7 +238,7 @@ impl CreateArgs {
                 .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
             deployer.tx.set_gas_price(max_fee);
             if priority_fee.is_none() {
-                priority_fee = Some(max_priority_fee.to_alloy());
+                priority_fee = Some(max_priority_fee);
             }
         }
 

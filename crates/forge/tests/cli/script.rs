@@ -411,7 +411,7 @@ forgetest_async!(
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
-            .load_addresses(&[
+            .load_addresses(vec![
                 Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
             ])
             .await
@@ -450,7 +450,7 @@ forgetest_async!(
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
-            .load_addresses(&[
+            .load_addresses(vec![
                 Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
             ])
             .await
@@ -474,7 +474,7 @@ forgetest_async!(
 
         tester
             .add_deployer(0)
-            .load_addresses(&[
+            .load_addresses(vec![
                 Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
             ])
             .await
@@ -653,7 +653,7 @@ forgetest_async!(
         // Prepare CREATE2 Deployer
         let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
         let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
-        api.anvil_set_code(addr.to_ethers(), code).await.unwrap();
+        api.anvil_set_code(addr, code).await.unwrap();
 
         tester
             .load_private_keys(&[0])
