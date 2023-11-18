@@ -3,7 +3,7 @@ use alloy_json_abi::{ContractObject, Function};
 use alloy_primitives::{Address, BlockNumber, StorageKey, B160, B256, I256, U256, U64};
 use alloy_providers::provider::TempProvider;
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter};
 use alloy_transport::TransportResult;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
@@ -346,7 +346,7 @@ impl<P: TempProvider> Cast<P> {
     pub async fn estimate(&self, builder_output: TxBuilderPeekOutput<'_>) -> Result<U256> {
         let (tx, _) = builder_output;
 
-        let res = self.provider.estimate_gas(tx, None).await?;
+        let res = self.provider.estimate_gas(tx.clone(), None).await?;
 
         Ok::<_, eyre::Error>(res)
     }
@@ -865,7 +865,7 @@ impl<P: TempProvider> Cast<P> {
     }
 
     pub async fn filter_logs(&self, filter: Filter, to_json: bool) -> Result<String> {
-        let logs = self.provider.get_logs(&filter).await?;
+        let logs = self.provider.get_logs(filter).await?;
 
         let res = if to_json {
             serde_json::to_string(&logs)?
