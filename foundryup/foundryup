@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -eo pipefail
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -266,8 +266,7 @@ check_cmd() {
 }
 
 # Run a command that should never fail. If the command fails execution
-# will immediately terminate with an error showing the failing
-# command.
+# will immediately terminate with an error showing the failing command.
 ensure() {
   if ! "$@"; then err "command failed: $*"; fi
 }
@@ -315,4 +314,4 @@ Contribute : https://github.com/orgs/foundry-rs/projects/2/
 }
 
 
-main "$@" || exit 1
+main "$@"
