@@ -37,8 +37,6 @@ pub use inspector::Tracer;
 mod node;
 pub use node::CallTraceNode;
 
-pub mod utils;
-
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
 /// An arena of [CallTraceNode]s
