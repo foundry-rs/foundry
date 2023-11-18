@@ -18,7 +18,7 @@ use foundry_evm::traces::CallTraceArena;
 use foundry_utils::types::ToAlloy;
 use revm::{
     interpreter::InstructionResult,
-    primitives::{CreateScheme, TransactTo, TxEnv, OptimismFields},
+    primitives::{CreateScheme, OptimismFields, TransactTo, TxEnv},
 };
 use std::ops::Deref;
 
@@ -48,7 +48,8 @@ pub enum TypedTransactionRequest {
 /// Represents _all_ transaction requests received from RPC
 #[derive(Clone, Debug, PartialEq, Eq, Default, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-// #[cfg_attr(feature = "serde", serde(deny_unknown_fields))] // TODO: had to disable this to get tests passing
+// #[cfg_attr(feature = "serde", serde(deny_unknown_fields))] // TODO: had to disable this to get
+// tests passing
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct EthTransactionRequest {
     /// from address
@@ -154,7 +155,8 @@ impl EthTransactionRequest {
                 }))
             }
             // op-stack deposit
-            (Some(126), _, None, None, None) => { // TODO: gas price should be zero, enforce this here?
+            (Some(126), _, None, None, None) => {
+                // TODO: gas price should be zero, enforce this here?
                 Some(TypedTransactionRequest::Deposit(DepositTransactionRequest {
                     source_hash: source_hash.unwrap_or_default(),
                     from: from.unwrap_or_default(),
@@ -831,9 +833,7 @@ impl TypedTransaction {
                 let s = U256::from_big_endian(&tx.s[..]);
                 Signature { r, s, v: v.into() }
             }
-            TypedTransaction::Deposit(_) => {
-                Signature { r: U256::zero(), s: U256::zero(), v: 0 }
-            },
+            TypedTransaction::Deposit(_) => Signature { r: U256::zero(), s: U256::zero(), v: 0 },
         }
     }
 }
@@ -1361,7 +1361,7 @@ impl PendingTransaction {
     }
 
     pub fn nonce(&self) -> &U256 {
-        &self.transaction.nonce()
+        self.transaction.nonce()
     }
 
     pub fn hash(&self) -> &TxHash {
@@ -1456,7 +1456,17 @@ impl PendingTransaction {
             }
             TypedTransaction::Deposit(tx) => {
                 let chain_id = tx.chain_id();
-                let DepositTransaction { nonce, source_hash, gas_limit, value, kind, mint, input, is_system_tx, .. } = tx;
+                let DepositTransaction {
+                    nonce,
+                    source_hash,
+                    gas_limit,
+                    value,
+                    kind,
+                    mint,
+                    input,
+                    is_system_tx,
+                    ..
+                } = tx;
                 TxEnv {
                     caller: caller.to_alloy(),
                     transact_to: transact_to(kind),
@@ -1803,7 +1813,10 @@ mod tests {
         let bytes_sixth = &mut &hex::decode("b8587ef85507a0000000000000000000000000000000000000000000000000000000000000000094cf7f9e66af820a19257a2108375b180b0ec491679461815774383099e24810ab832a5b2a5425c154d5808230398287fb0180").unwrap()[..];
         let expected: TypedTransaction = TypedTransaction::Deposit(DepositTransaction {
             nonce: 7u64.into(),
-            source_hash: H256::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
+            source_hash: H256::from_str(
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            )
+            .unwrap(),
             from: H160::from_str("cf7f9e66af820a19257a2108375b180b0ec49167").unwrap(),
             kind: TransactionKind::Call(Address::from_slice(
                 &hex::decode("61815774383099e24810ab832a5b2a5425c154d5").unwrap()[..],

@@ -56,8 +56,8 @@ use ethers::{
             eip712::TypedData,
         },
         Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams,
-        GethDebugTracingOptions, GethTrace, Log, Trace, Transaction, TransactionReceipt, TxHash,
-        TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256, U64, Signature
+        GethDebugTracingOptions, GethTrace, Log, Signature, Trace, Transaction, TransactionReceipt,
+        TxHash, TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
     },
     utils::rlp,
 };
@@ -411,8 +411,11 @@ impl EthApi {
     ) -> Result<TypedTransaction> {
         match request {
             TypedTransactionRequest::Deposit(_) => {
-                return build_typed_transaction(request, Signature { r: U256([0, 0, 0, 0]), s: U256([0, 0, 0, 0]), v: 0 })
-            },
+                return build_typed_transaction(
+                    request,
+                    Signature { r: U256::zero(), s: U256::zero(), v: 0 },
+                )
+            }
             _ => {
                 for signer in self.signers.iter() {
                     if signer.accounts().contains(from) {
@@ -420,7 +423,7 @@ impl EthApi {
                         return build_typed_transaction(request, signature)
                     }
                 }
-            },
+            }
         }
         Err(BlockchainError::NoSignerAvailable)
     }

@@ -115,18 +115,20 @@ impl TypedReceipt {
     /// Returns the gas used by the transactions
     pub fn gas_used(&self) -> U256 {
         match self {
-            TypedReceipt::Legacy(r) | TypedReceipt::EIP2930(r) | TypedReceipt::EIP1559(r) | TypedReceipt::Deposit(r) => {
-                r.gas_used
-            }
+            TypedReceipt::Legacy(r) |
+            TypedReceipt::EIP2930(r) |
+            TypedReceipt::EIP1559(r) |
+            TypedReceipt::Deposit(r) => r.gas_used,
         }
     }
 
     /// Returns the gas used by the transactions
     pub fn logs_bloom(&self) -> &Bloom {
         match self {
-            TypedReceipt::Legacy(r) | TypedReceipt::EIP2930(r) | TypedReceipt::EIP1559(r) | TypedReceipt::Deposit(r) => {
-                &r.logs_bloom
-            }
+            TypedReceipt::Legacy(r) |
+            TypedReceipt::EIP2930(r) |
+            TypedReceipt::EIP1559(r) |
+            TypedReceipt::Deposit(r) => &r.logs_bloom,
         }
     }
 }

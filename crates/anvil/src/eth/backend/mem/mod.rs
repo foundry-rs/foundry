@@ -2258,7 +2258,8 @@ impl TransactionValidator for Backend {
         }
 
         // check nonce
-        let is_deposit_tx = matches!(&pending.transaction.transaction, TypedTransaction::Deposit(_));
+        let is_deposit_tx =
+            matches!(&pending.transaction.transaction, TypedTransaction::Deposit(_));
         let nonce: u64 =
             (*tx.nonce()).try_into().map_err(|_| InvalidTransactionError::NonceMaxValue)?;
         if nonce < account.nonce && !is_deposit_tx {

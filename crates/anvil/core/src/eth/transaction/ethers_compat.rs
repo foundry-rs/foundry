@@ -2,16 +2,18 @@
 
 use super::EthTransactionRequest;
 use crate::eth::transaction::{
-    EIP1559TransactionRequest, EIP2930TransactionRequest, LegacyTransactionRequest,
-    MaybeImpersonatedTransaction, TypedTransaction, TypedTransactionRequest,
-    DepositTransactionRequest,
+    DepositTransactionRequest, EIP1559TransactionRequest, EIP2930TransactionRequest,
+    LegacyTransactionRequest, MaybeImpersonatedTransaction, TypedTransaction,
+    TypedTransactionRequest,
 };
 use ethers_core::types::{
-    transaction::eip2718::TypedTransaction as EthersTypedTransactionRequest, Address,
-    Eip1559TransactionRequest as EthersEip1559TransactionRequest,
+    transaction::{
+        eip2718::TypedTransaction as EthersTypedTransactionRequest, optimism::DepositTransaction,
+    },
+    Address, Eip1559TransactionRequest as EthersEip1559TransactionRequest,
     Eip2930TransactionRequest as EthersEip2930TransactionRequest, NameOrAddress,
     Transaction as EthersTransaction, TransactionRequest as EthersLegacyTransactionRequest,
-    TransactionRequest, H256, U256, U64, transaction::optimism::DepositTransaction,
+    TransactionRequest, H256, U256, U64,
 };
 
 impl From<TypedTransactionRequest> for EthersTypedTransactionRequest {
@@ -110,9 +112,9 @@ impl From<TypedTransactionRequest> for EthersTypedTransactionRequest {
                         nonce: Some(0.into()),
                         chain_id: None,
                     },
-                    source_hash: source_hash,
+                    source_hash,
                     mint: Some(mint),
-                    is_system_tx: is_system_tx,
+                    is_system_tx,
                 })
             }
         }

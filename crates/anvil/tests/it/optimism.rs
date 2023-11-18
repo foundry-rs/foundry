@@ -1,10 +1,14 @@
 //! tests for OP chain support
 use anvil::{spawn, NodeConfig};
-use ethers_core::types::{H256, Bytes};
 use ethers::{
-    types::{transaction::eip2718::TypedTransaction, transaction::optimism::DepositTransaction, TransactionRequest, U256},
-    providers::Middleware, abi::Address
+    abi::Address,
+    providers::Middleware,
+    types::{
+        transaction::{eip2718::TypedTransaction, optimism::DepositTransaction},
+        TransactionRequest, U256,
+    },
 };
+use ethers_core::types::{Bytes, H256};
 use std::str::FromStr;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -26,7 +30,10 @@ async fn test_deposits_not_supported_if_optimism_disabled() {
             data: Some(Bytes::default()),
             nonce: None,
         },
-        source_hash: H256::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
+        source_hash: H256::from_str(
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .unwrap(),
         mint: Some(U256::zero()),
         is_system_tx: true,
     });
@@ -34,7 +41,10 @@ async fn test_deposits_not_supported_if_optimism_disabled() {
     // sending the deposit transaction should fail with error saying not supported
     let res = provider.send_transaction(deposit_tx.clone(), None).await;
     assert!(res.is_err());
-    assert!(res.unwrap_err().to_string().contains("op-stack deposit tx received but is not supported"));
+    assert!(res
+        .unwrap_err()
+        .to_string()
+        .contains("op-stack deposit tx received but is not supported"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -61,7 +71,10 @@ async fn test_send_value_deposit_transaction() {
             data: Some(Bytes::default()),
             nonce: None,
         },
-        source_hash: H256::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
+        source_hash: H256::from_str(
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .unwrap(),
         mint: Some(U256::zero()),
         is_system_tx: true,
     });
@@ -74,7 +87,6 @@ async fn test_send_value_deposit_transaction() {
     let balance = provider.get_balance(to_addr, None).await.unwrap();
     assert_eq!(balance, send_value);
 }
-
 
 // // TODO: get this working - it tests eth_sendRawTransaction
 // #[tokio::test(flavor = "multi_thread")]
@@ -101,7 +113,8 @@ async fn test_send_value_deposit_transaction() {
 //             data: Some(Bytes::default()),
 //             nonce: None,
 //         },
-//         source_hash: H256::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
+//         source_hash:
+// H256::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
 //         mint: Some(U256::zero()),
 //         is_system_tx: true,
 //     });

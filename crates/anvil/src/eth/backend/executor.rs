@@ -8,7 +8,7 @@ use crate::{
 };
 use anvil_core::eth::{
     block::{Block, BlockInfo, Header, PartialHeader},
-    receipt::{EIP1559Receipt, EIP2930Receipt, EIP658Receipt, DepositReceipt, Log, TypedReceipt},
+    receipt::{DepositReceipt, EIP1559Receipt, EIP2930Receipt, EIP658Receipt, Log, TypedReceipt},
     transaction::{PendingTransaction, TransactionInfo, TypedTransaction},
     trie,
 };
