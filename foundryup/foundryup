@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -eo pipefail
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -14,7 +14,7 @@ main() {
   need_cmd git
   need_cmd curl
 
-  while [[ $1 ]]; do
+  while [[ -n $1 ]]; do
     case $1 in
       --)               shift; break;;
 
@@ -91,7 +91,8 @@ main() {
 
     say "installing foundry (version ${FOUNDRYUP_VERSION}, tag ${FOUNDRYUP_TAG})"
 
-    PLATFORM=$(tolower "${FOUNDRYUP_PLATFORM:-$(uname -s)}")
+    uname_s=$(uname -s)
+    PLATFORM=$(tolower "${FOUNDRYUP_PLATFORM:-$uname_s}")
     EXT="tar.gz"
     case $PLATFORM in
       linux) ;;
@@ -107,7 +108,8 @@ main() {
         ;;
     esac
 
-    ARCHITECTURE=$(tolower "${FOUNDRYUP_ARCH:-$(uname -m)}")
+    uname_m=$(uname -m)
+    ARCHITECTURE=$(tolower "${FOUNDRYUP_ARCH:-$uname_m}")
     if [ "${ARCHITECTURE}" = "x86_64" ]; then
       # Redirect stderr to /dev/null to avoid printing errors if non Rosetta.
       if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
@@ -266,15 +268,14 @@ check_cmd() {
 }
 
 # Run a command that should never fail. If the command fails execution
-# will immediately terminate with an error showing the failing
-# command.
+# will immediately terminate with an error showing the failing command.
 ensure() {
   if ! "$@"; then err "command failed: $*"; fi
 }
 
 # Downloads $1 into $2 or stdout
 download() {
-  if [ "$2" ]; then
+  if [ -n "$2" ]; then
     # output into $2
     if check_cmd curl; then
       curl -#o "$2" -L "$1"
@@ -315,4 +316,4 @@ Contribute : https://github.com/orgs/foundry-rs/projects/2/
 }
 
 
-main "$@" || exit 1
+main "$@"
