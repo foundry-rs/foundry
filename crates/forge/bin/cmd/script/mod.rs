@@ -28,7 +28,7 @@ use foundry_common::{
     contracts::get_contract_name,
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
-    fmt::format_token,
+    fmt::{format_token, format_token_raw},
     shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::{
@@ -248,7 +248,7 @@ impl ScriptArgs {
         Ok(decoder)
     }
 
-    pub fn get_returns(
+    fn get_returns(
         &self,
         script_config: &ScriptConfig,
         returned: &Bytes,
@@ -275,7 +275,7 @@ impl ScriptArgs {
                         label,
                         NestedValue {
                             internal_type: internal_type.to_string(),
-                            value: format_token(token),
+                            value: format_token_raw(token),
                         },
                     );
                 }
@@ -299,7 +299,7 @@ impl ScriptArgs {
 
         if !result.success || verbosity > 3 {
             if result.traces.is_empty() {
-                eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
+                warn!(verbosity, "no traces");
             }
 
             shell::println("Traces:")?;

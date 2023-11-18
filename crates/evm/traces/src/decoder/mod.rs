@@ -1,6 +1,6 @@
 use crate::{
     identifier::{AddressIdentity, SingleSignaturesIdentifier, TraceIdentifier},
-    utils, CallTrace, CallTraceArena, TraceCallData, TraceLog, TraceRetData,
+    CallTrace, CallTraceArena, TraceCallData, TraceLog, TraceRetData,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Event, Function, JsonAbi as Abi};
@@ -463,7 +463,12 @@ impl CallTraceDecoder {
     }
 
     fn apply_label(&self, value: &DynSolValue) -> String {
-        utils::label(value, &self.labels)
+        if let DynSolValue::Address(addr) = value {
+            if let Some(label) = self.labels.get(addr) {
+                return format!("{label}: [{addr}]");
+            }
+        }
+        format_token(value)
     }
 }
 
