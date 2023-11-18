@@ -138,7 +138,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
     }
 
     /// Set nonce, if `v` is not None
-    pub fn nonce(&mut self, v: Option<U256>) -> &mut Self {
+    pub fn nonce(&mut self, v: Option<U64>) -> &mut Self {
         if let Some(value) = v {
             self.set_nonce(value);
         }
