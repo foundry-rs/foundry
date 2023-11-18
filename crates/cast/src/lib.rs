@@ -147,10 +147,10 @@ impl<P: TempProvider> Cast<P> {
         block: Option<BlockId>,
     ) -> Result<String> {
         let (tx, func) = builder_output;
-        let res = self.provider.call(&tx, block).await?;
+        let to = tx.to;
+        let res = self.provider.call(tx, block).await?;
 
         let mut decoded = vec![];
-
         if let Some(func) = func {
             // decode args into tokens
             decoded = match func.abi_decode_output(res.as_ref(), false) {
@@ -159,10 +159,14 @@ impl<P: TempProvider> Cast<P> {
                     // ensure the address is a contract
                     if res.is_empty() {
                         // check that the recipient is a contract that can be called
-                        if let Some(NameOrAddress::Address(addr)) = tx.to() {
-                            if let Ok(code) = self.provider.get_code(*addr, block).await {
+                        if let Some(to) = to {
+                            if let Ok(code) = self
+                                .provider
+                                .get_code_at(to, block.unwrap_or(BlockNumberOrTag::Latest.into()))
+                                .await
+                            {
                                 if code.is_empty() {
-                                    eyre::bail!("contract {addr:?} does not exist")
+                                    eyre::bail!("contract {to:?} does not exist")
                                 }
                             }
                         }
