@@ -856,7 +856,12 @@ impl<P: TempProvider> Cast<P> {
         slot: StorageKey,
         block: Option<BlockId>,
     ) -> Result<String> {
-        Ok(format!("{:?}", self.provider.get_storage_at(from, slot, block).await?))
+        Ok(format!(
+            "{:?}",
+            self.provider
+                .get_storage_at(resolve_ens(&self.provider, from).await?, slot, block)
+                .await?
+        ))
     }
 
     pub async fn filter_logs(&self, filter: Filter, to_json: bool) -> Result<String> {
