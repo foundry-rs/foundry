@@ -275,6 +275,7 @@ async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<
 #[cfg(test)]
 mod tests {
     use crate::TxBuilder;
+    use alloy_primitives::U64;
     use alloy_primitives::{Address, U256};
     use async_trait::async_trait;
     use ethers_core::types::{transaction::eip2718::TypedTransaction, NameOrAddress, H160};
@@ -371,16 +372,16 @@ mod tests {
             .gas(Some(U256::from(12u32)))
             .gas_price(Some(U256::from(34u32)))
             .value(Some(U256::from(56u32)))
-            .nonce(Some(U256::from(78u32)));
+            .nonce(Some(U64::from(78u32)));
 
         builder.etherscan_api_key(Some(String::from("what a lovely day"))); // not testing for this :-/
         let (tx, _) = builder.build();
 
-        assert_eq!(tx.gas().unwrap().as_u32(), 12);
-        assert_eq!(tx.gas_price().unwrap().as_u32(), 34);
-        assert_eq!(tx.value().unwrap().as_u32(), 56);
-        assert_eq!(tx.nonce().unwrap().as_u32(), 78);
-        assert_eq!(tx.chain_id().unwrap().as_u32(), 1);
+        assert_eq!(tx.gas.unwrap().to::<u64>(), 12u64);
+        assert_eq!(tx.gas_price.unwrap().to::<u64>(), 34u64);
+        assert_eq!(tx.value.unwrap().to::<u64>(), 56u64);
+        assert_eq!(tx.nonce.unwrap().to::<u64>(), 78u64);
+        assert_eq!(tx.chain_id.unwrap().to::<u64>(), 1u64);
         Ok(())
     }
 
