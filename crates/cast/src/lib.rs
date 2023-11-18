@@ -1,6 +1,6 @@
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::{ContractObject, Function};
-use alloy_primitives::{Address, BlockNumber, B160, B256, I256, U256, U64};
+use alloy_primitives::{Address, BlockNumber, StorageKey, B160, B256, I256, U256, U64};
 use alloy_providers::provider::TempProvider;
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
@@ -856,7 +856,7 @@ impl<P: TempProvider> Cast<P> {
     pub async fn storage<T: Into<NameOrAddress> + Send + Sync>(
         &self,
         from: T,
-        slot: H256,
+        slot: StorageKey,
         block: Option<BlockId>,
     ) -> Result<String> {
         Ok(format!("{:?}", self.provider.get_storage_at(from, slot, block).await?))
@@ -1487,7 +1487,7 @@ impl SimpleCast {
 
         let padded = format!("{s:0<64}");
         // need to use the Debug implementation
-        Ok(format!("{:?}", H256::from_str(&padded)?))
+        Ok(format!("{:?}", B256::from_str(&padded)?))
     }
 
     /// Encodes string into bytes32 value
@@ -1820,7 +1820,7 @@ impl SimpleCast {
             _ => keccak256(data),
         };
 
-        Ok(format!("{:?}", H256(hash)))
+        Ok(format!("{:?}", B256::from(hash)))
     }
 
     /// Performs the left shift operation (<<) on a number

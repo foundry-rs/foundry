@@ -129,7 +129,7 @@ impl CreateArgs {
         let chain_id = if let Some(chain_id) = self.chain_id() {
             chain_id
         } else {
-            provider.get_chainid().await?.as_u64()
+            provider.get_chain_id().await?.to()
         };
         if self.unlocked {
             // Deploy with unlocked account
@@ -297,7 +297,7 @@ impl CreateArgs {
         };
 
         if !self.verify {
-            return Ok(())
+            return Ok(());
         }
 
         println!("Starting contract verification...");
