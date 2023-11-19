@@ -493,7 +493,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_chainId`
     pub fn eth_chain_id(&self) -> Result<Option<U64>> {
         node_info!("eth_chainId");
-        Ok(Some(self.backend.chain_id().as_u64().into()))
+        Ok(Some(self.backend.chain_id().into()))
     }
 
     /// Returns the same as `chain_id`
@@ -501,7 +501,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_networkId`
     pub fn network_id(&self) -> Result<Option<String>> {
         node_info!("eth_networkId");
-        let chain_id = self.backend.chain_id().as_u64();
+        let chain_id = self.backend.chain_id();
         Ok(Some(format!("{chain_id}")))
     }
 
@@ -1708,17 +1708,16 @@ impl EthApi {
     pub async fn anvil_metadata(&self) -> Result<AnvilMetadata> {
         node_info!("anvil_metadata");
         let fork_config = self.backend.get_fork();
-        let chain_id_uint = U256::from(self.backend.chain_id().low_u64());
-        let latest_block_number_uint = U64::from(self.backend.best_number().low_u64());
+
         Ok(AnvilMetadata {
             client_version: CLIENT_VERSION,
-            chain_id: chain_id_uint,
+            chain_id: self.backend.chain_id().try_into().unwrap_or(u64::MAX),
             latest_block_hash: self.backend.best_hash(),
-            latest_block_number: latest_block_number_uint,
+            latest_block_number: self.backend.best_number().as_u64(),
             instance_id: *self.instance_id.read(),
             forked_network: fork_config.map(|cfg| ForkedNetwork {
-                chain_id: U256::from(cfg.chain_id()),
-                fork_block_number: U64::from(cfg.block_number()),
+                chain_id: cfg.chain_id().into(),
+                fork_block_number: cfg.block_number().into(),
                 fork_block_hash: cfg.block_hash(),
             }),
         })
@@ -2302,7 +2301,7 @@ impl EthApi {
 
     /// Returns the chain ID used for transaction
     pub fn chain_id(&self) -> u64 {
-        self.backend.chain_id().as_u64()
+        self.backend.chain_id()
     }
 
     pub fn get_fork(&self) -> Option<ClientFork> {

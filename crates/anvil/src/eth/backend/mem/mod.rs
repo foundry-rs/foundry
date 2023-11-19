@@ -470,8 +470,7 @@ impl Backend {
 
     /// Returns the current best number of the chain
     pub fn best_number(&self) -> U64 {
-        let num: u64 = self.env.read().block.number.try_into().unwrap_or(u64::MAX);
-        num.into()
+        self.env.read().block.number.saturating_to::<u64>().into()
     }
 
     /// Sets the block number
@@ -486,8 +485,8 @@ impl Backend {
     }
 
     /// Returns the client coinbase address.
-    pub fn chain_id(&self) -> U256 {
-        self.env.read().cfg.chain_id.into()
+    pub fn chain_id(&self) -> u64 {
+        self.env.read().cfg.chain_id
     }
 
     pub fn set_chain_id(&self, chain_id: u64) {
@@ -2202,11 +2201,10 @@ impl TransactionValidator for Backend {
 
         if let Some(tx_chain_id) = tx.chain_id() {
             let chain_id = self.chain_id();
-            if chain_id != tx_chain_id.into() {
+            if chain_id != tx_chain_id {
                 if let Some(legacy) = tx.as_legacy() {
                     // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
-                    if env.cfg.spec_id >= SpecId::SPURIOUS_DRAGON &&
-                        !legacy.meets_eip155(chain_id.as_u64())
+                    if env.cfg.spec_id >= SpecId::SPURIOUS_DRAGON && !legacy.meets_eip155(chain_id)
                     {
                         warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
                         return Err(InvalidTransactionError::IncompatibleEIP155)
