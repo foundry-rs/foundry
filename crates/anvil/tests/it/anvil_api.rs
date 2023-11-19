@@ -440,7 +440,7 @@ async fn can_get_node_info() {
         transaction_order: "fees".to_owned(),
         environment: NodeEnvironment {
             base_fee: U256::from_str("0x3b9aca00").unwrap(),
-            chain_id: U256::from_str("0x7a69").unwrap(),
+            chain_id: 0x7a69,
             gas_limit: U256::from_str("0x1c9c380").unwrap(),
             gas_price: U256::from_str("0x77359400").unwrap(),
         },
@@ -462,8 +462,8 @@ async fn can_get_metadata() {
 
     let provider = handle.http_provider();
 
-    let block_number = provider.get_block_number().await.unwrap();
-    let chain_id = provider.get_chainid().await.unwrap();
+    let block_number = provider.get_block_number().await.unwrap().as_u64();
+    let chain_id = provider.get_chainid().await.unwrap().as_u64();
     let block = provider.get_block(block_number).await.unwrap().unwrap();
 
     let expected_metadata = AnvilMetadata {
@@ -486,8 +486,8 @@ async fn can_get_metadata_on_fork() {
 
     let metadata = api.anvil_metadata().await.unwrap();
 
-    let block_number = provider.get_block_number().await.unwrap();
-    let chain_id = provider.get_chainid().await.unwrap();
+    let block_number = provider.get_block_number().await.unwrap().as_u64();
+    let chain_id = provider.get_chainid().await.unwrap().as_u64();
     let block = provider.get_block(block_number).await.unwrap().unwrap();
 
     let expected_metadata = AnvilMetadata {
