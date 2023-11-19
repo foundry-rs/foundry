@@ -341,6 +341,21 @@ impl Cheatcode for revertToCall {
     }
 }
 
+impl Cheatcode for startStateDiffRecordingCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        state.recorded_account_diffs_stack = Some(Default::default());
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for stopAndReturnStateDiffCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        get_state_diff(state)
+    }
+}
+
 pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Address) -> Result {
     super::script::correct_sender_nonce(ccx)?;
     let (account, _) = ccx.data.journaled_state.load_account(*address, ccx.data.db)?;
@@ -403,4 +418,23 @@ pub(super) fn journaled_account<'a, DB: DatabaseExt>(
     data.journaled_state.load_account(addr, data.db)?;
     data.journaled_state.touch(&addr);
     Ok(data.journaled_state.state.get_mut(&addr).expect("account is loaded"))
+}
+
+/// Consumes recorded account accesses and returns them as an abi encoded
+/// array of [AccountAccess]. If there are no accounts were
+/// recorded as accessed, an abi encoded empty array is returned.
+///
+/// In the case where `stopAndReturnStateDiff` is called at a lower
+/// depth than `startStateDiffRecording`, multiple `Vec<RecordedAccountAccesses>`
+/// will be flattened, preserving the order of the accesses.
+fn get_state_diff(state: &mut Cheatcodes) -> Result {
+    let res = state
+        .recorded_account_diffs_stack
+        .replace(Default::default())
+        .unwrap_or_default()
+        .into_iter()
+        .flatten()
+        .map(|record| record.access)
+        .collect::<Vec<_>>();
+    Ok(res.abi_encode())
 }
