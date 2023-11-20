@@ -279,7 +279,7 @@ fn map_env_err<'a>(key: &'a str, value: &'a str) -> impl FnOnce(Error) -> Error 
         };
         // ensure we're also removing the value from the underlying alloy parser error message, See
         // [alloy_dyn_abi::parser::Error::parser]
-        let e = e.replacen(&format!("\n{value}\n"), &format!("${key}"), 1);
+        let e = e.replacen(&format!("\n{value}\n"), &format!("\n${key}\n"), 1);
         fmt_err!("failed parsing ${key}{sep}{e}")
     }
 }
