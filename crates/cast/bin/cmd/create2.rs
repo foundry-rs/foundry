@@ -161,12 +161,8 @@ impl Create2Args {
                 let mut salt = B256Aligned(top_bytes, []);
                 // SAFETY: B256 is aligned to `usize`.
                 let salt_word = unsafe {
-                    let ptr: *mut u8 = &mut salt.0[0];
-                    // Offset to preserve caller address at the beginning of the salt.
-                    // Must offset by 24 and not 20 to align u8s and usize.
-                    &mut *ptr.add(24).cast::<usize>()
+                    &mut *salt.0.as_mut_ptr().add(32 - usize::BITS as usize / 8).cast::<usize>()
                 };
-
                 // Important: set the salt to the start value, otherwise all threads loop over the
                 // same values.
                 *salt_word = i;
