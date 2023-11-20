@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use ethers_core::types::{TxHash, H256, U256, U64};
 use revm::primitives::SpecId;
 
@@ -217,6 +219,7 @@ pub struct AnvilMetadata {
     pub latest_block_number: u64,
     pub latest_block_hash: H256,
     pub forked_network: Option<ForkedNetwork>,
+    pub snapshots: HashMap<U256, (u64, H256)>,
 }
 
 /// Information about the forked network.

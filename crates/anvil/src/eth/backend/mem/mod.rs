@@ -622,6 +622,13 @@ impl Backend {
     pub async fn create_snapshot(&self) -> U256 {
         let num = self.best_number().as_u64();
         let hash = self.best_hash();
+
+        if let Some((id, _)) =
+            self.active_snapshots.lock().iter().find(|(_, val)| &(num, hash) == *val)
+        {
+            return *id
+        }
+
         let id = self.db.write().await.snapshot();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
         self.active_snapshots.lock().insert(id, (num, hash));
@@ -630,7 +637,7 @@ impl Backend {
 
     /// Reverts the state to the snapshot identified by the given `id`.
     pub async fn revert_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
-        let block = { self.active_snapshots.lock().remove(&id) };
+        let block = { self.active_snapshots.lock().get(&id).cloned() };
         if let Some((num, hash)) = block {
             let best_block_hash = {
                 // revert the storage that's newer than the snapshot
@@ -673,7 +680,13 @@ impl Backend {
                 ..Default::default()
             };
         }
+
+        self.active_snapshots.lock().retain(|key, _| *key <= id);
         Ok(self.db.write().await.revert(id))
+    }
+
+    pub async fn list_snapshots(&self) -> HashMap<U256, (u64, H256)> {
+        self.active_snapshots.lock().clone()
     }
 
     /// Get the current state.
