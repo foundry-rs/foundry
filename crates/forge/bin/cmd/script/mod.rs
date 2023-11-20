@@ -69,16 +69,6 @@ mod sequence;
 pub mod transaction;
 mod verify;
 
-/// List of Chains that support Shanghai.
-const SHANGHAI_ENABLED_CHAINS: &[NamedChain] = &[
-    NamedChain::Mainnet,
-    NamedChain::Goerli,
-    NamedChain::Sepolia,
-    NamedChain::OptimismGoerli,
-    NamedChain::OptimismSepolia,
-    NamedChain::BaseGoerli,
-];
-
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_opts);
 
@@ -705,10 +695,10 @@ impl ScriptConfig {
         });
 
         let chains = future::join_all(chain_ids).await;
-        let iter = chains.iter().flatten().map(|c| (SHANGHAI_ENABLED_CHAINS.contains(c), c));
+        let iter = chains.iter().flatten().map(|c| (c.supports_shanghai(), c));
         if iter.clone().any(|(s, _)| !s) {
             let msg = format!(
-                r"\
+                "\
 EIP-3855 is not supported in one or more of the RPCs used.
 Unsupported Chain IDs: {}.
 Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
