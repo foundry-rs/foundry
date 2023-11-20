@@ -16,6 +16,7 @@ forge-fmt.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+alloy-rpc-types.workspace = true
 
 ethers-core.workspace = true
 ethers-providers.workspace = true

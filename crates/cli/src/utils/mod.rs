@@ -79,7 +79,7 @@ pub fn subscriber() {
 /// and chain.
 ///
 /// Defaults to `http://localhost:8545` and `Mainnet`.
-pub fn get_provider(config: &Config) -> Result<foundry_common::RetryProvider> {
+pub fn get_provider(config: &Config) -> Result<foundry_common::provider::ethers::RetryProvider> {
     get_provider_builder(config)?.build()
 }
 
@@ -87,9 +87,11 @@ pub fn get_provider(config: &Config) -> Result<foundry_common::RetryProvider> {
 /// URL and chain.
 ///
 /// Defaults to `http://localhost:8545` and `Mainnet`.
-pub fn get_provider_builder(config: &Config) -> Result<foundry_common::ProviderBuilder> {
+pub fn get_provider_builder(
+    config: &Config,
+) -> Result<foundry_common::provider::ethers::ProviderBuilder> {
     let url = config.get_rpc_url_or_localhost_http()?;
-    let mut builder = foundry_common::ProviderBuilder::new(url.as_ref());
+    let mut builder = foundry_common::provider::ethers::ProviderBuilder::new(url.as_ref());
 
     if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
         builder = builder.chain(chain);
@@ -469,7 +471,7 @@ impl<'a> Git<'a> {
                     output.status.code(),
                     stdout.trim(),
                     stderr.trim()
-                ))
+                ));
             }
         }
         Ok(())

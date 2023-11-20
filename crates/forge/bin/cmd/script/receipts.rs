@@ -4,7 +4,7 @@ use ethers_core::types::TransactionReceipt;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::Result;
 use foundry_cli::{init_progress, update_progress, utils::print_receipt};
-use foundry_common::RetryProvider;
+use foundry_common::provider::ethers::RetryProvider;
 use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::StreamExt;
 use std::sync::Arc;
@@ -34,7 +34,7 @@ pub async fn wait_for_pending(
     deployment_sequence: &mut ScriptSequence,
 ) -> Result<()> {
     if deployment_sequence.pending.is_empty() {
-        return Ok(())
+        return Ok(());
     }
     println!("##\nChecking previously pending transactions.");
     clear_pendings(provider, deployment_sequence, None).await
@@ -136,7 +136,7 @@ async fn check_tx_status(
         // First check if there's a receipt
         let receipt_opt = provider.get_transaction_receipt(hash.to_ethers()).await?;
         if let Some(receipt) = receipt_opt {
-            return Ok(receipt.into())
+            return Ok(receipt.into());
         }
 
         // If the tx is present in the mempool, run the pending tx future, and

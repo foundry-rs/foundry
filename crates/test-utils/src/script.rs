@@ -1,8 +1,10 @@
 use crate::{init_tracing, TestCommand};
 use alloy_primitives::{Address, U256};
-use alloy_providers::provider::TempProvider;
+use ethers_core::types::NameOrAddress;
+use ethers_providers::Middleware;
 use eyre::Result;
-use foundry_common::{get_http_provider, RetryProvider};
+use foundry_common::provider::ethers::{get_http_provider, RetryProvider};
+use foundry_utils::types::{ToAlloy, ToEthers};
 use std::{collections::BTreeMap, fs, path::Path, str::FromStr};
 
 const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
@@ -111,20 +113,28 @@ impl ScriptTester {
 
             if let Some(provider) = &self.provider {
                 let nonce = provider
-                    .get_transaction_count(self.accounts_pub[index as usize], None)
+                    .get_transaction_count(
+                        NameOrAddress::Address(self.accounts_pub[index as usize].to_ethers()),
+                        None,
+                    )
                     .await
                     .unwrap();
-                self.nonces.insert(index, nonce);
+                self.nonces.insert(index, nonce.to_alloy());
             }
         }
         self
     }
 
-    pub async fn load_addresses(&mut self, addresses: Vec<Address>) -> &mut Self {
-        for address in addresses {
-            let nonce =
-                self.provider.as_ref().unwrap().get_transaction_count(address, None).await.unwrap();
-            self.address_nonces.insert(address, nonce);
+    pub async fn load_addresses(&mut self, addresses: &[Address]) -> &mut Self {
+        for &address in addresses {
+            let nonce = self
+                .provider
+                .as_ref()
+                .unwrap()
+                .get_transaction_count(NameOrAddress::Address(address.to_ethers()), None)
+                .await
+                .unwrap();
+            self.address_nonces.insert(address, nonce.to_alloy());
         }
         self
     }
@@ -163,13 +173,18 @@ impl ScriptTester {
     pub async fn assert_nonce_increment(&mut self, keys_indexes: &[(u32, u32)]) -> &mut Self {
         for &(private_key_slot, expected_increment) in keys_indexes {
             let addr = self.accounts_pub[private_key_slot as usize];
-            let nonce =
-                self.provider.as_ref().unwrap().get_transaction_count(addr, None).await.unwrap();
+            let nonce = self
+                .provider
+                .as_ref()
+                .unwrap()
+                .get_transaction_count(NameOrAddress::Address(addr.to_ethers()), None)
+                .await
+                .unwrap();
             let prev_nonce = self.nonces.get(&private_key_slot).unwrap();
 
             assert_eq!(
                 nonce,
-                (prev_nonce + U256::from(expected_increment)),
+                (prev_nonce + U256::from(expected_increment)).to_ethers(),
                 "nonce not incremented correctly for {addr}: \
                  {prev_nonce} + {expected_increment} != {nonce}"
             );
@@ -187,12 +202,12 @@ impl ScriptTester {
                 .provider
                 .as_ref()
                 .unwrap()
-                .get_transaction_count(*address, None)
+                .get_transaction_count(NameOrAddress::Address(address.to_ethers()), None)
                 .await
                 .unwrap();
             let prev_nonce = self.address_nonces.get(address).unwrap();
 
-            assert_eq!(nonce, (prev_nonce + U256::from(*expected_increment)));
+            assert_eq!(nonce, (prev_nonce + U256::from(*expected_increment)).to_ethers());
         }
         self
     }
@@ -261,16 +276,16 @@ impl ScriptOutcome {
 
     pub fn is_err(&self) -> bool {
         match self {
-            ScriptOutcome::OkNoEndpoint |
-            ScriptOutcome::OkSimulation |
-            ScriptOutcome::OkBroadcast |
-            ScriptOutcome::WarnSpecifyDeployer => false,
-            ScriptOutcome::MissingSender |
-            ScriptOutcome::MissingWallet |
-            ScriptOutcome::StaticCallNotAllowed |
-            ScriptOutcome::UnsupportedLibraries |
-            ScriptOutcome::ErrorSelectForkOnBroadcast |
-            ScriptOutcome::ScriptFailed => true,
+            ScriptOutcome::OkNoEndpoint
+            | ScriptOutcome::OkSimulation
+            | ScriptOutcome::OkBroadcast
+            | ScriptOutcome::WarnSpecifyDeployer => false,
+            ScriptOutcome::MissingSender
+            | ScriptOutcome::MissingWallet
+            | ScriptOutcome::StaticCallNotAllowed
+            | ScriptOutcome::UnsupportedLibraries
+            | ScriptOutcome::ErrorSelectForkOnBroadcast
+            | ScriptOutcome::ScriptFailed => true,
         }
     }
 }

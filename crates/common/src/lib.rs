@@ -27,6 +27,5 @@ pub mod units;
 
 pub use constants::*;
 pub use contracts::*;
-pub use provider::*;
 pub use traits::*;
 pub use transactions::*;

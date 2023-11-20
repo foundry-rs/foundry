@@ -7,7 +7,7 @@ use crate::fork::{BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, Sh
 use alloy_providers::provider::Provider;
 use alloy_transport::BoxTransport;
 use ethers::types::BlockNumber;
-use foundry_common::ProviderBuilder;
+use foundry_common::provider::alloy::ProviderBuilder;
 use foundry_config::Config;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
@@ -374,8 +374,8 @@ impl Future for MultiForkHandler {
             .flush_cache_interval
             .as_mut()
             .map(|interval| interval.poll_tick(cx).is_ready())
-            .unwrap_or_default() &&
-            !pin.forks.is_empty()
+            .unwrap_or_default()
+            && !pin.forks.is_empty()
         {
             trace!(target: "fork::multi", "tick flushing caches");
             let forks = pin.forks.values().map(|f| f.backend.clone()).collect::<Vec<_>>();

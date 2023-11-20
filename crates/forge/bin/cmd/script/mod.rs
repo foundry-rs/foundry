@@ -29,7 +29,8 @@ use foundry_common::{
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
     fmt::format_token,
-    shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    provider::ethers::RpcUrl,
+    shell, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::{
     artifacts::{ContractBytecodeSome, Libraries},
@@ -367,7 +368,7 @@ impl ScriptArgs {
             return Err(eyre::eyre!(
                 "script failed: {}",
                 decode::decode_revert(&result.returned[..], None, None)
-            ))
+            ));
         }
 
         Ok(())
@@ -407,7 +408,7 @@ impl ScriptArgs {
                                 if let Some(ns) = new_sender {
                                     if sender != ns {
                                         shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
-                                        return Ok(None)
+                                        return Ok(None);
                                     }
                                 } else if sender != evm_opts.sender {
                                     new_sender = Some(sender);
@@ -495,13 +496,13 @@ impl ScriptArgs {
         // From artifacts
         for (artifact, bytecode) in known_contracts.iter() {
             if bytecode.bytecode.object.is_unlinked() {
-                return Err(UnlinkedByteCode::Bytecode(artifact.identifier()).into())
+                return Err(UnlinkedByteCode::Bytecode(artifact.identifier()).into());
             }
             let init_code = bytecode.bytecode.object.as_bytes().unwrap();
             // Ignore abstract contracts
             if let Some(ref deployed_code) = bytecode.deployed_bytecode.bytecode {
                 if deployed_code.object.is_unlinked() {
-                    return Err(UnlinkedByteCode::DeployedBytecode(artifact.identifier()).into())
+                    return Err(UnlinkedByteCode::DeployedBytecode(artifact.identifier()).into());
                 }
                 let deployed_code = deployed_code.object.as_bytes().unwrap();
                 bytecodes.push((artifact.name.clone(), init_code, deployed_code));
@@ -526,7 +527,7 @@ impl ScriptArgs {
                         bytecodes.push((format!("Unknown{unknown_c}"), init_code, deployed_code));
                         unknown_c += 1;
                     }
-                    continue
+                    continue;
                 }
             }
             // Both should be raw and not decoded since it's just bytecode
@@ -556,7 +557,7 @@ impl ScriptArgs {
                     offset = 32;
                 }
             } else if to.is_some() {
-                continue
+                continue;
             }
 
             // Find artifact with a deployment code same as the data.
@@ -578,9 +579,9 @@ impl ScriptArgs {
         }
 
         // Only prompt if we're broadcasting and we've not disabled interactivity.
-        if prompt_user &&
-            !self.non_interactive &&
-            !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()?
+        if prompt_user
+            && !self.non_interactive
+            && !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()?
         {
             eyre::bail!("User canceled the script.");
         }
@@ -700,7 +701,9 @@ impl ScriptConfig {
             if let Ok(provider) = ethers_providers::Provider::<Http>::try_from(rpc) {
                 match provider.get_chainid().await {
                     Ok(chain_id) => match TryInto::<Chain>::try_into(chain_id) {
-                        Ok(chain) => return Some((SHANGHAI_ENABLED_CHAINS.contains(&chain), chain)),
+                        Ok(chain) => {
+                            return Some((SHANGHAI_ENABLED_CHAINS.contains(&chain), chain))
+                        }
                         Err(_) => return None,
                     },
                     Err(_) => return None,

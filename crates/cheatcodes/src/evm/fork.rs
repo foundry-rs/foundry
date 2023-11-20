@@ -4,7 +4,7 @@ use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{Filter, Topic};
 use alloy_sol_types::SolValue;
 use eyre::WrapErr;
-use foundry_common::ProviderBuilder;
+use foundry_common::provider::alloy::ProviderBuilder;
 use foundry_compilers::utils::RuntimeOrHandle;
 use foundry_evm_core::fork::CreateFork;
 use foundry_utils::types::{ToAlloy, ToEthers};
