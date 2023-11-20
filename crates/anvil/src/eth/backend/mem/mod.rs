@@ -676,6 +676,10 @@ impl Backend {
         Ok(self.db.write().await.revert(id))
     }
 
+    pub async fn list_snapshots(&self) -> HashMap<U256, (u64, H256)> {
+        self.active_snapshots.lock().clone()
+    }
+
     /// Get the current state.
     pub async fn serialized_state(&self) -> Result<SerializableState, BlockchainError> {
         let state = self.db.read().await.dump_state()?;
