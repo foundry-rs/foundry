@@ -1,7 +1,7 @@
 //! Helper trait and functions to format ethers types.
 use alloy_primitives::{U256, U64};
 use alloy_rpc_types::{Block, Transaction};
-use ethers_core::utils::hex;
+use ethers_core::utils::{hex, to_checksum};
 use serde::Deserialize;
 
 /// length of the name column for pretty formatting `{:>20}{value}`
@@ -41,6 +41,11 @@ impl UIfmt for alloy_primitives::U128 {
         self.to_string()
     }
 }
+impl UIfmt for ethers_core::types::U256 {
+    fn pretty(&self) -> String {
+        self.to_string()
+    }
+}
 impl UIfmt for alloy_primitives::U256 {
     fn pretty(&self) -> String {
         self.to_string()
@@ -49,6 +54,16 @@ impl UIfmt for alloy_primitives::U256 {
 impl UIfmt for alloy_primitives::I256 {
     fn pretty(&self) -> String {
         self.to_string()
+    }
+}
+impl UIfmt for ethers_core::types::I256 {
+    fn pretty(&self) -> String {
+        self.to_string()
+    }
+}
+impl UIfmt for ethers_core::types::Address {
+    fn pretty(&self) -> String {
+        to_checksum(self, None)
     }
 }
 impl UIfmt for alloy_primitives::Address {
@@ -61,12 +76,21 @@ impl UIfmt for alloy_primitives::B64 {
         format!("{self:#x}")
     }
 }
+impl UIfmt for ethers_core::types::H256 {
+    fn pretty(&self) -> String {
+        format!("{self:#x}")
+    }
+}
 impl UIfmt for alloy_primitives::B256 {
     fn pretty(&self) -> String {
         format!("{self:#x}")
     }
 }
-
+impl UIfmt for ethers_core::types::Bytes {
+    fn pretty(&self) -> String {
+        format!("{self:#x}")
+    }
+}
 impl UIfmt for alloy_primitives::Bytes {
     fn pretty(&self) -> String {
         format!("{self:#x}")
@@ -78,13 +102,22 @@ impl<const N: usize> UIfmt for [u8; N] {
         hex::encode_prefixed(&self[..])
     }
 }
-
+impl UIfmt for ethers_core::types::U64 {
+    fn pretty(&self) -> String {
+        self.to_string()
+    }
+}
 impl UIfmt for alloy_primitives::U64 {
     fn pretty(&self) -> String {
         self.to_string()
     }
 }
 
+impl UIfmt for ethers_core::types::Bloom {
+    fn pretty(&self) -> String {
+        format!("{self:#x}")
+    }
+}
 impl UIfmt for alloy_primitives::Bloom {
     fn pretty(&self) -> String {
         format!("{self:#x}")
@@ -181,6 +214,66 @@ transactionIndex: {}",
     }
 }
 
+impl UIfmt for ethers_core::types::TransactionReceipt {
+    fn pretty(&self) -> String {
+        format!(
+            "
+blockHash               {}
+blockNumber             {}
+contractAddress         {}
+cumulativeGasUsed       {}
+effectiveGasPrice       {}
+gasUsed                 {}
+logs                    {}
+logsBloom               {}
+root                    {}
+status                  {}
+transactionHash         {}
+transactionIndex        {}
+type                    {}",
+            self.block_hash.pretty(),
+            self.block_number.pretty(),
+            self.contract_address.pretty(),
+            self.cumulative_gas_used.pretty(),
+            self.effective_gas_price.pretty(),
+            self.gas_used.pretty(),
+            serde_json::to_string(&self.logs).unwrap(),
+            self.logs_bloom.pretty(),
+            self.root.pretty(),
+            self.status.pretty(),
+            self.transaction_hash.pretty(),
+            self.transaction_index.pretty(),
+            self.transaction_type.pretty()
+        )
+    }
+}
+
+impl UIfmt for ethers_core::types::Log {
+    fn pretty(&self) -> String {
+        format!(
+            "
+address: {}
+blockHash: {}
+blockNumber: {}
+data: {}
+logIndex: {}
+removed: {}
+topics: {}
+transactionHash: {}
+transactionIndex: {}",
+            self.address.pretty(),
+            self.block_hash.pretty(),
+            self.block_number.pretty(),
+            self.data.pretty(),
+            self.log_index.pretty(),
+            self.removed.pretty(),
+            self.topics.pretty(),
+            self.transaction_hash.pretty(),
+            self.transaction_index.pretty(),
+        )
+    }
+}
+
 impl UIfmt for alloy_rpc_types::Block {
     fn pretty(&self) -> String {
         format!(
@@ -188,7 +281,7 @@ impl UIfmt for alloy_rpc_types::Block {
 {}
 transactions         {}",
             pretty_block_basics(self),
-            match self.transactions {
+            match &self.transactions {
                 alloy_rpc_types::BlockTransactions::Full(txs) => txs.pretty(),
                 alloy_rpc_types::BlockTransactions::Hashes(hashes) => hashes.pretty(),
                 _ => "".to_string(),
@@ -279,7 +372,8 @@ impl UIfmt for EthValue {
 
 impl UIfmt for alloy_rpc_types::Transaction {
     fn pretty(&self) -> String {
-        let (r, s, v) = self.signature.map(|sig| (sig.r, sig.s, sig.v)).unwrap_or_default();
+        let (r, s, v) =
+            self.signature.as_ref().map(|sig| (sig.r, sig.s, sig.v)).unwrap_or_default();
         format!(
             "
 blockHash            {}
@@ -304,8 +398,8 @@ value                {}{}",
             self.hash.pretty(),
             self.input.pretty(),
             self.nonce.pretty(),
-            r.to_be_bytes().pretty(),
-            s.to_be_bytes().pretty(),
+            r.to_be_bytes::<32>().pretty(),
+            s.to_be_bytes::<32>().pretty(),
             self.to.pretty(),
             self.transaction_index.pretty(),
             v.pretty(),
@@ -318,7 +412,8 @@ value                {}{}",
 
 /// Returns the `UiFmt::pretty()` formatted attribute of the transactions
 pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<String> {
-    let (r, s, v) = transaction.signature.map(|sig| (sig.r, sig.s, sig.v)).unwrap_or_default();
+    let (r, s, v) =
+        transaction.signature.as_ref().map(|sig| (sig.r, sig.s, sig.v)).unwrap_or_default();
     match attr {
         "blockHash" | "block_hash" => Some(transaction.block_hash.pretty()),
         "blockNumber" | "block_number" => Some(transaction.block_number.pretty()),
@@ -328,8 +423,8 @@ pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<Strin
         "hash" => Some(transaction.hash.pretty()),
         "input" => Some(transaction.input.pretty()),
         "nonce" => Some(transaction.nonce.pretty()),
-        "s" => Some(s.to_be_bytes().pretty()),
-        "r" => Some(r.to_be_bytes().pretty()),
+        "s" => Some(s.to_be_bytes::<32>().pretty()),
+        "r" => Some(r.to_be_bytes::<32>().pretty()),
         "to" => Some(transaction.to.pretty()),
         "transactionIndex" | "transaction_index" => Some(transaction.transaction_index.pretty()),
         "v" => Some(v.pretty()),
@@ -381,6 +476,7 @@ pub fn get_pretty_block_attr(block: &Block, attr: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Bytes, B256};
+    use ethers_core::types::H256;
 
     use super::*;
     use std::str::FromStr;
@@ -476,8 +572,13 @@ to                   0xdca8ce283150AB773BCbeB8d38289bdB5661dE1e
 transactionIndex     0
 v                    37
 value                0".to_string();
-        let generated = block.transactions[0].pretty();
-        assert_eq!(generated.as_str(), output.as_str());
+        match block.transactions {
+            alloy_rpc_types::BlockTransactions::Full(transactions) => {
+                let generated = transactions[0].pretty();
+                assert_eq!(generated.as_str(), output.as_str());
+            }
+            _ => panic!("could not deser transactions"),
+        }
     }
 
     #[test]
@@ -492,14 +593,14 @@ value                0".to_string();
     fn uifmt_option_h64() {
         let empty: Option<B256> = None;
         assert_eq!(String::new(), empty.pretty());
-        B256::from_low_u64_be(100);
+        H256::from_low_u64_be(100);
         assert_eq!(
             "0x0000000000000000000000000000000000000000000000000000000000000064",
-            B256::from_low_u64_be(100).pretty()
+            H256::from_low_u64_be(100).pretty()
         );
         assert_eq!(
             "0x0000000000000000000000000000000000000000000000000000000000000064",
-            Some(B256::from_low_u64_be(100)).pretty()
+            Some(H256::from_low_u64_be(100)).pretty()
         );
     }
     #[test]
@@ -527,44 +628,58 @@ value                0".to_string();
     fn test_pretty_tx_attr() {
         let block = r#"{"number":"0x3","hash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","parentHash":"0x689c70c080ca22bc0e681694fa803c1aba16a69c8b6368fed5311d279eb9de90","mixHash":"0x0000000000000000000000000000000000000000000000000000000000000000","nonce":"0x0000000000000000","sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","transactionsRoot":"0x7270c1c4440180f2bd5215809ee3d545df042b67329499e1ab97eb759d31610d","stateRoot":"0x29f32984517a7d25607da485b23cefabfd443751422ca7e603395e1de9bc8a4b","receiptsRoot":"0x056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2","miner":"0x0000000000000000000000000000000000000000","difficulty":"0x0","totalDifficulty":"0x0","extraData":"0x","size":"0x3e8","gasLimit":"0x6691b7","gasUsed":"0x5208","timestamp":"0x5ecedbb9","transactions":[{"hash":"0xc3c5f700243de37ae986082fd2af88d2a7c2752a0c0f7b9d6ac47c729d45e067","nonce":"0x2","blockHash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","blockNumber":"0x3","transactionIndex":"0x0","from":"0xfdcedc3bfca10ecb0890337fbdd1977aba84807a","to":"0xdca8ce283150ab773bcbeb8d38289bdb5661de1e","value":"0x0","gas":"0x15f90","gasPrice":"0x4a817c800","input":"0x","v":"0x25","r":"0x19f2694eb9113656dbea0b925e2e7ceb43df83e601c4116aee9c0dd99130be88","s":"0x73e5764b324a4f7679d890a198ba658ba1c8cd36983ff9797e10b1b89dbb448e"}],"uncles":[]}"#;
         let block: Block = serde_json::from_str(block).unwrap();
-        assert_eq!(None, get_pretty_tx_attr(&block.transactions[0], ""));
-        assert_eq!(
-            Some("3".to_string()),
-            get_pretty_tx_attr(&block.transactions[0], "blockNumber")
-        );
-        assert_eq!(
-            Some("0xFdCeDC3bFca10eCb0890337fbdD1977aba84807a".to_string()),
-            get_pretty_tx_attr(&block.transactions[0], "from")
-        );
-        assert_eq!(Some("90000".to_string()), get_pretty_tx_attr(&block.transactions[0], "gas"));
-        assert_eq!(
-            Some("20000000000".to_string()),
-            get_pretty_tx_attr(&block.transactions[0], "gasPrice")
-        );
-        assert_eq!(
-            Some("0xc3c5f700243de37ae986082fd2af88d2a7c2752a0c0f7b9d6ac47c729d45e067".to_string()),
-            get_pretty_tx_attr(&block.transactions[0], "hash")
-        );
-        assert_eq!(Some("0x".to_string()), get_pretty_tx_attr(&block.transactions[0], "input"));
-        assert_eq!(Some("2".to_string()), get_pretty_tx_attr(&block.transactions[0], "nonce"));
-        assert_eq!(
-            Some("0x19f2694eb9113656dbea0b925e2e7ceb43df83e601c4116aee9c0dd99130be88".to_string()),
-            get_pretty_tx_attr(&block.transactions[0], "r")
-        );
-        assert_eq!(
-            Some("0x73e5764b324a4f7679d890a198ba658ba1c8cd36983ff9797e10b1b89dbb448e".to_string()),
-            get_pretty_tx_attr(&block.transactions[0], "s")
-        );
-        assert_eq!(
-            Some("0xdca8ce283150AB773BCbeB8d38289bdB5661dE1e".into()),
-            get_pretty_tx_attr(&block.transactions[0], "to")
-        );
-        assert_eq!(
-            Some("0".to_string()),
-            get_pretty_tx_attr(&block.transactions[0], "transactionIndex")
-        );
-        assert_eq!(Some("37".to_string()), get_pretty_tx_attr(&block.transactions[0], "v"));
-        assert_eq!(Some("0".to_string()), get_pretty_tx_attr(&block.transactions[0], "value"));
+        match block.transactions {
+            alloy_rpc_types::BlockTransactions::Full(transactions) => {
+                assert_eq!(None, get_pretty_tx_attr(&transactions[0], ""));
+                assert_eq!(
+                    Some("3".to_string()),
+                    get_pretty_tx_attr(&transactions[0], "blockNumber")
+                );
+                assert_eq!(
+                    Some("0xFdCeDC3bFca10eCb0890337fbdD1977aba84807a".to_string()),
+                    get_pretty_tx_attr(&transactions[0], "from")
+                );
+                assert_eq!(Some("90000".to_string()), get_pretty_tx_attr(&transactions[0], "gas"));
+                assert_eq!(
+                    Some("20000000000".to_string()),
+                    get_pretty_tx_attr(&transactions[0], "gasPrice")
+                );
+                assert_eq!(
+                    Some(
+                        "0xc3c5f700243de37ae986082fd2af88d2a7c2752a0c0f7b9d6ac47c729d45e067"
+                            .to_string()
+                    ),
+                    get_pretty_tx_attr(&transactions[0], "hash")
+                );
+                assert_eq!(Some("0x".to_string()), get_pretty_tx_attr(&transactions[0], "input"));
+                assert_eq!(Some("2".to_string()), get_pretty_tx_attr(&transactions[0], "nonce"));
+                assert_eq!(
+                    Some(
+                        "0x19f2694eb9113656dbea0b925e2e7ceb43df83e601c4116aee9c0dd99130be88"
+                            .to_string()
+                    ),
+                    get_pretty_tx_attr(&transactions[0], "r")
+                );
+                assert_eq!(
+                    Some(
+                        "0x73e5764b324a4f7679d890a198ba658ba1c8cd36983ff9797e10b1b89dbb448e"
+                            .to_string()
+                    ),
+                    get_pretty_tx_attr(&transactions[0], "s")
+                );
+                assert_eq!(
+                    Some("0xdca8ce283150AB773BCbeB8d38289bdB5661dE1e".into()),
+                    get_pretty_tx_attr(&transactions[0], "to")
+                );
+                assert_eq!(
+                    Some("0".to_string()),
+                    get_pretty_tx_attr(&transactions[0], "transactionIndex")
+                );
+                assert_eq!(Some("37".to_string()), get_pretty_tx_attr(&transactions[0], "v"));
+                assert_eq!(Some("0".to_string()), get_pretty_tx_attr(&transactions[0], "value"));
+            }
+            _ => panic!("did not deser transactions"),
+        }
     }
     #[test]
     fn test_pretty_block_attr() {

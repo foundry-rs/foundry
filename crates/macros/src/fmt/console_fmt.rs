@@ -1,5 +1,5 @@
 use super::UIfmt;
-use alloy_primitives::{Address, Bytes, B256, I256, U256};
+use ethers_core::types::{Address, Bytes, H256, I256, U256};
 
 /// A format specifier.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -44,10 +44,10 @@ impl ConsoleFmt for String {
         match spec {
             FormatSpec::String => self.clone(),
             FormatSpec::Object => format!("'{}'", self.clone()),
-            FormatSpec::Number |
-            FormatSpec::Integer |
-            FormatSpec::Exponential |
-            FormatSpec::Hexadecimal => String::from("NaN"),
+            FormatSpec::Number
+            | FormatSpec::Integer
+            | FormatSpec::Exponential
+            | FormatSpec::Hexadecimal => String::from("NaN"),
         }
     }
 }
@@ -74,7 +74,7 @@ impl ConsoleFmt for U256 {
             FormatSpec::Hexadecimal => format!("0x{:x}", *self),
             FormatSpec::Exponential => {
                 let log = self.pretty().len() - 1;
-                let exp10 = U256::from(10).pow(U256::from(log));
+                let exp10 = U256::exp10(log);
                 let amount = *self;
                 let integer = amount / exp10;
                 let decimal = (amount % exp10).to_string();
@@ -118,7 +118,7 @@ impl ConsoleFmt for I256 {
     }
 }
 
-impl ConsoleFmt for B256 {
+impl ConsoleFmt for H256 {
     fn fmt(&self, spec: FormatSpec) -> String {
         match spec {
             FormatSpec::Hexadecimal | FormatSpec::String => self.pretty(),
@@ -135,10 +135,10 @@ impl ConsoleFmt for Address {
         match spec {
             FormatSpec::String => self.pretty(),
             FormatSpec::Object => format!("'{}'", self.pretty()),
-            FormatSpec::Number |
-            FormatSpec::Integer |
-            FormatSpec::Exponential |
-            FormatSpec::Hexadecimal => String::from("NaN"),
+            FormatSpec::Number
+            | FormatSpec::Integer
+            | FormatSpec::Exponential
+            | FormatSpec::Hexadecimal => String::from("NaN"),
         }
     }
 }
@@ -148,10 +148,10 @@ impl ConsoleFmt for Bytes {
         match spec {
             FormatSpec::String => self.pretty(),
             FormatSpec::Object => format!("'{}'", self.pretty()),
-            FormatSpec::Number |
-            FormatSpec::Integer |
-            FormatSpec::Exponential |
-            FormatSpec::Hexadecimal => String::from("NaN"),
+            FormatSpec::Number
+            | FormatSpec::Integer
+            | FormatSpec::Exponential
+            | FormatSpec::Hexadecimal => String::from("NaN"),
         }
     }
 }
@@ -163,30 +163,6 @@ impl<const N: usize> ConsoleFmt for [u8; N] {
 }
 
 /// Formats a string using the input values.
-///
-/// Formatting rules are the same as Hardhat. The supported format specifiers are as follows:
-/// - %s: Converts the value using its String representation. This is equivalent to applying
-///   [`UIfmt::pretty()`] on the format string.
-/// - %o: Treats the format value as a javascript "object" and converts it to its string
-///   representation.
-/// - %d, %i: Converts the value to an integer. If a non-numeric value, such as String or Address,
-///   is passed, then the spec is formatted as `NaN`.
-/// - %x: Converts the value to a hexadecimal string. If a non-numeric value, such as String or
-///   Address, is passed, then the spec is formatted as `NaN`.
-/// - %e: Converts the value to an exponential notation string. If a non-numeric value, such as
-///   String or Address, is passed, then the spec is formatted as `NaN`.
-/// - %%: This is parsed as a single percent sign ('%') without consuming any input value.
-///
-/// Unformatted values are appended to the end of the formatted output using [`UIfmt::pretty()`].
-/// If there are more format specifiers than values, then the remaining unparsed format specifiers
-/// appended to the formatted output as-is.
-///
-/// # Example
-///
-/// ```ignore
-/// let formatted = console_format("%s has %d characters", ["foo", 3]);
-/// assert_eq!(formatted, "foo has 3 characters");
-/// ```
 pub fn console_format<'a>(
     spec: &str,
     values: impl IntoIterator<Item = &'a dyn ConsoleFmt>,
@@ -339,7 +315,7 @@ mod tests {
         assert_eq!("'true'", console_log_format_1("%o", &true));
 
         let b32 =
-            B256::from_str("0xdeadbeef00000000000000000000000000000000000000000000000000000000")
+            H256::from_str("0xdeadbeef00000000000000000000000000000000000000000000000000000000")
                 .unwrap();
         assert_eq!(
             "0xdeadbeef00000000000000000000000000000000000000000000000000000000",
