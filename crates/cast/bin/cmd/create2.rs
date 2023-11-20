@@ -54,6 +54,10 @@ pub struct Create2Args {
     /// Number of threads to use. Defaults to and caps at the number of logical cores.
     #[clap(short, long)]
     jobs: Option<usize>,
+
+    /// Address of the caller. Used for the first 20 bytes of the salt.
+    #[clap(long, value_name = "ADDRESS")]
+    caller: Option<Address>,
 }
 
 #[allow(dead_code)]
@@ -73,6 +77,7 @@ impl Create2Args {
             init_code,
             init_code_hash,
             jobs,
+            caller,
         } = self;
 
         let mut regexs = vec![];
@@ -132,6 +137,11 @@ impl Create2Args {
             n_threads = n_threads.min(2);
         }
 
+        let mut top_bytes = B256::ZERO;
+        if let Some(caller_address) = caller {
+            top_bytes[..20].copy_from_slice(&caller_address.into_array());
+        }
+
         println!("Starting to generate deterministic contract address...");
         let mut handles = Vec::with_capacity(n_threads);
         let found = Arc::new(AtomicBool::new(false));
@@ -148,10 +158,11 @@ impl Create2Args {
             handles.push(std::thread::spawn(move || {
                 // Read the first bytes of the salt as a usize to be able to increment it.
                 struct B256Aligned(B256, [usize; 0]);
-                let mut salt = B256Aligned(B256::ZERO, []);
+                let mut salt = B256Aligned(top_bytes, []);
                 // SAFETY: B256 is aligned to `usize`.
-                let salt_word = unsafe { &mut *salt.0.as_mut_ptr().cast::<usize>() };
-
+                let salt_word = unsafe {
+                    &mut *salt.0.as_mut_ptr().add(32 - usize::BITS as usize / 8).cast::<usize>()
+                };
                 // Important: set the salt to the start value, otherwise all threads loop over the
                 // same values.
                 *salt_word = i;
@@ -303,5 +314,22 @@ mod tests {
             deployer
                 .create2(salt, B256::from_slice(hex::decode(init_code_hash).unwrap().as_slice()))
         );
+    }
+
+    #[test]
+    fn create2_caller() {
+        let init_code_hash = "bc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a";
+        let args = Create2Args::parse_from([
+            "foundry-cli",
+            "--starts-with=dd",
+            "--init-code-hash",
+            init_code_hash,
+            "--caller=0x66f9664f97F2b50F62D13eA064982f936dE76657",
+        ]);
+        let create2_out = args.run().unwrap();
+        let address = create2_out.address;
+        let salt = create2_out.salt;
+        assert!(format!("{address:x}").starts_with("dd"));
+        assert!(format!("{salt:x}").starts_with("66f9664f97f2b50f62d13ea064982f936de76657"));
     }
 }
