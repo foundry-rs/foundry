@@ -77,7 +77,7 @@ use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     io::{Read, Write},
     ops::Deref,
     sync::Arc,
@@ -674,6 +674,10 @@ impl Backend {
             };
         }
         Ok(self.db.write().await.revert(id))
+    }
+
+    pub fn list_snapshots(&self) -> BTreeMap<U256, (u64, H256)> {
+        self.active_snapshots.lock().clone().into_iter().collect()
     }
 
     /// Get the current state.
