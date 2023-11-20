@@ -137,14 +137,10 @@ impl Create2Args {
             n_threads = n_threads.min(2);
         }
 
-        let top_bytes = match caller {
-            None => B256::ZERO,
-            Some(caller_address) => {
-                let mut slice = B256::ZERO;
-                slice[..20].copy_from_slice(&caller_address.into_array());
-                slice
-            }
-        };
+        let mut top_bytes = B256::ZERO;
+        if let Some(caller_address) = caller {
+            top_bytes[..20].copy_from_slice(&caller_address.into_array());
+        }
 
         println!("Starting to generate deterministic contract address...");
         let mut handles = Vec::with_capacity(n_threads);
