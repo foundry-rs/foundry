@@ -155,7 +155,7 @@ impl RunArgs {
                         break;
                     }
 
-                    configure_tx_env(&mut env, &tx.to_alloy());
+                    configure_tx_env(&mut env, &tx.clone().to_alloy());
 
                     if let Some(to) = tx.to {
                         trace!(tx=?tx.hash,?to, "executing previous call transaction");
@@ -192,7 +192,7 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            configure_tx_env(&mut env, &tx.to_alloy());
+            configure_tx_env(&mut env, &tx.clone().to_alloy());
 
             if let Some(to) = tx.to {
                 trace!(tx=?tx.hash, to=?to, "executing call transaction");
