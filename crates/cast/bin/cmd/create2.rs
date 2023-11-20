@@ -139,7 +139,11 @@ impl Create2Args {
 
         let top_bytes = match caller {
             None => B256::ZERO,
-            Some(caller_address) => address_to_b256_right_pad(caller_address),
+            Some(caller_address) => {
+                let mut slice = B256::ZERO;
+                slice[..20].copy_from_slice(&caller_address.into_array());
+                slice
+            }
         };
 
         println!("Starting to generate deterministic contract address...");
@@ -220,37 +224,12 @@ fn get_regex_hex_string(s: String) -> Result<String> {
     Ok(s.to_string())
 }
 
-fn address_to_b256_right_pad(a: Address) -> B256 {
-    let mut left_pad = a.into_word();
-    for idx in 0..32 {
-        if idx > 19 {
-            left_pad[idx] = 0;
-        } else {
-            left_pad[idx] = left_pad[idx + 12];
-        }
-    }
-    left_pad
-}
-
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::b256;
-
     use super::*;
     use std::str::FromStr;
 
     const DEPLOYER: &str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
-
-    #[test]
-    fn address_right_pad() {
-        let padded = address_to_b256_right_pad(
-            Address::parse_checksummed("0x66f9664f97F2b50F62D13eA064982f936dE76657", None).unwrap(),
-        );
-        assert_eq!(
-            padded,
-            b256!("66f9664f97F2b50F62D13eA064982f936dE76657000000000000000000000000")
-        );
-    }
 
     #[test]
     fn basic_create2() {
