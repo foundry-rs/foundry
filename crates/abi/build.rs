@@ -24,7 +24,6 @@ fn main() -> eyre::Result<()> {
     let mut multi = MultiAbigen::new([
         ("HardhatConsole", include_json_abi!("abi/HardhatConsole.json")),
         ("Console", include_hr_abi!("abi/Console.sol")),
-        ("HEVM", include_hr_abi!("abi/HEVM.sol")),
     ])?;
 
     // Add the ConsoleFmt derive to the HardhatConsole contract

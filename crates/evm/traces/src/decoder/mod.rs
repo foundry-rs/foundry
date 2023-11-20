@@ -5,9 +5,10 @@ use crate::{
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Event, Function, JsonAbi as Abi};
 use alloy_primitives::{Address, Selector, B256};
+use foundry_cheatcodes_spec::Vm;
 use foundry_common::{abi::get_indexed_event, fmt::format_token, SELECTOR_LEN};
 use foundry_evm_core::{
-    abi::{CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HEVM_ABI},
+    abi::{CONSOLE_ABI, HARDHAT_CONSOLE_ABI},
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
         TEST_CONTRACT_ADDRESS,
@@ -132,11 +133,9 @@ impl CallTraceDecoder {
 
             functions: HARDHAT_CONSOLE_ABI
                 .functions()
-                .chain(HEVM_ABI.functions())
-                .map(|func| {
-                    let func = func.clone().to_alloy();
-                    (func.selector(), vec![func])
-                })
+                .map(|func| func.clone().to_alloy())
+                .chain(Vm::abi::functions().into_values().flatten())
+                .map(|func| (func.selector(), vec![func]))
                 .collect(),
 
             events: CONSOLE_ABI

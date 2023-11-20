@@ -19,9 +19,9 @@ foundry-config.workspace = true
 foundry-utils.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
-alloy-json-abi = { workspace = true }
+alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
-alloy-sol-types.workspace = true
+alloy-sol-types = { workspace = true, features = ["json"] }
 revm = { workspace = true, default-features = false, features = [
     "std",
     "serde",
