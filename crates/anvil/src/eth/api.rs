@@ -1711,13 +1711,13 @@ impl EthApi {
 
         Ok(AnvilMetadata {
             client_version: CLIENT_VERSION,
-            chain_id: self.backend.chain_id().try_into().unwrap_or(u64::MAX),
+            chain_id: self.backend.chain_id(),
             latest_block_hash: self.backend.best_hash(),
             latest_block_number: self.backend.best_number().as_u64(),
             instance_id: *self.instance_id.read(),
             forked_network: fork_config.map(|cfg| ForkedNetwork {
-                chain_id: cfg.chain_id().into(),
-                fork_block_number: cfg.block_number().into(),
+                chain_id: cfg.chain_id(),
+                fork_block_number: cfg.block_number(),
                 fork_block_hash: cfg.block_hash(),
             }),
         })
