@@ -163,6 +163,30 @@ impl<const N: usize> ConsoleFmt for [u8; N] {
 }
 
 /// Formats a string using the input values.
+///
+/// Formatting rules are the same as Hardhat. The supported format specifiers are as follows:
+/// - %s: Converts the value using its String representation. This is equivalent to applying
+///   [`UIfmt::pretty()`] on the format string.
+/// - %o: Treats the format value as a javascript "object" and converts it to its string
+///   representation.
+/// - %d, %i: Converts the value to an integer. If a non-numeric value, such as String or Address,
+///   is passed, then the spec is formatted as `NaN`.
+/// - %x: Converts the value to a hexadecimal string. If a non-numeric value, such as String or
+///   Address, is passed, then the spec is formatted as `NaN`.
+/// - %e: Converts the value to an exponential notation string. If a non-numeric value, such as
+///   String or Address, is passed, then the spec is formatted as `NaN`.
+/// - %%: This is parsed as a single percent sign ('%') without consuming any input value.
+///
+/// Unformatted values are appended to the end of the formatted output using [`UIfmt::pretty()`].
+/// If there are more format specifiers than values, then the remaining unparsed format specifiers
+/// appended to the formatted output as-is.
+///
+/// # Example
+///
+/// ```ignore
+/// let formatted = console_format("%s has %d characters", ["foo", 3]);
+/// assert_eq!(formatted, "foo has 3 characters");
+/// ```
 pub fn console_format<'a>(
     spec: &str,
     values: impl IntoIterator<Item = &'a dyn ConsoleFmt>,
