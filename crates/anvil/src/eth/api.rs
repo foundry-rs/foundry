@@ -1709,8 +1709,6 @@ impl EthApi {
         node_info!("anvil_metadata");
         let fork_config = self.backend.get_fork();
 
-        let snapshots = self.backend.list_snapshots().await;
-
         Ok(AnvilMetadata {
             client_version: CLIENT_VERSION,
             chain_id: self.backend.chain_id().try_into().unwrap_or(u64::MAX),
@@ -1722,7 +1720,6 @@ impl EthApi {
                 fork_block_number: cfg.block_number().into(),
                 fork_block_hash: cfg.block_hash(),
             }),
-            snapshots,
         })
     }
 

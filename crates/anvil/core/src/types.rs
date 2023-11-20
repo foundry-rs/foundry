@@ -219,7 +219,6 @@ pub struct AnvilMetadata {
     pub latest_block_number: u64,
     pub latest_block_hash: H256,
     pub forked_network: Option<ForkedNetwork>,
-    pub snapshots: HashMap<U256, (u64, H256)>,
 }
 
 /// Information about the forked network.
