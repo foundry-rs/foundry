@@ -1342,6 +1342,31 @@ mod tests {
     }
 
     #[test]
+    fn can_recover_sender_not_normalized() {
+        let bytes = hex::decode("f85f800182520894095e7baea6a6c7c4c2dfeb977efac326af552d870a801ba048b55bfa915ac795c431978d8a6a992b628d557da5ff759b307d495a36649353a0efffd310ac743f371de3b9f7f9cb56c0b28ad43601b4ab949f53faa07bd2c804").unwrap();
+
+        let tx: TypedTransaction = rlp::decode(&bytes).expect("decoding TypedTransaction failed");
+        let tx = match tx {
+            TypedTransaction::Legacy(tx) => tx,
+            _ => panic!("Invalid typed transaction"),
+        };
+        assert_eq!(tx.input, Bytes::from(b""));
+        assert_eq!(tx.gas_price, U256::from(0x01u64));
+        assert_eq!(tx.gas_limit, U256::from(0x5208u64));
+        assert_eq!(tx.nonce, U256::from(0x00u64));
+        if let TransactionKind::Call(ref to) = tx.kind {
+            assert_eq!(*to, "095e7baea6a6c7c4c2dfeb977efac326af552d87".parse().unwrap());
+        } else {
+            panic!();
+        }
+        assert_eq!(tx.value, U256::from(0x0au64));
+        assert_eq!(
+            tx.recover().unwrap(),
+            "0f65fe9276bc9a24ae7083ae28e2660ef72df99e".parse().unwrap()
+        );
+    }
+
+    #[test]
     #[cfg(feature = "fastrlp")]
     fn test_decode_fastrlp_create() {
         use bytes::BytesMut;
