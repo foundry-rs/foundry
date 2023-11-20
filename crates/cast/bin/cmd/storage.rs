@@ -22,6 +22,7 @@ use foundry_config::{
     impl_figment_convert_cast, Config,
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
+use futures::future::join_all;
 
 use semver::Version;
 use std::str::FromStr;
@@ -202,14 +203,22 @@ async fn fetch_storage_slots(
     address: NameOrAddress,
     layout: &StorageLayout,
 ) -> Result<Vec<B256>> {
-    let mut results = Vec::new();
+    let mut futures = Vec::new();
 
     for storage_entry in &layout.storage {
         let slot_number = U256::from_str_radix(&storage_entry.slot, 10)?.to_be_bytes();
+        let future =
+            provider.get_storage_at(address.clone(), B256::from(slot_number).to_ethers(), None);
+        futures.push(future);
+    }
 
-        let storage_result = provider
-            .get_storage_at(address.clone(), B256::from(slot_number).to_ethers(), None)
-            .await?;
+    let results = join_all(futures).await;
+
+    let mut processed_results = Vec::new();
+
+    for (index, result) in results.into_iter().enumerate() {
+        let storage_entry = &layout.storage[index];
+        let storage_result = result?;
         let storage_bytes = storage_result.as_fixed_bytes();
 
         let type_details = layout.types.get(&storage_entry.storage_type).ok_or_else(|| {
@@ -220,28 +229,38 @@ async fn fetch_storage_slots(
             eyre::eyre!("Invalid number of bytes: {}", type_details.number_of_bytes)
         })?;
 
-        if storage_entry.offset < 0 {
-            return Err(eyre::eyre!("Negative offset for storage entry: {}", storage_entry.label))
+        if type_details.label == "bool" {
+            if storage_entry.offset < 0 {
+                return Err(eyre::eyre!(
+                    "Negative offset for storage entry: {}",
+                    storage_entry.label
+                ))
+            }
+            let offset = storage_entry.offset as usize;
+
+            let byte_value = storage_bytes[offset];
+            let bool_value = byte_value & 0x01 != 0;
+
+            let value =
+                if bool_value { B256::from(U256::from(0)) } else { B256::from(U256::from(1)) };
+            processed_results.push(value);
+        } else {
+            let offset = storage_entry.offset as usize;
+            let slice_end = offset.checked_add(number_of_bytes).ok_or_else(|| {
+                eyre::eyre!("Offset and number of bytes exceed storage slot size")
+            })?;
+
+            let relevant_bytes = &storage_bytes[offset..slice_end];
+            let mut padded_value = [0u8; 32];
+            let pad_start = 32 - relevant_bytes.len();
+            padded_value[pad_start..].copy_from_slice(relevant_bytes);
+            let value = B256::from(padded_value);
+
+            processed_results.push(value);
         }
-        let offset = storage_entry.offset as usize;
-
-        let slice_end = offset
-            .checked_add(number_of_bytes)
-            .ok_or_else(|| eyre::eyre!("Offset and number of bytes exceed storage slot size"))?;
-
-        let relevant_bytes = &storage_bytes[offset..slice_end];
-
-        let mut padded_value = [0u8; 32];
-
-        let pad_start = 32 - relevant_bytes.len();
-        padded_value[pad_start..].copy_from_slice(relevant_bytes);
-
-        let value = B256::from(padded_value);
-
-        results.push(value);
     }
 
-    Ok(results)
+    Ok(processed_results)
 }
 
 fn print_storage(layout: StorageLayout, values: Vec<B256>, pretty: bool) -> Result<()> {
