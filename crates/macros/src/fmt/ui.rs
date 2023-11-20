@@ -1,9 +1,7 @@
 //! Helper trait and functions to format ethers types.
-
-use ethers_core::{
-    types::*,
-    utils::{hex, to_checksum},
-};
+use alloy_primitives::{U256, U64};
+use alloy_rpc_types::{Block, Transaction};
+use ethers_core::utils::hex;
 use serde::Deserialize;
 
 /// length of the name column for pretty formatting `{:>20}{value}`
@@ -33,37 +31,43 @@ impl UIfmt for bool {
         self.to_string()
     }
 }
-
-impl UIfmt for U256 {
+impl UIfmt for alloy_primitives::U8 {
     fn pretty(&self) -> String {
         self.to_string()
     }
 }
-impl UIfmt for I256 {
+impl UIfmt for alloy_primitives::U128 {
     fn pretty(&self) -> String {
         self.to_string()
     }
 }
-
-impl UIfmt for Address {
+impl UIfmt for alloy_primitives::U256 {
     fn pretty(&self) -> String {
-        to_checksum(self, None)
+        self.to_string()
     }
 }
-
-impl UIfmt for H64 {
+impl UIfmt for alloy_primitives::I256 {
+    fn pretty(&self) -> String {
+        self.to_string()
+    }
+}
+impl UIfmt for alloy_primitives::Address {
+    fn pretty(&self) -> String {
+        self.to_checksum(None)
+    }
+}
+impl UIfmt for alloy_primitives::B64 {
+    fn pretty(&self) -> String {
+        format!("{self:#x}")
+    }
+}
+impl UIfmt for alloy_primitives::B256 {
     fn pretty(&self) -> String {
         format!("{self:#x}")
     }
 }
 
-impl UIfmt for H256 {
-    fn pretty(&self) -> String {
-        format!("{self:#x}")
-    }
-}
-
-impl UIfmt for Bytes {
+impl UIfmt for alloy_primitives::Bytes {
     fn pretty(&self) -> String {
         format!("{self:#x}")
     }
@@ -75,13 +79,13 @@ impl<const N: usize> UIfmt for [u8; N] {
     }
 }
 
-impl UIfmt for U64 {
+impl UIfmt for alloy_primitives::U64 {
     fn pretty(&self) -> String {
         self.to_string()
     }
 }
 
-impl UIfmt for Bloom {
+impl UIfmt for alloy_primitives::Bloom {
     fn pretty(&self) -> String {
         format!("{self:#x}")
     }
@@ -117,7 +121,7 @@ impl<T: UIfmt> UIfmt for Vec<T> {
     }
 }
 
-impl UIfmt for TransactionReceipt {
+impl UIfmt for alloy_rpc_types::TransactionReceipt {
     fn pretty(&self) -> String {
         format!(
             "
@@ -142,8 +146,8 @@ type                    {}",
             self.gas_used.pretty(),
             serde_json::to_string(&self.logs).unwrap(),
             self.logs_bloom.pretty(),
-            self.root.pretty(),
-            self.status.pretty(),
+            self.state_root.pretty(),
+            self.status_code.pretty(),
             self.transaction_hash.pretty(),
             self.transaction_index.pretty(),
             self.transaction_type.pretty()
@@ -151,7 +155,7 @@ type                    {}",
     }
 }
 
-impl UIfmt for Log {
+impl UIfmt for alloy_rpc_types::Log {
     fn pretty(&self) -> String {
         format!(
             "
@@ -177,31 +181,23 @@ transactionIndex: {}",
     }
 }
 
-impl UIfmt for Block<Transaction> {
+impl UIfmt for alloy_rpc_types::Block {
     fn pretty(&self) -> String {
         format!(
             "
 {}
 transactions         {}",
             pretty_block_basics(self),
-            self.transactions.pretty()
+            match self.transactions {
+                alloy_rpc_types::BlockTransactions::Full(txs) => txs.pretty(),
+                alloy_rpc_types::BlockTransactions::Hashes(hashes) => hashes.pretty(),
+                _ => "".to_string(),
+            }
         )
     }
 }
 
-impl UIfmt for Block<TxHash> {
-    fn pretty(&self) -> String {
-        format!(
-            "
-{}
-transactions:        {}",
-            pretty_block_basics(self),
-            self.transactions.pretty()
-        )
-    }
-}
-
-fn pretty_block_basics<T>(block: &Block<T>) -> String {
+fn pretty_block_basics(block: &Block) -> String {
     format!(
         "
 baseFeePerGas        {}
@@ -224,46 +220,31 @@ stateRoot            {}
 timestamp            {}
 withdrawalsRoot      {}
 totalDifficulty      {}{}",
-        block.base_fee_per_gas.pretty(),
-        block.difficulty.pretty(),
-        block.extra_data.pretty(),
-        block.gas_limit.pretty(),
-        block.gas_used.pretty(),
-        block.hash.pretty(),
-        block.logs_bloom.pretty(),
-        block.author.pretty(),
-        block.mix_hash.pretty(),
-        block.nonce.pretty(),
-        block.number.pretty(),
-        block.parent_hash.pretty(),
-        block.receipts_root.pretty(),
-        block.seal_fields.pretty(),
-        block.uncles_hash.pretty(),
+        block.header.base_fee_per_gas.pretty(),
+        block.header.difficulty.pretty(),
+        block.header.extra_data.pretty(),
+        block.header.gas_limit.pretty(),
+        block.header.gas_used.pretty(),
+        block.header.hash.pretty(),
+        block.header.logs_bloom.pretty(),
+        block.header.miner.pretty(),
+        block.header.mix_hash.pretty(),
+        block.header.nonce.pretty(),
+        block.header.number.pretty(),
+        block.header.parent_hash.pretty(),
+        block.header.receipts_root.pretty(),
+        "",
+        // todo
+        //block.seal_fields.pretty(),
+        block.header.uncles_hash.pretty(),
         block.size.pretty(),
-        block.state_root.pretty(),
-        block.timestamp.pretty(),
-        block.withdrawals_root.pretty(),
+        block.header.state_root.pretty(),
+        block.header.timestamp.pretty(),
+        block.header.withdrawals_root.pretty(),
         block.total_difficulty.pretty(),
-        block.other.pretty()
+        "" /* todo
+            *block.other.pretty() */
     )
-}
-
-impl UIfmt for OtherFields {
-    fn pretty(&self) -> String {
-        let mut s = String::with_capacity(self.len() * 30);
-        if !self.is_empty() {
-            s.push('\n');
-        }
-        for (key, value) in self.iter() {
-            let val = EthValue::from(value.clone()).pretty();
-            let offset = NAME_COLUMN_LEN.saturating_sub(key.len());
-            s.push_str(key);
-            s.extend(std::iter::repeat(' ').take(offset + 1));
-            s.push_str(&val);
-            s.push('\n');
-        }
-        s
-    }
 }
 
 /// Various numerical ethereum types used for pretty printing
@@ -296,8 +277,9 @@ impl UIfmt for EthValue {
     }
 }
 
-impl UIfmt for Transaction {
+impl UIfmt for alloy_rpc_types::Transaction {
     fn pretty(&self) -> String {
+        let (r, s, v) = self.signature.map(|sig| (sig.r, sig.s, sig.v)).unwrap_or_default();
         format!(
             "
 blockHash            {}
@@ -322,26 +304,21 @@ value                {}{}",
             self.hash.pretty(),
             self.input.pretty(),
             self.nonce.pretty(),
-            to_bytes(self.r).pretty(),
-            to_bytes(self.s).pretty(),
+            r.to_be_bytes().pretty(),
+            s.to_be_bytes().pretty(),
             self.to.pretty(),
             self.transaction_index.pretty(),
-            self.v.pretty(),
+            v.pretty(),
             self.value.pretty(),
-            self.other.pretty()
+            "",
+            //self.other.pretty()
         )
     }
 }
 
-/// Convert a U256 to bytes
-pub fn to_bytes(uint: U256) -> Bytes {
-    let mut buffer: [u8; 4 * 8] = [0; 4 * 8];
-    uint.to_big_endian(&mut buffer);
-    Bytes::from(buffer)
-}
-
 /// Returns the `UiFmt::pretty()` formatted attribute of the transactions
 pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<String> {
+    let (r, s, v) = transaction.signature.map(|sig| (sig.r, sig.s, sig.v)).unwrap_or_default();
     match attr {
         "blockHash" | "block_hash" => Some(transaction.block_hash.pretty()),
         "blockNumber" | "block_number" => Some(transaction.block_number.pretty()),
@@ -351,48 +328,51 @@ pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<Strin
         "hash" => Some(transaction.hash.pretty()),
         "input" => Some(transaction.input.pretty()),
         "nonce" => Some(transaction.nonce.pretty()),
-        "s" => Some(to_bytes(transaction.s).pretty()),
-        "r" => Some(to_bytes(transaction.r).pretty()),
+        "s" => Some(s.to_be_bytes().pretty()),
+        "r" => Some(r.to_be_bytes().pretty()),
         "to" => Some(transaction.to.pretty()),
         "transactionIndex" | "transaction_index" => Some(transaction.transaction_index.pretty()),
-        "v" => Some(transaction.v.pretty()),
+        "v" => Some(v.pretty()),
         "value" => Some(transaction.value.pretty()),
         other => {
-            if let Some(value) = transaction.other.get(other) {
-                return Some(value.to_string().trim_matches('"').to_string())
-            }
+            // todo
+            //if let Some(value) = transaction.other.get(other) {
+            //    return Some(value.to_string().trim_matches('"').to_string());
+            //}
             None
         }
     }
 }
 
 /// Returns the `UiFmt::pretty()` formatted attribute of the given block
-pub fn get_pretty_block_attr<TX>(block: &Block<TX>, attr: &str) -> Option<String> {
+pub fn get_pretty_block_attr(block: &Block, attr: &str) -> Option<String> {
     match attr {
-        "baseFeePerGas" | "base_fee_per_gas" => Some(block.base_fee_per_gas.pretty()),
-        "difficulty" => Some(block.difficulty.pretty()),
-        "extraData" | "extra_data" => Some(block.extra_data.pretty()),
-        "gasLimit" | "gas_limit" => Some(block.gas_limit.pretty()),
-        "gasUsed" | "gas_used" => Some(block.gas_used.pretty()),
-        "hash" => Some(block.hash.pretty()),
-        "logsBloom" | "logs_bloom" => Some(block.logs_bloom.pretty()),
-        "miner" | "author" => Some(block.author.pretty()),
-        "mixHash" | "mix_hash" => Some(block.mix_hash.pretty()),
-        "nonce" => Some(block.nonce.pretty()),
-        "number" => Some(block.number.pretty()),
-        "parentHash" | "parent_hash" => Some(block.parent_hash.pretty()),
-        "receiptsRoot" | "receipts_root" => Some(block.receipts_root.pretty()),
-        "sealFields" | "seal_fields" => Some(block.seal_fields.pretty()),
-        "sha3Uncles" | "sha_3_uncles" => Some(block.uncles_hash.pretty()),
+        "baseFeePerGas" | "base_fee_per_gas" => Some(block.header.base_fee_per_gas.pretty()),
+        "difficulty" => Some(block.header.difficulty.pretty()),
+        "extraData" | "extra_data" => Some(block.header.extra_data.pretty()),
+        "gasLimit" | "gas_limit" => Some(block.header.gas_limit.pretty()),
+        "gasUsed" | "gas_used" => Some(block.header.gas_used.pretty()),
+        "hash" => Some(block.header.hash.pretty()),
+        "logsBloom" | "logs_bloom" => Some(block.header.logs_bloom.pretty()),
+        "miner" | "author" => Some(block.header.miner.pretty()),
+        "mixHash" | "mix_hash" => Some(block.header.mix_hash.pretty()),
+        "nonce" => Some(block.header.nonce.pretty()),
+        "number" => Some(block.header.number.pretty()),
+        "parentHash" | "parent_hash" => Some(block.header.parent_hash.pretty()),
+        "receiptsRoot" | "receipts_root" => Some(block.header.receipts_root.pretty()),
+        // todo what is this
+        //"sealFields" | "seal_fields" => Some(block.header.seal_fields.pretty()),
+        "sha3Uncles" | "sha_3_uncles" => Some(block.header.uncles_hash.pretty()),
         "size" => Some(block.size.pretty()),
-        "stateRoot" | "state_root" => Some(block.state_root.pretty()),
-        "timestamp" => Some(block.timestamp.pretty()),
+        "stateRoot" | "state_root" => Some(block.header.state_root.pretty()),
+        "timestamp" => Some(block.header.timestamp.pretty()),
         "totalDifficulty" | "total_difficult" => Some(block.total_difficulty.pretty()),
         other => {
-            if let Some(value) = block.other.get(other) {
-                let val = EthValue::from(value.clone());
-                return Some(val.pretty())
-            }
+            // todo
+            //if let Some(value) = block.other.get(other) {
+            //    let val = EthValue::from(value.clone());
+            //    return Some(val.pretty());
+            //}
             None
         }
     }
@@ -400,6 +380,8 @@ pub fn get_pretty_block_attr<TX>(block: &Block<TX>, attr: &str) -> Option<String
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::{Bytes, B256};
+
     use super::*;
     use std::str::FromStr;
 
@@ -479,7 +461,7 @@ txType
     #[test]
     fn print_block_w_txs() {
         let block = r#"{"number":"0x3","hash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","parentHash":"0x689c70c080ca22bc0e681694fa803c1aba16a69c8b6368fed5311d279eb9de90","mixHash":"0x0000000000000000000000000000000000000000000000000000000000000000","nonce":"0x0000000000000000","sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","transactionsRoot":"0x7270c1c4440180f2bd5215809ee3d545df042b67329499e1ab97eb759d31610d","stateRoot":"0x29f32984517a7d25607da485b23cefabfd443751422ca7e603395e1de9bc8a4b","receiptsRoot":"0x056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2","miner":"0x0000000000000000000000000000000000000000","difficulty":"0x0","totalDifficulty":"0x0","extraData":"0x","size":"0x3e8","gasLimit":"0x6691b7","gasUsed":"0x5208","timestamp":"0x5ecedbb9","transactions":[{"hash":"0xc3c5f700243de37ae986082fd2af88d2a7c2752a0c0f7b9d6ac47c729d45e067","nonce":"0x2","blockHash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","blockNumber":"0x3","transactionIndex":"0x0","from":"0xfdcedc3bfca10ecb0890337fbdd1977aba84807a","to":"0xdca8ce283150ab773bcbeb8d38289bdb5661de1e","value":"0x0","gas":"0x15f90","gasPrice":"0x4a817c800","input":"0x","v":"0x25","r":"0x19f2694eb9113656dbea0b925e2e7ceb43df83e601c4116aee9c0dd99130be88","s":"0x73e5764b324a4f7679d890a198ba658ba1c8cd36983ff9797e10b1b89dbb448e"}],"uncles":[]}"#;
-        let block: Block<Transaction> = serde_json::from_str(block).unwrap();
+        let block: Block = serde_json::from_str(block).unwrap();
         let output ="\nblockHash            0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972
 blockNumber          3
 from                 0xFdCeDC3bFca10eCb0890337fbdD1977aba84807a
@@ -502,22 +484,22 @@ value                0".to_string();
     fn uifmt_option_u64() {
         let empty: Option<U64> = None;
         assert_eq!(String::new(), empty.pretty());
-        assert_eq!("100".to_string(), U64::from_dec_str("100").unwrap().pretty());
-        assert_eq!("100".to_string(), Option::from(U64::from_dec_str("100").unwrap()).pretty())
+        assert_eq!("100".to_string(), U64::from_str("100").unwrap().pretty());
+        assert_eq!("100".to_string(), Option::from(U64::from_str("100").unwrap()).pretty())
     }
 
     #[test]
     fn uifmt_option_h64() {
-        let empty: Option<H256> = None;
+        let empty: Option<B256> = None;
         assert_eq!(String::new(), empty.pretty());
-        H256::from_low_u64_be(100);
+        B256::from_low_u64_be(100);
         assert_eq!(
             "0x0000000000000000000000000000000000000000000000000000000000000064",
-            H256::from_low_u64_be(100).pretty()
+            B256::from_low_u64_be(100).pretty()
         );
         assert_eq!(
             "0x0000000000000000000000000000000000000000000000000000000000000064",
-            Some(H256::from_low_u64_be(100)).pretty()
+            Some(B256::from_low_u64_be(100)).pretty()
         );
     }
     #[test]
@@ -544,7 +526,7 @@ value                0".to_string();
     #[test]
     fn test_pretty_tx_attr() {
         let block = r#"{"number":"0x3","hash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","parentHash":"0x689c70c080ca22bc0e681694fa803c1aba16a69c8b6368fed5311d279eb9de90","mixHash":"0x0000000000000000000000000000000000000000000000000000000000000000","nonce":"0x0000000000000000","sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","transactionsRoot":"0x7270c1c4440180f2bd5215809ee3d545df042b67329499e1ab97eb759d31610d","stateRoot":"0x29f32984517a7d25607da485b23cefabfd443751422ca7e603395e1de9bc8a4b","receiptsRoot":"0x056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2","miner":"0x0000000000000000000000000000000000000000","difficulty":"0x0","totalDifficulty":"0x0","extraData":"0x","size":"0x3e8","gasLimit":"0x6691b7","gasUsed":"0x5208","timestamp":"0x5ecedbb9","transactions":[{"hash":"0xc3c5f700243de37ae986082fd2af88d2a7c2752a0c0f7b9d6ac47c729d45e067","nonce":"0x2","blockHash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","blockNumber":"0x3","transactionIndex":"0x0","from":"0xfdcedc3bfca10ecb0890337fbdd1977aba84807a","to":"0xdca8ce283150ab773bcbeb8d38289bdb5661de1e","value":"0x0","gas":"0x15f90","gasPrice":"0x4a817c800","input":"0x","v":"0x25","r":"0x19f2694eb9113656dbea0b925e2e7ceb43df83e601c4116aee9c0dd99130be88","s":"0x73e5764b324a4f7679d890a198ba658ba1c8cd36983ff9797e10b1b89dbb448e"}],"uncles":[]}"#;
-        let block: Block<Transaction> = serde_json::from_str(block).unwrap();
+        let block: Block = serde_json::from_str(block).unwrap();
         assert_eq!(None, get_pretty_tx_attr(&block.transactions[0], ""));
         assert_eq!(
             Some("3".to_string()),
@@ -617,7 +599,7 @@ value                0".to_string();
           }
         );
 
-        let block: Block<()> = serde_json::from_value(json).unwrap();
+        let block: Block = serde_json::from_value(json).unwrap();
 
         assert_eq!(None, get_pretty_block_attr(&block, ""));
         assert_eq!(Some("7".to_string()), get_pretty_block_attr(&block, "baseFeePerGas"));

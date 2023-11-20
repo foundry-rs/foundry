@@ -1,5 +1,5 @@
 use super::UIfmt;
-use ethers_core::types::{Address, Bytes, H256, I256, U256};
+use alloy_primitives::{Address, Bytes, B256, I256, U256};
 
 /// A format specifier.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -74,7 +74,7 @@ impl ConsoleFmt for U256 {
             FormatSpec::Hexadecimal => format!("0x{:x}", *self),
             FormatSpec::Exponential => {
                 let log = self.pretty().len() - 1;
-                let exp10 = U256::exp10(log);
+                let exp10 = U256::from(10).pow(U256::from(log));
                 let amount = *self;
                 let integer = amount / exp10;
                 let decimal = (amount % exp10).to_string();
@@ -118,7 +118,7 @@ impl ConsoleFmt for I256 {
     }
 }
 
-impl ConsoleFmt for H256 {
+impl ConsoleFmt for B256 {
     fn fmt(&self, spec: FormatSpec) -> String {
         match spec {
             FormatSpec::Hexadecimal | FormatSpec::String => self.pretty(),
@@ -231,7 +231,7 @@ fn format_spec<'a>(
         // no more values
         if current_value.is_none() {
             result.push_str(&s[i..].replace("%%", "%"));
-            break
+            break;
         }
 
         if expect_fmt {
@@ -339,7 +339,7 @@ mod tests {
         assert_eq!("'true'", console_log_format_1("%o", &true));
 
         let b32 =
-            H256::from_str("0xdeadbeef00000000000000000000000000000000000000000000000000000000")
+            B256::from_str("0xdeadbeef00000000000000000000000000000000000000000000000000000000")
                 .unwrap();
         assert_eq!(
             "0xdeadbeef00000000000000000000000000000000000000000000000000000000",
@@ -385,16 +385,16 @@ mod tests {
         assert_eq!("0x64", console_log_format_1("%x", &U256::from(100)));
         assert_eq!("100", console_log_format_1("%o", &U256::from(100)));
 
-        assert_eq!("100", console_log_format_1("%s", &I256::from(100)));
-        assert_eq!("100", console_log_format_1("%d", &I256::from(100)));
-        assert_eq!("100", console_log_format_1("%i", &I256::from(100)));
-        assert_eq!("1e2", console_log_format_1("%e", &I256::from(100)));
-        assert_eq!("-1.0023e6", console_log_format_1("%e", &I256::from(-1002300)));
-        assert_eq!("-1.23e5", console_log_format_1("%e", &I256::from(-123000)));
-        assert_eq!("1.0023e6", console_log_format_1("%e", &I256::from(1002300)));
-        assert_eq!("1.23e5", console_log_format_1("%e", &I256::from(123000)));
-        assert_eq!("0x64", console_log_format_1("%x", &I256::from(100)));
-        assert_eq!("100", console_log_format_1("%o", &I256::from(100)));
+        assert_eq!("100", console_log_format_1("%s", &I256::try_from(100).unwrap()));
+        assert_eq!("100", console_log_format_1("%d", &I256::try_from(100).unwrap()));
+        assert_eq!("100", console_log_format_1("%i", &I256::try_from(100).unwrap()));
+        assert_eq!("1e2", console_log_format_1("%e", &I256::try_from(100).unwrap()));
+        assert_eq!("-1.0023e6", console_log_format_1("%e", &I256::try_from(-1002300).unwrap()));
+        assert_eq!("-1.23e5", console_log_format_1("%e", &I256::try_from(-123000).unwrap()));
+        assert_eq!("1.0023e6", console_log_format_1("%e", &I256::try_from(1002300).unwrap()));
+        assert_eq!("1.23e5", console_log_format_1("%e", &I256::try_from(123000).unwrap()));
+        assert_eq!("0x64", console_log_format_1("%x", &I256::try_from(100).unwrap()));
+        assert_eq!("100", console_log_format_1("%o", &I256::try_from(100).unwrap()));
     }
 
     #[test]

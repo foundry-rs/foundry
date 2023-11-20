@@ -3155,6 +3155,8 @@ dependencies = [
 name = "foundry-macros"
 version = "0.2.0"
 dependencies = [
+ "alloy-primitives",
+ "alloy-rpc-types",
  "ethers-core",
  "foundry-macros-impl",
  "serde",

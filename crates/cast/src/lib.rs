@@ -376,7 +376,7 @@ impl<P: TempProvider> Cast<P> {
         let block = if full {
             let block = self
                 .provider
-                .get_block_with_txs(block)
+                .get_block(block, true)
                 .await?
                 .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
             if let Some(ref field) = field {
@@ -390,7 +390,7 @@ impl<P: TempProvider> Cast<P> {
         } else {
             let block = self
                 .provider
-                .get_block(block)
+                .get_block(block, false)
                 .await?
                 .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
 
@@ -865,7 +865,7 @@ impl<P: TempProvider> Cast<P> {
     }
 
     pub async fn filter_logs(&self, filter: Filter, to_json: bool) -> Result<String> {
-        let logs = self.provider.get_logs(filter).await?;
+        let logs = self.provider.get_logs(&filter).await?;
 
         let res = if to_json {
             serde_json::to_string(&logs)?
