@@ -246,6 +246,17 @@ impl ScriptSequence {
         Ok((broadcast, cache))
     }
 
+    /// Checks that there is an Etherscan key for the chain id of this sequence.
+    pub fn verify_preflight_check(&self, config: &Config, verify: &VerifyBundle) -> Result<()> {
+        if config.get_etherscan_api_key(Some(self.chain.into())).is_none() &&
+            verify.verifier.verifier == VerificationProviderType::Etherscan
+        {
+            eyre::bail!("Etherscan API key wasn't found for chain id {}", self.chain)
+        }
+
+        Ok(())
+    }
+
     /// Given the broadcast log, it matches transactions with receipts, and tries to verify any
     /// created contract on etherscan.
     pub async fn verify_contracts(
