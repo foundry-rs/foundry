@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use ethers_core::types::{TxHash, H256, U256, U64};
 use revm::primitives::SpecId;
 
