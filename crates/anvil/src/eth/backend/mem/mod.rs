@@ -676,7 +676,7 @@ impl Backend {
         Ok(self.db.write().await.revert(id))
     }
 
-    pub async fn list_snapshots(&self) -> HashMap<U256, (u64, H256)> {
+    pub fn list_snapshots(&self) -> HashMap<U256, (u64, H256)> {
         self.active_snapshots.lock().clone()
     }
 
