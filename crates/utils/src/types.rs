@@ -2,10 +2,10 @@
 
 use alloy_json_abi::{Event, EventParam, Function, InternalType, Param, StateMutability};
 use alloy_primitives::{Address, B256, I256, U128, U256, U64};
-use alloy_rpc_types::{Signature, Transaction, AccessList, AccessListItem};
+use alloy_rpc_types::{Signature, Transaction, AccessList, AccessListItem, CallRequest, CallInput};
 use ethers_core::{
     abi as ethabi,
-    types::{H160, H256, I256 as EthersI256, U256 as EthersU256, U64 as EthersU64, transaction::eip2930::{AccessList as EthersAccessList, AccessListItem as EthersAccessListItem}},
+    types::{H160, H256, I256 as EthersI256, U256 as EthersU256, U64 as EthersU64, transaction::eip2930::{AccessList as EthersAccessList, AccessListItem as EthersAccessListItem}, TransactionRequest},
 };
 
 /// Conversion trait to easily convert from Ethers types to Alloy types.
@@ -100,6 +100,29 @@ impl ToAlloy for ethers_core::types::Transaction {
             access_list: self.access_list.map(|a| a.0.into_iter().map(ToAlloy::to_alloy).collect()),
             transaction_type: self.transaction_type.map(|t| t.to_alloy()),
         }
+    }
+}
+
+pub fn to_call_request_from_tx_request(tx: TransactionRequest) -> CallRequest {
+    CallRequest { 
+        from: tx.from.map(|f| f.to_alloy()),
+        to: match tx.to {
+            Some(to) => match to {
+                ethers_core::types::NameOrAddress::Address(addr) => Some(addr.to_alloy()),
+                ethers_core::types::NameOrAddress::Name(_) => None
+            },
+            None => None
+        },
+        gas_price: tx.gas_price.map(|g| g.to_alloy()), 
+        max_fee_per_gas: None, 
+        max_priority_fee_per_gas: None, 
+        gas: tx.gas.map(|g| g.to_alloy()), 
+        value: tx.value.map(|v| v.to_alloy()), 
+        input: CallInput::maybe_input(tx.data.map(|b| b.0.into())), 
+        nonce: tx.nonce.map(|n| U64::from(n.as_u64())), 
+        chain_id: tx.chain_id.map(|c| c.to_alloy()), 
+        access_list: None, max_fee_per_blob_gas: None, blob_versioned_hashes: None, 
+        transaction_type: None 
     }
 }
 

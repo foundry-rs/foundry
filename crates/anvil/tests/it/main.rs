@@ -1,5 +1,5 @@
-// mod abi;
-// mod anvil;
+mod abi;
+mod anvil;
 // mod anvil_api;
 // mod api;
 // mod fork;
@@ -15,8 +15,8 @@ mod genesis;
 // mod otterscan;
 // mod sign;
 // mod traces;
-// mod transaction;
-// mod txpool;
+mod transaction;
+mod txpool;
 // pub mod utils;
 // mod wsapi;
 
