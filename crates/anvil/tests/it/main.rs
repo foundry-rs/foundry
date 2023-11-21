@@ -4,20 +4,20 @@ mod anvil;
 // mod api;
 // mod fork;
 // mod ganache;
-// mod gas;
+mod gas;
 mod genesis;
-// mod geth;
+mod geth;
 // mod ipc;
-// mod logs;
+mod logs;
 // mod proof;
 // mod pubsub;
 // // mod revert; // TODO uncomment <https://github.com/gakonst/ethers-rs/issues/2186>
-// mod otterscan;
+mod otterscan;
 // mod sign;
 // mod traces;
 mod transaction;
 mod txpool;
-// pub mod utils;
+pub mod utils;
 // mod wsapi;
 
 #[allow(unused)]

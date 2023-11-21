@@ -12,7 +12,7 @@ use serde::Serialize;
 use serde_repr::Serialize_repr;
 
 /// Patched Block struct, to include the additional `transactionCount` field expected by Otterscan
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OtsBlock {
     #[serde(flatten)]
@@ -38,7 +38,7 @@ pub struct Issuance {
 }
 
 /// Holds both transactions and receipts for a block
-#[derive(Serialize, Debug)]
+#[derive(Clone, Serialize, Debug)]
 pub struct OtsBlockTransactions {
     pub fullblock: OtsBlock,
     pub receipts: Vec<TransactionReceipt>,
