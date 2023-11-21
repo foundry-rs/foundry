@@ -178,7 +178,7 @@ impl ClientFork {
 
         if let BlockNumber::Number(num) = block {
             // check if this request was already been sent
-            let key = (request.clone(), num.to::<u64>());
+            let key = (request.clone(), num);
             if let Some(res) = self.storage_read().eth_call.get(&key).cloned() {
                 return Ok(res);
             }
@@ -191,7 +191,7 @@ impl ClientFork {
         if let BlockNumber::Number(num) = block {
             // cache result
             let mut storage = self.storage_write();
-            storage.eth_call.insert((request, num.to::<u64>()), res.clone());
+            storage.eth_call.insert((request, num), res.clone());
         }
 
         Ok(res)
@@ -208,7 +208,7 @@ impl ClientFork {
 
         if let BlockNumber::Number(num) = block {
             // check if this request was already been sent
-            let key = (request.clone(), num.to::<u64>());
+            let key = (request.clone(), num);
             if let Some(res) = self.storage_read().eth_gas_estimations.get(&key).cloned() {
                 return Ok(res);
             }
@@ -221,7 +221,7 @@ impl ClientFork {
         if let BlockNumber::Number(num) = block {
             // cache result
             let mut storage = self.storage_write();
-            storage.eth_gas_estimations.insert((request, num.to::<u64>()), res);
+            storage.eth_gas_estimations.insert((request, num), res);
         }
 
         Ok(res)
