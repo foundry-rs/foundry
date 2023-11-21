@@ -6,13 +6,13 @@ use crate::eth::{
     transaction::{
         EIP1559TransactionRequest, EIP2930TransactionRequest, LegacyTransactionRequest,
         MaybeImpersonatedTransaction, TypedTransaction, TypedTransactionRequest,
-    },
+    }, state::{StateOverride as EthStateOverride, AccountOverride},
 };
 use alloy_primitives::{U128 as rU128, U256 as rU256, U64 as rU64};
 use alloy_rpc_types::{
     AccessList as AlloyAccessList, AccessListItem as AlloyAccessListItem, CallRequest,
     EIP1186StorageProof, Signature, Transaction as AlloyTransaction,
-    TransactionRequest as AlloyTransactionRequest,
+    TransactionRequest as AlloyTransactionRequest, state::{StateOverride, AccountOverride as AlloyAccountOverride},
 };
 use ethers_core::types::{
     transaction::{
@@ -98,7 +98,9 @@ pub fn to_ethers_access_list(access_list: AlloyAccessList) -> AccessList {
                 storage_keys: item
                     .storage_keys
                     .into_iter()
-                    .map(|k| BigEndianHash::from_uint(&k.to_ethers()))
+                    .map(|k| {
+                        BigEndianHash::from_uint(&U256::from_big_endian(k.to_ethers().as_bytes()))
+                    })
                     .collect(),
             })
             .collect(),
@@ -106,20 +108,29 @@ pub fn to_ethers_access_list(access_list: AlloyAccessList) -> AccessList {
 }
 
 pub fn from_ethers_access_list(access_list: AccessList) -> AlloyAccessList {
-    AlloyAccessList(
-        access_list
-            .0
-            .into_iter()
-            .map(|item| AlloyAccessListItem {
-                address: item.address.to_alloy(),
-                storage_keys: item
-                    .storage_keys
-                    .into_iter()
-                    .map(|k| rU256::from_be_bytes(k.to_alloy().0))
-                    .collect(),
-            })
-            .collect(),
-    )
+    AlloyAccessList(access_list.0.into_iter().map(ToAlloy::to_alloy).collect())
+}
+
+pub fn to_ethers_state_override(ov: StateOverride) -> EthStateOverride {
+    ov.into_iter()
+        .map(|(addr, o)| (addr.to_ethers(), AccountOverride {
+           nonce: o.nonce.map(|n| n.to::<u64>()),
+           balance: o.balance.map(|b| b.to_ethers()),
+           code: o.code.map(|c| c.0.into()),
+           state_diff: o.state_diff.map(|s| s.into_iter().map(|(k, v)| (k.to_ethers(), H256::from_uint(&v.to_ethers()))).collect()),
+           state: o.state.map(|s| s.into_iter().map(|(k, v)| (k.to_ethers(), H256::from_uint(&v.to_ethers()))).collect()),
+        })).collect()
+}
+
+pub fn to_alloy_state_override(ov: EthStateOverride) -> StateOverride {
+    ov.into_iter()
+        .map(|(addr, o)| (addr.to_alloy(), AlloyAccountOverride {
+           nonce: o.nonce.map(|n| rU64::from(n)),
+           balance: o.balance.map(|b| b.to_alloy()),
+           code: o.code.map(|c| c.0.into()),
+           state_diff: o.state_diff.map(|s| s.into_iter().map(|(k, v)| (k.to_alloy(), rU256::from_be_bytes(v.to_alloy().0))).collect()),
+           state: o.state.map(|s| s.into_iter().map(|(k, v)| (k.to_alloy(), rU256::from_be_bytes(v.to_alloy().0))).collect()),
+        })).collect()
 }
 
 impl From<TypedTransactionRequest> for EthersTypedTransactionRequest {

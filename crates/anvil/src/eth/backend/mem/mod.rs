@@ -128,7 +128,7 @@ impl BlockRequest {
     pub fn block_number(&self) -> BlockNumber {
         match self {
             BlockRequest::Pending(_) => BlockNumber::Pending,
-            BlockRequest::Number(n) => BlockNumber::Number(*n),
+            BlockRequest::Number(n) => BlockNumber::Number(n.to::<u64>()),
         }
     }
 }
@@ -1602,7 +1602,7 @@ impl Backend {
                 BlockId::Number(num) => match num {
                     BlockNumber::Latest | BlockNumber::Pending => self.best_number().to::<u64>(),
                     BlockNumber::Earliest => U64::ZERO.to::<u64>(),
-                    BlockNumber::Number(num) => num.to::<u64>(),
+                    BlockNumber::Number(num) => num,
                     BlockNumber::Safe => {
                         U64::from(current).saturating_sub(U64::from(slots_in_an_epoch)).to::<u64>()
                     }
@@ -1625,7 +1625,7 @@ impl Backend {
         match block.unwrap_or(BlockNumber::Latest) {
             BlockNumber::Latest | BlockNumber::Pending => current,
             BlockNumber::Earliest => 0,
-            BlockNumber::Number(num) => num.to::<u64>(),
+            BlockNumber::Number(num) => num,
             BlockNumber::Safe => current.saturating_sub(slots_in_an_epoch),
             BlockNumber::Finalized => current.saturating_sub(slots_in_an_epoch * 2),
         }
@@ -1660,7 +1660,7 @@ impl Backend {
                     .await;
                 return Ok(result);
             }
-            Some(BlockRequest::Number(bn)) => Some(BlockNumber::Number(bn)),
+            Some(BlockRequest::Number(bn)) => Some(BlockNumber::Number(bn.to::<u64>())),
             None => None,
         };
         let block_number: U256 = U256::from(self.convert_block_number(block_number));

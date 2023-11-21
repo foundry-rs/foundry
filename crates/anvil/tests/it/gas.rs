@@ -17,7 +17,7 @@ async fn test_basefee_full_block() {
         NodeConfig::test().with_base_fee(Some(INITIAL_BASE_FEE)).with_gas_limit(Some(GAS_TRANSFER)),
     )
     .await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
     let tx = TransactionRequest::new().to(Address::random()).value(1337u64);
     provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
     let base_fee =
@@ -40,7 +40,7 @@ async fn test_basefee_half_block() {
             .with_gas_limit(Some(GAS_TRANSFER * 2)),
     )
     .await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
     let tx = TransactionRequest::new().to(Address::random()).value(1337u64);
     provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
     let tx = TransactionRequest::new().to(Address::random()).value(1337u64);
@@ -55,7 +55,7 @@ async fn test_basefee_half_block() {
 async fn test_basefee_empty_block() {
     let (api, handle) = spawn(NodeConfig::test().with_base_fee(Some(INITIAL_BASE_FEE))).await;
 
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
     let tx = TransactionRequest::new().to(Address::random()).value(1337u64);
     provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
     let base_fee =
@@ -75,7 +75,7 @@ async fn test_basefee_empty_block() {
 async fn test_respect_base_fee() {
     let base_fee = 50u64;
     let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
     let mut tx = TypedTransaction::default();
     tx.set_value(100u64);
     tx.set_to(Address::random());
@@ -95,7 +95,7 @@ async fn test_respect_base_fee() {
 async fn test_tip_above_fee_cap() {
     let base_fee = 50u64;
     let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
     let tx = TypedTransaction::Eip1559(
         Eip1559TransactionRequest::new()
             .max_fee_per_gas(base_fee)

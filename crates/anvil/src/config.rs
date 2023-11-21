@@ -954,7 +954,7 @@ impl NodeConfig {
         };
 
         let block = provider
-            .get_block(BlockNumberOrTag::Number(U64::from(fork_block_number)).into(), false)
+            .get_block(BlockNumberOrTag::Number(fork_block_number).into(), false)
             .await
             .expect("Failed to get fork block");
 
@@ -969,7 +969,7 @@ latest block number: {latest_block}"
                 // If the `eth_getBlockByNumber` call succeeds, but returns null instead of
                 // the block, and the block number is less than equal the latest block, then
                 // the user is forking from a non-archive node with an older block number.
-                if fork_block_number <= latest_block.to::<u64>() {
+                if fork_block_number <= latest_block {
                     message.push_str(&format!("\n{}", NON_ARCHIVE_NODE_WARNING));
                 }
                 panic!("{}", message);
@@ -1189,7 +1189,7 @@ pub fn anvil_tmp_dir() -> Option<PathBuf> {
 /// This fetches the "latest" block and checks whether the `Block` is fully populated (`hash` field
 /// is present). This prevents edge cases where anvil forks the "latest" block but `eth_getBlockByNumber` still returns a pending block, <https://github.com/foundry-rs/foundry/issues/2036>
 async fn find_latest_fork_block<P: TempProvider>(provider: P) -> Result<u64, TransportError> {
-    let mut num = provider.get_block_number().await?.to::<u64>();
+    let mut num = provider.get_block_number().await?;
 
     // walk back from the head of the chain, but at most 2 blocks, which should be more than enough
     // leeway

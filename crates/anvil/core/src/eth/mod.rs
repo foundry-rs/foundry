@@ -17,6 +17,7 @@ pub mod subscription;
 pub mod transaction;
 pub mod trie;
 pub mod utils;
+pub mod state;
 
 #[cfg(feature = "serde")]
 pub mod serde_helpers;

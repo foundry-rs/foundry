@@ -168,7 +168,7 @@ pub fn filter_logs(
         };
         if params.filter.is_some() {
             let block_number = block.header.number.as_u64();
-            if !params.filter_block_range(U64::from(block_number))
+            if !params.filter_block_range(block_number)
                 || !params.filter_block_hash(block_hash)
                 || !params.filter_address(&log)
                 || !params.filter_topics(&log)

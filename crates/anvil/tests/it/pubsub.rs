@@ -9,6 +9,7 @@ use ethers::{
     signers::Signer,
     types::{Address, Block, Filter, TransactionRequest, TxHash, ValueOrArray, U256},
 };
+use foundry_utils::types::ToAlloy;
 use futures::StreamExt;
 use std::sync::Arc;
 
@@ -16,7 +17,7 @@ use std::sync::Arc;
 async fn test_sub_new_heads() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
-    let provider = handle.ws_provider();
+    let provider = handle.ethers_ws_provider();
 
     let blocks = provider.subscribe_blocks().await.unwrap();
 
@@ -34,7 +35,7 @@ async fn test_sub_logs_legacy() {
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider();
+    let provider = handle.ethers_ws_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
@@ -73,7 +74,7 @@ async fn test_sub_logs() {
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider();
+    let provider = handle.ethers_ws_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
@@ -111,13 +112,13 @@ async fn test_sub_logs_impersonated() {
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider();
+    let provider = handle.ethers_ws_provider();
 
     // impersonate account
     let impersonate = Address::random();
     let funding = U256::from(1e18 as u64);
-    api.anvil_set_balance(impersonate, funding).await.unwrap();
-    api.anvil_impersonate_account(impersonate).await.unwrap();
+    api.anvil_set_balance(impersonate.to_alloy(), funding.to_alloy()).await.unwrap();
+    api.anvil_impersonate_account(impersonate.to_alloy()).await.unwrap();
 
     let wallet = handle.dev_wallets().next().unwrap();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
@@ -137,7 +138,7 @@ async fn test_sub_logs_impersonated() {
 
     let tx = TransactionRequest::new().from(impersonate).to(contract.address()).data(data);
 
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     let receipt = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
@@ -152,7 +153,7 @@ async fn test_filters_legacy() {
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
     let from = wallet.address();
@@ -193,7 +194,7 @@ async fn test_filters() {
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
     let from = wallet.address();
@@ -253,7 +254,7 @@ async fn test_subscriptions() {
 async fn test_sub_new_heads_fast() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
-    let provider = handle.ws_provider();
+    let provider = handle.ethers_ws_provider();
 
     let blocks = provider.subscribe_blocks().await.unwrap();
 

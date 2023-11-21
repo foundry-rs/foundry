@@ -637,7 +637,7 @@ impl EthApi {
                         fork.storage_at(
                             address,
                             B256::from(index),
-                            Some(BlockNumber::Number(*number)),
+                            Some(BlockNumber::Number(number.to::<u64>())),
                         )
                         .await
                         .map_err(|_| BlockchainError::DataUnavailable)?,
@@ -1260,7 +1260,7 @@ impl EthApi {
         let number = match newest_block {
             BlockNumber::Latest | BlockNumber::Pending => current,
             BlockNumber::Earliest => 0,
-            BlockNumber::Number(n) => n.to::<u64>(),
+            BlockNumber::Number(n) => n,
             BlockNumber::Safe => current.saturating_sub(slots_in_an_epoch),
             BlockNumber::Finalized => current.saturating_sub(slots_in_an_epoch * 2),
         };
@@ -1273,7 +1273,7 @@ impl EthApi {
                 return Ok(fork
                     .fee_history(
                         block_count,
-                        BlockNumber::Number(U64::from(number)),
+                        BlockNumber::Number(number),
                         &reward_percentiles,
                     )
                     .await
@@ -1906,7 +1906,7 @@ impl EthApi {
         for offset in (0..mined_blocks).rev() {
             let block_num = latest - offset;
             if let Some(mut block) =
-                self.backend.block_by_number_full(BlockNumber::Number(U64::from(block_num))).await?
+                self.backend.block_by_number_full(BlockNumber::Number(block_num)).await?
             {
                 let mut block_txs = match block.transactions {
                     BlockTransactions::Full(txs) => txs,

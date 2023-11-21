@@ -9,7 +9,7 @@ use ethers::{
 #[tokio::test(flavor = "multi_thread")]
 async fn geth_txpool() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
     api.anvil_set_auto_mine(false).await.unwrap();
 
     let account = provider.get_accounts().await.unwrap()[0];

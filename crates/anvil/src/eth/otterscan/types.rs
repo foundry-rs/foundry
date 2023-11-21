@@ -12,7 +12,7 @@ use serde::Serialize;
 use serde_repr::Serialize_repr;
 
 /// Patched Block struct, to include the additional `transactionCount` field expected by Otterscan
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OtsBlock {
     #[serde(flatten)]
@@ -38,7 +38,7 @@ pub struct Issuance {
 }
 
 /// Holds both transactions and receipts for a block
-#[derive(Serialize, Debug)]
+#[derive(Clone, Serialize, Debug)]
 pub struct OtsBlockTransactions {
     pub fullblock: OtsBlock,
     pub receipts: Vec<TransactionReceipt>,
@@ -172,7 +172,7 @@ impl From<Block> for OtsBlock {
 impl OtsBlockTransactions {
     /// Fetches all receipts for the blocks's transactions, as required by the [`ots_getBlockTransactions`](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_getblockdetails) endpoint spec, and returns the final response object.
     pub async fn build(
-        block: Block,
+        mut block: Block,
         backend: &Backend,
         page: usize,
         page_size: usize,
@@ -182,10 +182,17 @@ impl OtsBlockTransactions {
             BlockTransactions::Hashes(txs) => txs,
             BlockTransactions::Uncle => return Err(BlockchainError::DataUnavailable),
         };
-        let block_txs = block_txs.iter().skip(page * page_size).take(page_size).collect::<Vec<_>>();
+
+        let block_txs = block_txs.into_iter().skip(page * page_size).take(page_size).collect::<Vec<_>>();
+
+        block.transactions = match block.transactions {
+            BlockTransactions::Full(txs) => BlockTransactions::Full(txs.into_iter().skip(page * page_size).take(page_size).collect()),
+            BlockTransactions::Hashes(txs) => BlockTransactions::Hashes(txs.into_iter().skip(page * page_size).take(page_size).collect()),
+            BlockTransactions::Uncle => return Err(BlockchainError::DataUnavailable),
+        };
 
         let receipt_futs =
-            block_txs.iter().map(|tx| async { backend.transaction_receipt(*tx.clone()).await });
+            block_txs.iter().map(|tx| async { backend.transaction_receipt(tx.clone()).await });
 
         let receipts: Vec<TransactionReceipt> = join_all(receipt_futs)
             .await
