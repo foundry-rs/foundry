@@ -1,7 +1,7 @@
 use super::{artifacts::ArtifactInfo, ScriptResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, Bytes, B256};
 use ethers_core::types::{transaction::eip2718::TypedTransaction, NameOrAddress};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{fmt::format_token_raw, RpcUrl, SELECTOR_LEN};
