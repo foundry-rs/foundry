@@ -10,7 +10,7 @@ mod geth;
 // mod ipc;
 mod logs;
 mod proof;
-// mod pubsub;
+mod pubsub;
 // mod revert; // TODO uncomment <https://github.com/gakonst/ethers-rs/issues/2186>
 mod otterscan;
 mod sign;
