@@ -411,10 +411,9 @@ impl EthApi {
     ) -> Result<TypedTransaction> {
         match request {
             TypedTransactionRequest::Deposit(_) => {
-                return build_typed_transaction(
-                    request,
-                    Signature { r: U256::zero(), s: U256::zero(), v: 0 },
-                )
+                const NIL_SIGNATURE: ethers::types::Signature =
+                    Signature { r: U256::zero(), s: U256::zero(), v: 0 };
+                return build_typed_transaction(request, NIL_SIGNATURE)
             }
             _ => {
                 for signer in self.signers.iter() {

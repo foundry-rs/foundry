@@ -48,8 +48,7 @@ pub enum TypedTransactionRequest {
 /// Represents _all_ transaction requests received from RPC
 #[derive(Clone, Debug, PartialEq, Eq, Default, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-// #[cfg_attr(feature = "serde", serde(deny_unknown_fields))] // TODO: had to disable this to get
-// tests passing
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct EthTransactionRequest {
     /// from address
@@ -156,7 +155,6 @@ impl EthTransactionRequest {
             }
             // op-stack deposit
             (Some(126), _, None, None, None) => {
-                // TODO: gas price should be zero, enforce this here?
                 Some(TypedTransactionRequest::Deposit(DepositTransactionRequest {
                     source_hash: source_hash.unwrap_or_default(),
                     from: from.unwrap_or_default(),
@@ -1247,6 +1245,7 @@ impl Decodable for EIP1559Transaction {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+
 pub struct DepositTransaction {
     pub nonce: U256,
     pub source_hash: H256,
@@ -1295,20 +1294,20 @@ impl Encodable for DepositTransaction {
 
 impl Decodable for DepositTransaction {
     fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-        if rlp.item_count()? != 9 {
+        if rlp.item_count()? != 8 {
             return Err(DecoderError::RlpIncorrectListLen)
         }
 
         Ok(Self {
-            nonce: rlp.val_at(0)?,
-            source_hash: rlp.val_at(1)?,
-            from: rlp.val_at(2)?,
-            kind: rlp.val_at(3)?,
-            mint: rlp.val_at(4)?,
-            value: rlp.val_at(5)?,
-            gas_limit: rlp.val_at(6)?,
-            is_system_tx: rlp.val_at(7)?,
-            input: rlp.val_at::<Vec<u8>>(8)?.into(),
+            source_hash: rlp.val_at(0)?,
+            from: rlp.val_at(1)?,
+            kind: rlp.val_at(2)?,
+            mint: rlp.val_at(3)?,
+            value: rlp.val_at(4)?,
+            gas_limit: rlp.val_at(5)?,
+            is_system_tx: rlp.val_at(6)?,
+            input: rlp.val_at::<Vec<u8>>(7)?.into(),
+            nonce: U256::from(0),
         })
     }
 }

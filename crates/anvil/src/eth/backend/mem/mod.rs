@@ -554,7 +554,7 @@ impl Backend {
     }
 
     /// Returns true if op-stack deposits are active
-    pub fn is_op_deposits(&self) -> bool {
+    pub fn is_optimism(&self) -> bool {
         self.env.read().cfg.optimism
     }
 
@@ -576,7 +576,7 @@ impl Backend {
 
     /// Returns an error if op-stack deposits are not active
     pub fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
-        if self.is_op_deposits() {
+        if self.is_optimism() {
             return Ok(())
         }
         Err(BlockchainError::DepositTransactionUnsupported)
@@ -1929,10 +1929,7 @@ impl Backend {
             TypedTransaction::Deposit(_) => U256::from(0),
         };
 
-        let mut deposit_nonce: Option<u64> = None;
-        if transaction_type.unwrap_or_default() == 0x7E {
-            deposit_nonce = Some(info.nonce);
-        }
+        let deposit_nonce = transaction_type.and_then(|x| (x == 0x7E).then_some(info.nonce));
 
         let inner = TransactionReceipt {
             transaction_hash: info.transaction_hash,
