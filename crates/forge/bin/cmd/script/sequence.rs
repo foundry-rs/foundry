@@ -251,7 +251,7 @@ impl ScriptSequence {
         if config.get_etherscan_api_key(Some(self.chain.into())).is_none() &&
             verify.verifier.verifier == VerificationProviderType::Etherscan
         {
-            eyre::bail!("Etherscan API key wasn't found for chain id {}", self.chain)
+            eyre::bail!("Etherscan API key wasn't found for chain id {}. On-chain execution aborted", self.chain)
         }
 
         Ok(())
