@@ -90,7 +90,7 @@ dependencies = [
 [[package]]
 name = "alloy-dyn-abi"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/?branch=dani/sol-dyn-abi#a793c1db24ae70fd8f7311c55a063229a5314c23"
+source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -110,7 +110,7 @@ dependencies = [
 [[package]]
 name = "alloy-json-abi"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/?branch=dani/sol-dyn-abi#a793c1db24ae70fd8f7311c55a063229a5314c23"
+source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-type-parser",
@@ -121,7 +121,7 @@ dependencies = [
 [[package]]
 name = "alloy-primitives"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/?branch=dani/sol-dyn-abi#a793c1db24ae70fd8f7311c55a063229a5314c23"
+source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
 dependencies = [
  "alloy-rlp",
  "arbitrary",
@@ -168,7 +168,7 @@ dependencies = [
 [[package]]
 name = "alloy-sol-macro"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/?branch=dani/sol-dyn-abi#a793c1db24ae70fd8f7311c55a063229a5314c23"
+source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
 dependencies = [
  "alloy-json-abi",
  "const-hex",
@@ -187,7 +187,7 @@ dependencies = [
 [[package]]
 name = "alloy-sol-type-parser"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/?branch=dani/sol-dyn-abi#a793c1db24ae70fd8f7311c55a063229a5314c23"
+source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
 dependencies = [
  "winnow",
 ]
@@ -195,7 +195,7 @@ dependencies = [
 [[package]]
 name = "alloy-sol-types"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/?branch=dani/sol-dyn-abi#a793c1db24ae70fd8f7311c55a063229a5314c23"
+source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5888,9 +5888,9 @@ dependencies = [
 
 [[package]]
 name = "ruint"
-version = "1.11.0"
+version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "724fd11728a3804e9944b14cab63825024c40bf42f8af87c8b5d97c4bbacf426"
+checksum = "608a5726529f2f0ef81b8fde9873c4bb829d6b5b5ca6be4d97345ddf0749c825"
 dependencies = [
  "alloy-rlp",
  "arbitrary",
@@ -6837,7 +6837,7 @@ dependencies = [
 [[package]]
 name = "syn-solidity"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/?branch=dani/sol-dyn-abi#a793c1db24ae70fd8f7311c55a063229a5314c23"
+source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
 dependencies = [
  "paste",
  "proc-macro2",
