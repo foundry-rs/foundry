@@ -747,7 +747,7 @@ mod tests {
     async fn can_read_write_cache() {
         let provider = get_http_provider(ENDPOINT);
 
-        let block_num = provider.get_block_number().await.unwrap().to();
+        let block_num = provider.get_block_number().await.unwrap();
 
         let config = Config::figment();
         let mut evm_opts = config.extract::<EvmOpts>().unwrap();
