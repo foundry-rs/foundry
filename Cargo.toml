@@ -196,14 +196,14 @@ tower-http = "0.4"
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "2d2599f90237376e443163e3f05b887c6141dc78" }
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "2d2599f90237376e443163e3f05b887c6141dc78"  }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "2d2599f90237376e443163e3f05b887c6141dc78"  }
-ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "2d2599f90237376e443163e3f05b887c6141dc78"  }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "2d2599f90237376e443163e3f05b887c6141dc78"  }
-ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "2d2599f90237376e443163e3f05b887c6141dc78"  }
-ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "2d2599f90237376e443163e3f05b887c6141dc78"  }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "2d2599f90237376e443163e3f05b887c6141dc78"  }
+ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "4a38a957d6cc4e7efb3de112b74363b657ee1c06" }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "4a38a957d6cc4e7efb3de112b74363b657ee1c06"  }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "4a38a957d6cc4e7efb3de112b74363b657ee1c06"  }
+ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "4a38a957d6cc4e7efb3de112b74363b657ee1c06"  }
+ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "4a38a957d6cc4e7efb3de112b74363b657ee1c06"  }
+ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "4a38a957d6cc4e7efb3de112b74363b657ee1c06"  }
+ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "4a38a957d6cc4e7efb3de112b74363b657ee1c06"  }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "4a38a957d6cc4e7efb3de112b74363b657ee1c06"  }
 
 foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers" }
 
