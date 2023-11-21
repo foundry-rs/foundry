@@ -19,20 +19,18 @@ pub struct Document {
     context: Mutex<HashMap<PreprocessorId, PreprocessorOutput>>,
     /// Whether the document is from external library.
     pub from_library: bool,
-}
-
-/// The content of the document.
-#[derive(Debug)]
-pub enum DocumentContent {
-    Empty,
-    Single(ParseItem),
-    Constants(Vec<ParseItem>),
-    OverloadedFunctions(Vec<ParseItem>),
+    /// The target directory for the doc output.
+    pub out_target_dir: PathBuf,
 }
 
 impl Document {
     /// Create new instance of [Document].
-    pub fn new(item_path: PathBuf, target_path: PathBuf, from_library: bool) -> Self {
+    pub fn new(
+        item_path: PathBuf,
+        target_path: PathBuf,
+        from_library: bool,
+        out_target_dir: PathBuf,
+    ) -> Self {
         Self {
             item_path,
             target_path,
@@ -40,6 +38,7 @@ impl Document {
             item_content: String::default(),
             identity: String::default(),
             content: DocumentContent::Empty,
+            out_target_dir,
             context: Mutex::new(HashMap::default()),
         }
     }
@@ -63,6 +62,15 @@ impl Document {
         let context = self.context.lock().expect("failed to lock context");
         context.get(&id).cloned()
     }
+}
+
+/// The content of the document.
+#[derive(Debug)]
+pub enum DocumentContent {
+    Empty,
+    Single(ParseItem),
+    Constants(Vec<ParseItem>),
+    OverloadedFunctions(Vec<ParseItem>),
 }
 
 /// Read the preprocessor output variant from document context.
