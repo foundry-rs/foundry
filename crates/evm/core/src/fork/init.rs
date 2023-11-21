@@ -18,14 +18,14 @@ pub async fn environment<P: TempProvider>(
     origin: Address,
 ) -> eyre::Result<(Env, Block)> {
     let block_number = if let Some(pin_block) = pin_block {
-        U64::from(pin_block)
+        pin_block
     } else {
         provider.get_block_number().await.wrap_err("Failed to get latest block number")?
     };
     let (fork_gas_price, rpc_chain_id, block) = tokio::try_join!(
         provider.get_gas_price(),
         provider.get_chain_id(),
-        provider.get_block_by_number(BlockNumberOrTag::Number(block_number.to()), false)
+        provider.get_block_by_number(BlockNumberOrTag::Number(block_number), false)
     )?;
     let block = if let Some(block) = block {
         block
