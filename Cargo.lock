@@ -3173,12 +3173,14 @@ name = "foundry-test-utils"
 version = "0.2.0"
 dependencies = [
  "alloy-primitives",
- "alloy-providers",
+ "ethers-core",
+ "ethers-providers",
  "eyre",
  "fd-lock 4.0.0",
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
+ "foundry-utils",
  "once_cell",
  "parking_lot",
  "pretty_assertions",
@@ -3195,6 +3197,7 @@ version = "0.2.0"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
+ "alloy-rpc-types",
  "alloy-sol-types",
  "dunce",
  "ethers-core",

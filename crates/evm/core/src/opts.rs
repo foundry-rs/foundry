@@ -4,7 +4,11 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::Block;
 use ethers::providers::{Middleware, Provider};
 use eyre::WrapErr;
-use foundry_common::{self, ProviderBuilder, RpcUrl, ALCHEMY_FREE_TIER_CUPS};
+use foundry_common::{
+    self,
+    provider::alloy::{ProviderBuilder, RpcUrl},
+    ALCHEMY_FREE_TIER_CUPS,
+};
 use foundry_compilers::utils::RuntimeOrHandle;
 use foundry_config::{Chain, Config};
 use revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv};

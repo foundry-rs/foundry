@@ -1,12 +1,12 @@
 use super::{WalletSigner, WalletTrait};
 use alloy_primitives::Address;
-use alloy_providers::provider::TempProvider;
 use clap::Parser;
+use ethers_providers::Middleware;
 use ethers_signers::{
     AwsSigner, HDPath as LedgerHDPath, Ledger, LocalWallet, Signer, Trezor, TrezorHDPath,
 };
 use eyre::{Context, ContextCompat, Result};
-use foundry_common::RetryProvider;
+use foundry_common::provider::ethers::RetryProvider;
 use foundry_config::Config;
 use foundry_utils::types::ToAlloy;
 use itertools::izip;
@@ -220,7 +220,7 @@ impl MultiWallet {
         script_wallets: &[LocalWallet],
     ) -> Result<HashMap<Address, WalletSigner>> {
         println!("\n###\nFinding wallets for all the necessary addresses...");
-        let chain = provider.get_chain_id().await.wrap_err("could not fetch chain id")?.to();
+        let chain = provider.get_chainid().await?.as_u64();
 
         let mut local_wallets = HashMap::new();
         let mut unused_wallets = vec![];

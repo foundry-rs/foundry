@@ -5,7 +5,7 @@ use ethers_providers::Middleware;
 use ethers_signers::Signer;
 use eyre::Result;
 use foundry_cli::utils::LoadConfig;
-use foundry_common::{contracts::flatten_contracts, try_get_http_provider};
+use foundry_common::{contracts::flatten_contracts, provider::ethers::try_get_http_provider};
 use foundry_debugger::DebuggerArgs;
 use foundry_utils::types::ToAlloy;
 use std::sync::Arc;
@@ -78,7 +78,7 @@ impl ScriptArgs {
                     result,
                     verify,
                 )
-                .await
+                .await;
         }
 
         let known_contracts = flatten_contracts(&highlevel_known_contracts, true);
@@ -155,7 +155,7 @@ impl ScriptArgs {
                 &flatten_contracts(&highlevel_known_contracts, true),
             )?;
 
-            return Ok(Some((new_traces, libraries, highlevel_known_contracts)))
+            return Ok(Some((new_traces, libraries, highlevel_known_contracts)));
         }
 
         // Add predeploy libraries to the list of broadcastable transactions.
@@ -202,7 +202,7 @@ impl ScriptArgs {
                     result.script_wallets,
                     verify,
                 )
-                .await
+                .await;
         }
         self.resume_single_deployment(
             script_config,
@@ -213,7 +213,7 @@ impl ScriptArgs {
         )
         .await
         .map_err(|err| {
-            eyre::eyre!("{err}\n\nIf you were trying to resume or verify a multi chain deployment, add `--multi` to your command invocation.") 
+            eyre::eyre!("{err}\n\nIf you were trying to resume or verify a multi chain deployment, add `--multi` to your command invocation.")
         })
     }
 

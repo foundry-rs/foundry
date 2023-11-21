@@ -39,7 +39,7 @@ impl LogsSubscription {
                     subscription: self.id.clone(),
                     result: to_rpc_result(log),
                 };
-                return Poll::Ready(Some(EthSubscriptionResponse::new(params)))
+                return Poll::Ready(Some(EthSubscriptionResponse::new(params)));
             }
 
             if let Some(block) = ready!(self.blocks.poll_next_unpin(cx)) {
@@ -51,16 +51,16 @@ impl LogsSubscription {
                         // this ensures we poll the receiver until it is pending, in which case the
                         // underlying `UnboundedReceiver` will register the new waker, see
                         // [`futures::channel::mpsc::UnboundedReceiver::poll_next()`]
-                        continue
+                        continue;
                     }
                     self.queued.extend(logs)
                 }
             } else {
-                return Poll::Ready(None)
+                return Poll::Ready(None);
             }
 
             if self.queued.is_empty() {
-                return Poll::Pending
+                return Poll::Pending;
             }
         }
     }
@@ -114,10 +114,10 @@ impl EthSubscription {
                                 subscription: id.clone(),
                                 result: to_rpc_result(block),
                             };
-                            return Poll::Ready(Some(EthSubscriptionResponse::new(params)))
+                            return Poll::Ready(Some(EthSubscriptionResponse::new(params)));
                         }
                     } else {
-                        return Poll::Ready(None)
+                        return Poll::Ready(None);
                     }
                 }
             }
@@ -168,12 +168,12 @@ pub fn filter_logs(
         };
         if params.filter.is_some() {
             let block_number = block.header.number.as_u64();
-            if !params.filter_block_range(U64::from(block_number)) ||
-                !params.filter_block_hash(block_hash) ||
-                !params.filter_address(&log) ||
-                !params.filter_topics(&log)
+            if !params.filter_block_range(U64::from(block_number))
+                || !params.filter_block_hash(block_hash)
+                || !params.filter_address(&log)
+                || !params.filter_topics(&log)
             {
-                return false
+                return false;
             }
         }
         true

@@ -7,7 +7,7 @@ use super::{
 use ethers_signers::LocalWallet;
 use eyre::{ContextCompat, Report, Result, WrapErr};
 use foundry_cli::utils::now;
-use foundry_common::{fs, get_http_provider};
+use foundry_common::{fs, provider::ethers::get_http_provider};
 use foundry_compilers::{artifacts::Libraries, ArtifactId};
 use foundry_config::Config;
 use futures::future::join_all;
@@ -157,7 +157,7 @@ impl ScriptArgs {
             {
                 Ok(_) => {
                     if self.verify {
-                        return sequence.verify_contracts(config, verify.clone()).await
+                        return sequence.verify_contracts(config, verify.clone()).await;
                     }
                     Ok(())
                 }
@@ -169,7 +169,7 @@ impl ScriptArgs {
         let errors = results.into_iter().filter(|res| res.is_err()).collect::<Vec<_>>();
 
         if !errors.is_empty() {
-            return Err(eyre::eyre!("{errors:?}"))
+            return Err(eyre::eyre!("{errors:?}"));
         }
 
         Ok(())

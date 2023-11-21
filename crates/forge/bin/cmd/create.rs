@@ -18,7 +18,7 @@ use foundry_cli::{
     opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
-use foundry_common::{compile, estimate_eip1559_fees, fmt::parse_tokens};
+use foundry_common::{compile, fmt::parse_tokens, provider::ethers::estimate_eip1559_fees};
 use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalized};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use serde_json::json;
@@ -212,8 +212,8 @@ impl CreateArgs {
                     e
                 }
             })?;
-        let is_legacy = self.tx.legacy ||
-            Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
+        let is_legacy = self.tx.legacy
+            || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
         let mut deployer = if is_legacy { deployer.legacy() } else { deployer };
 
         // set tx value if specified
@@ -297,7 +297,7 @@ impl CreateArgs {
         };
 
         if !self.verify {
-            return Ok(())
+            return Ok(());
         }
 
         println!("Starting contract verification...");

@@ -15,7 +15,7 @@ use forge::{
     utils::CallKind,
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
-use foundry_common::{shell, RpcUrl};
+use foundry_common::{provider::ethers::RpcUrl, shell};
 use foundry_compilers::artifacts::CompactContractBytecode;
 use foundry_utils::types::ToEthers;
 use futures::future::join_all;
@@ -129,7 +129,7 @@ impl ScriptArgs {
                         abi,
                         code,
                     };
-                    return Some((*addr, info))
+                    return Some((*addr, info));
                 }
                 None
             })
@@ -160,7 +160,7 @@ impl ScriptArgs {
                         .expect("Internal EVM error");
 
                         if !result.success || result.traces.is_empty() {
-                            return Ok((None, result.traces))
+                            return Ok((None, result.traces));
                         }
 
                         let created_contracts = result
@@ -173,7 +173,7 @@ impl ScriptArgs {
                                             opcode: node.kind(),
                                             address: node.trace.address,
                                             init_code: node.trace.data.as_bytes().to_vec(),
-                                        })
+                                        });
                                     }
                                     None
                                 })

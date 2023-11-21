@@ -688,7 +688,7 @@ mod tests {
         fork::{BlockchainDbMeta, CreateFork, JsonBlockCacheDB},
         opts::EvmOpts,
     };
-    use foundry_common::get_http_provider;
+    use foundry_common::provider::alloy::get_http_provider;
     use foundry_config::{Config, NamedChain};
     use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
     const ENDPOINT: &str = "https://mainnet.infura.io/v3/40bee2d557ed4b52908c3e62345a3d8b";
