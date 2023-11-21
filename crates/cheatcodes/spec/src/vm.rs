@@ -7,6 +7,8 @@ use alloy_sol_types::sol;
 use foundry_macros::Cheatcode;
 
 sol! {
+#![sol(abi)]
+
 // Cheatcodes are marked as view/pure/none using the following rules:
 // 0. A call's observable behaviour includes its return value, logs, reverts and state writes,
 // 1. If you can influence a later call's observable behaviour, you're neither `view` nor `pure`

@@ -5,4 +5,3 @@
 //! These files may be overwritten by the codegen system at any time.
 pub mod console;
 pub mod hardhat_console;
-pub mod hevm;

@@ -6,7 +6,6 @@ use std::collections::HashMap;
 pub use foundry_abi::{
     console::{ConsoleEvents, CONSOLE_ABI},
     hardhat_console::{HardhatConsoleCalls, HARDHATCONSOLE_ABI as HARDHAT_CONSOLE_ABI},
-    hevm::HEVM_ABI,
 };
 
 /// If the input starts with a known `hardhat/console.log` `uint` selector, then this will replace
