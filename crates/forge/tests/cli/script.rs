@@ -1075,3 +1075,16 @@ interface Interface {}
     cmd.arg("script").arg(script);
     assert!(cmd.stdout_lossy().contains("Script ran successfully."));
 });
+
+forgetest_async!(assert_can_resume_with_additional_contracts, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    tester
+        .add_deployer(0)
+        .add_sig("ScriptAdditionalContracts", "run()")
+        .broadcast(ScriptOutcome::MissingWallet)
+        .load_private_keys(&[0])
+        .await
+        .resume(ScriptOutcome::OkBroadcast);
+});
