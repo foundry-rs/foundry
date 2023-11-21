@@ -2,10 +2,15 @@
 
 use alloy_json_abi::{Event, EventParam, Function, InternalType, Param, StateMutability};
 use alloy_primitives::{Address, B256, I256, U128, U256, U64};
-use alloy_rpc_types::{Signature, Transaction, AccessList, AccessListItem, CallRequest, CallInput};
+use alloy_rpc_types::{AccessList, AccessListItem, CallInput, CallRequest, Signature, Transaction};
 use ethers_core::{
     abi as ethabi,
-    types::{H160, H256, I256 as EthersI256, U256 as EthersU256, U64 as EthersU64, transaction::eip2930::{AccessList as EthersAccessList, AccessListItem as EthersAccessListItem}, TransactionRequest},
+    types::{
+        transaction::eip2930::{
+            AccessList as EthersAccessList, AccessListItem as EthersAccessListItem,
+        },
+        TransactionRequest, H160, H256, I256 as EthersI256, U256 as EthersU256, U64 as EthersU64,
+    },
 };
 
 /// Conversion trait to easily convert from Ethers types to Alloy types.
@@ -86,7 +91,9 @@ impl ToAlloy for ethers_core::types::Transaction {
             gas_price: self.gas_price.map(|a| U128::from(a.as_u128())),
             gas: self.gas.to_alloy(),
             max_fee_per_gas: self.max_fee_per_gas.map(|f| U128::from(f.as_u128())),
-            max_priority_fee_per_gas: self.max_priority_fee_per_gas.map(|f| U128::from(f.as_u128())),
+            max_priority_fee_per_gas: self
+                .max_priority_fee_per_gas
+                .map(|f| U128::from(f.as_u128())),
             max_fee_per_blob_gas: None,
             input: self.input.0.into(),
             signature: Some(Signature {
@@ -104,25 +111,27 @@ impl ToAlloy for ethers_core::types::Transaction {
 }
 
 pub fn to_call_request_from_tx_request(tx: TransactionRequest) -> CallRequest {
-    CallRequest { 
+    CallRequest {
         from: tx.from.map(|f| f.to_alloy()),
         to: match tx.to {
             Some(to) => match to {
                 ethers_core::types::NameOrAddress::Address(addr) => Some(addr.to_alloy()),
-                ethers_core::types::NameOrAddress::Name(_) => None
+                ethers_core::types::NameOrAddress::Name(_) => None,
             },
-            None => None
+            None => None,
         },
-        gas_price: tx.gas_price.map(|g| g.to_alloy()), 
-        max_fee_per_gas: None, 
-        max_priority_fee_per_gas: None, 
-        gas: tx.gas.map(|g| g.to_alloy()), 
-        value: tx.value.map(|v| v.to_alloy()), 
-        input: CallInput::maybe_input(tx.data.map(|b| b.0.into())), 
-        nonce: tx.nonce.map(|n| U64::from(n.as_u64())), 
-        chain_id: tx.chain_id.map(|c| c.to_alloy()), 
-        access_list: None, max_fee_per_blob_gas: None, blob_versioned_hashes: None, 
-        transaction_type: None 
+        gas_price: tx.gas_price.map(|g| g.to_alloy()),
+        max_fee_per_gas: None,
+        max_priority_fee_per_gas: None,
+        gas: tx.gas.map(|g| g.to_alloy()),
+        value: tx.value.map(|v| v.to_alloy()),
+        input: CallInput::maybe_input(tx.data.map(|b| b.0.into())),
+        nonce: tx.nonce.map(|n| U64::from(n.as_u64())),
+        chain_id: tx.chain_id.map(|c| c.to_alloy()),
+        access_list: None,
+        max_fee_per_blob_gas: None,
+        blob_versioned_hashes: None,
+        transaction_type: None,
     }
 }
 
@@ -139,11 +148,7 @@ impl ToAlloy for EthersAccessListItem {
     fn to_alloy(self) -> Self::To {
         AccessListItem {
             address: self.address.to_alloy(),
-            storage_keys: self
-                .storage_keys
-                .into_iter()
-                .map(|k| U256::from_be_bytes(k.to_alloy().0))
-                .collect(),
+            storage_keys: self.storage_keys.into_iter().map(ToAlloy::to_alloy).collect(),
         }
     }
 }

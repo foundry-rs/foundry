@@ -98,7 +98,9 @@ pub fn to_ethers_access_list(access_list: AlloyAccessList) -> AccessList {
                 storage_keys: item
                     .storage_keys
                     .into_iter()
-                    .map(|k| BigEndianHash::from_uint(&k.to_ethers()))
+                    .map(|k| {
+                        BigEndianHash::from_uint(&U256::from_big_endian(k.to_ethers().as_bytes()))
+                    })
                     .collect(),
             })
             .collect(),
@@ -106,20 +108,7 @@ pub fn to_ethers_access_list(access_list: AlloyAccessList) -> AccessList {
 }
 
 pub fn from_ethers_access_list(access_list: AccessList) -> AlloyAccessList {
-    AlloyAccessList(
-        access_list
-            .0
-            .into_iter()
-            .map(|item| AlloyAccessListItem {
-                address: item.address.to_alloy(),
-                storage_keys: item
-                    .storage_keys
-                    .into_iter()
-                    .map(|k| rU256::from_be_bytes(k.to_alloy().0))
-                    .collect(),
-            })
-            .collect(),
-    )
+    AlloyAccessList(access_list.0.into_iter().map(ToAlloy::to_alloy).collect())
 }
 
 impl From<TypedTransactionRequest> for EthersTypedTransactionRequest {
