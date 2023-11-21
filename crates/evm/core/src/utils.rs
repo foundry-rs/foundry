@@ -132,7 +132,7 @@ pub fn halt_to_instruction_result(halt: Halt) -> InstructionResult {
         Halt::CallNotAllowedInsideStatic => InstructionResult::CallNotAllowedInsideStatic,
         Halt::OutOfFund => InstructionResult::OutOfFund,
         Halt::CallTooDeep => InstructionResult::CallTooDeep,
-        Halt::FailedDeposit => todo!(),
+        Halt::FailedDeposit => InstructionResult::Return,
     }
 }
 

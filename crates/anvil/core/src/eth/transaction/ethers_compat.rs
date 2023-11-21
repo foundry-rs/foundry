@@ -265,9 +265,7 @@ impl From<TransactionRequest> for EthTransactionRequest {
             chain_id,
             access_list: None,
             transaction_type: None,
-            source_hash: None,
-            mint: None,
-            is_system_tx: None,
+            optimism_fields: None,
         }
     }
 }

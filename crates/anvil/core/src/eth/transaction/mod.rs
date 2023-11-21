@@ -82,12 +82,22 @@ pub struct EthTransactionRequest {
     /// EIP-2718 type
     #[cfg_attr(feature = "serde", serde(rename = "type"))]
     pub transaction_type: Option<U256>,
+    /// Optimism Deposit Request Fields
+    #[serde(flatten)]
+    pub optimism_fields: Option<OptimismDepositRequestFields>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct OptimismDepositRequestFields {
     /// op-stack deposit source hash
-    pub source_hash: Option<H256>,
+    pub source_hash: H256,
     /// op-stack deposit mint
-    pub mint: Option<U256>,
+    pub mint: U256,
     /// op-stack deposit system tx
-    pub is_system_tx: Option<bool>,
+    pub is_system_tx: bool,
 }
 
 // == impl EthTransactionRequest ==
@@ -108,13 +118,27 @@ impl EthTransactionRequest {
             mut access_list,
             chain_id,
             transaction_type,
-            source_hash,
-            mint,
-            is_system_tx,
+            optimism_fields,
             ..
         } = self;
         let chain_id = chain_id.map(|id| id.as_u64());
         let transaction_type = transaction_type.map(|id| id.as_u64());
+        // op-stack deposit tx
+        if optimism_fields.is_some() && transaction_type == Some(126) {
+            return Some(TypedTransactionRequest::Deposit(DepositTransactionRequest {
+                source_hash: optimism_fields.clone()?.source_hash,
+                from: from.unwrap_or_default(),
+                kind: match to {
+                    Some(to) => TransactionKind::Call(to),
+                    None => TransactionKind::Create,
+                },
+                mint: optimism_fields.clone()?.mint,
+                value: value.unwrap_or_default(),
+                gas_limit: gas.unwrap_or_default(),
+                is_system_tx: optimism_fields.clone()?.is_system_tx,
+                input: data.clone().unwrap_or_default(),
+            }));
+        }
         match (
             transaction_type,
             gas_price,
@@ -151,22 +175,6 @@ impl EthTransactionRequest {
                     },
                     chain_id: chain_id.unwrap_or_default(),
                     access_list: access_list.unwrap_or_default(),
-                }))
-            }
-            // op-stack deposit
-            (Some(126), _, None, None, None) => {
-                Some(TypedTransactionRequest::Deposit(DepositTransactionRequest {
-                    source_hash: source_hash.unwrap_or_default(),
-                    from: from.unwrap_or_default(),
-                    kind: match to {
-                        Some(to) => TransactionKind::Call(to),
-                        None => TransactionKind::Create,
-                    },
-                    mint: mint.unwrap_or_default(),
-                    value: value.unwrap_or_default(),
-                    gas_limit: gas.unwrap_or_default(),
-                    is_system_tx: is_system_tx.unwrap_or_default(),
-                    input: data.unwrap_or_default(),
                 }))
             }
             // EIP1559
