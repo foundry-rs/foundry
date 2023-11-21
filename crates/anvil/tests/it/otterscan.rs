@@ -464,11 +464,7 @@ async fn can_call_ots_get_block_transactions() {
         let result = api.ots_get_block_transactions(1, page, page_size).await.unwrap();
 
         assert!(result.receipts.len() <= page_size);
-        let len = match result.fullblock.block.transactions {
-            BlockTransactions::Full(ref txs) => txs.len(),
-            BlockTransactions::Hashes(ref hashes) => hashes.len(),
-            BlockTransactions::Uncle => 0
-        };
+        let len = result.receipts.len();
         assert!(len <= page_size);
         assert!(result.fullblock.transaction_count == result.receipts.len());
 
