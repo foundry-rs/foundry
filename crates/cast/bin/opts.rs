@@ -892,10 +892,21 @@ mod tests {
             "0",
             "1",
             "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "0x1",
+            "0x01",
         ]);
         match args.sub {
             Subcommands::Proof { slots, .. } => {
-                assert_eq!(slots, vec![B256::ZERO, U256::from(1).into(), B256::ZERO]);
+                assert_eq!(
+                    slots,
+                    vec![
+                        B256::ZERO,
+                        U256::from(1).into(),
+                        B256::ZERO,
+                        U256::from(1).into(),
+                        U256::from(1).into()
+                    ]
+                );
             }
             _ => unreachable!(),
         };
