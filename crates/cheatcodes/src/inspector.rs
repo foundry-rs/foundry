@@ -787,7 +787,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             from: Some(broadcast.new_origin.to_ethers()),
                             to: Some(NameOrAddress::Address(call.contract.to_ethers())),
                             value: Some(call.transfer.value.to_ethers()),
-                            data: Some(call.input.clone().0.into()),
+                            data: Some(call.input.clone().to_ethers()),
                             nonce: Some(account.info.nonce.into()),
                             gas: if is_fixed_gas_limit {
                                 Some(call.gas_limit.into())
@@ -1153,7 +1153,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                             from: Some(broadcast.new_origin.to_ethers()),
                             to: to.map(|a| NameOrAddress::Address(a.to_ethers())),
                             value: Some(call.value.to_ethers()),
-                            data: Some(bytecode.0.into()),
+                            data: Some(bytecode.to_ethers()),
                             nonce: Some(nonce.into()),
                             gas: if is_fixed_gas_limit {
                                 Some(call.gas_limit.into())

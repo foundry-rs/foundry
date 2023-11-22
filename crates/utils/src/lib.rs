@@ -382,7 +382,7 @@ fn recurse_link<'a>(
                     id: library,
                     address: *deployed_address,
                     nonce: *cached_nonce,
-                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!("Bytecode should be linked for {next_target}")).0.into(),
+                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!("Bytecode should be linked for {next_target}")),
                 });
                 *deployed_address
             } else {
@@ -399,7 +399,7 @@ fn recurse_link<'a>(
                     id: library,
                     address: computed_address,
                     nonce: used_nonce,
-                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!("Bytecode should be linked for {next_target}")).0.into(),
+                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!("Bytecode should be linked for {next_target}")),
                 });
 
                 // remember this library for later

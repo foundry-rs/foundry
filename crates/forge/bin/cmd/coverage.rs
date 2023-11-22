@@ -391,7 +391,7 @@ fn dummy_link_bytecode(mut obj: CompactBytecode) -> Option<Bytes> {
     }
 
     obj.object.resolve();
-    obj.object.into_bytes().map(|o| o.0.into())
+    obj.object.into_bytes()
 }
 
 /// Helper function that will link references in unlinked bytecode to the 0 address.

@@ -49,7 +49,7 @@ impl<DB: Database> Inspector<DB> for LogCollector {
         self.logs.push(Log {
             address: address.to_ethers(),
             topics: topics.iter().copied().map(|t| t.to_ethers()).collect(),
-            data: data.clone().0.into(),
+            data: data.clone().to_ethers(),
             ..Default::default()
         });
     }

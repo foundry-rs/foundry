@@ -177,7 +177,7 @@ impl CallTraceArena {
             // If the top-level trace succeeded, then it was a success
             failed: !main_trace.success,
             gas: receipt_gas_used.to_ethers(),
-            return_value: main_trace.output.to_bytes().0.into(),
+            return_value: main_trace.output.to_bytes().to_ethers(),
             ..Default::default()
         };
 
