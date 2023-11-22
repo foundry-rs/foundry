@@ -13,15 +13,16 @@ use revm::{
 
 /// An inspector that collects logs during execution.
 ///
-/// The inspector collects logs from the LOG opcodes as well as Hardhat-style logs.
+/// The inspector collects logs from the `LOG` opcodes as well as Hardhat-style logs.
 #[derive(Debug, Clone, Default)]
 pub struct LogCollector {
+    /// The collected logs. Includes both `LOG` opcodes and Hardhat-style logs.
     pub logs: Vec<Log>,
 }
 
 impl LogCollector {
     fn hardhat_log(&mut self, mut input: Vec<u8>) -> (InstructionResult, Bytes) {
-        // Patch the Hardhat-style selectors
+        // Patch the Hardhat-style selector (`uint` instead of `uint256`)
         patch_hardhat_console_selector(&mut input);
 
         // Decode the call
@@ -35,7 +36,7 @@ impl LogCollector {
             }
         };
 
-        // Convert the call to a DS `log(string)` event
+        // Convert the decoded call to a DS `log(string)` event
         self.logs.push(convert_hh_log_to_event(decoded));
 
         (InstructionResult::Continue, Bytes::new())
@@ -57,12 +58,12 @@ impl<DB: Database> Inspector<DB> for LogCollector {
         _: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
-        if call.contract == HARDHAT_CONSOLE_ADDRESS {
-            let (status, reason) = self.hardhat_log(call.input.to_vec());
-            (status, Gas::new(call.gas_limit), reason)
+        let (status, reason) = if call.contract == HARDHAT_CONSOLE_ADDRESS {
+            self.hardhat_log(call.input.to_vec())
         } else {
-            (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
-        }
+            (InstructionResult::Continue, Bytes::new())
+        };
+        (status, Gas::new(call.gas_limit), reason)
     }
 }
 

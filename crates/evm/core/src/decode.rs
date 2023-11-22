@@ -3,7 +3,7 @@
 use crate::abi::{Console, Vm};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
-use alloy_sol_types::{SolCall, SolError, SolInterface, SolValue};
+use alloy_sol_types::{SolCall, SolError, SolEventInterface, SolInterface, SolValue};
 use ethers_core::types::Log;
 use foundry_common::SELECTOR_LEN;
 use itertools::Itertools;
@@ -18,12 +18,15 @@ pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
 ///
 /// This function returns [None] if it is not a DSTest log or the result of a Hardhat
 /// `console.log`.
+#[instrument(level = "error", ret)]
 pub fn decode_console_log(log: &Log) -> Option<String> {
-    // TODO: decode
-    let _ = log;
-    let decoded = Console::ConsoleEvents::log(Console::log { val: String::new() });
-
-    Some(decoded.to_string())
+    let topics = log.topics.as_slice();
+    let topics = unsafe {
+        &*(topics as *const [ethers_core::types::H256] as *const [alloy_primitives::B256])
+    };
+    Console::ConsoleEvents::decode_log(topics, &log.data, false)
+        .ok()
+        .map(|decoded| decoded.to_string())
 }
 
 /// Tries to decode an error message from the given revert bytes.
