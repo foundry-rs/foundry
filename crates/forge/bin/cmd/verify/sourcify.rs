@@ -2,7 +2,7 @@ use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
 use async_trait::async_trait;
 use eyre::Result;
 use foundry_cli::utils::{get_cached_entry_by_name, LoadConfig};
-use foundry_common::{fs, Retry};
+use foundry_common::{fs, retry::Retry};
 use foundry_compilers::ConfigurableContractArtifact;
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};

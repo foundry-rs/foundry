@@ -1,14 +1,13 @@
-//! Contains various tests for checking forge commands related to verifying contracts on etherscan
-//! and sourcify
-
-use std::time::Duration;
+//! Contains various tests for checking forge commands related to verifying contracts on Etherscan
+//! and Sourcify.
 
 use crate::utils::{self, EnvExternalities};
-use foundry_common::Retry;
+use foundry_common::retry::Retry;
 use foundry_test_utils::{
     forgetest,
     util::{TestCommand, TestProject},
 };
+use std::time::Duration;
 
 /// Adds a `Unique` contract to the source directory of the project that can be imported as
 /// `import {Unique} from "./unique.sol";`

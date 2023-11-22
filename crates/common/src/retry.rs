@@ -1,36 +1,6 @@
-use std::{env::VarError, fmt::Write, future::Future, time::Duration};
+//! Retry utilities.
 
-/// Given a k/v serde object, it pretty prints its keys and values as a table.
-pub fn to_table(value: serde_json::Value) -> String {
-    match value {
-        serde_json::Value::String(s) => s,
-        serde_json::Value::Object(map) => {
-            let mut s = String::new();
-            for (k, v) in map.iter() {
-                writeln!(&mut s, "{k: <20} {v}\n").expect("could not write k/v to table");
-            }
-            s
-        }
-        _ => String::new(),
-    }
-}
-
-/// Reads the `ETHERSCAN_API_KEY` env variable
-pub fn etherscan_api_key() -> eyre::Result<String> {
-    std::env::var("ETHERSCAN_API_KEY").map_err(|err| match err {
-        VarError::NotPresent => {
-            eyre::eyre!(
-                r#"
-  You need an Etherscan Api Key to verify contracts.
-  Create one at https://etherscan.io/myapikey
-  Then export it with \`export ETHERSCAN_API_KEY=xxxxxxxx'"#
-            )
-        }
-        VarError::NotUnicode(err) => {
-            eyre::eyre!("Invalid `ETHERSCAN_API_KEY`: {:?}", err)
-        }
-    })
-}
+use std::{future::Future, time::Duration};
 
 /// A type that keeps track of attempts.
 #[derive(Debug, Clone)]

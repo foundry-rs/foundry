@@ -1,7 +1,6 @@
-use std::time::Duration;
-
 use clap::{builder::RangedU64ValueParser, Parser};
-use foundry_common::Retry;
+use foundry_common::retry::Retry;
+use std::time::Duration;
 
 /// Retry config used when waiting for verification
 pub const RETRY_CHECK_ON_VERIFY: RetryArgs = RetryArgs { retries: 8, delay: 15 };

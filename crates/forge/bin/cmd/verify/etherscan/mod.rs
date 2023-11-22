@@ -9,7 +9,7 @@ use foundry_block_explorers::{
     Client,
 };
 use foundry_cli::utils::{get_cached_entry_by_name, read_constructor_args_file, LoadConfig};
-use foundry_common::{abi::encode_function_args, Retry};
+use foundry_common::{abi::encode_function_args, retry::Retry};
 use foundry_compilers::{artifacts::CompactContract, cache::CacheEntry, Project, Solc};
 use foundry_config::{Chain, Config, SolcReq};
 use futures::FutureExt;

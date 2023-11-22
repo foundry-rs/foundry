@@ -19,6 +19,7 @@ pub mod fmt;
 pub mod fs;
 pub mod glob;
 pub mod provider;
+pub mod retry;
 pub mod rpc;
 pub mod runtime_client;
 pub mod selectors;
@@ -34,7 +35,3 @@ pub use contracts::*;
 pub use provider::*;
 pub use traits::*;
 pub use transactions::*;
-
-// TODO: Remove
-mod tmp;
-pub use tmp::*;
