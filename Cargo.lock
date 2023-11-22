@@ -2615,19 +2615,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "foundry-binder"
-version = "0.2.0"
-dependencies = [
- "ethers-contract",
- "eyre",
- "foundry-config",
- "git2",
- "tempfile",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "foundry-block-explorers"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
