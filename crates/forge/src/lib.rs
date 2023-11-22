@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate tracing;
+
 use alloy_primitives::B256;
 use foundry_compilers::ProjectCompileOutput;
 use foundry_config::{
@@ -8,29 +11,22 @@ use foundry_config::{
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use std::path::Path;
 
-#[macro_use]
-extern crate tracing;
-
-/// Gas reports
-pub mod gas_report;
-
-/// Coverage reports
 pub mod coverage;
 
-/// The Forge test runner
-mod runner;
-pub use runner::ContractRunner;
+pub mod gas_report;
 
-/// Forge test runners for multiple contracts
+pub mod link;
+
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
-/// reexport
-pub use foundry_common::traits::TestFilter;
+mod runner;
+pub use runner::ContractRunner;
 
 pub mod result;
 
-/// The Forge EVM backend
+// TODO: remove
+pub use foundry_common::traits::TestFilter;
 pub use foundry_evm::*;
 
 /// Metadata on how to run fuzz/invariant tests
