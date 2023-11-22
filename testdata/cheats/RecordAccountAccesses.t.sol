@@ -4,7 +4,7 @@ pragma solidity 0.8.18;
 import "ds-test/test.sol";
 import "./Vm.sol";
 
-/// @notice Helper contract with a constructo that makes a call to itself then
+/// @notice Helper contract with a construction that makes a call to itself then
 ///         optionally reverts if zero-length data is passed
 contract SelfCaller {
     constructor(bytes memory) payable {

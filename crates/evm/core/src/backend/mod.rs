@@ -779,8 +779,8 @@ impl Backend {
         self.inner.precompiles().contains(addr)
     }
 
-    /// Ths will clean up already loaded accounts that would be initialized without the correct data
-    /// from the fork
+    /// Cleans up already loaded accounts that would be initialized without the correct data from
+    /// the fork.
     ///
     /// It can happen that an account is loaded before the first fork is selected, like
     /// `getNonce(addr)`, which will load an empty account by default.

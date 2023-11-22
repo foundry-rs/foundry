@@ -1640,7 +1640,7 @@ impl EthApi {
         Ok(())
     }
 
-    /// Create a bufer that represents all state on the chain, which can be loaded to separate
+    /// Create a buffer that represents all state on the chain, which can be loaded to separate
     /// process by calling `anvil_loadState`
     ///
     /// Handler for RPC call: `anvil_dumpState`

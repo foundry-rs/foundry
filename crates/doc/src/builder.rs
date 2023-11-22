@@ -66,7 +66,7 @@ impl DocBuilder {
         }
     }
 
-    /// Set `shoul_build` flag on the builder
+    /// Set `should_build` flag on the builder
     pub fn with_should_build(mut self, should_build: bool) -> Self {
         self.should_build = should_build;
         self
