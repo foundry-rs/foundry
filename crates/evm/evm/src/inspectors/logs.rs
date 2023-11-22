@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
 use ethers_core::types::Log;
+use foundry_common::fmt::ConsoleFmt;
 use foundry_evm_core::{
     abi::{patch_hardhat_console_selector, Console, HardhatConsole},
     constants::HARDHAT_CONSOLE_ADDRESS,
@@ -69,11 +70,8 @@ impl<DB: Database> Inspector<DB> for LogCollector {
 
 /// Converts a call to Hardhat's `console.log` to a DSTest `log(string)` event.
 fn convert_hh_log_to_event(call: HardhatConsole::HardhatConsoleCalls) -> Log {
-    // TODO
     // Convert the parameters of the call to their string representation using `ConsoleFmt`.
-    // let fmt = call.fmt(Default::default());
-    let _ = call;
-    let fmt = "<HardhatConsoleCalls>";
+    let fmt = call.fmt(Default::default());
     Log {
         topics: vec![Console::log::SIGNATURE_HASH.to_ethers()],
         data: fmt.abi_encode().into(),
