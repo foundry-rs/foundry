@@ -15,7 +15,6 @@ repository.workspace = true
 foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["project-util"] }
 foundry-config.workspace = true
-foundry-utils.workspace = true
 
 alloy-primitives.workspace = true
 

@@ -16,7 +16,7 @@ use ethers::{
     types::{ActionType, Bytes, GethDebugTracingOptions, TransactionReceipt, U256},
 };
 use foundry_evm::revm::{interpreter::InstructionResult, primitives::Env};
-use foundry_utils::types::{ToAlloy, ToEthers};
+use foundry_common::types::{ToAlloy, ToEthers};
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, VecDeque},
@@ -448,7 +448,7 @@ mod tests {
             primitives::{AccountInfo, U256 as rU256},
         },
     };
-    use foundry_utils::types::ToAlloy;
+    use foundry_common::types::ToAlloy;
 
     #[test]
     fn test_interval_update() {

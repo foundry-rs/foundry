@@ -9,8 +9,10 @@ use ethers_core::{
     types::{Block, BlockId, NameOrAddress, Transaction},
 };
 use ethers_providers::Middleware;
-use foundry_common::NON_ARCHIVE_NODE_WARNING;
-use foundry_utils::types::{ToAlloy, ToEthers};
+use foundry_common::{
+    types::{ToAlloy, ToEthers},
+    NON_ARCHIVE_NODE_WARNING,
+};
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     stream::Stream,

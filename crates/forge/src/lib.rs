@@ -211,3 +211,23 @@ impl TestOptionsBuilder {
         TestOptions::new(output, root, profiles, base_fuzz, base_invariant)
     }
 }
+
+mod utils2 {
+    use alloy_primitives::Address;
+    use ethers_core::types::BlockId;
+    use ethers_providers::{Middleware, Provider};
+    use eyre::Context;
+    use foundry_common::types::{ToAlloy, ToEthers};
+
+    pub async fn next_nonce(
+        caller: Address,
+        provider_url: &str,
+        block: Option<BlockId>,
+    ) -> eyre::Result<u64> {
+        let provider = Provider::try_from(provider_url)
+            .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
+        let res = provider.get_transaction_count(caller.to_ethers(), block).await?.to_alloy();
+        res.try_into().map_err(Into::into)
+    }
+}
+pub use utils2::*;

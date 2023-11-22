@@ -8,7 +8,7 @@ use ethers_signers::{
 use eyre::{Context, ContextCompat, Result};
 use foundry_common::RetryProvider;
 use foundry_config::Config;
-use foundry_utils::types::ToAlloy;
+use foundry_common::types::ToAlloy;
 use itertools::izip;
 use rusoto_core::{
     credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,

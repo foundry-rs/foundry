@@ -29,7 +29,9 @@ use foundry_common::{
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
     fmt::{format_token, format_token_raw},
-    shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    shell,
+    types::{ToAlloy, ToEthers},
+    ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::{
     artifacts::{ContractBytecodeSome, Libraries},
@@ -49,7 +51,6 @@ use foundry_evm::{
     decode,
     inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::future;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};

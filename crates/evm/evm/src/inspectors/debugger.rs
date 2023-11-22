@@ -1,12 +1,11 @@
 use alloy_primitives::{Address, Bytes};
-use foundry_common::SELECTOR_LEN;
+use foundry_common::{ErrorExt, SELECTOR_LEN};
 use foundry_evm_core::{
     backend::DatabaseExt,
     constants::CHEATCODE_ADDRESS,
     debug::{DebugArena, DebugNode, DebugStep, Instruction},
     utils::{gas_used, get_create_address, CallKind},
 };
-use foundry_utils::error::ErrorExt;
 use revm::{
     interpreter::{
         opcode::{self, spec_opcode_gas},

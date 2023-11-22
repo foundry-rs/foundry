@@ -1,7 +1,7 @@
 use alloy_primitives::{hex, I256, U256};
 use alloy_sol_types::sol;
 use derive_more::Display;
-use foundry_utils::types::ToEthers;
+use foundry_common::types::ToEthers;
 use itertools::Itertools;
 
 // TODO: Use `UiFmt`

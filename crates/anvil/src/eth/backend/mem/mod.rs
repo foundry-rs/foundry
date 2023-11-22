@@ -56,6 +56,7 @@ use ethers::{
     utils::{keccak256, rlp},
 };
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
@@ -72,7 +73,6 @@ use foundry_evm::{
     },
     utils::{eval_to_instruction_result, halt_to_instruction_result, u256_to_h256_be},
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};

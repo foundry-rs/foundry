@@ -3,9 +3,9 @@ use crate::{
     ParseSource, Parser, Preprocessor,
 };
 use forge_fmt::{FormatterConfig, Visitable};
+use foundry_common::glob::expand_globs;
 use foundry_compilers::utils::source_files_iter;
 use foundry_config::DocConfig;
-use foundry_utils::glob::expand_globs;
 use itertools::Itertools;
 use mdbook::MDBook;
 use rayon::prelude::*;

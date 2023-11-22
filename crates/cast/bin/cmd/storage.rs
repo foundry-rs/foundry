@@ -14,6 +14,7 @@ use foundry_cli::{
 use foundry_common::{
     abi::find_source,
     compile::{compile, etherscan_project, suppress_compile},
+    types::{ToAlloy, ToEthers},
     RetryProvider,
 };
 use foundry_compilers::{artifacts::StorageLayout, ConfigurableContractArtifact, Project, Solc};
@@ -21,7 +22,6 @@ use foundry_config::{
     figment::{self, value::Dict, Metadata, Profile},
     impl_figment_convert_cast, Config,
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::future::join_all;
 use semver::Version;
 use std::str::FromStr;

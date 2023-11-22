@@ -17,6 +17,7 @@ use ethers::{
     types::{Bloom, H256, U256},
     utils::rlp,
 };
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
     backend::DatabaseError,
     revm,
@@ -27,7 +28,6 @@ use foundry_evm::{
     traces::{CallTraceArena, CallTraceNode},
     utils::{eval_to_instruction_result, halt_to_instruction_result},
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use std::sync::Arc;
 
 /// Represents an executed transaction (transacted on the DB)

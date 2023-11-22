@@ -61,7 +61,7 @@ use ethers::{
     },
     utils::rlp,
 };
-use foundry_common::ProviderBuilder;
+use foundry_common::{types::ToEthers, ProviderBuilder};
 use foundry_evm::{
     backend::DatabaseError,
     revm::{
@@ -70,7 +70,6 @@ use foundry_evm::{
         primitives::BlockEnv,
     },
 };
-use foundry_utils::types::ToEthers;
 use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
 use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};

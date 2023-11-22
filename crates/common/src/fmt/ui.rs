@@ -313,7 +313,7 @@ impl UIfmt for EthValue {
 mod temp_ethers {
     use super::UIfmt;
     use ethers_core::types::{Address, Bloom, Bytes, H256, H64, I256, U256, U64};
-    use foundry_utils::types::ToAlloy;
+    use foundry_common::types::ToAlloy;
 
     macro_rules! with_alloy {
         ($($t:ty),*) => {$(

@@ -8,7 +8,7 @@ use ethers::{
     types::{BlockId, H256},
     utils::keccak256,
 };
-use foundry_common::errors::FsPathError;
+use foundry_common::{errors::FsPathError, types::ToAlloy};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, MemDb, StateSnapshot},
     fork::BlockchainDb,
@@ -19,7 +19,6 @@ use foundry_evm::{
         Database, DatabaseCommit,
     },
 };
-use foundry_utils::types::ToAlloy;
 use hash_db::HashDB;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, path::Path};

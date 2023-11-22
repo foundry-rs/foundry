@@ -1,12 +1,11 @@
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
 use ethers_core::types::Log;
-use foundry_common::fmt::ConsoleFmt;
+use foundry_common::{fmt::ConsoleFmt, types::ToEthers, ErrorExt};
 use foundry_evm_core::{
     abi::{patch_hardhat_console_selector, Console, HardhatConsole},
     constants::HARDHAT_CONSOLE_ADDRESS,
 };
-use foundry_utils::{error::ErrorExt, types::ToEthers};
 use revm::{
     interpreter::{CallInputs, Gas, InstructionResult},
     Database, EVMData, Inspector,

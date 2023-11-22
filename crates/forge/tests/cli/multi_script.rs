@@ -1,7 +1,7 @@
 //! Contains various tests related to forge script
 use anvil::{spawn, NodeConfig};
+use foundry_common::types::ToEthers;
 use foundry_test_utils::{ScriptOutcome, ScriptTester};
-use foundry_utils::types::ToEthers;
 
 forgetest_async!(can_deploy_multi_chain_script_without_lib, |prj, cmd| {
     let (api1, handle1) = spawn(NodeConfig::test()).await;

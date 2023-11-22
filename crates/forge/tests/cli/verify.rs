@@ -1,12 +1,14 @@
 //! Contains various tests for checking forge commands related to verifying contracts on etherscan
 //! and sourcify
 
+use std::time::Duration;
+
 use crate::utils::{self, EnvExternalities};
+use foundry_common::Retry;
 use foundry_test_utils::{
     forgetest,
     util::{TestCommand, TestProject},
 };
-use foundry_utils::Retry;
 
 /// Adds a `Unique` contract to the source directory of the project that can be imported as
 /// `import {Unique} from "./unique.sol";`
@@ -40,7 +42,7 @@ function doStuff() external {}
 
 fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Result<()> {
     // give etherscan some time to verify the contract
-    let retry = Retry::new(retries, Some(30));
+    let retry = Retry::new(retries, Some(Duration::from_secs(30)));
     retry.run(|| -> eyre::Result<()> {
         let output = cmd.unchecked_output();
         let out = String::from_utf8_lossy(&output.stdout);
@@ -82,7 +84,7 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
         // `verify-contract`
         let guid = {
             // give etherscan some time to detect the transaction
-            let retry = Retry::new(5, Some(60));
+            let retry = Retry::new(5, Some(Duration::from_secs(60)));
             retry
                 .run(|| -> eyre::Result<String> {
                     let output = cmd.unchecked_output();

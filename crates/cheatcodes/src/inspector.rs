@@ -19,13 +19,12 @@ use ethers_core::types::{
     transaction::eip2718::TypedTransaction, NameOrAddress, TransactionRequest,
 };
 use ethers_signers::LocalWallet;
-use foundry_common::{evm::Breakpoints, RpcUrl};
+use foundry_common::{evm::Breakpoints, types::ToEthers, RpcUrl};
 use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_SKIP},
     utils::get_create_address,
 };
-use foundry_utils::types::ToEthers;
 use itertools::Itertools;
 use revm::{
     interpreter::{

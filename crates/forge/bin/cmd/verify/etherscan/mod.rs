@@ -9,10 +9,9 @@ use foundry_block_explorers::{
     Client,
 };
 use foundry_cli::utils::{get_cached_entry_by_name, read_constructor_args_file, LoadConfig};
-use foundry_common::abi::encode_function_args;
+use foundry_common::{abi::encode_function_args, Retry};
 use foundry_compilers::{artifacts::CompactContract, cache::CacheEntry, Project, Solc};
 use foundry_config::{Chain, Config, SolcReq};
-use foundry_utils::Retry;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -71,9 +70,9 @@ impl VerificationProvider for EtherscanVerificationProvider {
         trace!(target: "forge::verify", ?verify_args, "submitting verification request");
 
         let retry: Retry = args.retry.into();
-        let resp = retry.run_async(|| {
-            async {
-                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, verify_args.address.to_checksum(None));
+        let resp = retry.run_async(|| 
+            async  {
+                println!("\nSubmitting verification for [{}] {}.", verify_args.contract_name, verify_args.address);
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await
@@ -106,8 +105,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
                 Ok(Some(resp))
             }
-                .boxed()
-        }).await?;
+        ).await?;
 
         if let Some(resp) = resp {
             println!(
