@@ -192,7 +192,7 @@ impl ScriptArgs {
             return self
                 .multi_chain_deployment(
                     MultiChainSequence::load(
-                        &script_config.config.broadcast,
+                        &script_config.config,
                         &self.sig,
                         script_config.target_contract(),
                     )?,

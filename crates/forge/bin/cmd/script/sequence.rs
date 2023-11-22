@@ -136,11 +136,7 @@ impl ScriptSequence {
                 "Deployment's sensitive details not found for chain `{chain_id}`."
             ))?;
 
-        script_sequence
-            .transactions
-            .iter_mut()
-            .enumerate()
-            .for_each(|(i, tx)| tx.rpc = sensitive_script_sequence.transactions[i].rpc.clone());
+        script_sequence.fill_sensitive(&sensitive_script_sequence);
 
         script_sequence.path = path;
         script_sequence.sensitive_path = sensitive_path;
@@ -366,6 +362,13 @@ impl ScriptSequence {
             })
             .collect()
     }
+
+    pub fn fill_sensitive(&mut self, sensitive: &SensitiveScriptSequence) {
+        self.transactions
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, tx)| tx.rpc = sensitive.transactions[i].rpc.clone());
+    }
 }
 
 impl Drop for ScriptSequence {
@@ -379,7 +382,7 @@ impl Drop for ScriptSequence {
 ///
 /// This accepts either the signature of the function or the raw calldata
 
-fn sig_to_file_name(sig: &str) -> String {
+pub fn sig_to_file_name(sig: &str) -> String {
     if let Some((name, _)) = sig.split_once('(') {
         // strip until call argument parenthesis
         return name.to_string()
