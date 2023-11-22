@@ -11,7 +11,6 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-foundry-abi.workspace = true
 foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true
 foundry-compilers.workspace = true
@@ -32,10 +31,10 @@ revm = { workspace = true, default-features = false, features = [
     "arbitrary",
 ] }
 
-ethers-contract.workspace = true
 ethers-core.workspace = true
 ethers-providers.workspace = true
 
+derive_more.workspace = true
 eyre = "0.6"
 futures = "0.3"
 hex.workspace = true

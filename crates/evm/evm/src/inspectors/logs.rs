@@ -1,14 +1,10 @@
 use alloy_primitives::{Address, Bytes, B256};
-use alloy_sol_types::SolValue;
-use ethers_core::{
-    abi::AbiDecode,
-    types::{Log, H256},
-};
+use alloy_sol_types::{SolEvent, SolInterface, SolValue};
+use ethers_core::types::Log;
 use foundry_evm_core::{
-    abi::{patch_hardhat_console_selector, HardhatConsoleCalls},
+    abi::{patch_hardhat_console_selector, Console, HardhatConsole},
     constants::HARDHAT_CONSOLE_ADDRESS,
 };
-use foundry_macros::ConsoleFmt;
 use foundry_utils::types::ToEthers;
 use revm::{
     interpreter::{CallInputs, Gas, InstructionResult},
@@ -27,7 +23,9 @@ impl LogCollector {
     fn hardhat_log(&mut self, mut input: Vec<u8>) -> (InstructionResult, Bytes) {
         // Patch the Hardhat-style selectors
         patch_hardhat_console_selector(&mut input);
-        let decoded = match HardhatConsoleCalls::decode(input) {
+
+        // Decode the call
+        let decoded = match HardhatConsole::HardhatConsoleCalls::abi_decode(&input, false) {
             Ok(inner) => inner,
             Err(err) => {
                 return (
@@ -37,7 +35,7 @@ impl LogCollector {
             }
         };
 
-        // Convert it to a DS-style `emit log(string)` event
+        // Convert the call to a DS `log(string)` event
         self.logs.push(convert_hh_log_to_event(decoded));
 
         (InstructionResult::Continue, Bytes::new())
@@ -68,17 +66,16 @@ impl<DB: Database> Inspector<DB> for LogCollector {
     }
 }
 
-/// Topic 0 of DSTest's `log(string)`.
-///
-/// `0x41304facd9323d75b11bcdd609cb38effffdb05710f7caf0e9b16c6d9d709f50`
-const TOPIC: H256 = H256([
-    0x41, 0x30, 0x4f, 0xac, 0xd9, 0x32, 0x3d, 0x75, 0xb1, 0x1b, 0xcd, 0xd6, 0x09, 0xcb, 0x38, 0xef,
-    0xff, 0xfd, 0xb0, 0x57, 0x10, 0xf7, 0xca, 0xf0, 0xe9, 0xb1, 0x6c, 0x6d, 0x9d, 0x70, 0x9f, 0x50,
-]);
-
 /// Converts a call to Hardhat's `console.log` to a DSTest `log(string)` event.
-fn convert_hh_log_to_event(call: HardhatConsoleCalls) -> Log {
+fn convert_hh_log_to_event(call: HardhatConsole::HardhatConsoleCalls) -> Log {
+    // TODO
     // Convert the parameters of the call to their string representation using `ConsoleFmt`.
-    let fmt = call.fmt(Default::default());
-    Log { topics: vec![TOPIC], data: fmt.abi_encode().into(), ..Default::default() }
+    // let fmt = call.fmt(Default::default());
+    let _ = call;
+    let fmt = "";
+    Log {
+        topics: vec![Console::log::SIGNATURE_HASH.to_ethers()],
+        data: fmt.abi_encode().into(),
+        ..Default::default()
+    }
 }
