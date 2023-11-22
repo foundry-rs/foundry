@@ -180,8 +180,13 @@ impl DocBuilder {
                         let relative_path = path.strip_prefix(&self.root)?.join(item.filename());
                         let target_path = self.config.out.join(Self::SRC).join(relative_path);
                         let ident = item.source.ident();
-                        Ok(Document::new(path.clone(), target_path, from_library)
-                            .with_content(DocumentContent::Single(item), ident))
+                        Ok(Document::new(
+                            path.clone(),
+                            target_path,
+                            from_library,
+                            self.config.out.clone(),
+                        )
+                        .with_content(DocumentContent::Single(item), ident))
                     })
                     .collect::<eyre::Result<Vec<_>>>()?;
 
@@ -207,8 +212,13 @@ impl DocBuilder {
                     };
 
                     files.push(
-                        Document::new(path.clone(), target_path, from_library)
-                            .with_content(DocumentContent::Constants(consts), identity),
+                        Document::new(
+                            path.clone(),
+                            target_path,
+                            from_library,
+                            self.config.out.clone(),
+                        )
+                        .with_content(DocumentContent::Constants(consts), identity),
                     )
                 }
 
@@ -219,8 +229,13 @@ impl DocBuilder {
                         let relative_path = path.strip_prefix(&self.root)?.join(filename);
                         let target_path = self.config.out.join(Self::SRC).join(relative_path);
                         files.push(
-                            Document::new(path.clone(), target_path, from_library)
-                                .with_content(DocumentContent::OverloadedFunctions(funcs), ident),
+                            Document::new(
+                                path.clone(),
+                                target_path,
+                                from_library,
+                                self.config.out.clone(),
+                            )
+                            .with_content(DocumentContent::OverloadedFunctions(funcs), ident),
                         );
                     }
                 }
