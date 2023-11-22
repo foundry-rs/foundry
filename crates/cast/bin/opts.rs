@@ -884,6 +884,24 @@ mod tests {
     use ethers_core::types::BlockNumber;
 
     #[test]
+    fn parse_proof_slot() {
+        let args: Opts = Opts::parse_from([
+            "foundry-cli",
+            "proof",
+            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            "0",
+            "1",
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
+        ]);
+        match args.sub {
+            Subcommands::Proof { slots, .. } => {
+                assert_eq!(slots, vec![B256::ZERO, U256::from(1).into(), B256::ZERO]);
+            }
+            _ => unreachable!(),
+        };
+    }
+
+    #[test]
     fn parse_call_data() {
         let args: Opts = Opts::parse_from([
             "foundry-cli",
