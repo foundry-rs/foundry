@@ -335,10 +335,10 @@ mod temp_ethers {
 }
 
 /// Convert a U256 to bytes
-pub fn to_bytes(uint: ethers_core::types::U256) -> Bytes {
-    let mut buffer: [u8; 4 * 8] = [0; 4 * 8];
+pub fn to_bytes(uint: ethers_core::types::U256) -> [u8; 32] {
+    let mut buffer: [u8; 32] = [0; 32];
     uint.to_big_endian(&mut buffer);
-    Bytes::from(buffer)
+    buffer
 }
 
 /// Returns the `UiFmt::pretty()` formatted attribute of the transactions

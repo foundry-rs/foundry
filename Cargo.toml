@@ -204,13 +204,13 @@ ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "4e09b
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "4e09be88730045dd6c4ed8a4e198a9956931e7bd" }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "4e09be88730045dd6c4ed8a4e198a9956931e7bd" }
 
-alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/", branch = "dani/sol-events-iface" }
-alloy-json-abi = { git = "https://github.com/alloy-rs/core/", branch = "dani/sol-events-iface" }
-alloy-primitives = { git = "https://github.com/alloy-rs/core/", branch = "dani/sol-events-iface" }
-alloy-sol-macro = { git = "https://github.com/alloy-rs/core/", branch = "dani/sol-events-iface" }
-alloy-sol-types = { git = "https://github.com/alloy-rs/core/", branch = "dani/sol-events-iface" }
-alloy-sol-type-parser = { git = "https://github.com/alloy-rs/core/", branch = "dani/sol-events-iface" }
-syn-solidity = { git = "https://github.com/alloy-rs/core/", branch = "dani/sol-events-iface" }
+alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/" }
+alloy-json-abi = { git = "https://github.com/alloy-rs/core/" }
+alloy-primitives = { git = "https://github.com/alloy-rs/core/" }
+alloy-sol-macro = { git = "https://github.com/alloy-rs/core/" }
+alloy-sol-types = { git = "https://github.com/alloy-rs/core/" }
+alloy-sol-type-parser = { git = "https://github.com/alloy-rs/core/" }
+syn-solidity = { git = "https://github.com/alloy-rs/core/" }
 
 revm = { git = "https://github.com/bluealloy/revm", rev = "1609e07c68048909ad1682c98cf2b9baa76310b5" }
 revm-primitives = { git = "https://github.com/bluealloy/revm", rev = "1609e07c68048909ad1682c98cf2b9baa76310b5" }

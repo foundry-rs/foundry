@@ -47,5 +47,5 @@ yansi = "0.5"
 
 [dev-dependencies]
 foundry-macros.workspace = true
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 pretty_assertions.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
