@@ -18,7 +18,7 @@ pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
 ///
 /// This function returns [None] if it is not a DSTest log or the result of a Hardhat
 /// `console.log`.
-#[instrument(level = "error", ret)]
+#[instrument(level = "debug", skip_all, fields(topics=?log.topics, data=%log.data), ret)]
 pub fn decode_console_log(log: &Log) -> Option<String> {
     let topics = log.topics.as_slice();
     let topics = unsafe {
