@@ -1,6 +1,5 @@
 [package]
 name = "foundry-macros"
-publish = false
 
 version.workspace = true
 edition.workspace = true
