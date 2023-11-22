@@ -1,5 +1,5 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
-use alloy_primitives::{Address, Bytes, Log as RawLog, B256, U256};
+use alloy_primitives::{address, Address, Bytes, Log as RawLog, B256, U256};
 use alloy_sol_types::{SolError, SolValue};
 use revm::interpreter::{return_ok, InstructionResult};
 use spec::Vm;
@@ -14,8 +14,7 @@ use std::collections::{hash_map::Entry, HashMap};
 static DUMMY_CALL_OUTPUT: Bytes = Bytes::from_static(&[0u8; 8192]);
 
 /// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
-static DUMMY_CREATE_ADDRESS: Address =
-    Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+const DUMMY_CREATE_ADDRESS: Address = address!("0000000000000000000000000000000000000001");
 
 /// Tracks the expected calls per address.
 ///
