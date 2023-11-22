@@ -28,7 +28,7 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
     db::{DatabaseCommit, DatabaseRef},
-    interpreter::{return_ok, CreateScheme, InstructionResult, SharedMemory, Stack},
+    interpreter::{return_ok, CreateScheme, InstructionResult, Stack},
     primitives::{
         BlockEnv, Bytecode, Env, ExecutionResult, Output, ResultAndState, SpecId, TransactTo, TxEnv,
     },
@@ -680,7 +680,7 @@ pub struct RawCallResult {
     /// The raw output of the execution
     pub out: Option<Output>,
     /// The chisel state
-    pub chisel_state: Option<(Stack, SharedMemory, InstructionResult)>,
+    pub chisel_state: Option<(Stack, Vec<u8>, InstructionResult)>,
 }
 
 impl Default for RawCallResult {
