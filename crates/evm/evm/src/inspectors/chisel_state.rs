@@ -1,5 +1,5 @@
 use revm::{
-    interpreter::{InstructionResult, Interpreter, SharedMemory, Stack},
+    interpreter::{InstructionResult, Interpreter, Stack},
     Database, Inspector,
 };
 
@@ -9,7 +9,7 @@ pub struct ChiselState {
     /// The PC of the final instruction
     pub final_pc: usize,
     /// The final state of the REPL contract call
-    pub state: Option<(Stack, SharedMemory, InstructionResult)>,
+    pub state: Option<(Stack, Vec<u8>, InstructionResult)>,
 }
 
 impl ChiselState {
@@ -28,7 +28,7 @@ impl<DB: Database> Inspector<DB> for ChiselState {
         if self.final_pc == interp.program_counter() - 1 {
             self.state = Some((
                 interp.stack().clone(),
-                interp.shared_memory.clone(),
+                interp.shared_memory.context_memory().to_vec(),
                 interp.instruction_result,
             ))
         }

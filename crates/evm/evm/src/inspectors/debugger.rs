@@ -73,7 +73,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         self.arena.arena[self.head].steps.push(DebugStep {
             pc,
             stack: interpreter.stack().data().clone(),
-            memory: interpreter.shared_memory.clone(),
+            memory: interpreter.shared_memory.context_memory().to_vec(),
             instruction: Instruction::OpCode(op),
             push_bytes,
             total_gas_used,

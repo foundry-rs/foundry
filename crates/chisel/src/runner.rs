@@ -50,11 +50,7 @@ pub struct ChiselResult {
     /// Called address
     pub address: Option<Address>,
     /// EVM State at the final instruction of the `run()` function
-    pub state: Option<(
-        revm::interpreter::Stack,
-        revm::interpreter::SharedMemory,
-        revm::interpreter::InstructionResult,
-    )>,
+    pub state: Option<(revm::interpreter::Stack, Vec<u8>, InstructionResult)>,
 }
 
 /// ChiselRunner implementation
