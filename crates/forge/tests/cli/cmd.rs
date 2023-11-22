@@ -1401,9 +1401,9 @@ contract ContractThreeTest is DSTest {
 });
 
 forgetest_init!(can_use_absolute_imports, |prj, cmd| {
-    let remapping = prj.paths().libraries[0].join("myDepdendency");
+    let remapping = prj.paths().libraries[0].join("myDependency");
     let config = Config {
-        remappings: vec![Remapping::from_str(&format!("myDepdendency/={}", remapping.display()))
+        remappings: vec![Remapping::from_str(&format!("myDependency/={}", remapping.display()))
             .unwrap()
             .into()],
         ..Default::default()
@@ -1411,7 +1411,7 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
     prj.write_config(config);
 
     prj.add_lib(
-        "myDepdendency/src/interfaces/IConfig.sol",
+        "myDependency/src/interfaces/IConfig.sol",
         r"
     
     interface IConfig {}
@@ -1420,7 +1420,7 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
     .unwrap();
 
     prj.add_lib(
-        "myDepdendency/src/Config.sol",
+        "myDependency/src/Config.sol",
         r#"
         import "src/interfaces/IConfig.sol";
 
@@ -1432,7 +1432,7 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
     prj.add_source(
         "Greeter",
         r#"
-        import "myDepdendency/src/Config.sol";
+        import "myDependency/src/Config.sol";
 
     contract Greeter {}
    "#,

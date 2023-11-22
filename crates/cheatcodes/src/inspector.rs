@@ -129,7 +129,7 @@ pub struct Cheatcodes {
     /// Address labels
     pub labels: HashMap<Address, String>,
 
-    /// Rememebered private keys
+    /// Remembered private keys
     pub script_wallets: Vec<LocalWallet>,
 
     /// Whether the skip cheatcode was activated

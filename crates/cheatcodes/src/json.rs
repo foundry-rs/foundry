@@ -404,7 +404,7 @@ pub(super) fn value_to_token(value: &Value) -> Result<DynSolValue> {
                     // to f64.
                     let s = number.to_string();
 
-                    // Coerced to scientific notation, so short-ciruit to using fallback.
+                    // Coerced to scientific notation, so short-circuit to using fallback.
                     // This will not have a problem with hex numbers, as for parsing these
                     // We'd need to prefix this with 0x.
                     // See also <https://docs.soliditylang.org/en/latest/types.html#rational-and-integer-literals>
