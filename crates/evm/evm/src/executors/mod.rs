@@ -735,9 +735,9 @@ fn convert_executed_result(
     };
     let stipend = calc_stipend(&env.tx.data, env.cfg.spec_id);
 
-    let result = match out {
-        Some(Output::Call(ref data)) => data.to_owned(),
-        _ => Bytes::default(),
+    let result = match &out {
+        Some(Output::Call(data)) => data.clone(),
+        _ => Bytes::new(),
     };
 
     let InspectorData {
@@ -765,7 +765,7 @@ fn convert_executed_result(
         gas_used,
         gas_refunded,
         stipend,
-        logs: logs.to_vec(),
+        logs,
         labels,
         traces,
         coverage,

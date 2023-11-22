@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "crates/abi/",
     "crates/anvil/",
     "crates/anvil/core/",
     "crates/anvil/rpc/",
@@ -23,7 +22,6 @@ members = [
     "crates/fmt/",
     "crates/forge/",
     "crates/macros/",
-    "crates/macros/impl/",
     "crates/test-utils/",
     "crates/utils/",
 ]
@@ -97,7 +95,6 @@ codegen-units = 1
 
 # Override packages which aren't perf-sensitive for faster compilation speed
 [profile.release.package]
-foundry-abi.opt-level = 1
 mdbook.opt-level = 1
 protobuf.opt-level = 1
 rusoto_core.opt-level = 1
@@ -114,7 +111,6 @@ forge = { path = "crates/forge" }
 
 forge-doc = { path = "crates/doc" }
 forge-fmt = { path = "crates/fmt" }
-foundry-abi = { path = "crates/abi" }
 foundry-binder = { path = "crates/binder" }
 foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
@@ -165,6 +161,7 @@ solang-parser = "=0.3.3"
 ## misc
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 color-eyre = "0.6"
+derive_more = "0.99"
 eyre = "0.6"
 hex = { package = "const-hex", version = "1.6", features = ["hex"] }
 itertools = "0.11"
