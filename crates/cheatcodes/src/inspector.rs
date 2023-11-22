@@ -907,7 +907,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match expect::handle_expect_revert(
                     false,
-                    expected_revert.reason.as_ref(),
+                    expected_revert.reason.as_deref(),
                     status,
                     retdata,
                 ) {
@@ -1239,7 +1239,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match expect::handle_expect_revert(
                     true,
-                    expected_revert.reason.as_ref(),
+                    expected_revert.reason.as_deref(),
                     status,
                     retdata,
                 ) {

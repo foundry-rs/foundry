@@ -57,7 +57,7 @@ pub enum ExpectedCallType {
 #[derive(Clone, Debug, Default)]
 pub struct ExpectedRevert {
     /// The expected data returned by the revert, None being any
-    pub reason: Option<Bytes>,
+    pub reason: Option<Vec<u8>>,
     /// The depth at which the revert is expected
     pub depth: u64,
 }
@@ -436,19 +436,16 @@ fn expect_revert(state: &mut Cheatcodes, reason: Option<&[u8]>, depth: u64) -> R
         state.expected_revert.is_none(),
         "you must call another function prior to expecting a second revert"
     );
-    state.expected_revert =
-        Some(ExpectedRevert { reason: reason.map(Bytes::copy_from_slice), depth });
+    state.expected_revert = Some(ExpectedRevert { reason: reason.map(<[_]>::to_vec), depth });
     Ok(Default::default())
 }
 
 pub(crate) fn handle_expect_revert(
     is_create: bool,
-    expected_revert: Option<&Bytes>,
+    expected_revert: Option<&[u8]>,
     status: InstructionResult,
     retdata: Bytes,
 ) -> Result<(Option<Address>, Bytes)> {
-    ensure!(!matches!(status, return_ok!()), "call did not revert as expected");
-
     let success_return = || {
         if is_create {
             (Some(DUMMY_CREATE_ADDRESS), Bytes::new())
@@ -456,6 +453,8 @@ pub(crate) fn handle_expect_revert(
             (None, DUMMY_CALL_OUTPUT.clone())
         }
     };
+
+    ensure!(!matches!(status, return_ok!()), "call did not revert as expected");
 
     // If None, accept any revert
     let expected_revert = match expected_revert {
@@ -478,19 +477,19 @@ pub(crate) fn handle_expect_revert(
         }
     }
 
-    if actual_revert == *expected_revert {
+    if actual_revert == expected_revert {
         Ok(success_return())
     } else {
         let stringify = |data: &[u8]| {
             String::abi_decode(data, false)
                 .ok()
-                .or_else(|| std::str::from_utf8(data.as_ref()).ok().map(ToOwned::to_owned))
+                .or_else(|| std::str::from_utf8(data).ok().map(ToOwned::to_owned))
                 .unwrap_or_else(|| hex::encode_prefixed(data))
         };
         Err(fmt_err!(
             "Error != expected error: {} != {}",
             stringify(&actual_revert),
-            stringify(&expected_revert),
+            stringify(expected_revert),
         ))
     }
 }
