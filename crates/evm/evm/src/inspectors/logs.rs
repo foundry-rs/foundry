@@ -73,7 +73,7 @@ fn convert_hh_log_to_event(call: HardhatConsole::HardhatConsoleCalls) -> Log {
     // Convert the parameters of the call to their string representation using `ConsoleFmt`.
     // let fmt = call.fmt(Default::default());
     let _ = call;
-    let fmt = "";
+    let fmt = "<HardhatConsoleCalls>";
     Log {
         topics: vec![Console::log::SIGNATURE_HASH.to_ethers()],
         data: fmt.abi_encode().into(),
