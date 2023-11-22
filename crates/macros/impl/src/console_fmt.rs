@@ -35,8 +35,7 @@ fn impl_struct(s: &DataStruct) -> Option<TokenStream> {
     }
     .collect();
 
-    let n = fields.len();
-    if n == 0 {
+    if fields.is_empty() {
         return None
     }
 
@@ -59,16 +58,13 @@ fn impl_struct(s: &DataStruct) -> Option<TokenStream> {
         let mut args = args.pairs();
         let first = args.next().unwrap();
         let first = first.value();
-        let n = n - 1;
         quote! {
-            let args: [&dyn ::foundry_macros::ConsoleFmt; #n] = [#(#args)*];
-            ::foundry_macros::console_format((#first).as_str(), args)
+            ::foundry_macros::console_format((#first).as_str(), &[#(#args)*])
         }
     } else {
         // console_format("", [...args])
         quote! {
-            let args: [&dyn ::foundry_macros::ConsoleFmt; #n] = [#args];
-            ::foundry_macros::console_format("", args)
+            ::foundry_macros::console_format("", &[#args])
         }
     };
 
