@@ -6,7 +6,7 @@ use foundry_evm_core::{
     abi::{patch_hardhat_console_selector, Console, HardhatConsole},
     constants::HARDHAT_CONSOLE_ADDRESS,
 };
-use foundry_utils::types::ToEthers;
+use foundry_utils::{error::ErrorExt, types::ToEthers};
 use revm::{
     interpreter::{CallInputs, Gas, InstructionResult},
     Database, EVMData, Inspector,
@@ -29,12 +29,7 @@ impl LogCollector {
         // Decode the call
         let decoded = match HardhatConsole::HardhatConsoleCalls::abi_decode(&input, false) {
             Ok(inner) => inner,
-            Err(err) => {
-                return (
-                    InstructionResult::Revert,
-                    foundry_cheatcodes::Error::encode(err.to_string()),
-                )
-            }
+            Err(err) => return (InstructionResult::Revert, err.abi_encode_revert()),
         };
 
         // Convert the decoded call to a DS `log(string)` event

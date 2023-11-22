@@ -1,8 +1,8 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
-use alloy_dyn_abi::DynSolType;
 use alloy_primitives::{Address, Bytes, Log as RawLog, B256, U256};
-use foundry_utils::error::{ERROR_PREFIX, REVERT_PREFIX};
+use alloy_sol_types::{ContractError, SolInterface, SolValue};
 use revm::interpreter::{return_ok, InstructionResult};
+use spec::Vm;
 use std::collections::{hash_map::Entry, HashMap};
 
 /// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
@@ -449,53 +449,48 @@ pub(crate) fn handle_expect_revert(
 ) -> Result<(Option<Address>, Bytes)> {
     ensure!(!matches!(status, return_ok!()), "call did not revert as expected");
 
-    macro_rules! success_return {
-        () => {
-            Ok(if is_create {
-                (Some(DUMMY_CREATE_ADDRESS), Default::default())
-            } else {
-                trace!("successfully handled expected revert");
-                (None, DUMMY_CALL_OUTPUT.clone())
-            })
-        };
-    }
+    let success_return = || {
+        if is_create {
+            (Some(DUMMY_CREATE_ADDRESS), Bytes::new())
+        } else {
+            (None, DUMMY_CALL_OUTPUT.clone())
+        }
+    };
 
     // If None, accept any revert
-    let mut expected_revert = match expected_revert {
-        Some(x) => x.clone(),
-        None => return success_return!(),
+    let expected_revert = match expected_revert {
+        Some(x) => &x[..],
+        None => return Ok(success_return()),
     };
 
     if !expected_revert.is_empty() && retdata.is_empty() {
         bail!("call reverted as expected, but without data");
     }
 
-    let mut actual_revert = retdata;
-    if actual_revert.len() >= 4 &&
-        matches!(actual_revert[..4].try_into(), Ok(ERROR_PREFIX | REVERT_PREFIX))
-    {
-        if let Ok(parsed_bytes) = DynSolType::Bytes.abi_decode(&actual_revert[4..]) {
-            if let Some(bytes) = parsed_bytes.as_bytes().map(|b| b.to_vec()) {
-                actual_revert = bytes.into();
+    let mut actual_revert: Vec<u8> = retdata.into();
+    if let Ok(error) = ContractError::<Vm::VmErrors>::abi_decode(&actual_revert, false) {
+        match error {
+            ContractError::Revert(revert) => actual_revert = revert.reason.into_bytes(),
+            ContractError::Panic(_panic) => {}
+            ContractError::CustomError(Vm::VmErrors::CheatcodeError(cheatcode_error)) => {
+                actual_revert = cheatcode_error.message.into_bytes()
             }
         }
     }
 
     if actual_revert == *expected_revert {
-        success_return!()
+        Ok(success_return())
     } else {
-        let stringify = |data: &mut Bytes| {
-            DynSolType::String
-                .abi_decode(data.0.as_ref())
+        let stringify = |data: &[u8]| {
+            String::abi_decode(data, false)
                 .ok()
-                .and_then(|d| d.as_str().map(|s| s.to_owned()))
                 .or_else(|| std::str::from_utf8(data.as_ref()).ok().map(ToOwned::to_owned))
                 .unwrap_or_else(|| hex::encode_prefixed(data))
         };
         Err(fmt_err!(
             "Error != expected error: {} != {}",
-            stringify(&mut actual_revert),
-            stringify(&mut expected_revert),
+            stringify(&actual_revert),
+            stringify(&expected_revert),
         ))
     }
 }

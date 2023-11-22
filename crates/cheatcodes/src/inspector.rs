@@ -1069,7 +1069,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         };
                         let s = if *count == 1 { "" } else { "s" };
                         let msg = format!(
-                            "Expected call to {address} with {expected_values} \
+                            "expected call to {address} with {expected_values} \
                              to be called {count} time{s}, but {but}"
                         );
                         return (InstructionResult::Revert, remaining_gas, Error::encode(msg))

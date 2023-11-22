@@ -6,6 +6,7 @@ use foundry_evm_core::{
     debug::{DebugArena, DebugNode, DebugStep, Instruction},
     utils::{gas_used, get_create_address, CallKind},
 };
+use foundry_utils::error::ErrorExt;
 use revm::{
     interpreter::{
         opcode::{self, spec_opcode_gas},
@@ -127,7 +128,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         // TODO: Does this increase gas cost?
         if let Err(err) = data.journaled_state.load_account(call.caller, data.db) {
             let gas = Gas::new(call.gas_limit);
-            return (InstructionResult::Revert, None, gas, foundry_cheatcodes::Error::encode(err))
+            return (InstructionResult::Revert, None, gas, err.abi_encode_revert())
         }
 
         let nonce = data.journaled_state.account(call.caller).info.nonce;
