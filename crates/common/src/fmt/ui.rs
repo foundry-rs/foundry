@@ -1,4 +1,4 @@
-//! Helper trait and functions to format ethers types.
+//! Helper trait and functions to format Ethereum types.
 
 use crate::TransactionReceiptWithRevertReason;
 use alloy_primitives::*;
@@ -8,12 +8,13 @@ use serde::Deserialize;
 /// length of the name column for pretty formatting `{:>20}{value}`
 const NAME_COLUMN_LEN: usize = 20usize;
 
-/// Helper trait to format ethers types.
+/// Helper trait to format Ethereum types.
 ///
 /// # Examples
 ///
 /// ```
-/// use foundry_macros::fmt::UIfmt;
+/// use foundry_common::fmt::UIfmt;
+///
 /// let boolean: bool = true;
 /// let string = boolean.pretty();
 /// ```

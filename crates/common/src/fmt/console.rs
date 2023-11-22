@@ -69,11 +69,14 @@ impl ConsoleFmt for U256 {
     fn fmt(&self, spec: FormatSpec) -> String {
         match spec {
             FormatSpec::String | FormatSpec::Object | FormatSpec::Number | FormatSpec::Integer => {
-                self.to_string()
+                self.pretty()
             }
-            FormatSpec::Hexadecimal => format!("0x{:x}", *self),
+            FormatSpec::Hexadecimal => {
+                let hex = format!("{self:x}");
+                format!("0x{}", hex.trim_start_matches('0'))
+            }
             FormatSpec::Exponential => {
-                let log = self.to_string().len() - 1;
+                let log = self.pretty().len() - 1;
                 let exp10 = U256::from(10).pow(U256::from(log));
                 let amount = *self;
                 let integer = amount / exp10;
@@ -95,7 +98,10 @@ impl ConsoleFmt for I256 {
             FormatSpec::String | FormatSpec::Object | FormatSpec::Number | FormatSpec::Integer => {
                 self.pretty()
             }
-            FormatSpec::Hexadecimal => format!("0x{:x}", *self),
+            FormatSpec::Hexadecimal => {
+                let hex = format!("{self:x}");
+                format!("0x{}", hex.trim_start_matches('0'))
+            }
             FormatSpec::Exponential => {
                 let amount = *self;
                 let sign = if amount.is_negative() { "-" } else { "" };
@@ -121,12 +127,11 @@ impl ConsoleFmt for I256 {
 impl ConsoleFmt for Address {
     fn fmt(&self, spec: FormatSpec) -> String {
         match spec {
-            FormatSpec::String => self.pretty(),
+            FormatSpec::String | FormatSpec::Hexadecimal => self.pretty(),
             FormatSpec::Object => format!("'{}'", self.pretty()),
-            FormatSpec::Number |
-            FormatSpec::Integer |
-            FormatSpec::Exponential |
-            FormatSpec::Hexadecimal => String::from("NaN"),
+            FormatSpec::Number | FormatSpec::Integer | FormatSpec::Exponential => {
+                String::from("NaN")
+            }
         }
     }
 }
@@ -158,12 +163,11 @@ impl<const N: usize> ConsoleFmt for FixedBytes<N> {
 impl ConsoleFmt for [u8] {
     fn fmt(&self, spec: FormatSpec) -> String {
         match spec {
-            FormatSpec::String => self.pretty(),
+            FormatSpec::String | FormatSpec::Hexadecimal => self.pretty(),
             FormatSpec::Object => format!("'{}'", self.pretty()),
-            FormatSpec::Number |
-            FormatSpec::Integer |
-            FormatSpec::Exponential |
-            FormatSpec::Hexadecimal => String::from("NaN"),
+            FormatSpec::Number | FormatSpec::Integer | FormatSpec::Exponential => {
+                String::from("NaN")
+            }
         }
     }
 }
@@ -360,7 +364,7 @@ mod tests {
         assert_eq!("NaN", fmt_1("%d", &addr));
         assert_eq!("NaN", fmt_1("%i", &addr));
         assert_eq!("NaN", fmt_1("%e", &addr));
-        assert_eq!("NaN", fmt_1("%x", &addr));
+        assert_eq!("0xdEADBEeF00000000000000000000000000000000", fmt_1("%x", &addr));
         assert_eq!("'0xdEADBEeF00000000000000000000000000000000'", fmt_1("%o", &addr));
 
         let bytes = Bytes::from_str("0xdeadbeef").unwrap();
@@ -368,7 +372,7 @@ mod tests {
         assert_eq!("NaN", fmt_1("%d", &bytes));
         assert_eq!("NaN", fmt_1("%i", &bytes));
         assert_eq!("NaN", fmt_1("%e", &bytes));
-        assert_eq!("NaN", fmt_1("%x", &bytes));
+        assert_eq!("0xdeadbeef", fmt_1("%x", &bytes));
         assert_eq!("'0xdeadbeef'", fmt_1("%o", &bytes));
 
         assert_eq!("100", fmt_1("%s", &U256::from(100)));
@@ -389,6 +393,14 @@ mod tests {
         assert_eq!("1.0023e6", fmt_1("%e", &I256::try_from(1002300).unwrap()));
         assert_eq!("1.23e5", fmt_1("%e", &I256::try_from(123000).unwrap()));
         assert_eq!("0x64", fmt_1("%x", &I256::try_from(100).unwrap()));
+        assert_eq!(
+            "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff9c",
+            fmt_1("%x", &I256::try_from(-100).unwrap())
+        );
+        assert_eq!(
+            "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffe8b7891800",
+            fmt_1("%x", &I256::try_from(-100000000000i64).unwrap())
+        );
         assert_eq!("100", fmt_1("%o", &I256::try_from(100).unwrap()));
     }
 
