@@ -23,7 +23,7 @@ pub mod state;
 pub mod serde_helpers;
 
 #[cfg(feature = "serde")]
-use ethers_core::types::serde_helpers::*;
+use ethers_core::types::serde_helpers::{deserialize_number, deserialize_number_opt, deserialize_number_seq};
 
 #[cfg(feature = "serde")]
 use self::serde_helpers::*;
@@ -87,7 +87,10 @@ pub enum EthRequest {
     EthGetBlockByHash(B256, bool),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getBlockByNumber"))]
-    EthGetBlockByNumber(BlockNumber, bool),
+    EthGetBlockByNumber(
+        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number::lenient_block_number"))]
+        BlockNumber, 
+        bool),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getTransactionCount"))]
     EthGetTransactionCount(Address, Option<BlockId>),
@@ -98,7 +101,13 @@ pub enum EthRequest {
     )]
     EthGetTransactionCountByHash(B256),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getBlockTransactionCountByNumber",))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            rename = "eth_getBlockTransactionCountByNumber",
+            deserialize_with = "lenient_block_number::lenient_block_number_seq"
+        )
+    )]
     EthGetTransactionCountByNumber(BlockNumber),
 
     #[cfg_attr(
@@ -107,7 +116,13 @@ pub enum EthRequest {
     )]
     EthGetUnclesCountByHash(B256),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_getUncleCountByBlockNumber",))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            rename = "eth_getUncleCountByBlockNumber",
+            deserialize_with = "lenient_block_number::lenient_block_number_seq"
+        )
+    )]
     EthGetUnclesCountByNumber(BlockNumber),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getCode"))]
@@ -175,7 +190,11 @@ pub enum EthRequest {
     EthGetUncleByBlockHashAndIndex(B256, Index),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getUncleByBlockNumberAndIndex"))]
-    EthGetUncleByBlockNumberAndIndex(BlockNumber, Index),
+    EthGetUncleByBlockNumberAndIndex(
+        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number::lenient_block_number"))]
+        BlockNumber, 
+        Index
+    ),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getLogs", with = "sequence"))]
     EthGetLogs(Filter),
@@ -248,6 +267,10 @@ pub enum EthRequest {
     TraceTransaction(B256),
 
     /// Trace transaction endpoint for parity's `trace_block`
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "trace_block", deserialize_with = "lenient_block_number::lenient_block_number_seq")
+    )]
     TraceBlock(BlockNumber),
 
     // Custom endpoints, they're not extracted to a separate type out of serde convenience
@@ -582,7 +605,10 @@ pub enum EthRequest {
     /// https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71
     /// Related upstream issue: https://github.com/otterscan/otterscan/issues/1081
     #[cfg_attr(feature = "serde", serde(rename = "erigon_getHeaderByNumber"))]
-    ErigonGetHeaderByNumber(BlockNumber),
+    ErigonGetHeaderByNumber(
+        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number::lenient_block_number_seq"))]
+        BlockNumber
+    ),
 
     /// Otterscan's `ots_getApiLevel` endpoint
     /// Used as a simple API versioning scheme for the ots_* namespace
@@ -598,7 +624,11 @@ pub enum EthRequest {
     /// Otterscan's `ots_hasCode` endpoint
     /// Check if an ETH address contains code at a certain block number.
     #[cfg_attr(feature = "serde", serde(rename = "ots_hasCode"))]
-    OtsHasCode(Address, BlockNumber),
+    OtsHasCode(
+        Address, 
+        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number::lenient_block_number", default))]
+        BlockNumber
+    ),
 
     /// Otterscan's `ots_traceTransaction` endpoint
     /// Trace a transaction and generate a trace call tree.
@@ -615,7 +645,10 @@ pub enum EthRequest {
     /// method, but can be optimized by excluding unnecessary data such as transactions and
     /// logBloom
     #[cfg_attr(feature = "serde", serde(rename = "ots_getBlockDetails"))]
-    OtsGetBlockDetails(BlockNumber),
+    OtsGetBlockDetails(
+        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number::lenient_block_number", default))]
+        BlockNumber
+    ),
 
     /// Otterscan's `ots_getBlockDetails` endpoint
     /// Same as `ots_getBlockDetails`, but receiving a block hash instead of number
@@ -715,11 +748,10 @@ mod tests {
 
     #[test]
     fn test_eth_get_proof() {
-        let s =
-r#"{"method":"eth_getProof","params":["0x7F0d15C7FAae65896648C8273B6d7E43f58Fa842",["
-0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"],"latest"]}"#;         let
-value: serde_json::Value = serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();     }
+        let s = r#"{"method":"eth_getProof","params":["0x7F0d15C7FAae65896648C8273B6d7E43f58Fa842",["0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"],"latest"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
 
     #[test]
     fn test_eth_chain_id() {
@@ -1272,27 +1304,24 @@ serde_json::from_value::<EthRequest>(value).unwrap();     }
 
     #[test]
     fn test_eth_uncle_count_by_block_hash() {
-        let s =
-r#"{"jsonrpc":"2.0","method":"eth_getUncleCountByBlockHash","params":["
-0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;         let value:
-serde_json::Value = serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();     }
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getUncleCountByBlockHash","params":["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;         
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();         
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();     
+    }
 
     #[test]
     fn test_eth_block_tx_count_by_block_hash() {
-        let s =
-r#"{"jsonrpc":"2.0","method":"eth_getBlockTransactionCountByHash","params":["
-0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;         let value:
-serde_json::Value = serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();     }
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getBlockTransactionCountByHash","params":["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;         
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();         
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();     
+    }
 
     #[test]
     fn test_eth_get_logs() {
-        let s =
-r#"{"jsonrpc":"2.0","method":"eth_getLogs","params":[{"topics":["
-0x000000000000000000000000a94f5374fce5edbc8e2a8697c15331677e6ebf0b"]}],"id":74}"#;         let
-value: serde_json::Value = serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();     }
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getLogs","params":[{"topics":["0x000000000000000000000000a94f5374fce5edbc8e2a8697c15331677e6ebf0b"]}],"id":74}"#;         
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();         
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();     
+    }
 
     #[test]
     fn test_eth_new_filter() {
@@ -1348,36 +1377,26 @@ true}]}"#;         let value: serde_json::Value = serde_json::from_str(s).unwrap
     }
 
     #[test]
+        #[test]
     fn test_serde_debug_trace_call() {
-        let s = r#"{"method": "debug_traceCall", "params":
-[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"
-0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}]}"#;         let value: serde_json::Value =
-serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
-        let s = r#"{"method": "debug_traceCall", "params":
-[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"
-0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "latest" }]}"#;         let value:
-serde_json::Value = serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "latest" }]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
-        let s = r#"{"method": "debug_traceCall", "params":
-[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"
-0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "0x0" }]}"#;         let value:
-serde_json::Value = serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "0x0" }]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
-        let s = r#"{"method": "debug_traceCall", "params":
-[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"
-0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockHash":
-"0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" }]}"#;         let value:
-serde_json::Value = serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockHash": "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" }]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
-        let s = r#"{"method": "debug_traceCall", "params":
-[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"
-0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "0x0" }, {"disableStorage":
-true}]}"#;         let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "0x0" }, {"disableStorage": true}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
@@ -1390,36 +1409,24 @@ serde_json::from_value::<EthRequest>(value).unwrap();     }
 
     #[test]
     fn test_eth_call() {
-        let req =
-r#"{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"
-0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}"#;         let _req =
-serde_json::from_str::<TransactionRequest>(req).unwrap();
+        let req = r#"{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}"#;
+let _req =serde_json::from_str::<CallRequest>(req).unwrap();
 
-        let s = r#"{"method": "eth_call", "params":
-[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"
-0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"},"latest"]}"#;         let _req =
-serde_json::from_str::<EthRequest>(s).unwrap();
+        let s = r#"{"method": "eth_call", "params":[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"},"latest"]}"#;         
+        let _req = serde_json::from_str::<EthRequest>(s).unwrap();
 
-        let s = r#"{"method": "eth_call", "params":
-[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"
-0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}]}"#;         let _req =
-serde_json::from_str::<EthRequest>(s).unwrap();
+        let s = r#"{"method": "eth_call", "params":[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}]}"#;
+        let _req = serde_json::from_str::<EthRequest>(s).unwrap();
 
-        let s = r#"{"method": "eth_call", "params":
-[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"
-0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "latest" }]}"#;         let _req =
-serde_json::from_str::<EthRequest>(s).unwrap();
+        let s = r#"{"method": "eth_call", "params":[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "latest" }]}"#;         
+        let _req = serde_json::from_str::<EthRequest>(s).unwrap();
 
-        let s = r#"{"method": "eth_call", "params":
-[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"
-0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "0x0" }]}"#;         let _req =
-serde_json::from_str::<EthRequest>(s).unwrap();
+        let s = r#"{"method": "eth_call", "params":[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "0x0" }]}"#;         
+        let _req = serde_json::from_str::<EthRequest>(s).unwrap();
 
-        let s = r#"{"method": "eth_call", "params":
-[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"
-0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockHash":
-"0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" }]}"#;         let _req =
-serde_json::from_str::<EthRequest>(s).unwrap();     }
+        let s = r#"{"method": "eth_call", "params":[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockHash":"0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" }]}"#;         
+        let _req = serde_json::from_str::<EthRequest>(s).unwrap();     
+    }
 
     #[test]
     fn test_serde_eth_balance() {
@@ -1453,17 +1460,8 @@ serde_json::from_str::<EthRequest>(s).unwrap();     }
 
     #[test]
     fn test_eth_sign_typed_data() {
-        let s =
-r#"{"method":"eth_signTypedData_v4","params":["0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826",
-{"types":{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"
-name":"chainId","type":"uint256"},{"name":"verifyingContract","type":"address"}],"Person":[{"
-name":"name","type":"string"},{"name":"wallet","type":"address"}],"Mail":[{"name":"from","type":"
-Person"},{"name":"to","type":"Person"},{"name":"contents","type":"string"}]},"primaryType":"Mail"
-,"domain":{"name":"Ether
-Mail","version":"1","chainId":1,"verifyingContract":"0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC"
-},"message":{"from":{"name":"Cow","wallet":"0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826"},"to":{"
-name":"Bob","wallet":"0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB"},"contents":"Hello,
-Bob!"}}]}"#;         let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let s = r#"{"method":"eth_signTypedData_v4","params":["0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826", {"types":{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"},{"name":"verifyingContract","type":"address"}],"Person":[{"name":"name","type":"string"},{"name":"wallet","type":"address"}],"Mail":[{"name":"from","type":"Person"},{"name":"to","type":"Person"},{"name":"contents","type":"string"}]},"primaryType":"Mail","domain":{"name":"Ether Mail","version":"1","chainId":1,"verifyingContract":"0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC"},"message":{"from":{"name":"Cow","wallet":"0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826"},"to":{"name":"Bob","wallet":"0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB"},"contents":"Hello, Bob!"}}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 }
