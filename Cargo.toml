@@ -96,7 +96,6 @@ codegen-units = 1
 
 # Override packages which aren't perf-sensitive for faster compilation speed
 [profile.release.package]
-foundry-abi.opt-level = 1
 mdbook.opt-level = 1
 protobuf.opt-level = 1
 rusoto_core.opt-level = 1

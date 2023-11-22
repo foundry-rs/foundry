@@ -12,7 +12,7 @@ use foundry_config::{
 use foundry_evm::{
     decode::decode_console_logs, inspectors::CheatsConfig, revm::primitives::SpecId,
 };
-use foundry_test_utils::Filter;
+use foundry_test_utils::{init_tracing, Filter};
 use itertools::Itertools;
 use std::{collections::BTreeMap, path::Path};
 
@@ -128,13 +128,6 @@ pub fn test_opts() -> TestOptions {
     }
 }
 
-#[allow(unused)]
-pub(crate) fn init_tracing() {
-    let _ = tracing_subscriber::FmtSubscriber::builder()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
-}
-
 pub fn manifest_root() -> &'static Path {
     let mut root = Path::new(env!("CARGO_MANIFEST_DIR"));
     // need to check here where we're executing the test from, if in `forge` we need to also allow
@@ -147,6 +140,7 @@ pub fn manifest_root() -> &'static Path {
 
 /// Builds a base runner
 pub fn base_runner() -> MultiContractRunnerBuilder {
+    init_tracing();
     MultiContractRunnerBuilder::default().sender(EVM_OPTS.sender)
 }
 
