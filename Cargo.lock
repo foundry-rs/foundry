@@ -2989,13 +2989,6 @@ dependencies = [
 name = "foundry-macros"
 version = "0.2.0"
 dependencies = [
- "foundry-macros-impl",
-]
-
-[[package]]
-name = "foundry-macros-impl"
-version = "0.2.0"
-dependencies = [
  "proc-macro-error",
  "proc-macro2",
  "quote",

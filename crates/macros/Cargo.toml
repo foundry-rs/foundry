@@ -1,5 +1,6 @@
 [package]
 name = "foundry-macros"
+publish = false
 
 version.workspace = true
 edition.workspace = true
@@ -9,5 +10,14 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lib]
+proc-macro = true
+# proc-macro tests aren't fully supported by cargo-nextest archives
+test = false
+doc = false
+
 [dependencies]
-foundry-macros-impl = { path = "impl" }
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = "2.0"
+proc-macro-error = "1"

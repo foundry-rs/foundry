@@ -22,7 +22,6 @@ members = [
     "crates/fmt/",
     "crates/forge/",
     "crates/macros/",
-    "crates/macros/impl/",
     "crates/test-utils/",
     "crates/utils/",
 ]
