@@ -237,3 +237,12 @@ impl ToEthers for U64 {
         EthersU64(self.into_limbs())
     }
 }
+
+impl ToEthers for Bytes {
+    type To = EthersBytes;
+
+    #[inline(always)]
+    fn to_ethers(self) -> Self::To {
+        EthersBytes(self.0)
+    }
+}

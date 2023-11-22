@@ -428,7 +428,7 @@ impl ScriptArgs {
                 rpc: fork_url.clone(),
                 transaction: TypedTransaction::Legacy(TransactionRequest {
                     from: Some(from.to_ethers()),
-                    data: Some(bytes.clone().0.into()),
+                    data: Some(bytes.clone().to_ethers()),
                     nonce: Some((nonce + i as u64).into()),
                     ..Default::default()
                 }),

@@ -107,7 +107,7 @@ impl SessionSource {
                 let mut runner = self.prepare_runner(final_pc).await;
 
                 // Return [ChiselResult] or bubble up error
-                runner.run(bytecode.into_owned().0.into())
+                runner.run(bytecode.into_owned())
             } else {
                 // Return a default result if no statements are present.
                 Ok((Address::ZERO, ChiselResult::default()))
