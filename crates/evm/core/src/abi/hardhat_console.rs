@@ -1,9 +1,11 @@
 use alloy_sol_types::sol;
+use foundry_macros::ConsoleFmt;
 use once_cell::sync::Lazy;
 use revm::primitives::HashMap;
 
 sol!(
     #[sol(abi)]
+    #[derive(ConsoleFmt)]
     HardhatConsole,
     "src/abi/HardhatConsole.json"
 );

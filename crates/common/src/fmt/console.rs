@@ -1,5 +1,5 @@
 use super::UIfmt;
-use ethers_core::types::{Address, Bytes, H256, I256, U256};
+use alloy_primitives::{Address, Bytes, FixedBytes, I256, U256};
 
 /// A format specifier.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -69,12 +69,12 @@ impl ConsoleFmt for U256 {
     fn fmt(&self, spec: FormatSpec) -> String {
         match spec {
             FormatSpec::String | FormatSpec::Object | FormatSpec::Number | FormatSpec::Integer => {
-                self.pretty()
+                self.to_string()
             }
             FormatSpec::Hexadecimal => format!("0x{:x}", *self),
             FormatSpec::Exponential => {
-                let log = self.pretty().len() - 1;
-                let exp10 = U256::exp10(log);
+                let log = self.to_string().len() - 1;
+                let exp10 = U256::from(10).pow(U256::from(log));
                 let amount = *self;
                 let integer = amount / exp10;
                 let decimal = (amount % exp10).to_string();
@@ -118,18 +118,6 @@ impl ConsoleFmt for I256 {
     }
 }
 
-impl ConsoleFmt for H256 {
-    fn fmt(&self, spec: FormatSpec) -> String {
-        match spec {
-            FormatSpec::Hexadecimal | FormatSpec::String => self.pretty(),
-            FormatSpec::Object => format!("'{}'", self.pretty()),
-            FormatSpec::Number | FormatSpec::Integer | FormatSpec::Exponential => {
-                String::from("NaN")
-            }
-        }
-    }
-}
-
 impl ConsoleFmt for Address {
     fn fmt(&self, spec: FormatSpec) -> String {
         match spec {
@@ -143,7 +131,31 @@ impl ConsoleFmt for Address {
     }
 }
 
+impl ConsoleFmt for Vec<u8> {
+    fn fmt(&self, spec: FormatSpec) -> String {
+        self[..].fmt(spec)
+    }
+}
+
 impl ConsoleFmt for Bytes {
+    fn fmt(&self, spec: FormatSpec) -> String {
+        self[..].fmt(spec)
+    }
+}
+
+impl<const N: usize> ConsoleFmt for [u8; N] {
+    fn fmt(&self, spec: FormatSpec) -> String {
+        self[..].fmt(spec)
+    }
+}
+
+impl<const N: usize> ConsoleFmt for FixedBytes<N> {
+    fn fmt(&self, spec: FormatSpec) -> String {
+        self[..].fmt(spec)
+    }
+}
+
+impl ConsoleFmt for [u8] {
     fn fmt(&self, spec: FormatSpec) -> String {
         match spec {
             FormatSpec::String => self.pretty(),
@@ -153,12 +165,6 @@ impl ConsoleFmt for Bytes {
             FormatSpec::Exponential |
             FormatSpec::Hexadecimal => String::from("NaN"),
         }
-    }
-}
-
-impl<const N: usize> ConsoleFmt for [u8; N] {
-    fn fmt(&self, _spec: FormatSpec) -> String {
-        self.pretty()
     }
 }
 
@@ -257,7 +263,8 @@ fn format_spec<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ConsoleFmt;
+    use alloy_primitives::B256;
+    use foundry_macros::ConsoleFmt;
     use std::str::FromStr;
 
     macro_rules! logf1 {
@@ -330,7 +337,7 @@ mod tests {
         assert_eq!("'true'", fmt_1("%o", &true));
 
         let b32 =
-            H256::from_str("0xdeadbeef00000000000000000000000000000000000000000000000000000000")
+            B256::from_str("0xdeadbeef00000000000000000000000000000000000000000000000000000000")
                 .unwrap();
         assert_eq!(
             "0xdeadbeef00000000000000000000000000000000000000000000000000000000",
@@ -373,16 +380,16 @@ mod tests {
         assert_eq!("0x64", fmt_1("%x", &U256::from(100)));
         assert_eq!("100", fmt_1("%o", &U256::from(100)));
 
-        assert_eq!("100", fmt_1("%s", &I256::from(100)));
-        assert_eq!("100", fmt_1("%d", &I256::from(100)));
-        assert_eq!("100", fmt_1("%i", &I256::from(100)));
-        assert_eq!("1e2", fmt_1("%e", &I256::from(100)));
-        assert_eq!("-1.0023e6", fmt_1("%e", &I256::from(-1002300)));
-        assert_eq!("-1.23e5", fmt_1("%e", &I256::from(-123000)));
-        assert_eq!("1.0023e6", fmt_1("%e", &I256::from(1002300)));
-        assert_eq!("1.23e5", fmt_1("%e", &I256::from(123000)));
-        assert_eq!("0x64", fmt_1("%x", &I256::from(100)));
-        assert_eq!("100", fmt_1("%o", &I256::from(100)));
+        assert_eq!("100", fmt_1("%s", &I256::try_from(100).unwrap()));
+        assert_eq!("100", fmt_1("%d", &I256::try_from(100).unwrap()));
+        assert_eq!("100", fmt_1("%i", &I256::try_from(100).unwrap()));
+        assert_eq!("1e2", fmt_1("%e", &I256::try_from(100).unwrap()));
+        assert_eq!("-1.0023e6", fmt_1("%e", &I256::try_from(-1002300).unwrap()));
+        assert_eq!("-1.23e5", fmt_1("%e", &I256::try_from(-123000).unwrap()));
+        assert_eq!("1.0023e6", fmt_1("%e", &I256::try_from(1002300).unwrap()));
+        assert_eq!("1.23e5", fmt_1("%e", &I256::try_from(123000).unwrap()));
+        assert_eq!("0x64", fmt_1("%x", &I256::try_from(100).unwrap()));
+        assert_eq!("100", fmt_1("%o", &I256::try_from(100).unwrap()));
     }
 
     #[test]

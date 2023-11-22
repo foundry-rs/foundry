@@ -15,6 +15,7 @@ foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
+foundry-macros.workspace = true
 foundry-utils.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }

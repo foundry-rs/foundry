@@ -1,9 +1,8 @@
 //! Helper trait and functions to format ethers types.
 
-use ethers_core::{
-    types::*,
-    utils::{hex, to_checksum},
-};
+use crate::TransactionReceiptWithRevertReason;
+use alloy_primitives::*;
+use ethers_core::types::{Block, Log, OtherFields, Transaction, TransactionReceipt, TxHash};
 use serde::Deserialize;
 
 /// length of the name column for pretty formatting `{:>20}{value}`
@@ -21,70 +20,6 @@ const NAME_COLUMN_LEN: usize = 20usize;
 pub trait UIfmt {
     /// Return a prettified string version of the value
     fn pretty(&self) -> String;
-}
-
-impl UIfmt for String {
-    fn pretty(&self) -> String {
-        self.to_string()
-    }
-}
-impl UIfmt for bool {
-    fn pretty(&self) -> String {
-        self.to_string()
-    }
-}
-
-impl UIfmt for U256 {
-    fn pretty(&self) -> String {
-        self.to_string()
-    }
-}
-impl UIfmt for I256 {
-    fn pretty(&self) -> String {
-        self.to_string()
-    }
-}
-
-impl UIfmt for Address {
-    fn pretty(&self) -> String {
-        to_checksum(self, None)
-    }
-}
-
-impl UIfmt for H64 {
-    fn pretty(&self) -> String {
-        format!("{self:#x}")
-    }
-}
-
-impl UIfmt for H256 {
-    fn pretty(&self) -> String {
-        format!("{self:#x}")
-    }
-}
-
-impl UIfmt for Bytes {
-    fn pretty(&self) -> String {
-        format!("{self:#x}")
-    }
-}
-
-impl<const N: usize> UIfmt for [u8; N] {
-    fn pretty(&self) -> String {
-        hex::encode_prefixed(&self[..])
-    }
-}
-
-impl UIfmt for U64 {
-    fn pretty(&self) -> String {
-        self.to_string()
-    }
-}
-
-impl UIfmt for Bloom {
-    fn pretty(&self) -> String {
-        format!("{self:#x}")
-    }
 }
 
 impl<T: UIfmt> UIfmt for Option<T> {
@@ -114,6 +49,78 @@ impl<T: UIfmt> UIfmt for Vec<T> {
         } else {
             "[]".to_string()
         }
+    }
+}
+
+impl UIfmt for String {
+    fn pretty(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl UIfmt for bool {
+    fn pretty(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl UIfmt for U256 {
+    fn pretty(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl UIfmt for I256 {
+    fn pretty(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl UIfmt for Address {
+    fn pretty(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl UIfmt for Bloom {
+    fn pretty(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl UIfmt for Vec<u8> {
+    fn pretty(&self) -> String {
+        self[..].pretty()
+    }
+}
+
+impl UIfmt for Bytes {
+    fn pretty(&self) -> String {
+        self[..].pretty()
+    }
+}
+
+impl<const N: usize> UIfmt for [u8; N] {
+    fn pretty(&self) -> String {
+        self[..].pretty()
+    }
+}
+
+impl<const N: usize> UIfmt for FixedBytes<N> {
+    fn pretty(&self) -> String {
+        self[..].pretty()
+    }
+}
+
+impl UIfmt for [u8] {
+    fn pretty(&self) -> String {
+        hex::encode_prefixed(self)
+    }
+}
+
+impl UIfmt for U64 {
+    fn pretty(&self) -> String {
+        self.to_string()
     }
 }
 
@@ -201,6 +208,226 @@ transactions:        {}",
     }
 }
 
+impl UIfmt for OtherFields {
+    fn pretty(&self) -> String {
+        let mut s = String::with_capacity(self.len() * 30);
+        if !self.is_empty() {
+            s.push('\n');
+        }
+        for (key, value) in self.iter() {
+            let val = EthValue::from(value.clone()).pretty();
+            let offset = NAME_COLUMN_LEN.saturating_sub(key.len());
+            s.push_str(key);
+            s.extend(std::iter::repeat(' ').take(offset + 1));
+            s.push_str(&val);
+            s.push('\n');
+        }
+        s
+    }
+}
+
+impl UIfmt for Transaction {
+    fn pretty(&self) -> String {
+        format!(
+            "
+blockHash            {}
+blockNumber          {}
+from                 {}
+gas                  {}
+gasPrice             {}
+hash                 {}
+input                {}
+nonce                {}
+r                    {}
+s                    {}
+to                   {}
+transactionIndex     {}
+v                    {}
+value                {}{}",
+            self.block_hash.pretty(),
+            self.block_number.pretty(),
+            self.from.pretty(),
+            self.gas.pretty(),
+            self.gas_price.pretty(),
+            self.hash.pretty(),
+            self.input.pretty(),
+            self.nonce.pretty(),
+            to_bytes(self.r).pretty(),
+            to_bytes(self.s).pretty(),
+            self.to.pretty(),
+            self.transaction_index.pretty(),
+            self.v.pretty(),
+            self.value.pretty(),
+            self.other.pretty()
+        )
+    }
+}
+
+impl UIfmt for TransactionReceiptWithRevertReason {
+    fn pretty(&self) -> String {
+        if let Some(revert_reason) = &self.revert_reason {
+            format!(
+                "{}
+revertReason            {}",
+                self.receipt.pretty(),
+                revert_reason
+            )
+        } else {
+            self.receipt.pretty()
+        }
+    }
+}
+
+/// Various numerical ethereum types used for pretty printing
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+#[allow(missing_docs)]
+pub enum EthValue {
+    U64(U64),
+    U256(U256),
+    U64Array(Vec<U64>),
+    U256Array(Vec<U256>),
+    Other(serde_json::Value),
+}
+
+impl From<serde_json::Value> for EthValue {
+    fn from(val: serde_json::Value) -> Self {
+        serde_json::from_value(val).expect("infallible")
+    }
+}
+
+impl UIfmt for EthValue {
+    fn pretty(&self) -> String {
+        match self {
+            EthValue::U64(num) => num.pretty(),
+            EthValue::U256(num) => num.pretty(),
+            EthValue::U64Array(arr) => arr.pretty(),
+            EthValue::U256Array(arr) => arr.pretty(),
+            EthValue::Other(val) => val.to_string().trim_matches('"').to_string(),
+        }
+    }
+}
+
+// TODO: replace these above and remove this module once types are converted
+mod temp_ethers {
+    use super::UIfmt;
+    use ethers_core::types::{Address, Bloom, Bytes, H256, H64, I256, U256, U64};
+    use foundry_utils::types::ToAlloy;
+
+    macro_rules! with_alloy {
+        ($($t:ty),*) => {$(
+            impl UIfmt for $t {
+                fn pretty(&self) -> String {
+                    self.to_alloy().pretty()
+                }
+            }
+        )*};
+    }
+
+    impl UIfmt for Bytes {
+        fn pretty(&self) -> String {
+            self.clone().to_alloy().pretty()
+        }
+    }
+
+    with_alloy!(Address, Bloom, H64, H256, I256, U256, U64);
+}
+
+/// Convert a U256 to bytes
+pub fn to_bytes(uint: ethers_core::types::U256) -> Bytes {
+    let mut buffer: [u8; 4 * 8] = [0; 4 * 8];
+    uint.to_big_endian(&mut buffer);
+    Bytes::from(buffer)
+}
+
+/// Returns the `UiFmt::pretty()` formatted attribute of the transactions
+pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<String> {
+    match attr {
+        "blockHash" | "block_hash" => Some(transaction.block_hash.pretty()),
+        "blockNumber" | "block_number" => Some(transaction.block_number.pretty()),
+        "from" => Some(transaction.from.pretty()),
+        "gas" => Some(transaction.gas.pretty()),
+        "gasPrice" | "gas_price" => Some(transaction.gas_price.pretty()),
+        "hash" => Some(transaction.hash.pretty()),
+        "input" => Some(transaction.input.pretty()),
+        "nonce" => Some(transaction.nonce.pretty()),
+        "s" => Some(to_bytes(transaction.s).pretty()),
+        "r" => Some(to_bytes(transaction.r).pretty()),
+        "to" => Some(transaction.to.pretty()),
+        "transactionIndex" | "transaction_index" => Some(transaction.transaction_index.pretty()),
+        "v" => Some(transaction.v.pretty()),
+        "value" => Some(transaction.value.pretty()),
+        other => {
+            if let Some(value) = transaction.other.get(other) {
+                return Some(value.to_string().trim_matches('"').to_string())
+            }
+            None
+        }
+    }
+}
+
+/// Returns the `UiFmt::pretty()` formatted attribute of the transaction receipt
+pub fn get_pretty_tx_receipt_attr(
+    receipt: &TransactionReceiptWithRevertReason,
+    attr: &str,
+) -> Option<String> {
+    match attr {
+        "blockHash" | "block_hash" => Some(receipt.receipt.block_hash.pretty()),
+        "blockNumber" | "block_number" => Some(receipt.receipt.block_number.pretty()),
+        "contractAddress" | "contract_address" => Some(receipt.receipt.contract_address.pretty()),
+        "cumulativeGasUsed" | "cumulative_gas_used" => {
+            Some(receipt.receipt.cumulative_gas_used.pretty())
+        }
+        "effectiveGasPrice" | "effective_gas_price" => {
+            Some(receipt.receipt.effective_gas_price.pretty())
+        }
+        "gasUsed" | "gas_used" => Some(receipt.receipt.gas_used.pretty()),
+        "logs" => Some(receipt.receipt.logs.pretty()),
+        "logsBloom" | "logs_bloom" => Some(receipt.receipt.logs_bloom.pretty()),
+        "root" => Some(receipt.receipt.root.pretty()),
+        "status" => Some(receipt.receipt.status.pretty()),
+        "transactionHash" | "transaction_hash" => Some(receipt.receipt.transaction_hash.pretty()),
+        "transactionIndex" | "transaction_index" => {
+            Some(receipt.receipt.transaction_index.pretty())
+        }
+        "type" | "transaction_type" => Some(receipt.receipt.transaction_type.pretty()),
+        "revertReason" | "revert_reason" => Some(receipt.revert_reason.pretty()),
+        _ => None,
+    }
+}
+
+/// Returns the `UiFmt::pretty()` formatted attribute of the given block
+pub fn get_pretty_block_attr<TX>(block: &Block<TX>, attr: &str) -> Option<String> {
+    match attr {
+        "baseFeePerGas" | "base_fee_per_gas" => Some(block.base_fee_per_gas.pretty()),
+        "difficulty" => Some(block.difficulty.pretty()),
+        "extraData" | "extra_data" => Some(block.extra_data.pretty()),
+        "gasLimit" | "gas_limit" => Some(block.gas_limit.pretty()),
+        "gasUsed" | "gas_used" => Some(block.gas_used.pretty()),
+        "hash" => Some(block.hash.pretty()),
+        "logsBloom" | "logs_bloom" => Some(block.logs_bloom.pretty()),
+        "miner" | "author" => Some(block.author.pretty()),
+        "mixHash" | "mix_hash" => Some(block.mix_hash.pretty()),
+        "nonce" => Some(block.nonce.pretty()),
+        "number" => Some(block.number.pretty()),
+        "parentHash" | "parent_hash" => Some(block.parent_hash.pretty()),
+        "receiptsRoot" | "receipts_root" => Some(block.receipts_root.pretty()),
+        "sealFields" | "seal_fields" => Some(block.seal_fields.pretty()),
+        "sha3Uncles" | "sha_3_uncles" => Some(block.uncles_hash.pretty()),
+        "size" => Some(block.size.pretty()),
+        "stateRoot" | "state_root" => Some(block.state_root.pretty()),
+        "timestamp" => Some(block.timestamp.pretty()),
+        "totalDifficulty" | "total_difficult" => Some(block.total_difficulty.pretty()),
+        other => {
+            if let Some(value) = block.other.get(other) {
+                let val = EthValue::from(value.clone());
+                return Some(val.pretty())
+            }
+            None
+        }
+    }
+}
+
 fn pretty_block_basics<T>(block: &Block<T>) -> String {
     format!(
         "
@@ -246,156 +473,6 @@ totalDifficulty      {}{}",
         block.total_difficulty.pretty(),
         block.other.pretty()
     )
-}
-
-impl UIfmt for OtherFields {
-    fn pretty(&self) -> String {
-        let mut s = String::with_capacity(self.len() * 30);
-        if !self.is_empty() {
-            s.push('\n');
-        }
-        for (key, value) in self.iter() {
-            let val = EthValue::from(value.clone()).pretty();
-            let offset = NAME_COLUMN_LEN.saturating_sub(key.len());
-            s.push_str(key);
-            s.extend(std::iter::repeat(' ').take(offset + 1));
-            s.push_str(&val);
-            s.push('\n');
-        }
-        s
-    }
-}
-
-/// Various numerical ethereum types used for pretty printing
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-#[allow(missing_docs)]
-pub enum EthValue {
-    U64(U64),
-    U256(U256),
-    U64Array(Vec<U64>),
-    U256Array(Vec<U256>),
-    Other(serde_json::Value),
-}
-
-impl From<serde_json::Value> for EthValue {
-    fn from(val: serde_json::Value) -> Self {
-        serde_json::from_value(val).expect("infallible")
-    }
-}
-
-impl UIfmt for EthValue {
-    fn pretty(&self) -> String {
-        match self {
-            EthValue::U64(num) => num.pretty(),
-            EthValue::U256(num) => num.pretty(),
-            EthValue::U64Array(arr) => arr.pretty(),
-            EthValue::U256Array(arr) => arr.pretty(),
-            EthValue::Other(val) => val.to_string().trim_matches('"').to_string(),
-        }
-    }
-}
-
-impl UIfmt for Transaction {
-    fn pretty(&self) -> String {
-        format!(
-            "
-blockHash            {}
-blockNumber          {}
-from                 {}
-gas                  {}
-gasPrice             {}
-hash                 {}
-input                {}
-nonce                {}
-r                    {}
-s                    {}
-to                   {}
-transactionIndex     {}
-v                    {}
-value                {}{}",
-            self.block_hash.pretty(),
-            self.block_number.pretty(),
-            self.from.pretty(),
-            self.gas.pretty(),
-            self.gas_price.pretty(),
-            self.hash.pretty(),
-            self.input.pretty(),
-            self.nonce.pretty(),
-            to_bytes(self.r).pretty(),
-            to_bytes(self.s).pretty(),
-            self.to.pretty(),
-            self.transaction_index.pretty(),
-            self.v.pretty(),
-            self.value.pretty(),
-            self.other.pretty()
-        )
-    }
-}
-
-/// Convert a U256 to bytes
-pub fn to_bytes(uint: U256) -> Bytes {
-    let mut buffer: [u8; 4 * 8] = [0; 4 * 8];
-    uint.to_big_endian(&mut buffer);
-    Bytes::from(buffer)
-}
-
-/// Returns the `UiFmt::pretty()` formatted attribute of the transactions
-pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<String> {
-    match attr {
-        "blockHash" | "block_hash" => Some(transaction.block_hash.pretty()),
-        "blockNumber" | "block_number" => Some(transaction.block_number.pretty()),
-        "from" => Some(transaction.from.pretty()),
-        "gas" => Some(transaction.gas.pretty()),
-        "gasPrice" | "gas_price" => Some(transaction.gas_price.pretty()),
-        "hash" => Some(transaction.hash.pretty()),
-        "input" => Some(transaction.input.pretty()),
-        "nonce" => Some(transaction.nonce.pretty()),
-        "s" => Some(to_bytes(transaction.s).pretty()),
-        "r" => Some(to_bytes(transaction.r).pretty()),
-        "to" => Some(transaction.to.pretty()),
-        "transactionIndex" | "transaction_index" => Some(transaction.transaction_index.pretty()),
-        "v" => Some(transaction.v.pretty()),
-        "value" => Some(transaction.value.pretty()),
-        other => {
-            if let Some(value) = transaction.other.get(other) {
-                return Some(value.to_string().trim_matches('"').to_string())
-            }
-            None
-        }
-    }
-}
-
-/// Returns the `UiFmt::pretty()` formatted attribute of the given block
-pub fn get_pretty_block_attr<TX>(block: &Block<TX>, attr: &str) -> Option<String> {
-    match attr {
-        "baseFeePerGas" | "base_fee_per_gas" => Some(block.base_fee_per_gas.pretty()),
-        "difficulty" => Some(block.difficulty.pretty()),
-        "extraData" | "extra_data" => Some(block.extra_data.pretty()),
-        "gasLimit" | "gas_limit" => Some(block.gas_limit.pretty()),
-        "gasUsed" | "gas_used" => Some(block.gas_used.pretty()),
-        "hash" => Some(block.hash.pretty()),
-        "logsBloom" | "logs_bloom" => Some(block.logs_bloom.pretty()),
-        "miner" | "author" => Some(block.author.pretty()),
-        "mixHash" | "mix_hash" => Some(block.mix_hash.pretty()),
-        "nonce" => Some(block.nonce.pretty()),
-        "number" => Some(block.number.pretty()),
-        "parentHash" | "parent_hash" => Some(block.parent_hash.pretty()),
-        "receiptsRoot" | "receipts_root" => Some(block.receipts_root.pretty()),
-        "sealFields" | "seal_fields" => Some(block.seal_fields.pretty()),
-        "sha3Uncles" | "sha_3_uncles" => Some(block.uncles_hash.pretty()),
-        "size" => Some(block.size.pretty()),
-        "stateRoot" | "state_root" => Some(block.state_root.pretty()),
-        "timestamp" => Some(block.timestamp.pretty()),
-        "totalDifficulty" | "total_difficult" => Some(block.total_difficulty.pretty()),
-        other => {
-            if let Some(value) = block.other.get(other) {
-                let val = EthValue::from(value.clone());
-                return Some(val.pretty())
-            }
-            None
-        }
-    }
 }
 
 #[cfg(test)]
@@ -500,47 +577,45 @@ value                0".to_string();
 
     #[test]
     fn uifmt_option_u64() {
-        let empty: Option<U64> = None;
-        assert_eq!(String::new(), empty.pretty());
-        assert_eq!("100".to_string(), U64::from_dec_str("100").unwrap().pretty());
-        assert_eq!("100".to_string(), Option::from(U64::from_dec_str("100").unwrap()).pretty())
+        assert_eq!(None::<U64>.pretty(), "");
+        assert_eq!(U64::from(100).pretty(), "100");
+        assert_eq!(Some(U64::from(100)).pretty(), "100");
     }
 
     #[test]
     fn uifmt_option_h64() {
-        let empty: Option<H256> = None;
-        assert_eq!(String::new(), empty.pretty());
-        H256::from_low_u64_be(100);
+        assert_eq!(None::<B256>.pretty(), "");
         assert_eq!(
+            B256::with_last_byte(100).pretty(),
             "0x0000000000000000000000000000000000000000000000000000000000000064",
-            H256::from_low_u64_be(100).pretty()
         );
         assert_eq!(
+            Some(B256::with_last_byte(100)).pretty(),
             "0x0000000000000000000000000000000000000000000000000000000000000064",
-            Some(H256::from_low_u64_be(100)).pretty()
         );
     }
+
     #[test]
     fn uifmt_option_bytes() {
-        let empty: Option<Bytes> = None;
-        assert_eq!(String::new(), empty.pretty());
+        assert_eq!(None::<Bytes>.pretty(), "");
         assert_eq!(
-            "0x0000000000000000000000000000000000000000000000000000000000000064".to_string(),
             Bytes::from_str("0x0000000000000000000000000000000000000000000000000000000000000064")
                 .unwrap()
-                .pretty()
+                .pretty(),
+            "0x0000000000000000000000000000000000000000000000000000000000000064",
         );
         assert_eq!(
-            "0x0000000000000000000000000000000000000000000000000000000000000064".to_string(),
             Some(
                 Bytes::from_str(
                     "0x0000000000000000000000000000000000000000000000000000000000000064"
                 )
                 .unwrap()
             )
-            .pretty()
+            .pretty(),
+            "0x0000000000000000000000000000000000000000000000000000000000000064",
         );
     }
+
     #[test]
     fn test_pretty_tx_attr() {
         let block = r#"{"number":"0x3","hash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","parentHash":"0x689c70c080ca22bc0e681694fa803c1aba16a69c8b6368fed5311d279eb9de90","mixHash":"0x0000000000000000000000000000000000000000000000000000000000000000","nonce":"0x0000000000000000","sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","transactionsRoot":"0x7270c1c4440180f2bd5215809ee3d545df042b67329499e1ab97eb759d31610d","stateRoot":"0x29f32984517a7d25607da485b23cefabfd443751422ca7e603395e1de9bc8a4b","receiptsRoot":"0x056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2","miner":"0x0000000000000000000000000000000000000000","difficulty":"0x0","totalDifficulty":"0x0","extraData":"0x","size":"0x3e8","gasLimit":"0x6691b7","gasUsed":"0x5208","timestamp":"0x5ecedbb9","transactions":[{"hash":"0xc3c5f700243de37ae986082fd2af88d2a7c2752a0c0f7b9d6ac47c729d45e067","nonce":"0x2","blockHash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","blockNumber":"0x3","transactionIndex":"0x0","from":"0xfdcedc3bfca10ecb0890337fbdd1977aba84807a","to":"0xdca8ce283150ab773bcbeb8d38289bdb5661de1e","value":"0x0","gas":"0x15f90","gasPrice":"0x4a817c800","input":"0x","v":"0x25","r":"0x19f2694eb9113656dbea0b925e2e7ceb43df83e601c4116aee9c0dd99130be88","s":"0x73e5764b324a4f7679d890a198ba658ba1c8cd36983ff9797e10b1b89dbb448e"}],"uncles":[]}"#;
@@ -584,6 +659,7 @@ value                0".to_string();
         assert_eq!(Some("37".to_string()), get_pretty_tx_attr(&block.transactions[0], "v"));
         assert_eq!(Some("0".to_string()), get_pretty_tx_attr(&block.transactions[0], "value"));
     }
+
     #[test]
     fn test_pretty_block_attr() {
         let json = serde_json::json!(

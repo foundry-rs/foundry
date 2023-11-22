@@ -1,8 +1,6 @@
 use proc_macro2::{Delimiter, Group, Ident, TokenStream};
 use quote::{format_ident, quote};
-use syn::{
-    punctuated::Punctuated, Data, DataEnum, DataStruct, DeriveInput, Field, Fields, Token, Type,
-};
+use syn::{punctuated::Punctuated, Data, DataEnum, DataStruct, DeriveInput, Fields, Token, Type};
 
 pub fn console_fmt(input: &DeriveInput) -> TokenStream {
     let name = &input.ident;
@@ -12,7 +10,7 @@ pub fn console_fmt(input: &DeriveInput) -> TokenStream {
         Data::Union(_) => return quote!(compile_error!("Unions are unsupported");),
     };
     quote! {
-        impl ::foundry_macros::ConsoleFmt for #name {
+        impl ::foundry_common::fmt::ConsoleFmt for #name {
             #tokens
         }
     }
@@ -21,19 +19,18 @@ pub fn console_fmt(input: &DeriveInput) -> TokenStream {
 fn derive_struct(s: &DataStruct) -> TokenStream {
     let imp = impl_struct(s).unwrap_or_else(|| quote!(String::new()));
     quote! {
-        fn fmt(&self, _spec: ::foundry_macros::FormatSpec) -> String {
+        fn fmt(&self, _spec: ::foundry_common::fmt::FormatSpec) -> String {
             #imp
         }
     }
 }
 
 fn impl_struct(s: &DataStruct) -> Option<TokenStream> {
-    let fields: Punctuated<&Field, Token![,]> = match &s.fields {
-        Fields::Named(fields) => fields.named.iter(),
-        Fields::Unnamed(fields) => fields.unnamed.iter(),
+    let fields = match &s.fields {
+        Fields::Named(fields) => &fields.named,
+        Fields::Unnamed(fields) => &fields.unnamed,
         Fields::Unit => return None,
-    }
-    .collect();
+    };
 
     if fields.is_empty() {
         return None
@@ -59,12 +56,12 @@ fn impl_struct(s: &DataStruct) -> Option<TokenStream> {
         let first = args.next().unwrap();
         let first = first.value();
         quote! {
-            ::foundry_macros::console_format((#first).as_str(), &[#(#args)*])
+            ::foundry_common::fmt::console_format((#first).as_str(), &[#(#args)*])
         }
     } else {
         // console_format("", [...args])
         quote! {
-            ::foundry_macros::console_format("", &[#args])
+            ::foundry_common::fmt::console_format("", &[#args])
         }
     };
 
@@ -95,12 +92,12 @@ fn derive_enum(e: &DataEnum) -> TokenStream {
         let field = fields.into_iter().next().unwrap();
         let fields = Group::new(delimiter, quote!(#field));
         quote! {
-            Self::#name #fields => ::foundry_macros::ConsoleFmt::fmt(#field, spec),
+            Self::#name #fields => ::foundry_common::fmt::ConsoleFmt::fmt(#field, spec),
         }
     });
 
     quote! {
-        fn fmt(&self, spec: ::foundry_macros::FormatSpec) -> String {
+        fn fmt(&self, spec: ::foundry_common::fmt::FormatSpec) -> String {
             match self {
                 #(#arms)*
 
