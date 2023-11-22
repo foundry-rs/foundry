@@ -1,6 +1,6 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{Address, Bytes, Log as RawLog, B256, U256};
-use alloy_sol_types::{ContractError, SolInterface, SolValue};
+use alloy_sol_types::{SolError, SolValue};
 use revm::interpreter::{return_ok, InstructionResult};
 use spec::Vm;
 use std::collections::{hash_map::Entry, HashMap};
@@ -466,13 +466,14 @@ pub(crate) fn handle_expect_revert(
     }
 
     let mut actual_revert: Vec<u8> = retdata.into();
-    if let Ok(error) = ContractError::<Vm::VmErrors>::abi_decode(&actual_revert, false) {
-        match error {
-            ContractError::Revert(revert) => actual_revert = revert.reason.into_bytes(),
-            ContractError::Panic(_panic) => {}
-            ContractError::CustomError(Vm::VmErrors::CheatcodeError(cheatcode_error)) => {
-                actual_revert = cheatcode_error.message.into_bytes()
-            }
+
+    // Try decoding as known errors
+    if matches!(
+        actual_revert.get(..4).map(|s| s.try_into().unwrap()),
+        Some(Vm::CheatcodeError::SELECTOR | alloy_sol_types::Revert::SELECTOR)
+    ) {
+        if let Ok(decoded) = Vec::<u8>::abi_decode(&actual_revert[4..], false) {
+            actual_revert = decoded;
         }
     }
 
