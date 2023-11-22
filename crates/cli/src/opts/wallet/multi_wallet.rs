@@ -6,9 +6,8 @@ use ethers_signers::{
     AwsSigner, HDPath as LedgerHDPath, Ledger, LocalWallet, Signer, Trezor, TrezorHDPath,
 };
 use eyre::{Context, ContextCompat, Result};
-use foundry_common::RetryProvider;
+use foundry_common::{types::ToAlloy, RetryProvider};
 use foundry_config::Config;
-use foundry_utils::types::ToAlloy;
 use itertools::izip;
 use rusoto_core::{
     credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,

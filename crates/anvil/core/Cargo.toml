@@ -10,9 +10,9 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-# foundry internal
+foundry-common.workspace = true
 foundry-evm.workspace = true
-foundry-utils.workspace = true
+
 revm = { workspace = true, default-features = false, features = ["std", "serde", "memory_limit"] }
 
 alloy-primitives = { workspace = true, features = ["serde"] }

@@ -12,6 +12,7 @@ use ethers_core::{
 
 /// Conversion trait to easily convert from Ethers types to Alloy types.
 pub trait ToAlloy {
+    /// The corresponding Alloy type.
     type To;
 
     /// Converts the Ethers type to the corresponding Alloy type.
@@ -196,6 +197,7 @@ impl ToAlloy for ethabi::StateMutability {
 
 /// Conversion trait to easily convert from Alloy types to Ethers types.
 pub trait ToEthers {
+    /// The corresponding Ethers type.
     type To;
 
     /// Converts the Alloy type to the corresponding Ethers type.

@@ -17,9 +17,9 @@ use foundry_common::{
         decode_calldata, decode_event_topic, decode_function_selector, import_selectors,
         parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
     },
+    types::{ToAlloy, ToEthers},
 };
 use foundry_config::Config;
-use foundry_utils::types::{ToAlloy, ToEthers};
 use std::time::Instant;
 
 pub mod cmd;

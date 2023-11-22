@@ -23,7 +23,6 @@ members = [
     "crates/forge/",
     "crates/macros/",
     "crates/test-utils/",
-    "crates/utils/",
 ]
 resolver = "2"
 
@@ -125,7 +124,6 @@ foundry-evm-fuzz = { path = "crates/evm/fuzz" }
 foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
-foundry-utils = { path = "crates/utils" }
 
 # block explorer & verification bindings
 foundry-block-explorers = { version = "0.1", default-features = false }

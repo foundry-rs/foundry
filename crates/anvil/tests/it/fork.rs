@@ -13,13 +13,12 @@ use ethers::{
         U256,
     },
 };
-use foundry_common::get_http_provider;
-use foundry_config::Config;
-use foundry_utils::{
-    rpc,
+use foundry_common::{
+    get_http_provider, rpc,
     rpc::next_http_rpc_endpoint,
     types::{ToAlloy, ToEthers},
 };
+use foundry_config::Config;
 use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
 

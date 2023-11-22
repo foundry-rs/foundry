@@ -11,8 +11,11 @@ use ethers_core::{
     types::{Block, BlockNumber, Transaction},
     utils::GenesisAccount,
 };
-use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
-use foundry_utils::types::{ToAlloy, ToEthers};
+use foundry_common::{
+    is_known_system_sender,
+    types::{ToAlloy, ToEthers},
+    SYSTEM_TRANSACTION_TYPE,
+};
 use revm::{
     db::{CacheDB, DatabaseRef},
     inspectors::NoOpInspector,
