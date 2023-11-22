@@ -4,7 +4,6 @@ members = [
     "crates/anvil/core/",
     "crates/anvil/rpc/",
     "crates/anvil/server/",
-    "crates/binder/",
     "crates/cast/",
     "crates/cheatcodes/",
     "crates/cheatcodes/spec/",
@@ -110,7 +109,6 @@ forge = { path = "crates/forge" }
 
 forge-doc = { path = "crates/doc" }
 forge-fmt = { path = "crates/fmt" }
-foundry-binder = { path = "crates/binder" }
 foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
 foundry-cli = { path = "crates/cli" }
