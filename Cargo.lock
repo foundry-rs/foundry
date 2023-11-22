@@ -2752,6 +2752,7 @@ dependencies = [
  "foundry-utils",
  "globset",
  "once_cell",
+ "pretty_assertions",
  "regex",
  "reqwest",
  "semver 1.0.20",

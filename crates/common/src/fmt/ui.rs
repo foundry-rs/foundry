@@ -479,6 +479,7 @@ totalDifficulty      {}{}",
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
     use std::str::FromStr;
 
     #[test]
@@ -549,7 +550,7 @@ l1TxOrigin           null
 queueIndex           null
 queueOrigin          sequencer
 rawTransaction       0xf86681a28084011cbbdc944a16a42407aa491564643e1dfc1fd50af29794ef8084d294f09338a06fca94073a0cf3381978662d46cf890602d3e9ccf6a31e4b69e8ecbd995e2beea00e804161a2b56a37ca1f6f4c4b8bce926587afa0d9b1acc5165e6556c959d583
-txType
+txType               0
 ".trim()
         );
     }

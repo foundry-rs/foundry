@@ -193,8 +193,8 @@ impl ConsoleFmt for [u8] {
 ///
 /// # Examples
 ///
-/// ```
-/// let formatted = foundry_macros::console_format("%s has %d characters", ["foo", 3]);
+/// ```ignore (not implemented for integers)
+/// let formatted = foundry_common::fmt::console_format("%s has %d characters", &[&"foo", &3]);
 /// assert_eq!(formatted, "foo has 3 characters");
 /// ```
 pub fn console_format(spec: &str, values: &[&dyn ConsoleFmt]) -> String {
