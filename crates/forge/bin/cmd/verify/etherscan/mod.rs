@@ -70,9 +70,12 @@ impl VerificationProvider for EtherscanVerificationProvider {
         trace!(target: "forge::verify", ?verify_args, "submitting verification request");
 
         let retry: Retry = args.retry.into();
-        let resp = retry.run_async(|| 
-            async  {
-                println!("\nSubmitting verification for [{}] {}.", verify_args.contract_name, verify_args.address);
+        let resp = retry
+            .run_async(|| async {
+                println!(
+                    "\nSubmitting verification for [{}] {}.",
+                    verify_args.contract_name, verify_args.address
+                );
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await
@@ -97,15 +100,15 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
                     warn!("Failed verify submission: {:?}", resp);
                     eprintln!(
-                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
-                        resp.message, resp.result
-                    );
+                    "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
+                    resp.message, resp.result
+                );
                     std::process::exit(1);
                 }
 
                 Ok(Some(resp))
-            }
-        ).await?;
+            })
+            .await?;
 
         if let Some(resp) = resp {
             println!(
