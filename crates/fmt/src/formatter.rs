@@ -237,9 +237,8 @@ impl<'a, W: Write> Formatter<'a, W> {
             return false;
         }
         let space: usize = self.next_char_needs_space(text.chars().next().unwrap()).into();
-        self.config.line_length
-            >= self
-                .total_indent_len()
+        self.config.line_length >=
+            self.total_indent_len()
                 .saturating_add(self.current_line_len())
                 .saturating_add(text.chars().count() + space)
     }
@@ -313,10 +312,10 @@ impl<'a, W: Write> Formatter<'a, W> {
             subset
                 .comment_state_char_indices()
                 .position(|(state, idx, ch)| {
-                    first_char == ch
-                        && state == CommentState::None
-                        && idx + needle.len() <= subset.len()
-                        && subset[idx..idx + needle.len()].eq(needle)
+                    first_char == ch &&
+                        state == CommentState::None &&
+                        idx + needle.len() <= subset.len() &&
+                        subset[idx..idx + needle.len()].eq(needle)
                 })
                 .map(|p| byte_offset + p)
         })
@@ -1450,14 +1449,14 @@ impl<'a, W: Write> Formatter<'a, W> {
                     } else {
                         ";"
                     };
-                    let should_multiline = header_multiline
-                        && matches!(
+                    let should_multiline = header_multiline &&
+                        matches!(
                             fmt.config.multiline_func_header,
                             MultilineFuncHeaderStyle::ParamsFirst | MultilineFuncHeaderStyle::All
                         );
-                    params_multiline = should_multiline
-                        || multiline
-                        || fmt.are_chunks_separated_multiline(
+                    params_multiline = should_multiline ||
+                        multiline ||
+                        fmt.are_chunks_separated_multiline(
                             &format!("{{}}){after_params}"),
                             &params,
                             ",",
@@ -1537,8 +1536,8 @@ impl<'a, W: Write> Formatter<'a, W> {
             Ok(())
         };
 
-        let should_multiline = header_multiline
-            && if params_multiline {
+        let should_multiline = header_multiline &&
+            if params_multiline {
                 matches!(self.config.multiline_func_header, MultilineFuncHeaderStyle::All)
             } else {
                 matches!(
@@ -1546,8 +1545,8 @@ impl<'a, W: Write> Formatter<'a, W> {
                     MultilineFuncHeaderStyle::AttributesFirst
                 )
             };
-        let attrs_multiline = should_multiline
-            || !self.try_on_single_line(|fmt| {
+        let attrs_multiline = should_multiline ||
+            !self.try_on_single_line(|fmt| {
                 write_attributes(fmt, false)?;
                 if !fmt.will_it_fit(if func.body.is_some() { " {" } else { ";" }) {
                     bail!(FormatterError::fmt())
@@ -1583,8 +1582,8 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         let cond_close_paren_loc =
             self.find_next_in_src(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
-        let attempt_single_line = single_line_stmt_wide
-            && self.should_attempt_block_single_line(if_branch.as_mut(), cond_close_paren_loc);
+        let attempt_single_line = single_line_stmt_wide &&
+            self.should_attempt_block_single_line(if_branch.as_mut(), cond_close_paren_loc);
         let if_branch_is_single_line = self.visit_stmt_as_block(if_branch, attempt_single_line)?;
         if single_line_stmt_wide && !if_branch_is_single_line {
             bail!(FormatterError::fmt())
@@ -2098,9 +2097,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                                 fmt.chunked(end.loc().start(), Some(loc.end()), |fmt| {
                                     end.visit(fmt)
                                 })?;
-                            if chunk.prefixes.is_empty()
-                                && chunk.postfixes_before.is_empty()
-                                && (start.is_none() || fmt.will_it_fit(&chunk.content))
+                            if chunk.prefixes.is_empty() &&
+                                chunk.postfixes_before.is_empty() &&
+                                (start.is_none() || fmt.will_it_fit(&chunk.content))
                             {
                                 chunk.needs_space = Some(false);
                             }
@@ -2138,33 +2137,33 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 })?;
                 write_chunk!(self, loc.end(), "]")?;
             }
-            Expression::PreIncrement(..)
-            | Expression::PostIncrement(..)
-            | Expression::PreDecrement(..)
-            | Expression::PostDecrement(..)
-            | Expression::Not(..)
-            | Expression::UnaryPlus(..)
-            | Expression::Add(..)
-            | Expression::Negate(..)
-            | Expression::Subtract(..)
-            | Expression::Power(..)
-            | Expression::Multiply(..)
-            | Expression::Divide(..)
-            | Expression::Modulo(..)
-            | Expression::ShiftLeft(..)
-            | Expression::ShiftRight(..)
-            | Expression::BitwiseNot(..)
-            | Expression::BitwiseAnd(..)
-            | Expression::BitwiseXor(..)
-            | Expression::BitwiseOr(..)
-            | Expression::Less(..)
-            | Expression::More(..)
-            | Expression::LessEqual(..)
-            | Expression::MoreEqual(..)
-            | Expression::And(..)
-            | Expression::Or(..)
-            | Expression::Equal(..)
-            | Expression::NotEqual(..) => {
+            Expression::PreIncrement(..) |
+            Expression::PostIncrement(..) |
+            Expression::PreDecrement(..) |
+            Expression::PostDecrement(..) |
+            Expression::Not(..) |
+            Expression::UnaryPlus(..) |
+            Expression::Add(..) |
+            Expression::Negate(..) |
+            Expression::Subtract(..) |
+            Expression::Power(..) |
+            Expression::Multiply(..) |
+            Expression::Divide(..) |
+            Expression::Modulo(..) |
+            Expression::ShiftLeft(..) |
+            Expression::ShiftRight(..) |
+            Expression::BitwiseNot(..) |
+            Expression::BitwiseAnd(..) |
+            Expression::BitwiseXor(..) |
+            Expression::BitwiseOr(..) |
+            Expression::Less(..) |
+            Expression::More(..) |
+            Expression::LessEqual(..) |
+            Expression::MoreEqual(..) |
+            Expression::And(..) |
+            Expression::Or(..) |
+            Expression::Equal(..) |
+            Expression::NotEqual(..) => {
                 let spaced = expr.has_space_around();
                 let op = expr.operator().unwrap();
 
@@ -2195,17 +2194,17 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     (None, None) => {}
                 }
             }
-            Expression::Assign(..)
-            | Expression::AssignOr(..)
-            | Expression::AssignAnd(..)
-            | Expression::AssignXor(..)
-            | Expression::AssignShiftLeft(..)
-            | Expression::AssignShiftRight(..)
-            | Expression::AssignAdd(..)
-            | Expression::AssignSubtract(..)
-            | Expression::AssignMultiply(..)
-            | Expression::AssignDivide(..)
-            | Expression::AssignModulo(..) => {
+            Expression::Assign(..) |
+            Expression::AssignOr(..) |
+            Expression::AssignAnd(..) |
+            Expression::AssignXor(..) |
+            Expression::AssignShiftLeft(..) |
+            Expression::AssignShiftRight(..) |
+            Expression::AssignAdd(..) |
+            Expression::AssignSubtract(..) |
+            Expression::AssignMultiply(..) |
+            Expression::AssignDivide(..) |
+            Expression::AssignModulo(..) => {
                 let op = expr.operator().unwrap();
                 let (left, right) = expr.components_mut();
                 let (left, right) = (left.unwrap(), right.unwrap());
@@ -2496,9 +2495,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     Some(base.loc.end()),
                     args.iter_mut().map(|arg| (arg.loc(), arg)),
                 )?;
-                let multiline = multiline
-                    || multiline_hint
-                    || fmt.are_chunks_separated_multiline("{}", &args, ",")?;
+                let multiline = multiline ||
+                    multiline_hint ||
+                    fmt.are_chunks_separated_multiline("{}", &args, ",")?;
                 fmt.write_chunks_separated(&args, ",", multiline)?;
                 Ok(())
             },
@@ -3031,9 +3030,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         }
 
         if let Some(first) = chunks.first_mut() {
-            if first.prefixes.is_empty()
-                && first.postfixes_before.is_empty()
-                && !self.config.bracket_spacing
+            if first.prefixes.is_empty() &&
+                first.postfixes_before.is_empty() &&
+                !self.config.bracket_spacing
             {
                 first.needs_space = Some(false);
             }
