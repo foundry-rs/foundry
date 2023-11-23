@@ -4,10 +4,12 @@ use alloy_dyn_abi::{DynSolType, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use ethers_core::types::Log;
-use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use foundry_common::{
+    contracts::{ContractsByAddress, ContractsByArtifact},
+    types::ToEthers,
+};
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
-use foundry_utils::types::ToEthers;
 use hashbrown::HashSet;
 use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};

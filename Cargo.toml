@@ -1,11 +1,9 @@
 [workspace]
 members = [
-    "crates/abi/",
     "crates/anvil/",
     "crates/anvil/core/",
     "crates/anvil/rpc/",
     "crates/anvil/server/",
-    "crates/binder/",
     "crates/cast/",
     "crates/cheatcodes/",
     "crates/cheatcodes/spec/",
@@ -23,9 +21,7 @@ members = [
     "crates/fmt/",
     "crates/forge/",
     "crates/macros/",
-    "crates/macros/impl/",
     "crates/test-utils/",
-    "crates/utils/",
 ]
 resolver = "2"
 
@@ -97,7 +93,6 @@ codegen-units = 1
 
 # Override packages which aren't perf-sensitive for faster compilation speed
 [profile.release.package]
-foundry-abi.opt-level = 1
 mdbook.opt-level = 1
 protobuf.opt-level = 1
 rusoto_core.opt-level = 1
@@ -114,8 +109,6 @@ forge = { path = "crates/forge" }
 
 forge-doc = { path = "crates/doc" }
 forge-fmt = { path = "crates/fmt" }
-foundry-abi = { path = "crates/abi" }
-foundry-binder = { path = "crates/binder" }
 foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
 foundry-cli = { path = "crates/cli" }
@@ -129,7 +122,6 @@ foundry-evm-fuzz = { path = "crates/evm/fuzz" }
 foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
-foundry-utils = { path = "crates/utils" }
 
 # block explorer & verification bindings
 foundry-block-explorers = { version = "0.1", default-features = false }
@@ -158,13 +150,14 @@ alloy-json-abi = "0.4.1"
 alloy-sol-types = "0.4.1"
 syn-solidity = "0.4.1"
 
-alloy-chains = "0.1.2"
+alloy-chains = "0.1.3"
 alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
 
 ## misc
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 color-eyre = "0.6"
+derive_more = "0.99"
 eyre = "0.6"
 hex = { package = "const-hex", version = "1.6", features = ["hex"] }
 itertools = "0.11"
@@ -196,21 +189,24 @@ tower-http = "0.4"
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
-ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
-ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
-ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
-ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
-ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "b4c366c964106b274e2eb528ac44eebc9bb49551" }
+ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f" }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f"  }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f"  }
+ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f"  }
+ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f"  }
+ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f"  }
+ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f"  }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f"  }
+
+foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers" }
 
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/" }
-alloy-primitives = { git = "https://github.com/alloy-rs/core/" }
 alloy-json-abi = { git = "https://github.com/alloy-rs/core/" }
+alloy-primitives = { git = "https://github.com/alloy-rs/core/" }
+alloy-sol-macro = { git = "https://github.com/alloy-rs/core/" }
 alloy-sol-types = { git = "https://github.com/alloy-rs/core/" }
+alloy-sol-type-parser = { git = "https://github.com/alloy-rs/core/" }
+syn-solidity = { git = "https://github.com/alloy-rs/core/" }
 
 revm = { git = "https://github.com/bluealloy/revm", rev = "1609e07c68048909ad1682c98cf2b9baa76310b5" }
 revm-primitives = { git = "https://github.com/bluealloy/revm", rev = "1609e07c68048909ad1682c98cf2b9baa76310b5" }

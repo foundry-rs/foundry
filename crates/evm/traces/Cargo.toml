@@ -16,7 +16,6 @@ foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-evm-core.workspace = true
-foundry-utils.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
@@ -39,5 +38,4 @@ tracing = "0.1"
 yansi = "0.5"
 
 [dev-dependencies]
-foundry-utils.workspace = true
 tempfile = "3"

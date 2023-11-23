@@ -311,7 +311,7 @@ impl AstEq for Statement {
                 While(loc, expr, stmt1),
                 DoWhile(loc, stmt1, expr),
                 For(loc, stmt1, expr, stmt2, stmt3),
-                Try(loc, expr, params, claus),
+                Try(loc, expr, params, clause),
                 Error(loc)
                 _
                 Block {

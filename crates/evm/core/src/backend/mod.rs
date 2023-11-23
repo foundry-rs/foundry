@@ -11,8 +11,11 @@ use ethers_core::{
     types::{Block, BlockNumber, Transaction},
     utils::GenesisAccount,
 };
-use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
-use foundry_utils::types::{ToAlloy, ToEthers};
+use foundry_common::{
+    is_known_system_sender,
+    types::{ToAlloy, ToEthers},
+    SYSTEM_TRANSACTION_TYPE,
+};
 use revm::{
     db::{CacheDB, DatabaseRef},
     inspectors::NoOpInspector,
@@ -779,8 +782,8 @@ impl Backend {
         self.inner.precompiles().contains(addr)
     }
 
-    /// Ths will clean up already loaded accounts that would be initialized without the correct data
-    /// from the fork
+    /// Cleans up already loaded accounts that would be initialized without the correct data from
+    /// the fork.
     ///
     /// It can happen that an account is loaded before the first fork is selected, like
     /// `getNonce(addr)`, which will load an empty account by default.

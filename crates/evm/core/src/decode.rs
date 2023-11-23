@@ -1,13 +1,10 @@
 //! Various utilities to decode test results.
 
-use crate::abi::ConsoleEvents;
+use crate::abi::{Console, Vm};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::B256;
-use alloy_sol_types::{SolCall, SolError, SolInterface, SolValue};
-use ethers_contract::EthLogDecode;
-use ethers_core::{abi::RawLog, types::Log, utils::format_units};
-use foundry_cheatcodes_spec::Vm;
+use alloy_sol_types::{SolCall, SolError, SolEventInterface, SolInterface, SolValue};
+use ethers_core::types::Log;
 use foundry_common::SELECTOR_LEN;
 use itertools::Itertools;
 use revm::interpreter::InstructionResult;
@@ -21,44 +18,17 @@ pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
 ///
 /// This function returns [None] if it is not a DSTest log or the result of a Hardhat
 /// `console.log`.
+#[instrument(level = "debug", skip_all, fields(topics=?log.topics, data=%log.data), ret)]
 pub fn decode_console_log(log: &Log) -> Option<String> {
-    use ConsoleEvents as CE;
-
-    // NOTE: We need to do this conversion because ethers-rs does not
-    // support passing `Log`s
-    let raw_log = RawLog { topics: log.topics.clone(), data: log.data.to_vec() };
-    let decoded = match ConsoleEvents::decode_log(&raw_log).ok()? {
-        CE::LogsFilter(inner) => format!("{}", inner.0),
-        CE::LogBytesFilter(inner) => format!("{}", inner.0),
-        CE::LogNamedAddressFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
-        CE::LogNamedBytes32Filter(inner) => {
-            format!("{}: {}", inner.key, B256::new(inner.val))
-        }
-        CE::LogNamedDecimalIntFilter(inner) => {
-            let (sign, val) = inner.val.into_sign_and_abs();
-            format!(
-                "{}: {}{}",
-                inner.key,
-                sign,
-                format_units(val, inner.decimals.as_u32()).unwrap()
-            )
-        }
-        CE::LogNamedDecimalUintFilter(inner) => {
-            format!("{}: {}", inner.key, format_units(inner.val, inner.decimals.as_u32()).unwrap())
-        }
-        CE::LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
-        CE::LogNamedUintFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
-        CE::LogNamedBytesFilter(inner) => {
-            format!("{}: {}", inner.key, inner.val)
-        }
-        CE::LogNamedStringFilter(inner) => format!("{}: {}", inner.key, inner.val),
-        CE::LogNamedArray1Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
-        CE::LogNamedArray2Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
-        CE::LogNamedArray3Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
-
-        e => e.to_string(),
+    let topics = log.topics.as_slice();
+    // SAFETY: Same type
+    // TODO: Remove when `ethers::Log` has been replaced
+    let topics = unsafe {
+        &*(topics as *const [ethers_core::types::H256] as *const [alloy_primitives::B256])
     };
-    Some(decoded)
+    Console::ConsoleEvents::decode_log(topics, &log.data, false)
+        .ok()
+        .map(|decoded| decoded.to_string())
 }
 
 /// Tries to decode an error message from the given revert bytes.

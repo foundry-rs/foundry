@@ -1,35 +1,16 @@
-#![doc = include_str!("../README.md")]
-#![warn(unused_crate_dependencies)]
-
-#[macro_use]
-extern crate tracing;
-
-use crate::types::{ToAlloy, ToEthers};
 use alloy_primitives::{Address, Bytes};
-use ethers_core::types::BlockId;
-use ethers_providers::{Middleware, Provider};
-use eyre::{Result, WrapErr};
+use eyre::Result;
 use foundry_compilers::{
     artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode, Libraries},
     contracts::ArtifactContracts,
     ArtifactId,
 };
-use futures::future::BoxFuture;
 use std::{
     collections::{BTreeMap, HashMap},
-    env::VarError,
-    fmt::{Formatter, Write},
+    fmt,
     path::{Path, PathBuf},
     str::FromStr,
-    time::Duration,
 };
-
-pub mod abi;
-pub mod error;
-pub mod glob;
-pub mod path;
-pub mod rpc;
-pub mod types;
 
 /// Data passed to the post link handler of the linker for each linked artifact.
 #[derive(Debug)]
@@ -104,7 +85,7 @@ pub struct ResolvedDependency {
 }
 
 impl std::fmt::Display for ResolvedDependency {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} @ {} (resolved with nonce {})", self.id, self.address, self.nonce)
     }
 }
@@ -139,7 +120,6 @@ impl std::fmt::Display for ResolvedDependency {
 ///
 /// For an example of this, see [here](https://github.com/foundry-rs/foundry/blob/2308972dbc3a89c03488a05aceb3c428bb3e08c0/cli/src/cmd/forge/script/build.rs#L130-L151C9).
 #[allow(clippy::too_many_arguments)]
-
 pub fn link_with_nonce_or_address<T, U>(
     contracts: ArtifactContracts,
     known_contracts: &mut BTreeMap<ArtifactId, T>,
@@ -286,7 +266,7 @@ fn recurse_link<'a>(
     // libraries we have already deployed during the linking process.
     // the key is `file:contract` and the value is the address we computed
     internally_deployed_libraries: &'a mut HashMap<String, (u64, Address)>,
-    // deployed library addresses fname => adddress
+    // deployed library addresses fname => address
     deployed_library_addresses: &'a Libraries,
     // nonce to start at
     nonce: &mut u64,
@@ -382,7 +362,7 @@ fn recurse_link<'a>(
                     id: library,
                     address: *deployed_address,
                     nonce: *cached_nonce,
-                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!("Bytecode should be linked for {next_target}")).0.into(),
+                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!("Bytecode should be linked for {next_target}")),
                 });
                 *deployed_address
             } else {
@@ -399,7 +379,7 @@ fn recurse_link<'a>(
                     id: library,
                     address: computed_address,
                     nonce: used_nonce,
-                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!("Bytecode should be linked for {next_target}")).0.into(),
+                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!("Bytecode should be linked for {next_target}")),
                 });
 
                 // remember this library for later
@@ -414,95 +394,6 @@ fn recurse_link<'a>(
             trace!(target: "forge::link", ?target, dependency=next_target, file, key, "linking dependency done");
         });
     }
-}
-
-/// Given a k/v serde object, it pretty prints its keys and values as a table.
-pub fn to_table(value: serde_json::Value) -> String {
-    match value {
-        serde_json::Value::String(s) => s,
-        serde_json::Value::Object(map) => {
-            let mut s = String::new();
-            for (k, v) in map.iter() {
-                writeln!(&mut s, "{k: <20} {v}\n").expect("could not write k/v to table");
-            }
-            s
-        }
-        _ => String::new(),
-    }
-}
-
-/// Reads the `ETHERSCAN_API_KEY` env variable
-pub fn etherscan_api_key() -> eyre::Result<String> {
-    std::env::var("ETHERSCAN_API_KEY").map_err(|err| match err {
-        VarError::NotPresent => {
-            eyre::eyre!(
-                r#"
-  You need an Etherscan Api Key to verify contracts.
-  Create one at https://etherscan.io/myapikey
-  Then export it with \`export ETHERSCAN_API_KEY=xxxxxxxx'"#
-            )
-        }
-        VarError::NotUnicode(err) => {
-            eyre::eyre!("Invalid `ETHERSCAN_API_KEY`: {:?}", err)
-        }
-    })
-}
-
-/// A type that keeps track of attempts
-#[derive(Debug, Clone)]
-pub struct Retry {
-    retries: u32,
-    delay: Option<u32>,
-}
-
-/// Sample retry logic implementation
-impl Retry {
-    pub fn new(retries: u32, delay: Option<u32>) -> Self {
-        Self { retries, delay }
-    }
-
-    fn handle_err(&mut self, err: eyre::Report) {
-        self.retries -= 1;
-        warn!("erroneous attempt ({} tries remaining): {}", self.retries, err.root_cause());
-        if let Some(delay) = self.delay {
-            std::thread::sleep(Duration::from_secs(delay.into()));
-        }
-    }
-
-    pub fn run<T, F>(mut self, mut callback: F) -> eyre::Result<T>
-    where
-        F: FnMut() -> eyre::Result<T>,
-    {
-        loop {
-            match callback() {
-                Err(e) if self.retries > 0 => self.handle_err(e),
-                res => return res,
-            }
-        }
-    }
-
-    pub async fn run_async<'a, T, F>(mut self, mut callback: F) -> eyre::Result<T>
-    where
-        F: FnMut() -> BoxFuture<'a, eyre::Result<T>>,
-    {
-        loop {
-            match callback().await {
-                Err(e) if self.retries > 0 => self.handle_err(e),
-                res => return res,
-            };
-        }
-    }
-}
-
-pub async fn next_nonce(
-    caller: Address,
-    provider_url: &str,
-    block: Option<BlockId>,
-) -> Result<u64> {
-    let provider = Provider::try_from(provider_url)
-        .wrap_err_with(|| format!("Bad fork_url provider: {provider_url}"))?;
-    let res = provider.get_transaction_count(caller.to_ethers(), block).await?.to_alloy();
-    res.try_into().map_err(|e| eyre::eyre!("{e}"))
 }
 
 #[cfg(test)]

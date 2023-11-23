@@ -10,9 +10,11 @@ use ethers_signers::{
 };
 use eyre::{Context, Result};
 use foundry_cli::opts::{RawWallet, Wallet};
-use foundry_common::fs;
+use foundry_common::{
+    fs,
+    types::{ToAlloy, ToEthers},
+};
 use foundry_config::Config;
-use foundry_utils::types::{ToAlloy, ToEthers};
 use serde_json::json;
 use std::path::Path;
 use yansi::Paint;

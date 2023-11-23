@@ -11,15 +11,14 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-foundry-abi.workspace = true
 foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
-foundry-utils.workspace = true
+foundry-macros.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
-alloy-json-abi = { workspace = true }
+alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
 alloy-sol-types.workspace = true
 revm = { workspace = true, default-features = false, features = [
@@ -30,12 +29,13 @@ revm = { workspace = true, default-features = false, features = [
     "optional_block_gas_limit",
     "optional_no_base_fee",
     "arbitrary",
+    "optimism",
 ] }
 
-ethers-contract.workspace = true
 ethers-core.workspace = true
 ethers-providers.workspace = true
 
+derive_more.workspace = true
 eyre = "0.6"
 futures = "0.3"
 hex.workspace = true

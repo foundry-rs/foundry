@@ -12,9 +12,9 @@ contract UnitExpression {
         value = 1 gwei;
         value = 1 ether;
 
-        uint256 someVeryVeryVeryLongVaribleNameForTheMultiplierForEtherValue;
+        uint256 someVeryVeryVeryLongVariableNameForTheMultiplierForEtherValue;
 
-        value = someVeryVeryVeryLongVaribleNameForTheMultiplierForEtherValue
+        value = someVeryVeryVeryLongVariableNameForTheMultiplierForEtherValue
             * 1 /* comment1 */ ether; // comment2
 
         value = 1 // comment3

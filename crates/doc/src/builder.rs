@@ -3,9 +3,9 @@ use crate::{
     ParseSource, Parser, Preprocessor,
 };
 use forge_fmt::{FormatterConfig, Visitable};
+use foundry_common::glob::expand_globs;
 use foundry_compilers::utils::source_files_iter;
 use foundry_config::DocConfig;
-use foundry_utils::glob::expand_globs;
 use itertools::Itertools;
 use mdbook::MDBook;
 use rayon::prelude::*;
@@ -66,7 +66,7 @@ impl DocBuilder {
         }
     }
 
-    /// Set `shoul_build` flag on the builder
+    /// Set `should_build` flag on the builder
     pub fn with_should_build(mut self, should_build: bool) -> Self {
         self.should_build = should_build;
         self
@@ -180,8 +180,13 @@ impl DocBuilder {
                         let relative_path = path.strip_prefix(&self.root)?.join(item.filename());
                         let target_path = self.config.out.join(Self::SRC).join(relative_path);
                         let ident = item.source.ident();
-                        Ok(Document::new(path.clone(), target_path, from_library)
-                            .with_content(DocumentContent::Single(item), ident))
+                        Ok(Document::new(
+                            path.clone(),
+                            target_path,
+                            from_library,
+                            self.config.out.clone(),
+                        )
+                        .with_content(DocumentContent::Single(item), ident))
                     })
                     .collect::<eyre::Result<Vec<_>>>()?;
 
@@ -207,8 +212,13 @@ impl DocBuilder {
                     };
 
                     files.push(
-                        Document::new(path.clone(), target_path, from_library)
-                            .with_content(DocumentContent::Constants(consts), identity),
+                        Document::new(
+                            path.clone(),
+                            target_path,
+                            from_library,
+                            self.config.out.clone(),
+                        )
+                        .with_content(DocumentContent::Constants(consts), identity),
                     )
                 }
 
@@ -219,8 +229,13 @@ impl DocBuilder {
                         let relative_path = path.strip_prefix(&self.root)?.join(filename);
                         let target_path = self.config.out.join(Self::SRC).join(relative_path);
                         files.push(
-                            Document::new(path.clone(), target_path, from_library)
-                                .with_content(DocumentContent::OverloadedFunctions(funcs), ident),
+                            Document::new(
+                                path.clone(),
+                                target_path,
+                                from_library,
+                                self.config.out.clone(),
+                            )
+                            .with_content(DocumentContent::OverloadedFunctions(funcs), ident),
                         );
                     }
                 }

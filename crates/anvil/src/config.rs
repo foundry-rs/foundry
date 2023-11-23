@@ -28,6 +28,7 @@ use ethers::{
     utils::{format_ether, hex, to_checksum, WEI_IN_ETHER},
 };
 use foundry_common::{
+    types::{ToAlloy, ToEthers},
     ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
 };
 use foundry_config::Config;
@@ -38,7 +39,6 @@ use foundry_evm::{
     revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv, U256 as rU256},
     utils::apply_chain_and_block_specific_env_changes,
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::RwLock;
 use serde_json::{json, to_writer, Value};
 use std::{
@@ -169,6 +169,8 @@ pub struct NodeConfig {
     pub transaction_block_keeper: Option<usize>,
     /// Disable the default CREATE2 deployer
     pub disable_default_create2_deployer: bool,
+    /// Enable Optimism deposit transaction
+    pub enable_optimism: bool,
 }
 
 impl NodeConfig {
@@ -406,6 +408,7 @@ impl Default for NodeConfig {
             init_state: None,
             transaction_block_keeper: None,
             disable_default_create2_deployer: false,
+            enable_optimism: false,
         }
     }
 }
@@ -784,6 +787,13 @@ impl NodeConfig {
         Config::foundry_block_cache_file(chain_id, block)
     }
 
+    /// Sets whether to enable optimism support
+    #[must_use]
+    pub fn with_optimism(mut self, enable_optimism: bool) -> Self {
+        self.enable_optimism = enable_optimism;
+        self
+    }
+
     /// Configures everything related to env, backend and database and returns the
     /// [Backend](mem::Backend)
     ///
@@ -800,6 +810,7 @@ impl NodeConfig {
         // caller is a contract. So we disable the check by default.
         cfg.disable_eip3607 = true;
         cfg.disable_block_gas_limit = self.disable_block_gas_limit;
+        cfg.optimism = self.enable_optimism;
 
         let mut env = revm::primitives::Env {
             cfg,

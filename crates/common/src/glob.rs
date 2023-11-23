@@ -1,5 +1,25 @@
-//! Contains `globset::Glob` wrapper functions used for filtering
-use std::{fmt, str::FromStr};
+//! Contains `globset::Glob` wrapper functions used for filtering.
+
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
+
+/// Expand globs with a root path.
+pub fn expand_globs(
+    root: &Path,
+    patterns: impl IntoIterator<Item = impl AsRef<str>>,
+) -> eyre::Result<Vec<PathBuf>> {
+    let mut expanded = Vec::new();
+    for pattern in patterns {
+        for paths in glob::glob(&root.join(pattern.as_ref()).display().to_string())? {
+            expanded.push(paths?);
+        }
+    }
+    Ok(expanded)
+}
+
 /// A `globset::Glob` that creates its `globset::GlobMatcher` when its created, so it doesn't need
 /// to be compiled when the filter functions `TestFilter` functions are called.
 #[derive(Debug, Clone)]
@@ -9,8 +29,6 @@ pub struct GlobMatcher {
     /// The compiled glob
     pub matcher: globset::GlobMatcher,
 }
-
-// === impl GlobMatcher ===
 
 impl GlobMatcher {
     /// Tests whether the given path matches this pattern or not.

@@ -62,7 +62,7 @@ contract ForkTest is DSTest {
     }
 
     // ensures forks have different block hashes
-    function testBlockNumbersMimatch() public {
+    function testBlockNumbersMismatch() public {
         vm.selectFork(mainnetFork);
         uint256 num = block.number;
         bytes32 mainHash = blockhash(block.number - 1);

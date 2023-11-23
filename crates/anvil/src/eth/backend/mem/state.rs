@@ -7,6 +7,7 @@ use ethers::{
     types::H256,
     utils::{rlp, rlp::RlpStream},
 };
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
     backend::DatabaseError,
     hashbrown::HashMap as Map,
@@ -15,7 +16,6 @@ use foundry_evm::{
         primitives::{AccountInfo, Bytecode, Log},
     },
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use memory_db::HashKey;
 use trie_db::TrieMut;
 

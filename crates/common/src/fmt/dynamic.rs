@@ -1,13 +1,8 @@
-//! Helpers for formatting ethereum types
-
-use crate::{calc::to_exp_notation, TransactionReceiptWithRevertReason};
+use super::{format_int_exp, format_uint_exp};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{hex, Sign, I256, U256};
+use alloy_primitives::hex;
 use eyre::Result;
 use std::fmt;
-use yansi::Paint;
-
-pub use foundry_macros::fmt::*;
 
 /// [`DynSolValue`] formatter.
 struct DynValueFormatter {
@@ -144,117 +139,10 @@ pub fn format_token_raw(value: &DynSolValue) -> String {
     DynValueDisplay::new(value, true).to_string()
 }
 
-/// Formats a U256 number to string, adding an exponential notation _hint_ if it
-/// is larger than `10_000`, with a precision of `4` figures, and trimming the
-/// trailing zeros.
-///
-/// # Examples
-///
-/// ```
-/// use alloy_primitives::U256;
-/// use foundry_common::fmt::format_uint_exp as f;
-///
-/// # yansi::Paint::disable();
-/// assert_eq!(f(U256::from(0)), "0");
-/// assert_eq!(f(U256::from(1234)), "1234");
-/// assert_eq!(f(U256::from(1234567890)), "1234567890 [1.234e9]");
-/// assert_eq!(f(U256::from(1000000000000000000_u128)), "1000000000000000000 [1e18]");
-/// assert_eq!(f(U256::from(10000000000000000000000_u128)), "10000000000000000000000 [1e22]");
-/// ```
-pub fn format_uint_exp(num: U256) -> String {
-    if num < U256::from(10_000) {
-        return num.to_string()
-    }
-
-    let exp = to_exp_notation(num, 4, true, Sign::Positive);
-    format!("{num} {}", Paint::default(format!("[{exp}]")).dimmed())
-}
-
-/// Formats a U256 number to string, adding an exponential notation _hint_.
-///
-/// Same as [`format_uint_exp`].
-///
-/// # Examples
-///
-/// ```
-/// use alloy_primitives::I256;
-/// use foundry_common::fmt::format_int_exp as f;
-///
-/// # yansi::Paint::disable();
-/// assert_eq!(f(I256::try_from(0).unwrap()), "0");
-/// assert_eq!(f(I256::try_from(-1).unwrap()), "-1");
-/// assert_eq!(f(I256::try_from(1234).unwrap()), "1234");
-/// assert_eq!(f(I256::try_from(1234567890).unwrap()), "1234567890 [1.234e9]");
-/// assert_eq!(f(I256::try_from(-1234567890).unwrap()), "-1234567890 [-1.234e9]");
-/// assert_eq!(f(I256::try_from(1000000000000000000_u128).unwrap()), "1000000000000000000 [1e18]");
-/// assert_eq!(
-///     f(I256::try_from(10000000000000000000000_u128).unwrap()),
-///     "10000000000000000000000 [1e22]"
-/// );
-/// assert_eq!(
-///     f(I256::try_from(-10000000000000000000000_i128).unwrap()),
-///     "-10000000000000000000000 [-1e22]"
-/// );
-/// ```
-pub fn format_int_exp(num: I256) -> String {
-    let (sign, abs) = num.into_sign_and_abs();
-    if abs < U256::from(10_000) {
-        return format!("{sign}{abs}");
-    }
-
-    let exp = to_exp_notation(abs, 4, true, sign);
-    format!("{sign}{abs} {}", Paint::default(format!("[{exp}]")).dimmed())
-}
-
-impl UIfmt for TransactionReceiptWithRevertReason {
-    fn pretty(&self) -> String {
-        if let Some(revert_reason) = &self.revert_reason {
-            format!(
-                "{}
-revertReason            {}",
-                self.receipt.pretty(),
-                revert_reason
-            )
-        } else {
-            self.receipt.pretty()
-        }
-    }
-}
-
-/// Returns the ``UiFmt::pretty()` formatted attribute of the transaction receipt
-pub fn get_pretty_tx_receipt_attr(
-    receipt: &TransactionReceiptWithRevertReason,
-    attr: &str,
-) -> Option<String> {
-    match attr {
-        "blockHash" | "block_hash" => Some(receipt.receipt.block_hash.pretty()),
-        "blockNumber" | "block_number" => Some(receipt.receipt.block_number.pretty()),
-        "contractAddress" | "contract_address" => Some(receipt.receipt.contract_address.pretty()),
-        "cumulativeGasUsed" | "cumulative_gas_used" => {
-            Some(receipt.receipt.cumulative_gas_used.pretty())
-        }
-        "effectiveGasPrice" | "effective_gas_price" => {
-            Some(receipt.receipt.effective_gas_price.pretty())
-        }
-        "gasUsed" | "gas_used" => Some(receipt.receipt.gas_used.pretty()),
-        "logs" => Some(receipt.receipt.logs.pretty()),
-        "logsBloom" | "logs_bloom" => Some(receipt.receipt.logs_bloom.pretty()),
-        "root" => Some(receipt.receipt.root.pretty()),
-        "status" => Some(receipt.receipt.status.pretty()),
-        "transactionHash" | "transaction_hash" => Some(receipt.receipt.transaction_hash.pretty()),
-        "transactionIndex" | "transaction_index" => {
-            Some(receipt.receipt.transaction_index.pretty())
-        }
-        "type" | "transaction_type" => Some(receipt.receipt.transaction_type.pretty()),
-        "revertReason" | "revert_reason" => Some(receipt.revert_reason.pretty()),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::address;
+    use alloy_primitives::{address, U256};
 
     #[test]
     fn parse_hex_uint() {

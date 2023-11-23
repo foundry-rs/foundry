@@ -49,7 +49,7 @@ contract HelloWorld {
     /// A long doc line comment that will be wrapped
     function docLineOverflow() external {}
 
-    function docLinePostfixOveflow() external {}
+    function docLinePostfixOverflow() external {}
 
     /// A long doc line comment that will be wrapped
 
@@ -87,7 +87,7 @@ contract HelloWorld {
      *   }
      * }
      */
-    function malformedIndentOveflow() external {}
+    function malformedIndentOverflow() external {}
 }
 
 /**

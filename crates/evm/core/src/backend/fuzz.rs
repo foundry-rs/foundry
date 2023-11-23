@@ -37,9 +37,9 @@ pub struct FuzzBackendWrapper<'a> {
     ///
     /// No calls on the `FuzzBackendWrapper` will ever persistently modify the `backend`'s state.
     pub backend: Cow<'a, Backend>,
-    /// Keeps track of whether the backed is already intialized
+    /// Keeps track of whether the backed is already initialized
     is_initialized: bool,
-    /// Keeps track of wheter there was a snapshot failure.
+    /// Keeps track of whether there was a snapshot failure.
     ///
     /// Necessary as the backend is dropped after usage, but we'll need to persist
     /// the snapshot failure anyhow.

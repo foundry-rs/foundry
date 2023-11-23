@@ -7,12 +7,12 @@ use crate::{
     Address, U256,
 };
 use ethers::{prelude::H256, types::BlockId};
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
     backend::{DatabaseResult, StateSnapshot},
     fork::{database::ForkDbSnapshot, BlockchainDb},
     revm::Database,
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 
 pub use foundry_evm::fork::database::ForkedDatabase;
 

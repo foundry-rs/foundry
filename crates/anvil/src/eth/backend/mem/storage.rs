@@ -15,8 +15,8 @@ use ethers::{
     prelude::{BlockId, BlockNumber, DefaultFrame, Trace, H256, H256 as TxHash, U64},
     types::{ActionType, Bytes, GethDebugTracingOptions, TransactionReceipt, U256},
 };
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::revm::{interpreter::InstructionResult, primitives::Env};
-use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, VecDeque},
@@ -441,6 +441,7 @@ mod tests {
     use super::*;
     use crate::eth::backend::db::Db;
     use ethers::{abi::ethereum_types::BigEndianHash, types::Address};
+    use foundry_common::types::ToAlloy;
     use foundry_evm::{
         backend::MemDb,
         revm::{
@@ -448,7 +449,6 @@ mod tests {
             primitives::{AccountInfo, U256 as rU256},
         },
     };
-    use foundry_utils::types::ToAlloy;
 
     #[test]
     fn test_interval_update() {

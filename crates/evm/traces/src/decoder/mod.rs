@@ -7,14 +7,13 @@ use alloy_json_abi::{Event, Function, JsonAbi as Abi};
 use alloy_primitives::{Address, Selector, B256};
 use foundry_common::{abi::get_indexed_event, fmt::format_token, SELECTOR_LEN};
 use foundry_evm_core::{
-    abi::{CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HEVM_ABI},
+    abi::{Console, HardhatConsole, Vm},
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
         TEST_CONTRACT_ADDRESS,
     },
     decode,
 };
-use foundry_utils::types::ToAlloy;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
@@ -130,21 +129,17 @@ impl CallTraceDecoder {
             ]
             .into(),
 
-            functions: HARDHAT_CONSOLE_ABI
-                .functions()
-                .chain(HEVM_ABI.functions())
-                .map(|func| {
-                    let func = func.clone().to_alloy();
-                    (func.selector(), vec![func])
-                })
+            functions: HardhatConsole::abi::functions()
+                .into_values()
+                .chain(Vm::abi::functions().into_values())
+                .flatten()
+                .map(|func| (func.selector(), vec![func]))
                 .collect(),
 
-            events: CONSOLE_ABI
-                .events()
-                .map(|event| {
-                    let event = event.clone().to_alloy();
-                    ((event.selector(), indexed_inputs(&event)), vec![event])
-                })
+            events: Console::abi::events()
+                .into_values()
+                .flatten()
+                .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
                 .collect(),
 
             errors: Default::default(),

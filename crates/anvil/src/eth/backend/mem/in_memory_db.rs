@@ -10,11 +10,11 @@ use crate::{
     Address, U256,
 };
 use ethers::{prelude::H256, types::BlockId};
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
     backend::{DatabaseResult, StateSnapshot},
     fork::BlockchainDb,
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 
 // reexport for convenience
 pub use foundry_evm::{backend::MemDb, revm::db::DatabaseRef};
@@ -141,11 +141,11 @@ mod tests {
     };
     use alloy_primitives::{Bytes, U256 as rU256};
     use ethers::types::U256;
+    use foundry_common::types::ToAlloy;
     use foundry_evm::{
         backend::MemDb,
         revm::primitives::{Bytecode, KECCAK_EMPTY},
     };
-    use foundry_utils::types::ToAlloy;
     use std::{collections::BTreeMap, str::FromStr};
 
     // verifies that all substantial aspects of a loaded account remain the state after an account

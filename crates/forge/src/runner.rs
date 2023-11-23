@@ -1,3 +1,5 @@
+//! The Forge test runner.
+
 use crate::{
     result::{SuiteResult, TestKind, TestResult, TestSetup, TestStatus},
     TestFilter, TestOptions,

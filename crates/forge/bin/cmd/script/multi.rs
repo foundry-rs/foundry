@@ -155,12 +155,8 @@ impl ScriptArgs {
                 )
                 .await
             {
-                Ok(_) => {
-                    if self.verify {
-                        return sequence.verify_contracts(config, verify.clone()).await
-                    }
-                    Ok(())
-                }
+                Ok(_) if self.verify => sequence.verify_contracts(config, verify.clone()).await,
+                Ok(_) => Ok(()),
                 Err(err) => Err(err),
             };
             results.push(result);
