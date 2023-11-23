@@ -11,7 +11,10 @@
     };
     solc = {
       url = "github:hellwolf/solc.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        flake-utils.follows = "flake-utils";
+      };
     };
   };
 
