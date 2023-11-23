@@ -5,9 +5,8 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolValue;
 use ethers_core::utils::{Genesis, GenesisAccount};
 use ethers_signers::Signer;
-use foundry_common::fs::read_json_file;
+use foundry_common::{fs::read_json_file, types::ToAlloy};
 use foundry_evm_core::backend::DatabaseExt;
-use foundry_utils::types::ToAlloy;
 use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     EVMData,

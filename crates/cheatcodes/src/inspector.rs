@@ -19,13 +19,12 @@ use ethers_core::types::{
     transaction::eip2718::TypedTransaction, NameOrAddress, TransactionRequest,
 };
 use ethers_signers::LocalWallet;
-use foundry_common::{evm::Breakpoints, RpcUrl};
+use foundry_common::{evm::Breakpoints, types::ToEthers, RpcUrl};
 use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_SKIP},
     utils::get_create_address,
 };
-use foundry_utils::types::ToEthers;
 use itertools::Itertools;
 use revm::{
     interpreter::{
@@ -908,7 +907,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match expect::handle_expect_revert(
                     false,
-                    expected_revert.reason.as_ref(),
+                    expected_revert.reason.as_deref(),
                     status,
                     retdata,
                 ) {
@@ -1069,7 +1068,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         };
                         let s = if *count == 1 { "" } else { "s" };
                         let msg = format!(
-                            "Expected call to {address} with {expected_values} \
+                            "expected call to {address} with {expected_values} \
                              to be called {count} time{s}, but {but}"
                         );
                         return (InstructionResult::Revert, remaining_gas, Error::encode(msg))
@@ -1240,7 +1239,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match expect::handle_expect_revert(
                     true,
-                    expected_revert.reason.as_ref(),
+                    expected_revert.reason.as_deref(),
                     status,
                     retdata,
                 ) {

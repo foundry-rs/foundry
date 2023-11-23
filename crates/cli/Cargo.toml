@@ -10,12 +10,11 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-# foundry internal
+forge-fmt.workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-debugger.workspace = true
 foundry-evm.workspace = true
-foundry-utils.workspace = true
 
 foundry-compilers = { workspace = true, features = ["full"] }
 

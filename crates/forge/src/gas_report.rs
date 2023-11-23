@@ -1,3 +1,5 @@
+//! Gas reports.
+
 use crate::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
     hashbrown::HashSet,

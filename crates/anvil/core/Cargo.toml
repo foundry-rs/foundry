@@ -10,14 +10,15 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-# foundry internal
+foundry-common.workspace = true
 foundry-evm.workspace = true
-foundry-utils.workspace = true
 
-# eth
+alloy-primitives = { workspace = true, features = ["serde"] }
 revm = { workspace = true, default-features = false, features = ["std", "serde", "memory_limit"] }
 ethers-core = { workspace = true, features = ["optimism"] }
-alloy-primitives = { workspace = true, features = ["serde"] }
+ethers-contract = { workspace = true, features = ["optimism"] }
+ethers-providers = { workspace = true, features = ["optimism"] }
+ethers-middleware = { workspace = true, features = ["optimism"] }
 
 serde = { workspace = true, optional = true }
 serde_json.workspace = true

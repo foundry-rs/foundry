@@ -14,8 +14,8 @@ use ethers_core::{
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
+use foundry_common::types::ToAlloy;
 use foundry_evm::traces::CallTraceArena;
-use foundry_utils::types::ToAlloy;
 use revm::{
     interpreter::InstructionResult,
     primitives::{CreateScheme, OptimismFields, TransactTo, TxEnv},

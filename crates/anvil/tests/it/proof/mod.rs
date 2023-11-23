@@ -11,8 +11,8 @@ use ethers::{
     types::{Address, H256, U256},
     utils::{keccak256, rlp},
 };
+use foundry_common::types::ToEthers;
 use foundry_evm::revm::primitives::KECCAK_EMPTY;
-use foundry_utils::types::ToEthers;
 
 mod eip1186;
 

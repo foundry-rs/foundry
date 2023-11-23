@@ -1,6 +1,6 @@
 use ethers::abi::Address;
+use foundry_common::types::ToEthers;
 use foundry_evm::revm::{self, precompile::Precompiles, primitives::SpecId};
-use foundry_utils::types::ToEthers;
 use std::fmt;
 
 pub fn get_precompiles_for(spec_id: SpecId) -> Vec<Address> {

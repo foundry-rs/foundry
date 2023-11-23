@@ -1,4 +1,4 @@
-//! Support rpc api keys
+//! RPC API keys utilities.
 
 use once_cell::sync::Lazy;
 use rand::seq::SliceRandom;
@@ -77,6 +77,7 @@ pub fn next_ws_rpc_endpoint() -> String {
     next_ws_endpoint("mainnet")
 }
 
+/// Returns the next HTTP RPC endpoint.
 pub fn next_rpc_endpoint(network: &str) -> String {
     let idx = next() % num_keys();
     if idx < INFURA_KEYS.len() {
@@ -87,6 +88,7 @@ pub fn next_rpc_endpoint(network: &str) -> String {
     }
 }
 
+/// Returns the next WS RPC endpoint.
 pub fn next_ws_endpoint(network: &str) -> String {
     let idx = next() % num_keys();
     if idx < INFURA_KEYS.len() {

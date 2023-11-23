@@ -4,7 +4,6 @@ members = [
     "crates/anvil/core/",
     "crates/anvil/rpc/",
     "crates/anvil/server/",
-    "crates/binder/",
     "crates/cast/",
     "crates/cheatcodes/",
     "crates/cheatcodes/spec/",
@@ -23,7 +22,6 @@ members = [
     "crates/forge/",
     "crates/macros/",
     "crates/test-utils/",
-    "crates/utils/",
 ]
 resolver = "2"
 
@@ -111,7 +109,6 @@ forge = { path = "crates/forge" }
 
 forge-doc = { path = "crates/doc" }
 forge-fmt = { path = "crates/fmt" }
-foundry-binder = { path = "crates/binder" }
 foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
 foundry-cli = { path = "crates/cli" }
@@ -125,7 +122,6 @@ foundry-evm-fuzz = { path = "crates/evm/fuzz" }
 foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
-foundry-utils = { path = "crates/utils" }
 
 # block explorer & verification bindings
 foundry-block-explorers = { version = "0.1", default-features = false }

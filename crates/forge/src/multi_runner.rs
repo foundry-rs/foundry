@@ -1,4 +1,10 @@
-use crate::{result::SuiteResult, ContractRunner, TestFilter, TestOptions};
+//! Forge test runner for multiple contracts.
+
+use crate::{
+    link::{link_with_nonce_or_address, PostLinkInput, ResolvedDependency},
+    result::SuiteResult,
+    ContractRunner, TestFilter, TestOptions,
+};
 use alloy_json_abi::{Function, JsonAbi as Abi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
@@ -15,7 +21,6 @@ use foundry_evm::{
     opts::EvmOpts,
     revm,
 };
-use foundry_utils::{PostLinkInput, ResolvedDependency};
 use rayon::prelude::*;
 use revm::primitives::SpecId;
 use std::{
@@ -293,7 +298,7 @@ impl MultiContractRunnerBuilder {
             filtered
         }
 
-        foundry_utils::link_with_nonce_or_address(
+        link_with_nonce_or_address(
             ArtifactContracts::from_iter(contracts),
             &mut known_contracts,
             Default::default(),

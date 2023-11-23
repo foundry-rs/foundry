@@ -9,6 +9,7 @@ use ethers::{
     abi::ethereum_types::BigEndianHash,
     types::{Address, H256},
 };
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, StateSnapshot},
     revm::{
@@ -16,7 +17,6 @@ use foundry_evm::{
         primitives::{AccountInfo, Bytecode, KECCAK_EMPTY},
     },
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::Mutex;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLockWriteGuard;

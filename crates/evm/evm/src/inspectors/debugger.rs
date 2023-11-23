@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, Bytes};
-use foundry_common::SELECTOR_LEN;
+use foundry_common::{ErrorExt, SELECTOR_LEN};
 use foundry_evm_core::{
     backend::DatabaseExt,
     constants::CHEATCODE_ADDRESS,
@@ -127,7 +127,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         // TODO: Does this increase gas cost?
         if let Err(err) = data.journaled_state.load_account(call.caller, data.db) {
             let gas = Gas::new(call.gas_limit);
-            return (InstructionResult::Revert, None, gas, foundry_cheatcodes::Error::encode(err))
+            return (InstructionResult::Revert, None, gas, err.abi_encode_revert())
         }
 
         let nonce = data.journaled_state.account(call.caller).info.nonce;
