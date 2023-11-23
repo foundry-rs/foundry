@@ -2,7 +2,7 @@ use crate::{
     eth::{backend::notifications::NewBlockNotifications, error::to_rpc_result},
     StorageInfo,
 };
-use alloy_primitives::{TxHash, B256, U256, U64};
+use alloy_primitives::{TxHash, B256, U256};
 use alloy_rpc_types::{pubsub::SubscriptionResult, FilteredParams, Log as AlloyLog};
 use anvil_core::eth::{
     block::Block,
@@ -190,7 +190,7 @@ pub fn filter_logs(
         } else {
             None
         };
-        for (transaction_log_index, log) in receipt_logs.into_iter().enumerate() {
+        for (_, log) in receipt_logs.into_iter().enumerate() {
             if add_log(block_hash.to_alloy(), &log, &block, filter) {
                 logs.push(AlloyLog {
                     address: log.address.to_alloy(),

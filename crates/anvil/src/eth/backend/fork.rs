@@ -10,8 +10,6 @@ use alloy_rpc_types::{
     TransactionReceipt,
 };
 use alloy_transport::TransportError;
-use ethers::providers::ProviderError;
-use eyre::Context;
 use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
 use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
@@ -19,8 +17,6 @@ use parking_lot::{
 };
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
-
-use super::mem::storage::Blockchain;
 
 /// Represents a fork of a remote client
 ///

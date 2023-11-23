@@ -26,6 +26,7 @@ use ethers::{
 use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
 use foundry_common::provider::ethers::{ProviderBuilder as EthersProviderBuilder, RetryProvider as EthersRetryProvider};
 use foundry_evm::revm;
+use foundry_utils::types::ToEthers;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
 use std::{
@@ -35,7 +36,6 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Duration,
 };
 use tokio::{
     runtime::Handle,
@@ -315,12 +315,12 @@ impl NodeHandle {
 
     /// Native token balance of every genesis account in the genesis block
     pub fn genesis_balance(&self) -> U256 {
-        self.config.genesis_balance
+        self.config.genesis_balance.to_ethers()
     }
 
     /// Default gas price for all txs
     pub fn gas_price(&self) -> U256 {
-        self.config.get_gas_price()
+        self.config.get_gas_price().to_ethers()
     }
 
     /// Returns the shutdown signal

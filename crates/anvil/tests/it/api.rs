@@ -6,7 +6,7 @@ use anvil::{
     eth::{api::CLIENT_VERSION, EthApi},
     spawn, NodeConfig, CHAIN_ID,
 };
-use anvil_core::eth::{state::AccountOverride, transaction::{EthTransactionRequest, to_ethers_state_override, to_alloy_state_override}};
+use anvil_core::eth::{state::AccountOverride, transaction::to_alloy_state_override};
 use ethers::{
     abi::{Address, Tokenizable},
     prelude::{builders::ContractCall, decode_function_data, Middleware, SignerMiddleware},
@@ -14,7 +14,7 @@ use ethers::{
     types::{Block, BlockNumber, Chain, Transaction, TransactionRequest, H256, U256},
     utils::get_contract_address,
 };
-use alloy_primitives::{U256 as rU256};
+use alloy_primitives::U256 as rU256;
 use foundry_utils::types::ToAlloy;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
@@ -186,7 +186,7 @@ async fn can_call_on_pending_block() {
     let accounts: Vec<Address> = handle.dev_wallets().map(|w| w.address()).collect();
     for i in 1..10 {
         api.anvil_set_coinbase(accounts[i % accounts.len()].to_alloy()).await.unwrap();
-        api.evm_set_block_gas_limit(rU256::from((30_000_000 + i))).unwrap();
+        api.evm_set_block_gas_limit(rU256::from(30_000_000 + i)).unwrap();
 
         api.anvil_mine(Some(rU256::from(1)), None).await.unwrap();
         tokio::time::sleep(Duration::from_secs(1)).await;

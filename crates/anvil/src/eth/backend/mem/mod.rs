@@ -282,7 +282,7 @@ impl Backend {
                 // accounts concurrently by spawning the job to a new task
                 genesis_accounts_futures.push(tokio::task::spawn(async move {
                     let db = db.read().await;
-                    let info = db.basic_ref(address.to_alloy())?.unwrap_or_default();
+                    let info = db.basic_ref(address)?.unwrap_or_default();
                     Ok::<_, DatabaseError>((address, info))
                 }));
             }
@@ -300,7 +300,7 @@ impl Backend {
             for res in genesis_accounts {
                 let (address, mut info) = res.map_err(DatabaseError::display)??;
                 info.balance = self.genesis.balance;
-                db.insert_account(address.to_alloy(), info.clone());
+                db.insert_account(address, info.clone());
 
                 // store the fetched AccountInfo, so we can cheaply reset in [Self::reset_fork()]
                 fork_genesis_infos.push(info);
@@ -308,7 +308,7 @@ impl Backend {
         } else {
             let mut db = self.db.write().await;
             for (account, info) in self.genesis.account_infos() {
-                db.insert_account(account.to_alloy(), info);
+                db.insert_account(account, info);
             }
         }
 
@@ -450,7 +450,7 @@ impl Backend {
             for (address, info) in
                 self.genesis.accounts.iter().copied().zip(fork_genesis_infos.iter().cloned())
             {
-                db.insert_account(address.to_alloy(), info);
+                db.insert_account(address, info);
             }
 
             // reset the genesis.json alloc
@@ -1255,7 +1255,7 @@ impl Backend {
             let logs = transaction.logs.clone();
             let transaction_hash = transaction.transaction_hash;
 
-            for (log_idx, log) in logs.into_iter().enumerate() {
+            for (_, log) in logs.into_iter().enumerate() {
                 let mut log = Log {
                     address: log.address.to_alloy(),
                     topics: log.topics.into_iter().map(|t| t.to_alloy()).collect(),

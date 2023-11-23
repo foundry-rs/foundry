@@ -24,6 +24,7 @@ pub mod term;
 pub mod traits;
 pub mod transactions;
 pub mod units;
+pub mod serde_helpers;
 
 pub use constants::*;
 pub use contracts::*;

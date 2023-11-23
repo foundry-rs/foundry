@@ -2,13 +2,13 @@ use crate::{
     eth::subscription::SubscriptionId,
     types::{EvmMineOptions, Forking, Index},
 };
-use alloy_primitives::{Address, Bytes, TxHash, B256, B64};
+use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
 use alloy_rpc_types::{
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     state::StateOverride,
     BlockId, BlockNumberOrTag as BlockNumber, CallRequest, Filter, TransactionRequest,
 };
-use ethers_core::types::{transaction::eip712::TypedData, GethDebugTracingOptions, U256};
+use ethers_core::types::{transaction::eip712::TypedData, GethDebugTracingOptions};
 
 pub mod block;
 pub mod proof;
@@ -23,10 +23,10 @@ pub mod state;
 pub mod serde_helpers;
 
 #[cfg(feature = "serde")]
-use ethers_core::types::serde_helpers::{deserialize_number, deserialize_number_opt, deserialize_number_seq};
+use self::serde_helpers::*;
 
 #[cfg(feature = "serde")]
-use self::serde_helpers::*;
+use foundry_common::serde_helpers::{deserialize_number, deserialize_number_opt, deserialize_number_seq};
 
 /// Wrapper type that ensures the type is named `params`
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1377,7 +1377,6 @@ true}]}"#;         let value: serde_json::Value = serde_json::from_str(s).unwrap
     }
 
     #[test]
-        #[test]
     fn test_serde_debug_trace_call() {
         let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();

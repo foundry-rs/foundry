@@ -10,11 +10,11 @@ use ethers::{
     abi::Address,
     prelude::{ContractFactory, ContractInstance, Middleware, SignerMiddleware},
     signers::Signer,
-    types::{BlockNumber, Bytes, TransactionRequest, U256},
+    types::{Bytes, TransactionRequest, U256},
     utils::get_contract_address,
 };
-use alloy_primitives::{U256 as rU256, Address as rAddress, B256};
-use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions, Block};
+use alloy_primitives::U256 as rU256;
+use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use ethers_solc::{project_util::TempProject, Artifact};
 use std::{collections::VecDeque, str::FromStr, sync::Arc};
