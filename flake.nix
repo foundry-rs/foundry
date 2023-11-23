@@ -36,12 +36,17 @@
           nativeBuildInputs = with pkgs; [
             pkg-config
             libusb1
+          ] ++ lib.optionals pkgs.stdenv.isDarwin [
+            pkgs.darwin.apple_sdk.frameworks.AppKit
           ];
           buildInputs = [
             pkgs.rust-analyzer-unwrapped
             toolchain
           ];
-          packages = with pkgs; [ solc_0_8_20 ];
+          packages = with pkgs; [
+            solc_0_8_20
+            (solc.mkDefault pkgs solc_0_8_20)
+          ];
 
           # Environment variables
           RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
