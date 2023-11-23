@@ -1824,7 +1824,7 @@ mod tests {
                 "0000000000000000000000000000000000000000000000000000000000000000",
             )
             .unwrap(),
-            from: H160::from_str("cf7f9e66af820a19257a2108375b180b0ec49167").unwrap(),
+            from: "cf7f9e66af820a19257a2108375b180b0ec49167".parse().unwrap(),
             kind: TransactionKind::Call(Address::from_slice(
                 &hex::decode("61815774383099e24810ab832a5b2a5425c154d5").unwrap()[..],
             )),
