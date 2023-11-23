@@ -4,11 +4,7 @@ use crate::{
     eth::backend::db::{Db, MaybeHashDatabase},
     genesis::Genesis,
 };
-use alloy_primitives::{Address as aAddress, B256, U256};
-use ethers::{
-    abi::ethereum_types::BigEndianHash,
-    types::{Address, H256},
-};
+use alloy_primitives::{Address, B256, U256};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, StateSnapshot},
     revm::{
@@ -16,7 +12,6 @@ use foundry_evm::{
         primitives::{AccountInfo, Bytecode, KECCAK_EMPTY},
     },
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::Mutex;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLockWriteGuard;
@@ -65,13 +60,13 @@ impl GenesisConfig {
             for (addr, mut acc) in genesis.alloc.accounts.clone() {
                 let storage = std::mem::take(&mut acc.storage);
                 // insert all accounts
-                db.insert_account(addr.to_alloy(), acc.into());
+                db.insert_account(addr, acc.into());
                 // insert all storage values
                 for (k, v) in storage.iter() {
                     db.set_storage_at(
-                        addr.to_alloy(),
-                        k.into_uint().to_alloy(),
-                        v.into_uint().to_alloy(),
+                        addr,
+                        U256::from_be_bytes(k.0),
+                        U256::from_be_bytes(v.0),
                     )?;
                 }
             }
@@ -107,8 +102,8 @@ pub(crate) struct AtGenesisStateDb<'a> {
 
 impl<'a> DatabaseRef for AtGenesisStateDb<'a> {
     type Error = DatabaseError;
-    fn basic_ref(&self, address: aAddress) -> DatabaseResult<Option<AccountInfo>> {
-        if let Some(acc) = self.accounts.get(&(address.to_ethers())).cloned() {
+    fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
+        if let Some(acc) = self.accounts.get(&(address)).cloned() {
             return Ok(Some(acc))
         }
         self.db.basic_ref(address)
@@ -121,18 +116,18 @@ impl<'a> DatabaseRef for AtGenesisStateDb<'a> {
         self.db.code_by_hash_ref(code_hash)
     }
 
-    fn storage_ref(&self, address: aAddress, index: U256) -> DatabaseResult<U256> {
+    fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
         if let Some(acc) = self
             .genesis
             .as_ref()
-            .and_then(|genesis| genesis.alloc.accounts.get(&(address.to_ethers())))
+            .and_then(|genesis| genesis.alloc.accounts.get(&(address)))
         {
             let value = acc
                 .storage
-                .get(&H256::from_uint(&(index.to_ethers())))
+                .get(&B256::from(index))
                 .copied()
                 .unwrap_or_default();
-            return Ok(value.into_uint().to_alloy())
+            return Ok(U256::from_be_bytes(value.0))
         }
         self.db.storage_ref(address, index)
     }

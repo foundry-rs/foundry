@@ -8,13 +8,15 @@ use ethers::{
         TransactionRequest,
     },
 };
+use alloy_primitives::U256;
+use foundry_utils::types::ToAlloy;
 
 const GAS_TRANSFER: u64 = 21_000u64;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_basefee_full_block() {
     let (_api, handle) = spawn(
-        NodeConfig::test().with_base_fee(Some(INITIAL_BASE_FEE)).with_gas_limit(Some(GAS_TRANSFER)),
+        NodeConfig::test().with_base_fee(Some(INITIAL_BASE_FEE.to_alloy())).with_gas_limit(Some(GAS_TRANSFER.to_alloy())),
     )
     .await;
     let provider = handle.ethers_http_provider();
@@ -36,8 +38,8 @@ async fn test_basefee_full_block() {
 async fn test_basefee_half_block() {
     let (_api, handle) = spawn(
         NodeConfig::test()
-            .with_base_fee(Some(INITIAL_BASE_FEE))
-            .with_gas_limit(Some(GAS_TRANSFER * 2)),
+            .with_base_fee(Some(INITIAL_BASE_FEE.to_alloy()))
+            .with_gas_limit(Some(GAS_TRANSFER.to_alloy() * U256::from(2))),
     )
     .await;
     let provider = handle.ethers_http_provider();
@@ -53,7 +55,7 @@ async fn test_basefee_half_block() {
 }
 #[tokio::test(flavor = "multi_thread")]
 async fn test_basefee_empty_block() {
-    let (api, handle) = spawn(NodeConfig::test().with_base_fee(Some(INITIAL_BASE_FEE))).await;
+    let (api, handle) = spawn(NodeConfig::test().with_base_fee(Some(INITIAL_BASE_FEE.to_alloy()))).await;
 
     let provider = handle.ethers_http_provider();
     let tx = TransactionRequest::new().to(Address::random()).value(1337u64);
@@ -74,7 +76,7 @@ async fn test_basefee_empty_block() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_respect_base_fee() {
     let base_fee = 50u64;
-    let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee.to_alloy()))).await;
     let provider = handle.ethers_http_provider();
     let mut tx = TypedTransaction::default();
     tx.set_value(100u64);
@@ -94,7 +96,7 @@ async fn test_respect_base_fee() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tip_above_fee_cap() {
     let base_fee = 50u64;
-    let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee.to_alloy()))).await;
     let provider = handle.ethers_http_provider();
     let tx = TypedTransaction::Eip1559(
         Eip1559TransactionRequest::new()

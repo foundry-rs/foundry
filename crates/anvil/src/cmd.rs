@@ -6,11 +6,13 @@ use crate::{
 };
 use anvil_server::ServerConfig;
 use clap::Parser;
+use foundry_utils::types::ToAlloy;
 use core::fmt;
 use ethers::{
     signers::coins_bip39::{English, Mnemonic},
     utils::WEI_IN_ETHER,
 };
+use alloy_primitives::U256;
 use foundry_config::{Chain, Config};
 use futures::FutureExt;
 use rand::{rngs::StdRng, SeedableRng};
@@ -192,14 +194,14 @@ impl NodeArgs {
         };
 
         NodeConfig::default()
-            .with_gas_limit(self.evm_opts.gas_limit)
+            .with_gas_limit(self.evm_opts.gas_limit.map(|g| U256::from(g)))
             .disable_block_gas_limit(self.evm_opts.disable_block_gas_limit)
-            .with_gas_price(self.evm_opts.gas_price)
+            .with_gas_price(self.evm_opts.gas_price.map(|g| U256::from(g)))
             .with_hardfork(self.hardfork)
             .with_blocktime(self.block_time.map(Duration::from_secs))
             .with_no_mining(self.no_mining)
             .with_account_generator(self.account_generator())
-            .with_genesis_balance(genesis_balance)
+            .with_genesis_balance(genesis_balance.to_alloy())
             .with_genesis_timestamp(self.timestamp)
             .with_port(self.port)
             .with_fork_block_number(
@@ -208,13 +210,13 @@ impl NodeArgs {
                     .or_else(|| self.evm_opts.fork_url.as_ref().and_then(|f| f.block)),
             )
             .with_fork_headers(self.evm_opts.fork_headers)
-            .with_fork_chain_id(self.evm_opts.fork_chain_id.map(u64::from))
+            .with_fork_chain_id(self.evm_opts.fork_chain_id.map(u64::from).map(|c| U256::from(c)))
             .fork_request_timeout(self.evm_opts.fork_request_timeout.map(Duration::from_millis))
             .fork_request_retries(self.evm_opts.fork_request_retries)
             .fork_retry_backoff(self.evm_opts.fork_retry_backoff.map(Duration::from_millis))
             .fork_compute_units_per_second(compute_units_per_second)
             .with_eth_rpc_url(self.evm_opts.fork_url.map(|fork| fork.url))
-            .with_base_fee(self.evm_opts.block_base_fee_per_gas)
+            .with_base_fee(self.evm_opts.block_base_fee_per_gas.map(|f| U256::from(f)))
             .with_storage_caching(self.evm_opts.no_storage_caching)
             .with_server_config(self.server_config)
             .with_host(self.host)

@@ -4,7 +4,7 @@ use crate::proof::eip1186::verify_proof;
 use alloy_rpc_types::EIP1186AccountProofResponse;
 use anvil::{spawn, NodeConfig};
 use anvil_core::eth::{
-    proof::{AccountProof, BasicAccount},
+    proof::BasicAccount,
     trie::ExtensionLayout,
 };
 use ethers::{

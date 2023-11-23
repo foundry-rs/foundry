@@ -30,6 +30,7 @@ use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256, U64};
+use alloy_transport::TransportErrorKind;
 use alloy_rpc_types::{
     state::StateOverride,
     AccessList,
@@ -44,7 +45,6 @@ use alloy_rpc_types::{
     Filter,
     FilteredParams,
     Log,
-    Rich,
     Transaction,
     TransactionReceipt,
     TransactionRequest as AlloyTransactionRequest,
@@ -58,7 +58,6 @@ use alloy_rpc_types::{
 use anvil_core::{
     eth::{
         block::BlockInfo,
-        proof::AccountProof,
         transaction::{
             call_to_internal_tx_request, to_alloy_proof, to_ethers_access_list,
             to_internal_tx_request, EthTransactionRequest, LegacyTransaction, PendingTransaction,
@@ -73,16 +72,12 @@ use anvil_core::{
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{
-    // TODO: Move to alloy
     prelude::DefaultFrame,
-    providers::ProviderError,
     types::{
         transaction::eip712::TypedData,
-        // TODO: Move to alloy
         GethDebugTracingOptions,
         GethTrace,
         Trace,
-        // TODO: Move to alloy
     },
     utils::rlp,
 };
@@ -97,7 +92,6 @@ use foundry_evm::{
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::channel::{mpsc::Receiver, oneshot};
-use itertools::Itertools;
 use parking_lot::RwLock;
 use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
 
@@ -196,7 +190,7 @@ impl EthApi {
             EthRequest::EthAccounts(_) => self.accounts().to_rpc_result(),
             EthRequest::EthBlockNumber(_) => self.block_number().to_rpc_result(),
             EthRequest::EthGetStorageAt(addr, slot, block) => {
-                self.storage_at(addr, slot.to_alloy(), block).await.to_rpc_result()
+                self.storage_at(addr, slot, block).await.to_rpc_result()
             }
             EthRequest::EthGetBlockByHash(hash, full) => {
                 if full {
@@ -280,10 +274,10 @@ impl EthApi {
                 self.submit_work(nonce, pow, digest).to_rpc_result()
             }
             EthRequest::EthSubmitHashRate(rate, id) => {
-                self.submit_hashrate(rate.to_alloy(), id).to_rpc_result()
+                self.submit_hashrate(rate, id).to_rpc_result()
             }
             EthRequest::EthFeeHistory(count, newest, reward_percentiles) => {
-                self.fee_history(count.to_alloy(), newest, reward_percentiles).await.to_rpc_result()
+                self.fee_history(count, newest, reward_percentiles).await.to_rpc_result()
             }
 
             // non eth-standard rpc calls
@@ -307,7 +301,7 @@ impl EthApi {
             }
             EthRequest::GetAutoMine(()) => self.anvil_get_auto_mine().to_rpc_result(),
             EthRequest::Mine(blocks, interval) => self
-                .anvil_mine(blocks.map(|t| t.to_alloy()), interval.map(|t| t.to_alloy()))
+                .anvil_mine(blocks, interval)
                 .await
                 .to_rpc_result(),
             EthRequest::SetAutomine(enabled) => {
@@ -323,49 +317,51 @@ impl EthApi {
                 self.anvil_reset(fork.and_then(|p| p.params)).await.to_rpc_result()
             }
             EthRequest::SetBalance(addr, val) => {
-                self.anvil_set_balance(addr, val.to_alloy()).await.to_rpc_result()
+                self.anvil_set_balance(addr, val).await.to_rpc_result()
             }
             EthRequest::SetCode(addr, code) => {
                 self.anvil_set_code(addr, code).await.to_rpc_result()
             }
             EthRequest::SetNonce(addr, nonce) => {
-                self.anvil_set_nonce(addr, nonce.to_alloy()).await.to_rpc_result()
+                self.anvil_set_nonce(addr, nonce).await.to_rpc_result()
             }
             EthRequest::SetStorageAt(addr, slot, val) => {
-                self.anvil_set_storage_at(addr, slot.to_alloy(), val).await.to_rpc_result()
+                self.anvil_set_storage_at(addr, slot, val).await.to_rpc_result()
             }
             EthRequest::SetCoinbase(addr) => self.anvil_set_coinbase(addr).await.to_rpc_result(),
             EthRequest::SetChainId(id) => self.anvil_set_chain_id(id).await.to_rpc_result(),
             EthRequest::SetLogging(log) => self.anvil_set_logging(log).await.to_rpc_result(),
             EthRequest::SetMinGasPrice(gas) => {
-                self.anvil_set_min_gas_price(gas.to_alloy()).await.to_rpc_result()
+                self.anvil_set_min_gas_price(gas).await.to_rpc_result()
             }
             EthRequest::SetNextBlockBaseFeePerGas(gas) => {
-                self.anvil_set_next_block_base_fee_per_gas(gas.to_alloy()).await.to_rpc_result()
+                self.anvil_set_next_block_base_fee_per_gas(gas).await.to_rpc_result()
             }
             EthRequest::DumpState(_) => self.anvil_dump_state().await.to_rpc_result(),
             EthRequest::LoadState(buf) => self.anvil_load_state(buf).await.to_rpc_result(),
             EthRequest::NodeInfo(_) => self.anvil_node_info().await.to_rpc_result(),
             EthRequest::AnvilMetadata(_) => self.anvil_metadata().await.to_rpc_result(),
             EthRequest::EvmSnapshot(_) => self.evm_snapshot().await.to_rpc_result(),
-            EthRequest::EvmRevert(id) => self.evm_revert(id.to_alloy()).await.to_rpc_result(),
+            EthRequest::EvmRevert(id) => self.evm_revert(id).await.to_rpc_result(),
             EthRequest::EvmIncreaseTime(time) => {
-                self.evm_increase_time(time.to_alloy()).await.to_rpc_result()
+                self.evm_increase_time(time).await.to_rpc_result()
             }
             EthRequest::EvmSetNextBlockTimeStamp(time) => {
-                match u64::try_from(time).map_err(BlockchainError::UintConversion) {
-                    Ok(time) => self.evm_set_next_block_timestamp(time).to_rpc_result(),
-                    err @ Err(_) => err.to_rpc_result(),
+                if time >= U256::from(u64::MAX) {
+                    return ResponseResult::Error(RpcError::invalid_params("The timestamp is too big"))
                 }
+                let time = time.to::<u64>();
+                self.evm_set_next_block_timestamp(time).to_rpc_result()
             }
             EthRequest::EvmSetTime(timestamp) => {
-                match u64::try_from(timestamp).map_err(BlockchainError::UintConversion) {
-                    Ok(timestamp) => self.evm_set_time(timestamp).to_rpc_result(),
-                    err @ Err(_) => err.to_rpc_result(),
+                if timestamp >= U256::from(u64::MAX) {
+                    return ResponseResult::Error(RpcError::invalid_params("The timestamp is too big"))
                 }
+                let time = timestamp.to::<u64>();
+                self.evm_set_time(time).to_rpc_result()
             }
             EthRequest::EvmSetBlockGasLimit(gas_limit) => {
-                self.evm_set_block_gas_limit(gas_limit.to_alloy()).to_rpc_result()
+                self.evm_set_block_gas_limit(gas_limit).to_rpc_result()
             }
             EthRequest::EvmSetBlockTimeStampInterval(time) => {
                 self.evm_set_block_timestamp_interval(time).to_rpc_result()
@@ -425,7 +421,7 @@ impl EthApi {
                 self.ots_search_transactions_after(address, num, page_size).await.to_rpc_result()
             }
             EthRequest::OtsGetTransactionBySenderAndNonce(address, nonce) => self
-                .ots_get_transaction_by_sender_and_nonce(address, nonce.to_alloy())
+                .ots_get_transaction_by_sender_and_nonce(address, nonce)
                 .await
                 .to_rpc_result(),
             EthRequest::OtsGetContractCreator(address) => {
@@ -1030,7 +1026,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_createAccessList`
     pub async fn create_access_list(
         &self,
-        mut request: CallRequest,
+        request: CallRequest,
         block_number: Option<BlockId>,
     ) -> Result<AccessListWithGasUsed> {
         node_info!("eth_createAccessList");
@@ -1959,7 +1955,8 @@ impl EthApi {
             // let interval = config.provider.get_interval();
             let new_provider = Arc::new(
                 ProviderBuilder::new(&url).max_retry(10).initial_backoff(1000).build().map_err(
-                    |_| ProviderError::CustomError(format!("Failed to parse invalid url {url}")),
+                    |_| TransportErrorKind::custom_str(format!("Failed to parse invalid url {url}").as_str()),
+                    // TODO: Add interval
                 )?, // .interval(interval),
             );
             config.provider = new_provider;
@@ -2184,7 +2181,7 @@ impl EthApi {
     /// This will execute the [CallRequest] and find the best gas limit via binary search
     fn do_estimate_gas_with_state<D>(
         &self,
-        mut request: CallRequest,
+        request: CallRequest,
         state: D,
         block_env: BlockEnv,
     ) -> Result<U256>
