@@ -35,7 +35,7 @@ pub type RpcUrl = String;
 /// # Examples
 ///
 /// ```
-/// use foundry_common::get_http_provider;
+/// use foundry_common::provider::alloy::get_http_provider;
 ///
 /// let retry_provider = get_http_provider("http://localhost:8545");
 /// ```
