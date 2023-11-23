@@ -218,25 +218,21 @@ impl Cheatcode for isPersistentCall {
 }
 
 impl Cheatcode for rpcCall {
-    fn apply_full<DB: DatabaseExt>(&self, _ccx: &mut CheatsCtxt<DB>) -> Result {
-        /*
-        todo what do we do here
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { method, params } = self;
         let url =
             ccx.data.db.active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
         let provider = ProviderBuilder::new(&url).build()?;
-
+        let method: &'static str = Box::new(method.clone()).leak();
         let params_json: serde_json::Value = serde_json::from_str(params)?;
         let result = RuntimeOrHandle::new()
-            .block_on(provider.request(method, params_json))
+            .block_on(provider.raw_request(&method, params_json))
             .map_err(|err| fmt_err!("{method:?}: {err}"))?;
 
         let result_as_tokens = crate::json::value_to_token(&result)
             .map_err(|err| fmt_err!("failed to parse result: {err}"))?;
 
         Ok(result_as_tokens.abi_encode())
-        */
-        Ok(1.abi_encode())
     }
 }
 
