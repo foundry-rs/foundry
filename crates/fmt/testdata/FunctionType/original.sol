@@ -6,7 +6,7 @@ library ArrayUtils {
             uint[] memory r
         )
     {
-        r = new uint[](self.length);
+        r = new uint[]( self.length);
         for (uint i = 0; i < self.length; i++) {
             r[i] = f(self[i]);
         }
@@ -23,7 +23,7 @@ library ArrayUtils {
     }
 
     function range(uint256 length) internal pure returns (uint[] memory r) {
-        r = new uint[](length);
+        r = new uint256[](length );
         for (uint i = 0; i < r.length; i++) {
             r[i] = i;
         }
