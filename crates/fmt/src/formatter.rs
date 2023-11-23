@@ -204,12 +204,12 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// Does the next written character require whitespace before
     fn next_char_needs_space(&self, next_char: char) -> bool {
         if self.is_beginning_of_line() {
-            return false;
+            return false
         }
         let last_char =
             if let Some(last_char) = self.last_char() { last_char } else { return false };
         if last_char.is_whitespace() || next_char.is_whitespace() {
-            return false;
+            return false
         }
         match last_char {
             '{' => match next_char {
@@ -231,15 +231,14 @@ impl<'a, W: Write> Formatter<'a, W> {
     fn will_it_fit(&self, text: impl AsRef<str>) -> bool {
         let text = text.as_ref();
         if text.is_empty() {
-            return true;
+            return true
         }
         if text.contains('\n') {
-            return false;
+            return false
         }
         let space: usize = self.next_char_needs_space(text.chars().next().unwrap()).into();
-        self.config.line_length
-            >= self
-                .total_indent_len()
+        self.config.line_length >=
+            self.total_indent_len()
                 .saturating_add(self.current_line_len())
                 .saturating_add(text.chars().count() + space)
     }
@@ -313,10 +312,10 @@ impl<'a, W: Write> Formatter<'a, W> {
             subset
                 .comment_state_char_indices()
                 .position(|(state, idx, ch)| {
-                    first_char == ch
-                        && state == CommentState::None
-                        && idx + needle.len() <= subset.len()
-                        && subset[idx..idx + needle.len()].eq(needle)
+                    first_char == ch &&
+                        state == CommentState::None &&
+                        idx + needle.len() <= subset.len() &&
+                        subset[idx..idx + needle.len()].eq(needle)
                 })
                 .map(|p| byte_offset + p)
         })
@@ -447,7 +446,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// or if the comment are wrapped
     fn write_comment(&mut self, comment: &CommentWithMetadata, is_first: bool) -> Result<()> {
         if self.inline_config.is_disabled(comment.loc) {
-            return self.write_raw_comment(comment);
+            return self.write_raw_comment(comment)
         }
 
         match comment.position {
@@ -475,7 +474,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             lines.try_for_each(|l| self.write_doc_block_line(comment, l))?;
             write!(self.buf(), " {}", comment.end_token().unwrap())?;
             self.write_preserved_line()?;
-            return Ok(());
+            return Ok(())
         }
 
         write!(self.buf(), "{}", comment.start_token())?;
@@ -550,7 +549,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             write!(self.buf(), " *{}", if needs_space { " " } else { "" })?;
             self.write_comment_line(comment, line)?;
             self.write_whitespace_separator(true)?;
-            return Ok(());
+            return Ok(())
         }
 
         let indent_whitespace_count = line
@@ -572,7 +571,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 line.chars().next().map(|ch| ch.is_whitespace()).unwrap_or_default();
             if !self.is_beginning_of_line() || !start_with_ws {
                 write!(self.buf(), "{line}")?;
-                return Ok(false);
+                return Ok(false)
             }
 
             // if this is the beginning of the line,
@@ -584,7 +583,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 .map(|(_, ch)| ch);
             let padded = format!("{}{}", " ".repeat(indent), chars.join(""));
             self.write_raw(padded)?;
-            return Ok(false);
+            return Ok(false)
         }
 
         let mut words = line.split(' ').peekable();
@@ -603,7 +602,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                     // write newline wrap token
                     write!(self.buf(), "{}", comment.wrap_token())?;
                     self.write_comment_line(comment, &words.join(" "))?;
-                    return Ok(true);
+                    return Ok(true)
                 }
 
                 self.write_whitespace_separator(false)?;
@@ -1075,14 +1074,14 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// expression decide how to split itself on multiple lines
     fn visit_assignment(&mut self, expr: &mut Expression) -> Result<()> {
         if self.try_on_single_line(|fmt| expr.visit(fmt))? {
-            return Ok(());
+            return Ok(())
         }
 
         self.write_postfix_comments_before(expr.loc().start())?;
         self.write_prefix_comments_before(expr.loc().start())?;
 
         if self.try_on_single_line(|fmt| fmt.indented(1, |fmt| expr.visit(fmt)))? {
-            return Ok(());
+            return Ok(())
         }
 
         let mut fit_on_next_line = false;
@@ -1174,7 +1173,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             })?;
 
             if fits_on_single {
-                return Ok(true);
+                return Ok(true)
             }
         }
 
@@ -1338,7 +1337,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         let add_underscores = |string: &str, reversed: bool| -> String {
             if !matches!(config, NumberUnderscore::Thousands) || string.len() < 5 {
-                return string.to_string();
+                return string.to_string()
             }
             if reversed {
                 Box::new(string.as_bytes().chunks(3)) as Box<dyn Iterator<Item = &[u8]>>
@@ -1450,14 +1449,14 @@ impl<'a, W: Write> Formatter<'a, W> {
                     } else {
                         ";"
                     };
-                    let should_multiline = header_multiline
-                        && matches!(
+                    let should_multiline = header_multiline &&
+                        matches!(
                             fmt.config.multiline_func_header,
                             MultilineFuncHeaderStyle::ParamsFirst | MultilineFuncHeaderStyle::All
                         );
-                    params_multiline = should_multiline
-                        || multiline
-                        || fmt.are_chunks_separated_multiline(
+                    params_multiline = should_multiline ||
+                        multiline ||
+                        fmt.are_chunks_separated_multiline(
                             &format!("{{}}){after_params}"),
                             &params,
                             ",",
@@ -1537,8 +1536,8 @@ impl<'a, W: Write> Formatter<'a, W> {
             Ok(())
         };
 
-        let should_multiline = header_multiline
-            && if params_multiline {
+        let should_multiline = header_multiline &&
+            if params_multiline {
                 matches!(self.config.multiline_func_header, MultilineFuncHeaderStyle::All)
             } else {
                 matches!(
@@ -1546,8 +1545,8 @@ impl<'a, W: Write> Formatter<'a, W> {
                     MultilineFuncHeaderStyle::AttributesFirst
                 )
             };
-        let attrs_multiline = should_multiline
-            || !self.try_on_single_line(|fmt| {
+        let attrs_multiline = should_multiline ||
+            !self.try_on_single_line(|fmt| {
                 write_attributes(fmt, false)?;
                 if !fmt.will_it_fit(if func.body.is_some() { " {" } else { ";" }) {
                     bail!(FormatterError::fmt())
@@ -1583,8 +1582,8 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         let cond_close_paren_loc =
             self.find_next_in_src(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
-        let attempt_single_line = single_line_stmt_wide
-            && self.should_attempt_block_single_line(if_branch.as_mut(), cond_close_paren_loc);
+        let attempt_single_line = single_line_stmt_wide &&
+            self.should_attempt_block_single_line(if_branch.as_mut(), cond_close_paren_loc);
         let if_branch_is_single_line = self.visit_stmt_as_block(if_branch, attempt_single_line)?;
         if single_line_stmt_wide && !if_branch_is_single_line {
             bail!(FormatterError::fmt())
@@ -1742,7 +1741,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     fmt.write_postfix_comments_before(first.loc().start())?;
                     fmt.write_whitespace_separator(true)?;
                 } else {
-                    return Ok(());
+                    return Ok(())
                 }
 
                 if fmt.config.contract_new_lines {
@@ -1878,7 +1877,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 fmt.write_semicolon()?;
                 Ok(())
             })?;
-            return Ok(());
+            return Ok(())
         }
 
         let imports_start = imports.first().unwrap().0.loc.start();
@@ -2098,9 +2097,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                                 fmt.chunked(end.loc().start(), Some(loc.end()), |fmt| {
                                     end.visit(fmt)
                                 })?;
-                            if chunk.prefixes.is_empty()
-                                && chunk.postfixes_before.is_empty()
-                                && (start.is_none() || fmt.will_it_fit(&chunk.content))
+                            if chunk.prefixes.is_empty() &&
+                                chunk.postfixes_before.is_empty() &&
+                                (start.is_none() || fmt.will_it_fit(&chunk.content))
                             {
                                 chunk.needs_space = Some(false);
                             }
@@ -2138,33 +2137,33 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 })?;
                 write_chunk!(self, loc.end(), "]")?;
             }
-            Expression::PreIncrement(..)
-            | Expression::PostIncrement(..)
-            | Expression::PreDecrement(..)
-            | Expression::PostDecrement(..)
-            | Expression::Not(..)
-            | Expression::UnaryPlus(..)
-            | Expression::Add(..)
-            | Expression::Negate(..)
-            | Expression::Subtract(..)
-            | Expression::Power(..)
-            | Expression::Multiply(..)
-            | Expression::Divide(..)
-            | Expression::Modulo(..)
-            | Expression::ShiftLeft(..)
-            | Expression::ShiftRight(..)
-            | Expression::BitwiseNot(..)
-            | Expression::BitwiseAnd(..)
-            | Expression::BitwiseXor(..)
-            | Expression::BitwiseOr(..)
-            | Expression::Less(..)
-            | Expression::More(..)
-            | Expression::LessEqual(..)
-            | Expression::MoreEqual(..)
-            | Expression::And(..)
-            | Expression::Or(..)
-            | Expression::Equal(..)
-            | Expression::NotEqual(..) => {
+            Expression::PreIncrement(..) |
+            Expression::PostIncrement(..) |
+            Expression::PreDecrement(..) |
+            Expression::PostDecrement(..) |
+            Expression::Not(..) |
+            Expression::UnaryPlus(..) |
+            Expression::Add(..) |
+            Expression::Negate(..) |
+            Expression::Subtract(..) |
+            Expression::Power(..) |
+            Expression::Multiply(..) |
+            Expression::Divide(..) |
+            Expression::Modulo(..) |
+            Expression::ShiftLeft(..) |
+            Expression::ShiftRight(..) |
+            Expression::BitwiseNot(..) |
+            Expression::BitwiseAnd(..) |
+            Expression::BitwiseXor(..) |
+            Expression::BitwiseOr(..) |
+            Expression::Less(..) |
+            Expression::More(..) |
+            Expression::LessEqual(..) |
+            Expression::MoreEqual(..) |
+            Expression::And(..) |
+            Expression::Or(..) |
+            Expression::Equal(..) |
+            Expression::NotEqual(..) => {
                 let spaced = expr.has_space_around();
                 let op = expr.operator().unwrap();
 
@@ -2195,17 +2194,17 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     (None, None) => {}
                 }
             }
-            Expression::Assign(..)
-            | Expression::AssignOr(..)
-            | Expression::AssignAnd(..)
-            | Expression::AssignXor(..)
-            | Expression::AssignShiftLeft(..)
-            | Expression::AssignShiftRight(..)
-            | Expression::AssignAdd(..)
-            | Expression::AssignSubtract(..)
-            | Expression::AssignMultiply(..)
-            | Expression::AssignDivide(..)
-            | Expression::AssignModulo(..) => {
+            Expression::Assign(..) |
+            Expression::AssignOr(..) |
+            Expression::AssignAnd(..) |
+            Expression::AssignXor(..) |
+            Expression::AssignShiftLeft(..) |
+            Expression::AssignShiftRight(..) |
+            Expression::AssignAdd(..) |
+            Expression::AssignSubtract(..) |
+            Expression::AssignMultiply(..) |
+            Expression::AssignDivide(..) |
+            Expression::AssignModulo(..) => {
                 let op = expr.operator().unwrap();
                 let (left, right) = expr.components_mut();
                 let (left, right) = (left.unwrap(), right.unwrap());
@@ -2307,7 +2306,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     #[instrument(name = "ident_path", skip_all)]
     fn visit_ident_path(&mut self, idents: &mut IdentifierPath) -> Result<(), Self::Error> {
         if idents.identifiers.is_empty() {
-            return Ok(());
+            return Ok(())
         }
         return_source_if_disabled!(self, idents.loc);
 
@@ -2477,7 +2476,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 name.content.push_str("()");
             }
             self.write_chunk(&name)?;
-            return Ok(());
+            return Ok(())
         }
 
         let args = base.args.as_mut().unwrap();
@@ -2496,9 +2495,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     Some(base.loc.end()),
                     args.iter_mut().map(|arg| (arg.loc(), arg)),
                 )?;
-                let multiline = multiline
-                    || multiline_hint
-                    || fmt.are_chunks_separated_multiline("{}", &args, ",")?;
+                let multiline = multiline ||
+                    multiline_hint ||
+                    fmt.are_chunks_separated_multiline("{}", &args, ",")?;
                 fmt.write_chunks_separated(&args, ",", multiline)?;
                 Ok(())
             },
@@ -2531,7 +2530,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             write_chunk!(fmt, struct_name.loc.start(), "struct")?;
             struct_name.visit(fmt)?;
             if structure.fields.is_empty() {
-                return fmt.write_empty_brackets();
+                return fmt.write_empty_brackets()
             }
 
             write!(fmt.buf(), " {{")?;
@@ -2983,7 +2982,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         if !is_first_stmt {
             self.write_if_stmt(loc, cond, if_branch, else_branch)?;
-            return Ok(());
+            return Ok(())
         }
 
         self.context.if_stmt_single_line = Some(true);
@@ -3031,9 +3030,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         }
 
         if let Some(first) = chunks.first_mut() {
-            if first.prefixes.is_empty()
-                && first.postfixes_before.is_empty()
-                && !self.config.bracket_spacing
+            if first.prefixes.is_empty() &&
+                first.postfixes_before.is_empty() &&
+                !self.config.bracket_spacing
             {
                 first.needs_space = Some(false);
             }
@@ -3093,7 +3092,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         if args.is_empty() {
             write!(self.buf(), "({{}});")?;
-            return Ok(());
+            return Ok(())
         }
 
         write!(self.buf(), "(")?;
@@ -3113,7 +3112,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         if expr.is_none() {
             write_chunk!(self, loc.end(), "return;")?;
-            return Ok(());
+            return Ok(())
         }
 
         let expr = expr.as_mut().unwrap();
@@ -3130,7 +3129,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 expr.visit(fmt)
             })?;
             if fits_on_single {
-                return Ok(());
+                return Ok(())
             }
 
             let mut fit_on_next_line = false;
@@ -3147,7 +3146,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             })?;
             if fit_on_next_line {
                 tx.commit()?;
-                return Ok(());
+                return Ok(())
             }
 
             write_return(fmt)?;
@@ -3235,7 +3234,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let multiline = self.are_chunks_separated_multiline("{}", &chunks, "")?;
         if !multiline {
             self.write_chunks_separated(&chunks, "", false)?;
-            return Ok(());
+            return Ok(())
         }
 
         let mut chunks = chunks.iter_mut().peekable();
