@@ -20,7 +20,7 @@ vergen = { version = "8", default-features = false, features = ["build", "git", 
 
 [dependencies]
 # foundry internal
-anvil-core = { path = "core", features = ["fastrlp", "serde", "impersonated-tx", "optimism"] }
+anvil-core = { path = "core", features = ["fastrlp", "serde", "impersonated-tx"] }
 anvil-rpc = { path = "rpc" }
 anvil-server = { path = "server" }
 foundry-common.workspace = true

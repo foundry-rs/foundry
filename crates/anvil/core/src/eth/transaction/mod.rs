@@ -1552,7 +1552,7 @@ impl TransactionInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers_core::{types::H160, utils::hex};
+    use ethers_core::utils::hex;
 
     #[test]
     fn can_recover_sender() {
