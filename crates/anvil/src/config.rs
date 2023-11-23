@@ -475,7 +475,7 @@ impl NodeConfig {
     #[must_use]
     pub fn with_gas_limit(mut self, gas_limit: Option<U256>) -> Self {
         if let Some(gas_limit) = gas_limit {
-            self.gas_limit = gas_limit.into();
+            self.gas_limit = gas_limit;
         }
         self
     }

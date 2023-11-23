@@ -1,13 +1,13 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
-use alloy_primitives::{FixedBytes, B256, U256};
+use alloy_primitives::{B256, U256};
 use alloy_providers::provider::TempProvider;
-use alloy_rpc_types::{Filter, Topic};
+use alloy_rpc_types::{Filter};
 use alloy_sol_types::SolValue;
 use eyre::WrapErr;
 use foundry_common::provider::alloy::ProviderBuilder;
 use foundry_compilers::utils::RuntimeOrHandle;
 use foundry_evm_core::fork::CreateFork;
-use foundry_utils::types::{ToAlloy, ToEthers};
+use foundry_utils::types::{ToEthers};
 
 impl Cheatcode for activeForkCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
@@ -218,7 +218,7 @@ impl Cheatcode for isPersistentCall {
 }
 
 impl Cheatcode for rpcCall {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_full<DB: DatabaseExt>(&self, _ccx: &mut CheatsCtxt<DB>) -> Result {
         /*
         todo what do we do here
         let Self { method, params } = self;

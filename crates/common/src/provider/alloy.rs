@@ -216,14 +216,14 @@ impl ProviderBuilder {
     pub fn build(self) -> Result<RetryProvider> {
         let ProviderBuilder {
             url,
-            chain,
-            max_retry,
-            timeout_retry,
-            initial_backoff,
-            timeout,
-            compute_units_per_second,
+            chain: _,
+            max_retry: _,
+            timeout_retry: _,
+            initial_backoff: _,
+            timeout: _,
+            compute_units_per_second: _,
             jwt,
-            headers,
+            headers: _,
         } = self;
         let url = url?;
 

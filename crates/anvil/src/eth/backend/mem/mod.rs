@@ -1010,7 +1010,7 @@ impl Backend {
             let (exit, out, gas, state) = match overrides {
                 None => self.call_with_state(state, request, fee_details, block),
                 Some(overrides) => {
-                    let state = state::apply_state_override(overrides.into_iter().map(|(k, v)| (k, v)).collect(), state)?;
+                    let state = state::apply_state_override(overrides.into_iter().collect(), state)?;
                     self.call_with_state(state, request, fee_details, block)
                 },
             }?;
@@ -1227,7 +1227,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.logs(&filter).await.map_err(|_| BlockchainError::DataUnavailable)?);
+            return fork.logs(&filter).await.map_err(|_| BlockchainError::DataUnavailable);
         }
 
         Ok(Vec::new())
@@ -1360,10 +1360,10 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork
+            return fork
                 .block_by_hash(hash)
                 .await
-                .map_err(|_| BlockchainError::DataUnavailable)?);
+                .map_err(|_| BlockchainError::DataUnavailable);
         }
 
         Ok(None)
@@ -1379,10 +1379,10 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork
+            return fork
                 .block_by_hash_full(hash)
                 .await
-                .map_err(|_| BlockchainError::DataUnavailable)?);
+                .map_err(|_| BlockchainError::DataUnavailable);
         }
 
         Ok(None)
@@ -1436,10 +1436,10 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork
+                return fork
                     .block_by_number(number)
                     .await
-                    .map_err(|_| BlockchainError::DataUnavailable)?);
+                    .map_err(|_| BlockchainError::DataUnavailable);
             }
         }
 
@@ -1458,10 +1458,10 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork
+                return fork
                     .block_by_number_full(number)
                     .await
-                    .map_err(|_| BlockchainError::DataUnavailable)?);
+                    .map_err(|_| BlockchainError::DataUnavailable);
             }
         }
 
@@ -1968,7 +1968,7 @@ impl Backend {
                 .map(|f| f.to_alloy())
                 .unwrap_or(self.base_fee())
                 .checked_add(t.max_priority_fee_per_gas.to_alloy())
-                .unwrap_or_else(|| U256::MAX),
+                .unwrap_or(U256::MAX),
         };
 
         let inner = TransactionReceipt {
@@ -2009,7 +2009,7 @@ impl Backend {
             state_root: None,
             logs_bloom: Bloom::from_slice(logs_bloom.as_bytes()),
             // TODO: Should this be unwrap_or_default, or is this guaranteed to exist?
-            transaction_type: transaction_type.map(|t| U8::from(t)).unwrap_or_default(),
+            transaction_type: transaction_type.map(U8::from).unwrap_or_default(),
             effective_gas_price: effective_gas_price.to::<U128>(),
             blob_gas_price: None,
             blob_gas_used: None,
@@ -2030,10 +2030,10 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork(number) {
-                return Ok(fork
+                return fork
                     .transaction_by_block_number_and_index(number, index.into())
                     .await
-                    .map_err(|_| BlockchainError::DataUnavailable)?);
+                    .map_err(|_| BlockchainError::DataUnavailable);
             }
         }
 
@@ -2050,10 +2050,10 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork
+            return fork
                 .transaction_by_block_hash_and_index(hash, index.into())
                 .await
-                .map_err(|_| BlockchainError::DataUnavailable)?);
+                .map_err(|_| BlockchainError::DataUnavailable);
         }
 
         Ok(None)
@@ -2092,10 +2092,10 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork
+            return fork
                 .transaction_by_hash(hash)
                 .await
-                .map_err(|_| BlockchainError::DataUnavailable)?);
+                .map_err(|_| BlockchainError::DataUnavailable);
         }
 
         Ok(None)
@@ -2380,7 +2380,7 @@ pub fn transaction_build(
             transaction.gas_price = Some(
                 base_fee
                     .checked_add(max_priority_fee_per_gas)
-                    .unwrap_or_else(|| U256::MAX)
+                    .unwrap_or(U256::MAX)
                     .to::<U128>(),
             );
         }

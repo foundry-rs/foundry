@@ -192,7 +192,7 @@ impl OtsBlockTransactions {
         };
 
         let receipt_futs =
-            block_txs.iter().map(|tx| async { backend.transaction_receipt(tx.clone()).await });
+            block_txs.iter().map(|tx| async { backend.transaction_receipt(*tx).await });
 
         let receipts: Vec<TransactionReceipt> = join_all(receipt_futs)
             .await

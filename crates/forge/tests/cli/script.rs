@@ -4,7 +4,7 @@ use crate::constants::TEMPLATE_CONTRACT;
 use alloy_primitives::{Address, Bytes};
 use anvil::{spawn, NodeConfig};
 use foundry_test_utils::{util::OutputExt, ScriptOutcome, ScriptTester};
-use foundry_utils::{rpc, types::ToEthers};
+use foundry_utils::{rpc};
 use regex::Regex;
 use serde_json::Value;
 use std::{env, path::PathBuf, str::FromStr};
