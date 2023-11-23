@@ -42,16 +42,16 @@ use anvil_core::{
         trie::RefTrieDB,
         utils::to_revm_access_list,
     },
-    types::{Forking, Index},
+    types::{Forking, Index, TraceFilter, TraceFilterMode},
 };
 use anvil_rpc::error::RpcError;
 use ethers::{
     abi::ethereum_types::BigEndianHash,
     prelude::{BlockNumber, GethTraceFrame, TxHash, H256, U256, U64},
     types::{
-        transaction::eip2930::AccessList, Address, Block as EthersBlock, BlockId, Bytes,
-        DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, OtherFields,
-        Trace, Transaction, TransactionReceipt, H160,
+        transaction::eip2930::AccessList, Action, Address, Block as EthersBlock, BlockId, Bytes,
+        Call, Create, DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace,
+        Log, OtherFields, Suicide, Trace, Transaction, TransactionReceipt, H160,
     },
     utils::{keccak256, rlp},
 };
@@ -1854,6 +1854,83 @@ impl Backend {
         }
 
         Ok(vec![])
+    }
+
+    /// Returns the traces for the given filter
+    pub async fn trace_filter(&self, filter: TraceFilter) -> Result<Vec<Trace>, BlockchainError> {
+        let mut block: u64 = match filter.from_block {
+            Some(n) => self.convert_block_number(Some(n)),
+            None => self.convert_block_number(Some(BlockNumber::Earliest)),
+        };
+
+        let to_block: u64 = match filter.to_block {
+            Some(n) => self.convert_block_number(Some(n)),
+            None => self.convert_block_number(Some(BlockNumber::Latest)),
+        };
+
+        let after: usize = filter.after.unwrap_or(0);
+        let count: usize = filter.count.unwrap_or(usize::MAX);
+
+        let mut traces = vec![];
+        let mut trace_count = 0;
+
+        while block <= to_block {
+            for trace in self.trace_block(block.into()).await? {
+                if !self.trace_filter_address_valid(&filter, &trace) {
+                    continue;
+                }
+
+                trace_count += 1;
+
+                if trace_count > after && trace_count <= count {
+                    traces.push(trace);
+                }
+            }
+            block += 1;
+        }
+
+        Ok(traces)
+    }
+
+    /// Checks if addresses from a `Trace` object exist in a `TraceFilter`. It uses
+    /// `TraceFilterMode` to use correct cross check logic.
+    ///
+    /// Address types which are not set in the `TraceFilter` are considered always valid.
+    ///
+    /// Returns `true` if any or all (based on `TraceFilterMode`) addresses from the `Trace`
+    /// object are present in the `TraceFilter`. Otherwise, returns `false`.
+    fn trace_filter_address_valid(&self, filter: &TraceFilter, trace: &Trace) -> bool {
+        let (trace_from_addr, trace_to_addr): (Option<Address>, Option<Address>) =
+            match trace.action {
+                Action::Call(Call { from, to, .. }) => (Some(from), Some(to)),
+                Action::Create(Create { from, .. }) => (Some(from), None),
+                Action::Suicide(Suicide { address, refund_address, .. }) => {
+                    (Some(address), Some(refund_address))
+                }
+                Action::Reward(_) => (None, None),
+            };
+
+        let mut from_valid = true;
+        let mut to_valid = true;
+
+        if let Some(from_addresses) = &filter.from_address {
+            from_valid = match trace_from_addr {
+                Some(addr) => from_addresses.contains(&addr),
+                None => false,
+            };
+        }
+
+        if let Some(to_addresses) = &filter.to_address {
+            to_valid = match trace_to_addr {
+                Some(addr) => to_addresses.contains(&addr),
+                None => false,
+            };
+        }
+
+        match filter.mode {
+            TraceFilterMode::Intersection => from_valid && to_valid,
+            TraceFilterMode::Union => from_valid || to_valid,
+        }
     }
 
     pub async fn transaction_receipt(
