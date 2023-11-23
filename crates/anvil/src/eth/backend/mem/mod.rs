@@ -553,6 +553,11 @@ impl Backend {
         (self.spec_id() as u8) >= (SpecId::BERLIN as u8)
     }
 
+    /// Returns true if op-stack deposits are active
+    pub fn is_optimism(&self) -> bool {
+        self.env.read().cfg.optimism
+    }
+
     /// Returns an error if EIP1559 is not active (pre Berlin)
     pub fn ensure_eip1559_active(&self) -> Result<(), BlockchainError> {
         if self.is_eip1559() {
@@ -567,6 +572,14 @@ impl Backend {
             return Ok(())
         }
         Err(BlockchainError::EIP2930TransactionUnsupportedAtHardfork)
+    }
+
+    /// Returns an error if op-stack deposits are not active
+    pub fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
+        if self.is_optimism() {
+            return Ok(())
+        }
+        Err(BlockchainError::DepositTransactionUnsupported)
     }
 
     /// Returns the block gas limit
@@ -1913,7 +1926,10 @@ impl Backend {
                 .unwrap_or(self.base_fee())
                 .checked_add(t.max_priority_fee_per_gas)
                 .unwrap_or_else(U256::max_value),
+            TypedTransaction::Deposit(_) => U256::from(0),
         };
+
+        let deposit_nonce = transaction_type.and_then(|x| (x == 0x7E).then_some(info.nonce));
 
         let inner = TransactionReceipt {
             transaction_hash: info.transaction_hash,
@@ -1956,6 +1972,11 @@ impl Backend {
             logs_bloom,
             transaction_type: transaction_type.map(Into::into),
             effective_gas_price: Some(effective_gas_price),
+            deposit_nonce,
+            l1_fee: None,
+            l1_fee_scalar: None,
+            l1_gas_price: None,
+            l1_gas_used: None,
             other: OtherFields::default(),
         };
 
@@ -2234,15 +2255,17 @@ impl TransactionValidator for Backend {
         }
 
         // check nonce
+        let is_deposit_tx =
+            matches!(&pending.transaction.transaction, TypedTransaction::Deposit(_));
         let nonce: u64 =
             (*tx.nonce()).try_into().map_err(|_| InvalidTransactionError::NonceMaxValue)?;
-        if nonce < account.nonce {
+        if nonce < account.nonce && !is_deposit_tx {
             warn!(target: "backend", "[{:?}] nonce too low", tx.hash());
             return Err(InvalidTransactionError::NonceTooLow)
         }
 
         if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
-            if tx.gas_price() < env.block.basefee.to_ethers() {
+            if tx.gas_price() < env.block.basefee.to_ethers() && !is_deposit_tx {
                 warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
                 return Err(InvalidTransactionError::FeeCapTooLow)
             }
@@ -2297,6 +2320,9 @@ pub fn transaction_build(
     base_fee: Option<U256>,
 ) -> Transaction {
     let mut transaction: Transaction = eth_transaction.clone().into();
+    if info.is_some() && transaction.transaction_type.unwrap_or(U64::zero()).as_u64() == 0x7E {
+        transaction.nonce = U256::from(info.as_ref().unwrap().nonce);
+    }
 
     if eth_transaction.is_dynamic_fee() {
         if block.is_none() && info.is_none() {

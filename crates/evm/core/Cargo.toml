@@ -29,6 +29,7 @@ revm = { workspace = true, default-features = false, features = [
     "optional_block_gas_limit",
     "optional_no_base_fee",
     "arbitrary",
+    "optimism",
 ] }
 
 ethers-core.workspace = true

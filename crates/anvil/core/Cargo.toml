@@ -13,10 +13,14 @@ repository.workspace = true
 foundry-common.workspace = true
 foundry-evm.workspace = true
 
-revm = { workspace = true, default-features = false, features = ["std", "serde", "memory_limit"] }
-
 alloy-primitives = { workspace = true, features = ["serde"] }
-ethers-core.workspace = true
+revm = { workspace = true, default-features = false, features = ["std", "serde", "memory_limit"] }
+ethers-core = { workspace = true, features = ["optimism"] }
+# theses are not used by anvil-core, but are required by ethers, because pulled in via foundry-common
+ethers-contract = { workspace = true, features = ["optimism"] }
+ethers-providers = { workspace = true, features = ["optimism"] }
+ethers-middleware = { workspace = true, features = ["optimism"] }
+
 serde = { workspace = true, optional = true }
 serde_json.workspace = true
 bytes = { version = "1.4" }
