@@ -1255,7 +1255,7 @@ impl Backend {
             let logs = transaction.logs.clone();
             let transaction_hash = transaction.transaction_hash;
 
-            for (_, log) in logs.into_iter().enumerate() {
+            for log in logs.into_iter() {
                 let mut log = Log {
                     address: log.address.to_alloy(),
                     topics: log.topics.into_iter().map(|t| t.to_alloy()).collect(),

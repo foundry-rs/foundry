@@ -190,7 +190,7 @@ pub fn filter_logs(
         } else {
             None
         };
-        for (_, log) in receipt_logs.into_iter().enumerate() {
+        for  log in receipt_logs.into_iter() {
             if add_log(block_hash.to_alloy(), &log, &block, filter) {
                 logs.push(AlloyLog {
                     address: log.address.to_alloy(),
