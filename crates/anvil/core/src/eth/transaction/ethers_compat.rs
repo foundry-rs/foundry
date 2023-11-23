@@ -316,7 +316,6 @@ fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: None,
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: vec![],
-            ..Default::default()
         },
         TypedTransaction::EIP2930(t) => AlloyTransaction {
             hash: hash.to_alloy(),
@@ -343,7 +342,6 @@ fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: Some(rU64::from(1)),
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: vec![],
-            ..Default::default()
         },
         TypedTransaction::EIP1559(t) => AlloyTransaction {
             hash: hash.to_alloy(),
@@ -370,7 +368,6 @@ fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: Some(rU64::from(2)),
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: vec![],
-            ..Default::default()
         },
     }
 }
