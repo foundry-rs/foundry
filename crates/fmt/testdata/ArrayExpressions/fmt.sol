@@ -4,7 +4,7 @@ contract ArrayExpressions {
         uint256[10] memory sample;
 
         uint256 length = 10;
-        uint256[] memory sample2 = new uint[](length);
+        uint256[] memory sample2 = new uint256[](length);
 
         uint256[] /* comment1 */ memory /* comment2 */ sample3; // comment3
 

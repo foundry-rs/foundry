@@ -2286,6 +2286,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 expr.visit(self)?;
                 stmt.visit(self)?;
             }
+            Expression::New(_, expr) => {
+                write_chunk!(self, "new ")?;
+                self.visit_expr(expr.loc(), expr)?;
+            }
             _ => self.visit_source(loc)?,
         };
 
