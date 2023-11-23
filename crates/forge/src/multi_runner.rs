@@ -218,7 +218,7 @@ impl MultiContractRunner {
             name,
             executor,
             contract,
-            deploy_code.0.into(),
+            deploy_code,
             self.evm_opts.initial_balance,
             self.sender,
             self.errors.as_ref(),
@@ -330,11 +330,8 @@ impl MultiContractRunnerBuilder {
                         id.clone(),
                         (
                             abi.clone(),
-                            bytecode.0.into(),
-                            dependencies
-                                .into_iter()
-                                .map(|dep| dep.bytecode.0.into())
-                                .collect::<Vec<_>>(),
+                            bytecode,
+                            dependencies.into_iter().map(|dep| dep.bytecode).collect::<Vec<_>>(),
                         ),
                     );
                 }

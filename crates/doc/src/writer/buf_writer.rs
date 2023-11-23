@@ -80,7 +80,7 @@ impl BufWriter {
         writeln!(self.buf, "{}", Markdown::Italic(text))
     }
 
-    /// Writes bold text to the bufffer formatted as [Markdown::Bold].
+    /// Writes bold text to the buffer formatted as [Markdown::Bold].
     pub fn write_bold(&mut self, text: &str) -> fmt::Result {
         writeln!(self.buf, "{}", Markdown::Bold(text))
     }
@@ -90,7 +90,7 @@ impl BufWriter {
         writeln!(self.buf, "{}", Markdown::Link(name, path))
     }
 
-    /// Writes a list item to the bufffer indented by specified depth.
+    /// Writes a list item to the buffer indented by specified depth.
     pub fn write_list_item(&mut self, item: &str, depth: usize) -> fmt::Result {
         let indent = " ".repeat(depth * 2);
         writeln!(self.buf, "{indent}- {item}")

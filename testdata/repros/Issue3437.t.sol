@@ -8,12 +8,12 @@ import "../cheats/Vm.sol";
 contract Issue3347Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    function rever() internal {
+    function internalRevert() internal {
         revert();
     }
 
     function testFailExample() public {
         vm.expectRevert();
-        rever();
+        internalRevert();
     }
 }

@@ -1071,7 +1071,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Visit the right side of an assignment. The function will try to write the assignment on a
     /// single line or indented on the next line. If it can't do this it resorts to letting the
-    /// expression decide how to split iself on multiple lines
+    /// expression decide how to split itself on multiple lines
     fn visit_assignment(&mut self, expr: &mut Expression) -> Result<()> {
         if self.try_on_single_line(|fmt| expr.visit(fmt))? {
             return Ok(())

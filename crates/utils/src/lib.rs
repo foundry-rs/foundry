@@ -286,7 +286,7 @@ fn recurse_link<'a>(
     // libraries we have already deployed during the linking process.
     // the key is `file:contract` and the value is the address we computed
     internally_deployed_libraries: &'a mut HashMap<String, (u64, Address)>,
-    // deployed library addresses fname => adddress
+    // deployed library addresses fname => address
     deployed_library_addresses: &'a Libraries,
     // nonce to start at
     nonce: &mut u64,
@@ -382,7 +382,7 @@ fn recurse_link<'a>(
                     id: library,
                     address: *deployed_address,
                     nonce: *cached_nonce,
-                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!("Bytecode should be linked for {next_target}")).0.into(),
+                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!("Bytecode should be linked for {next_target}")),
                 });
                 *deployed_address
             } else {
@@ -399,7 +399,7 @@ fn recurse_link<'a>(
                     id: library,
                     address: computed_address,
                     nonce: used_nonce,
-                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!("Bytecode should be linked for {next_target}")).0.into(),
+                    bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!("Bytecode should be linked for {next_target}")),
                 });
 
                 // remember this library for later

@@ -135,7 +135,7 @@ impl Cheatcode for computeCreate2Address_1Call {
 }
 
 /// Using a given private key, return its public ETH address, its public key affine x and y
-/// coodinates, and its private key (see the 'Wallet' struct)
+/// coordinates, and its private key (see the 'Wallet' struct)
 ///
 /// If 'label' is set to 'Some()', assign that label to the associated ETH address in state
 fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes) -> Result {

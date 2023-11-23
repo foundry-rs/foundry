@@ -230,7 +230,7 @@ impl Comments {
         Self { prefixes, postfixes }
     }
 
-    /// Heloer for removing comments before a byte offset
+    /// Helper for removing comments before a byte offset
     fn remove_comments_before(
         comments: &mut VecDeque<CommentWithMetadata>,
         byte: usize,

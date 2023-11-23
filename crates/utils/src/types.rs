@@ -1,10 +1,13 @@
 //! Temporary utility conversion traits between ethers-rs and alloy types.
 
 use alloy_json_abi::{Event, EventParam, Function, InternalType, Param, StateMutability};
-use alloy_primitives::{Address, B256, I256, U256, U64};
+use alloy_primitives::{Address, Bloom, Bytes, B256, B64, I256, U256, U64};
 use ethers_core::{
     abi as ethabi,
-    types::{H160, H256, I256 as EthersI256, U256 as EthersU256, U64 as EthersU64},
+    types::{
+        Bloom as EthersBloom, Bytes as EthersBytes, H160, H256, H64, I256 as EthersI256,
+        U256 as EthersU256, U64 as EthersU64,
+    },
 };
 
 /// Conversion trait to easily convert from Ethers types to Alloy types.
@@ -13,6 +16,24 @@ pub trait ToAlloy {
 
     /// Converts the Ethers type to the corresponding Alloy type.
     fn to_alloy(self) -> Self::To;
+}
+
+impl ToAlloy for EthersBytes {
+    type To = Bytes;
+
+    #[inline(always)]
+    fn to_alloy(self) -> Self::To {
+        Bytes(self.0)
+    }
+}
+
+impl ToAlloy for H64 {
+    type To = B64;
+
+    #[inline(always)]
+    fn to_alloy(self) -> Self::To {
+        B64::new(self.0)
+    }
 }
 
 impl ToAlloy for H160 {
@@ -30,6 +51,15 @@ impl ToAlloy for H256 {
     #[inline(always)]
     fn to_alloy(self) -> Self::To {
         B256::new(self.0)
+    }
+}
+
+impl ToAlloy for EthersBloom {
+    type To = Bloom;
+
+    #[inline(always)]
+    fn to_alloy(self) -> Self::To {
+        Bloom::new(self.0)
     }
 }
 
@@ -205,5 +235,14 @@ impl ToEthers for U64 {
     #[inline(always)]
     fn to_ethers(self) -> Self::To {
         EthersU64(self.into_limbs())
+    }
+}
+
+impl ToEthers for Bytes {
+    type To = EthersBytes;
+
+    #[inline(always)]
+    fn to_ethers(self) -> Self::To {
+        EthersBytes(self.0)
     }
 }

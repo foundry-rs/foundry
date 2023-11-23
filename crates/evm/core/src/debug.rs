@@ -1,6 +1,6 @@
 use crate::utils::CallKind;
 use alloy_primitives::{Address, U256};
-use revm::interpreter::{OpCode, SharedMemory};
+use revm::interpreter::OpCode;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 
@@ -114,7 +114,7 @@ pub struct DebugStep {
     /// Stack *prior* to running the associated opcode
     pub stack: Vec<U256>,
     /// Memory *prior* to running the associated opcode
-    pub memory: SharedMemory,
+    pub memory: Vec<u8>,
     /// Opcode to be executed
     pub instruction: Instruction,
     /// Optional bytes that are being pushed onto the stack
@@ -178,7 +178,7 @@ impl Display for Instruction {
             Instruction::Cheatcode(cheat) => write!(
                 f,
                 "VM_{}",
-                foundry_cheatcodes_spec::Vm::CHEATCODES
+                crate::abi::Vm::CHEATCODES
                     .iter()
                     .map(|c| &c.func)
                     .find(|c| c.selector_bytes == *cheat)

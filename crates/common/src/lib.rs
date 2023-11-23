@@ -2,6 +2,8 @@
 
 #![warn(missing_docs, unused_crate_dependencies)]
 
+extern crate self as foundry_common;
+
 #[macro_use]
 extern crate tracing;
 

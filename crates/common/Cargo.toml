@@ -13,7 +13,7 @@ repository.workspace = true
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 foundry-compilers.workspace = true
 foundry-config.workspace = true
-foundry-macros.workspace = true
+foundry-utils.workspace = true
 
 ethers-core.workspace = true
 ethers-middleware.workspace = true
@@ -46,4 +46,6 @@ walkdir = "2"
 yansi = "0.5"
 
 [dev-dependencies]
+foundry-macros.workspace = true
+pretty_assertions.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

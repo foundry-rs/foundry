@@ -78,9 +78,9 @@ checksum = "0942ffc6dcaadf03badf6e6a2d0228460359d5e34b57ccdc720b7382dfbd5ec5"
 
 [[package]]
 name = "alloy-chains"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c18b3ecf1746f0eac255374bdf899dd217dd1b301e4a3f146592234243e1bc66"
+checksum = "7e9249bbabebe77f78e6a8f1984f9cd6151bb3297e484bb073cfae7a6dbd9f22"
 dependencies = [
  "num_enum",
  "serde",
@@ -90,7 +90,7 @@ dependencies = [
 [[package]]
 name = "alloy-dyn-abi"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
+source = "git+https://github.com/alloy-rs/core/#389e256e9f82c797dd0ed642348b7b8d2e0bcf90"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -110,7 +110,7 @@ dependencies = [
 [[package]]
 name = "alloy-json-abi"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
+source = "git+https://github.com/alloy-rs/core/#389e256e9f82c797dd0ed642348b7b8d2e0bcf90"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-type-parser",
@@ -121,7 +121,7 @@ dependencies = [
 [[package]]
 name = "alloy-primitives"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
+source = "git+https://github.com/alloy-rs/core/#389e256e9f82c797dd0ed642348b7b8d2e0bcf90"
 dependencies = [
  "alloy-rlp",
  "arbitrary",
@@ -168,7 +168,7 @@ dependencies = [
 [[package]]
 name = "alloy-sol-macro"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
+source = "git+https://github.com/alloy-rs/core/#389e256e9f82c797dd0ed642348b7b8d2e0bcf90"
 dependencies = [
  "alloy-json-abi",
  "const-hex",
@@ -187,7 +187,7 @@ dependencies = [
 [[package]]
 name = "alloy-sol-type-parser"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
+source = "git+https://github.com/alloy-rs/core/#389e256e9f82c797dd0ed642348b7b8d2e0bcf90"
 dependencies = [
  "winnow",
 ]
@@ -195,7 +195,7 @@ dependencies = [
 [[package]]
 name = "alloy-sol-types"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
+source = "git+https://github.com/alloy-rs/core/#389e256e9f82c797dd0ed642348b7b8d2e0bcf90"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -2623,19 +2623,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "foundry-abi"
-version = "0.2.0"
-dependencies = [
- "ethers-contract",
- "ethers-contract-abigen",
- "ethers-core",
- "ethers-providers",
- "eyre",
- "foundry-macros",
- "syn 2.0.39",
-]
-
-[[package]]
 name = "foundry-binder"
 version = "0.2.0"
 dependencies = [
@@ -2765,8 +2752,10 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-macros",
+ "foundry-utils",
  "globset",
  "once_cell",
+ "pretty_assertions",
  "regex",
  "reqwest",
  "semver 1.0.20",
@@ -2887,7 +2876,6 @@ dependencies = [
  "foundry-evm-coverage",
  "foundry-evm-fuzz",
  "foundry-evm-traces",
- "foundry-macros",
  "foundry-utils",
  "hashbrown 0.14.2",
  "parking_lot",
@@ -2906,15 +2894,15 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "const-hex",
- "ethers-contract",
+ "derive_more",
  "ethers-core",
  "ethers-providers",
  "eyre",
- "foundry-abi",
  "foundry-cheatcodes-spec",
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
+ "foundry-macros",
  "foundry-utils",
  "futures",
  "itertools 0.11.0",
@@ -2983,7 +2971,6 @@ dependencies = [
  "ethers-core",
  "eyre",
  "foundry-block-explorers",
- "foundry-cheatcodes-spec",
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
@@ -3004,16 +2991,6 @@ dependencies = [
 
 [[package]]
 name = "foundry-macros"
-version = "0.2.0"
-dependencies = [
- "ethers-core",
- "foundry-macros-impl",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "foundry-macros-impl"
 version = "0.2.0"
 dependencies = [
  "proc-macro-error",
@@ -6840,7 +6817,7 @@ dependencies = [
 [[package]]
 name = "syn-solidity"
 version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
+source = "git+https://github.com/alloy-rs/core/#389e256e9f82c797dd0ed642348b7b8d2e0bcf90"
 dependencies = [
  "paste",
  "proc-macro2",

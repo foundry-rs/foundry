@@ -503,26 +503,26 @@ async fn test_fork_nft_set_approve_all() {
 
     let nouns = Erc721::new(nouns_addr, Arc::clone(&provider));
 
-    let real_onwer = nouns.owner_of(token_id).call().await.unwrap();
-    assert_eq!(real_onwer, owner);
+    let real_owner = nouns.owner_of(token_id).call().await.unwrap();
+    assert_eq!(real_owner, owner);
     let approval = nouns.set_approval_for_all(nouns_addr, true);
     let tx = approval.send().await.unwrap().await.unwrap().unwrap();
     assert_eq!(tx.status, Some(1u64.into()));
 
     // transfer: impersonate real owner and transfer nft
-    api.anvil_impersonate_account(real_onwer).await.unwrap();
+    api.anvil_impersonate_account(real_owner).await.unwrap();
 
-    api.anvil_set_balance(real_onwer, U256::from(10000e18 as u64)).await.unwrap();
+    api.anvil_set_balance(real_owner, U256::from(10000e18 as u64)).await.unwrap();
 
-    let call = nouns.transfer_from(real_onwer, wallet.address(), token_id);
+    let call = nouns.transfer_from(real_owner, wallet.address(), token_id);
     let mut tx: TypedTransaction = call.tx;
-    tx.set_from(real_onwer);
+    tx.set_from(real_owner);
     provider.fill_transaction(&mut tx, None).await.unwrap();
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
     assert_eq!(tx.status, Some(1u64.into()));
 
-    let real_onwer = nouns.owner_of(token_id).call().await.unwrap();
-    assert_eq!(real_onwer, wallet.address());
+    let real_owner = nouns.owner_of(token_id).call().await.unwrap();
+    assert_eq!(real_owner, wallet.address());
 }
 
 // <https://github.com/foundry-rs/foundry/issues/2261>

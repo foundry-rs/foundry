@@ -1,5 +1,5 @@
 use super::UIfmt;
-use ethers_core::types::{Address, Bytes, H256, I256, U256};
+use alloy_primitives::{Address, Bytes, FixedBytes, I256, U256};
 
 /// A format specifier.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -71,10 +71,13 @@ impl ConsoleFmt for U256 {
             FormatSpec::String | FormatSpec::Object | FormatSpec::Number | FormatSpec::Integer => {
                 self.pretty()
             }
-            FormatSpec::Hexadecimal => format!("0x{:x}", *self),
+            FormatSpec::Hexadecimal => {
+                let hex = format!("{self:x}");
+                format!("0x{}", hex.trim_start_matches('0'))
+            }
             FormatSpec::Exponential => {
                 let log = self.pretty().len() - 1;
-                let exp10 = U256::exp10(log);
+                let exp10 = U256::from(10).pow(U256::from(log));
                 let amount = *self;
                 let integer = amount / exp10;
                 let decimal = (amount % exp10).to_string();
@@ -95,7 +98,10 @@ impl ConsoleFmt for I256 {
             FormatSpec::String | FormatSpec::Object | FormatSpec::Number | FormatSpec::Integer => {
                 self.pretty()
             }
-            FormatSpec::Hexadecimal => format!("0x{:x}", *self),
+            FormatSpec::Hexadecimal => {
+                let hex = format!("{self:x}");
+                format!("0x{}", hex.trim_start_matches('0'))
+            }
             FormatSpec::Exponential => {
                 let amount = *self;
                 let sign = if amount.is_negative() { "-" } else { "" };
@@ -118,10 +124,10 @@ impl ConsoleFmt for I256 {
     }
 }
 
-impl ConsoleFmt for H256 {
+impl ConsoleFmt for Address {
     fn fmt(&self, spec: FormatSpec) -> String {
         match spec {
-            FormatSpec::Hexadecimal | FormatSpec::String => self.pretty(),
+            FormatSpec::String | FormatSpec::Hexadecimal => self.pretty(),
             FormatSpec::Object => format!("'{}'", self.pretty()),
             FormatSpec::Number | FormatSpec::Integer | FormatSpec::Exponential => {
                 String::from("NaN")
@@ -130,35 +136,39 @@ impl ConsoleFmt for H256 {
     }
 }
 
-impl ConsoleFmt for Address {
+impl ConsoleFmt for Vec<u8> {
     fn fmt(&self, spec: FormatSpec) -> String {
-        match spec {
-            FormatSpec::String => self.pretty(),
-            FormatSpec::Object => format!("'{}'", self.pretty()),
-            FormatSpec::Number |
-            FormatSpec::Integer |
-            FormatSpec::Exponential |
-            FormatSpec::Hexadecimal => String::from("NaN"),
-        }
+        self[..].fmt(spec)
     }
 }
 
 impl ConsoleFmt for Bytes {
     fn fmt(&self, spec: FormatSpec) -> String {
-        match spec {
-            FormatSpec::String => self.pretty(),
-            FormatSpec::Object => format!("'{}'", self.pretty()),
-            FormatSpec::Number |
-            FormatSpec::Integer |
-            FormatSpec::Exponential |
-            FormatSpec::Hexadecimal => String::from("NaN"),
-        }
+        self[..].fmt(spec)
     }
 }
 
 impl<const N: usize> ConsoleFmt for [u8; N] {
-    fn fmt(&self, _spec: FormatSpec) -> String {
-        self.pretty()
+    fn fmt(&self, spec: FormatSpec) -> String {
+        self[..].fmt(spec)
+    }
+}
+
+impl<const N: usize> ConsoleFmt for FixedBytes<N> {
+    fn fmt(&self, spec: FormatSpec) -> String {
+        self[..].fmt(spec)
+    }
+}
+
+impl ConsoleFmt for [u8] {
+    fn fmt(&self, spec: FormatSpec) -> String {
+        match spec {
+            FormatSpec::String | FormatSpec::Hexadecimal => self.pretty(),
+            FormatSpec::Object => format!("'{}'", self.pretty()),
+            FormatSpec::Number | FormatSpec::Integer | FormatSpec::Exponential => {
+                String::from("NaN")
+            }
+        }
     }
 }
 
@@ -181,17 +191,14 @@ impl<const N: usize> ConsoleFmt for [u8; N] {
 /// If there are more format specifiers than values, then the remaining unparsed format specifiers
 /// appended to the formatted output as-is.
 ///
-/// # Example
+/// # Examples
 ///
-/// ```ignore
-/// let formatted = console_format("%s has %d characters", ["foo", 3]);
+/// ```ignore (not implemented for integers)
+/// let formatted = foundry_common::fmt::console_format("%s has %d characters", &[&"foo", &3]);
 /// assert_eq!(formatted, "foo has 3 characters");
 /// ```
-pub fn console_format<'a>(
-    spec: &str,
-    values: impl IntoIterator<Item = &'a dyn ConsoleFmt>,
-) -> String {
-    let mut values = values.into_iter();
+pub fn console_format(spec: &str, values: &[&dyn ConsoleFmt]) -> String {
+    let mut values = values.iter().copied();
     let mut result = String::with_capacity(spec.len());
 
     // for the first space
@@ -260,28 +267,26 @@ fn format_spec<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ConsoleFmt;
+    use alloy_primitives::B256;
+    use foundry_macros::ConsoleFmt;
     use std::str::FromStr;
 
     macro_rules! logf1 {
-        ($a:ident) => {{
-            let args: [&dyn ConsoleFmt; 1] = [&$a.p_1];
-            console_format(&$a.p_0, args)
-        }};
+        ($a:ident) => {
+            console_format(&$a.p_0, &[&$a.p_1])
+        };
     }
 
     macro_rules! logf2 {
-        ($a:ident) => {{
-            let args: [&dyn ConsoleFmt; 2] = [&$a.p_1, &$a.p_2];
-            console_format(&$a.p_0, args)
-        }};
+        ($a:ident) => {
+            console_format(&$a.p_0, &[&$a.p_1, &$a.p_2])
+        };
     }
 
     macro_rules! logf3 {
-        ($a:ident) => {{
-            let args: [&dyn ConsoleFmt; 3] = [&$a.p_1, &$a.p_2, &$a.p_3];
-            console_format(&$a.p_0, args)
-        }};
+        ($a:ident) => {
+            console_format(&$a.p_0, &[&$a.p_1, &$a.p_2, &$a.p_3])
+        };
     }
 
     #[derive(Clone, Debug, ConsoleFmt)]
@@ -315,86 +320,88 @@ mod tests {
 
     #[test]
     fn test_console_log_format_specifiers() {
-        let console_log_format_1 = |spec: &str, arg: &dyn ConsoleFmt| {
-            let args: [&dyn ConsoleFmt; 1] = [arg];
-            console_format(spec, args)
-        };
+        let fmt_1 = |spec: &str, arg: &dyn ConsoleFmt| console_format(spec, &[arg]);
 
-        assert_eq!("foo", console_log_format_1("%s", &String::from("foo")));
-        assert_eq!("NaN", console_log_format_1("%d", &String::from("foo")));
-        assert_eq!("NaN", console_log_format_1("%i", &String::from("foo")));
-        assert_eq!("NaN", console_log_format_1("%e", &String::from("foo")));
-        assert_eq!("NaN", console_log_format_1("%x", &String::from("foo")));
-        assert_eq!("'foo'", console_log_format_1("%o", &String::from("foo")));
-        assert_eq!("%s foo", console_log_format_1("%%s", &String::from("foo")));
-        assert_eq!("% foo", console_log_format_1("%", &String::from("foo")));
-        assert_eq!("% foo", console_log_format_1("%%", &String::from("foo")));
+        assert_eq!("foo", fmt_1("%s", &String::from("foo")));
+        assert_eq!("NaN", fmt_1("%d", &String::from("foo")));
+        assert_eq!("NaN", fmt_1("%i", &String::from("foo")));
+        assert_eq!("NaN", fmt_1("%e", &String::from("foo")));
+        assert_eq!("NaN", fmt_1("%x", &String::from("foo")));
+        assert_eq!("'foo'", fmt_1("%o", &String::from("foo")));
+        assert_eq!("%s foo", fmt_1("%%s", &String::from("foo")));
+        assert_eq!("% foo", fmt_1("%", &String::from("foo")));
+        assert_eq!("% foo", fmt_1("%%", &String::from("foo")));
 
-        assert_eq!("true", console_log_format_1("%s", &true));
-        assert_eq!("1", console_log_format_1("%d", &true));
-        assert_eq!("0", console_log_format_1("%d", &false));
-        assert_eq!("NaN", console_log_format_1("%i", &true));
-        assert_eq!("NaN", console_log_format_1("%e", &true));
-        assert_eq!("NaN", console_log_format_1("%x", &true));
-        assert_eq!("'true'", console_log_format_1("%o", &true));
+        assert_eq!("true", fmt_1("%s", &true));
+        assert_eq!("1", fmt_1("%d", &true));
+        assert_eq!("0", fmt_1("%d", &false));
+        assert_eq!("NaN", fmt_1("%i", &true));
+        assert_eq!("NaN", fmt_1("%e", &true));
+        assert_eq!("NaN", fmt_1("%x", &true));
+        assert_eq!("'true'", fmt_1("%o", &true));
 
         let b32 =
-            H256::from_str("0xdeadbeef00000000000000000000000000000000000000000000000000000000")
+            B256::from_str("0xdeadbeef00000000000000000000000000000000000000000000000000000000")
                 .unwrap();
         assert_eq!(
             "0xdeadbeef00000000000000000000000000000000000000000000000000000000",
-            console_log_format_1("%s", &b32)
+            fmt_1("%s", &b32)
         );
         assert_eq!(
             "0xdeadbeef00000000000000000000000000000000000000000000000000000000",
-            console_log_format_1("%x", &b32)
+            fmt_1("%x", &b32)
         );
-        assert_eq!("NaN", console_log_format_1("%d", &b32));
-        assert_eq!("NaN", console_log_format_1("%i", &b32));
-        assert_eq!("NaN", console_log_format_1("%e", &b32));
+        assert_eq!("NaN", fmt_1("%d", &b32));
+        assert_eq!("NaN", fmt_1("%i", &b32));
+        assert_eq!("NaN", fmt_1("%e", &b32));
         assert_eq!(
             "'0xdeadbeef00000000000000000000000000000000000000000000000000000000'",
-            console_log_format_1("%o", &b32)
+            fmt_1("%o", &b32)
         );
 
         let addr = Address::from_str("0xdEADBEeF00000000000000000000000000000000").unwrap();
-        assert_eq!("0xdEADBEeF00000000000000000000000000000000", console_log_format_1("%s", &addr));
-        assert_eq!("NaN", console_log_format_1("%d", &addr));
-        assert_eq!("NaN", console_log_format_1("%i", &addr));
-        assert_eq!("NaN", console_log_format_1("%e", &addr));
-        assert_eq!("NaN", console_log_format_1("%x", &addr));
-        assert_eq!(
-            "'0xdEADBEeF00000000000000000000000000000000'",
-            console_log_format_1("%o", &addr)
-        );
+        assert_eq!("0xdEADBEeF00000000000000000000000000000000", fmt_1("%s", &addr));
+        assert_eq!("NaN", fmt_1("%d", &addr));
+        assert_eq!("NaN", fmt_1("%i", &addr));
+        assert_eq!("NaN", fmt_1("%e", &addr));
+        assert_eq!("0xdEADBEeF00000000000000000000000000000000", fmt_1("%x", &addr));
+        assert_eq!("'0xdEADBEeF00000000000000000000000000000000'", fmt_1("%o", &addr));
 
         let bytes = Bytes::from_str("0xdeadbeef").unwrap();
-        assert_eq!("0xdeadbeef", console_log_format_1("%s", &bytes));
-        assert_eq!("NaN", console_log_format_1("%d", &bytes));
-        assert_eq!("NaN", console_log_format_1("%i", &bytes));
-        assert_eq!("NaN", console_log_format_1("%e", &bytes));
-        assert_eq!("NaN", console_log_format_1("%x", &bytes));
-        assert_eq!("'0xdeadbeef'", console_log_format_1("%o", &bytes));
+        assert_eq!("0xdeadbeef", fmt_1("%s", &bytes));
+        assert_eq!("NaN", fmt_1("%d", &bytes));
+        assert_eq!("NaN", fmt_1("%i", &bytes));
+        assert_eq!("NaN", fmt_1("%e", &bytes));
+        assert_eq!("0xdeadbeef", fmt_1("%x", &bytes));
+        assert_eq!("'0xdeadbeef'", fmt_1("%o", &bytes));
 
-        assert_eq!("100", console_log_format_1("%s", &U256::from(100)));
-        assert_eq!("100", console_log_format_1("%d", &U256::from(100)));
-        assert_eq!("100", console_log_format_1("%i", &U256::from(100)));
-        assert_eq!("1e2", console_log_format_1("%e", &U256::from(100)));
-        assert_eq!("1.0023e6", console_log_format_1("%e", &U256::from(1002300)));
-        assert_eq!("1.23e5", console_log_format_1("%e", &U256::from(123000)));
-        assert_eq!("0x64", console_log_format_1("%x", &U256::from(100)));
-        assert_eq!("100", console_log_format_1("%o", &U256::from(100)));
+        assert_eq!("100", fmt_1("%s", &U256::from(100)));
+        assert_eq!("100", fmt_1("%d", &U256::from(100)));
+        assert_eq!("100", fmt_1("%i", &U256::from(100)));
+        assert_eq!("1e2", fmt_1("%e", &U256::from(100)));
+        assert_eq!("1.0023e6", fmt_1("%e", &U256::from(1002300)));
+        assert_eq!("1.23e5", fmt_1("%e", &U256::from(123000)));
+        assert_eq!("0x64", fmt_1("%x", &U256::from(100)));
+        assert_eq!("100", fmt_1("%o", &U256::from(100)));
 
-        assert_eq!("100", console_log_format_1("%s", &I256::from(100)));
-        assert_eq!("100", console_log_format_1("%d", &I256::from(100)));
-        assert_eq!("100", console_log_format_1("%i", &I256::from(100)));
-        assert_eq!("1e2", console_log_format_1("%e", &I256::from(100)));
-        assert_eq!("-1.0023e6", console_log_format_1("%e", &I256::from(-1002300)));
-        assert_eq!("-1.23e5", console_log_format_1("%e", &I256::from(-123000)));
-        assert_eq!("1.0023e6", console_log_format_1("%e", &I256::from(1002300)));
-        assert_eq!("1.23e5", console_log_format_1("%e", &I256::from(123000)));
-        assert_eq!("0x64", console_log_format_1("%x", &I256::from(100)));
-        assert_eq!("100", console_log_format_1("%o", &I256::from(100)));
+        assert_eq!("100", fmt_1("%s", &I256::try_from(100).unwrap()));
+        assert_eq!("100", fmt_1("%d", &I256::try_from(100).unwrap()));
+        assert_eq!("100", fmt_1("%i", &I256::try_from(100).unwrap()));
+        assert_eq!("1e2", fmt_1("%e", &I256::try_from(100).unwrap()));
+        assert_eq!("-1.0023e6", fmt_1("%e", &I256::try_from(-1002300).unwrap()));
+        assert_eq!("-1.23e5", fmt_1("%e", &I256::try_from(-123000).unwrap()));
+        assert_eq!("1.0023e6", fmt_1("%e", &I256::try_from(1002300).unwrap()));
+        assert_eq!("1.23e5", fmt_1("%e", &I256::try_from(123000).unwrap()));
+        assert_eq!("0x64", fmt_1("%x", &I256::try_from(100).unwrap()));
+        assert_eq!(
+            "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff9c",
+            fmt_1("%x", &I256::try_from(-100).unwrap())
+        );
+        assert_eq!(
+            "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffe8b7891800",
+            fmt_1("%x", &I256::try_from(-100000000000i64).unwrap())
+        );
+        assert_eq!("100", fmt_1("%o", &I256::try_from(100).unwrap()));
     }
 
     #[test]

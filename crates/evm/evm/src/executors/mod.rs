@@ -28,7 +28,7 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
     db::{DatabaseCommit, DatabaseRef},
-    interpreter::{return_ok, CreateScheme, InstructionResult, SharedMemory, Stack},
+    interpreter::{return_ok, CreateScheme, InstructionResult, Stack},
     primitives::{
         BlockEnv, Bytecode, Env, ExecutionResult, Output, ResultAndState, SpecId, TransactTo, TxEnv,
     },
@@ -680,7 +680,7 @@ pub struct RawCallResult {
     /// The raw output of the execution
     pub out: Option<Output>,
     /// The chisel state
-    pub chisel_state: Option<(Stack, SharedMemory, InstructionResult)>,
+    pub chisel_state: Option<(Stack, Vec<u8>, InstructionResult)>,
 }
 
 impl Default for RawCallResult {
@@ -735,9 +735,9 @@ fn convert_executed_result(
     };
     let stipend = calc_stipend(&env.tx.data, env.cfg.spec_id);
 
-    let result = match out {
-        Some(Output::Call(ref data)) => data.to_owned(),
-        _ => Bytes::default(),
+    let result = match &out {
+        Some(Output::Call(data)) => data.clone(),
+        _ => Bytes::new(),
     };
 
     let InspectorData {
@@ -765,7 +765,7 @@ fn convert_executed_result(
         gas_used,
         gas_refunded,
         stipend,
-        logs: logs.to_vec(),
+        logs,
         labels,
         traces,
         coverage,
