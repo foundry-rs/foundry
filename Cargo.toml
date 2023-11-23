@@ -123,10 +123,8 @@ foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 
-# block explorer & verification bindings
-foundry-block-explorers = { version = "0.1", default-features = false }
-# solc & compilation utilities
-foundry-compilers = { version = "0.1", default-features = false }
+foundry-block-explorers = { version = "0.1.1", default-features = false }
+foundry-compilers = { version = "0.1.1", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
@@ -144,11 +142,11 @@ ethers-middleware = { version = "2.0", default-features = false }
 ethers-solc = { version = "2.0", default-features = false }
 
 ## alloy
-alloy-primitives = "0.4.1"
-alloy-dyn-abi = "0.4.1"
-alloy-json-abi = "0.4.1"
-alloy-sol-types = "0.4.1"
-syn-solidity = "0.4.1"
+alloy-primitives = "0.5.0"
+alloy-dyn-abi = "0.5.0"
+alloy-json-abi = "0.5.0"
+alloy-sol-types = "0.5.0"
+syn-solidity = "0.5.0"
 
 alloy-chains = "0.1.3"
 alloy-rlp = "0.3.3"
@@ -189,24 +187,14 @@ tower-http = "0.4"
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f" }
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f"  }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f"  }
-ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f"  }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f"  }
-ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f"  }
-ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f"  }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f"  }
-
-foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers" }
-
-alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/" }
-alloy-json-abi = { git = "https://github.com/alloy-rs/core/" }
-alloy-primitives = { git = "https://github.com/alloy-rs/core/" }
-alloy-sol-macro = { git = "https://github.com/alloy-rs/core/" }
-alloy-sol-types = { git = "https://github.com/alloy-rs/core/" }
-alloy-sol-type-parser = { git = "https://github.com/alloy-rs/core/" }
-syn-solidity = { git = "https://github.com/alloy-rs/core/" }
+ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
+ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
+ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
+ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
+ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
 
 revm = { git = "https://github.com/bluealloy/revm", rev = "1609e07c68048909ad1682c98cf2b9baa76310b5" }
 revm-primitives = { git = "https://github.com/bluealloy/revm", rev = "1609e07c68048909ad1682c98cf2b9baa76310b5" }
