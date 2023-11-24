@@ -50,9 +50,9 @@ pub enum IntTypes {
 #[serde(rename_all = "snake_case")]
 pub enum NumberUnderscore {
     /// Use the underscores defined in the source code
-    #[default]
     Preserve,
     /// Remove all underscores
+    #[default]
     Remove,
     /// Add an underscore every thousand, if greater than 9999
     /// e.g. 1000 -> 1000 and 10000 -> 10_000
