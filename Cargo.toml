@@ -196,5 +196,7 @@ ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f9
 ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
 
-revm = { git = "https://github.com/bluealloy/revm", rev = "1609e07c68048909ad1682c98cf2b9baa76310b5" }
-revm-primitives = { git = "https://github.com/bluealloy/revm", rev = "1609e07c68048909ad1682c98cf2b9baa76310b5" }
+revm = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
+revm-interpreter = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
+revm-precompile = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
+revm-primitives = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
