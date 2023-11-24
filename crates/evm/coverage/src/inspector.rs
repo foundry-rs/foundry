@@ -1,6 +1,6 @@
 use crate::{HitMap, HitMaps};
 use alloy_primitives::Bytes;
-use revm::{interpreter::Interpreter, Database, EVMData, Inspector};
+use revm::{interpreter::Interpreter, Database, EvmContext, Inspector};
 
 #[derive(Clone, Default, Debug)]
 pub struct CoverageCollector {
@@ -10,7 +10,7 @@ pub struct CoverageCollector {
 
 impl<DB: Database> Inspector<DB> for CoverageCollector {
     #[inline]
-    fn initialize_interp(&mut self, interpreter: &mut Interpreter<'_>, _: &mut EVMData<'_, DB>) {
+    fn initialize_interp(&mut self, interpreter: &mut Interpreter, _: &mut EvmContext<'_, DB>) {
         let hash = interpreter.contract.hash;
         self.maps.entry(hash).or_insert_with(|| {
             HitMap::new(Bytes::copy_from_slice(
@@ -20,7 +20,7 @@ impl<DB: Database> Inspector<DB> for CoverageCollector {
     }
 
     #[inline]
-    fn step(&mut self, interpreter: &mut Interpreter<'_>, _: &mut EVMData<'_, DB>) {
+    fn step(&mut self, interpreter: &mut Interpreter, _: &mut EvmContext<'_, DB>) {
         let hash = interpreter.contract.hash;
         self.maps.entry(hash).and_modify(|map| map.hit(interpreter.program_counter()));
     }

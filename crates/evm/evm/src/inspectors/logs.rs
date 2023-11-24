@@ -8,7 +8,7 @@ use foundry_evm_core::{
 };
 use revm::{
     interpreter::{CallInputs, Gas, InstructionResult},
-    Database, EVMData, Inspector,
+    Database, EvmContext, Inspector,
 };
 
 /// An inspector that collects logs during execution.
@@ -39,7 +39,13 @@ impl LogCollector {
 }
 
 impl<DB: Database> Inspector<DB> for LogCollector {
-    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[B256], data: &Bytes) {
+    fn log(
+        &mut self,
+        _: &mut EvmContext<'_, DB>,
+        address: &Address,
+        topics: &[B256],
+        data: &Bytes,
+    ) {
         self.logs.push(Log {
             address: address.to_ethers(),
             topics: topics.iter().copied().map(|t| t.to_ethers()).collect(),
@@ -50,7 +56,7 @@ impl<DB: Database> Inspector<DB> for LogCollector {
 
     fn call(
         &mut self,
-        _: &mut EVMData<'_, DB>,
+        _: &mut EvmContext<'_, DB>,
         call: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
         let (status, reason) = if call.contract == HARDHAT_CONSOLE_ADDRESS {

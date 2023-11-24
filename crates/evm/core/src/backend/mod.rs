@@ -771,7 +771,7 @@ impl Backend {
     {
         self.initialize(env);
 
-        match revm::evm_inner::<Self>(env, self, Some(&mut inspector)).transact() {
+        match revm::new_evm::<Self>(env, self, Some(&mut inspector)).transact() {
             Ok(res) => Ok(res),
             Err(e) => eyre::bail!("backend: failed while inspecting: {e}"),
         }

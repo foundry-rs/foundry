@@ -63,7 +63,7 @@ impl<'a> FuzzBackendWrapper<'a> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
         self.is_initialized = false;
-        match revm::evm_inner::<Self>(env, self, Some(&mut inspector)).transact() {
+        match revm::new_evm::<Self>(env, self, Some(&mut inspector)).transact() {
             Ok(result) => Ok(result),
             Err(e) => eyre::bail!("fuzz: failed to inspect: {e}"),
         }

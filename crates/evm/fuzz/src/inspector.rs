@@ -4,7 +4,7 @@ use foundry_common::types::ToEthers;
 use foundry_evm_core::utils;
 use revm::{
     interpreter::{CallInputs, CallScheme, Gas, InstructionResult, Interpreter},
-    Database, EVMData, Inspector,
+    Database, EvmContext, Inspector,
 };
 
 /// An inspector that can fuzz and collect data for that effect.
@@ -20,7 +20,7 @@ pub struct Fuzzer {
 
 impl<DB: Database> Inspector<DB> for Fuzzer {
     #[inline]
-    fn step(&mut self, interpreter: &mut Interpreter<'_>, _: &mut EVMData<'_, DB>) {
+    fn step(&mut self, interpreter: &mut Interpreter, _: &mut EvmContext<'_, DB>) {
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
             self.collect_data(interpreter);
@@ -31,7 +31,7 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
     #[inline]
     fn call(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         call: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
         // We don't want to override the very first call made to the test contract.
@@ -49,7 +49,7 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
     #[inline]
     fn call_end(
         &mut self,
-        _: &mut EVMData<'_, DB>,
+        _: &mut EvmContext<'_, DB>,
         _: &CallInputs,
         remaining_gas: Gas,
         status: InstructionResult,
@@ -69,7 +69,7 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
 
 impl Fuzzer {
     /// Collects `stack` and `memory` values into the fuzz dictionary.
-    fn collect_data(&mut self, interpreter: &Interpreter<'_>) {
+    fn collect_data(&mut self, interpreter: &Interpreter) {
         let mut state = self.fuzz_state.write();
 
         for slot in interpreter.stack().data() {

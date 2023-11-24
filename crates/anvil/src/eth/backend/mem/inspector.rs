@@ -10,7 +10,7 @@ use foundry_evm::{
     revm::{
         interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
         primitives::{Address, Bytes, B256},
-        EVMData,
+        EvmContext,
     },
 };
 
@@ -48,14 +48,14 @@ impl Inspector {
 
 impl<DB: Database> revm::Inspector<DB> for Inspector {
     #[inline]
-    fn initialize_interp(&mut self, interp: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
+    fn initialize_interp(&mut self, interp: &mut Interpreter, data: &mut EvmContext<'_, DB>) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.initialize_interp(interp, data);
         });
     }
 
     #[inline]
-    fn step(&mut self, interp: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
+    fn step(&mut self, interp: &mut Interpreter, data: &mut EvmContext<'_, DB>) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.step(interp, data);
         });
@@ -64,7 +64,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     #[inline]
     fn log(
         &mut self,
-        evm_data: &mut EVMData<'_, DB>,
+        evm_data: &mut EvmContext<'_, DB>,
         address: &Address,
         topics: &[B256],
         data: &Bytes,
@@ -75,7 +75,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     }
 
     #[inline]
-    fn step_end(&mut self, interp: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
+    fn step_end(&mut self, interp: &mut Interpreter, data: &mut EvmContext<'_, DB>) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.step_end(interp, data);
         });
@@ -84,7 +84,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     #[inline]
     fn call(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         call: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
         call_inspectors!([&mut self.tracer, Some(&mut self.log_collector)], |inspector| {
@@ -97,7 +97,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     #[inline]
     fn call_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         inputs: &CallInputs,
         remaining_gas: Gas,
         ret: InstructionResult,
@@ -112,7 +112,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     #[inline]
     fn create(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         call: &mut CreateInputs,
     ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         call_inspectors!([&mut self.tracer], |inspector| {
@@ -125,7 +125,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     #[inline]
     fn create_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         inputs: &CreateInputs,
         status: InstructionResult,
         address: Option<Address>,

@@ -17,7 +17,7 @@ is called when the EVM is about to execute a call:
 ```rust
 fn call(
     &mut self,
-    data: &mut EVMData<'_, DB>,
+    data: &mut EvmContext<'_, DB>,
     inputs: &mut CallInputs,
     is_static: bool,
 ) -> (InstructionResult, Gas, Bytes) { ... }
@@ -47,7 +47,7 @@ Since cheatcodes are bound to a constant address, the cheatcode inspector listen
 impl Inspector for Cheatcodes {
     fn call(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         call: &mut CallInputs,
         is_static: bool,
     ) -> (Return, Gas, Bytes) {

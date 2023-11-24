@@ -12,7 +12,7 @@ extern crate tracing;
 
 use alloy_primitives::Address;
 use foundry_evm_core::backend::DatabaseExt;
-use revm::EVMData;
+use revm::EvmContext;
 
 pub use spec::{CheatcodeDef, Vm};
 
@@ -94,7 +94,7 @@ pub(crate) struct CheatsCtxt<'a, 'b, 'c, DB: DatabaseExt> {
     /// The cheatcodes inspector state.
     pub(crate) state: &'a mut Cheatcodes,
     /// The EVM data.
-    pub(crate) data: &'b mut EVMData<'c, DB>,
+    pub(crate) data: &'b mut EvmContext<'c, DB>,
     /// The original `msg.sender`.
     pub(crate) caller: Address,
 }

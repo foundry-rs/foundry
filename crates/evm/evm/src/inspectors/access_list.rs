@@ -4,7 +4,7 @@ use foundry_common::types::{ToAlloy, ToEthers};
 use hashbrown::{HashMap, HashSet};
 use revm::{
     interpreter::{opcode, Interpreter},
-    Database, EVMData, Inspector,
+    Database, EvmContext, Inspector,
 };
 
 /// An inspector that collects touched accounts and storage slots.
@@ -51,7 +51,7 @@ impl AccessListTracer {
 
 impl<DB: Database> Inspector<DB> for AccessListTracer {
     #[inline]
-    fn step(&mut self, interpreter: &mut Interpreter<'_>, _data: &mut EVMData<'_, DB>) {
+    fn step(&mut self, interpreter: &mut Interpreter, _data: &mut EvmContext<'_, DB>) {
         match interpreter.current_opcode() {
             opcode::SLOAD | opcode::SSTORE => {
                 if let Ok(slot) = interpreter.stack().peek(0) {

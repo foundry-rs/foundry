@@ -11,7 +11,7 @@ use revm::{
         opcode::{self, spec_opcode_gas},
         CallInputs, CreateInputs, Gas, InstructionResult, Interpreter,
     },
-    EVMData, Inspector,
+    EvmContext, Inspector,
 };
 
 /// An inspector that collects debug nodes on every step of the interpreter.
@@ -45,7 +45,7 @@ impl Debugger {
 
 impl<DB: DatabaseExt> Inspector<DB> for Debugger {
     #[inline]
-    fn step(&mut self, interpreter: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
+    fn step(&mut self, interpreter: &mut Interpreter, data: &mut EvmContext<'_, DB>) {
         let pc = interpreter.program_counter();
         let op = interpreter.current_opcode();
 
@@ -83,7 +83,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
     #[inline]
     fn call(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         call: &mut CallInputs,
     ) -> (InstructionResult, Gas, Bytes) {
         self.enter(
@@ -107,7 +107,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
     #[inline]
     fn call_end(
         &mut self,
-        _: &mut EVMData<'_, DB>,
+        _: &mut EvmContext<'_, DB>,
         _: &CallInputs,
         gas: Gas,
         status: InstructionResult,
@@ -121,7 +121,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
     #[inline]
     fn create(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         call: &mut CreateInputs,
     ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         // TODO: Does this increase gas cost?
@@ -143,7 +143,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
     #[inline]
     fn create_end(
         &mut self,
-        _: &mut EVMData<'_, DB>,
+        _: &mut EvmContext<'_, DB>,
         _: &CreateInputs,
         status: InstructionResult,
         address: Option<Address>,

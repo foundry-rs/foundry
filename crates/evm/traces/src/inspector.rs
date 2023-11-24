@@ -8,11 +8,12 @@ use foundry_evm_core::{
 };
 use revm::{
     interpreter::{
-        opcode, return_ok, CallInputs, CallScheme, CreateInputs, Gas, InstructionResult,
-        Interpreter,
+        opcode, return_ok, CallInputs, CallScheme, CreateInputs, InstructionResult, Interpreter,
+        InterpreterResult,
     },
-    Database, EVMData, Inspector, JournalEntry,
+    Database, EvmContext, Inspector, JournalEntry,
 };
+use std::ops::Range;
 
 /// An inspector that collects call traces.
 #[derive(Default, Debug, Clone)]
@@ -57,7 +58,7 @@ impl Tracer {
         &mut self,
         status: InstructionResult,
         cost: u64,
-        output: Vec<u8>,
+        output: Bytes,
         address: Option<Address>,
     ) {
         let success = matches!(status, return_ok!());
@@ -67,14 +68,14 @@ impl Tracer {
         trace.status = status;
         trace.success = success;
         trace.gas_cost = cost;
-        trace.output = TraceRetData::Raw(output.into());
+        trace.output = TraceRetData::Raw(output);
 
         if let Some(address) = address {
             trace.address = address;
         }
     }
 
-    fn start_step<DB: Database>(&mut self, interp: &Interpreter<'_>, data: &EVMData<'_, DB>) {
+    fn start_step<DB: Database>(&mut self, interp: &Interpreter, data: &EvmContext<'_, DB>) {
         let trace_idx =
             *self.trace_stack.last().expect("can't start step without starting a trace first");
         let node = &mut self.traces.arena[trace_idx];
@@ -96,7 +97,7 @@ impl Tracer {
         });
     }
 
-    fn fill_step<DB: Database>(&mut self, interp: &Interpreter<'_>, data: &EVMData<'_, DB>) {
+    fn fill_step<DB: Database>(&mut self, interp: &Interpreter, data: &EvmContext<'_, DB>) {
         let (trace_idx, step_idx) =
             self.step_stack.pop().expect("can't fill step without starting a step first");
         let step = &mut self.traces.arena[trace_idx].trace.steps[step_idx];
@@ -131,21 +132,21 @@ impl Tracer {
 
 impl<DB: Database> Inspector<DB> for Tracer {
     #[inline]
-    fn step(&mut self, interp: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
+    fn step(&mut self, interp: &mut Interpreter, data: &mut EvmContext<'_, DB>) {
         if self.record_steps {
             self.start_step(interp, data);
         }
     }
 
     #[inline]
-    fn step_end(&mut self, interp: &mut Interpreter<'_>, data: &mut EVMData<'_, DB>) {
+    fn step_end(&mut self, interp: &mut Interpreter, data: &mut EvmContext<'_, DB>) {
         if self.record_steps {
             self.fill_step(interp, data);
         }
     }
 
     #[inline]
-    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[B256], data: &Bytes) {
+    fn log(&mut self, _: &mut EvmContext<'_, DB>, _: &Address, topics: &[B256], data: &Bytes) {
         let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
         node.ordering.push(LogCallOrder::Log(node.logs.len()));
         let data = data.clone();
@@ -156,9 +157,9 @@ impl<DB: Database> Inspector<DB> for Tracer {
     #[inline]
     fn call(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         inputs: &mut CallInputs,
-    ) -> (InstructionResult, Gas, Bytes) {
+    ) -> Option<(InterpreterResult, Range<usize>)> {
         let (from, to) = match inputs.context.scheme {
             CallScheme::DelegateCall | CallScheme::CallCode => {
                 (inputs.context.address, inputs.context.code_address)
@@ -175,35 +176,31 @@ impl<DB: Database> Inspector<DB> for Tracer {
             from,
         );
 
-        (InstructionResult::Continue, Gas::new(inputs.gas_limit), Bytes::new())
+        None
     }
 
     #[inline]
     fn call_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
-        _inputs: &CallInputs,
-        gas: Gas,
-        status: InstructionResult,
-        retdata: Bytes,
-    ) -> (InstructionResult, Gas, Bytes) {
+        data: &mut EvmContext<'_, DB>,
+        status: InterpreterResult,
+    ) -> InterpreterResult {
         self.fill_trace(
-            status,
-            gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
-            retdata.to_vec(),
+            status.result,
+            gas_used(data.env.cfg.spec_id, status.gas.spend(), status.gas.refunded() as u64),
+            status.output.clone(),
             None,
         );
 
-        (status, gas, retdata)
+        status
     }
 
     #[inline]
     fn create(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EvmContext<'_, DB>,
         inputs: &mut CreateInputs,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
-        // TODO: Does this increase gas cost?
+    ) -> Option<(InterpreterResult, Option<Address>)> {
         let _ = data.journaled_state.load_account(inputs.caller, data.db);
         let nonce = data.journaled_state.account(inputs.caller).info.nonce;
         self.start_trace(
@@ -215,36 +212,27 @@ impl<DB: Database> Inspector<DB> for Tracer {
             inputs.caller,
         );
 
-        (InstructionResult::Continue, None, Gas::new(inputs.gas_limit), Bytes::new())
+        None
     }
 
     #[inline]
     fn create_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
-        _inputs: &CreateInputs,
-        status: InstructionResult,
+        data: &mut EvmContext<'_, DB>,
+        status: InterpreterResult,
         address: Option<Address>,
-        gas: Gas,
-        retdata: Bytes,
-    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
-        let code = match address {
-            Some(address) => data
-                .journaled_state
-                .account(address)
-                .info
-                .code
-                .as_ref()
-                .map_or(vec![], |code| code.bytes()[..code.len()].to_vec()),
-            None => vec![],
-        };
+    ) -> (InterpreterResult, Option<Address>) {
+        let code = address
+            .and_then(|address| data.journaled_state.account(address).info.code.as_ref())
+            .map(|code| code.original_bytes())
+            .unwrap_or_default();
         self.fill_trace(
-            status,
-            gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
+            status.result,
+            gas_used(data.env.cfg.spec_id, status.gas.spend(), status.gas.refunded() as u64),
             code,
             address,
         );
 
-        (status, address, gas, retdata)
+        (status, address)
     }
 }
