@@ -208,5 +208,5 @@ alloy-sol-types = { git = "https://github.com/alloy-rs/core/" }
 alloy-sol-type-parser = { git = "https://github.com/alloy-rs/core/" }
 syn-solidity = { git = "https://github.com/alloy-rs/core/" }
 
-revm = { git = "https://github.com/bluealloy/revm", rev = "1609e07c68048909ad1682c98cf2b9baa76310b5" }
-revm-primitives = { git = "https://github.com/bluealloy/revm", rev = "1609e07c68048909ad1682c98cf2b9baa76310b5" }
+revm = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
+revm-primitives = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
