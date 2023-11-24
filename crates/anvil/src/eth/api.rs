@@ -9,7 +9,7 @@ use crate::{
             validate::TransactionValidator,
         },
         error::{
-            decode_revert_reason, BlockchainError, FeeHistoryError, InvalidTransactionError,
+            BlockchainError, FeeHistoryError, InvalidTransactionError,
             Result, ToRpcResponseResult,
         },
         fees::{FeeDetails, FeeHistoryCache},
@@ -602,10 +602,10 @@ impl EthApi {
         if let BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number.to::<u64>()) {
-                    return Ok(fork
+                    return fork
                         .get_balance(address, number.to::<u64>())
                         .await
-                        .map_err(|_| BlockchainError::DataUnavailable)?);
+                        .map_err(|_| BlockchainError::DataUnavailable);
                 }
             }
         }
@@ -768,10 +768,10 @@ impl EthApi {
         if let BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number.to::<u64>()) {
-                    return Ok(fork
+                    return fork
                         .get_code(address, number.to::<u64>())
                         .await
-                        .map_err(|_| BlockchainError::DataUnavailable)?);
+                        .map_err(|_| BlockchainError::DataUnavailable);
                 }
             }
         }
@@ -796,10 +796,10 @@ impl EthApi {
                 // if we're in forking mode, or still on the forked block (no blocks mined yet) then
                 // we can delegate the call
                 if fork.predates_fork_inclusive(number.to::<u64>()) {
-                    return Ok(fork
+                    return fork
                         .get_proof(address, keys, Some((*number).into()))
                         .await
-                        .map_err(|_| BlockchainError::DataUnavailable)?);
+                        .map_err(|_| BlockchainError::DataUnavailable);
                 }
             }
         }
@@ -984,10 +984,10 @@ impl EthApi {
                             "not available on past forked blocks".to_string(),
                         ));
                     }
-                    return Ok(fork
+                    return fork
                         .call(&request, Some(number.to::<u64>().into()))
                         .await
-                        .map_err(|_| BlockchainError::DataUnavailable)?);
+                        .map_err(|_| BlockchainError::DataUnavailable);
                 }
             }
         }
@@ -1035,10 +1035,10 @@ impl EthApi {
         if let BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number.to::<u64>()) {
-                    return Ok(fork
+                    return fork
                         .create_access_list(&request, Some(number.to::<u64>().into()))
                         .await
-                        .map_err(|_| BlockchainError::DataUnavailable)?);
+                        .map_err(|_| BlockchainError::DataUnavailable);
                 }
             }
         }
@@ -1166,10 +1166,10 @@ impl EthApi {
             self.backend.ensure_block_number(Some(BlockId::Hash(block_hash.into()))).await?;
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork
+                return fork
                     .uncle_by_block_hash_and_index(block_hash, idx.into())
                     .await
-                    .map_err(|_| BlockchainError::DataUnavailable)?);
+                    .map_err(|_| BlockchainError::DataUnavailable);
             }
         }
         // It's impossible to have uncles outside of fork mode
@@ -1188,10 +1188,10 @@ impl EthApi {
         let number = self.backend.ensure_block_number(Some(BlockId::Number(block_number))).await?;
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork
+                return fork
                     .uncle_by_block_number_and_index(number, idx.into())
                     .await
-                    .map_err(|_| BlockchainError::DataUnavailable)?);
+                    .map_err(|_| BlockchainError::DataUnavailable);
             }
         }
         // It's impossible to have uncles outside of fork mode
@@ -1266,14 +1266,14 @@ impl EthApi {
             // if we're still at the forked block we don't have any history and can't compute it
             // efficiently, instead we fetch it from the fork
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork
+                return fork
                     .fee_history(
                         block_count,
                         BlockNumber::Number(number),
                         &reward_percentiles,
                     )
                     .await
-                    .map_err(|_| BlockchainError::DataUnavailable)?);
+                    .map_err(|_| BlockchainError::DataUnavailable);
             }
         }
 
@@ -1788,7 +1788,7 @@ impl EthApi {
             latest_block_number: latest_block_number_uint,
             instance_id: *self.instance_id.read(),
             forked_network: fork_config.map(|cfg| ForkedNetwork {
-                chain_id: U256::from(cfg.chain_id()).into(),
+                chain_id: U256::from(cfg.chain_id()),
                 fork_block_number: U64::from(cfg.block_number()),
                 fork_block_hash: cfg.block_hash(),
             }),
@@ -1910,7 +1910,7 @@ impl EthApi {
                 };
                 for tx in block_txs.iter_mut() {
                     if let Some(receipt) = self.backend.mined_transaction_receipt(tx.hash) {
-                        if let Some(output) = receipt.out {
+                        if let Some(_output) = receipt.out {
                             // insert revert reason if failure
                             // TODO: Support for additional fields
                             // if receipt.inner.status_code.unwrap_or_default().to::<u64>() == 0 {
@@ -2161,10 +2161,10 @@ impl EthApi {
         if let BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number.to::<u64>()) {
-                    return Ok(fork
+                    return fork
                         .estimate_gas(&request, Some((*number).into()))
                         .await
-                        .map_err(|_| BlockchainError::DataUnavailable)?);
+                        .map_err(|_| BlockchainError::DataUnavailable);
                 }
             }
         }
@@ -2539,10 +2539,10 @@ impl EthApi {
         if let BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork_inclusive(number.to::<u64>()) {
-                    return Ok(fork
+                    return fork
                         .get_nonce(address, (*number).to::<u64>())
                         .await
-                        .map_err(|_| BlockchainError::DataUnavailable)?);
+                        .map_err(|_| BlockchainError::DataUnavailable);
                 }
             }
         }
@@ -2566,7 +2566,7 @@ impl EthApi {
     ) -> Result<(U256, U256)> {
         let highest_nonce =
             self.get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending))).await?;
-        let nonce = request.nonce.map(|n| U256::from(n)).unwrap_or(highest_nonce);
+        let nonce = request.nonce.map(U256::from).unwrap_or(highest_nonce);
 
         Ok((nonce, highest_nonce))
     }

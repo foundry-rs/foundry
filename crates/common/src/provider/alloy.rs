@@ -35,7 +35,7 @@ pub type RpcUrl = String;
 /// # Examples
 ///
 /// ```
-/// use foundry_common::get_http_provider;
+/// use foundry_common::provider::alloy::get_http_provider;
 ///
 /// let retry_provider = get_http_provider("http://localhost:8545");
 /// ```
@@ -216,14 +216,14 @@ impl ProviderBuilder {
     pub fn build(self) -> Result<RetryProvider> {
         let ProviderBuilder {
             url,
-            chain,
-            max_retry,
-            timeout_retry,
-            initial_backoff,
-            timeout,
-            compute_units_per_second,
+            chain: _,
+            max_retry: _,
+            timeout_retry: _,
+            initial_backoff: _,
+            timeout: _,
+            compute_units_per_second: _,
             jwt,
-            headers,
+            headers: _,
         } = self;
         let url = url?;
 

@@ -61,7 +61,7 @@ impl ClientFork {
             self.config.write().update_url(url)?;
             let override_chain_id = self.config.read().override_chain_id;
             let chain_id = if let Some(chain_id) = override_chain_id {
-                chain_id.into()
+                chain_id
             } else {
                 self.provider().get_chain_id().await?.to::<u64>()
             };
@@ -239,7 +239,7 @@ impl ClientFork {
         number: Option<BlockNumber>,
     ) -> Result<StorageValue, TransportError> {
         let index = B256::from(index);
-        self.provider().get_storage_at(address, index.into(), number.map(Into::into)).await
+        self.provider().get_storage_at(address, index, number.map(Into::into)).await
     }
 
     pub async fn logs(&self, filter: &Filter) -> Result<Vec<Log>, TransportError> {
@@ -353,7 +353,7 @@ impl ClientFork {
 
         let mut storage = self.storage_write();
         storage.transactions.insert(hash, tx.clone());
-        return Ok(Some(tx));
+        Ok(Some(tx))
     }
 
     pub async fn trace_transaction(&self, hash: B256) -> Result<Vec<Trace>, TransportError> {
@@ -481,7 +481,7 @@ impl ClientFork {
             };
             storage.transactions.extend(block_txs.iter().map(|tx| (tx.hash, tx.clone())));
             storage.hashes.insert(block_number, hash);
-            storage.blocks.insert(hash, block.clone().into());
+            storage.blocks.insert(hash, block.clone());
             return Ok(Some(block));
         }
 

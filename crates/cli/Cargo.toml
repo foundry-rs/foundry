@@ -22,7 +22,6 @@ foundry-compilers = { workspace = true, features = ["full"] }
 alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
-alloy-providers.workspace = true
 
 ethers-core.workspace = true
 ethers-providers.workspace = true

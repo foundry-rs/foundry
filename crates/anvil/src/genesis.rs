@@ -140,7 +140,7 @@ impl From<GenesisAccount> for AccountInfo {
         let GenesisAccount { code, balance, nonce, .. } = acc;
         let code = code.map(|code| Bytecode::new_raw(code.to_vec().into()));
         AccountInfo {
-            balance: balance,
+            balance,
             nonce: nonce.unwrap_or_default(),
             code_hash: code.as_ref().map(|code| code.hash_slow()).unwrap_or(KECCAK_EMPTY),
             code,

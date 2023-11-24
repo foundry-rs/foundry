@@ -157,10 +157,10 @@ alloy-dyn-abi = "0.4.1"
 alloy-json-abi = "0.4.1"
 alloy-sol-types = "0.4.1"
 syn-solidity = "0.4.1"
-alloy-providers = { path = "../../alloy-rs/alloy/crates/providers" }
-alloy-transport = { path = "../../alloy-rs/alloy/crates/transport" }
-alloy-transport-http = { path = "../../alloy-rs/alloy/crates/transport-http" }
-alloy-rpc-types = { path = "../../alloy-rs/alloy/crates/rpc-types" }
+alloy-providers = "0.1.0"
+alloy-transport = "0.1.0"
+alloy-transport-http = "0.1.0"
+alloy-rpc-types = "0.1.0"
 
 alloy-chains = "0.1.2"
 alloy-rlp = "0.3.3"
@@ -210,6 +210,11 @@ ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029
 ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f" }
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f" }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "546ea029362a7502365667c6f99fac92ad0aeb9f" }
+
+alloy-providers = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
+alloy-transport = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
+alloy-transport-http = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
+alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
 
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/" }
 alloy-primitives = { git = "https://github.com/alloy-rs/core/" }

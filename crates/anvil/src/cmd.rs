@@ -194,9 +194,9 @@ impl NodeArgs {
         };
 
         NodeConfig::default()
-            .with_gas_limit(self.evm_opts.gas_limit.map(|g| U256::from(g)))
+            .with_gas_limit(self.evm_opts.gas_limit.map(U256::from))
             .disable_block_gas_limit(self.evm_opts.disable_block_gas_limit)
-            .with_gas_price(self.evm_opts.gas_price.map(|g| U256::from(g)))
+            .with_gas_price(self.evm_opts.gas_price.map(U256::from))
             .with_hardfork(self.hardfork)
             .with_blocktime(self.block_time.map(Duration::from_secs))
             .with_no_mining(self.no_mining)
@@ -210,13 +210,13 @@ impl NodeArgs {
                     .or_else(|| self.evm_opts.fork_url.as_ref().and_then(|f| f.block)),
             )
             .with_fork_headers(self.evm_opts.fork_headers)
-            .with_fork_chain_id(self.evm_opts.fork_chain_id.map(u64::from).map(|c| U256::from(c)))
+            .with_fork_chain_id(self.evm_opts.fork_chain_id.map(u64::from).map(U256::from))
             .fork_request_timeout(self.evm_opts.fork_request_timeout.map(Duration::from_millis))
             .fork_request_retries(self.evm_opts.fork_request_retries)
             .fork_retry_backoff(self.evm_opts.fork_retry_backoff.map(Duration::from_millis))
             .fork_compute_units_per_second(compute_units_per_second)
             .with_eth_rpc_url(self.evm_opts.fork_url.map(|fork| fork.url))
-            .with_base_fee(self.evm_opts.block_base_fee_per_gas.map(|f| U256::from(f)))
+            .with_base_fee(self.evm_opts.block_base_fee_per_gas.map(U256::from))
             .with_storage_caching(self.evm_opts.no_storage_caching)
             .with_server_config(self.server_config)
             .with_host(self.host)

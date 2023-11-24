@@ -124,7 +124,7 @@ pub fn to_ethers_state_override(ov: StateOverride) -> EthStateOverride {
 pub fn to_alloy_state_override(ov: EthStateOverride) -> StateOverride {
     ov.into_iter()
         .map(|(addr, o)| (addr.to_alloy(), AlloyAccountOverride {
-           nonce: o.nonce.map(|n| rU64::from(n)),
+           nonce: o.nonce.map(rU64::from),
            balance: o.balance.map(|b| b.to_alloy()),
            code: o.code.map(|c| c.0.into()),
            state_diff: o.state_diff.map(|s| s.into_iter().map(|(k, v)| (k.to_alloy(), rU256::from_be_bytes(v.to_alloy().0))).collect()),
@@ -305,7 +305,7 @@ fn to_alloy_transaction_with_hash_and_sender(
             max_priority_fee_per_gas: Some(t.gas_price.to_alloy().to::<rU128>()),
             gas: t.gas_limit.to_alloy(),
             input: t.input.clone().0.into(),
-            chain_id: t.chain_id().map(|c| rU64::from(c)),
+            chain_id: t.chain_id().map(rU64::from),
             signature: Some(Signature {
                 r: t.signature.r.to_alloy(),
                 s: t.signature.s.to_alloy(),
@@ -316,7 +316,6 @@ fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: None,
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: vec![],
-            ..Default::default()
         },
         TypedTransaction::EIP2930(t) => AlloyTransaction {
             hash: hash.to_alloy(),
@@ -343,7 +342,6 @@ fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: Some(rU64::from(1)),
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: vec![],
-            ..Default::default()
         },
         TypedTransaction::EIP1559(t) => AlloyTransaction {
             hash: hash.to_alloy(),
@@ -370,7 +368,6 @@ fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: Some(rU64::from(2)),
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: vec![],
-            ..Default::default()
         },
     }
 }

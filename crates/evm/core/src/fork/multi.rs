@@ -462,7 +462,7 @@ async fn create_fork(mut fork: CreateFork) -> eyre::Result<(CreatedFork, Handler
 
     // we need to use the block number from the block because the env's number can be different on
     // some L2s (e.g. Arbitrum).
-    let number = block.header.number.unwrap_or_else(|| meta.block_env.number);
+    let number = block.header.number.unwrap_or(meta.block_env.number);
 
     // determine the cache path if caching is enabled
     let cache_path = if fork.enable_caching {
