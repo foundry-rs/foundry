@@ -1,6 +1,6 @@
 //! Tests for OP chain support.
 
-use anvil::{spawn, NodeConfig};
+use anvil::{spawn, Hardfork, NodeConfig};
 use ethers::{
     abi::Address,
     providers::Middleware,
@@ -50,7 +50,8 @@ async fn test_deposits_not_supported_if_optimism_disabled() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_send_value_deposit_transaction() {
     // enable the Optimism flag
-    let (api, handle) = spawn(NodeConfig::test().with_optimism(true)).await;
+    let (api, handle) =
+        spawn(NodeConfig::test().with_optimism(true).with_hardfork(Some(Hardfork::Paris))).await;
     let provider = handle.http_provider();
 
     let send_value = U256::from(1234);
@@ -95,7 +96,8 @@ async fn test_send_value_deposit_transaction() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_send_value_raw_deposit_transaction() {
     // enable the Optimism flag
-    let (api, handle) = spawn(NodeConfig::test().with_optimism(true)).await;
+    let (api, handle) =
+        spawn(NodeConfig::test().with_optimism(true).with_hardfork(Some(Hardfork::Paris))).await;
     let provider = handle.http_provider();
 
     let send_value = U256::from(1234);

@@ -221,11 +221,12 @@ contract ForkTest is DSTest {
     }
 
     function testRpc() public {
+        // balance at block <https://etherscan.io/block/18332681>
         vm.selectFork(mainnetFork);
         string memory path = "fixtures/Rpc/balance_params.json";
         string memory file = vm.readFile(path);
         bytes memory result = vm.rpc("eth_getBalance", file);
-        assertEq(result, hex"10b7c11bcb51e6");
+        assertEq(hex"10b7c11bcb51e6", result);
     }
 }
 
