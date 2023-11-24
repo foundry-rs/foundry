@@ -193,6 +193,7 @@ test_directories! {
     IntTypes,
     InlineDisable,
     NumberLiteralUnderscore,
+    HexUnderscore,
     FunctionCall,
     TrailingComma,
     PragmaDirective,
