@@ -1,4 +1,5 @@
-//! tests for OP chain support
+//! Tests for OP chain support.
+
 use anvil::{spawn, NodeConfig};
 use ethers::{
     abi::Address,
@@ -40,7 +41,6 @@ async fn test_deposits_not_supported_if_optimism_disabled() {
 
     // sending the deposit transaction should fail with error saying not supported
     let res = provider.send_transaction(deposit_tx.clone(), None).await;
-    assert!(res.is_err());
     assert!(res
         .unwrap_err()
         .to_string()
@@ -53,7 +53,7 @@ async fn test_send_value_deposit_transaction() {
     let (api, handle) = spawn(NodeConfig::test().with_optimism(true)).await;
     let provider = handle.http_provider();
 
-    let send_value: U256 = "1234".parse().unwrap();
+    let send_value = U256::from(1234);
     let from_addr: Address = "cf7f9e66af820a19257a2108375b180b0ec49167".parse().unwrap();
     let to_addr: Address = "71562b71999873db5b286df957af199ec94617f7".parse().unwrap();
 
@@ -78,7 +78,11 @@ async fn test_send_value_deposit_transaction() {
         mint: Some(U256::zero()),
         is_system_tx: true,
     });
-    provider.send_transaction(deposit_tx.clone(), None).await.unwrap().await.unwrap().unwrap();
+
+    let pending = provider.send_transaction(deposit_tx.clone(), None).await.unwrap();
+    let receipt = pending.await.unwrap().expect("dropped");
+    assert_eq!(receipt.from, from_addr);
+    assert_eq!(receipt.to, Some(to_addr));
 
     // mine block
     api.evm_mine(None).await.unwrap();
@@ -94,7 +98,7 @@ async fn test_send_value_raw_deposit_transaction() {
     let (api, handle) = spawn(NodeConfig::test().with_optimism(true)).await;
     let provider = handle.http_provider();
 
-    let send_value: U256 = "1234".parse().unwrap();
+    let send_value = U256::from(1234);
     let from_addr: Address = "cf7f9e66af820a19257a2108375b180b0ec49167".parse().unwrap();
     let to_addr: Address = "71562b71999873db5b286df957af199ec94617f7".parse().unwrap();
 
@@ -121,7 +125,10 @@ async fn test_send_value_raw_deposit_transaction() {
     });
 
     let rlpbytes = deposit_tx.rlp();
-    provider.send_raw_transaction(rlpbytes).await.unwrap().await.unwrap().unwrap();
+    let pending = provider.send_raw_transaction(rlpbytes).await.unwrap();
+    let receipt = pending.await.unwrap().expect("dropped");
+    assert_eq!(receipt.from, from_addr);
+    assert_eq!(receipt.to, Some(to_addr));
 
     // mine block
     api.evm_mine(None).await.unwrap();
