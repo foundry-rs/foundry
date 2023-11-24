@@ -84,9 +84,9 @@ impl NumberUnderscore {
 #[serde(rename_all = "snake_case")]
 pub enum HexUnderscore {
     /// Use the underscores defined in the source code
-    #[default]
     Preserve,
     /// Remove all underscores
+    #[default]
     Remove,
     /// Add underscore as separator between byte boundaries
     Bytes,
@@ -170,7 +170,7 @@ impl Default for FormatterConfig {
             multiline_func_header: MultilineFuncHeaderStyle::AttributesFirst,
             quote_style: QuoteStyle::Double,
             number_underscore: NumberUnderscore::Preserve,
-            hex_underscore: HexUnderscore::Preserve,
+            hex_underscore: HexUnderscore::Remove,
             single_line_statement_blocks: SingleLineBlockStyle::Preserve,
             override_spacing: false,
             wrap_comments: false,
