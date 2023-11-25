@@ -5,7 +5,7 @@ use ethers::types::Log;
 use foundry_evm::{
     call_inspectors,
     decode::decode_console_logs,
-    inspectors::{LogCollector, Tracer},
+    inspectors::{LogCollector, TracingInspector},
     revm,
     revm::{
         interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
@@ -17,7 +17,7 @@ use foundry_evm::{
 /// The [`revm::Inspector`] used when transacting in the evm
 #[derive(Debug, Clone, Default)]
 pub struct Inspector {
-    pub tracer: Option<Tracer>,
+    pub tracer: Option<TracingInspector>,
     /// collects all `console.sol` logs
     pub log_collector: LogCollector,
 }

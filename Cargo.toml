@@ -132,9 +132,9 @@ foundry-test-utils = { path = "crates/test-utils" }
 foundry-utils = { path = "crates/utils" }
 
 # block explorer & verification bindings
-foundry-block-explorers = { version = "0.1", default-features = false }
+foundry-block-explorers = { version = "0.1.1", default-features = false }
 # solc & compilation utilities
-foundry-compilers = { version = "0.1", default-features = false }
+foundry-compilers = { version = "0.1.1", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
@@ -152,11 +152,11 @@ ethers-middleware = { version = "2.0", default-features = false }
 ethers-solc = { version = "2.0", default-features = false }
 
 ## alloy
-alloy-primitives = "0.4.1"
-alloy-dyn-abi = "0.4.1"
-alloy-json-abi = "0.4.1"
-alloy-sol-types = "0.4.1"
-syn-solidity = "0.4.1"
+alloy-primitives = "0.5.0"
+alloy-dyn-abi = "0.5.0"
+alloy-json-abi = "0.5.0"
+alloy-sol-types = "0.5.0"
+syn-solidity = "0.5.0"
 alloy-providers = "0.1.0"
 alloy-transport = "0.1.0"
 alloy-transport-http = "0.1.0"
@@ -216,10 +216,5 @@ alloy-transport = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjer
 alloy-transport-http = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
 alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
 
-alloy-dyn-abi = { git = "https://github.com/alloy-rs/core/" }
-alloy-primitives = { git = "https://github.com/alloy-rs/core/" }
-alloy-json-abi = { git = "https://github.com/alloy-rs/core/" }
-alloy-sol-types = { git = "https://github.com/alloy-rs/core/" }
-
-revm = { git = "https://github.com/bluealloy/revm", rev = "1609e07c68048909ad1682c98cf2b9baa76310b5" }
-revm-primitives = { git = "https://github.com/bluealloy/revm", rev = "1609e07c68048909ad1682c98cf2b9baa76310b5" }
+revm = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
+revm-primitives = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }

@@ -23,6 +23,7 @@ alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
 alloy-sol-types.workspace = true
 revm.workspace = true
+reth-revm-inspectors = { git = "https://github.com/paradigmxyz/reth/", branch = "onbjerg/tracer-snapshot-type" }
 
 ethers-core.workspace = true
 
