@@ -75,6 +75,11 @@ impl Comment {
         CommentTag::from_str(&value.tag).map(|tag| Self { tag, value: value.value })
     }
 
+    /// Returns a formatting wrapper for the comment value.
+    pub fn comment_value(&self) -> CommentValue<'_> {
+        CommentValue(&self.value)
+    }
+
     /// Split the comment at first word.
     /// Useful for [CommentTag::Param] and [CommentTag::Return] comments.
     pub fn split_first_word(&self) -> Option<(&str, &str)> {
@@ -119,6 +124,12 @@ impl Comments {
     ref_fn!(pub fn contains_tag(&self, tag: &Comment) -> bool);
     ref_fn!(pub fn find_inheritdoc_base(&self) -> Option<&'_ str>);
 
+
+    /// Wraps the tags in a [Comments] collection.
+    pub  fn new(value: Vec<DocCommentTag>) -> Self {
+        Self(value.into_iter().flat_map(Comment::from_doc_comment).collect())
+    }
+
     /// Attempt to lookup
     ///
     /// Merges two comments collections by inserting [CommentTag] from the second collection
@@ -142,12 +153,6 @@ impl Comments {
         }
 
         result
-    }
-}
-
-impl From<Vec<DocCommentTag>> for Comments {
-    fn from(value: Vec<DocCommentTag>) -> Self {
-        Self(value.into_iter().flat_map(Comment::from_doc_comment).collect())
     }
 }
 
@@ -199,9 +204,65 @@ impl<'a> From<&'a Comments> for CommentsRef<'a> {
     }
 }
 
+/// A wrapper for a [Comment] value.
+///
+/// This handles list escapes and formatting for comments, since comment parsing does not persevere multine-line empty strings
+/// See also <https://github.com/foundry-rs/foundry/issues/6425>
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommentValue<'a>(&'a str);
+
+impl std::fmt::Display for CommentValue<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const LIST_ID: [char; 2] = ['-', '*'];
+        let mut within_list = false;
+        for line in self.0.lines() {
+            let line_is_list_item =  line.trim_start().chars().next().map(|c| LIST_ID.contains(&c)).unwrap_or(false);
+
+            if !line_is_list_item && within_list {
+                // force end of list
+                writeln!(f)?;
+            }
+            within_list = line_is_list_item;
+
+            writeln!(f, "{}", line)?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn escape_lists() {
+        let s = r#"
+Here is a list of fruits:
+* bananas
+* apples
+* pears
+And here is a list of shapes:
+* circle
+* square
+* triangle
+"#;
+
+        let val = CommentValue(s);
+        let formatted = format!("{}", val);
+
+        let s = r#"
+Here is a list of fruits:
+* bananas
+* apples
+* pears
+
+And here is a list of shapes:
+* circle
+* square
+* triangle
+"#;
+        assert_eq!(formatted, s);
+    }
 
     #[test]
     fn parse_comment_tag() {

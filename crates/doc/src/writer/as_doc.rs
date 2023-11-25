@@ -48,7 +48,7 @@ impl<'a> AsDoc for CommentsRef<'a> {
         // Write notice tags
         let notices = self.include_tag(CommentTag::Notice);
         for notice in notices.iter() {
-            writer.writeln_raw(&notice.value)?;
+            writer.writeln_raw(notice.comment_value())?;
             writer.writeln()?;
         }
 
