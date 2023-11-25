@@ -98,6 +98,12 @@ pub struct VerifyArgs {
 
     #[clap(flatten)]
     pub verifier: VerifierArgs,
+
+    /// Attempt to verify the contract even if it is already verified.
+    ///
+    /// This can be used to fully verify a partially verified contract.
+    #[clap(long)]
+    pub ignore_already_verified: bool,
 }
 
 impl_figment_convert!(VerifyArgs);

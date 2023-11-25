@@ -184,6 +184,7 @@ impl CreateArgs {
             root: None,
             verifier: self.verifier.clone(),
             show_standard_json_input: false,
+            ignore_already_verified: false,
         };
         verify.verification_provider()?.preflight_check(verify).await?;
         Ok(())
@@ -323,6 +324,7 @@ impl CreateArgs {
             root: None,
             verifier: self.verifier,
             show_standard_json_input: false,
+            ignore_already_verified: true,
         };
         println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier);
         verify.run().await

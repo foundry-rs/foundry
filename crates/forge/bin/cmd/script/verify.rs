@@ -109,6 +109,7 @@ impl VerifyBundle {
                     root: None,
                     verifier: self.verifier.clone(),
                     show_standard_json_input: false,
+                    ignore_already_verified: true,
                 };
 
                 return Some(verify)
