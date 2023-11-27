@@ -1,187 +1,113 @@
-//! Tests for reproducing issues
+//! Regression tests for previous issues.
 
 use crate::{config::*, test_helpers::PROJECT};
-use alloy_primitives::Address;
+use alloy_primitives::{address, Address};
 use ethers_core::abi::{Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
 use forge::result::TestStatus;
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use foundry_test_utils::Filter;
-use std::str::FromStr;
 
-/// A macro that tests a single pattern (".*/repros/<issue>")
 macro_rules! test_repro {
-    ($issue:expr) => {
-        test_repro!($issue, false, None)
+    ($issue_number:literal $(,)?) => {
+        test_repro!($issue_number, false, None);
     };
-    ($issue:expr, $should_fail:expr, $sender:expr) => {
-        let pattern = concat!(".*repros/", $issue);
-        let filter = Filter::path(pattern);
-
-        let mut config = Config::with_root(PROJECT.root());
-        config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
-        if let Some(sender) = $sender {
-            config.sender = sender;
+    ($issue_number:literal, $should_fail:expr $(,)?) => {
+        test_repro!($issue_number, $should_fail, None);
+    };
+    ($issue_number:literal, $should_fail:expr, $sender:expr $(,)?) => {
+        paste::paste! {
+            #[tokio::test]
+            async fn [< test_issue_ $issue_number >]() {
+                repro_config($issue_number, $should_fail, $sender.into()).await.run().await;
+            }
         }
-
-        let mut config = TestConfig::with_filter(runner_with_config(config).await, filter)
-            .set_should_fail($should_fail);
-        config.run().await;
     };
-}
-
-macro_rules! test_repro_fail {
-    ($issue:expr) => {
-        test_repro!($issue, true, None)
-    };
-}
-
-macro_rules! test_repro_with_sender {
-    ($issue:expr, $sender:expr) => {
-        test_repro!($issue, false, Some($sender))
-    };
-}
-
-macro_rules! run_test_repro {
-    ($issue:expr) => {
-        run_test_repro!($issue, false, None)
-    };
-    ($issue:expr, $should_fail:expr, $sender:expr) => {{
-        let pattern = concat!(".*repros/", $issue);
-        let filter = Filter::path(pattern);
-
-        let mut config = Config::default();
-        if let Some(sender) = $sender {
-            config.sender = sender;
+    ($issue_number:literal, $should_fail:expr, $sender:expr, |$res:ident| $e:expr $(,)?) => {
+        paste::paste! {
+            #[tokio::test]
+            async fn [< test_issue_ $issue_number >]() {
+                let mut $res = repro_config($issue_number, $should_fail, $sender.into()).await.test().await;
+                $e
+            }
         }
-
-        let mut config = TestConfig::with_filter(runner_with_config(config).await, filter)
-            .set_should_fail($should_fail);
-        config.test().await
-    }};
+    };
 }
 
-// <https://github.com/foundry-rs/foundry/issues/2623>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_2623() {
-    test_repro!("Issue2623");
+async fn repro_config(issue: usize, should_fail: bool, sender: Option<Address>) -> TestConfig {
+    let filter = Filter::path(&format!(".*repros/Issue{issue}.t.sol"));
+
+    let mut config = Config::with_root(PROJECT.root());
+    config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
+    if let Some(sender) = sender {
+        config.sender = sender;
+    }
+
+    let runner = runner_with_config(config).await;
+    TestConfig::with_filter(runner, filter).set_should_fail(should_fail)
 }
 
-// <https://github.com/foundry-rs/foundry/issues/2629>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_2629() {
-    test_repro!("Issue2629");
-}
+// https://github.com/foundry-rs/foundry/issues/2623
+test_repro!(2623);
 
-// <https://github.com/foundry-rs/foundry/issues/2723>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_2723() {
-    test_repro!("Issue2723");
-}
+// https://github.com/foundry-rs/foundry/issues/2629
+test_repro!(2629);
 
-// <https://github.com/foundry-rs/foundry/issues/2898>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_2898() {
-    test_repro!("Issue2898");
-}
+// https://github.com/foundry-rs/foundry/issues/2723
+test_repro!(2723);
 
-// <https://github.com/foundry-rs/foundry/issues/2956>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_2956() {
-    test_repro!("Issue2956");
-}
+// https://github.com/foundry-rs/foundry/issues/2898
+test_repro!(2898);
 
-// <https://github.com/foundry-rs/foundry/issues/2984>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_2984() {
-    test_repro!("Issue2984");
-}
+// https://github.com/foundry-rs/foundry/issues/2956
+test_repro!(2956);
 
-// <https://github.com/foundry-rs/foundry/issues/4640>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_4640() {
-    test_repro!("Issue4640");
-}
+// https://github.com/foundry-rs/foundry/issues/2984
+test_repro!(2984);
 
-// <https://github.com/foundry-rs/foundry/issues/3077>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3077() {
-    test_repro!("Issue3077");
-}
+// https://github.com/foundry-rs/foundry/issues/4640
+test_repro!(4640);
 
-// <https://github.com/foundry-rs/foundry/issues/3055>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3055() {
-    test_repro_fail!("Issue3055");
-}
+// https://github.com/foundry-rs/foundry/issues/3077
+test_repro!(3077);
 
-// <https://github.com/foundry-rs/foundry/issues/3192>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3192() {
-    test_repro!("Issue3192");
-}
+// https://github.com/foundry-rs/foundry/issues/3055
+test_repro!(3055, true);
 
-// <https://github.com/foundry-rs/foundry/issues/3110>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3110() {
-    test_repro!("Issue3110");
-}
+// https://github.com/foundry-rs/foundry/issues/3192
+test_repro!(3192);
 
-// <https://github.com/foundry-rs/foundry/issues/3189>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3189() {
-    test_repro_fail!("Issue3189");
-}
+// https://github.com/foundry-rs/foundry/issues/3110
+test_repro!(3110);
 
-// <https://github.com/foundry-rs/foundry/issues/3119>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3119() {
-    test_repro!("Issue3119");
-}
+// https://github.com/foundry-rs/foundry/issues/3189
+test_repro!(3189, true);
 
-// <https://github.com/foundry-rs/foundry/issues/3190>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3190() {
-    test_repro!("Issue3190");
-}
+// https://github.com/foundry-rs/foundry/issues/3119
+test_repro!(3119);
 
-// <https://github.com/foundry-rs/foundry/issues/3221>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3221() {
-    test_repro!("Issue3221");
-}
+// https://github.com/foundry-rs/foundry/issues/3190
+test_repro!(3190);
 
-// <https://github.com/foundry-rs/foundry/issues/3437>
+// https://github.com/foundry-rs/foundry/issues/3221
+test_repro!(3221);
+
+// https://github.com/foundry-rs/foundry/issues/3437
 // 1.0 related
-// #[tokio::test(flavor = "multi_thread")]
+//     test_repro!(3437);
 // async fn test_issue_3437() {
-//     test_repro!("Issue3437");
 // }
 
-// <https://github.com/foundry-rs/foundry/issues/3708>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3708() {
-    test_repro!("Issue3708");
-}
+// https://github.com/foundry-rs/foundry/issues/3708
+test_repro!(3708);
 
-// <https://github.com/foundry-rs/foundry/issues/3221>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3223() {
-    test_repro_with_sender!(
-        "Issue3223",
-        Address::from_str("0xF0959944122fb1ed4CfaBA645eA06EED30427BAA").unwrap()
-    );
-}
+// https://github.com/foundry-rs/foundry/issues/3221
+test_repro!(3223, false, address!("F0959944122fb1ed4CfaBA645eA06EED30427BAA"));
 
-// <https://github.com/foundry-rs/foundry/issues/3220>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3220() {
-    test_repro!("Issue3220");
-}
+// https://github.com/foundry-rs/foundry/issues/3220
+test_repro!(3220);
 
-// <https://github.com/foundry-rs/foundry/issues/3347>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3347() {
-    let mut res = run_test_repro!("Issue3347");
+// https://github.com/foundry-rs/foundry/issues/3347
+test_repro!(3347, false, None, |res| {
     let mut res = res.remove("repros/Issue3347.sol:Issue3347Test").unwrap();
     let test = res.test_results.remove("test()").unwrap();
     assert_eq!(test.logs.len(), 1);
@@ -205,127 +131,68 @@ async fn test_issue_3347() {
             ]
         }
     );
-}
+});
 
-// <https://github.com/foundry-rs/foundry/issues/3685>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3685() {
-    test_repro!("Issue3685");
-}
+// https://github.com/foundry-rs/foundry/issues/3685
+test_repro!(3685);
 
-// <https://github.com/foundry-rs/foundry/issues/3653>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3653() {
-    test_repro!("Issue3653");
-}
+// https://github.com/foundry-rs/foundry/issues/3653
+test_repro!(3653);
 
-// <https://github.com/foundry-rs/foundry/issues/3596>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3596() {
-    test_repro!("Issue3596", true, None);
-}
+// https://github.com/foundry-rs/foundry/issues/3596
+test_repro!(3596, true, None);
 
-// <https://github.com/foundry-rs/foundry/issues/3661>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3661() {
-    test_repro!("Issue3661");
-}
+// https://github.com/foundry-rs/foundry/issues/3661
+test_repro!(3661);
 
-// <https://github.com/foundry-rs/foundry/issues/3674>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3674() {
-    test_repro_with_sender!(
-        "Issue3674",
-        Address::from_str("0xF0959944122fb1ed4CfaBA645eA06EED30427BAA").unwrap()
-    );
-}
+// https://github.com/foundry-rs/foundry/issues/3674
+test_repro!(3674, false, address!("F0959944122fb1ed4CfaBA645eA06EED30427BAA"));
 
-// <https://github.com/foundry-rs/foundry/issues/3703>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3703() {
-    test_repro!("Issue3703");
-}
+// https://github.com/foundry-rs/foundry/issues/3703
+test_repro!(3703);
 
-// <https://github.com/foundry-rs/foundry/issues/3723>
+// https://github.com/foundry-rs/foundry/issues/3723
 // 1.0 related
-// #[tokio::test(flavor = "multi_thread")]
-// async fn test_issue_3723() {
-//     test_repro!("Issue3723");
-// }
+// test_repro!(3723);
 
-// <https://github.com/foundry-rs/foundry/issues/3753>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3753() {
-    test_repro!("Issue3753");
-}
+// https://github.com/foundry-rs/foundry/issues/3753
+test_repro!(3753);
 
-// <https://github.com/foundry-rs/foundry/issues/4630>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_4630() {
-    test_repro!("Issue4630");
-}
+// https://github.com/foundry-rs/foundry/issues/4630
+test_repro!(4630);
 
-// <https://github.com/foundry-rs/foundry/issues/4586>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_4586() {
-    test_repro!("Issue4586");
-}
+// https://github.com/foundry-rs/foundry/issues/4586
+test_repro!(4586);
 
 // https://github.com/foundry-rs/foundry/issues/4832
 // 1.0 related
-// #[tokio::test(flavor = "multi_thread")]
-// async fn test_issue_4832() {
-//     test_repro!("Issue4832");
-// }
+// test_repro!(4832);
 
-// <https://github.com/foundry-rs/foundry/issues/5038>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_5038() {
-    test_repro!("Issue5038");
-}
+// https://github.com/foundry-rs/foundry/issues/5038
+test_repro!(5038);
 
-// <https://github.com/foundry-rs/foundry/issues/3792>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_3792() {
-    test_repro!("Issue3792");
-}
+// https://github.com/foundry-rs/foundry/issues/3792
+test_repro!(3792);
 
-// <https://github.com/foundry-rs/foundry/issues/6006>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_6006() {
-    test_repro!("Issue6006");
-}
+// https://github.com/foundry-rs/foundry/issues/6006
+test_repro!(6006);
 
-// <https://github.com/foundry-rs/foundry/issues/5808>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_5808() {
-    test_repro!("Issue5808");
-}
+// https://github.com/foundry-rs/foundry/issues/5808
+test_repro!(5808);
 
-// <https://github.com/foundry-rs/foundry/issues/6070>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_6070() {
-    test_repro!("Issue6070");
-}
+// https://github.com/foundry-rs/foundry/issues/6070
+test_repro!(6070);
 
-// <https://github.com/foundry-rs/foundry/issues/6115>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_6115() {
-    test_repro!("Issue6115");
-}
+// https://github.com/foundry-rs/foundry/issues/6115
+test_repro!(6115);
 
-// <https://github.com/foundry-rs/foundry/issues/6170>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_6170() {
-    let mut res = run_test_repro!("Issue6170");
+// https://github.com/foundry-rs/foundry/issues/6170
+test_repro!(6170, false, None, |res| {
     let mut res = res.remove("repros/Issue6170.t.sol:Issue6170Test").unwrap();
     let test = res.test_results.remove("test()").unwrap();
     assert_eq!(test.status, TestStatus::Failure);
     assert_eq!(test.reason, Some("log != expected log".to_string()));
-}
+});
 
-// <https://github.com/foundry-rs/foundry/issues/6180>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_issue_6180() {
-    test_repro!("Issue6180");
-}
+// https://github.com/foundry-rs/foundry/issues/6180
+test_repro!(6180);

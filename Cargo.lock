@@ -2550,6 +2550,7 @@ dependencies = [
  "once_cell",
  "opener",
  "parking_lot",
+ "paste",
  "path-slash",
  "pretty_assertions",
  "proptest",
