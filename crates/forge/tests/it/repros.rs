@@ -18,7 +18,7 @@ macro_rules! test_repro {
     ($issue_number:literal, $should_fail:expr, $sender:expr $(,)?) => {
         paste::paste! {
             #[tokio::test(flavor = "multi_thread")]
-            async fn [< test_issue_ $issue_number >]() {
+            async fn [< issue_ $issue_number >]() {
                 repro_config($issue_number, $should_fail, $sender.into()).await.run().await;
             }
         }
@@ -26,7 +26,7 @@ macro_rules! test_repro {
     ($issue_number:literal, $should_fail:expr, $sender:expr, |$res:ident| $e:expr $(,)?) => {
         paste::paste! {
             #[tokio::test(flavor = "multi_thread")]
-            async fn [< test_issue_ $issue_number >]() {
+            async fn [< issue_ $issue_number >]() {
                 let mut $res = repro_config($issue_number, $should_fail, $sender.into()).await.test().await;
                 $e
             }
