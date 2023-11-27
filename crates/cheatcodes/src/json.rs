@@ -302,8 +302,10 @@ fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Result {
                 s
             };
             if let Some(array) = values[0].as_array() {
+                debug!(target: "cheatcodes", %ty, "parsing array");
                 string::parse_array(array.iter().map(to_string), ty)
             } else {
+                debug!(target: "cheatcodes", %ty, "parsing string");
                 string::parse(&to_string(values[0]), ty)
             }
         }),
@@ -318,10 +320,8 @@ where
     let selected = select(&value, key)?;
 
     // don't coerce when selecting the root value
-    if !matches!(key, "$" | ".") {
-        if let Some(coerce) = coerce {
-            return coerce(selected)
-        }
+    if let Some(coerce) = coerce {
+        return coerce(selected);
     }
 
     let sol = json_to_sol(&selected)?;
@@ -345,6 +345,7 @@ fn select<'a>(value: &'a Value, mut path: &str) -> Result<Vec<&'a Value>> {
     if path == "." {
         path = "$";
     }
+    // format error with debug string because json_path errors may contain newlines
     jsonpath_lib::select(value, &canonicalize_json_path(path))
         .map_err(|e| fmt_err!("failed selecting from JSON: {:?}", e.to_string()))
 }
@@ -374,7 +375,7 @@ fn canonicalize_json_path(path: &str) -> Cow<'_, str> {
 /// The function is designed to run recursively, so that in case of an object
 /// it will call itself to convert each of it's value and encode the whole as a
 /// Tuple
-#[instrument(target = "cheatcodes", level = "trace", err, ret)]
+#[instrument(target = "cheatcodes", level = "trace", ret)]
 pub(super) fn value_to_token(value: &Value) -> Result<DynSolValue> {
     match value {
         Value::Null => Ok(DynSolValue::FixedBytes(B256::ZERO, 32)),
