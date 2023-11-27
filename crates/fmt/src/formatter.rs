@@ -315,7 +315,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                     first_char == ch &&
                         state == CommentState::None &&
                         idx + needle.len() <= subset.len() &&
-                        subset[idx..idx + needle.len()].eq(needle)
+                        subset[idx..idx + needle.len()] == *needle
                 })
                 .map(|p| byte_offset + p)
         })

@@ -67,7 +67,7 @@ impl TestConfig {
     ///    * filter matched 0 test cases
     ///    * a test results deviates from the configured `should_fail` setting
     pub async fn try_run(&mut self) -> eyre::Result<()> {
-        let suite_result = self.runner.test(&self.filter, None, self.opts.clone()).await;
+        let suite_result = self.test().await;
         if suite_result.is_empty() {
             eyre::bail!("empty test result");
         }
@@ -259,8 +259,9 @@ pub fn assert_multiple(
             }
 
             if let Some(expected_logs) = expected_logs {
-                assert!(
-                    logs.iter().eq(expected_logs.iter()),
+                assert_eq!(
+                    logs,
+                    expected_logs,
                     "Logs did not match for test {}.\nExpected:\n{}\n\nGot:\n{}",
                     test_name,
                     expected_logs.join("\n"),
