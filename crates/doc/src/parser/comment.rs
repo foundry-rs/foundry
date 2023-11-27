@@ -87,7 +87,7 @@ impl Comment {
     pub fn match_first_word(&self, expected: &str) -> Option<&str> {
         self.split_first_word().and_then(
             |(word, rest)| {
-                if word.eq(expected) {
+                if word == expected {
                     Some(rest)
                 } else {
                     None

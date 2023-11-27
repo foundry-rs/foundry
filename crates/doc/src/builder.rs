@@ -408,8 +408,8 @@ impl DocBuilder {
         }
         // Sort entries by path depth
         let grouped = grouped.into_iter().sorted_by(|(lhs, _), (rhs, _)| {
-            let lhs_at_end = lhs.extension().map(|ext| ext.eq(Self::SOL_EXT)).unwrap_or_default();
-            let rhs_at_end = rhs.extension().map(|ext| ext.eq(Self::SOL_EXT)).unwrap_or_default();
+            let lhs_at_end = lhs.extension().map(|ext| ext == Self::SOL_EXT).unwrap_or_default();
+            let rhs_at_end = rhs.extension().map(|ext| ext == Self::SOL_EXT).unwrap_or_default();
             if lhs_at_end == rhs_at_end {
                 lhs.cmp(rhs)
             } else if lhs_at_end {
@@ -421,7 +421,7 @@ impl DocBuilder {
 
         let mut readme = BufWriter::new("\n\n# Contents\n");
         for (path, files) in grouped {
-            if path.extension().map(|ext| ext.eq(Self::SOL_EXT)).unwrap_or_default() {
+            if path.extension().map(|ext| ext == Self::SOL_EXT).unwrap_or_default() {
                 for file in files {
                     let ident = &file.identity;
 

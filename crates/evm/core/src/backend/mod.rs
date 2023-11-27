@@ -873,7 +873,7 @@ impl Backend {
                 continue
             }
 
-            if tx.hash.eq(&tx_hash.to_ethers()) {
+            if tx.hash == tx_hash.to_ethers() {
                 // found the target transaction
                 return Ok(Some(tx))
             }

@@ -259,8 +259,9 @@ pub fn assert_multiple(
             }
 
             if let Some(expected_logs) = expected_logs {
-                assert!(
-                    logs.iter().eq(expected_logs.iter()),
+                assert_eq!(
+                    logs,
+                    expected_logs,
                     "Logs did not match for test {}.\nExpected:\n{}\n\nGot:\n{}",
                     test_name,
                     expected_logs.join("\n"),

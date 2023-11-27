@@ -148,7 +148,7 @@ where
 impl AstEq for String {
     fn ast_eq(&self, other: &Self) -> bool {
         match (Address::from_str(self), Address::from_str(other)) {
-            (Ok(left), Ok(right)) => left.eq(&right),
+            (Ok(left), Ok(right)) => left == right,
             _ => self == other,
         }
     }
