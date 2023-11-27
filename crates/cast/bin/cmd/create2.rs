@@ -392,6 +392,8 @@ mod tests {
 
     #[test]
     fn j0() {
-        let _e = Create2Args::try_parse_from(["foundry-cli", "-j0"]).unwrap_err();
+        let e =
+            Create2Args::try_parse_from(["foundry-cli", "--starts-with=00", "-j0"]).unwrap_err();
+        let _ = e.print();
     }
 }
