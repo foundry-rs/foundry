@@ -1,14 +1,19 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use clap::Parser;
 use eyre::{Result, WrapErr};
+use rand::{rngs::StdRng, RngCore, SeedableRng};
 use regex::RegexSetBuilder;
 use std::{
+    num::NonZeroUsize,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
     time::Instant,
 };
+
+// https://etherscan.io/address/0x4e59b44847b379578588920ca78fbf26c0b4956c#code
+const DEPLOYER: &str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
 
 /// CLI arguments for `cast create2`.
 #[derive(Debug, Clone, Parser)]
@@ -38,7 +43,7 @@ pub struct Create2Args {
     #[clap(
         short,
         long,
-        default_value = "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+        default_value = DEPLOYER,
         value_name = "ADDRESS"
     )]
     deployer: Address,
@@ -53,11 +58,19 @@ pub struct Create2Args {
 
     /// Number of threads to use. Defaults to and caps at the number of logical cores.
     #[clap(short, long)]
-    jobs: Option<usize>,
+    jobs: Option<NonZeroUsize>,
 
     /// Address of the caller. Used for the first 20 bytes of the salt.
     #[clap(long, value_name = "ADDRESS")]
     caller: Option<Address>,
+
+    /// The random number generator's seed, used to initialize the salt.
+    #[clap(long, value_name = "HEX")]
+    seed: Option<B256>,
+
+    /// Don't initialize the salt with a random value, and instead use the default value of 0.
+    #[clap(long, conflicts_with = "seed")]
+    no_random: bool,
 }
 
 #[allow(dead_code)]
@@ -78,6 +91,8 @@ impl Create2Args {
             init_code_hash,
             jobs,
             caller,
+            seed,
+            no_random,
         } = self;
 
         let mut regexs = vec![];
@@ -131,15 +146,26 @@ impl Create2Args {
 
         let mut n_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
         if let Some(jobs) = jobs {
-            n_threads = n_threads.min(jobs);
+            n_threads = n_threads.min(jobs.get());
         }
         if cfg!(test) {
             n_threads = n_threads.min(2);
         }
 
-        let mut top_bytes = B256::ZERO;
-        if let Some(caller_address) = caller {
-            top_bytes[..20].copy_from_slice(&caller_address.into_array());
+        let mut salt = B256::ZERO;
+        let remaining = if let Some(caller_address) = caller {
+            salt[..20].copy_from_slice(&caller_address.into_array());
+            &mut salt[20..]
+        } else {
+            &mut salt[..]
+        };
+
+        if !no_random {
+            let mut rng = match seed {
+                Some(seed) => StdRng::from_seed(seed.0),
+                None => StdRng::from_entropy(),
+            };
+            rng.fill_bytes(remaining);
         }
 
         println!("Starting to generate deterministic contract address...");
@@ -158,14 +184,13 @@ impl Create2Args {
             handles.push(std::thread::spawn(move || {
                 // Read the first bytes of the salt as a usize to be able to increment it.
                 struct B256Aligned(B256, [usize; 0]);
-                let mut salt = B256Aligned(top_bytes, []);
+                let mut salt = B256Aligned(salt, []);
                 // SAFETY: B256 is aligned to `usize`.
                 let salt_word = unsafe {
                     &mut *salt.0.as_mut_ptr().add(32 - usize::BITS as usize / 8).cast::<usize>()
                 };
-                // Important: set the salt to the start value, otherwise all threads loop over the
-                // same values.
-                *salt_word = i;
+                // Important: add the thread index to the salt to avoid duplicate results.
+                *salt_word = salt_word.wrapping_add(i);
 
                 let mut checksum = [0; 42];
                 loop {
@@ -190,7 +215,7 @@ impl Create2Args {
                     }
 
                     // Increment the salt for the next iteration.
-                    *salt_word += increment;
+                    *salt_word = salt_word.wrapping_add(increment);
                 }
             }));
         }
@@ -219,9 +244,8 @@ fn get_regex_hex_string(s: String) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::{address, b256};
     use std::str::FromStr;
-
-    const DEPLOYER: &str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
 
     #[test]
     fn basic_create2() {
@@ -331,5 +355,46 @@ mod tests {
         let salt = create2_out.salt;
         assert!(format!("{address:x}").starts_with("dd"));
         assert!(format!("{salt:x}").starts_with("66f9664f97f2b50f62d13ea064982f936de76657"));
+    }
+
+    #[test]
+    fn deterministic_seed() {
+        let args = Create2Args::parse_from([
+            "foundry-cli",
+            "--starts-with=0x00",
+            "--init-code-hash=0x479d7e8f31234e208d704ba1a123c76385cea8a6981fd675b784fbd9cffb918d",
+            "--seed=0x479d7e8f31234e208d704ba1a123c76385cea8a6981fd675b784fbd9cffb918d",
+            "-j1",
+        ]);
+        let out = args.run().unwrap();
+        assert_eq!(out.address, address!("00614b3D65ac4a09A376a264fE1aE5E5E12A6C43"));
+        assert_eq!(
+            out.salt,
+            b256!("322113f523203e2c0eb00bbc8e69208b0eb0c8dad0eaac7b01d64ff016edb40d"),
+        );
+    }
+
+    #[test]
+    fn deterministic_output() {
+        let args = Create2Args::parse_from([
+            "foundry-cli",
+            "--starts-with=0x00",
+            "--init-code-hash=0x479d7e8f31234e208d704ba1a123c76385cea8a6981fd675b784fbd9cffb918d",
+            "--no-random",
+            "-j1",
+        ]);
+        let out = args.run().unwrap();
+        assert_eq!(out.address, address!("00bF495b8b42fdFeb91c8bCEB42CA4eE7186AEd2"));
+        assert_eq!(
+            out.salt,
+            b256!("000000000000000000000000000000000000000000000000df00000000000000"),
+        );
+    }
+
+    #[test]
+    fn j0() {
+        let e =
+            Create2Args::try_parse_from(["foundry-cli", "--starts-with=00", "-j0"]).unwrap_err();
+        let _ = e.print();
     }
 }
