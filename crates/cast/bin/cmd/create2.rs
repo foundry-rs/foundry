@@ -12,6 +12,9 @@ use std::{
     time::Instant,
 };
 
+// https://etherscan.io/address/0x4e59b44847b379578588920ca78fbf26c0b4956c#code
+const DEPLOYER: &str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
+
 /// CLI arguments for `cast create2`.
 #[derive(Debug, Clone, Parser)]
 pub struct Create2Args {
@@ -40,7 +43,7 @@ pub struct Create2Args {
     #[clap(
         short,
         long,
-        default_value = "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+        default_value = DEPLOYER,
         value_name = "ADDRESS"
     )]
     deployer: Address,
@@ -61,7 +64,7 @@ pub struct Create2Args {
     #[clap(long, value_name = "ADDRESS")]
     caller: Option<Address>,
 
-    /// Seed for the random number generator that's used to initialize the salt.
+    /// The random number generator's seed, used to initialize the salt.
     #[clap(long, value_name = "HEX")]
     seed: Option<B256>,
 
@@ -243,8 +246,6 @@ mod tests {
     use super::*;
     use alloy_primitives::{address, b256};
     use std::str::FromStr;
-
-    const DEPLOYER: &str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
 
     #[test]
     fn basic_create2() {
