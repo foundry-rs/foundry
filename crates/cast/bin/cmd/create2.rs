@@ -61,11 +61,11 @@ pub struct Create2Args {
     #[clap(long, value_name = "ADDRESS")]
     caller: Option<Address>,
 
-    /// Seed for the random number generator that's used to initialize the nonce.
+    /// Seed for the random number generator that's used to initialize the salt.
     #[clap(long, value_name = "HEX")]
     seed: Option<B256>,
 
-    /// Don't initialize the nonce with a random value, and instead use the default value of 0.
+    /// Don't initialize the salt with a random value, and instead use the default value of 0.
     #[clap(long, conflicts_with = "seed")]
     no_random: bool,
 }
