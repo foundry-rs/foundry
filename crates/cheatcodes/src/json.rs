@@ -281,51 +281,34 @@ impl Cheatcode for writeJson_1Call {
 }
 
 fn parse_json(json: &str, path: &str) -> Result {
-    parse_json_inner(json, path, None::<fn(Vec<&Value>) -> Result>)
+    let value = parse_json_str(json)?;
+    let selected = select(&value, path)?;
+    let sol = json_to_sol(&selected)?;
+    Ok(encode(sol))
 }
 
 fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Result {
-    parse_json_inner(
-        json,
-        path,
-        Some(|values: Vec<&Value>| {
-            ensure!(!values.is_empty(), "no matching value found at {path:?}");
-
-            ensure!(
-                values.iter().all(|value| !value.is_object()),
-                "values at {path:?} must not be JSON objects"
-            );
-
-            let to_string = |v: &Value| {
-                let mut s = v.to_string();
-                s.retain(|c: char| c != '"');
-                s
-            };
-            if let Some(array) = values[0].as_array() {
-                debug!(target: "cheatcodes", %ty, "parsing array");
-                string::parse_array(array.iter().map(to_string), ty)
-            } else {
-                debug!(target: "cheatcodes", %ty, "parsing string");
-                string::parse(&to_string(values[0]), ty)
-            }
-        }),
-    )
-}
-
-fn parse_json_inner<F>(json: &str, key: &str, coerce: Option<F>) -> Result
-where
-    F: FnOnce(Vec<&Value>) -> Result,
-{
     let value = parse_json_str(json)?;
-    let selected = select(&value, key)?;
+    let values = select(&value, path)?;
+    ensure!(!values.is_empty(), "no matching value found at {path:?}");
 
-    // don't coerce when selecting the root value
-    if let Some(coerce) = coerce {
-        return coerce(selected);
+    ensure!(
+        values.iter().all(|value| !value.is_object()),
+        "values at {path:?} must not be JSON objects"
+    );
+
+    let to_string = |v: &Value| {
+        let mut s = v.to_string();
+        s.retain(|c: char| c != '"');
+        s
+    };
+    if let Some(array) = values[0].as_array() {
+        debug!(target: "cheatcodes", %ty, "parsing array");
+        string::parse_array(array.iter().map(to_string), ty)
+    } else {
+        debug!(target: "cheatcodes", %ty, "parsing string");
+        string::parse(&to_string(values[0]), ty)
     }
-
-    let sol = json_to_sol(&selected)?;
-    Ok(encode(sol))
 }
 
 fn parse_json_str(json: &str) -> Result<Value> {

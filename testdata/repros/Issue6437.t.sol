@@ -8,10 +8,24 @@ import "../cheats/Vm.sol";
 contract Issue6437Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    function test() public {
+    function test0() public {
+        string memory json = "[]";
+        address[] memory arr = vm.parseJsonAddressArray(json, "$");
+        assertEq(arr.length, 0);
+    }
+
+    function test1() public {
         string memory json = "[\"0x1111111111111111111111111111111111111111\"]";
         address[] memory arr = vm.parseJsonAddressArray(json, "$");
         assertEq(arr.length, 1);
         assertEq(arr[0], 0x1111111111111111111111111111111111111111);
+    }
+
+    function test2() public {
+        string memory json = "[\"0x1111111111111111111111111111111111111111\",\"0x2222222222222222222222222222222222222222\"]";
+        address[] memory arr = vm.parseJsonAddressArray(json, "$");
+        assertEq(arr.length, 2);
+        assertEq(arr[0], 0x1111111111111111111111111111111111111111);
+        assertEq(arr[1], 0x2222222222222222222222222222222222222222);
     }
 }
