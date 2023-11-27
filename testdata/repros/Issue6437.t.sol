@@ -22,7 +22,8 @@ contract Issue6437Test is DSTest {
     }
 
     function test2() public {
-        string memory json = "[\"0x1111111111111111111111111111111111111111\",\"0x2222222222222222222222222222222222222222\"]";
+        string memory json =
+            "[\"0x1111111111111111111111111111111111111111\",\"0x2222222222222222222222222222222222222222\"]";
         address[] memory arr = vm.parseJsonAddressArray(json, "$");
         assertEq(arr.length, 2);
         assertEq(arr[0], 0x1111111111111111111111111111111111111111);
