@@ -97,7 +97,7 @@ test_repro!(3223, false, address!("F0959944122fb1ed4CfaBA645eA06EED30427BAA"));
 
 // https://github.com/foundry-rs/foundry/issues/3347
 test_repro!(3347, false, None, |res| {
-    let mut res = res.remove("repros/Issue3347.sol:Issue3347Test").unwrap();
+    let mut res = res.remove("repros/Issue3347.t.sol:Issue3347Test").unwrap();
     let test = res.test_results.remove("test()").unwrap();
     assert_eq!(test.logs.len(), 1);
     let event = Event {
