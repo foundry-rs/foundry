@@ -357,7 +357,7 @@ impl NodeConfig {
     /// random, free port by setting it to `0`
     #[doc(hidden)]
     pub fn test() -> Self {
-        Self { enable_tracing: false, silent: true, port: 0, ..Default::default() }
+        Self { enable_tracing: true, silent: true, port: 0, ..Default::default() }
     }
 }
 

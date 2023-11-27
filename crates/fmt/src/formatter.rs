@@ -11,10 +11,10 @@ use crate::{
     solang_ext::{pt::*, *},
     string::{QuoteState, QuotedStringExt},
     visit::{Visitable, Visitor},
-    FormatterConfig, InlineConfig, IntTypes, NumberUnderscore,
+    FormatterConfig, InlineConfig, IntTypes,
 };
 use alloy_primitives::Address;
-use foundry_config::fmt::{MultilineFuncHeaderStyle, SingleLineBlockStyle};
+use foundry_config::fmt::{HexUnderscore, MultilineFuncHeaderStyle, SingleLineBlockStyle};
 use itertools::{Either, Itertools};
 use solang_parser::pt::ImportPath;
 use std::{fmt::Write, str::FromStr};
@@ -315,7 +315,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                     first_char == ch &&
                         state == CommentState::None &&
                         idx + needle.len() <= subset.len() &&
-                        subset[idx..idx + needle.len()].eq(needle)
+                        subset[idx..idx + needle.len()] == *needle
                 })
                 .map(|p| byte_offset + p)
         })
@@ -1304,7 +1304,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         let config = self.config.number_underscore;
 
         // get source if we preserve underscores
-        let (value, fractional, exponent) = if matches!(config, NumberUnderscore::Preserve) {
+        let (value, fractional, exponent) = if config.is_preserve() {
             let source = &self.source[loc.start()..loc.end()];
             // Strip unit
             let (source, _) = source.split_once(' ').unwrap_or((source, ""));
@@ -1336,7 +1336,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         exp = exp.trim().trim_start_matches('0');
 
         let add_underscores = |string: &str, reversed: bool| -> String {
-            if !matches!(config, NumberUnderscore::Thousands) || string.len() < 5 {
+            if !config.is_thousands() || string.len() < 5 {
                 return string.to_string()
             }
             if reversed {
@@ -1375,6 +1375,32 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         write_chunk!(self, loc.start(), loc.end(), "{out}")?;
         self.write_unit(unit)
+    }
+
+    /// Write and hex literals according to the configuration.
+    fn write_hex_literal(&mut self, lit: &HexLiteral) -> Result<()> {
+        let HexLiteral { loc, hex } = lit;
+        match self.config.hex_underscore {
+            HexUnderscore::Remove => self.write_quoted_str(*loc, Some("hex"), hex),
+            HexUnderscore::Preserve => {
+                let quote = &self.source[loc.start()..loc.end()].trim_start_matches("hex");
+                // source is always quoted so we remove the quotes first so we can adhere to the
+                // configured quoting style
+                let hex = &quote[1..quote.len() - 1];
+                self.write_quoted_str(*loc, Some("hex"), hex)
+            }
+            HexUnderscore::Bytes => {
+                // split all bytes
+                let hex = hex
+                    .chars()
+                    .chunks(2)
+                    .into_iter()
+                    .map(|chunk| chunk.collect::<String>())
+                    .collect::<Vec<_>>()
+                    .join("_");
+                self.write_quoted_str(*loc, Some("hex"), &hex)
+            }
+        }
     }
 
     /// Write built-in unit.
@@ -2061,8 +2087,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
             }
             Expression::HexLiteral(vals) => {
-                for HexLiteral { loc, hex } in vals {
-                    self.write_quoted_str(*loc, Some("hex"), hex)?;
+                for val in vals {
+                    self.write_hex_literal(val)?;
                 }
             }
             Expression::AddressLiteral(loc, val) => {
@@ -2285,6 +2311,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::FunctionCallBlock(_, expr, stmt) => {
                 expr.visit(self)?;
                 stmt.visit(self)?;
+            }
+            Expression::New(_, expr) => {
+                write_chunk!(self, "new ")?;
+                self.visit_expr(expr.loc(), expr)?;
             }
             _ => self.visit_source(loc)?,
         };
