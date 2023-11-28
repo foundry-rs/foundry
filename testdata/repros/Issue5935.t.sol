@@ -23,9 +23,12 @@ contract Issue5935Test is DSTest {
             vm.createFork("https://eth-mainnet.alchemyapi.io/v2/QC55XC151AgkS3FNtWvz9VZGeu9Xd9lb", 18234083);
         vm.selectFork(forkId1);
         SimpleStorage myContract = new SimpleStorage();
-        emit log_address(address(myContract));
+        myContract.set(42);
         vm.selectFork(forkId2);
         SimpleStorage myContract2 = new SimpleStorage();
-        emit log_address(address(myContract2));
+        assertEq(myContract2.value(), 0);
+
+        vm.selectFork(forkId1);
+        assertEq(myContract.value(), 42);
     }
 }
