@@ -2,7 +2,7 @@
 
 use anvil::{spawn, NodeConfig};
 use ethers::{prelude::Middleware, types::Address};
-use foundry_utils::types::ToAlloy;
+use foundry_common::types::ToAlloy;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_change_mining_mode() {

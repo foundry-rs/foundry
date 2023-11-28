@@ -21,6 +21,7 @@ pub enum Hardfork {
     GrayGlacier,
     Paris,
     Shanghai,
+    Cancun,
     #[default]
     Latest,
 }
@@ -44,6 +45,9 @@ impl Hardfork {
             Hardfork::GrayGlacier => 15050000,
             Hardfork::Paris => 15537394,
             Hardfork::Shanghai | Hardfork::Latest => 17034870,
+
+            // TODO: set block number after activation
+            Hardfork::Cancun => unreachable!(),
         }
     }
 
@@ -92,6 +96,10 @@ impl Hardfork {
                 // update `next` when another fork block num is known
                 ForkId { hash: ForkHash([0xc1, 0xfd, 0xf1, 0x81]), next: 0 }
             }
+            Hardfork::Cancun => {
+                // TODO: set fork hash once known
+                ForkId { hash: ForkHash([0xc1, 0xfd, 0xf1, 0x81]), next: 0 }
+            }
         }
     }
 }
@@ -118,7 +126,7 @@ impl FromStr for Hardfork {
             "grayglacier" | "14" => Hardfork::GrayGlacier,
             "paris" | "merge" | "15" => Hardfork::Paris,
             "shanghai" | "16" => Hardfork::Shanghai,
-            // "cancun" | "17"=> Hardfork::Cancun,
+            "cancun" | "17" => Hardfork::Cancun,
             "latest" => Hardfork::Latest,
             _ => return Err(format!("Unknown hardfork {s}")),
         };
@@ -145,6 +153,9 @@ impl From<Hardfork> for SpecId {
             Hardfork::GrayGlacier => SpecId::GRAY_GLACIER,
             Hardfork::Paris => SpecId::MERGE,
             Hardfork::Shanghai | Hardfork::Latest => SpecId::SHANGHAI,
+
+            // TODO: switch to latest after activation
+            Hardfork::Cancun => SpecId::CANCUN,
         }
     }
 }

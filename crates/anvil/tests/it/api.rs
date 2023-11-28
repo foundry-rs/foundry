@@ -15,7 +15,7 @@ use ethers::{
     utils::get_contract_address,
 };
 use alloy_primitives::U256 as rU256;
-use foundry_utils::types::ToAlloy;
+use foundry_common::types::ToAlloy;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 #[tokio::test(flavor = "multi_thread")]

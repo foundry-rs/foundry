@@ -6,7 +6,7 @@ use ethers_core::{
         rlp::{Encodable, RlpStream},
     },
 };
-use foundry_utils::types::ToAlloy;
+use foundry_common::types::ToAlloy;
 
 pub fn enveloped<T: Encodable>(id: u8, v: &T, s: &mut RlpStream) {
     let encoded = rlp::encode(v);

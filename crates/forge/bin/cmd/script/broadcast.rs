@@ -14,7 +14,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     provider::ethers::estimate_eip1559_fees, provider::ethers::try_get_http_provider,
-    provider::ethers::RetryProvider, shell,
+    provider::ethers::RetryProvider, shell, types::{ToAlloy, ToEthers},
 };
 use futures::StreamExt;
 use std::{cmp::min, collections::HashSet, ops::Mul, sync::Arc};
@@ -70,9 +70,6 @@ impl ScriptArgs {
             // Make a one-time gas price estimation
             let (gas_price, eip1559_fees) = {
                 match deployment_sequence.transactions.front().unwrap().typed_tx() {
-                    TypedTransaction::Legacy(_) | TypedTransaction::Eip2930(_) => {
-                        (provider.get_gas_price().await.ok(), None)
-                    }
                     TypedTransaction::Eip1559(_) => {
                         let fees = estimate_eip1559_fees(&provider, Some(chain))
                             .await
@@ -80,6 +77,7 @@ impl ScriptArgs {
 
                         (None, Some(fees))
                     }
+                    _ => (provider.get_gas_price().await.ok(), None),
                 }
             };
 
@@ -105,9 +103,6 @@ impl ScriptArgs {
                     } else {
                         // fill gas price
                         match tx {
-                            TypedTransaction::Eip2930(_) | TypedTransaction::Legacy(_) => {
-                                tx.set_gas_price(gas_price.expect("Could not get gas_price."));
-                            }
                             TypedTransaction::Eip1559(ref mut inner) => {
                                 let eip1559_fees =
                                     eip1559_fees.expect("Could not get eip1559 fee estimation.");
@@ -118,6 +113,9 @@ impl ScriptArgs {
                                     inner.max_priority_fee_per_gas = Some(eip1559_fees.1);
                                 }
                                 inner.max_fee_per_gas = Some(eip1559_fees.0);
+                            }
+                            _ => {
+                                tx.set_gas_price(gas_price.expect("Could not get gas_price."));
                             }
                         }
                     }
@@ -232,7 +230,7 @@ impl ScriptArgs {
         let from = tx.from().expect("no sender");
 
         if sequential_broadcast {
-            let nonce = foundry_utils::next_nonce((*from).to_alloy(), fork_url, None)
+            let nonce = forge::next_nonce((*from).to_alloy(), fork_url, None)
                 .await
                 .map_err(|_| eyre::eyre!("Not able to query the EOA nonce."))?;
 

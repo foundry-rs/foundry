@@ -15,7 +15,7 @@ use ethers::{
 };
 use alloy_primitives::U256 as rU256;
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
-use foundry_utils::types::{ToAlloy, ToEthers};
+use foundry_common::types::{ToAlloy, ToEthers};
 use ethers_solc::{project_util::TempProject, Artifact};
 use std::{collections::VecDeque, str::FromStr, sync::Arc};
 
@@ -68,7 +68,7 @@ async fn can_call_ots_get_internal_operations_contract_deploy() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_call_ots_get_internal_operations_contract_trasfer() {
+async fn can_call_ots_get_internal_operations_contract_transfer() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ethers_http_provider();
 

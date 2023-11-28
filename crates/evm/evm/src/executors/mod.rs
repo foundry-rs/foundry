@@ -28,7 +28,7 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
     db::{DatabaseCommit, DatabaseRef},
-    interpreter::{return_ok, CreateScheme, InstructionResult, SharedMemory, Stack},
+    interpreter::{return_ok, CreateScheme, InstructionResult, Stack},
     primitives::{
         BlockEnv, Bytecode, Env, ExecutionResult, Output, ResultAndState, SpecId, TransactTo, TxEnv,
     },
@@ -489,26 +489,24 @@ impl Executor {
 
         // If this test failed any asserts, then this changeset will contain changes `false -> true`
         // for the contract's `failed` variable and the `globalFailure` flag in the state of the
-        // cheatcode address which are both read when call `"failed()(bool)"` in the next step
+        // cheatcode address which are both read when we call `"failed()(bool)"` in the next step
         backend.commit(state_changeset);
-        let executor =
-            Executor::new(backend, self.env.clone(), self.inspector.clone(), self.gas_limit);
 
         let mut success = !reverted;
         if success {
             // Check if a DSTest assertion failed
-            let call =
-                executor.call::<_, _>(CALLER, address, "failed()(bool)", vec![], U256::ZERO, None);
-
+            let executor =
+                Executor::new(backend, self.env.clone(), self.inspector.clone(), self.gas_limit);
+            let call = executor.call(CALLER, address, "failed()(bool)", vec![], U256::ZERO, None);
             if let Ok(CallResult { result: failed, .. }) = call {
-                let failed = failed
-                    .as_bool()
-                    .expect("Failed to decode DSTest `failed` variable. This is a bug");
-                success = !failed;
+                debug!(?failed, "DSTest");
+                success = !failed.as_bool().unwrap();
             }
         }
 
-        Ok(should_fail ^ success)
+        let result = should_fail ^ success;
+        debug!(should_fail, success, result);
+        Ok(result)
     }
 
     /// Creates the environment to use when executing a transaction in a test context
@@ -682,7 +680,7 @@ pub struct RawCallResult {
     /// The raw output of the execution
     pub out: Option<Output>,
     /// The chisel state
-    pub chisel_state: Option<(Stack, SharedMemory, InstructionResult)>,
+    pub chisel_state: Option<(Stack, Vec<u8>, InstructionResult)>,
 }
 
 impl Default for RawCallResult {
@@ -737,9 +735,9 @@ fn convert_executed_result(
     };
     let stipend = calc_stipend(&env.tx.data, env.cfg.spec_id);
 
-    let result = match out {
-        Some(Output::Call(ref data)) => data.to_owned(),
-        _ => Bytes::default(),
+    let result = match &out {
+        Some(Output::Call(data)) => data.clone(),
+        _ => Bytes::new(),
     };
 
     let InspectorData {
@@ -767,7 +765,7 @@ fn convert_executed_result(
         gas_used,
         gas_refunded,
         stipend,
-        logs: logs.to_vec(),
+        logs,
         labels,
         traces,
         coverage,

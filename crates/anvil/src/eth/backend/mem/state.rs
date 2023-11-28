@@ -13,7 +13,7 @@ use foundry_evm::{
         primitives::{AccountInfo, Bytecode, Log},
     },
 };
-use foundry_utils::types::ToEthers;
+use foundry_common::types::ToEthers;
 use memory_db::HashKey;
 use trie_db::TrieMut;
 

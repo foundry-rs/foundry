@@ -10,7 +10,7 @@ use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
 use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
 use ethers::utils::GenesisAccount;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
-use foundry_utils::types::ToAlloy;
+use foundry_common::types::ToAlloy;
 use revm::{
     db::{CacheDB, DatabaseRef},
     inspectors::NoOpInspector,
@@ -777,8 +777,8 @@ impl Backend {
         self.inner.precompiles().contains(addr)
     }
 
-    /// Ths will clean up already loaded accounts that would be initialized without the correct data
-    /// from the fork
+    /// Cleans up already loaded accounts that would be initialized without the correct data from
+    /// the fork.
     ///
     /// It can happen that an account is loaded before the first fork is selected, like
     /// `getNonce(addr)`, which will load an empty account by default.
@@ -867,9 +867,9 @@ impl Backend {
                     continue;
                 }
 
-                if tx.hash.eq(&tx_hash) {
+                if tx.hash == tx_hash {
                     // found the target transaction
-                    return Ok(Some(tx));
+                    return Ok(Some(tx))
                 }
                 trace!(tx=?tx.hash, "committing transaction");
 

@@ -236,7 +236,7 @@ impl Cheatcode for envOr_13Call {
 }
 
 fn env(key: &str, ty: &DynSolType) -> Result {
-    get_env(key).and_then(|val| string::parse(&val, ty).map_err(map_env_err(key)))
+    get_env(key).and_then(|val| string::parse(&val, ty).map_err(map_env_err(key, &val)))
 }
 
 fn env_default<T: SolValue>(key: &str, default: &T, ty: &DynSolType) -> Result {
@@ -245,7 +245,7 @@ fn env_default<T: SolValue>(key: &str, default: &T, ty: &DynSolType) -> Result {
 
 fn env_array(key: &str, delim: &str, ty: &DynSolType) -> Result {
     get_env(key).and_then(|val| {
-        string::parse_array(val.split(delim).map(str::trim), ty).map_err(map_env_err(key))
+        string::parse_array(val.split(delim).map(str::trim), ty).map_err(map_env_err(key, &val))
     })
 }
 
@@ -263,9 +263,12 @@ fn get_env(key: &str) -> Result<String> {
     }
 }
 
-fn map_env_err(key: &str) -> impl FnOnce(Error) -> Error + '_ {
+/// Converts the error message of a failed parsing attempt to a more user-friendly message that
+/// doesn't leak the value.
+fn map_env_err<'a>(key: &'a str, value: &'a str) -> impl FnOnce(Error) -> Error + 'a {
     move |e| {
-        let e = e.to_string();
+        let e = e.to_string(); // failed parsing \"xy(123)\" as type `uint256`: parser error:\nxy(123)\n ^\nexpected at
+                               // least one digit
         let mut e = e.as_str();
         // cut off the message to not leak the value
         let sep = if let Some(idx) = e.rfind(" as type `") {
@@ -274,6 +277,26 @@ fn map_env_err(key: &str) -> impl FnOnce(Error) -> Error + '_ {
         } else {
             ": "
         };
+        // ensure we're also removing the value from the underlying alloy parser error message, See
+        // [alloy_dyn_abi::parser::Error::parser]
+        let e = e.replacen(&format!("\n{value}\n"), &format!("\n${key}\n"), 1);
         fmt_err!("failed parsing ${key}{sep}{e}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_env_uint() {
+        let key = "parse_env_uint";
+        let value = "xy(123)";
+        env::set_var(key, value);
+
+        let err = env(key, &DynSolType::Uint(256)).unwrap_err().to_string();
+        assert!(!err.contains(value));
+        assert_eq!(err, "failed parsing $parse_env_uint as type `uint256`: parser error:\n$parse_env_uint\n ^\nexpected at least one digit");
+        env::remove_var(key);
     }
 }

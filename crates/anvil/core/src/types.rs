@@ -1,4 +1,5 @@
 use alloy_primitives::{TxHash, B256, U256, U64};
+use std::collections::BTreeMap;
 use revm::primitives::SpecId;
 
 #[cfg(feature = "serde")]
@@ -190,7 +191,7 @@ pub struct NodeInfo {
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct NodeEnvironment {
     pub base_fee: U256,
-    pub chain_id: U256,
+    pub chain_id: u64,
     pub gas_limit: U256,
     pub gas_price: U256,
 }
@@ -212,11 +213,12 @@ pub struct NodeForkConfig {
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct AnvilMetadata {
     pub client_version: &'static str,
-    pub chain_id: U256,
+    pub chain_id: u64,
     pub instance_id: B256,
-    pub latest_block_number: U64,
+    pub latest_block_number: u64,
     pub latest_block_hash: B256,
     pub forked_network: Option<ForkedNetwork>,
+    pub snapshots: BTreeMap<U256, (u64, B256)>,
 }
 
 /// Information about the forked network.
@@ -225,8 +227,8 @@ pub struct AnvilMetadata {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct ForkedNetwork {
-    pub chain_id: U256,
-    pub fork_block_number: U64,
+    pub chain_id: u64,
+    pub fork_block_number: u64,
     pub fork_block_hash: TxHash,
 }
 

@@ -11,7 +11,7 @@ use ethers::{
         Address, BlockNumber, Transaction, TransactionReceipt, H256, U256,
     },
 };
-use foundry_utils::types::{ToAlloy, ToEthers, to_call_request_from_tx_request};
+use foundry_common::types::{ToAlloy, ToEthers, to_call_request_from_tx_request};
 use futures::{future::join_all, FutureExt, StreamExt};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::timeout;

@@ -17,8 +17,8 @@ use ethers::{
     prelude::{DefaultFrame, Trace},
     types::{ActionType, GethDebugTracingOptions},
 };
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::revm::{interpreter::InstructionResult, primitives::Env};
-use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, VecDeque},

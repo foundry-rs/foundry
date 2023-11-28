@@ -7,9 +7,11 @@ use ethers_core::types::{
 };
 use ethers_providers::Middleware;
 use eyre::{eyre, Result};
-use foundry_common::abi::{encode_function_args, get_func, get_func_etherscan};
+use foundry_common::{
+    abi::{encode_function_args, get_func, get_func_etherscan},
+    types::{ToAlloy, ToEthers},
+};
 use foundry_config::Chain;
-use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::future::join_all;
 
 pub type TxBuilderOutput = (TypedTransaction, Option<Function>);
@@ -276,8 +278,8 @@ mod tests {
     use async_trait::async_trait;
     use ethers_core::types::{transaction::eip2718::TypedTransaction, NameOrAddress, H160};
     use ethers_providers::{JsonRpcClient, Middleware, ProviderError};
+    use foundry_common::types::ToEthers;
     use foundry_config::NamedChain;
-    use foundry_utils::types::ToEthers;
     use serde::{de::DeserializeOwned, Serialize};
     use std::str::FromStr;
 

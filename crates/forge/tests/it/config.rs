@@ -12,11 +12,9 @@ use foundry_config::{
 use foundry_evm::{
     decode::decode_console_logs, inspectors::CheatsConfig, revm::primitives::SpecId,
 };
-use foundry_test_utils::Filter;
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use foundry_test_utils::{init_tracing, Filter};
+use itertools::Itertools;
+use std::{collections::BTreeMap, path::Path};
 
 /// How to execute a a test run
 pub struct TestConfig {
@@ -69,7 +67,7 @@ impl TestConfig {
     ///    * filter matched 0 test cases
     ///    * a test results deviates from the configured `should_fail` setting
     pub async fn try_run(&mut self) -> eyre::Result<()> {
-        let suite_result = self.runner.test(&self.filter, None, self.opts.clone()).await;
+        let suite_result = self.test().await;
         if suite_result.is_empty() {
             eyre::bail!("empty test result");
         }
@@ -82,11 +80,12 @@ impl TestConfig {
                     let outcome = if self.should_fail { "fail" } else { "pass" };
 
                     eyre::bail!(
-                        "Test {} did not {} as expected.\nReason: {:?}\nLogs:\n{}",
+                        "Test {} did not {} as expected.\nReason: {:?}\nLogs:\n{}\n\nTraces:\n{}",
                         test_name,
                         outcome,
                         result.reason,
-                        logs.join("\n")
+                        logs.join("\n"),
+                        result.traces.iter().map(|(_, a)| a).format("\n"),
                     )
                 }
             }
@@ -129,25 +128,19 @@ pub fn test_opts() -> TestOptions {
     }
 }
 
-#[allow(unused)]
-pub(crate) fn init_tracing() {
-    let _ = tracing_subscriber::FmtSubscriber::builder()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
-}
-
-pub fn manifest_root() -> PathBuf {
+pub fn manifest_root() -> &'static Path {
     let mut root = Path::new(env!("CARGO_MANIFEST_DIR"));
     // need to check here where we're executing the test from, if in `forge` we need to also allow
     // `testdata`
     if root.ends_with("forge") {
         root = root.parent().unwrap();
     }
-    root.to_path_buf()
+    root
 }
 
 /// Builds a base runner
 pub fn base_runner() -> MultiContractRunnerBuilder {
+    init_tracing();
     MultiContractRunnerBuilder::default().sender(EVM_OPTS.sender)
 }
 
@@ -161,7 +154,7 @@ pub async fn runner() -> MultiContractRunner {
 /// Builds a non-tracing runner
 pub async fn runner_with_config(mut config: Config) -> MultiContractRunner {
     config.rpc_endpoints = rpc_endpoints();
-    config.allow_paths.push(manifest_root());
+    config.allow_paths.push(manifest_root().to_path_buf());
 
     let root = &PROJECT.paths.root;
     let opts = &*EVM_OPTS;
@@ -266,8 +259,9 @@ pub fn assert_multiple(
             }
 
             if let Some(expected_logs) = expected_logs {
-                assert!(
-                    logs.iter().eq(expected_logs.iter()),
+                assert_eq!(
+                    logs,
+                    expected_logs,
                     "Logs did not match for test {}.\nExpected:\n{}\n\nGot:\n{}",
                     test_name,
                     expected_logs.join("\n"),

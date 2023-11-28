@@ -10,7 +10,7 @@ use anvil_core::eth::{
     subscription::SubscriptionId,
 };
 use anvil_rpc::{request::Version, response::ResponseResult};
-use foundry_utils::types::ToAlloy;
+use foundry_common::types::ToAlloy;
 use futures::{channel::mpsc::Receiver, ready, Stream, StreamExt};
 use serde::Serialize;
 use std::{

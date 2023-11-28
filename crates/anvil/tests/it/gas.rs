@@ -9,7 +9,7 @@ use ethers::{
     },
 };
 use alloy_primitives::U256;
-use foundry_utils::types::ToAlloy;
+use foundry_common::types::ToAlloy;
 
 const GAS_TRANSFER: u64 = 21_000u64;
 

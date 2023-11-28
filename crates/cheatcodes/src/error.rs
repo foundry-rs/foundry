@@ -6,7 +6,7 @@ use ethers_signers::WalletError;
 use foundry_common::errors::FsPathError;
 use foundry_config::UnresolvedEnvVarError;
 use foundry_evm_core::backend::DatabaseError;
-use std::{borrow::Cow, fmt, ptr::NonNull};
+use std::{borrow::Cow, fmt};
 
 /// Cheatcode result type.
 ///
@@ -88,7 +88,7 @@ pub struct Error {
     /// in `impl Drop`.
     drop: bool,
     /// The error data. Always a valid pointer, and never modified.
-    data: NonNull<[u8]>,
+    data: *const [u8],
 }
 
 impl std::error::Error for Error {}
@@ -137,7 +137,7 @@ impl Error {
         Self::fmt(format_args!("{msg}"))
     }
 
-    /// Creates a new error with a custom `fmt::Arguments` message.
+    /// Creates a new error with a custom [`fmt::Arguments`] message.
     pub fn fmt(args: fmt::Arguments<'_>) -> Self {
         match args.as_str() {
             Some(s) => Self::new_str(s),
@@ -145,7 +145,8 @@ impl Error {
         }
     }
 
-    /// ABI-encodes this error as `CheatcodeError(string)`.
+    /// ABI-encodes this error as `CheatcodeError(string)` if the inner message is a string,
+    /// otherwise returns the raw bytes.
     pub fn abi_encode(&self) -> Vec<u8> {
         match self.kind() {
             ErrorKind::String(string) => Vm::CheatcodeError { message: string.into() }.abi_encode(),
@@ -158,6 +159,7 @@ impl Error {
     pub fn kind(&self) -> ErrorKind<'_> {
         let data = self.data();
         if self.is_str {
+            debug_assert!(std::str::from_utf8(data).is_ok());
             ErrorKind::String(unsafe { std::str::from_utf8_unchecked(data) })
         } else {
             ErrorKind::Bytes(data)
@@ -167,32 +169,33 @@ impl Error {
     /// Returns the raw data of this error.
     #[inline(always)]
     pub fn data(&self) -> &[u8] {
-        unsafe { &*self.data.as_ptr() }
+        unsafe { &*self.data }
     }
 
     #[inline(always)]
     fn new_str(data: &'static str) -> Self {
-        Self::new(true, false, data.as_bytes() as *const [u8] as *mut [u8])
+        Self::_new(true, false, data.as_bytes())
     }
 
     #[inline(always)]
     fn new_string(data: String) -> Self {
-        Self::new(true, true, Box::into_raw(data.into_boxed_str().into_boxed_bytes()))
+        Self::_new(true, true, Box::into_raw(data.into_boxed_str().into_boxed_bytes()))
     }
 
     #[inline(always)]
     fn new_bytes(data: &'static [u8]) -> Self {
-        Self::new(false, false, data as *const [u8] as *mut [u8])
+        Self::_new(false, false, data)
     }
 
     #[inline(always)]
     fn new_vec(data: Vec<u8>) -> Self {
-        Self::new(false, true, Box::into_raw(data.into_boxed_slice()))
+        Self::_new(false, true, Box::into_raw(data.into_boxed_slice()))
     }
 
     #[inline(always)]
-    fn new(is_str: bool, drop: bool, data: *mut [u8]) -> Self {
-        Self { is_str, drop, data: unsafe { NonNull::new_unchecked(data) } }
+    fn _new(is_str: bool, drop: bool, data: *const [u8]) -> Self {
+        debug_assert!(!data.is_null());
+        Self { is_str, drop, data }
     }
 }
 
@@ -200,7 +203,7 @@ impl Drop for Error {
     #[inline]
     fn drop(&mut self) {
         if self.drop {
-            drop(unsafe { Box::from_raw(self.data.as_ptr()) });
+            drop(unsafe { Box::<[u8]>::from_raw(self.data.cast_mut()) });
         }
     }
 }
@@ -266,6 +269,7 @@ impl From<Bytes> for Error {
     }
 }
 
+// So we can use `?` on `Result<_, Error>`.
 macro_rules! impl_from {
     ($($t:ty),* $(,)?) => {$(
         impl From<$t> for Error {

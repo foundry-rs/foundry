@@ -26,7 +26,7 @@ use ethers::{
 use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
 use foundry_common::provider::ethers::{ProviderBuilder as EthersProviderBuilder, RetryProvider as EthersRetryProvider};
 use foundry_evm::revm;
-use foundry_utils::types::ToEthers;
+use foundry_common::types::ToEthers;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
 use std::{
@@ -386,18 +386,17 @@ impl Future for NodeHandle {
     }
 }
 
-#[allow(unused)]
 #[doc(hidden)]
 pub fn init_tracing() -> LoggingManager {
     use tracing_subscriber::prelude::*;
 
     let manager = LoggingManager::default();
     // check whether `RUST_LOG` is explicitly set
-    if std::env::var("RUST_LOG").is_ok() {
+    let _ = if std::env::var("RUST_LOG").is_ok() {
         tracing_subscriber::Registry::default()
             .with(tracing_subscriber::EnvFilter::from_default_env())
             .with(tracing_subscriber::fmt::layer())
-            .init();
+            .try_init()
     } else {
         tracing_subscriber::Registry::default()
             .with(NodeLogLayer::new(manager.clone()))
@@ -407,8 +406,8 @@ pub fn init_tracing() -> LoggingManager {
                     .with_target(false)
                     .with_level(false),
             )
-            .init();
-    }
+            .try_init()
+    };
 
     manager
 }

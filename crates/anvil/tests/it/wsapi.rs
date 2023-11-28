@@ -2,7 +2,7 @@
 
 use anvil::{spawn, NodeConfig};
 use ethers::{prelude::Middleware, types::U256};
-use foundry_utils::types::ToAlloy;
+use foundry_common::types::ToAlloy;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_block_number_ws() {

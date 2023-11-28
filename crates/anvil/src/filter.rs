@@ -8,7 +8,7 @@ use alloy_primitives::TxHash;
 use alloy_rpc_types::{Filter, FilteredParams, Log as AlloyLog};
 use anvil_core::eth::subscription::SubscriptionId;
 use anvil_rpc::response::ResponseResult;
-use foundry_utils::types::ToAlloy;
+use foundry_common::types::ToAlloy;
 use futures::{channel::mpsc::Receiver, Stream, StreamExt};
 use std::{
     collections::HashMap,

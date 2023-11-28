@@ -13,7 +13,7 @@ use ethers::{
     utils::{keccak256, rlp},
 };
 use foundry_evm::revm::primitives::KECCAK_EMPTY;
-use foundry_utils::types::{ToEthers, ToAlloy};
+use foundry_common::types::{ToEthers, ToAlloy};
 
 mod eip1186;
 

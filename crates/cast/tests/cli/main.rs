@@ -1,7 +1,7 @@
 //! Contains various tests for checking cast commands
 
+use foundry_common::rpc::{next_http_rpc_endpoint, next_ws_rpc_endpoint};
 use foundry_test_utils::{casttest, util::OutputExt};
-use foundry_utils::rpc::{next_http_rpc_endpoint, next_ws_rpc_endpoint};
 use std::{io::Write, path::Path};
 
 // tests `--help` is printed to std out

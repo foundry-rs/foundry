@@ -1,7 +1,7 @@
 //! Contains various tests for checking `forge test`
+use foundry_common::rpc;
 use foundry_config::Config;
 use foundry_test_utils::util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION};
-use foundry_utils::rpc;
 use std::{path::PathBuf, process::Command, str::FromStr};
 
 // tests that test filters are handled correctly

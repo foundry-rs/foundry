@@ -242,7 +242,10 @@ pub struct EnvArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<u64>,
 
-    /// The memory limit of the EVM in bytes (32 MB by default)
+    /// The memory limit per EVM execution in bytes.
+    /// If this limit is exceeded, a `MemoryLimitOOG` result is thrown.
+    ///
+    /// The default is 128MiB.
     #[clap(long, value_name = "MEMORY_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_limit: Option<u64>,

@@ -10,7 +10,7 @@ use crate::eth::{
 use alloy_primitives::{Address, Bytes, B256, U256, U64};
 use alloy_rpc_types::{Block, BlockId, BlockNumberOrTag as BlockNumber, Transaction};
 use ethers::types::{Action, Call, Create, CreateResult, Res, Reward};
-use foundry_utils::types::ToAlloy;
+use foundry_common::types::ToAlloy;
 use itertools::Itertools;
 
 impl EthApi {

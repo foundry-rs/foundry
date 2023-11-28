@@ -6,7 +6,7 @@ use alloy_primitives::{Address, Bytes, B256, U256 as rU256, U256};
 use alloy_rpc_types::{Block, BlockTransactions, Transaction, TransactionReceipt};
 use ethers::types::{Action, CallType, Trace};
 use foundry_evm::{revm::interpreter::InstructionResult, utils::CallKind};
-use foundry_utils::types::ToAlloy;
+use foundry_common::types::ToAlloy;
 use futures::future::join_all;
 use serde::Serialize;
 use serde_repr::Serialize_repr;

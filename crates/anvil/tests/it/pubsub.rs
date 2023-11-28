@@ -9,7 +9,7 @@ use ethers::{
     signers::Signer,
     types::{Address, Block, Filter, TransactionRequest, TxHash, ValueOrArray, U256},
 };
-use foundry_utils::types::ToAlloy;
+use foundry_common::types::ToAlloy;
 use futures::StreamExt;
 use std::sync::Arc;
 

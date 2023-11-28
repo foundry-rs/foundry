@@ -4,8 +4,8 @@ use clap::Parser;
 use ethers_providers::Middleware;
 use eyre::Result;
 use foundry_cli::{opts::RpcOpts, utils};
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_config::Config;
-use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::join;
 
 /// CLI arguments for `cast find-block`.

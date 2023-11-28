@@ -70,6 +70,7 @@ use ethers::{
     utils::{keccak256, rlp},
 };
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
@@ -86,13 +87,12 @@ use foundry_evm::{
     },
     utils::{eval_to_instruction_result, halt_to_instruction_result, u256_to_h256_be},
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     io::{Read, Write},
     ops::Deref,
     sync::Arc,
@@ -573,6 +573,11 @@ impl Backend {
         (self.spec_id() as u8) >= (SpecId::BERLIN as u8)
     }
 
+    /// Returns true if op-stack deposits are active
+    pub fn is_optimism(&self) -> bool {
+        self.env.read().cfg.optimism
+    }
+
     /// Returns an error if EIP1559 is not active (pre Berlin)
     pub fn ensure_eip1559_active(&self) -> Result<(), BlockchainError> {
         if self.is_eip1559() {
@@ -587,6 +592,14 @@ impl Backend {
             return Ok(());
         }
         Err(BlockchainError::EIP2930TransactionUnsupportedAtHardfork)
+    }
+
+    /// Returns an error if op-stack deposits are not active
+    pub fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
+        if self.is_optimism() {
+            return Ok(())
+        }
+        Err(BlockchainError::DepositTransactionUnsupported)
     }
 
     /// Returns the block gas limit
@@ -694,6 +707,10 @@ impl Backend {
             };
         }
         Ok(self.db.write().await.revert(id))
+    }
+
+    pub fn list_snapshots(&self) -> BTreeMap<U256, (u64, B256)> {
+        self.active_snapshots.lock().clone().into_iter().collect()
     }
 
     /// Get the current state.
@@ -1969,7 +1986,10 @@ impl Backend {
                 .unwrap_or(self.base_fee())
                 .checked_add(t.max_priority_fee_per_gas.to_alloy())
                 .unwrap_or(U256::MAX),
+            TypedTransaction::Deposit(_) => U256::from(0),
         };
+
+        let deposit_nonce = transaction_type.and_then(|x| (x == 0x7E).then_some(info.nonce));
 
         let inner = TransactionReceipt {
             transaction_hash: Some(info.transaction_hash.to_alloy()),
@@ -2013,6 +2033,13 @@ impl Backend {
             effective_gas_price: effective_gas_price.to::<U128>(),
             blob_gas_price: None,
             blob_gas_used: None,
+            // TODO: Optimism TX types
+            // deposit_nonce,
+            // l1_fee: None,
+            // l1_fee_scalar: None,
+            // l1_gas_price: None,
+            // l1_gas_used: None,
+            // other: OtherFields::default(),
         };
 
         Some(MinedTransactionReceipt { inner, out: info.out.map(|o| o.0.into()) })
@@ -2303,15 +2330,17 @@ impl TransactionValidator for Backend {
         }
 
         // check nonce
+        let is_deposit_tx =
+            matches!(&pending.transaction.transaction, TypedTransaction::Deposit(_));
         let nonce: u64 =
             (*tx.nonce()).try_into().map_err(|_| InvalidTransactionError::NonceMaxValue)?;
-        if nonce < account.nonce {
+        if nonce < account.nonce && !is_deposit_tx {
             warn!(target: "backend", "[{:?}] nonce too low", tx.hash());
             return Err(InvalidTransactionError::NonceTooLow);
         }
 
         if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
-            if tx.gas_price() < env.block.basefee.to_ethers() {
+            if tx.gas_price() < env.block.basefee.to_ethers() && !is_deposit_tx {
                 warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
                 return Err(InvalidTransactionError::FeeCapTooLow);
             }
@@ -2366,6 +2395,9 @@ pub fn transaction_build(
     base_fee: Option<U256>,
 ) -> Transaction {
     let mut transaction: Transaction = eth_transaction.clone().into();
+    if info.is_some() && transaction.transaction_type.unwrap_or(U64::ZERO).to::<u64>() == 0x7E {
+        transaction.nonce = U64::from(info.as_ref().unwrap().nonce);
+    }
 
     if eth_transaction.is_dynamic_fee() {
         if block.is_none() && info.is_none() {
