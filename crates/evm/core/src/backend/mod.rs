@@ -571,6 +571,7 @@ impl Backend {
         self.inner.has_snapshot_failure.load(Ordering::Relaxed)
     }
 
+    /// Sets the snapshot failure flag.
     pub fn set_snapshot_failure(&self, has_snapshot_failure: bool) {
         self.inner.has_snapshot_failure.store(has_snapshot_failure, Ordering::Relaxed);
     }
@@ -913,7 +914,7 @@ impl DatabaseExt for Backend {
             // need to check whether there's a global failure which means an error occurred either
             // during the snapshot or even before
             if self.is_global_failure(current_state) {
-                self.inner.has_snapshot_failure.store(true, Ordering::Relaxed);
+                self.set_snapshot_failure(true);
             }
 
             // merge additional logs
