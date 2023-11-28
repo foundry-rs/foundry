@@ -150,7 +150,7 @@ impl RunArgs {
                         update_progress!(pb, index);
                         continue
                     }
-                    if tx.hash.eq(&tx_hash) {
+                    if tx.hash == tx_hash {
                         break
                     }
 

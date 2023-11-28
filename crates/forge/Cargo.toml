@@ -84,6 +84,7 @@ foundry-test-utils.workspace = true
 
 criterion = "0.5"
 globset = "0.4"
+paste = "1.0"
 path-slash = "0.2"
 pretty_assertions.workspace = true
 serial_test = "2"

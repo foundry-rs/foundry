@@ -38,6 +38,7 @@ evm-disassembler = "0.3"
 eyre.workspace = true
 futures = "0.3"
 hex.workspace = true
+rand.workspace = true
 rayon = "1"
 serde_json.workspace = true
 serde.workspace = true
