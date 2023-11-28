@@ -2574,6 +2574,8 @@ dependencies = [
  "tracing-subscriber",
  "vergen",
  "watchexec",
+ "watchexec-events",
+ "watchexec-signals",
  "yansi 0.5.1",
 ]
 
