@@ -1,20 +1,26 @@
-use crate::{result::SuiteResult, ContractRunner, TestFilter, TestOptions};
-use alloy_primitives::{Address, Bytes, U256};
-use ethers::{
-    abi::{Abi, Function},
-    prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
-    solc::{contracts::ArtifactContracts, Artifact, ProjectCompileOutput},
+//! Forge test runner for multiple contracts.
+
+use crate::{
+    link::{link_with_nonce_or_address, PostLinkInput, ResolvedDependency},
+    result::SuiteResult,
+    ContractRunner, TestFilter, TestOptions,
 };
+use alloy_json_abi::{Function, JsonAbi as Abi};
+use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{ContractsByArtifact, TestFunctionExt};
+use foundry_compilers::{
+    artifacts::CompactContractBytecode, contracts::ArtifactContracts, Artifact, ArtifactId,
+    ArtifactOutput, ProjectCompileOutput,
+};
 use foundry_evm::{
-    executor::{
-        backend::Backend, fork::CreateFork, inspector::CheatsConfig, opts::EvmOpts, Executor,
-        ExecutorBuilder,
-    },
+    backend::Backend,
+    executors::{Executor, ExecutorBuilder},
+    fork::CreateFork,
+    inspectors::CheatsConfig,
+    opts::EvmOpts,
     revm,
 };
-use foundry_utils::{types::ToEthers, PostLinkInput, ResolvedDependency};
 use rayon::prelude::*;
 use revm::primitives::SpecId;
 use std::{
@@ -60,7 +66,23 @@ pub struct MultiContractRunner {
 
 impl MultiContractRunner {
     /// Returns the number of matching tests
-    pub fn count_filtered_tests(&self, filter: &impl TestFilter) -> usize {
+    pub fn matching_test_function_count(&self, filter: &impl TestFilter) -> usize {
+        self.matching_test_functions(filter).count()
+    }
+
+    /// Returns all test functions matching the filter
+    pub fn get_matching_test_functions<'a>(
+        &'a self,
+        filter: &'a impl TestFilter,
+    ) -> Vec<&Function> {
+        self.matching_test_functions(filter).collect()
+    }
+
+    /// Returns all test functions matching the filter
+    pub fn matching_test_functions<'a>(
+        &'a self,
+        filter: &'a impl TestFilter,
+    ) -> impl Iterator<Item = &Function> {
         self.contracts
             .iter()
             .filter(|(id, _)| {
@@ -70,10 +92,10 @@ impl MultiContractRunner {
             .flat_map(|(_, (abi, _, _))| {
                 abi.functions().filter(|func| filter.matches_test(func.signature()))
             })
-            .count()
     }
 
-    /// Get an iterator over all test functions that matches the filter path and contract name
+    /// Get an iterator over all test contract functions that matches the filter path and contract
+    /// name
     fn filtered_tests<'a>(
         &'a self,
         filter: &'a impl TestFilter,
@@ -93,11 +115,6 @@ impl MultiContractRunner {
             .map(|func| func.name.clone())
             .filter(|name| name.is_test())
             .collect()
-    }
-
-    /// Returns all test functions matching the filter
-    pub fn get_typed_tests<'a>(&'a self, filter: &'a impl TestFilter) -> Vec<&Function> {
-        self.filtered_tests(filter).filter(|func| func.name.is_test()).collect()
     }
 
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
@@ -179,7 +196,7 @@ impl MultiContractRunner {
                     filter,
                     test_options.clone(),
                 );
-                trace!(contract= ?identifier, "executed all tests in contract");
+                trace!(contract=?identifier, "executed all tests in contract");
 
                 if let Some(stream_result) = stream_result {
                     let _ = stream_result.send((identifier.clone(), result.clone()));
@@ -202,16 +219,15 @@ impl MultiContractRunner {
         filter: impl TestFilter,
         test_options: TestOptions,
     ) -> SuiteResult {
-        let libs = libs.iter().map(|l| l.0.clone().into()).collect::<Vec<_>>();
         let runner = ContractRunner::new(
             name,
             executor,
             contract,
-            deploy_code.0.into(),
-            self.evm_opts.initial_balance.to_ethers(),
-            self.sender.map(|a| a.to_ethers()),
+            deploy_code,
+            self.evm_opts.initial_balance,
+            self.sender,
             self.errors.as_ref(),
-            &libs,
+            libs,
             self.debug,
         );
         runner.run_tests(filter, test_options, Some(&self.known_contracts))
@@ -282,12 +298,12 @@ impl MultiContractRunnerBuilder {
             filtered
         }
 
-        foundry_utils::link_with_nonce_or_address(
+        link_with_nonce_or_address(
             ArtifactContracts::from_iter(contracts),
             &mut known_contracts,
             Default::default(),
             evm_opts.sender,
-            U256::from(1),
+            1,
             &mut deployable_contracts,
             |post_link_input| {
                 let PostLinkInput {
@@ -319,11 +335,8 @@ impl MultiContractRunnerBuilder {
                         id.clone(),
                         (
                             abi.clone(),
-                            bytecode.0.into(),
-                            dependencies
-                                .into_iter()
-                                .map(|dep| dep.bytecode.0.into())
-                                .collect::<Vec<_>>(),
+                            bytecode,
+                            dependencies.into_iter().map(|dep| dep.bytecode).collect::<Vec<_>>(),
                         ),
                     );
                 }

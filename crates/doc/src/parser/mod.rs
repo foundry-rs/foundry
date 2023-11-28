@@ -272,7 +272,7 @@ mod tests {
         );
         assert_eq!(items.len(), 3);
 
-        let first_item = items.get(0).unwrap();
+        let first_item = items.first().unwrap();
         assert!(matches!(first_item.source, ParseSource::Contract(_)));
         assert_eq!(first_item.source.ident(), "A");
 
@@ -309,7 +309,7 @@ mod tests {
 
         assert_eq!(items.len(), 2);
 
-        let event = items.get(0).unwrap();
+        let event = items.first().unwrap();
         assert!(event.comments.is_empty());
         assert!(event.children.is_empty());
         assert_eq!(event.source.ident(), "TopLevelEvent");

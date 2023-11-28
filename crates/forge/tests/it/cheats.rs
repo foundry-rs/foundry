@@ -1,11 +1,11 @@
 //! forge tests for cheat codes
 
-use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
-
 use crate::{
     config::*,
-    test_helpers::{filter::Filter, PROJECT, RE_PATH_SEPARATOR},
+    test_helpers::{PROJECT, RE_PATH_SEPARATOR},
 };
+use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
+use foundry_test_utils::Filter;
 
 /// Executes all cheat code tests but not fork cheat codes
 #[tokio::test(flavor = "multi_thread")]

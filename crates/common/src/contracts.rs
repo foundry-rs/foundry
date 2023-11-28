@@ -1,11 +1,8 @@
-//! commonly used contract types and functions
+//! Commonly used contract types and functions.
 
-use ethers_core::{
-    abi::{Abi, Event, Function},
-    types::{Address, H256},
-    utils::hex,
-};
-use ethers_solc::{
+use alloy_json_abi::{Event, Function, JsonAbi as Abi};
+use alloy_primitives::{hex, Address, B256};
+use foundry_compilers::{
     artifacts::{CompactContractBytecode, ContractBytecodeSome},
     ArtifactId, ProjectPathsConfig,
 };
@@ -47,22 +44,22 @@ impl ContractsByArtifact {
     }
 
     /// Flattens a group of contracts into maps of all events and functions
-    pub fn flatten(&self) -> (BTreeMap<[u8; 4], Function>, BTreeMap<H256, Event>, Abi) {
+    pub fn flatten(&self) -> (BTreeMap<[u8; 4], Function>, BTreeMap<B256, Event>, Abi) {
         let flattened_funcs: BTreeMap<[u8; 4], Function> = self
             .iter()
             .flat_map(|(_name, (abi, _code))| {
                 abi.functions()
-                    .map(|func| (func.short_signature(), func.clone()))
+                    .map(|func| (func.selector().into(), func.clone()))
                     .collect::<BTreeMap<[u8; 4], Function>>()
             })
             .collect();
 
-        let flattened_events: BTreeMap<H256, Event> = self
+        let flattened_events: BTreeMap<B256, Event> = self
             .iter()
             .flat_map(|(_name, (abi, _code))| {
                 abi.events()
-                    .map(|event| (event.signature(), event.clone()))
-                    .collect::<BTreeMap<H256, Event>>()
+                    .map(|event| (event.selector(), event.clone()))
+                    .collect::<BTreeMap<B256, Event>>()
             })
             .collect();
 
@@ -222,10 +219,24 @@ pub fn find_constructor_args(data: &[u8]) -> Option<&[u8]> {
     Some(args)
 }
 
+/// Helper function to convert CompactContractBytecode ~> ContractBytecodeSome
+pub fn compact_to_contract(
+    contract: CompactContractBytecode,
+) -> eyre::Result<ContractBytecodeSome> {
+    Ok(ContractBytecodeSome {
+        abi: contract.abi.ok_or_else(|| eyre::eyre!("No contract abi"))?,
+        bytecode: contract.bytecode.ok_or_else(|| eyre::eyre!("No contract bytecode"))?.into(),
+        deployed_bytecode: contract
+            .deployed_bytecode
+            .ok_or_else(|| eyre::eyre!("No contract deployed bytecode"))?
+            .into(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers_core::{abi, abi::ParamType};
+    use alloy_dyn_abi::DynSolType;
 
     // <https://github.com/foundry-rs/foundry/issues/3053>
     #[test]
@@ -236,15 +247,14 @@ mod tests {
 
         let args = find_constructor_args(&code).unwrap();
 
-        let params = vec![
-            ParamType::Address,
-            ParamType::Uint(256),
-            ParamType::Int(256),
-            ParamType::FixedBytes(32),
-            ParamType::Bool,
-        ];
-
-        let _decoded = abi::decode(&params, args).unwrap();
+        let params = DynSolType::Tuple(vec![
+            DynSolType::Address,
+            DynSolType::Uint(256),
+            DynSolType::Int(256),
+            DynSolType::FixedBytes(32),
+            DynSolType::Bool,
+        ]);
+        let _decoded = params.abi_decode_params(args).unwrap();
     }
 
     #[test]
@@ -255,30 +265,15 @@ mod tests {
 
         let args = find_constructor_args(&code).unwrap();
 
-        let params = vec![
-            ParamType::Address,
-            ParamType::Uint(256),
-            ParamType::Int(256),
-            ParamType::FixedBytes(32),
-            ParamType::Bool,
-            ParamType::Bytes,
-            ParamType::String,
-        ];
-
-        let _decoded = abi::decode(&params, args).unwrap();
+        let params = DynSolType::Tuple(vec![
+            DynSolType::Address,
+            DynSolType::Uint(256),
+            DynSolType::Int(256),
+            DynSolType::FixedBytes(32),
+            DynSolType::Bool,
+            DynSolType::Bytes,
+            DynSolType::String,
+        ]);
+        let _decoded = params.abi_decode_params(args).unwrap();
     }
-}
-
-/// Helper function to convert CompactContractBytecode ~> ContractBytecodeSome
-pub fn compact_to_contract(
-    contract: CompactContractBytecode,
-) -> eyre::Result<ContractBytecodeSome> {
-    Ok(ContractBytecodeSome {
-        abi: contract.abi.ok_or(eyre::eyre!("No contract abi"))?,
-        bytecode: contract.bytecode.ok_or(eyre::eyre!("No contract bytecode"))?.into(),
-        deployed_bytecode: contract
-            .deployed_bytecode
-            .ok_or(eyre::eyre!("No contract deployed bytecode"))?
-            .into(),
-    })
 }

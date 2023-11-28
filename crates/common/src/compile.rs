@@ -1,15 +1,15 @@
-//! Support for compiling [ethers::solc::Project]
+//! Support for compiling [foundry_compilers::Project]
 use crate::{compact_to_contract, glob::GlobMatcher, term, TestFunctionExt};
 use comfy_table::{presets::ASCII_MARKDOWN, *};
-use ethers_etherscan::contract::Metadata;
-use ethers_solc::{
+use eyre::Result;
+use foundry_block_explorers::contract::Metadata;
+use foundry_compilers::{
     artifacts::{BytecodeObject, ContractBytecodeSome},
     remappings::Remapping,
     report::NoReporter,
     Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
     Solc, SolcConfig,
 };
-use eyre::Result;
 use std::{
     collections::{BTreeMap, HashMap},
     convert::Infallible,
@@ -82,9 +82,10 @@ impl ProjectCompiler {
     /// use foundry_common::compile::ProjectCompiler;
     /// let config = foundry_config::Config::load();
     /// ProjectCompiler::default()
-    ///     .compile_with(&config.project().unwrap(), |prj| Ok(prj.compile()?)).unwrap();
+    ///     .compile_with(&config.project().unwrap(), |prj| Ok(prj.compile()?))
+    ///     .unwrap();
     /// ```
-    #[tracing::instrument(target = "forge::compile", skip_all)]
+    #[instrument(target = "forge::compile", skip_all)]
     pub fn compile_with<F>(self, project: &Project, f: F) -> Result<ProjectCompileOutput>
     where
         F: FnOnce(&Project) -> Result<ProjectCompileOutput>,
@@ -96,15 +97,15 @@ impl ProjectCompiler {
         }
 
         let now = std::time::Instant::now();
-        tracing::trace!("start compiling project");
+        trace!("start compiling project");
 
         let output = term::with_spinner_reporter(|| f(project))?;
 
         let elapsed = now.elapsed();
-        tracing::trace!(?elapsed, "finished compiling");
+        trace!(?elapsed, "finished compiling");
 
         if output.has_compiler_errors() {
-            tracing::warn!("compiled with errors");
+            warn!("compiled with errors");
             eyre::bail!(output.to_string())
         } else if output.is_unchanged() {
             println!("No files changed, compilation skipped");
@@ -147,15 +148,14 @@ impl ProjectCompiler {
             for (name, artifact) in artifacts {
                 let size = deployed_contract_size(artifact).unwrap_or_default();
 
-                let dev_functions = artifact
-                    .abi
-                    .as_ref()
-                    .map(|abi| abi.abi.functions())
-                    .into_iter()
-                    .flatten()
-                    .filter(|func| {
-                        func.name.is_test() || func.name.eq("IS_TEST") || func.name.eq("IS_SCRIPT")
-                    });
+                let dev_functions =
+                    artifact.abi.as_ref().map(|abi| abi.functions()).into_iter().flatten().filter(
+                        |func| {
+                            func.name.is_test() ||
+                                func.name.eq("IS_TEST") ||
+                                func.name.eq("IS_SCRIPT")
+                        },
+                    );
 
                 let is_dev_contract = dev_functions.count() > 0;
                 size_report.contracts.insert(name, ContractInfo { size, is_dev_contract });
@@ -203,10 +203,10 @@ impl SizeReport {
 }
 
 impl Display for SizeReport {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         let mut table = Table::new();
         table.load_preset(ASCII_MARKDOWN);
-        table.set_header(vec![
+        table.set_header([
             Cell::new("Contract").add_attribute(Attribute::Bold).fg(Color::Blue),
             Cell::new("Size (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
             Cell::new("Margin (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
@@ -221,7 +221,7 @@ impl Display for SizeReport {
                 _ => Color::Red,
             };
 
-            table.add_row(vec![
+            table.add_row([
                 Cell::new(name).fg(color),
                 Cell::new(contract.size as f64 / 1000.0).fg(color),
                 Cell::new(margin as f64 / 1000.0).fg(color),
@@ -288,8 +288,8 @@ pub fn compile_with_filter(
 /// compilation was successful or if there was a cache hit.
 /// Doesn't print anything to stdout, thus is "suppressed".
 pub fn suppress_compile(project: &Project) -> Result<ProjectCompileOutput> {
-    let output = ethers_solc::report::with_scoped(
-        &ethers_solc::report::Report::new(NoReporter::default()),
+    let output = foundry_compilers::report::with_scoped(
+        &foundry_compilers::report::Report::new(NoReporter::default()),
         || project.compile(),
     )?;
 
@@ -322,8 +322,8 @@ pub fn suppress_compile_sparse<F: FileFilter + 'static>(
     project: &Project,
     filter: F,
 ) -> Result<ProjectCompileOutput> {
-    let output = ethers_solc::report::with_scoped(
-        &ethers_solc::report::Report::new(NoReporter::default()),
+    let output = foundry_compilers::report::with_scoped(
+        &foundry_compilers::report::Report::new(NoReporter::default()),
         || project.compile_sparse(filter),
     )?;
 
@@ -343,8 +343,8 @@ pub fn compile_files(
     silent: bool,
 ) -> Result<ProjectCompileOutput> {
     let output = if silent {
-        ethers_solc::report::with_scoped(
-            &ethers_solc::report::Report::new(NoReporter::default()),
+        foundry_compilers::report::with_scoped(
+            &foundry_compilers::report::Report::new(NoReporter::default()),
             || project.compile_files(files),
         )
     } else {

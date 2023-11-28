@@ -13,12 +13,11 @@ use forge_fmt::FormatterConfig;
 use foundry_config::{Config, RpcEndpoint};
 use foundry_evm::{
     decode::decode_console_logs,
-    trace::{
+    traces::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-use foundry_utils::types::ToEthers;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use reqwest::Url;
@@ -100,7 +99,7 @@ pub fn format_source(source: &str, config: FormatterConfig) -> eyre::Result<Stri
         Ok(parsed) => {
             let mut formatted_source = String::default();
 
-            if forge_fmt::format(&mut formatted_source, parsed, config).is_err() {
+            if forge_fmt::format_to(&mut formatted_source, parsed, config).is_err() {
                 eyre::bail!("Could not format source!");
             }
 
@@ -421,10 +420,7 @@ impl ChiselDispatcher {
                                                 i,
                                                 i + 32
                                             )),
-                                            Paint::cyan(format!(
-                                                "0x{}",
-                                                hex::encode(&mem.data()[i..i + 32])
-                                            ))
+                                            Paint::cyan(hex::encode_prefixed(&mem[i..i + 32]))
                                         );
                                     });
                                 } else {
@@ -839,7 +835,7 @@ impl ChiselDispatcher {
             // We can always safely unwrap here due to the regex matching.
             let addr: Address = match_str.parse().expect("Valid address regex");
             // Replace all occurrences of the address with a checksummed version
-            heap_input = heap_input.replace(match_str, &addr.to_checksum(None));
+            heap_input = heap_input.replace(match_str, &addr.to_string());
         });
         // Replace the old input with the formatted input.
         input = &heap_input;
@@ -954,9 +950,7 @@ impl ChiselDispatcher {
         )?;
 
         let mut decoder = CallTraceDecoderBuilder::new()
-            .with_labels(
-                result.labeled_addresses.iter().map(|(a, s)| ((*a).to_ethers(), s.clone())),
-            )
+            .with_labels(result.labeled_addresses.clone())
             .with_signature_identifier(SignaturesIdentifier::new(
                 Config::foundry_cache_dir(),
                 session_config.foundry_config.offline,

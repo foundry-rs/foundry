@@ -51,9 +51,9 @@ impl TaskManager {
     /// block
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use anvil::{spawn, NodeConfig};
     /// use ethers::providers::Provider;
-    /// use anvil::{NodeConfig, spawn};
+    /// use std::sync::Arc;
     /// # async fn t() {
     /// let endpoint = "http://....";
     /// let (api, handle) = spawn(NodeConfig::default().with_eth_rpc_url(Some(endpoint))).await;
@@ -61,7 +61,6 @@ impl TaskManager {
     /// let provider = Arc::new(Provider::try_from(endpoint).unwrap());
     ///
     /// handle.task_manager().spawn_reset_on_new_polled_blocks(provider, api);
-    ///
     /// # }
     /// ```
     pub fn spawn_reset_on_new_polled_blocks<P>(&self, provider: P, api: EthApi)
@@ -106,8 +105,8 @@ impl TaskManager {
     /// block
     ///
     /// ```
+    /// use anvil::{spawn, NodeConfig};
     /// use ethers::providers::Provider;
-    /// use anvil::{NodeConfig, spawn};
     /// # async fn t() {
     /// let (api, handle) = spawn(NodeConfig::default().with_eth_rpc_url(Some("http://...."))).await;
     ///

@@ -1,15 +1,17 @@
 use super::{artifacts::ArtifactInfo, ScriptResult};
-use alloy_primitives::{Address, B256};
-use ethers::{abi, prelude::NameOrAddress, types::transaction::eip2718::TypedTransaction};
+use alloy_dyn_abi::JsonAbiExt;
+use alloy_json_abi::Function;
+use alloy_primitives::{Address, Bytes, B256};
+use ethers_core::types::{transaction::eip2718::TypedTransaction, NameOrAddress};
 use eyre::{ContextCompat, Result, WrapErr};
-use foundry_common::{abi::format_token_raw, RpcUrl, SELECTOR_LEN};
-use foundry_evm::{
-    executor::inspector::DEFAULT_CREATE2_DEPLOYER, trace::CallTraceDecoder, CallKind,
+use foundry_common::{
+    fmt::format_token_raw,
+    types::{ToAlloy, ToEthers},
+    RpcUrl, SELECTOR_LEN,
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
+use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder, utils::CallKind};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use tracing::error;
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
@@ -18,8 +20,7 @@ pub struct AdditionalContract {
     pub opcode: CallKind,
     #[serde(serialize_with = "wrapper::serialize_addr")]
     pub address: Address,
-    #[serde(with = "hex")]
-    pub init_code: Vec<u8>,
+    pub init_code: Bytes,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -78,7 +79,6 @@ impl TransactionWithMetadata {
                     true,
                     Address::from_slice(&result.returned),
                     local_contracts,
-                    decoder,
                 )?;
             } else {
                 metadata
@@ -90,7 +90,6 @@ impl TransactionWithMetadata {
                 false,
                 result.address.wrap_err("There should be a contract address from CREATE.")?,
                 local_contracts,
-                decoder,
             )?;
         }
 
@@ -121,7 +120,6 @@ impl TransactionWithMetadata {
         is_create2: bool,
         address: Address,
         contracts: &BTreeMap<Address, ArtifactInfo>,
-        decoder: &CallTraceDecoder,
     ) -> Result<()> {
         if is_create2 {
             self.opcode = CallKind::Create2;
@@ -133,60 +131,49 @@ impl TransactionWithMetadata {
         self.contract_address = Some(address);
 
         if let Some(data) = self.transaction.data() {
-            // a CREATE2 transaction is a CALL to the CREATE2 deployer function, so we need to
-            // decode the arguments  from the function call
-            if is_create2 {
-                // this will be the `deploy()` function of the CREATE2 call, we assume the contract
-                // is already deployed and will try to fetch it via its signature
-                if let Some(Some(function)) = decoder
-                    .functions
-                    .get(&data.0[..SELECTOR_LEN])
-                    .map(|functions| functions.first())
-                {
-                    self.function = Some(function.signature());
-                    self.arguments = Some(
-                        function
-                            .decode_input(&data.0[SELECTOR_LEN..])
-                            .map(|tokens| tokens.iter().map(format_token_raw).collect())
-                            .map_err(|_| eyre::eyre!("Failed to decode CREATE2 call arguments"))?,
-                    );
-                }
-            } else {
-                // This is a regular CREATE via the constructor, in which case we expect the
-                // contract has a constructor and if so decode its input params
-                if let Some(info) = contracts.get(&address) {
-                    // set constructor arguments
-                    if data.len() > info.code.len() {
-                        if let Some(constructor) = info.abi.constructor() {
-                            let on_err = || {
-                                let inputs = constructor
-                                    .inputs
-                                    .iter()
-                                    .map(|p| p.kind.to_string())
-                                    .collect::<Vec<_>>()
-                                    .join(",");
-                                let signature = format!("constructor({inputs})");
-                                let bytecode = hex::encode(&data.0);
-                                (signature, bytecode)
-                            };
+            if let Some(info) = contracts.get(&address) {
+                // constructor args are postfixed to creation code
+                // and create2 transactions are prefixed by 32 byte salt
+                let contains_constructor_args = if is_create2 {
+                    data.len() - 32 > info.code.len()
+                } else {
+                    data.len() > info.code.len()
+                };
 
-                            let params = constructor
+                if contains_constructor_args {
+                    if let Some(constructor) = info.abi.constructor() {
+                        let creation_code = if is_create2 { &data[32..] } else { data };
+
+                        let on_err = || {
+                            let inputs = constructor
                                 .inputs
                                 .iter()
-                                .map(|p| p.kind.clone())
-                                .collect::<Vec<_>>();
+                                .map(|p| p.ty.clone())
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            let signature = format!("constructor({inputs})");
+                            let bytecode = hex::encode(creation_code);
+                            (signature, bytecode)
+                        };
 
-                            // the constructor args start after bytecode
-                            let constructor_args = &data.0[info.code.len()..];
+                        // the constructor args start after bytecode
+                        let constructor_args = &creation_code[info.code.len()..];
 
-                            if let Ok(arguments) = abi::decode(&params, constructor_args) {
-                                self.arguments =
-                                    Some(arguments.iter().map(format_token_raw).collect());
-                            } else {
-                                let (signature, bytecode) = on_err();
-                                error!(constructor=?signature, contract=?self.contract_name, bytecode, "Failed to decode constructor arguments")
-                            };
-                        }
+                        let constructor_fn = Function {
+                            name: "constructor".to_string(),
+                            inputs: constructor.inputs.clone(),
+                            outputs: vec![],
+                            state_mutability: constructor.state_mutability,
+                        };
+
+                        if let Ok(arguments) =
+                            constructor_fn.abi_decode_input(constructor_args, false)
+                        {
+                            self.arguments = Some(arguments.iter().map(format_token_raw).collect());
+                        } else {
+                            let (signature, bytecode) = on_err();
+                            error!(constructor=?signature, contract=?self.contract_name, bytecode, "Failed to decode constructor arguments")
+                        };
                     }
                 }
             }
@@ -212,12 +199,12 @@ impl TransactionWithMetadata {
                     if let Some(function) = info
                         .abi
                         .functions()
-                        .find(|function| function.short_signature() == data.0[..SELECTOR_LEN])
+                        .find(|function| function.selector() == data.0[..SELECTOR_LEN])
                     {
                         self.function = Some(function.signature());
                         self.arguments = Some(
                             function
-                                .decode_input(&data.0[SELECTOR_LEN..])
+                                .abi_decode_input(&data.0[SELECTOR_LEN..], false)
                                 .map(|tokens| tokens.iter().map(format_token_raw).collect())?,
                         );
                     }
@@ -225,17 +212,15 @@ impl TransactionWithMetadata {
                     // This CALL is made to an external contract. We can only decode it, if it has
                     // been verified and identified by etherscan.
 
-                    if let Some(Some(function)) = decoder
-                        .functions
-                        .get(&data.0[..SELECTOR_LEN])
-                        .map(|functions| functions.first())
+                    if let Some(function) =
+                        decoder.functions.get(&data.0[..SELECTOR_LEN]).and_then(|v| v.first())
                     {
-                        self.contract_name = decoder.contracts.get(&target.to_ethers()).cloned();
+                        self.contract_name = decoder.contracts.get(&target).cloned();
 
                         self.function = Some(function.signature());
                         self.arguments = Some(
                             function
-                                .decode_input(&data.0[SELECTOR_LEN..])
+                                .abi_decode_input(&data.0[SELECTOR_LEN..], false)
                                 .map(|tokens| tokens.iter().map(format_token_raw).collect())?,
                         );
                     }
@@ -274,8 +259,7 @@ impl TransactionWithMetadata {
 // wrapper for modifying ethers-rs type serialization
 pub mod wrapper {
     pub use super::*;
-
-    use ethers::{
+    use ethers_core::{
         types::{Bloom, Bytes, Log, TransactionReceipt, H256, U256, U64},
         utils::to_checksum,
     };
@@ -312,11 +296,12 @@ pub mod wrapper {
     // copied from https://github.com/gakonst/ethers-rs
     #[derive(Serialize, Deserialize)]
     struct WrappedLog {
-        /// H160. the contract that emitted the log
+        /// The contract address that emitted the log.
         #[serde(serialize_with = "serialize_addr")]
         pub address: Address,
 
-        /// topics: Array of 0 to 4 32 Bytes of indexed log arguments.
+        /// Array of 0 to 4 32 Bytes of indexed log arguments.
+        ///
         /// (In solidity: The first topic is the hash of the signature of the event
         /// (e.g. `Deposit(address,bytes32,uint256)`), except you declared the event
         /// with the anonymous specifier.)

@@ -1,21 +1,23 @@
+#[macro_use]
+extern crate tracing;
+
+use alloy_primitives::{keccak256, Address, B256};
 use cast::{Cast, SimpleCast};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use ethers::{
-    core::types::{BlockId, BlockNumber::Latest, H256},
-    providers::Middleware,
-    types::Address,
-    utils::keccak256,
-};
+use ethers_core::types::{BlockId, BlockNumber::Latest};
+use ethers_providers::Middleware;
 use eyre::Result;
 use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
-    abi::{format_tokens, get_event},
+    abi::get_event,
+    fmt::format_tokens,
     fs,
     selectors::{
         decode_calldata, decode_event_topic, decode_function_selector, import_selectors,
         parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
     },
+    types::{ToAlloy, ToEthers},
 };
 use foundry_config::Config;
 use std::time::Instant;
@@ -27,8 +29,8 @@ use opts::{Opts, Subcommands, ToBaseArgs};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    utils::load_dotenv();
     handler::install()?;
+    utils::load_dotenv();
     utils::subscriber();
     utils::enable_paint();
 
@@ -45,10 +47,10 @@ async fn main() -> Result<()> {
             println!("{}", SimpleCast::max_int(&r#type)?);
         }
         Subcommands::AddressZero => {
-            println!("{:?}", Address::zero());
+            println!("{:?}", Address::ZERO);
         }
         Subcommands::HashZero => {
-            println!("{:?}", H256::zero());
+            println!("{:?}", B256::ZERO);
         }
 
         // Conversions & transformations
@@ -78,7 +80,7 @@ async fn main() -> Result<()> {
         }
         Subcommands::FromBin => {
             let hex = stdin::read_bytes(false)?;
-            println!("0x{}", hex::encode(hex));
+            println!("{}", hex::encode_prefixed(hex));
         }
         Subcommands::ToHexdata { input } => {
             let value = stdin::unwrap_line(input)?;
@@ -91,7 +93,7 @@ async fn main() -> Result<()> {
         }
         Subcommands::ToCheckSumAddress { address } => {
             let value = stdin::unwrap_line(address)?;
-            println!("{}", SimpleCast::to_checksum_address(&value));
+            println!("{}", value.to_checksum(None));
         }
         Subcommands::ToUint256 { value } => {
             let value = stdin::unwrap_line(value)?;
@@ -123,15 +125,15 @@ async fn main() -> Result<()> {
         }
         Subcommands::ToHex(ToBaseArgs { value, base_in }) => {
             let value = stdin::unwrap_line(value)?;
-            println!("{}", SimpleCast::to_base(&value, base_in, "hex")?);
+            println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), "hex")?);
         }
         Subcommands::ToDec(ToBaseArgs { value, base_in }) => {
             let value = stdin::unwrap_line(value)?;
-            println!("{}", SimpleCast::to_base(&value, base_in, "dec")?);
+            println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), "dec")?);
         }
         Subcommands::ToBase { base: ToBaseArgs { value, base_in }, base_out } => {
             let (value, base_out) = stdin::unwrap2(value, base_out)?;
-            println!("{}", SimpleCast::to_base(&value, base_in, &base_out)?);
+            println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), &base_out)?);
         }
         Subcommands::ToBytes32 { bytes } => {
             let value = stdin::unwrap_line(bytes)?;
@@ -175,16 +177,16 @@ async fn main() -> Result<()> {
         }
         Subcommands::Sig { sig, optimize } => {
             let sig = stdin::unwrap_line(sig)?;
-            if optimize.is_none() {
-                println!("{}", SimpleCast::get_selector(&sig, None)?.0);
-            } else {
-                println!("Starting to optimize signature...");
-                let start_time = Instant::now();
-                let (selector, signature) = SimpleCast::get_selector(&sig, optimize)?;
-                let elapsed_time = start_time.elapsed();
-                println!("Successfully generated in {} seconds", elapsed_time.as_secs());
-                println!("Selector: {}", selector);
-                println!("Optimized signature: {}", signature);
+            match optimize {
+                Some(opt) => {
+                    println!("Starting to optimize signature...");
+                    let start_time = Instant::now();
+                    let (selector, signature) = SimpleCast::get_selector(&sig, opt)?;
+                    println!("Successfully generated in {:?}", start_time.elapsed());
+                    println!("Selector: {selector}");
+                    println!("Optimized signature: {signature}");
+                }
+                None => println!("{}", SimpleCast::get_selector(&sig, 0)?.0),
             }
         }
 
@@ -262,7 +264,7 @@ async fn main() -> Result<()> {
 
             let address: Address = stdin::unwrap_line(address)?.parse()?;
             let computed = Cast::new(&provider).compute_address(address, nonce).await?;
-            println!("Computed Address: {}", SimpleCast::to_checksum_address(&computed));
+            println!("Computed Address: {}", computed.to_checksum(None));
         }
         Subcommands::Disassemble { bytecode } => {
             println!("{}", SimpleCast::disassemble(&bytecode)?);
@@ -294,7 +296,9 @@ async fn main() -> Result<()> {
         Subcommands::Proof { address, slots, rpc, block } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            let value = provider.get_proof(address, slots, block).await?;
+            let value = provider
+                .get_proof(address, slots.into_iter().map(|s| s.to_ethers()).collect(), block)
+                .await?;
             println!("{}", serde_json::to_string(&value)?);
         }
         Subcommands::Rpc(cmd) => cmd.run().await?,
@@ -358,7 +362,7 @@ async fn main() -> Result<()> {
 
             let sig = match sigs.len() {
                 0 => eyre::bail!("No signatures found"),
-                1 => sigs.get(0).unwrap(),
+                1 => sigs.first().unwrap(),
                 _ => {
                     let i: usize = prompt!("Select a function signature by number: ")?;
                     sigs.get(i - 1).ok_or_else(|| eyre::eyre!("Invalid signature index"))?
@@ -401,9 +405,9 @@ async fn main() -> Result<()> {
             let provider = utils::get_provider(&config)?;
 
             let who = stdin::unwrap_line(who)?;
-            let name = provider.lookup_address(who).await?;
+            let name = provider.lookup_address(who.to_ethers()).await?;
             if verify {
-                let address = provider.resolve_name(&name).await?;
+                let address = provider.resolve_name(&name).await?.to_alloy();
                 eyre::ensure!(
                     address == who,
                     "Forward lookup verification failed: got `{name:?}`, expected `{who:?}`"
@@ -424,7 +428,7 @@ async fn main() -> Result<()> {
                     "forward lookup verification failed. got {name}, expected {who}"
                 );
             }
-            println!("{}", SimpleCast::to_checksum_address(&address));
+            println!("{}", address.to_alloy().to_checksum(None));
         }
 
         // Misc
@@ -448,19 +452,18 @@ async fn main() -> Result<()> {
         Subcommands::SigEvent { event_string } => {
             let event_string = stdin::unwrap_line(event_string)?;
             let parsed_event = get_event(&event_string)?;
-            println!("{:?}", parsed_event.signature());
+            println!("{:?}", parsed_event.selector());
         }
         Subcommands::LeftShift { value, bits, base_in, base_out } => {
-            println!("{}", SimpleCast::left_shift(&value, &bits, base_in, &base_out)?);
+            println!("{}", SimpleCast::left_shift(&value, &bits, base_in.as_deref(), &base_out)?);
         }
         Subcommands::RightShift { value, bits, base_in, base_out } => {
-            println!("{}", SimpleCast::right_shift(&value, &bits, base_in, &base_out)?);
+            println!("{}", SimpleCast::right_shift(&value, &bits, base_in.as_deref(), &base_out)?);
         }
         Subcommands::EtherscanSource { address, directory, etherscan } => {
             let config = Config::from(&etherscan);
-            let chain = config.chain_id.unwrap_or_default();
+            let chain = config.chain.unwrap_or_default();
             let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-            let chain = chain.named()?;
             match directory {
                 Some(dir) => {
                     SimpleCast::expand_etherscan_source_to_directory(chain, address, api_key, dir)

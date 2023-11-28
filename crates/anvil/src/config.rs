@@ -28,19 +28,17 @@ use ethers::{
     utils::{format_ether, hex, to_checksum, WEI_IN_ETHER},
 };
 use foundry_common::{
+    types::{ToAlloy, ToEthers},
     ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
 };
 use foundry_config::Config;
 use foundry_evm::{
-    executor::{
-        fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
-        inspector::DEFAULT_CREATE2_DEPLOYER,
-    },
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     revm,
     revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv, U256 as rU256},
     utils::apply_chain_and_block_specific_env_changes,
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::RwLock;
 use serde_json::{json, to_writer, Value};
 use std::{
@@ -125,6 +123,8 @@ pub struct NodeConfig {
     pub eth_rpc_url: Option<String>,
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
+    /// headers to use with `eth_rpc_url`
+    pub fork_headers: Vec<String>,
     /// specifies chain id for cache to skip fetching from remote in offline-start mode
     pub fork_chain_id: Option<U256>,
     /// The generator used to generate the dev accounts
@@ -169,11 +169,13 @@ pub struct NodeConfig {
     pub transaction_block_keeper: Option<usize>,
     /// Disable the default CREATE2 deployer
     pub disable_default_create2_deployer: bool,
+    /// Enable Optimism deposit transaction
+    pub enable_optimism: bool,
 }
 
 impl NodeConfig {
     fn as_string(&self, fork: Option<&ClientFork>) -> String {
-        let mut config_string: String = "".to_owned();
+        let mut config_string: String = String::new();
         let _ = write!(config_string, "\n{}", Paint::green(BANNER));
         let _ = write!(config_string, "\n    {VERSION_MESSAGE}");
         let _ = write!(
@@ -355,7 +357,7 @@ impl NodeConfig {
     /// random, free port by setting it to `0`
     #[doc(hidden)]
     pub fn test() -> Self {
-        Self { enable_tracing: false, silent: true, port: 0, ..Default::default() }
+        Self { enable_tracing: true, silent: true, port: 0, ..Default::default() }
     }
 }
 
@@ -394,10 +396,11 @@ impl Default for NodeConfig {
             config_out: None,
             genesis: None,
             fork_request_timeout: REQUEST_TIMEOUT,
+            fork_headers: vec![],
             fork_request_retries: 5,
             fork_retry_backoff: Duration::from_millis(1_000),
             fork_chain_id: None,
-            // alchemy max cpus <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
+            // alchemy max cpus <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
             ipc_path: None,
             code_size_limit: None,
@@ -405,6 +408,7 @@ impl Default for NodeConfig {
             init_state: None,
             transaction_block_keeper: None,
             disable_default_create2_deployer: false,
+            enable_optimism: false,
         }
     }
 }
@@ -661,6 +665,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the `fork_headers` to use with `eth_rpc_url`
+    #[must_use]
+    pub fn with_fork_headers(mut self, headers: Vec<String>) -> Self {
+        self.fork_headers = headers;
+        self
+    }
+
     /// Sets the `fork_request_timeout` to use for requests
     #[must_use]
     pub fn fork_request_timeout(mut self, fork_request_timeout: Option<Duration>) -> Self {
@@ -690,7 +701,7 @@ impl NodeConfig {
 
     /// Sets the number of assumed available compute units per second
     ///
-    /// See also, <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
+    /// See also, <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     #[must_use]
     pub fn fork_compute_units_per_second(mut self, compute_units_per_second: Option<u64>) -> Self {
         if let Some(compute_units_per_second) = compute_units_per_second {
@@ -776,6 +787,13 @@ impl NodeConfig {
         Config::foundry_block_cache_file(chain_id, block)
     }
 
+    /// Sets whether to enable optimism support
+    #[must_use]
+    pub fn with_optimism(mut self, enable_optimism: bool) -> Self {
+        self.enable_optimism = enable_optimism;
+        self
+    }
+
     /// Configures everything related to env, backend and database and returns the
     /// [Backend](mem::Backend)
     ///
@@ -792,6 +810,7 @@ impl NodeConfig {
         // caller is a contract. So we disable the check by default.
         cfg.disable_eip3607 = true;
         cfg.disable_block_gas_limit = self.disable_block_gas_limit;
+        cfg.optimism = self.enable_optimism;
 
         let mut env = revm::primitives::Env {
             cfg,
@@ -804,11 +823,11 @@ impl NodeConfig {
         };
         let fees = FeeManager::new(env.cfg.spec_id, self.get_base_fee(), self.get_gas_price());
 
-        let (db, fork): (Arc<tokio::sync::RwLock<dyn Db>>, Option<ClientFork>) =
+        let (db, fork): (Arc<tokio::sync::RwLock<Box<dyn Db>>>, Option<ClientFork>) =
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
                 self.setup_fork_db(eth_rpc_url, &mut env, &fees).await
             } else {
-                (Arc::new(tokio::sync::RwLock::new(MemDb::default())), None)
+                (Arc::new(tokio::sync::RwLock::new(Box::<MemDb>::default())), None)
             };
 
         // if provided use all settings of `genesis.json`
@@ -861,7 +880,8 @@ impl NodeConfig {
     }
 
     /// Configures everything related to forking based on the passed `eth_rpc_url`:
-    ///  - returning a tuple of a [ForkedDatabase](ForkedDatabase) and [ClientFork](ClientFork)
+    ///  - returning a tuple of a [ForkedDatabase](ForkedDatabase) wrapped in an [Arc](Arc)
+    ///    [RwLock](tokio::sync::RwLock) and [ClientFork](ClientFork) wrapped in an [Option](Option)
     ///    which can be used in a [Backend](mem::Backend) to fork from.
     ///  - modifying some parameters of the passed `env`
     ///  - mutating some members of `self`
@@ -870,7 +890,29 @@ impl NodeConfig {
         eth_rpc_url: String,
         env: &mut revm::primitives::Env,
         fees: &FeeManager,
-    ) -> (Arc<tokio::sync::RwLock<dyn Db>>, Option<ClientFork>) {
+    ) -> (Arc<tokio::sync::RwLock<Box<dyn Db>>>, Option<ClientFork>) {
+        let (db, config) = self.setup_fork_db_config(eth_rpc_url, env, fees).await;
+
+        let db: Arc<tokio::sync::RwLock<Box<dyn Db>>> =
+            Arc::new(tokio::sync::RwLock::new(Box::new(db)));
+
+        let fork = ClientFork::new(config, Arc::clone(&db));
+
+        (db, Some(fork))
+    }
+
+    /// Configures everything related to forking based on the passed `eth_rpc_url`:
+    ///  - returning a tuple of a [ForkedDatabase](ForkedDatabase) and
+    ///    [ClientForkConfig](ClientForkConfig) which can be used to build a
+    ///    [ClientFork](ClientFork) to fork from.
+    ///  - modifying some parameters of the passed `env`
+    ///  - mutating some members of `self`
+    pub async fn setup_fork_db_config(
+        &mut self,
+        eth_rpc_url: String,
+        env: &mut revm::primitives::Env,
+        fees: &FeeManager,
+    ) -> (ForkedDatabase, ClientForkConfig) {
         // TODO make provider agnostic
         let provider = Arc::new(
             ProviderBuilder::new(&eth_rpc_url)
@@ -880,6 +922,7 @@ impl NodeConfig {
                 .compute_units_per_second(self.compute_units_per_second)
                 .max_retry(10)
                 .initial_backoff(1000)
+                .headers(self.fork_headers.clone())
                 .build()
                 .expect("Failed to establish provider to fork url"),
         );
@@ -1022,27 +1065,23 @@ latest block number: {latest_block}"
             Some(fork_block_number.into()),
         );
 
-        let db = Arc::new(tokio::sync::RwLock::new(ForkedDatabase::new(backend, block_chain_db)));
-        let fork = ClientFork::new(
-            ClientForkConfig {
-                eth_rpc_url,
-                block_number: fork_block_number,
-                block_hash,
-                provider,
-                chain_id,
-                override_chain_id,
-                timestamp: block.timestamp.as_u64(),
-                base_fee: block.base_fee_per_gas,
-                timeout: self.fork_request_timeout,
-                retries: self.fork_request_retries,
-                backoff: self.fork_retry_backoff,
-                compute_units_per_second: self.compute_units_per_second,
-                total_difficulty: block.total_difficulty.unwrap_or_default(),
-            },
-            Arc::clone(&db),
-        );
+        let config = ClientForkConfig {
+            eth_rpc_url,
+            block_number: fork_block_number,
+            block_hash,
+            provider,
+            chain_id,
+            override_chain_id,
+            timestamp: block.timestamp.as_u64(),
+            base_fee: block.base_fee_per_gas,
+            timeout: self.fork_request_timeout,
+            retries: self.fork_request_retries,
+            backoff: self.fork_retry_backoff,
+            compute_units_per_second: self.compute_units_per_second,
+            total_difficulty: block.total_difficulty.unwrap_or_default(),
+        };
 
-        (db, Some(fork))
+        (ForkedDatabase::new(backend, block_chain_db), config)
     }
 }
 

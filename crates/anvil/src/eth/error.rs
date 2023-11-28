@@ -13,7 +13,7 @@ use ethers::{
 };
 use foundry_common::SELECTOR_LEN;
 use foundry_evm::{
-    executor::backend::DatabaseError,
+    backend::DatabaseError,
     revm::{
         self,
         interpreter::InstructionResult,
@@ -21,7 +21,6 @@ use foundry_evm::{
     },
 };
 use serde::Serialize;
-use tracing::error;
 
 pub(crate) type Result<T> = std::result::Result<T, BlockchainError>;
 
@@ -85,6 +84,8 @@ pub enum BlockchainError {
     EIP1559TransactionUnsupportedAtHardfork,
     #[error("Access list received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork berlin' or later.")]
     EIP2930TransactionUnsupportedAtHardfork,
+    #[error("op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'.")]
+    DepositTransactionUnsupported,
     #[error("Excess blob gas not set.")]
     ExcessBlobGasNotSet,
 }
@@ -280,7 +281,7 @@ pub fn to_rpc_result<T: Serialize>(val: T) -> ResponseResult {
     match serde_json::to_value(val) {
         Ok(success) => ResponseResult::Success(success),
         Err(err) => {
-            error!("Failed serialize rpc response: {:?}", err);
+            error!(%err, "Failed serialize rpc response");
             ResponseResult::error(RpcError::internal_error())
         }
     }
@@ -292,7 +293,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
             Ok(val) => to_rpc_result(val),
             Err(err) => match err {
                 BlockchainError::Pool(err) => {
-                    error!("txpool error: {:?}", err);
+                    error!(%err, "txpool error");
                     match err {
                         PoolError::CyclicTransaction => {
                             RpcError::transaction_rejected("Cyclic transaction detected")
@@ -367,7 +368,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     "Invalid input: `max_priority_fee_per_gas` greater than `max_fee_per_gas`",
                 ),
                 BlockchainError::ForkProvider(err) => {
-                    error!("fork provider error: {:?}", err);
+                    error!(%err, "fork provider error");
                     RpcError::internal_error_with(format!("Fork Error: {err:?}"))
                 }
                 err @ BlockchainError::EvmError(_) => {
@@ -404,6 +405,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::EIP2930TransactionUnsupportedAtHardfork => {
+                    RpcError::invalid_params(err.to_string())
+                }
+                err @ BlockchainError::DepositTransactionUnsupported => {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::ExcessBlobGasNotSet => {

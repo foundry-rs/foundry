@@ -1,6 +1,7 @@
+use alloy_primitives::U256;
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::types::{NameOrAddress, U256};
+use ethers_core::types::NameOrAddress;
 use eyre::Result;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
@@ -82,7 +83,7 @@ impl EstimateArgs {
         let config = Config::from_provider(figment);
 
         let provider = utils::get_provider(&config)?;
-        let chain = utils::get_chain(config.chain_id, &provider).await?;
+        let chain = utils::get_chain(config.chain, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain));
 
         let mut builder = TxBuilder::new(&provider, from, to, chain, false).await?;

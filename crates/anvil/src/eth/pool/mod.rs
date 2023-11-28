@@ -44,7 +44,6 @@ use ethers::{
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, fmt, sync::Arc};
-use tracing::{debug, trace, warn};
 
 pub mod transactions;
 
@@ -358,7 +357,7 @@ pub struct PruneResult {
 }
 
 impl fmt::Debug for PruneResult {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(fmt, "PruneResult {{ ")?;
         write!(
             fmt,

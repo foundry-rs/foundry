@@ -1,13 +1,15 @@
 use super::sequence::ScriptSequence;
 use alloy_primitives::TxHash;
-use ethers::{prelude::PendingTransaction, providers::Middleware, types::TransactionReceipt};
+use ethers_core::types::TransactionReceipt;
+use ethers_providers::{Middleware, PendingTransaction};
 use eyre::Result;
 use foundry_cli::{init_progress, update_progress, utils::print_receipt};
-use foundry_common::RetryProvider;
-use foundry_utils::types::{ToAlloy, ToEthers};
+use foundry_common::{
+    types::{ToAlloy, ToEthers},
+    RetryProvider,
+};
 use futures::StreamExt;
 use std::sync::Arc;
-use tracing::{trace, warn};
 
 /// Convenience enum for internal signalling of transaction status
 enum TxStatus {
@@ -41,7 +43,7 @@ pub async fn wait_for_pending(
 }
 
 /// Traverses a set of pendings and either finds receipts, or clears them from
-/// the deployment sequnce.
+/// the deployment sequence.
 ///
 /// If no `tx_hashes` are provided, then `deployment_sequence.pending` will be
 /// used. For each `tx_hash`, we check if it has confirmed. If it has
@@ -84,7 +86,7 @@ pub async fn clear_pendings(
                 errors.push(format!("Transaction dropped from the mempool: {tx_hash:?}"));
             }
             Ok(TxStatus::Success(receipt)) => {
-                trace!(tx_hash = ?tx_hash, "received tx receipt");
+                trace!(tx_hash=?tx_hash, "received tx receipt");
                 deployment_sequence.remove_pending(receipt.transaction_hash.to_alloy());
                 receipts.push(receipt);
             }
@@ -92,7 +94,7 @@ pub async fn clear_pendings(
                 // consider:
                 // if this is not removed from pending, then the script becomes
                 // un-resumable. Is this desirable on reverts?
-                warn!(tx_hash = ?tx_hash, "Transaction Failure");
+                warn!(tx_hash=?tx_hash, "Transaction Failure");
                 deployment_sequence.remove_pending(receipt.transaction_hash.to_alloy());
                 errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash));
             }
@@ -111,7 +113,7 @@ pub async fn clear_pendings(
         deployment_sequence.add_receipt(receipt);
     }
 
-    // print any erros
+    // print any errors
     if !errors.is_empty() {
         let mut error_msg = errors.join("\n");
         if !deployment_sequence.pending.is_empty() {

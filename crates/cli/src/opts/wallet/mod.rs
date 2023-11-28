@@ -1,19 +1,17 @@
 use crate::opts::error::PrivateKeyError;
+use alloy_primitives::Address;
 use async_trait::async_trait;
 use clap::Parser;
-use ethers::{
-    signers::{
-        coins_bip39::English, AwsSigner, AwsSignerError, HDPath as LedgerHDPath, Ledger,
-        LedgerError, LocalWallet, MnemonicBuilder, Signer, Trezor, TrezorError, TrezorHDPath,
-        WalletError,
-    },
-    types::{
-        transaction::{eip2718::TypedTransaction, eip712::Eip712},
-        Address, Signature,
-    },
+use ethers_core::types::{
+    transaction::{eip2718::TypedTransaction, eip712::Eip712},
+    Signature,
+};
+use ethers_signers::{
+    coins_bip39::English, AwsSigner, AwsSignerError, HDPath as LedgerHDPath, Ledger, LedgerError,
+    LocalWallet, MnemonicBuilder, Signer, Trezor, TrezorError, TrezorHDPath, WalletError,
 };
 use eyre::{bail, Result, WrapErr};
-use foundry_common::fs;
+use foundry_common::{fs, types::ToAlloy};
 use foundry_config::Config;
 use rusoto_core::{
     credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
@@ -25,7 +23,6 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-use tracing::{instrument, trace};
 
 pub mod multi_wallet;
 pub use multi_wallet::*;
@@ -202,9 +199,9 @@ impl Wallet {
     /// Returns the sender address of the signer or `from`.
     pub async fn sender(&self) -> Address {
         if let Ok(signer) = self.signer(0).await {
-            signer.address()
+            signer.address().to_alloy()
         } else {
-            self.from.unwrap_or_else(Address::zero)
+            self.from.unwrap_or(Address::ZERO)
         }
     }
 
@@ -497,7 +494,7 @@ impl Signer for WalletSigner {
         delegate!(self, inner => inner.sign_typed_data(payload).await.map_err(Into::into))
     }
 
-    fn address(&self) -> Address {
+    fn address(&self) -> ethers_core::types::Address {
         delegate!(self, inner => inner.address())
     }
 
@@ -537,7 +534,7 @@ impl Signer for &WalletSigner {
         (*self).sign_typed_data(payload).await
     }
 
-    fn address(&self) -> Address {
+    fn address(&self) -> ethers_core::types::Address {
         (*self).address()
     }
 

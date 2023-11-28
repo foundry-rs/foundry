@@ -1,7 +1,8 @@
-//! Support for multiple etherscan keys
+//! Support for multiple Etherscan keys.
+
 use crate::{
     resolve::{interpolate, UnresolvedEnvVarError, RE_PLACEHOLDER},
-    Chain, Config,
+    Chain, Config, NamedChain,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -10,7 +11,6 @@ use std::{
     ops::{Deref, DerefMut},
     time::Duration,
 };
-use tracing::warn;
 
 /// The user agent to use when querying the etherscan API.
 pub const ETHERSCAN_USER_AGENT: &str = concat!("foundry/", env!("CARGO_PKG_VERSION"));
@@ -140,7 +140,7 @@ impl DerefMut for ResolvedEtherscanConfigs {
 /// Represents all info required to create an etherscan client
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EtherscanConfig {
-    /// Chain name/id that can be used to derive the api url
+    /// The chain name or EIP-155 chain ID used to derive the API URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain: Option<Chain>,
     /// Etherscan API URL
@@ -204,15 +204,15 @@ impl EtherscanConfig {
 /// Contains required url + api key to set up an etherscan client
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedEtherscanConfig {
-    /// Etherscan API URL
+    /// Etherscan API URL.
     #[serde(rename = "url")]
     pub api_url: String,
-    /// Optional browser url
+    /// Optional browser URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_url: Option<String>,
-    /// Resolved api key
+    /// The resolved API key.
     pub key: String,
-    /// The chain if set
+    /// The chain name or EIP-155 chain ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain: Option<Chain>,
 }
@@ -251,20 +251,20 @@ impl ResolvedEtherscanConfig {
         self
     }
 
-    /// Returns the corresponding `ethers_etherscan::Client`, configured with the `api_url`,
+    /// Returns the corresponding `foundry_block_explorers::Client`, configured with the `api_url`,
     /// `api_key` and cache
     pub fn into_client(
         self,
-    ) -> Result<ethers_etherscan::Client, ethers_etherscan::errors::EtherscanError> {
+    ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError>
+    {
         let ResolvedEtherscanConfig { api_url, browser_url, key: api_key, chain } = self;
-        let (mainnet_api, mainnet_url) =
-            ethers_core::types::Chain::Mainnet.etherscan_urls().expect("exist; qed");
+        let (mainnet_api, mainnet_url) = NamedChain::Mainnet.etherscan_urls().expect("exist; qed");
 
         let cache = chain
             .or_else(|| {
                 if api_url == mainnet_api {
                     // try to match against mainnet, which is usually the most common target
-                    Some(ethers_core::types::Chain::Mainnet.into())
+                    Some(NamedChain::Mainnet.into())
                 } else {
                     None
                 }
@@ -278,7 +278,7 @@ impl ResolvedEtherscanConfig {
             }
         }
 
-        ethers_etherscan::Client::builder()
+        foundry_block_explorers::Client::builder()
             .with_client(reqwest::Client::builder().user_agent(ETHERSCAN_USER_AGENT).build()?)
             .with_api_key(api_key)
             .with_api_url(api_url.as_str())?
@@ -377,7 +377,7 @@ impl fmt::Display for EtherscanApiKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers_core::types::Chain::Mainnet;
+    use NamedChain::Mainnet;
 
     #[test]
     fn can_create_client_via_chain() {

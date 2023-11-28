@@ -421,6 +421,10 @@ pub enum EthRequest {
     )]
     SetCoinbase(Address),
 
+    /// Sets the chain id
+    #[cfg_attr(feature = "serde", serde(rename = "anvil_setChainId", with = "sequence"))]
+    SetChainId(u64),
+
     /// Enable or disable logging
     #[cfg_attr(
         feature = "serde",
@@ -485,6 +489,13 @@ pub enum EthRequest {
     /// Retrieves the Anvil node configuration params
     #[cfg_attr(feature = "serde", serde(rename = "anvil_nodeInfo", with = "empty_params"))]
     NodeInfo(()),
+
+    /// Retrieves the Anvil node metadata.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "anvil_metadata", alias = "hardhat_metadata", with = "empty_params")
+    )]
+    AnvilMetadata(()),
 
     // Ganache compatible calls
     /// Snapshot the state of the blockchain at the current block.
@@ -881,6 +892,26 @@ mod tests {
 
     #[test]
     fn test_custom_reset() {
+        let s = r#"{"method": "anvil_reset", "params": [{"forking": {"jsonRpcUrl": "https://ethereumpublicnode.com",
+        "blockNumber": "18441649"
+      }
+    }]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Reset(forking) => {
+                let forking = forking.and_then(|f| f.params);
+                assert_eq!(
+                    forking,
+                    Some(Forking {
+                        json_rpc_url: Some("https://ethereumpublicnode.com".into()),
+                        block_number: Some(18441649)
+                    })
+                )
+            }
+            _ => unreachable!(),
+        }
+
         let s = r#"{"method": "anvil_reset", "params": [ { "forking": {
                 "jsonRpcUrl": "https://eth-mainnet.alchemyapi.io/v2/<key>",
                 "blockNumber": 11095000
@@ -942,6 +973,20 @@ mod tests {
         }
 
         let s = r#"{"method":"anvil_reset","params":[{ "blockNumber": 14000000}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Reset(forking) => {
+                let forking = forking.and_then(|f| f.params);
+                assert_eq!(
+                    forking,
+                    Some(Forking { json_rpc_url: None, block_number: Some(14000000) })
+                )
+            }
+            _ => unreachable!(),
+        }
+
+        let s = r#"{"method":"anvil_reset","params":[{ "blockNumber": "14000000"}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let req = serde_json::from_value::<EthRequest>(value).unwrap();
         match req {

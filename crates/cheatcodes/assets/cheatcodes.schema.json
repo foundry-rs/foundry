@@ -1,0 +1,471 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Cheatcodes",
+  "description": "Foundry cheatcodes. Learn more: <https://book.getfoundry.sh/cheatcodes/>",
+  "type": "object",
+  "required": [
+    "cheatcodes",
+    "enums",
+    "errors",
+    "events",
+    "structs"
+  ],
+  "properties": {
+    "cheatcodes": {
+      "description": "All the cheatcodes.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Cheatcode"
+      }
+    },
+    "enums": {
+      "description": "Cheatcode enums.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Enum"
+      }
+    },
+    "errors": {
+      "description": "Cheatcode errors.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Error"
+      }
+    },
+    "events": {
+      "description": "Cheatcode events.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Event"
+      }
+    },
+    "structs": {
+      "description": "Cheatcode structs.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Struct"
+      }
+    }
+  },
+  "definitions": {
+    "Cheatcode": {
+      "description": "Specification of a single cheatcode. Extends [`Function`] with additional metadata.",
+      "type": "object",
+      "required": [
+        "func",
+        "group",
+        "safety",
+        "status"
+      ],
+      "properties": {
+        "func": {
+          "description": "The Solidity function declaration.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Function"
+            }
+          ]
+        },
+        "group": {
+          "description": "The group that the cheatcode belongs to.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Group"
+            }
+          ]
+        },
+        "safety": {
+          "description": "Whether the cheatcode is safe to use inside of scripts. E.g. it does not change state in an unexpected way.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Safety"
+            }
+          ]
+        },
+        "status": {
+          "description": "The current status of the cheatcode. E.g. whether it is stable or experimental, etc.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Status"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Enum": {
+      "description": "A Solidity enumeration.",
+      "type": "object",
+      "required": [
+        "description",
+        "name",
+        "variants"
+      ],
+      "properties": {
+        "description": {
+          "description": "The description of the enum. This is a markdown string derived from the NatSpec documentation.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The name of the enum.",
+          "type": "string"
+        },
+        "variants": {
+          "description": "The variants of the enum.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/EnumVariant"
+          }
+        }
+      }
+    },
+    "EnumVariant": {
+      "description": "A variant of an [`Enum`].",
+      "type": "object",
+      "required": [
+        "description",
+        "name"
+      ],
+      "properties": {
+        "description": {
+          "description": "The description of the variant. This is a markdown string derived from the NatSpec documentation.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The name of the variant.",
+          "type": "string"
+        }
+      }
+    },
+    "Error": {
+      "description": "A Solidity custom error.",
+      "type": "object",
+      "required": [
+        "declaration",
+        "description",
+        "name"
+      ],
+      "properties": {
+        "declaration": {
+          "description": "The Solidity error declaration, including full type, parameter names, etc.",
+          "type": "string"
+        },
+        "description": {
+          "description": "The description of the error. This is a markdown string derived from the NatSpec documentation.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The name of the error.",
+          "type": "string"
+        }
+      }
+    },
+    "Event": {
+      "description": "A Solidity event.",
+      "type": "object",
+      "required": [
+        "declaration",
+        "description",
+        "name"
+      ],
+      "properties": {
+        "declaration": {
+          "description": "The Solidity event declaration, including full type, parameter names, etc.",
+          "type": "string"
+        },
+        "description": {
+          "description": "The description of the event. This is a markdown string derived from the NatSpec documentation.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The name of the event.",
+          "type": "string"
+        }
+      }
+    },
+    "Function": {
+      "description": "Solidity function.",
+      "type": "object",
+      "required": [
+        "declaration",
+        "description",
+        "id",
+        "mutability",
+        "selector",
+        "selectorBytes",
+        "signature",
+        "visibility"
+      ],
+      "properties": {
+        "declaration": {
+          "description": "The Solidity function declaration, including full type and parameter names, visibility, etc.",
+          "type": "string"
+        },
+        "description": {
+          "description": "The description of the function. This is a markdown string derived from the NatSpec documentation.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The function's unique identifier. This is the function name, optionally appended with an index if it is overloaded.",
+          "type": "string"
+        },
+        "mutability": {
+          "description": "The Solidity function state mutability attribute.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Mutability"
+            }
+          ]
+        },
+        "selector": {
+          "description": "The hex-encoded, \"0x\"-prefixed 4-byte function selector, which is the Keccak-256 hash of `signature`.",
+          "type": "string"
+        },
+        "selectorBytes": {
+          "description": "The 4-byte function selector as a byte array.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0.0
+          },
+          "maxItems": 4,
+          "minItems": 4
+        },
+        "signature": {
+          "description": "The standard function signature used to calculate `selector`. See the [Solidity docs] for more information.\n\n[Solidity docs]: https://docs.soliditylang.org/en/latest/abi-spec.html#function-selector",
+          "type": "string"
+        },
+        "visibility": {
+          "description": "The Solidity function visibility attribute. This is currently always `external`, but this may change in the future.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Visibility"
+            }
+          ]
+        }
+      }
+    },
+    "Group": {
+      "description": "Cheatcode groups. Initially derived and modified from inline comments in [`forge-std`'s `Vm.sol`][vmsol].\n\n[vmsol]: https://github.com/foundry-rs/forge-std/blob/dcb0d52bc4399d37a6545848e3b8f9d03c77b98d/src/Vm.sol",
+      "oneOf": [
+        {
+          "description": "Cheatcodes that read from, or write to the current EVM execution state.\n\nExamples: any of the `record` cheatcodes, `chainId`, `coinbase`.\n\nSafety: ambiguous, depends on whether the cheatcode is read-only or not.",
+          "type": "string",
+          "enum": [
+            "evm"
+          ]
+        },
+        {
+          "description": "Cheatcodes that interact with how a test is run.\n\nExamples: `assume`, `skip`, `expectRevert`.\n\nSafety: ambiguous, depends on whether the cheatcode is read-only or not.",
+          "type": "string",
+          "enum": [
+            "testing"
+          ]
+        },
+        {
+          "description": "Cheatcodes that interact with how a script is run.\n\nExamples: `broadcast`, `startBroadcast`, `stopBroadcast`.\n\nSafety: safe.",
+          "type": "string",
+          "enum": [
+            "scripting"
+          ]
+        },
+        {
+          "description": "Cheatcodes that interact with the OS or filesystem.\n\nExamples: `ffi`, `projectRoot`, `writeFile`.\n\nSafety: safe.",
+          "type": "string",
+          "enum": [
+            "filesystem"
+          ]
+        },
+        {
+          "description": "Cheatcodes that interact with the program's environment variables.\n\nExamples: `setEnv`, `envBool`, `envOr`.\n\nSafety: safe.",
+          "type": "string",
+          "enum": [
+            "environment"
+          ]
+        },
+        {
+          "description": "Utility cheatcodes that deal with string parsing and manipulation.\n\nExamples: `toString`. `parseBytes`.\n\nSafety: safe.",
+          "type": "string",
+          "enum": [
+            "string"
+          ]
+        },
+        {
+          "description": "Utility cheatcodes that deal with parsing values from and converting values to JSON.\n\nExamples: `serializeJson`, `parseJsonUint`, `writeJson`.\n\nSafety: safe.",
+          "type": "string",
+          "enum": [
+            "json"
+          ]
+        },
+        {
+          "description": "Generic, uncategorized utilities.\n\nExamples: `toString`, `parse*`, `serialize*`.\n\nSafety: safe.",
+          "type": "string",
+          "enum": [
+            "utilities"
+          ]
+        }
+      ]
+    },
+    "Mutability": {
+      "description": "Solidity function state mutability attribute. See the [Solidity docs] for more information.\n\n[Solidity docs]: https://docs.soliditylang.org/en/latest/contracts.html#state-mutability",
+      "oneOf": [
+        {
+          "description": "Disallows modification or access of state.",
+          "type": "string",
+          "enum": [
+            "pure"
+          ]
+        },
+        {
+          "description": "Disallows modification of state.",
+          "type": "string",
+          "enum": [
+            "view"
+          ]
+        },
+        {
+          "description": "Allows modification of state.",
+          "type": "string",
+          "enum": [
+            ""
+          ]
+        }
+      ]
+    },
+    "Safety": {
+      "description": "Cheatcode safety.",
+      "oneOf": [
+        {
+          "description": "The cheatcode is not safe to use in scripts.",
+          "type": "string",
+          "enum": [
+            "unsafe"
+          ]
+        },
+        {
+          "description": "The cheatcode is safe to use in scripts.",
+          "type": "string",
+          "enum": [
+            "safe"
+          ]
+        }
+      ]
+    },
+    "Status": {
+      "description": "The status of a cheatcode.",
+      "oneOf": [
+        {
+          "description": "The cheatcode and its API is currently stable.",
+          "type": "string",
+          "enum": [
+            "stable"
+          ]
+        },
+        {
+          "description": "The cheatcode is unstable, meaning it may contain bugs and may break its API on any release.\n\nUse of experimental cheatcodes will result in a warning.",
+          "type": "string",
+          "enum": [
+            "experimental"
+          ]
+        },
+        {
+          "description": "The cheatcode has been deprecated, meaning it will be removed in a future release.\n\nUse of deprecated cheatcodes is discouraged and will result in a warning.",
+          "type": "string",
+          "enum": [
+            "deprecated"
+          ]
+        },
+        {
+          "description": "The cheatcode has been removed and is no longer available for use.\n\nUse of removed cheatcodes will result in a hard error.",
+          "type": "string",
+          "enum": [
+            "removed"
+          ]
+        }
+      ]
+    },
+    "Struct": {
+      "description": "A Solidity struct.",
+      "type": "object",
+      "required": [
+        "description",
+        "fields",
+        "name"
+      ],
+      "properties": {
+        "description": {
+          "description": "The description of the struct. This is a markdown string derived from the NatSpec documentation.",
+          "type": "string"
+        },
+        "fields": {
+          "description": "The fields of the struct.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/StructField"
+          }
+        },
+        "name": {
+          "description": "The name of the struct.",
+          "type": "string"
+        }
+      }
+    },
+    "StructField": {
+      "description": "A [`Struct`] field.",
+      "type": "object",
+      "required": [
+        "description",
+        "name",
+        "ty"
+      ],
+      "properties": {
+        "description": {
+          "description": "The description of the field. This is a markdown string derived from the NatSpec documentation.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The name of the field.",
+          "type": "string"
+        },
+        "ty": {
+          "description": "The type of the field.",
+          "type": "string"
+        }
+      }
+    },
+    "Visibility": {
+      "description": "Solidity function visibility attribute. See the [Solidity docs] for more information.\n\n[Solidity docs]: https://docs.soliditylang.org/en/latest/contracts.html#function-visibility",
+      "oneOf": [
+        {
+          "description": "The function is only visible externally.",
+          "type": "string",
+          "enum": [
+            "external"
+          ]
+        },
+        {
+          "description": "Visible externally and internally.",
+          "type": "string",
+          "enum": [
+            "public"
+          ]
+        },
+        {
+          "description": "Only visible internally.",
+          "type": "string",
+          "enum": [
+            "internal"
+          ]
+        },
+        {
+          "description": "Only visible in the current contract",
+          "type": "string",
+          "enum": [
+            "private"
+          ]
+        }
+      ]
+    }
+  }
+}

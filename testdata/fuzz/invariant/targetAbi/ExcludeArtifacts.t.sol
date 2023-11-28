@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Unlicense
+// SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
@@ -40,6 +40,6 @@ contract ExcludeArtifacts is DSTest {
     }
 
     function invariantShouldPass() public {
-        require(excluded.world() == true, "false world.");
+        require(excluded.world() == true, "false world");
     }
 }

@@ -4,10 +4,10 @@ use clap::Parser;
 use eyre::Result;
 use forge::{
     decode::decode_console_logs,
-    executor::inspector::CheatsConfig,
     gas_report::GasReport,
+    inspectors::CheatsConfig,
     result::{SuiteResult, TestResult, TestStatus},
-    trace::{
+    traces::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
         CallTraceDecoderBuilder, TraceKind,
     },
@@ -32,14 +32,15 @@ use foundry_config::{
     get_available_profiles, Config,
 };
 use foundry_debugger::DebuggerArgs;
-use foundry_evm::fuzz::CounterExample;
 use regex::Regex;
 use std::{collections::BTreeMap, fs, sync::mpsc::channel, time::Duration};
-use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 
 mod filter;
+mod summary;
+use summary::TestSummaryReporter;
+
 pub use filter::FilterArgs;
 
 // Loads project's figment and merges the build cli arguments into it
@@ -92,7 +93,7 @@ pub struct TestArgs {
     list: bool,
 
     /// Set seed used to generate randomness during your fuzz runs.
-    #[clap(long, value_parser = utils::alloy_parse_u256)]
+    #[clap(long)]
     pub fuzz_seed: Option<U256>,
 
     #[clap(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
@@ -109,6 +110,14 @@ pub struct TestArgs {
 
     #[clap(flatten)]
     pub watch: WatchArgs,
+
+    /// Print test summary table
+    #[clap(long, help_heading = "Display options")]
+    pub summary: bool,
+
+    /// Print detailed test summary table
+    #[clap(long, help_heading = "Display options")]
+    pub detailed: bool,
 }
 
 impl TestArgs {
@@ -150,14 +159,12 @@ impl TestArgs {
         }
 
         let compiler = ProjectCompiler::default();
-        let output = if config.sparse_mode {
-            compiler.compile_sparse(&project, filter.clone())
-        } else if self.opts.silent {
-            compile::suppress_compile(&project)
-        } else {
-            compiler.compile(&project)
+        let output = match (config.sparse_mode, self.opts.silent | self.json) {
+            (false, false) => compiler.compile(&project),
+            (true, false) => compiler.compile_sparse(&project, filter.clone()),
+            (false, true) => compile::suppress_compile(&project),
+            (true, true) => compile::suppress_compile_sparse(&project, filter.clone()),
         }?;
-
         // Create test options from general project settings
         // and compiler output
         let project_root = &project.paths.root;
@@ -187,7 +194,7 @@ impl TestArgs {
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
+            .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone()))
             .with_test_options(test_options.clone());
 
         let mut runner = runner_builder.clone().build(
@@ -199,16 +206,16 @@ impl TestArgs {
 
         if should_debug {
             filter.args_mut().test_pattern = self.debug.clone();
-            let n = runner.count_filtered_tests(&filter);
-            if n != 1 {
-                return Err(
-                        eyre::eyre!("{n} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
-                        \n
-                        Use --match-contract and --match-path to further limit the search."));
+            let num_filtered = runner.matching_test_function_count(&filter);
+            if num_filtered != 1 {
+                eyre::bail!(
+                    "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n\n\
+                     Use --match-contract and --match-path to further limit the search."
+                );
             }
-            let test_funcs = runner.get_typed_tests(&filter);
+            let test_funcs = runner.get_matching_test_functions(&filter);
             // if we debug a fuzz test, we should not collect data on the first run
-            if !test_funcs.get(0).unwrap().inputs.is_empty() {
+            if !test_funcs.first().expect("matching function exists").inputs.is_empty() {
                 runner_builder = runner_builder.set_debug(false);
                 runner = runner_builder.clone().build(
                     project_root,
@@ -229,7 +236,6 @@ impl TestArgs {
 
         if should_debug {
             let tests = outcome.clone().into_tests();
-
             let mut decoders = Vec::new();
             for test in tests {
                 let mut result = test.result;
@@ -293,7 +299,7 @@ impl TestArgs {
                 if let Some(source) = artifact.source_file() {
                     let abs_path = source
                         .ast
-                        .ok_or(eyre::eyre!("Source from artifact has no AST."))?
+                        .ok_or_else(|| eyre::eyre!("Source from artifact has no AST."))?
                         .absolute_path;
                     let source_code = fs::read_to_string(abs_path)?;
                     let contract = artifact.clone().into_contract_bytecode();
@@ -308,7 +314,6 @@ impl TestArgs {
 
             let test = outcome.clone().into_tests().next().unwrap();
             let result = test.result;
-
             // Run the debugger
             let debugger = DebuggerArgs {
                 debug: result.debug.map_or(vec![], |debug| vec![debug]),
@@ -340,6 +345,11 @@ impl TestArgs {
         } else if self.list {
             list(runner, filter, self.json)
         } else {
+            if self.detailed && !self.summary {
+                return Err(eyre::eyre!(
+                    "Missing `--summary` option in your command. You must pass it along with the `--detailed` option to view detailed test summary."
+                ));
+            }
             test(
                 config,
                 runner,
@@ -350,6 +360,8 @@ impl TestArgs {
                 test_options,
                 self.gas_report,
                 self.fail_fast,
+                self.summary,
+                self.detailed,
             )
             .await
         }
@@ -429,7 +441,7 @@ impl Test {
 }
 
 /// Represents the bundled results of all tests
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TestOutcome {
     /// Whether failures are allowed
     pub allow_failure: bool,
@@ -529,42 +541,10 @@ impl TestOutcome {
 }
 
 fn short_test_result(name: &str, result: &TestResult) {
-    let status = if result.status == TestStatus::Success {
-        Paint::green("[PASS]".to_string())
-    } else if result.status == TestStatus::Skipped {
-        Paint::yellow("[SKIP]".to_string())
-    } else {
-        let reason = result
-            .reason
-            .as_ref()
-            .map(|reason| format!("Reason: {reason}"))
-            .unwrap_or_else(|| "Reason: Assertion failed.".to_string());
-
-        let counterexample = result
-            .counterexample
-            .as_ref()
-            .map(|example| match example {
-                CounterExample::Single(eg) => format!(" Counterexample: {eg}]"),
-                CounterExample::Sequence(sequence) => {
-                    let mut inner_txt = String::new();
-
-                    for checkpoint in sequence {
-                        inner_txt += format!("\t\t{checkpoint}\n").as_str();
-                    }
-                    format!("]\n\t[Sequence]\n{inner_txt}\n")
-                }
-            })
-            .unwrap_or_else(|| "]".to_string());
-
-        Paint::red(format!("[FAIL. {reason}{counterexample}"))
-    };
-
-    println!("{status} {name} {}", result.kind.report());
+    println!("{result} {name} {}", result.kind.report());
 }
 
-/**
- * Formats the aggregated summary of all test suites into a string (for printing)
- */
+/// Formats the aggregated summary of all test suites into a string (for printing).
 fn format_aggregated_summary(
     num_test_suites: usize,
     total_passed: usize,
@@ -616,9 +596,12 @@ async fn test(
     test_options: TestOptions,
     gas_reporting: bool,
     fail_fast: bool,
+    summary: bool,
+    detailed: bool,
 ) -> Result<TestOutcome> {
     trace!(target: "forge::test", "running all tests");
-    if runner.count_filtered_tests(&filter) == 0 {
+
+    if runner.matching_test_function_count(&filter) == 0 {
         let filter_str = filter.to_string();
         if filter_str.is_empty() {
             println!(
@@ -658,13 +641,14 @@ async fn test(
     let handle =
         tokio::task::spawn(async move { runner.test(filter, Some(tx), test_options).await });
 
-    let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
+    let mut results = BTreeMap::new();
     let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
     let sig_identifier = SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
 
     let mut total_passed = 0;
     let mut total_failed = 0;
     let mut total_skipped = 0;
+    let mut suite_results: Vec<TestOutcome> = Vec::new();
 
     'outer: for (contract_name, suite_result) in rx {
         results.insert(contract_name.clone(), suite_result.clone());
@@ -756,13 +740,18 @@ async fn test(
                 gas_report.analyze(&result.traces);
             }
         }
-        let block_outcome = TestOutcome::new([(contract_name, suite_result)].into(), allow_failure);
+        let block_outcome =
+            TestOutcome::new([(contract_name.clone(), suite_result)].into(), allow_failure);
 
         total_passed += block_outcome.successes().count();
         total_failed += block_outcome.failures().count();
         total_skipped += block_outcome.skips().count();
 
         println!("{}", block_outcome.summary());
+
+        if summary {
+            suite_results.push(block_outcome.clone());
+        }
     }
 
     if gas_reporting {
@@ -776,70 +765,57 @@ async fn test(
             "{}",
             format_aggregated_summary(num_test_suites, total_passed, total_failed, total_skipped)
         );
+
+        if summary {
+            let mut summary_table = TestSummaryReporter::new(detailed);
+            println!("\n\nTest Summary:");
+            summary_table.print_summary(suite_results);
+        }
     }
 
-    // reattach the thread
+    // reattach the task
     let _results = handle.await?;
 
     trace!(target: "forge::test", "received {} results", results.len());
+
     Ok(TestOutcome::new(results, allow_failure))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Sanity test that unknown args are rejected
-    #[test]
-    fn test_verbosity() {
-        #[derive(Debug, Parser)]
-        pub struct VerbosityArgs {
-            #[clap(long, short, action = clap::ArgAction::Count)]
-            verbosity: u8,
-        }
-        let res = VerbosityArgs::try_parse_from(["foundry-cli", "-vw"]);
-        assert!(res.is_err());
-
-        let res = VerbosityArgs::try_parse_from(["foundry-cli", "-vv"]);
-        assert!(res.is_ok());
-    }
+    use foundry_config::Chain;
 
     #[test]
-    fn test_verbosity_multi_short() {
-        #[derive(Debug, Parser)]
-        pub struct VerbosityArgs {
-            #[clap(long, short)]
-            verbosity: bool,
-            #[clap(
-                long,
-                short,
-                num_args(0..),
-                value_name = "PATH",
-            )]
-            watch: Option<Vec<String>>,
-        }
-        // this is supported by clap
-        let res = VerbosityArgs::try_parse_from(["foundry-cli", "-vw"]);
-        assert!(res.is_ok())
-    }
-
-    #[test]
-    fn test_watch_parse() {
+    fn watch_parse() {
         let args: TestArgs = TestArgs::parse_from(["foundry-cli", "-vw"]);
         assert!(args.watch.watch.is_some());
     }
 
     #[test]
-    fn test_fuzz_seed() {
+    fn fuzz_seed() {
         let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--fuzz-seed", "0x10"]);
         assert!(args.fuzz_seed.is_some());
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5913>
     #[test]
-    fn test_5913() {
+    fn issue_5913() {
         let args: TestArgs =
             TestArgs::parse_from(["foundry-cli", "-vvv", "--gas-report", "--fuzz-seed", "0x10"]);
         assert!(args.fuzz_seed.is_some());
+    }
+
+    #[test]
+    fn extract_chain() {
+        let test = |arg: &str, expected: Chain| {
+            let args = TestArgs::parse_from(["foundry-cli", arg]);
+            assert_eq!(args.evm_opts.env.chain, Some(expected));
+            let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
+            assert_eq!(config.chain, Some(expected));
+            assert_eq!(evm_opts.env.chain_id, Some(expected.id()));
+        };
+        test("--chain-id=1", Chain::mainnet());
+        test("--chain-id=42", Chain::from_id(42));
     }
 }

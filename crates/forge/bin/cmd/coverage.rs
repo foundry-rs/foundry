@@ -1,20 +1,14 @@
 use super::{install, test::FilterArgs};
 use alloy_primitives::{Address, Bytes, U256};
-use clap::{Parser, ValueEnum};
-use ethers::{
-    prelude::{
-        artifacts::{Ast, CompactBytecode, CompactDeployedBytecode},
-        Artifact, Project, ProjectCompileOutput,
-    },
-    solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap},
-};
+use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, Result};
 use forge::{
     coverage::{
         analysis::SourceAnalyzer, anchors::find_anchors, ContractId, CoverageReport,
         CoverageReporter, DebugReporter, ItemAnchor, LcovReporter, SummaryReporter,
     },
-    executor::{inspector::CheatsConfig, opts::EvmOpts},
+    inspectors::CheatsConfig,
+    opts::EvmOpts,
     result::SuiteResult,
     revm::primitives::SpecId,
     utils::{build_ic_pc_map, ICPCMap},
@@ -26,11 +20,14 @@ use foundry_cli::{
     utils::{LoadConfig, STATIC_FUZZ_SEED},
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
+use foundry_compilers::{
+    artifacts::{contract::CompactContractBytecode, Ast, CompactBytecode, CompactDeployedBytecode},
+    sourcemap::SourceMap,
+    Artifact, Project, ProjectCompileOutput,
+};
 use foundry_config::{Config, SolcReq};
-use foundry_utils::types::ToEthers;
 use semver::Version;
-use std::{collections::HashMap, sync::mpsc::channel};
-use tracing::trace;
+use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel};
 use yansi::Paint;
 
 /// A map, keyed by contract ID, to a tuple of the deployment source map and the runtime source map.
@@ -55,6 +52,17 @@ pub struct CoverageArgs {
     #[clap(long)]
     ir_minimum: bool,
 
+    /// The path to output the report.
+    ///
+    /// If not specified, the report will be stored in the root of the project.
+    #[clap(
+        long,
+        short,
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH"
+    )]
+    report_file: Option<PathBuf>,
+
     #[clap(flatten)]
     filter: FilterArgs,
 
@@ -78,7 +86,7 @@ impl CoverageArgs {
         }
 
         // Set fuzz seed so coverage reports are deterministic
-        config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED).to_ethers());
+        config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
         let (project, output) = self.build(&config)?;
         p_println!(!self.opts.silent => "Analysing contracts...");
@@ -97,7 +105,7 @@ impl CoverageArgs {
             if self.ir_minimum {
                 // TODO: How to detect solc version if the user does not specify a solc version in
                 // config  case1: specify local installed solc ?
-                //  case2: mutliple solc versions used and  auto_detect_solc == true
+                //  case2: multiple solc versions used and  auto_detect_solc == true
                 if let Some(SolcReq::Version(version)) = &config.solc {
                     if *version < Version::new(0, 8, 13) {
                         return Err(eyre::eyre!(
@@ -141,7 +149,7 @@ impl CoverageArgs {
     }
 
     /// Builds the coverage report.
-    #[tracing::instrument(name = "prepare coverage", skip_all)]
+    #[instrument(name = "prepare coverage", skip_all)]
     fn prepare(&self, config: &Config, output: ProjectCompileOutput) -> Result<CoverageReport> {
         let project_paths = config.project_paths();
 
@@ -292,7 +300,7 @@ impl CoverageArgs {
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
+            .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone()))
             .with_test_options(TestOptions { fuzz: config.fuzz, ..Default::default() })
             .set_coverage(true)
             .build(root.clone(), output, env, evm_opts)?;
@@ -342,9 +350,14 @@ impl CoverageArgs {
         for report_kind in self.report {
             match report_kind {
                 CoverageReportKind::Summary => SummaryReporter::default().report(&report),
-                // TODO: Sensible place to put the LCOV file
                 CoverageReportKind::Lcov => {
-                    LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?).report(&report)
+                    if let Some(report_file) = self.report_file {
+                        return LcovReporter::new(&mut fs::create_file(root.join(report_file))?)
+                            .report(&report)
+                    } else {
+                        return LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?)
+                            .report(&report)
+                    }
                 }
                 CoverageReportKind::Debug => DebugReporter.report(&report),
             }?;
@@ -373,12 +386,12 @@ fn dummy_link_bytecode(mut obj: CompactBytecode) -> Option<Bytes> {
     let link_references = obj.link_references.clone();
     for (file, libraries) in link_references {
         for library in libraries.keys() {
-            obj.link(&file, library, Address::ZERO.to_ethers());
+            obj.link(&file, library, Address::ZERO);
         }
     }
 
     obj.object.resolve();
-    obj.object.into_bytes().map(|o| o.0.into())
+    obj.object.into_bytes()
 }
 
 /// Helper function that will link references in unlinked bytecode to the 0 address.

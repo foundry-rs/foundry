@@ -1,11 +1,9 @@
-use ethers::{
-    abi::token::{LenientTokenizer, Tokenizer},
-    prelude::TransactionReceipt,
-    providers::Middleware,
-    types::U256,
-    utils::{format_units, to_checksum},
-};
-use eyre::Result;
+use alloy_json_abi::JsonAbi;
+use alloy_primitives::U256;
+use ethers_core::types::TransactionReceipt;
+use ethers_providers::Middleware;
+use eyre::{ContextCompat, Result};
+use foundry_common::{types::ToAlloy, units::format_units};
 use foundry_config::{Chain, Config};
 use std::{
     ffi::OsStr,
@@ -13,7 +11,6 @@ use std::{
     ops::Mul,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
-    str::FromStr,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tracing_error::ErrorLayer;
@@ -78,16 +75,10 @@ pub fn subscriber() {
         .init()
 }
 
-/// parse a hex str or decimal str as U256
-pub fn parse_u256(s: &str) -> Result<U256> {
-    Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })
-}
-
-/// parse a hex str or decimal str as U256
-// TODO: rm after alloy transition
-pub fn alloy_parse_u256(s: &str) -> Result<alloy_primitives::U256> {
-    use foundry_utils::types::ToAlloy;
-    Ok(parse_u256(s)?.to_alloy())
+pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
+    let s = abi.to_sol(name);
+    let s = forge_fmt::format(&s)?;
+    Ok(s)
 }
 
 /// Returns a [RetryProvider](foundry_common::RetryProvider) instantiated using [Config]'s RPC URL
@@ -104,8 +95,11 @@ pub fn get_provider(config: &Config) -> Result<foundry_common::RetryProvider> {
 /// Defaults to `http://localhost:8545` and `Mainnet`.
 pub fn get_provider_builder(config: &Config) -> Result<foundry_common::ProviderBuilder> {
     let url = config.get_rpc_url_or_localhost_http()?;
-    let chain = config.chain_id.unwrap_or_default();
-    let mut builder = foundry_common::ProviderBuilder::new(url.as_ref()).chain(chain);
+    let mut builder = foundry_common::ProviderBuilder::new(url.as_ref());
+
+    if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
+        builder = builder.chain(chain);
+    }
 
     let jwt = config.get_rpc_jwt_secret()?;
     if let Some(jwt) = jwt {
@@ -122,7 +116,7 @@ where
 {
     match chain {
         Some(chain) => Ok(chain),
-        None => Ok(Chain::Id(provider.get_chainid().await?.as_u64())),
+        None => Ok(Chain::from_id(provider.get_chainid().await?.as_u64())),
     }
 }
 
@@ -134,16 +128,13 @@ where
 /// it is interpreted as wei.
 pub fn parse_ether_value(value: &str) -> Result<U256> {
     Ok(if value.starts_with("0x") {
-        U256::from_str(value)?
+        U256::from_str_radix(value, 16)?
     } else {
-        U256::from(LenientTokenizer::tokenize_uint(value)?)
+        alloy_dyn_abi::DynSolType::coerce_str(&alloy_dyn_abi::DynSolType::Uint(256), value)?
+            .as_uint()
+            .wrap_err("Could not parse ether value from string")?
+            .0
     })
-}
-
-// TODO: rm after alloy transition
-pub fn alloy_parse_ether_value(value: &str) -> Result<alloy_primitives::U256> {
-    use foundry_utils::types::ToAlloy;
-    Ok(parse_ether_value(value)?.to_alloy())
 }
 
 /// Parses a `Duration` from a &str
@@ -194,7 +185,7 @@ macro_rules! p_println {
 
 /// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
 ///
-/// We could use `tracing::warn!` here, but that would imply that the dotenv file can't configure
+/// We could use `warn!` here, but that would imply that the dotenv file can't configure
 /// the logging behavior of Foundry.
 ///
 /// Similarly, we could just use `eprintln!`, but colors are off limits otherwise dotenv is implied
@@ -241,7 +232,7 @@ pub fn print_receipt(chain: Chain, receipt: &TransactionReceipt) {
         },
         tx_hash = receipt.transaction_hash,
         caddr = if let Some(addr) = &receipt.contract_address {
-            format!("\nContract Address: {}", to_checksum(addr, None))
+            format!("\nContract Address: {}", addr.to_alloy().to_checksum(None))
         } else {
             String::new()
         },
@@ -249,8 +240,9 @@ pub fn print_receipt(chain: Chain, receipt: &TransactionReceipt) {
         gas = if gas_price.is_zero() {
             format!("Gas Used: {gas_used}")
         } else {
-            let paid = format_units(gas_used.mul(gas_price), 18).unwrap_or_else(|_| "N/A".into());
-            let gas_price = format_units(gas_price, 9).unwrap_or_else(|_| "N/A".into());
+            let paid = format_units(gas_used.mul(gas_price).to_alloy(), 18)
+                .unwrap_or_else(|_| "N/A".into());
+            let gas_price = format_units(gas_price.to_alloy(), 9).unwrap_or_else(|_| "N/A".into());
             format!(
                 "Paid: {} ETH ({gas_used} gas * {} gwei)",
                 paid.trim_end_matches('0'),
@@ -273,21 +265,26 @@ pub trait CommandUtils {
 impl CommandUtils for Command {
     #[track_caller]
     fn exec(&mut self) -> Result<Output> {
-        tracing::trace!(command=?self, "executing");
+        trace!(command=?self, "executing");
 
         let output = self.output()?;
 
-        tracing::trace!(code=?output.status.code(), ?output);
+        trace!(code=?output.status.code(), ?output);
 
         if output.status.success() {
             Ok(output)
         } else {
-            let mut stderr = String::from_utf8_lossy(&output.stderr);
-            let mut msg = stderr.trim();
-            if msg.is_empty() {
-                stderr = String::from_utf8_lossy(&output.stdout);
-                msg = stderr.trim();
-            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stdout = stdout.trim();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = stderr.trim();
+            let msg = if stdout.is_empty() {
+                stderr.to_string()
+            } else if stderr.is_empty() {
+                stdout.to_string()
+            } else {
+                format!("stdout:\n{stdout}\n\nstderr:\n{stderr}")
+            };
 
             let mut name = self.get_program().to_string_lossy();
             if let Some(arg) = self.get_args().next() {
@@ -304,8 +301,9 @@ impl CommandUtils for Command {
                 None => format!("{name} terminated by a signal"),
             };
             if !msg.is_empty() {
-                err.push_str(": ");
-                err.push_str(msg);
+                err.push(':');
+                err.push(if msg.lines().count() == 0 { ' ' } else { '\n' });
+                err.push_str(&msg);
             }
             Err(eyre::eyre!(err))
         }
@@ -381,11 +379,12 @@ impl<'a> Git<'a> {
     }
 
     pub fn fetch(
+        self,
         shallow: bool,
         remote: impl AsRef<OsStr>,
         branch: Option<impl AsRef<OsStr>>,
     ) -> Result<()> {
-        Self::cmd_no_root()
+        self.cmd()
             .stderr(Stdio::inherit())
             .arg("fetch")
             .args(shallow.then_some("--no-tags"))
@@ -563,6 +562,7 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
         force: bool,
         remote: bool,
         no_fetch: bool,
+        recursive: bool,
         paths: I,
     ) -> Result<()>
     where
@@ -571,12 +571,23 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
     {
         self.cmd()
             .stderr(self.stderr())
-            .args(["submodule", "update", "--progress", "--init", "--recursive"])
+            .args(["submodule", "update", "--progress", "--init"])
             .args(self.shallow.then_some("--depth=1"))
             .args(force.then_some("--force"))
             .args(remote.then_some("--remote"))
             .args(no_fetch.then_some("--no-fetch"))
+            .args(recursive.then_some("--recursive"))
             .args(paths)
+            .exec()
+            .map(drop)
+    }
+
+    pub fn submodule_foreach(self, recursive: bool, cmd: impl AsRef<OsStr>) -> Result<()> {
+        self.cmd()
+            .stderr(self.stderr())
+            .args(["submodule", "foreach"])
+            .args(recursive.then_some("--recursive"))
+            .arg(cmd)
             .exec()
             .map(drop)
     }

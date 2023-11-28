@@ -1,9 +1,12 @@
-//! Commonly used traits
+//! Commonly used traits.
 
-use ethers_core::abi::Function;
+use alloy_json_abi::Function;
+use alloy_primitives::Bytes;
+use alloy_sol_types::SolError;
+use auto_impl::auto_impl;
 
 /// Extension trait for matching tests
-#[auto_impl::auto_impl(&)]
+#[auto_impl(&)]
 pub trait TestFilter: Send + Sync {
     /// Returns whether the test should be included
     fn matches_test(&self, test_name: impl AsRef<str>) -> bool;
@@ -14,7 +17,7 @@ pub trait TestFilter: Send + Sync {
 }
 
 /// Extension trait for `Function`
-#[auto_impl::auto_impl(&)]
+#[auto_impl(&)]
 pub trait TestFunctionExt {
     /// Whether this function should be executed as invariant test
     fn is_invariant_test(&self) -> bool;
@@ -51,7 +54,29 @@ impl TestFunctionExt for Function {
     }
 }
 
-impl<'a> TestFunctionExt for &'a str {
+impl TestFunctionExt for String {
+    fn is_invariant_test(&self) -> bool {
+        self.as_str().is_invariant_test()
+    }
+
+    fn is_fuzz_test(&self) -> bool {
+        self.as_str().is_fuzz_test()
+    }
+
+    fn is_test(&self) -> bool {
+        self.as_str().is_test()
+    }
+
+    fn is_test_fail(&self) -> bool {
+        self.as_str().is_test_fail()
+    }
+
+    fn is_setup(&self) -> bool {
+        self.as_str().is_setup()
+    }
+}
+
+impl TestFunctionExt for str {
     fn is_invariant_test(&self) -> bool {
         self.starts_with("invariant") || self.starts_with("statefulFuzz")
     }
@@ -73,24 +98,14 @@ impl<'a> TestFunctionExt for &'a str {
     }
 }
 
-impl TestFunctionExt for String {
-    fn is_invariant_test(&self) -> bool {
-        self.as_str().is_invariant_test()
-    }
+/// An extension trait for `std::error::Error` for ABI encoding.
+pub trait ErrorExt: std::error::Error {
+    /// ABI-encodes the error using `Revert(string)`.
+    fn abi_encode_revert(&self) -> Bytes;
+}
 
-    fn is_fuzz_test(&self) -> bool {
-        self.as_str().is_fuzz_test()
-    }
-
-    fn is_test(&self) -> bool {
-        self.as_str().is_test()
-    }
-
-    fn is_test_fail(&self) -> bool {
-        self.as_str().is_test_fail()
-    }
-
-    fn is_setup(&self) -> bool {
-        self.as_str().is_setup()
+impl<T: std::error::Error> ErrorExt for T {
+    fn abi_encode_revert(&self) -> Bytes {
+        alloy_sol_types::Revert::from(self.to_string()).abi_encode().into()
     }
 }

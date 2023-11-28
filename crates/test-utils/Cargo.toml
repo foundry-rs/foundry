@@ -12,21 +12,24 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-foundry-config.workspace = true
 foundry-common.workspace = true
-foundry-utils.workspace = true
+foundry-compilers = { workspace = true, features = ["project-util"] }
+foundry-config.workspace = true
 
-ethers.workspace = true
-ethers-solc = { workspace = true, features = ["project-util"] }
-alloy-primitives = { workspace = true, features = ["std"]}
+alloy-primitives.workspace = true
 
-eyre = "0.6"
+ethers-core.workspace = true
+ethers-providers.workspace = true
+
+eyre.workspace = true
+fd-lock = "4.0.0"
 once_cell = "1"
 parking_lot = "0.12"
-pretty_assertions = "1"
+pretty_assertions.workspace = true
 regex = "1"
-serde_json = "1"
-tempfile = "3"
+serde_json.workspace = true
+tracing = "0.1"
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 walkdir = "2"
 
 [features]

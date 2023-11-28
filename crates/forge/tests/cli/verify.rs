@@ -1,53 +1,47 @@
-//! Contains various tests for checking forge commands related to verifying contracts on etherscan
-//! and sourcify
+//! Contains various tests for checking forge commands related to verifying contracts on Etherscan
+//! and Sourcify.
 
 use crate::utils::{self, EnvExternalities};
+use foundry_common::retry::Retry;
 use foundry_test_utils::{
     forgetest,
     util::{TestCommand, TestProject},
 };
-use foundry_utils::Retry;
+use std::time::Duration;
 
 /// Adds a `Unique` contract to the source directory of the project that can be imported as
 /// `import {Unique} from "./unique.sol";`
 fn add_unique(prj: &TestProject) {
     let timestamp = utils::millis_since_epoch();
-    prj.inner()
-        .add_source(
-            "unique",
-            format!(
-                r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity >=0.4.0;
-
+    prj.add_source(
+        "unique",
+        &format!(
+            r#"
 contract Unique {{
     uint public _timestamp = {timestamp};
 }}
 "#
-            ),
-        )
-        .unwrap();
+        ),
+    )
+    .unwrap();
 }
 
 fn add_verify_target(prj: &TestProject) {
-    prj.inner()
-        .add_source(
-            "Verify.sol",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity =0.8.10;
+    prj.add_source(
+        "Verify.sol",
+        r#"
 import {Unique} from "./unique.sol";
 contract Verify is Unique {
 function doStuff() external {}
 }
 "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 }
 
 fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Result<()> {
     // give etherscan some time to verify the contract
-    let retry = Retry::new(retries, Some(30));
+    let retry = Retry::new(retries, Some(Duration::from_secs(30)));
     retry.run(|| -> eyre::Result<()> {
         let output = cmd.unchecked_output();
         let out = String::from_utf8_lossy(&output.stdout);
@@ -89,7 +83,7 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
         // `verify-contract`
         let guid = {
             // give etherscan some time to detect the transaction
-            let retry = Retry::new(5, Some(60));
+            let retry = Retry::new(5, Some(Duration::from_secs(60)));
             retry
                 .run(|| -> eyre::Result<String> {
                     let output = cmd.unchecked_output();
@@ -121,11 +115,11 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
 }
 
 // tests `create && contract-verify && verify-check` on Fantom testnet if correct env vars are set
-forgetest!(can_verify_random_contract_fantom_testnet, |prj: TestProject, cmd: TestCommand| {
+forgetest!(can_verify_random_contract_fantom_testnet, |prj, cmd| {
     verify_on_chain(EnvExternalities::ftm_testnet(), prj, cmd);
 });
 
 // tests `create && contract-verify && verify-check` on Optimism kovan if correct env vars are set
-forgetest!(can_verify_random_contract_optimism_kovan, |prj: TestProject, cmd: TestCommand| {
+forgetest!(can_verify_random_contract_optimism_kovan, |prj, cmd| {
     verify_on_chain(EnvExternalities::optimism_kovan(), prj, cmd);
 });

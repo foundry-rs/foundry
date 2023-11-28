@@ -15,8 +15,8 @@ use ethers::{
     prelude::{BlockId, BlockNumber, DefaultFrame, Trace, H256, H256 as TxHash, U64},
     types::{ActionType, Bytes, GethDebugTracingOptions, TransactionReceipt, U256},
 };
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::revm::{interpreter::InstructionResult, primitives::Env};
-use foundry_utils::types::ToEthers;
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, VecDeque},
@@ -272,6 +272,23 @@ impl BlockchainStorage {
             total_difficulty: Default::default(),
         }
     }
+
+    /// Removes all stored transactions for the given block number
+    pub fn remove_block_transactions_by_number(&mut self, num: u64) {
+        if let Some(hash) = self.hashes.get(&(num.into())).copied() {
+            self.remove_block_transactions(hash);
+        }
+    }
+
+    /// Removes all stored transactions for the given block hash
+    pub fn remove_block_transactions(&mut self, block_hash: H256) {
+        if let Some(block) = self.blocks.get_mut(&block_hash) {
+            for tx in block.transactions.iter() {
+                self.transactions.remove(&tx.hash());
+            }
+            block.transactions.clear();
+        }
+    }
 }
 
 // === impl BlockchainStorage ===
@@ -406,7 +423,7 @@ impl MinedTransaction {
     }
 
     pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> DefaultFrame {
-        self.info.traces.geth_trace(self.receipt.gas_used(), opts)
+        self.info.traces.geth_trace(self.receipt.gas_used().to_alloy(), opts)
     }
 }
 
@@ -424,14 +441,14 @@ mod tests {
     use super::*;
     use crate::eth::backend::db::Db;
     use ethers::{abi::ethereum_types::BigEndianHash, types::Address};
+    use foundry_common::types::ToAlloy;
     use foundry_evm::{
-        executor::backend::MemDb,
+        backend::MemDb,
         revm::{
             db::DatabaseRef,
             primitives::{AccountInfo, U256 as rU256},
         },
     };
-    use foundry_utils::types::ToAlloy;
 
     #[test]
     fn test_interval_update() {
@@ -461,7 +478,7 @@ mod tests {
 
         let loaded = storage.get(&one).unwrap();
 
-        let acc = loaded.basic(addr.to_alloy()).unwrap().unwrap();
+        let acc = loaded.basic_ref(addr.to_alloy()).unwrap().unwrap();
         assert_eq!(acc.balance, rU256::from(1337u64));
     }
 
@@ -491,7 +508,7 @@ mod tests {
             let hash = H256::from_uint(&U256::from(idx));
             let addr = Address::from(hash);
             let loaded = storage.get(&hash).unwrap();
-            let acc = loaded.basic(addr.to_alloy()).unwrap().unwrap();
+            let acc = loaded.basic_ref(addr.to_alloy()).unwrap().unwrap();
             let balance = (idx * 2) as u64;
             assert_eq!(acc.balance, rU256::from(balance));
         }

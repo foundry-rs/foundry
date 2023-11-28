@@ -1,21 +1,17 @@
 use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
 use crate::cmd::retry::RETRY_CHECK_ON_VERIFY;
-use ethers::{
-    abi::Function,
-    etherscan::{
-        utils::lookup_compiler_version,
-        verify::{CodeFormat, VerifyContract},
-        Client,
-    },
-    prelude::errors::EtherscanError,
-    solc::{artifacts::CompactContract, cache::CacheEntry, Project, Solc},
-    utils::to_checksum,
-};
+use alloy_json_abi::Function;
 use eyre::{eyre, Context, Result};
+use foundry_block_explorers::{
+    errors::EtherscanError,
+    utils::lookup_compiler_version,
+    verify::{CodeFormat, VerifyContract},
+    Client,
+};
 use foundry_cli::utils::{get_cached_entry_by_name, read_constructor_args_file, LoadConfig};
-use foundry_common::abi::encode_args;
+use foundry_common::{abi::encode_function_args, retry::Retry};
+use foundry_compilers::{artifacts::CompactContract, cache::CacheEntry, Project, Solc};
 use foundry_config::{Chain, Config, SolcReq};
-use foundry_utils::{types::ToEthers, Retry};
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -24,7 +20,6 @@ use std::{
     fmt::Debug,
     path::{Path, PathBuf},
 };
-use tracing::{error, trace, warn};
 
 mod flatten;
 mod standard_json;
@@ -66,29 +61,32 @@ impl VerificationProvider for EtherscanVerificationProvider {
             println!(
                 "\nContract [{}] {:?} is already verified. Skipping verification.",
                 verify_args.contract_name,
-                to_checksum(&verify_args.address, None)
+                verify_args.address.to_checksum(None)
             );
 
             return Ok(())
         }
 
-        trace!(target : "forge::verify", ?verify_args,  "submitting verification request");
+        trace!(target: "forge::verify", ?verify_args, "submitting verification request");
 
         let retry: Retry = args.retry.into();
-        let resp = retry.run_async(|| {
-            async {
-                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, to_checksum(&verify_args.address, None));
+        let resp = retry
+            .run_async(|| async {
+                println!(
+                    "\nSubmitting verification for [{}] {}.",
+                    verify_args.contract_name, verify_args.address
+                );
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await
                     .wrap_err_with(|| {
                         // valid json
                         let args = serde_json::to_string(&verify_args).unwrap();
-                        error!(target : "forge::verify",  ?args, "Failed to submit verification");
+                        error!(target: "forge::verify", ?args, "Failed to submit verification");
                         format!("Failed to submit contract verification, payload:\n{args}")
                     })?;
 
-                trace!(target : "forge::verify",  ?resp, "Received verification response");
+                trace!(target: "forge::verify", ?resp, "Received verification response");
 
                 if resp.status == "0" {
                     if resp.result == "Contract source code already verified" {
@@ -102,16 +100,15 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
                     warn!("Failed verify submission: {:?}", resp);
                     eprintln!(
-                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
-                        resp.message, resp.result
-                    );
+                    "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
+                    resp.message, resp.result
+                );
                     std::process::exit(1);
                 }
 
                 Ok(Some(resp))
-            }
-                .boxed()
-        }).await?;
+            })
+            .await?;
 
         if let Some(resp) = resp {
             println!(
@@ -119,7 +116,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
         {}",
                 resp.message,
                 resp.result,
-                etherscan.address_url(args.address.to_ethers())
+                etherscan.address_url(args.address)
             );
 
             if args.watch {
@@ -157,7 +154,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         .await
                         .wrap_err("Failed to request verification status")?;
 
-                    trace!(target : "forge::verify",  ?resp, "Received verification response");
+                    trace!(target: "forge::verify", ?resp, "Received verification response");
 
                     eprintln!(
                         "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
@@ -264,12 +261,16 @@ impl EtherscanVerificationProvider {
     ) -> Result<Client> {
         let etherscan_config = config.get_etherscan_config_with_chain(Some(chain))?;
 
-        let api_url =
-            verifier_url.or_else(|| etherscan_config.as_ref().map(|c| c.api_url.as_str()));
+        let etherscan_api_url = verifier_url
+            .or_else(|| etherscan_config.as_ref().map(|c| c.api_url.as_str()))
+            .map(str::to_owned)
+            .map(|url| if url.ends_with('?') { url } else { url + "?" });
+
+        let api_url = etherscan_api_url.as_deref();
         let base_url = etherscan_config
             .as_ref()
             .and_then(|c| c.browser_url.as_deref())
-            .or_else(|| chain.etherscan_urls().map(|urls| urls.1));
+            .or_else(|| chain.etherscan_urls().map(|(_, url)| url));
 
         let etherscan_key =
             etherscan_key.or_else(|| etherscan_config.as_ref().map(|c| c.key.as_str()));
@@ -279,7 +280,7 @@ impl EtherscanVerificationProvider {
         builder = if let Some(api_url) = api_url {
             builder.with_api_url(api_url)?.with_url(base_url.unwrap_or(api_url))?
         } else {
-            builder.chain(chain.to_owned().try_into()?)?
+            builder.chain(chain)?
         };
 
         builder
@@ -312,7 +313,7 @@ impl EtherscanVerificationProvider {
         let compiler_version = format!("v{}", ensure_solc_build_metadata(compiler_version).await?);
         let constructor_args = self.constructor_args(args, &project)?;
         let mut verify_args =
-            VerifyContract::new(args.address.to_ethers(), contract_name, source, compiler_version)
+            VerifyContract::new(args.address, contract_name, source, compiler_version)
                 .constructor_arguments(constructor_args)
                 .code_format(code_format);
 
@@ -407,21 +408,21 @@ impl EtherscanVerificationProvider {
             let (_, _, contract) = self.cache_entry(project, &args.contract.name).wrap_err(
                 "Cache must be enabled in order to use the `--constructor-args-path` option",
             )?;
-            let abi = contract.abi.as_ref().ok_or(eyre!("Can't find ABI in cached artifact."))?;
+            let abi =
+                contract.abi.as_ref().ok_or_else(|| eyre!("Can't find ABI in cached artifact."))?;
             let constructor = abi
                 .constructor()
-                .ok_or(eyre!("Can't retrieve constructor info from artifact ABI."))?;
+                .ok_or_else(|| eyre!("Can't retrieve constructor info from artifact ABI."))?;
             #[allow(deprecated)]
             let func = Function {
                 name: "constructor".to_string(),
                 inputs: constructor.inputs.clone(),
                 outputs: vec![],
-                constant: None,
-                state_mutability: Default::default(),
+                state_mutability: alloy_json_abi::StateMutability::NonPayable,
             };
-            let encoded_args = encode_args(
+            let encoded_args = encode_function_args(
                 &func,
-                &read_constructor_args_file(constructor_args_path.to_path_buf())?,
+                read_constructor_args_file(constructor_args_path.to_path_buf())?,
             )?;
             let encoded_args = hex::encode(encoded_args);
             return Ok(Some(encoded_args[8..].into()))
@@ -455,7 +456,7 @@ mod tests {
     use clap::Parser;
     use foundry_cli::utils::LoadConfig;
     use foundry_common::fs;
-    use foundry_test_utils::tempfile::tempdir;
+    use tempfile::tempdir;
 
     #[test]
     fn can_extract_etherscan_verify_config() {
@@ -493,7 +494,7 @@ mod tests {
                 &config,
             )
             .unwrap();
-        assert_eq!(client.etherscan_api_url().as_str(), "https://api-testnet.polygonscan.com/");
+        assert_eq!(client.etherscan_api_url().as_str(), "https://api-testnet.polygonscan.com/?/");
 
         assert!(format!("{client:?}").contains("dummykey"));
 
@@ -520,7 +521,7 @@ mod tests {
                 &config,
             )
             .unwrap();
-        assert_eq!(client.etherscan_api_url().as_str(), "https://verifier-url.com/");
+        assert_eq!(client.etherscan_api_url().as_str(), "https://verifier-url.com/?/");
         assert!(format!("{client:?}").contains("dummykey"));
     }
 

@@ -1,8 +1,6 @@
 //! Test setup
 
-use crate::test_helpers::{
-    filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
-};
+use crate::test_helpers::{COMPILED, EVM_OPTS, PROJECT};
 use forge::{
     result::{SuiteResult, TestStatus},
     MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
@@ -12,13 +10,11 @@ use foundry_config::{
     InvariantConfig, RpcEndpoint, RpcEndpoints,
 };
 use foundry_evm::{
-    decode::decode_console_logs, executor::inspector::CheatsConfig, revm::primitives::SpecId,
+    decode::decode_console_logs, inspectors::CheatsConfig, revm::primitives::SpecId,
 };
-use foundry_utils::types::ToAlloy;
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use foundry_test_utils::{init_tracing, Filter};
+use itertools::Itertools;
+use std::{collections::BTreeMap, path::Path};
 
 /// How to execute a a test run
 pub struct TestConfig {
@@ -28,19 +24,18 @@ pub struct TestConfig {
     pub opts: TestOptions,
 }
 
-// === impl TestConfig ===
-
 impl TestConfig {
     pub fn new(runner: MultiContractRunner) -> Self {
         Self::with_filter(runner, Filter::matches_all())
     }
 
-    pub fn with_filter(runner: MultiContractRunner, filter: Filter) -> Self {
-        Self { runner, should_fail: false, filter, opts: test_opts() }
-    }
-
     pub async fn filter(filter: Filter) -> Self {
         Self::with_filter(runner().await, filter)
+    }
+
+    pub fn with_filter(runner: MultiContractRunner, filter: Filter) -> Self {
+        init_tracing();
+        Self { runner, should_fail: false, filter, opts: test_opts() }
     }
 
     pub fn evm_spec(mut self, spec: SpecId) -> Self {
@@ -85,11 +80,12 @@ impl TestConfig {
                     let outcome = if self.should_fail { "fail" } else { "pass" };
 
                     eyre::bail!(
-                        "Test {} did not {} as expected.\nReason: {:?}\nLogs:\n{}",
+                        "Test {} did not {} as expected.\nReason: {:?}\nLogs:\n{}\n\nTraces:\n{}",
                         test_name,
                         outcome,
                         result.reason,
-                        logs.join("\n")
+                        logs.join("\n"),
+                        result.traces.iter().map(|(_, a)| a).format("\n"),
                     )
                 }
             }
@@ -132,18 +128,19 @@ pub fn test_opts() -> TestOptions {
     }
 }
 
-pub fn manifest_root() -> PathBuf {
+pub fn manifest_root() -> &'static Path {
     let mut root = Path::new(env!("CARGO_MANIFEST_DIR"));
     // need to check here where we're executing the test from, if in `forge` we need to also allow
     // `testdata`
     if root.ends_with("forge") {
         root = root.parent().unwrap();
     }
-    root.to_path_buf()
+    root
 }
 
 /// Builds a base runner
 pub fn base_runner() -> MultiContractRunnerBuilder {
+    init_tracing();
     MultiContractRunnerBuilder::default().sender(EVM_OPTS.sender)
 }
 
@@ -157,17 +154,16 @@ pub async fn runner() -> MultiContractRunner {
 /// Builds a non-tracing runner
 pub async fn runner_with_config(mut config: Config) -> MultiContractRunner {
     config.rpc_endpoints = rpc_endpoints();
-    config.allow_paths.push(manifest_root());
+    config.allow_paths.push(manifest_root().to_path_buf());
 
+    let root = &PROJECT.paths.root;
+    let opts = &*EVM_OPTS;
+    let env = opts.evm_env().await.expect("could not instantiate fork environment");
+    let output = COMPILED.clone();
     base_runner()
-        .with_cheats_config(CheatsConfig::new(&config, &EVM_OPTS))
-        .sender(config.sender.to_alloy())
-        .build(
-            &PROJECT.paths.root,
-            (*COMPILED).clone(),
-            EVM_OPTS.evm_env().await.expect("Could not instantiate fork environment"),
-            EVM_OPTS.clone(),
-        )
+        .with_cheats_config(CheatsConfig::new(&config, opts.clone()))
+        .sender(config.sender)
+        .build(root, output, env, opts.clone())
         .unwrap()
 }
 
@@ -197,7 +193,7 @@ pub async fn forked_runner(rpc: &str) -> MultiContractRunner {
 
     base_runner()
         .with_fork(fork)
-        .build(&LIBS_PROJECT.paths.root, (*COMPILED_WITH_LIBS).clone(), env, opts)
+        .build(&PROJECT.paths.root, (*COMPILED).clone(), env, opts)
         .unwrap()
 }
 

@@ -10,7 +10,6 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use tracing::{trace, warn};
 
 /// A unique identifying marker for a transaction
 pub type TxMarker = Vec<u8>;
@@ -99,7 +98,7 @@ impl PoolTransaction {
 }
 
 impl fmt::Debug for PoolTransaction {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(fmt, "Transaction {{ ")?;
         write!(fmt, "hash: {:?}, ", &self.pending_transaction.hash())?;
         write!(fmt, "requires: [{}], ", hex_fmt_many(self.requires.iter()))?;
@@ -283,7 +282,7 @@ impl PendingPoolTransaction {
 }
 
 impl fmt::Debug for PendingPoolTransaction {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(fmt, "PendingTransaction {{ ")?;
         write!(fmt, "added_at: {:?}, ", self.added_at)?;
         write!(fmt, "tx: {:?}, ", self.transaction)?;

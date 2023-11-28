@@ -1,8 +1,6 @@
-use regex::Regex;
-
-use crate::{InlineConfigError, NatSpec};
-
 use super::{remove_whitespaces, INLINE_CONFIG_PREFIX};
+use crate::{InlineConfigError, NatSpec};
+use regex::Regex;
 
 /// Errors returned by the [`InlineConfigParser`] trait.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -82,25 +80,21 @@ where
         Ok(())
     }
 
-    /// Given a list of `config_lines, returns all available pairs (key, value)
-    /// matching the current config key
+    /// Given a list of config lines, returns all available pairs (key, value) matching the current
+    /// config key.
     ///
-    /// i.e. Given the `invariant` config key and a vector of config lines
-    /// ```rust
-    /// let _config_lines = vec![
-    ///     "forge-config: default.invariant.runs = 500",
-    ///     "forge-config: default.invariant.depth = 500",
-    ///     "forge-config: ci.invariant.depth = 500",
-    ///     "forge-config: ci.fuzz.runs = 10"
-    /// ];
-    /// ```
-    /// would return the whole set of `invariant` configs.
-    /// ```rust
-    ///  let _result = vec![
-    ///     ("runs", "500"),
-    ///     ("depth", "500"),
-    ///     ("depth", "500"),
-    ///  ];
+    /// # Examples
+    ///
+    /// ```ignore
+    /// assert_eq!(
+    ///     get_config_overrides(&[
+    ///         "forge-config: default.invariant.runs = 500",
+    ///         "forge-config: default.invariant.depth = 500",
+    ///         "forge-config: ci.invariant.depth = 500",
+    ///         "forge-config: ci.fuzz.runs = 10",
+    ///     ]),
+    ///     [("runs", "500"), ("depth", "500"), ("depth", "500")]
+    /// );
     /// ```
     fn get_config_overrides(config_lines: &[String]) -> Vec<(String, String)> {
         let mut result: Vec<(String, String)> = vec![];

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Unlicense
+// SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
@@ -63,6 +63,6 @@ contract TargetArtifactSelectors2 is DSTest {
         if (!parent.should_be_true()) {
             require(!Child(address(parent.child())).changed(), "should have not happened");
         }
-        require(parent.should_be_true() == true, "its false.");
+        require(parent.should_be_true() == true, "it's false");
     }
 }

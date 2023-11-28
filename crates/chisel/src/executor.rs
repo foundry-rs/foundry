@@ -9,13 +9,13 @@ use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_json_abi::EventParam;
 use alloy_primitives::{hex, Address, U256};
 use core::fmt::Debug;
-use ethers_solc::Artifact;
 use eyre::{Result, WrapErr};
+use foundry_common::types::ToEthers;
+use foundry_compilers::Artifact;
 use foundry_evm::{
-    decode::decode_console_logs,
-    executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
+    backend::Backend, decode::decode_console_logs, executors::ExecutorBuilder,
+    inspectors::CheatsConfig,
 };
-use foundry_utils::types::ToEthers;
 use solang_parser::pt::{self, CodeLocation};
 use std::str::FromStr;
 use yansi::Paint;
@@ -107,7 +107,7 @@ impl SessionSource {
                 let mut runner = self.prepare_runner(final_pc).await;
 
                 // Return [ChiselResult] or bubble up error
-                runner.run(bytecode.into_owned().0.into())
+                runner.run(bytecode.into_owned())
             } else {
                 // Return a default result if no statements are present.
                 Ok((Address::ZERO, ChiselResult::default()))
@@ -223,14 +223,13 @@ impl SessionSource {
         // the file compiled correctly, thus the last stack item must be the memory offset of
         // the `bytes memory inspectoor` value
         let mut offset = stack.data().last().unwrap().to_ethers().as_usize();
-        let mem = memory.data();
-        let mem_offset = &mem[offset..offset + 32];
+        let mem_offset = &memory[offset..offset + 32];
         let len = U256::try_from_be_slice(mem_offset).unwrap().to::<usize>();
         offset += 32;
-        let data = &mem[offset..offset + len];
+        let data = &memory[offset..offset + len];
         // `tokens` is guaranteed to have the same length as the provided types
         let token =
-            DynSolType::decode_single(&ty, data).wrap_err("Could not decode inspected values")?;
+            DynSolType::abi_decode(&ty, data).wrap_err("Could not decode inspected values")?;
         Ok((should_continue(contract_expr), Some(format_token(token))))
     }
 
@@ -292,7 +291,8 @@ impl SessionSource {
         let executor = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack.chisel_state(final_pc).trace(true).cheatcodes(
-                    CheatsConfig::new(&self.config.foundry_config, &self.config.evm_opts).into(),
+                    CheatsConfig::new(&self.config.foundry_config, self.config.evm_opts.clone())
+                        .into(),
                 )
             })
             .gas_limit(self.config.evm_opts.gas_limit())
@@ -319,13 +319,13 @@ impl SessionSource {
 fn format_token(token: DynSolValue) -> String {
     match token {
         DynSolValue::Address(a) => {
-            format!("Type: {}\n└ Data: {}", Paint::red("address"), Paint::cyan(format!("0x{a:x}")))
+            format!("Type: {}\n└ Data: {}", Paint::red("address"), Paint::cyan(a.to_string()))
         }
         DynSolValue::FixedBytes(b, _) => {
             format!(
                 "Type: {}\n└ Data: {}",
                 Paint::red(format!("bytes{}", b.len())),
-                Paint::cyan(format!("0x{}", hex::encode(b)))
+                Paint::cyan(hex::encode_prefixed(b))
             )
         }
         DynSolValue::Int(i, _) => {
@@ -348,8 +348,8 @@ fn format_token(token: DynSolValue) -> String {
             format!("Type: {}\n└ Value: {}", Paint::red("bool"), Paint::cyan(b))
         }
         DynSolValue::String(_) | DynSolValue::Bytes(_) => {
-            let hex = hex::encode(token.encode_single());
-            let s = token.as_str().map(|s| s.to_owned());
+            let hex = hex::encode(token.abi_encode());
+            let s = token.as_str();
             format!(
                 "Type: {}\n{}├ Hex (Memory):\n├─ Length ({}): {}\n├─ Contents ({}): {}\n├ Hex (Tuple Encoded):\n├─ Pointer ({}): {}\n├─ Length ({}): {}\n└─ Contents ({}): {}",
                 Paint::red(if s.is_some() { "string" } else { "dynamic bytes" }),
@@ -603,10 +603,9 @@ impl Type {
             // address
             pt::Expression::AddressLiteral(_, _) => Some(Self::Builtin(DynSolType::Address)),
             pt::Expression::HexNumberLiteral(_, s, _) => {
-                match s.parse() {
+                match s.parse::<Address>() {
                     Ok(addr) => {
-                        let checksummed = ethers::utils::to_checksum(&addr, None);
-                        if *s == checksummed {
+                        if *s == addr.to_checksum(None) {
                             Some(Self::Builtin(DynSolType::Address))
                         } else {
                             Some(Self::Builtin(DynSolType::Uint(256)))
@@ -1362,7 +1361,7 @@ impl<'a> Iterator for InstructionIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers_solc::{error::SolcError, Solc};
+    use foundry_compilers::{error::SolcError, Solc};
     use std::sync::Mutex;
 
     #[test]

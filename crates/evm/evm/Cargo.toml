@@ -1,0 +1,46 @@
+[package]
+name = "foundry-evm"
+description = "Main Foundry EVM backend abstractions"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+foundry-cheatcodes.workspace = true
+foundry-common.workspace = true
+foundry-compilers.workspace = true
+foundry-config.workspace = true
+foundry-evm-core.workspace = true
+foundry-evm-coverage.workspace = true
+foundry-evm-fuzz.workspace = true
+foundry-evm-traces.workspace = true
+
+alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
+alloy-json-abi.workspace = true
+alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-sol-types.workspace = true
+hashbrown = { version = "0.14", features = ["serde"] }
+revm = { workspace = true, default-features = false, features = [
+    "std",
+    "serde",
+    "memory_limit",
+    "optional_eip3607",
+    "optional_block_gas_limit",
+    "optional_no_base_fee",
+    "arbitrary",
+] }
+
+ethers-core.workspace = true
+ethers-signers.workspace = true
+
+eyre = "0.6"
+hex.workspace = true
+parking_lot = "0.12"
+proptest = "1"
+thiserror = "1"
+tracing = "0.1"

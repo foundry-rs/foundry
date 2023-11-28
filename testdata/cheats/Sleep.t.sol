@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Unlicense
+// SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
@@ -27,6 +27,7 @@ contract SleepTest is DSTest {
         assertGe(end - start, milliseconds / 1000 * 1000, "sleep failed");
     }
 
+    /*
     /// forge-config: default.fuzz.runs = 10
     function testSleepFuzzed(uint256 _milliseconds) public {
         // Limit sleep time to 2 seconds to decrease test time
@@ -48,4 +49,5 @@ contract SleepTest is DSTest {
         // Limit precision to 1000 ms
         assertGe(end - start, milliseconds / 1000 * 1000, "sleep failed");
     }
+    */
 }

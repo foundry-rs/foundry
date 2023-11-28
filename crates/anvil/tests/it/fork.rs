@@ -13,13 +13,17 @@ use ethers::{
         U256,
     },
 };
-use foundry_common::get_http_provider;
+use foundry_common::{
+    get_http_provider, rpc,
+    rpc::next_http_rpc_endpoint,
+    types::{ToAlloy, ToEthers},
+};
 use foundry_config::Config;
-use foundry_utils::{rpc, rpc::next_http_rpc_endpoint, types::ToAlloy};
 use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
 
 const BLOCK_NUMBER: u64 = 14_608_400u64;
+const DEAD_BALANCE_AT_BLOCK_NUMBER: u128 = 12_556_069_338_441_120_059_867u128;
 
 const BLOCK_TIMESTAMP: u64 = 1_650_274_250u64;
 
@@ -159,8 +163,8 @@ async fn test_fork_eth_get_nonce() {
     }
 
     let addr = Config::DEFAULT_SENDER;
-    let api_nonce = api.transaction_count(addr, None).await.unwrap();
-    let provider_nonce = provider.get_transaction_count(addr, None).await.unwrap();
+    let api_nonce = api.transaction_count(addr.to_ethers(), None).await.unwrap();
+    let provider_nonce = provider.get_transaction_count(addr.to_ethers(), None).await.unwrap();
     assert_eq!(api_nonce, provider_nonce);
 }
 
@@ -227,8 +231,13 @@ async fn test_fork_reset_setup() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
+    let dead_addr: Address = "000000000000000000000000000000000000dEaD".parse().unwrap();
+
     let block_number = provider.get_block_number().await.unwrap();
     assert_eq!(block_number, 0.into());
+
+    let local_balance = provider.get_balance(dead_addr, None).await.unwrap();
+    assert_eq!(local_balance, 0.into());
 
     api.anvil_reset(Some(Forking {
         json_rpc_url: Some(rpc::next_http_archive_rpc_endpoint()),
@@ -240,11 +249,8 @@ async fn test_fork_reset_setup() {
     let block_number = provider.get_block_number().await.unwrap();
     assert_eq!(block_number, BLOCK_NUMBER.into());
 
-    // TODO: This won't work because we don't replace the DB with a ForkedDatabase yet
-    // let addr: Address = "000000000000000000000000000000000000dEaD".parse().unwrap();
-
-    // let remote_balance = provider.get_balance(addr, None).await.unwrap();
-    // assert_eq!(remote_balance, 12556069338441120059867u128.into());
+    let remote_balance = provider.get_balance(dead_addr, None).await.unwrap();
+    assert_eq!(remote_balance, DEAD_BALANCE_AT_BLOCK_NUMBER.into());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -302,7 +308,15 @@ async fn test_separate_states() {
 
     let fork = api.get_fork().unwrap();
     let fork_db = fork.database.read().await;
-    let acc = fork_db.inner().db().accounts.read().get(&addr.to_alloy()).cloned().unwrap();
+    let acc = fork_db
+        .maybe_inner()
+        .expect("could not get fork db inner")
+        .db()
+        .accounts
+        .read()
+        .get(&addr.to_alloy())
+        .cloned()
+        .unwrap();
 
     assert_eq!(acc.balance, remote_balance.to_alloy())
 }
@@ -488,26 +502,26 @@ async fn test_fork_nft_set_approve_all() {
 
     let nouns = Erc721::new(nouns_addr, Arc::clone(&provider));
 
-    let real_onwer = nouns.owner_of(token_id).call().await.unwrap();
-    assert_eq!(real_onwer, owner);
+    let real_owner = nouns.owner_of(token_id).call().await.unwrap();
+    assert_eq!(real_owner, owner);
     let approval = nouns.set_approval_for_all(nouns_addr, true);
     let tx = approval.send().await.unwrap().await.unwrap().unwrap();
     assert_eq!(tx.status, Some(1u64.into()));
 
     // transfer: impersonate real owner and transfer nft
-    api.anvil_impersonate_account(real_onwer).await.unwrap();
+    api.anvil_impersonate_account(real_owner).await.unwrap();
 
-    api.anvil_set_balance(real_onwer, U256::from(10000e18 as u64)).await.unwrap();
+    api.anvil_set_balance(real_owner, U256::from(10000e18 as u64)).await.unwrap();
 
-    let call = nouns.transfer_from(real_onwer, wallet.address(), token_id);
+    let call = nouns.transfer_from(real_owner, wallet.address(), token_id);
     let mut tx: TypedTransaction = call.tx;
-    tx.set_from(real_onwer);
+    tx.set_from(real_owner);
     provider.fill_transaction(&mut tx, None).await.unwrap();
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
     assert_eq!(tx.status, Some(1u64.into()));
 
-    let real_onwer = nouns.owner_of(token_id).call().await.unwrap();
-    assert_eq!(real_onwer, wallet.address());
+    let real_owner = nouns.owner_of(token_id).call().await.unwrap();
+    assert_eq!(real_owner, wallet.address());
 }
 
 // <https://github.com/foundry-rs/foundry/issues/2261>

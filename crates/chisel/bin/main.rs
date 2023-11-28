@@ -3,8 +3,6 @@
 //! This module contains the core readline loop for the Chisel CLI as well as the
 //! executable's `main` function.
 
-use std::path::PathBuf;
-
 use chisel::{
     history::chisel_history_file,
     prelude::{ChiselCommand, ChiselDispatcher, DispatchResult, SolidityHelper},
@@ -24,6 +22,7 @@ use foundry_config::{
     Config,
 };
 use rustyline::{config::Configurer, error::ReadlineError, Editor};
+use std::path::PathBuf;
 use yansi::Paint;
 
 // Loads project's figment and merges the build cli arguments into it

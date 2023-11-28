@@ -2,10 +2,10 @@ use crate::{
     document::DocumentContent, helpers::merge_toml_table, AsDoc, BufWriter, Document, ParseItem,
     ParseSource, Parser, Preprocessor,
 };
-use ethers_solc::utils::source_files_iter;
 use forge_fmt::{FormatterConfig, Visitable};
+use foundry_common::glob::expand_globs;
+use foundry_compilers::utils::source_files_iter;
 use foundry_config::DocConfig;
-use foundry_utils::glob::expand_globs;
 use itertools::Itertools;
 use mdbook::MDBook;
 use rayon::prelude::*;
@@ -26,6 +26,8 @@ pub struct DocBuilder {
     pub root: PathBuf,
     /// Path to Solidity source files.
     pub sources: PathBuf,
+    /// Paths to external libraries.
+    pub libraries: Vec<PathBuf>,
     /// Flag whether to build mdbook.
     pub should_build: bool,
     /// Documentation configuration.
@@ -34,6 +36,8 @@ pub struct DocBuilder {
     pub preprocessors: Vec<Box<dyn Preprocessor>>,
     /// The formatter config.
     pub fmt: FormatterConfig,
+    /// Whether to include libraries to the output.
+    pub include_libraries: bool,
 }
 
 // TODO: consider using `tfio`
@@ -44,10 +48,17 @@ impl DocBuilder {
     const SUMMARY: &'static str = "SUMMARY.md";
 
     /// Create new instance of builder.
-    pub fn new(root: PathBuf, sources: PathBuf) -> Self {
+    pub fn new(
+        root: PathBuf,
+        sources: PathBuf,
+        libraries: Vec<PathBuf>,
+        include_libraries: bool,
+    ) -> Self {
         Self {
             root,
             sources,
+            libraries,
+            include_libraries,
             should_build: false,
             config: DocConfig::default(),
             preprocessors: Default::default(),
@@ -55,7 +66,7 @@ impl DocBuilder {
         }
     }
 
-    /// Set `shoul_build` flag on the builder
+    /// Set `should_build` flag on the builder
     pub fn with_should_build(mut self, should_build: bool) -> Self {
         self.should_build = should_build;
         self
@@ -99,20 +110,39 @@ impl DocBuilder {
             return Ok(())
         }
 
-        let documents = sources
+        let library_sources = self.libraries.iter().flat_map(source_files_iter).collect::<Vec<_>>();
+
+        let combined_sources = sources
+            .iter()
+            .map(|path| (path, false))
+            .chain(library_sources.iter().map(|path| (path, true)))
+            .collect::<Vec<_>>();
+
+        let documents = combined_sources
             .par_iter()
             .enumerate()
-            .map(|(i, path)| {
+            .map(|(i, (path, from_library))| {
+                let path = *path;
+                let from_library = *from_library;
+
                 // Read and parse source file
                 let source = fs::read_to_string(path)?;
-                let (mut source_unit, comments) =
-                    solang_parser::parse(&source, i).map_err(|diags| {
-                        eyre::eyre!(
-                            "Failed to parse Solidity code for {}\nDebug info: {:?}",
-                            path.display(),
-                            diags
-                        )
-                    })?;
+
+                let (mut source_unit, comments) = match solang_parser::parse(&source, i) {
+                    Ok(res) => res,
+                    Err(err) => {
+                        if from_library {
+                            // Ignore failures for library files
+                            return Ok(Vec::new());
+                        } else {
+                            return Err(eyre::eyre!(
+                                "Failed to parse Solidity code for {}\nDebug info: {:?}",
+                                path.display(),
+                                err
+                            ));
+                        }
+                    }
+                };
 
                 // Visit the parse tree
                 let mut doc = Parser::new(comments, source).with_fmt(self.fmt.clone());
@@ -150,8 +180,13 @@ impl DocBuilder {
                         let relative_path = path.strip_prefix(&self.root)?.join(item.filename());
                         let target_path = self.config.out.join(Self::SRC).join(relative_path);
                         let ident = item.source.ident();
-                        Ok(Document::new(path.clone(), target_path)
-                            .with_content(DocumentContent::Single(item), ident))
+                        Ok(Document::new(
+                            path.clone(),
+                            target_path,
+                            from_library,
+                            self.config.out.clone(),
+                        )
+                        .with_content(DocumentContent::Single(item), ident))
                     })
                     .collect::<eyre::Result<Vec<_>>>()?;
 
@@ -177,8 +212,13 @@ impl DocBuilder {
                     };
 
                     files.push(
-                        Document::new(path.clone(), target_path)
-                            .with_content(DocumentContent::Constants(consts), identity),
+                        Document::new(
+                            path.clone(),
+                            target_path,
+                            from_library,
+                            self.config.out.clone(),
+                        )
+                        .with_content(DocumentContent::Constants(consts), identity),
                     )
                 }
 
@@ -189,8 +229,13 @@ impl DocBuilder {
                         let relative_path = path.strip_prefix(&self.root)?.join(filename);
                         let target_path = self.config.out.join(Self::SRC).join(relative_path);
                         files.push(
-                            Document::new(path.clone(), target_path)
-                                .with_content(DocumentContent::OverloadedFunctions(funcs), ident),
+                            Document::new(
+                                path.clone(),
+                                target_path,
+                                from_library,
+                                self.config.out.clone(),
+                            )
+                            .with_content(DocumentContent::OverloadedFunctions(funcs), ident),
                         );
                     }
                 }
@@ -213,7 +258,9 @@ impl DocBuilder {
         });
 
         // Write mdbook related files
-        self.write_mdbook(documents.collect_vec())?;
+        self.write_mdbook(
+            documents.filter(|d| !d.from_library || self.include_libraries).collect_vec(),
+        )?;
 
         // Build the book if requested
         if self.should_build {
@@ -283,7 +330,7 @@ impl DocBuilder {
                 document
                     .target_path
                     .parent()
-                    .ok_or(eyre::format_err!("empty target path; noop"))?,
+                    .ok_or_else(|| eyre::format_err!("empty target path; noop"))?,
             )?;
             fs::write(&document.target_path, document.as_doc()?)?;
         }

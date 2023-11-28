@@ -5,23 +5,20 @@ use alloy_primitives::{Address as B160, B256, U256 as rU256};
 use anvil_core::eth::trie::KeccakHasher;
 use ethers::{
     prelude::{Address, Bytes},
-    types::H256,
+    types::{BlockId, H256},
     utils::keccak256,
 };
-use foundry_common::errors::FsPathError;
+use foundry_common::{errors::FsPathError, types::ToAlloy};
 use foundry_evm::{
-    executor::{
-        backend::{snapshot::StateSnapshot, DatabaseError, DatabaseResult, MemDb},
-        DatabaseRef,
-    },
+    backend::{DatabaseError, DatabaseResult, MemDb, StateSnapshot},
+    fork::BlockchainDb,
+    hashbrown::HashMap,
     revm::{
-        db::{CacheDB, DbAccount},
+        db::{CacheDB, DatabaseRef, DbAccount},
         primitives::{Bytecode, KECCAK_EMPTY},
         Database, DatabaseCommit,
     },
-    HashMap,
 };
-use foundry_utils::types::ToAlloy;
 use hash_db::HashDB;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, path::Path};
@@ -71,12 +68,24 @@ where
     fn init_from_snapshot(&mut self, _snapshot: StateSnapshot) {}
 }
 
+/// Helper trait to reset the DB if it's forked
+#[auto_impl::auto_impl(Box)]
+pub trait MaybeForkedDatabase {
+    fn maybe_reset(&mut self, _url: Option<String>, block_number: BlockId) -> Result<(), String>;
+
+    fn maybe_flush_cache(&self) -> Result<(), String>;
+
+    fn maybe_inner(&self) -> Result<&BlockchainDb, String>;
+}
+
 /// This bundles all required revm traits
+#[auto_impl::auto_impl(Box)]
 pub trait Db:
     DatabaseRef<Error = DatabaseError>
     + Database<Error = DatabaseError>
     + DatabaseCommit
     + MaybeHashDatabase
+    + MaybeForkedDatabase
     + fmt::Debug
     + Send
     + Sync
@@ -126,7 +135,7 @@ pub trait Db:
     /// Deserialize and add all chain data to the backend storage
     fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
         for (addr, account) in state.accounts.into_iter() {
-            let old_account_nonce = DatabaseRef::basic(self, addr.to_alloy())
+            let old_account_nonce = DatabaseRef::basic_ref(self, addr.to_alloy())
                 .ok()
                 .and_then(|acc| acc.map(|acc| acc.nonce))
                 .unwrap_or_default();
@@ -251,6 +260,20 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeHashDatabase for CacheDB<T> {
     }
 }
 
+impl<T: DatabaseRef<Error = DatabaseError>> MaybeForkedDatabase for CacheDB<T> {
+    fn maybe_reset(&mut self, _url: Option<String>, _block_number: BlockId) -> Result<(), String> {
+        Err("not supported".to_string())
+    }
+
+    fn maybe_flush_cache(&self) -> Result<(), String> {
+        Err("not supported".to_string())
+    }
+
+    fn maybe_inner(&self) -> Result<&BlockchainDb, String> {
+        Err("not supported".to_string())
+    }
+}
+
 /// Represents a state at certain point
 pub struct StateDb(pub(crate) Box<dyn MaybeHashDatabase + Send + Sync>);
 
@@ -264,20 +287,20 @@ impl StateDb {
 
 impl DatabaseRef for StateDb {
     type Error = DatabaseError;
-    fn basic(&self, address: B160) -> DatabaseResult<Option<AccountInfo>> {
-        self.0.basic(address)
+    fn basic_ref(&self, address: B160) -> DatabaseResult<Option<AccountInfo>> {
+        self.0.basic_ref(address)
     }
 
-    fn code_by_hash(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
-        self.0.code_by_hash(code_hash)
+    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
+        self.0.code_by_hash_ref(code_hash)
     }
 
-    fn storage(&self, address: B160, index: rU256) -> DatabaseResult<rU256> {
-        self.0.storage(address, index)
+    fn storage_ref(&self, address: B160, index: rU256) -> DatabaseResult<rU256> {
+        self.0.storage_ref(address, index)
     }
 
-    fn block_hash(&self, number: rU256) -> DatabaseResult<B256> {
-        self.0.block_hash(number)
+    fn block_hash_ref(&self, number: rU256) -> DatabaseResult<B256> {
+        self.0.block_hash_ref(number)
     }
 }
 

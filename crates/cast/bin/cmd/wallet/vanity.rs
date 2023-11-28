@@ -1,19 +1,15 @@
-use cast::SimpleCast;
+use alloy_primitives::Address;
 use clap::{builder::TypedValueParser, Parser};
-use ethers::{
-    core::{k256::ecdsa::SigningKey, rand::thread_rng},
-    prelude::{LocalWallet, Signer},
-    types::{H160, U256},
-    utils::{get_contract_address, secret_key_to_address},
-};
+use ethers_core::{k256::ecdsa::SigningKey, rand, utils::secret_key_to_address};
+use ethers_signers::{LocalWallet, Signer};
 use eyre::Result;
-
+use foundry_common::types::ToAlloy;
 use rayon::iter::{self, ParallelIterator};
 use regex::Regex;
 use std::time::Instant;
 
 /// Type alias for the result of [generate_wallet].
-pub type GeneratedWallet = (SigningKey, H160);
+pub type GeneratedWallet = (SigningKey, Address);
 
 /// CLI arguments for `cast wallet vanity`.
 #[derive(Debug, Clone, Parser)]
@@ -47,7 +43,7 @@ impl VanityArgs {
         let mut right_regex = None;
 
         if let Some(prefix) = starts_with {
-            if let Ok(decoded) = hex::decode(prefix.as_bytes()) {
+            if let Ok(decoded) = hex::decode(&prefix) {
                 left_exact_hex = Some(decoded)
             } else {
                 left_regex = Some(Regex::new(&format!(r"^{prefix}"))?);
@@ -55,7 +51,7 @@ impl VanityArgs {
         }
 
         if let Some(suffix) = ends_with {
-            if let Ok(decoded) = hex::decode(suffix.as_bytes()) {
+            if let Ok(decoded) = hex::decode(&suffix) {
                 right_exact_hex = Some(decoded)
             } else {
                 right_regex = Some(Regex::new(&format!(r"{suffix}$"))?);
@@ -117,14 +113,11 @@ impl VanityArgs {
             timer.elapsed().as_secs(),
             if nonce.is_some() { "\nContract address: " } else { "" },
             if nonce.is_some() {
-                SimpleCast::to_checksum_address(&get_contract_address(
-                    wallet.address(),
-                    nonce.unwrap(),
-                ))
+                wallet.address().to_alloy().create(nonce.unwrap()).to_checksum(None)
             } else {
-                "".to_string()
+                String::new()
             },
-            SimpleCast::to_checksum_address(&wallet.address()),
+            wallet.address().to_alloy().to_checksum(None),
             hex::encode(wallet.signer().to_bytes()),
         );
 
@@ -143,7 +136,6 @@ pub fn find_vanity_address_with_nonce<T: VanityMatcher>(
     matcher: T,
     nonce: u64,
 ) -> Option<LocalWallet> {
-    let nonce: U256 = nonce.into();
     wallet_generator().find_any(create_nonce_matcher(matcher, nonce)).map(|(key, _)| key.into())
 }
 
@@ -159,30 +151,30 @@ pub fn create_matcher<T: VanityMatcher>(matcher: T) -> impl Fn(&GeneratedWallet)
 #[inline]
 pub fn create_nonce_matcher<T: VanityMatcher>(
     matcher: T,
-    nonce: U256,
+    nonce: u64,
 ) -> impl Fn(&GeneratedWallet) -> bool {
     move |(_, addr)| {
-        let contract_addr = get_contract_address(*addr, nonce);
+        let contract_addr = addr.create(nonce);
         matcher.is_match(&contract_addr)
     }
 }
 
 /// Returns an infinite parallel iterator which yields a [GeneratedWallet].
 #[inline]
-pub fn wallet_generator() -> iter::Map<iter::Repeat<()>, fn(()) -> GeneratedWallet> {
-    iter::repeat(()).map(|_| generate_wallet())
+pub fn wallet_generator() -> iter::Map<iter::Repeat<()>, impl Fn(()) -> GeneratedWallet> {
+    iter::repeat(()).map(|()| generate_wallet())
 }
 
 /// Generates a random K-256 signing key and derives its Ethereum address.
 pub fn generate_wallet() -> GeneratedWallet {
-    let key = SigningKey::random(&mut thread_rng());
+    let key = SigningKey::random(&mut rand::thread_rng());
     let address = secret_key_to_address(&key);
-    (key, address)
+    (key, address.to_alloy())
 }
 
 /// A trait to match vanity addresses.
 pub trait VanityMatcher: Send + Sync {
-    fn is_match(&self, addr: &H160) -> bool;
+    fn is_match(&self, addr: &Address) -> bool;
 }
 
 /// Matches start and end hex.
@@ -193,8 +185,8 @@ pub struct HexMatcher {
 
 impl VanityMatcher for HexMatcher {
     #[inline]
-    fn is_match(&self, addr: &H160) -> bool {
-        let bytes = addr.as_bytes();
+    fn is_match(&self, addr: &Address) -> bool {
+        let bytes = addr.as_slice();
         bytes.starts_with(&self.left) && bytes.ends_with(&self.right)
     }
 }
@@ -206,8 +198,8 @@ pub struct LeftHexMatcher {
 
 impl VanityMatcher for LeftHexMatcher {
     #[inline]
-    fn is_match(&self, addr: &H160) -> bool {
-        let bytes = addr.as_bytes();
+    fn is_match(&self, addr: &Address) -> bool {
+        let bytes = addr.as_slice();
         bytes.starts_with(&self.left)
     }
 }
@@ -219,8 +211,8 @@ pub struct RightHexMatcher {
 
 impl VanityMatcher for RightHexMatcher {
     #[inline]
-    fn is_match(&self, addr: &H160) -> bool {
-        let bytes = addr.as_bytes();
+    fn is_match(&self, addr: &Address) -> bool {
+        let bytes = addr.as_slice();
         bytes.ends_with(&self.right)
     }
 }
@@ -233,8 +225,8 @@ pub struct LeftExactRightRegexMatcher {
 
 impl VanityMatcher for LeftExactRightRegexMatcher {
     #[inline]
-    fn is_match(&self, addr: &H160) -> bool {
-        let bytes = addr.as_bytes();
+    fn is_match(&self, addr: &Address) -> bool {
+        let bytes = addr.as_slice();
         bytes.starts_with(&self.left) && self.right.is_match(&hex::encode(bytes))
     }
 }
@@ -247,8 +239,8 @@ pub struct LeftRegexRightExactMatcher {
 
 impl VanityMatcher for LeftRegexRightExactMatcher {
     #[inline]
-    fn is_match(&self, addr: &H160) -> bool {
-        let bytes = addr.as_bytes();
+    fn is_match(&self, addr: &Address) -> bool {
+        let bytes = addr.as_slice();
         bytes.ends_with(&self.right) && self.left.is_match(&hex::encode(bytes))
     }
 }
@@ -260,8 +252,8 @@ pub struct SingleRegexMatcher {
 
 impl VanityMatcher for SingleRegexMatcher {
     #[inline]
-    fn is_match(&self, addr: &H160) -> bool {
-        let addr = hex::encode(addr.as_ref());
+    fn is_match(&self, addr: &Address) -> bool {
+        let addr = hex::encode(addr);
         self.re.is_match(&addr)
     }
 }
@@ -274,8 +266,8 @@ pub struct RegexMatcher {
 
 impl VanityMatcher for RegexMatcher {
     #[inline]
-    fn is_match(&self, addr: &H160) -> bool {
-        let addr = hex::encode(addr.as_ref());
+    fn is_match(&self, addr: &Address) -> bool {
+        let addr = hex::encode(addr);
         self.left.is_match(&addr) && self.right.is_match(&addr)
     }
 }

@@ -1,12 +1,13 @@
 //! Utility functions
 
 use crate::Config;
-use ethers_core::types::{serde_helpers::Numeric, U256};
-use ethers_solc::{
+use alloy_primitives::U256;
+use eyre::WrapErr;
+use figment::value::Value;
+use foundry_compilers::{
     remappings::{Remapping, RemappingError},
     EvmVersion,
 };
-use figment::value::Value;
 use revm_primitives::SpecId;
 use serde::{de::Error, Deserialize, Deserializer};
 use std::{
@@ -33,10 +34,14 @@ pub fn load_config_with_root(root: Option<PathBuf>) -> Config {
 /// Returns the path of the top-level directory of the working git tree. If there is no working
 /// tree, an error is returned.
 pub fn find_git_root_path(relative_to: impl AsRef<Path>) -> eyre::Result<PathBuf> {
+    let path = relative_to.as_ref();
     let path = std::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
-        .current_dir(relative_to.as_ref())
-        .output()?
+        .current_dir(path)
+        .output()
+        .wrap_err_with(|| {
+            format!("Failed detect git root path in current dir: {}", path.display())
+        })?
         .stdout;
     let path = std::str::from_utf8(&path)?.trim_end_matches('\n');
     Ok(PathBuf::from(path))
@@ -155,7 +160,7 @@ pub fn foundry_toml_dirs(root: impl AsRef<Path>) -> Vec<PathBuf> {
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_dir())
-        .filter_map(|e| ethers_solc::utils::canonicalize(e.path()).ok())
+        .filter_map(|e| foundry_compilers::utils::canonicalize(e.path()).ok())
         .filter(|p| p.join(Config::FILE_NAME).exists())
         .collect()
 }
@@ -198,7 +203,7 @@ pub fn get_available_profiles(toml_path: impl AsRef<Path>) -> eyre::Result<Vec<S
     let doc = read_toml(toml_path)?;
 
     if let Some(Item::Table(profiles)) = doc.as_table().get(Config::PROFILE_SECTION) {
-        for (_, (profile, _)) in profiles.iter().enumerate() {
+        for (profile, _) in profiles {
             let p = profile.to_string();
             if !result.contains(&p) {
                 result.push(p);
@@ -222,8 +227,7 @@ pub(crate) fn deserialize_stringified_percent<'de, D>(deserializer: D) -> Result
 where
     D: Deserializer<'de>,
 {
-    let num: U256 =
-        Numeric::deserialize(deserializer)?.try_into().map_err(serde::de::Error::custom)?;
+    let num: U256 = Numeric::deserialize(deserializer)?.into();
     let num: u64 = num.try_into().map_err(serde::de::Error::custom)?;
     if num <= 100 {
         num.try_into().map_err(serde::de::Error::custom)
@@ -257,6 +261,37 @@ where
         }
     };
     Ok(num)
+}
+
+/// Helper type to parse both `u64` and `U256`
+#[derive(Copy, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum Numeric {
+    /// A [U256] value.
+    U256(U256),
+    /// A `u64` value.
+    Num(u64),
+}
+
+impl From<Numeric> for U256 {
+    fn from(n: Numeric) -> U256 {
+        match n {
+            Numeric::U256(n) => n,
+            Numeric::Num(n) => U256::from(n),
+        }
+    }
+}
+
+impl FromStr for Numeric {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.starts_with("0x") {
+            U256::from_str_radix(s, 16).map(Numeric::U256).map_err(|err| err.to_string())
+        } else {
+            U256::from_str(s).map(Numeric::U256).map_err(|err| err.to_string())
+        }
+    }
 }
 
 /// Returns the [SpecId] derived from [EvmVersion]

@@ -11,10 +11,10 @@ use crate::{
     solang_ext::{pt::*, *},
     string::{QuoteState, QuotedStringExt},
     visit::{Visitable, Visitor},
-    FormatterConfig, InlineConfig, IntTypes, NumberUnderscore,
+    FormatterConfig, InlineConfig, IntTypes,
 };
 use alloy_primitives::Address;
-use foundry_config::fmt::{MultilineFuncHeaderStyle, SingleLineBlockStyle};
+use foundry_config::fmt::{HexUnderscore, MultilineFuncHeaderStyle, SingleLineBlockStyle};
 use itertools::{Either, Itertools};
 use solang_parser::pt::ImportPath;
 use std::{fmt::Write, str::FromStr};
@@ -33,14 +33,14 @@ pub enum FormatterError {
     InvalidParsedItem(Loc),
     /// All other errors
     #[error(transparent)]
-    Custom(Box<dyn std::error::Error>),
+    Custom(Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl FormatterError {
     fn fmt() -> Self {
         Self::Fmt(std::fmt::Error)
     }
-    fn custom(err: impl std::error::Error + 'static) -> Self {
+    fn custom(err: impl std::error::Error + Send + Sync + 'static) -> Self {
         Self::Custom(Box::new(err))
     }
 }
@@ -1071,7 +1071,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Visit the right side of an assignment. The function will try to write the assignment on a
     /// single line or indented on the next line. If it can't do this it resorts to letting the
-    /// expression decide how to split iself on multiple lines
+    /// expression decide how to split itself on multiple lines
     fn visit_assignment(&mut self, expr: &mut Expression) -> Result<()> {
         if self.try_on_single_line(|fmt| expr.visit(fmt))? {
             return Ok(())
@@ -1254,7 +1254,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         ident: &mut Option<Identifier>,
     ) -> Result<()> {
         let ident =
-            if let Some(ident) = ident { format!(":{}", ident.name) } else { "".to_owned() };
+            if let Some(ident) = ident { format!(":{}", ident.name) } else { String::new() };
         write_chunk!(self, loc.start(), loc.end(), "{val}{ident}")?;
         Ok(())
     }
@@ -1304,7 +1304,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         let config = self.config.number_underscore;
 
         // get source if we preserve underscores
-        let (value, fractional, exponent) = if matches!(config, NumberUnderscore::Preserve) {
+        let (value, fractional, exponent) = if config.is_preserve() {
             let source = &self.source[loc.start()..loc.end()];
             // Strip unit
             let (source, _) = source.split_once(' ').unwrap_or((source, ""));
@@ -1336,7 +1336,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         exp = exp.trim().trim_start_matches('0');
 
         let add_underscores = |string: &str, reversed: bool| -> String {
-            if !matches!(config, NumberUnderscore::Thousands) || string.len() < 5 {
+            if !config.is_thousands() || string.len() < 5 {
                 return string.to_string()
             }
             if reversed {
@@ -1375,6 +1375,32 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         write_chunk!(self, loc.start(), loc.end(), "{out}")?;
         self.write_unit(unit)
+    }
+
+    /// Write and hex literals according to the configuration.
+    fn write_hex_literal(&mut self, lit: &HexLiteral) -> Result<()> {
+        let HexLiteral { loc, hex } = lit;
+        match self.config.hex_underscore {
+            HexUnderscore::Remove => self.write_quoted_str(*loc, Some("hex"), hex),
+            HexUnderscore::Preserve => {
+                let quote = &self.source[loc.start()..loc.end()].trim_start_matches("hex");
+                // source is always quoted so we remove the quotes first so we can adhere to the
+                // configured quoting style
+                let hex = &quote[1..quote.len() - 1];
+                self.write_quoted_str(*loc, Some("hex"), hex)
+            }
+            HexUnderscore::Bytes => {
+                // split all bytes
+                let hex = hex
+                    .chars()
+                    .chunks(2)
+                    .into_iter()
+                    .map(|chunk| chunk.collect::<String>())
+                    .collect::<Vec<_>>()
+                    .join("_");
+                self.write_quoted_str(*loc, Some("hex"), &hex)
+            }
+        }
     }
 
     /// Write built-in unit.
@@ -1497,12 +1523,27 @@ impl<'a, W: Write> Formatter<'a, W> {
                 if fmt.inline_config.is_disabled(returns_loc) {
                     fmt.indented(1, |fmt| fmt.visit_source(returns_loc))?;
                 } else {
-                    let returns = fmt.items_to_chunks(
+                    let mut returns = fmt.items_to_chunks(
                         returns_end,
                         func.returns
                             .iter_mut()
                             .filter_map(|(loc, param)| param.as_mut().map(|param| (*loc, param))),
                     )?;
+
+                    // there's an issue with function return value that would lead to indent issues because those can be formatted with line breaks <https://github.com/foundry-rs/foundry/issues/4080>
+                    for function_chunk in
+                        returns.iter_mut().filter(|chunk| chunk.content.starts_with("function("))
+                    {
+                        // this will bypass the recursive indent that was applied when the function
+                        // content was formatted in the chunk
+                        function_chunk.content = function_chunk
+                            .content
+                            .split('\n')
+                            .map(|s| s.trim_start())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                    }
+
                     fmt.write_postfix_comments_before(returns_loc.start())?;
                     fmt.write_whitespace_separator(multiline)?;
                     fmt.indented(1, |fmt| {
@@ -2029,7 +2070,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::HexNumberLiteral(loc, val, unit) => {
                 // ref: https://docs.soliditylang.org/en/latest/types.html?highlight=address%20literal#address-literals
                 let val = if val.len() == 42 {
-                    Address::from_str(val).expect("").to_checksum(None)
+                    Address::from_str(val).expect("").to_string()
                 } else {
                     val.to_owned()
                 };
@@ -2046,8 +2087,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
             }
             Expression::HexLiteral(vals) => {
-                for HexLiteral { loc, hex } in vals {
-                    self.write_quoted_str(*loc, Some("hex"), hex)?;
+                for val in vals {
+                    self.write_hex_literal(val)?;
                 }
             }
             Expression::AddressLiteral(loc, val) => {
@@ -2270,6 +2311,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::FunctionCallBlock(_, expr, stmt) => {
                 expr.visit(self)?;
                 stmt.visit(self)?;
+            }
+            Expression::New(_, expr) => {
+                write_chunk!(self, "new ")?;
+                self.visit_expr(expr.loc(), expr)?;
             }
             _ => self.visit_source(loc)?,
         };

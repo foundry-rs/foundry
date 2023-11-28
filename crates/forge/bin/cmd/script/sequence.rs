@@ -8,22 +8,22 @@ use crate::cmd::{
     verify::provider::VerificationProviderType,
 };
 use alloy_primitives::{Address, TxHash};
-use ethers::{
-    prelude::{artifacts::Libraries, ArtifactId, TransactionReceipt},
-    types::transaction::eip2718::TypedTransaction,
-};
+use ethers_core::types::{transaction::eip2718::TypedTransaction, TransactionReceipt};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_cli::utils::now;
-use foundry_common::{fs, shell, SELECTOR_LEN};
+use foundry_common::{
+    fs, shell,
+    types::{ToAlloy, ToEthers},
+    SELECTOR_LEN,
+};
+use foundry_compilers::{artifacts::Libraries, ArtifactId};
 use foundry_config::Config;
-use foundry_utils::types::{ToAlloy, ToEthers};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
     io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
-use tracing::trace;
 use yansi::Paint;
 
 pub const DRY_RUN_DIR: &str = "dry-run";
@@ -83,7 +83,7 @@ impl ScriptSequence {
         broadcasted: bool,
         is_multi: bool,
     ) -> Result<Self> {
-        let chain = config.chain_id.unwrap_or_default().id();
+        let chain = config.chain.unwrap_or_default().id();
 
         let (path, sensitive_path) = ScriptSequence::get_paths(
             &config.broadcast,
@@ -128,11 +128,11 @@ impl ScriptSequence {
             broadcasted,
         )?;
 
-        let mut script_sequence: Self = ethers::solc::utils::read_json_file(&path)
+        let mut script_sequence: Self = foundry_compilers::utils::read_json_file(&path)
             .wrap_err(format!("Deployment not found for chain `{chain_id}`."))?;
 
         let sensitive_script_sequence: SensitiveScriptSequence =
-            ethers::solc::utils::read_json_file(&sensitive_path).wrap_err(format!(
+            foundry_compilers::utils::read_json_file(&sensitive_path).wrap_err(format!(
                 "Deployment's sensitive details not found for chain `{chain_id}`."
             ))?;
 

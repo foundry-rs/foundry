@@ -30,7 +30,6 @@ pub mod solidity_helper;
 /// Prelude of all chisel modules
 pub mod prelude {
     pub use crate::{
-        cmd::*, dispatcher::*, executor::*, runner::*, session::*, session_source::*,
-        solidity_helper::*,
+        cmd::*, dispatcher::*, runner::*, session::*, session_source::*, solidity_helper::*,
     };
 }

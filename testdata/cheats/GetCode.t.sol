@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Unlicense
+// SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
@@ -43,6 +43,8 @@ contract GetCodeTest is DSTest {
         assertEq(string(fullPath), expected, "code for full path was incorrect");
     }
 
+    // TODO: Huff uses its own ABI.
+    /*
     function testGetCodeHuffArtifact() public {
         string memory path = "fixtures/GetCode/HuffWorkingContract.json";
         bytes memory bytecode = vm.getCode(path);
@@ -63,6 +65,7 @@ contract GetCodeTest is DSTest {
         // compare the loaded code to the actual deployed code
         assertEq(string(deployedCode), string(deployed.code), "deployedCode for path was incorrect");
     }
+    */
 
     function testFailGetUnlinked() public {
         vm.getCode("UnlinkedContract.sol");

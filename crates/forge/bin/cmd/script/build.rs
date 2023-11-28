@@ -1,24 +1,21 @@
 use super::*;
-use alloy_primitives::{Address, Bytes, U256};
-use ethers::{
-    prelude::{
-        artifacts::Libraries, cache::SolFilesCache, ArtifactId, Project, ProjectCompileOutput,
-    },
-    solc::{
-        artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
-        contracts::ArtifactContracts,
-        info::ContractInfo,
-    },
-};
+use alloy_primitives::{Address, Bytes};
 use eyre::{Context, ContextCompat, Result};
+use forge::link::{link_with_nonce_or_address, PostLinkInput, ResolvedDependency};
 use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::{
     compact_to_contract,
     compile::{self, ContractSources},
+    fs,
 };
-use foundry_utils::{PostLinkInput, ResolvedDependency};
-use std::{collections::BTreeMap, fs, str::FromStr};
-use tracing::{trace, warn};
+use foundry_compilers::{
+    artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome, Libraries},
+    cache::SolFilesCache,
+    contracts::ArtifactContracts,
+    info::ContractInfo,
+    ArtifactId, Project, ProjectCompileOutput,
+};
+use std::{collections::BTreeMap, str::FromStr};
 
 impl ScriptArgs {
     /// Compiles the file or project and the verify metadata.
@@ -43,9 +40,11 @@ impl ScriptArgs {
                 if let Some(source) = artifact.source_file() {
                     let abs_path = source
                         .ast
-                        .ok_or(eyre::eyre!("Source from artifact has no AST."))?
+                        .ok_or_else(|| eyre::eyre!("Source from artifact has no AST."))?
                         .absolute_path;
-                    let source_code = fs::read_to_string(abs_path)?;
+                    let source_code = fs::read_to_string(abs_path).wrap_err_with(|| {
+                        format!("Failed to read artifact source file for `{}`", id.identifier())
+                    })?;
                     let contract = artifact.clone().into_contract_bytecode();
                     let source_contract = compact_to_contract(contract)?;
                     sources
@@ -80,7 +79,7 @@ impl ScriptArgs {
         contracts: ArtifactContracts,
         libraries_addresses: Libraries,
         sender: Address,
-        nonce: U256,
+        nonce: u64,
     ) -> Result<BuildOutput> {
         let mut run_dependencies = vec![];
         let mut contract = CompactContractBytecode::default();
@@ -120,7 +119,7 @@ impl ScriptArgs {
             }
         }
 
-        foundry_utils::link_with_nonce_or_address(
+        link_with_nonce_or_address(
             contracts.clone(),
             &mut highlevel_known_contracts,
             libs,
@@ -151,7 +150,10 @@ impl ScriptArgs {
 
                 // if it's the target contract, grab the info
                 if extra.no_target_name {
-                    if id.source == std::path::PathBuf::from(&extra.target_fname) {
+                    // Match artifact source, and ignore interfaces
+                    if id.source == std::path::Path::new(&extra.target_fname) &&
+                        contract.bytecode.as_ref().map_or(false, |b| b.object.bytes_len() > 0)
+                    {
                         if extra.matched {
                             eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
                         }

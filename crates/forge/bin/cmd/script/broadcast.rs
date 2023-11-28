@@ -2,11 +2,9 @@ use super::{
     multi::MultiChainSequence, providers::ProvidersManager, receipts::clear_pendings,
     sequence::ScriptSequence, transaction::TransactionWithMetadata, verify::VerifyBundle, *,
 };
-use ethers::{
-    prelude::{Provider, Signer, TxHash},
-    providers::{JsonRpcClient, Middleware},
-    utils::format_units,
-};
+use ethers_core::{types::TxHash, utils::format_units};
+use ethers_providers::{JsonRpcClient, Middleware, Provider};
+use ethers_signers::Signer;
 use eyre::{bail, ContextCompat, Result, WrapErr};
 use foundry_cli::{
     init_progress,
@@ -17,7 +15,6 @@ use foundry_cli::{
 use foundry_common::{estimate_eip1559_fees, shell, try_get_http_provider, RetryProvider};
 use futures::StreamExt;
 use std::{cmp::min, collections::HashSet, ops::Mul, sync::Arc};
-use tracing::trace;
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.
@@ -43,7 +40,6 @@ impl ScriptArgs {
                 let mut senders = HashSet::from([self
                     .evm_opts
                     .sender
-                    .map(|sender| sender.to_alloy())
                     .wrap_err("--sender must be set with --unlocked")?]);
                 // also take all additional senders that where set manually via broadcast
                 senders.extend(
@@ -56,19 +52,10 @@ impl ScriptArgs {
             } else {
                 let local_wallets = self
                     .wallets
-                    .find_all(
-                        provider.clone(),
-                        required_addresses.into_iter().map(|addr| addr.to_ethers()).collect(),
-                        script_wallets,
-                    )
+                    .find_all(provider.clone(), required_addresses, script_wallets)
                     .await?;
                 let chain = local_wallets.values().last().wrap_err("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")?.chain_id();
-                (
-                    SendTransactionsKind::Raw(
-                        local_wallets.into_iter().map(|m| (m.0.to_alloy(), m.1)).collect(),
-                    ),
-                    chain,
-                )
+                (SendTransactionsKind::Raw(local_wallets), chain)
             };
 
             // We only wait for a transaction receipt before sending the next transaction, if there
@@ -80,9 +67,6 @@ impl ScriptArgs {
             // Make a one-time gas price estimation
             let (gas_price, eip1559_fees) = {
                 match deployment_sequence.transactions.front().unwrap().typed_tx() {
-                    TypedTransaction::Legacy(_) | TypedTransaction::Eip2930(_) => {
-                        (provider.get_gas_price().await.ok(), None)
-                    }
                     TypedTransaction::Eip1559(_) => {
                         let fees = estimate_eip1559_fees(&provider, Some(chain))
                             .await
@@ -90,6 +74,7 @@ impl ScriptArgs {
 
                         (None, Some(fees))
                     }
+                    _ => (provider.get_gas_price().await.ok(), None),
                 }
             };
 
@@ -115,9 +100,6 @@ impl ScriptArgs {
                     } else {
                         // fill gas price
                         match tx {
-                            TypedTransaction::Eip2930(_) | TypedTransaction::Legacy(_) => {
-                                tx.set_gas_price(gas_price.expect("Could not get gas_price."));
-                            }
                             TypedTransaction::Eip1559(ref mut inner) => {
                                 let eip1559_fees =
                                     eip1559_fees.expect("Could not get eip1559 fee estimation.");
@@ -128,6 +110,9 @@ impl ScriptArgs {
                                     inner.max_priority_fee_per_gas = Some(eip1559_fees.1);
                                 }
                                 inner.max_fee_per_gas = Some(eip1559_fees.0);
+                            }
+                            _ => {
+                                tx.set_gas_price(gas_price.expect("Could not get gas_price."));
                             }
                         }
                     }
@@ -242,20 +227,21 @@ impl ScriptArgs {
         let from = tx.from().expect("no sender");
 
         if sequential_broadcast {
-            let nonce = foundry_utils::next_nonce((*from).to_alloy(), fork_url, None)
+            let nonce = forge::next_nonce((*from).to_alloy(), fork_url, None)
                 .await
                 .map_err(|_| eyre::eyre!("Not able to query the EOA nonce."))?;
 
             let tx_nonce = tx.nonce().expect("no nonce");
-
-            if nonce != (*tx_nonce).to_alloy() {
-                bail!("EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider.")
+            if let Ok(tx_nonce) = u64::try_from(tx_nonce.to_alloy()) {
+                if nonce != tx_nonce {
+                    bail!("EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider.")
+                }
             }
         }
 
         match kind {
             SendTransactionKind::Unlocked(addr) => {
-                tracing::debug!("sending transaction from unlocked account {:?}: {:?}", addr, tx);
+                debug!("sending transaction from unlocked account {:?}: {:?}", addr, tx);
 
                 // Chains which use `eth_estimateGas` are being sent sequentially and require their
                 // gas to be re-estimated right before broadcasting.
@@ -460,7 +446,7 @@ impl ScriptArgs {
 
         // Config is used to initialize the sequence chain, so we need to change when handling a new
         // sequence. This makes sure we don't lose the original value.
-        let original_config_chain = config.chain_id;
+        let original_config_chain = config.chain;
 
         // Peeking is used to check if the next rpc url is different. If so, it creates a
         // [`ScriptSequence`] from all the collected transactions up to this point.
@@ -522,7 +508,7 @@ impl ScriptArgs {
                 }
             }
 
-            config.chain_id = Some(provider_info.chain.into());
+            config.chain = Some(provider_info.chain.into());
             let sequence = ScriptSequence::new(
                 new_sequence,
                 returns.clone(),
@@ -539,7 +525,7 @@ impl ScriptArgs {
         }
 
         // Restore previous config chain.
-        config.chain_id = original_config_chain;
+        config.chain = original_config_chain;
 
         if !self.skip_simulation {
             // Present gas information on a per RPC basis.
@@ -585,7 +571,7 @@ impl ScriptArgs {
         signer: &WalletSigner,
         mut legacy_or_1559: TypedTransaction,
     ) -> Result<TxHash> {
-        tracing::debug!("sending transaction: {:?}", legacy_or_1559);
+        debug!("sending transaction: {:?}", legacy_or_1559);
 
         // Chains which use `eth_estimateGas` are being sent sequentially and require their gas
         // to be re-estimated right before broadcasting.

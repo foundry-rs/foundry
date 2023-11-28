@@ -1,14 +1,13 @@
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::{
-    providers::Middleware,
-    types::{BlockId, NameOrAddress},
-};
+use ethers_core::types::{BlockId, NameOrAddress};
+use ethers_providers::Middleware;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
 };
+use foundry_common::types::ToEthers;
 use foundry_config::{Chain, Config};
 use std::str::FromStr;
 
@@ -62,10 +61,11 @@ impl AccessListArgs {
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
-        let chain = utils::get_chain(config.chain_id, &provider).await?;
+        let chain = utils::get_chain(config.chain, &provider).await?;
         let sender = eth.wallet.sender().await;
 
-        access_list(&provider, sender, to, sig, args, data, tx, chain, block, to_json).await?;
+        access_list(&provider, sender.to_ethers(), to, sig, args, data, tx, chain, block, to_json)
+            .await?;
         Ok(())
     }
 }

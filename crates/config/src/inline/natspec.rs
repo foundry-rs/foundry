@@ -1,5 +1,5 @@
 use super::{remove_whitespaces, INLINE_CONFIG_PREFIX, INLINE_CONFIG_PREFIX_SELECTED_PROFILE};
-use ethers_solc::{
+use foundry_compilers::{
     artifacts::{ast::NodeType, Node},
     ProjectCompileOutput,
 };
@@ -192,8 +192,8 @@ mod tests {
     #[test]
     fn can_handle_unavailable_src_line_with_fallback() {
         let mut fn_data: BTreeMap<String, Value> = BTreeMap::new();
-        let doc_withouth_src_field = json!({ "text":  "forge-config:default.fuzz.runs=600" });
-        fn_data.insert("documentation".into(), doc_withouth_src_field);
+        let doc_without_src_field = json!({ "text":  "forge-config:default.fuzz.runs=600" });
+        fn_data.insert("documentation".into(), doc_without_src_field);
         let (_, src_line) = get_fn_docs(&fn_data).expect("Some docs");
         assert_eq!(src_line, "<no-src-line-available>".to_string());
     }
@@ -201,9 +201,9 @@ mod tests {
     #[test]
     fn can_handle_available_src_line() {
         let mut fn_data: BTreeMap<String, Value> = BTreeMap::new();
-        let doc_withouth_src_field =
+        let doc_without_src_field =
             json!({ "text":  "forge-config:default.fuzz.runs=600", "src": "73:21:12" });
-        fn_data.insert("documentation".into(), doc_withouth_src_field);
+        fn_data.insert("documentation".into(), doc_without_src_field);
         let (_, src_line) = get_fn_docs(&fn_data).expect("Some docs");
         assert_eq!(src_line, "73:21:12".to_string());
     }

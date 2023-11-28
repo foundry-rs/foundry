@@ -1,20 +1,20 @@
 use crate::{
     eth::backend::db::{
-        Db, MaybeHashDatabase, SerializableAccountRecord, SerializableState, StateDb,
+        Db, MaybeForkedDatabase, MaybeHashDatabase, SerializableAccountRecord, SerializableState,
+        StateDb,
     },
     revm::primitives::AccountInfo,
     Address, U256,
 };
-use ethers::prelude::H256;
-pub use foundry_evm::executor::fork::database::ForkedDatabase;
+use ethers::{prelude::H256, types::BlockId};
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
-    executor::{
-        backend::{snapshot::StateSnapshot, DatabaseResult},
-        fork::database::ForkDbSnapshot,
-    },
+    backend::{DatabaseResult, StateSnapshot},
+    fork::{database::ForkDbSnapshot, BlockchainDb},
     revm::Database,
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
+
+pub use foundry_evm::fork::database::ForkedDatabase;
 
 /// Implement the helper for the fork database
 impl Db for ForkedDatabase {
@@ -99,6 +99,7 @@ impl MaybeHashDatabase for ForkedDatabase {
         *db.block_hashes.write() = block_hashes;
     }
 }
+
 impl MaybeHashDatabase for ForkDbSnapshot {
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         std::mem::take(&mut self.snapshot)
@@ -111,5 +112,20 @@ impl MaybeHashDatabase for ForkDbSnapshot {
 
     fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
         self.snapshot = snapshot;
+    }
+}
+
+impl MaybeForkedDatabase for ForkedDatabase {
+    fn maybe_reset(&mut self, url: Option<String>, block_number: BlockId) -> Result<(), String> {
+        self.reset(url, block_number)
+    }
+
+    fn maybe_flush_cache(&self) -> Result<(), String> {
+        self.flush_cache();
+        Ok(())
+    }
+
+    fn maybe_inner(&self) -> Result<&BlockchainDb, String> {
+        Ok(self.inner())
     }
 }

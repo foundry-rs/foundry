@@ -1,13 +1,10 @@
-use ethers_core::{
-    abi::ethereum_types::FromStrRadixErrKind,
-    types::{Sign, I256, U256},
-    utils::ParseUnits,
-};
+use alloy_primitives::{Sign, I256, U256};
+use ethers_core::utils::ParseUnits;
 use eyre::Result;
+use foundry_common::types::ToAlloy;
 use std::{
-    convert::{Infallible, TryFrom, TryInto},
+    convert::Infallible,
     fmt::{Binary, Debug, Display, Formatter, LowerHex, Octal, Result as FmtResult, UpperHex},
-    iter::FromIterator,
     num::IntErrorKind,
     str::FromStr,
 };
@@ -89,25 +86,13 @@ impl TryFrom<U256> for Base {
     type Error = eyre::Report;
 
     fn try_from(n: U256) -> Result<Self, Self::Error> {
-        Self::try_from(n.low_u32())
+        Self::try_from(n.saturating_to::<u32>())
     }
 }
 
 impl From<Base> for u32 {
     fn from(b: Base) -> Self {
         b as u32
-    }
-}
-
-impl From<Base> for I256 {
-    fn from(b: Base) -> Self {
-        Self::from(b as u32)
-    }
-}
-
-impl From<Base> for U256 {
-    fn from(b: Base) -> Self {
-        Self::from(b as u32)
     }
 }
 
@@ -118,9 +103,9 @@ impl From<Base> for String {
 }
 
 impl Base {
-    pub fn unwrap_or_detect(base: Option<String>, s: impl AsRef<str>) -> Result<Self> {
+    pub fn unwrap_or_detect(base: Option<&str>, s: impl AsRef<str>) -> Result<Self> {
         match base {
-            Some(base) => base.try_into(),
+            Some(base) => base.parse(),
             None => Self::detect(s),
         }
     }
@@ -137,50 +122,36 @@ impl Base {
             // anyway;
             // strip prefix when using u128::from_str_radix because it does not recognize it as
             // valid.
-            _ if s.starts_with("0b") => match u128::from_str_radix(&s[2..], 2) {
+            _ if s.starts_with("0b") => match u64::from_str_radix(&s[2..], 2) {
                 Ok(_) => Ok(Self::Binary),
                 Err(e) => match e.kind() {
                     IntErrorKind::PosOverflow => Ok(Self::Binary),
                     _ => Err(eyre::eyre!("could not parse binary value: {}", e)),
                 },
             },
-            _ if s.starts_with("0o") => match u128::from_str_radix(&s[2..], 8) {
+            _ if s.starts_with("0o") => match u64::from_str_radix(&s[2..], 8) {
                 Ok(_) => Ok(Self::Octal),
                 Err(e) => match e.kind() {
                     IntErrorKind::PosOverflow => Ok(Self::Octal),
-                    _ => Err(eyre::eyre!("could not parse octal value: {}", e)),
+                    _ => Err(eyre::eyre!("could not parse octal value: {e}")),
                 },
             },
-            _ if s.starts_with("0x") => match U256::from_str_radix(s, 16) {
+            _ if s.starts_with("0x") => match u64::from_str_radix(&s[2..], 16) {
                 Ok(_) => Ok(Self::Hexadecimal),
                 Err(e) => match e.kind() {
-                    FromStrRadixErrKind::InvalidLength => {
-                        Err(eyre::eyre!("number must be less than U256::MAX ({})", U256::MAX))
-                    }
-                    _ => Err(eyre::eyre!("could not parse hexadecimal value: {}", e)),
+                    IntErrorKind::PosOverflow => Ok(Self::Hexadecimal),
+                    _ => Err(eyre::eyre!("could not parse hexadecimal value: {e}")),
                 },
             },
             // No prefix => first try parsing as decimal
             _ => match U256::from_str_radix(s, 10) {
-                Ok(_) => {
-                    // Can be both, ambiguous but default to Decimal
-
-                    // Err(eyre::eyre!("Could not autodetect base: input could be decimal or
-                    // hexadecimal. Please prepend with 0x if the input is hexadecimal, or specify a
-                    // --base-in parameter."))
-                    Ok(Self::Decimal)
-                }
+                // Can be both, ambiguous but default to Decimal
+                Ok(_) => Ok(Self::Decimal),
                 Err(_) => match U256::from_str_radix(s, 16) {
                     Ok(_) => Ok(Self::Hexadecimal),
-                    Err(e) => match e.kind() {
-                        FromStrRadixErrKind::InvalidLength => {
-                            Err(eyre::eyre!("number must be less than U256::MAX ({})", U256::MAX))
-                        }
-                        _ => Err(eyre::eyre!(
-                            "could not autodetect base as neither decimal or hexadecimal: {}",
-                            e
-                        )),
-                    },
+                    Err(e) => Err(eyre::eyre!(
+                        "could not autodetect base as neither decimal or hexadecimal: {e}"
+                    )),
                 },
             },
         }
@@ -189,10 +160,10 @@ impl Base {
     /// Returns the Rust standard prefix for a base
     pub const fn prefix(&self) -> &str {
         match self {
-            Base::Binary => "0b",
-            Base::Octal => "0o",
-            Base::Hexadecimal => "0x",
-            _ => "",
+            Self::Binary => "0b",
+            Self::Octal => "0o",
+            Self::Decimal => "",
+            Self::Hexadecimal => "0x",
         }
     }
 }
@@ -205,7 +176,7 @@ impl Base {
 ///
 /// ```
 /// use cast::base::NumberWithBase;
-/// use ethers_core::types::U256;
+/// use alloy_primitives::U256;
 ///
 /// let number: NumberWithBase = U256::from(12345).into();
 /// assert_eq!(number.format(), "12345");
@@ -287,7 +258,7 @@ impl LowerHex for NumberWithBase {
 
 impl UpperHex for NumberWithBase {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        let n = format!("{:X}", self.number);
+        let n = format!("{self:x}").to_uppercase();
         f.pad_integral(true, Base::Hexadecimal.prefix(), &n)
     }
 }
@@ -310,8 +281,8 @@ impl From<I256> for NumberWithBase {
 impl From<ParseUnits> for NumberWithBase {
     fn from(value: ParseUnits) -> Self {
         match value {
-            ParseUnits::U256(val) => val.into(),
-            ParseUnits::I256(val) => val.into(),
+            ParseUnits::U256(val) => val.to_alloy().into(),
+            ParseUnits::I256(val) => val.to_alloy().into(),
         }
     }
 }
@@ -355,7 +326,7 @@ impl NumberWithBase {
 
     /// Parses a string slice into a signed integer. If base is None then it tries to determine base
     /// from the prefix, otherwise defaults to Decimal.
-    pub fn parse_int(s: &str, base: Option<String>) -> Result<Self> {
+    pub fn parse_int(s: &str, base: Option<&str>) -> Result<Self> {
         let base = Base::unwrap_or_detect(base, s)?;
         let (number, is_nonnegative) = Self::_parse_int(s, base)?;
         Ok(Self { number, is_nonnegative, base })
@@ -363,7 +334,7 @@ impl NumberWithBase {
 
     /// Parses a string slice into an unsigned integer. If base is None then it tries to determine
     /// base from the prefix, otherwise defaults to Decimal.
-    pub fn parse_uint(s: &str, base: Option<String>) -> Result<Self> {
+    pub fn parse_uint(s: &str, base: Option<&str>) -> Result<Self> {
         let base = Base::unwrap_or_detect(base, s)?;
         let number = Self::_parse_uint(s, base)?;
         Ok(Self { number, is_nonnegative: true, base })
@@ -402,10 +373,9 @@ impl NumberWithBase {
     /// signs or padding. Refer to the [std::fmt] module documentation on how to format this
     /// number with the aforementioned properties.
     pub fn format(&self) -> String {
-        match self.base {
-            // Binary and Octal traits are not implemented for primitive-types types, so we're using
-            // a custom formatter
-            Base::Binary | Base::Octal => self.format_radix(),
+        let s = match self.base {
+            Base::Binary => format!("{:b}", self.number),
+            Base::Octal => format!("{:o}", self.number),
             Base::Decimal => {
                 if self.is_nonnegative {
                     self.number.to_string()
@@ -415,31 +385,12 @@ impl NumberWithBase {
                 }
             }
             Base::Hexadecimal => format!("{:x}", self.number),
+        };
+        if s.starts_with('0') {
+            s.trim_start_matches('0').to_string()
+        } else {
+            s
         }
-    }
-
-    /// Constructs a String from every digit of the number using [std::char::from_digit].
-    ///
-    /// Modified from: https://stackoverflow.com/a/50278316
-    fn format_radix(&self) -> String {
-        let mut x = self.number;
-        let radix = self.base as u32;
-        let r = U256::from(radix);
-
-        let mut buf = ['\0'; 256];
-        let mut i = 255;
-        loop {
-            let m = (x % r).low_u64() as u32;
-            // radix is always less than 37 so from_digit cannot panic
-            // m is always in the radix's range so unwrap cannot panic
-            buf[i] = char::from_digit(m, radix).unwrap();
-            x /= r;
-            if x.is_zero() {
-                break
-            }
-            i -= 1;
-        }
-        String::from_iter(&buf[i..])
     }
 
     fn _parse_int(s: &str, base: Base) -> Result<(U256, bool)> {
@@ -448,20 +399,18 @@ impl NumberWithBase {
 
         let is_neg = matches!(sign, Sign::Negative);
         if is_neg {
-            n = (!n).overflowing_add(U256::one()).0;
+            n = (!n).overflowing_add(U256::from(1)).0;
         }
 
         Ok((n, !is_neg))
     }
 
     fn _parse_uint(s: &str, base: Base) -> Result<U256> {
-        // TODO: Parse from binary or octal str into U256, requires a parser
-        U256::from_str_radix(s, base as u32).map_err(|e| match e.kind() {
-            FromStrRadixErrKind::UnsupportedRadix => {
-                eyre::eyre!("numbers in base {} are currently not supported as input", base)
-            }
-            _ => eyre::eyre!(e),
-        })
+        let s = match s.get(0..2) {
+            Some("0x" | "0X" | "0o" | "0O" | "0b" | "0B") => &s[2..],
+            _ => s,
+        };
+        U256::from_str_radix(s, base as u64).map_err(Into::into)
     }
 }
 
@@ -479,8 +428,8 @@ pub trait ToBase {
     /// # Example
     ///
     /// ```
+    /// use alloy_primitives::U256;
     /// use cast::base::{Base, ToBase};
-    /// use ethers_core::types::U256;
     ///
     /// // Any type that implements ToBase
     /// let number = U256::from(12345);
@@ -665,9 +614,9 @@ mod tests {
         let def: Base = Default::default();
         assert!(matches!(def, Decimal));
 
-        let n: NumberWithBase = U256::zero().into();
+        let n: NumberWithBase = U256::ZERO.into();
         assert!(matches!(n.base, Decimal));
-        let n: NumberWithBase = I256::zero().into();
+        let n: NumberWithBase = I256::ZERO.into();
         assert!(matches!(n.base, Decimal));
     }
 
@@ -719,7 +668,7 @@ mod tests {
         let expected_u16: Vec<_> = POS_NUM.iter().map(|n| format!("{n:X}")).collect();
 
         for (i, n) in POS_NUM.into_iter().enumerate() {
-            let mut num: NumberWithBase = I256::from(n).into();
+            let mut num: NumberWithBase = I256::try_from(n).unwrap().into();
 
             assert_eq!(num.set_base(Binary).format(), expected_2[i]);
             assert_eq!(num.set_base(Octal).format(), expected_8[i]);
@@ -743,7 +692,7 @@ mod tests {
         let expected_u16: Vec<_> = NEG_NUM.iter().map(|n| format!("{n:F>64X}")).collect();
 
         for (i, n) in NEG_NUM.into_iter().enumerate() {
-            let mut num: NumberWithBase = I256::from(n).into();
+            let mut num: NumberWithBase = I256::try_from(n).unwrap().into();
 
             assert_eq!(num.set_base(Binary).format(), expected_2[i]);
             // assert_eq!(num.set_base(Octal).format(), expected_8[i]);
@@ -756,7 +705,7 @@ mod tests {
     #[test]
     fn test_fmt_macro() {
         let nums: Vec<_> =
-            POS_NUM.into_iter().map(|n| NumberWithBase::from(I256::from(n))).collect();
+            POS_NUM.into_iter().map(|n| NumberWithBase::from(I256::try_from(n).unwrap())).collect();
 
         let actual_2: Vec<_> = nums.iter().map(|n| format!("{n:b}")).collect();
         let actual_2_alt: Vec<_> = nums.iter().map(|n| format!("{n:#b}")).collect();

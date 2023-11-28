@@ -1,3 +1,4 @@
+use super::{backend::mem::BlockRequest, sign::build_typed_transaction};
 use crate::{
     eth::{
         backend,
@@ -39,7 +40,10 @@ use anvil_core::{
         },
         EthRequest,
     },
-    types::{EvmMineOptions, Forking, Index, NodeEnvironment, NodeForkConfig, NodeInfo, Work},
+    types::{
+        AnvilMetadata, EvmMineOptions, ForkedNetwork, Forking, Index, NodeEnvironment,
+        NodeForkConfig, NodeInfo, Work,
+    },
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{
@@ -52,26 +56,23 @@ use ethers::{
             eip712::TypedData,
         },
         Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams,
-        GethDebugTracingOptions, GethTrace, Log, Trace, Transaction, TransactionReceipt, TxHash,
-        TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
+        GethDebugTracingOptions, GethTrace, Log, Signature, Trace, Transaction, TransactionReceipt,
+        TxHash, TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
     },
     utils::rlp,
 };
-use foundry_common::ProviderBuilder;
+use foundry_common::{types::ToEthers, ProviderBuilder};
 use foundry_evm::{
-    executor::{backend::DatabaseError, DatabaseRef},
+    backend::DatabaseError,
     revm::{
+        db::DatabaseRef,
         interpreter::{return_ok, return_revert, InstructionResult},
         primitives::BlockEnv,
     },
 };
-use foundry_utils::types::ToEthers;
-use futures::channel::mpsc::Receiver;
+use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
-use std::{collections::HashSet, sync::Arc, time::Duration};
-use tracing::{trace, warn};
-
-use super::{backend::mem::BlockRequest, sign::build_typed_transaction};
+use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
@@ -107,6 +108,8 @@ pub struct EthApi {
     transaction_order: Arc<RwLock<TransactionOrder>>,
     /// Whether we're listening for RPC calls
     net_listening: bool,
+    /// The instance ID. Changes on every reset.
+    instance_id: Arc<RwLock<H256>>,
 }
 
 // === impl Eth RPC API ===
@@ -137,6 +140,7 @@ impl EthApi {
             filters,
             net_listening: true,
             transaction_order: Arc::new(RwLock::new(transactions_order)),
+            instance_id: Arc::new(RwLock::new(H256::random())),
         }
     }
 
@@ -158,7 +162,7 @@ impl EthApi {
             EthRequest::EthChainId(_) => self.eth_chain_id().to_rpc_result(),
             EthRequest::EthNetworkId(_) => self.network_id().to_rpc_result(),
             EthRequest::NetListening(_) => self.net_listening().to_rpc_result(),
-            EthRequest::EthGasPrice(_) => self.gas_price().to_rpc_result(),
+            EthRequest::EthGasPrice(_) => self.eth_gas_price().to_rpc_result(),
             EthRequest::EthMaxPriorityFeePerGas(_) => {
                 self.gas_max_priority_fee_per_gas().to_rpc_result()
             }
@@ -303,6 +307,7 @@ impl EthApi {
                 self.anvil_set_storage_at(addr, slot, val).await.to_rpc_result()
             }
             EthRequest::SetCoinbase(addr) => self.anvil_set_coinbase(addr).await.to_rpc_result(),
+            EthRequest::SetChainId(id) => self.anvil_set_chain_id(id).await.to_rpc_result(),
             EthRequest::SetLogging(log) => self.anvil_set_logging(log).await.to_rpc_result(),
             EthRequest::SetMinGasPrice(gas) => {
                 self.anvil_set_min_gas_price(gas).await.to_rpc_result()
@@ -313,6 +318,7 @@ impl EthApi {
             EthRequest::DumpState(_) => self.anvil_dump_state().await.to_rpc_result(),
             EthRequest::LoadState(buf) => self.anvil_load_state(buf).await.to_rpc_result(),
             EthRequest::NodeInfo(_) => self.anvil_node_info().await.to_rpc_result(),
+            EthRequest::AnvilMetadata(_) => self.anvil_metadata().await.to_rpc_result(),
             EthRequest::EvmSnapshot(_) => self.evm_snapshot().await.to_rpc_result(),
             EthRequest::EvmRevert(id) => self.evm_revert(id).await.to_rpc_result(),
             EthRequest::EvmIncreaseTime(time) => self.evm_increase_time(time).await.to_rpc_result(),
@@ -402,10 +408,19 @@ impl EthApi {
         from: &Address,
         request: TypedTransactionRequest,
     ) -> Result<TypedTransaction> {
-        for signer in self.signers.iter() {
-            if signer.accounts().contains(from) {
-                let signature = signer.sign_transaction(request.clone(), from)?;
-                return build_typed_transaction(request, signature)
+        match request {
+            TypedTransactionRequest::Deposit(_) => {
+                const NIL_SIGNATURE: ethers::types::Signature =
+                    Signature { r: U256::zero(), s: U256::zero(), v: 0 };
+                return build_typed_transaction(request, NIL_SIGNATURE)
+            }
+            _ => {
+                for signer in self.signers.iter() {
+                    if signer.accounts().contains(from) {
+                        let signature = signer.sign_transaction(request.clone(), from)?;
+                        return build_typed_transaction(request, signature)
+                    }
+                }
             }
         }
         Err(BlockchainError::NoSignerAvailable)
@@ -486,7 +501,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_chainId`
     pub fn eth_chain_id(&self) -> Result<Option<U64>> {
         node_info!("eth_chainId");
-        Ok(Some(self.backend.chain_id().as_u64().into()))
+        Ok(Some(self.backend.chain_id().into()))
     }
 
     /// Returns the same as `chain_id`
@@ -494,7 +509,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_networkId`
     pub fn network_id(&self) -> Result<Option<String>> {
         node_info!("eth_networkId");
-        let chain_id = self.backend.chain_id().as_u64();
+        let chain_id = self.backend.chain_id();
         Ok(Some(format!("{chain_id}")))
     }
 
@@ -504,6 +519,12 @@ impl EthApi {
     pub fn net_listening(&self) -> Result<bool> {
         node_info!("net_listening");
         Ok(self.net_listening)
+    }
+
+    /// Returns the current gas price
+    fn eth_gas_price(&self) -> Result<U256> {
+        node_info!("eth_gasPrice");
+        self.gas_price()
     }
 
     /// Returns the current gas price
@@ -798,7 +819,7 @@ impl EthApi {
         node_info!("eth_signTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.get(0).cloned().ok_or(BlockchainError::NoSignerAvailable)
+            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
         })?;
 
         let (nonce, _) = self.request_nonce(&request, from).await?;
@@ -817,13 +838,12 @@ impl EthApi {
         node_info!("eth_sendTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.get(0).cloned().ok_or(BlockchainError::NoSignerAvailable)
+            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
         })?;
 
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
         let request = self.build_typed_tx_request(request, nonce)?;
-
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
             let bypass_signature = self.backend.cheats().bypass_signature();
@@ -933,11 +953,16 @@ impl EthApi {
         )?
         .or_zero_fees();
 
-        let (exit, out, gas, _) =
-            self.backend.call(request, fees, Some(block_request), overrides).await?;
-        trace!(target : "node", "Call status {:?}, gas {}", exit, gas);
+        // this can be blocking for a bit, especially in forking mode
+        // <https://github.com/foundry-rs/foundry/issues/6036>
+        self.on_blocking_task(|this| async move {
+            let (exit, out, gas, _) =
+                this.backend.call(request, fees, Some(block_request), overrides).await?;
+            trace!(target : "node", "Call status {:?}, gas {}", exit, gas);
 
-        ensure_return_ok(exit, &out)
+            ensure_return_ok(exit, &out)
+        })
+        .await
     }
 
     /// This method creates an EIP2930 type accessList based on a given Transaction. The accessList
@@ -1519,10 +1544,18 @@ impl EthApi {
     pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
         node_info!("anvil_reset");
         if let Some(forking) = forking {
+            // if we're resetting the fork we need to reset the instance id
+            self.reset_instance_id();
             self.backend.reset_fork(forking).await
         } else {
             Err(BlockchainError::RpcUnimplemented)
         }
+    }
+
+    pub async fn anvil_set_chain_id(&self, chain_id: u64) -> Result<()> {
+        node_info!("anvil_setChainId");
+        self.backend.set_chain_id(chain_id);
+        Ok(())
     }
 
     /// Modifies the balance of an account.
@@ -1614,7 +1647,7 @@ impl EthApi {
         Ok(())
     }
 
-    /// Create a bufer that represents all state on the chain, which can be loaded to separate
+    /// Create a buffer that represents all state on the chain, which can be loaded to separate
     /// process by calling `anvil_loadState`
     ///
     /// Handler for RPC call: `anvil_dumpState`
@@ -1673,6 +1706,29 @@ impl EthApi {
                     }
                 })
                 .unwrap_or_default(),
+        })
+    }
+
+    /// Retrieves metadata about the Anvil instance.
+    ///
+    /// Handler for RPC call: `anvil_metadata`
+    pub async fn anvil_metadata(&self) -> Result<AnvilMetadata> {
+        node_info!("anvil_metadata");
+        let fork_config = self.backend.get_fork();
+        let snapshots = self.backend.list_snapshots();
+
+        Ok(AnvilMetadata {
+            client_version: CLIENT_VERSION,
+            chain_id: self.backend.chain_id(),
+            latest_block_hash: self.backend.best_hash(),
+            latest_block_number: self.backend.best_number().as_u64(),
+            instance_id: *self.instance_id.read(),
+            forked_network: fork_config.map(|cfg| ForkedNetwork {
+                chain_id: cfg.chain_id(),
+                fork_block_number: cfg.block_number(),
+                fork_block_hash: cfg.block_hash(),
+            }),
+            snapshots,
         })
     }
 
@@ -1979,6 +2035,25 @@ impl EthApi {
 // === impl EthApi utility functions ===
 
 impl EthApi {
+    /// Executes the future on a new blocking task.
+    async fn on_blocking_task<C, F, R>(&self, c: C) -> Result<R>
+    where
+        C: FnOnce(Self) -> F,
+        F: Future<Output = Result<R>> + Send + 'static,
+        R: Send + 'static,
+    {
+        let (tx, rx) = oneshot::channel();
+        let this = self.clone();
+        let f = c(this);
+        tokio::task::spawn_blocking(move || {
+            tokio::runtime::Handle::current().block_on(async move {
+                let res = f.await;
+                let _ = tx.send(res);
+            })
+        });
+        rx.await.map_err(|_| BlockchainError::Internal("blocking task panicked".to_string()))?
+    }
+
     /// Executes the `evm_mine` and returns the number of blocks mined
     async fn do_evm_mine(&self, opts: Option<EvmMineOptions>) -> Result<u64> {
         let mut blocks_to_mine = 1u64;
@@ -2123,7 +2198,8 @@ impl EthApi {
                 return Err(InvalidTransactionError::BasicOutOfGas(gas_limit).into())
             }
             // need to check if the revert was due to lack of gas or unrelated reason
-            return_revert!() => {
+            // we're also checking for InvalidFEOpcode here because this can be used to trigger an error <https://github.com/foundry-rs/foundry/issues/6138> common usage in openzeppelin <https://github.com/OpenZeppelin/openzeppelin-contracts/blob/94697be8a3f0dfcd95dfb13ffbd39b5973f5c65d/contracts/metatx/ERC2771Forwarder.sol#L360-L367>
+            return_revert!() | InstructionResult::InvalidFEOpcode => {
                 // if price or limit was included in the request then we can execute the request
                 // again with the max gas limit to check if revert is gas related or not
                 return if request.gas.is_some() || request.gas_price.is_some() {
@@ -2195,7 +2271,9 @@ impl EthApi {
                     // gas).
                     InstructionResult::Revert |
                     InstructionResult::OutOfGas |
-                    InstructionResult::OutOfFund => {
+                    InstructionResult::OutOfFund |
+                    // we're also checking for InvalidFEOpcode here because this can be used to trigger an error <https://github.com/foundry-rs/foundry/issues/6138> common usage in openzeppelin <https://github.com/OpenZeppelin/openzeppelin-contracts/blob/94697be8a3f0dfcd95dfb13ffbd39b5973f5c65d/contracts/metatx/ERC2771Forwarder.sol#L360-L367>
+                    InstructionResult::InvalidFEOpcode => {
                         lowest_gas_limit = mid_gas_limit;
                     }
                     // The tx failed for some other reason.
@@ -2232,11 +2310,21 @@ impl EthApi {
 
     /// Returns the chain ID used for transaction
     pub fn chain_id(&self) -> u64 {
-        self.backend.chain_id().as_u64()
+        self.backend.chain_id()
     }
 
     pub fn get_fork(&self) -> Option<ClientFork> {
         self.backend.get_fork()
+    }
+
+    /// Returns the current instance's ID.
+    pub fn instance_id(&self) -> H256 {
+        *self.instance_id.read()
+    }
+
+    /// Resets the instance ID.
+    pub fn reset_instance_id(&self) {
+        *self.instance_id.write() = H256::random();
     }
 
     /// Returns the first signer that can sign for the given address
@@ -2347,6 +2435,10 @@ impl EthApi {
                 }
                 TypedTransactionRequest::EIP1559(m)
             }
+            Some(TypedTransactionRequest::Deposit(mut m)) => {
+                m.gas_limit = gas_limit;
+                TypedTransactionRequest::Deposit(m)
+            }
             _ => return Err(BlockchainError::FailedToDecodeTransaction),
         };
         Ok(request)
@@ -2423,6 +2515,7 @@ impl EthApi {
         match &tx {
             TypedTransaction::EIP2930(_) => self.backend.ensure_eip2930_active(),
             TypedTransaction::EIP1559(_) => self.backend.ensure_eip1559_active(),
+            TypedTransaction::Deposit(_) => self.backend.ensure_op_deposits_active(),
             TypedTransaction::Legacy(_) => Ok(()),
         }
     }
@@ -2508,6 +2601,10 @@ fn determine_base_gas_by_kind(request: EthTransactionRequest) -> U256 {
                 TransactionKind::Create => MIN_CREATE_GAS,
             },
             TypedTransactionRequest::EIP2930(req) => match req.kind {
+                TransactionKind::Call(_) => MIN_TRANSACTION_GAS,
+                TransactionKind::Create => MIN_CREATE_GAS,
+            },
+            TypedTransactionRequest::Deposit(req) => match req.kind {
                 TransactionKind::Call(_) => MIN_TRANSACTION_GAS,
                 TransactionKind::Create => MIN_CREATE_GAS,
             },

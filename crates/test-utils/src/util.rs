@@ -1,9 +1,11 @@
-use ethers_solc::{
-    cache::SolFilesCache,
-    project_util::{copy_dir, TempProject},
-    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig, Solc,
-};
+use crate::init_tracing;
 use eyre::{Result, WrapErr};
+use foundry_compilers::{
+    cache::SolFilesCache,
+    error::Result as SolcResult,
+    project_util::{copy_dir, TempProject},
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
+};
 use foundry_config::Config;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -16,7 +18,7 @@ use std::{
     fs::File,
     io::{BufWriter, IsTerminal, Write},
     path::{Path, PathBuf},
-    process::{self, Command, Stdio},
+    process::{ChildStdin, Command, Output, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -25,47 +27,129 @@ use std::{
 
 static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
-/// A lock used for pre-installing commonly used solc versions once.
-/// Pre-installing is useful, because if two forge test require a missing solc at the same time, one
-/// can encounter an OS error 26 textfile busy if it tries to write the freshly downloaded solc to
-/// the right location while the other test already did that and is currently executing this solc
-/// binary.
-static PRE_INSTALL_SOLC_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
-
-// This stores `true` if the current terminal is a tty
+/// Stores whether `stdout` is a tty / terminal.
 pub static IS_TTY: Lazy<bool> = Lazy::new(|| std::io::stdout().is_terminal());
 
-/// Contains a `forge init` initialized project
-pub static FORGE_INITIALIZED: Lazy<TestProject> = Lazy::new(|| {
-    let (prj, mut cmd) = setup_forge("init-template", PathStyle::Dapptools);
-    cmd.args(["init", "--force"]);
-    cmd.assert_non_empty_stdout();
-    prj
-});
+/// Global default template path. Contains the global template project from which all other
+/// temp projects are initialized. See [`initialize()`] for more info.
+static TEMPLATE_PATH: Lazy<PathBuf> =
+    Lazy::new(|| env::temp_dir().join("foundry-forge-test-template"));
 
-// identifier for tests
+/// Global default template lock. If its contents are not exactly `"1"`, the global template will
+/// be re-initialized. See [`initialize()`] for more info.
+static TEMPLATE_LOCK: Lazy<PathBuf> =
+    Lazy::new(|| env::temp_dir().join("foundry-forge-test-template.lock"));
+
+/// Global test identifier.
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
-/// Copies an initialized project to the given path
-pub fn initialize(target: impl AsRef<Path>) {
-    FORGE_INITIALIZED.copy_to(target)
+/// The default Solc version used when compiling tests.
+pub const SOLC_VERSION: &str = "0.8.23";
+
+/// Another Solc version used when compiling tests. Necessary to avoid downloading multiple
+/// versions.
+pub const OTHER_SOLC_VERSION: &str = "0.8.22";
+
+/// Initializes a project with `forge init` at the given path.
+///
+/// This should be called after an empty project is created like in
+/// [some of this crate's macros](crate::forgetest_init).
+///
+/// ## Note
+///
+/// This doesn't always run `forge init`, instead opting to copy an already-initialized template
+/// project from a global template path. This is done to speed up tests.
+///
+/// This used to use a `static` [`Lazy`], but this approach does not with `cargo-nextest` because it
+/// runs each test in a separate process. Instead, we use a global lock file to ensure that only one
+/// test can initialize the template at a time.
+pub fn initialize(target: &Path) {
+    eprintln!("initializing {}", target.display());
+
+    let tpath = TEMPLATE_PATH.as_path();
+    pretty_err(tpath, fs::create_dir_all(tpath));
+
+    // Initialize the global template if necessary.
+    let mut lock = crate::fd_lock::new_lock(TEMPLATE_LOCK.as_path());
+    let mut _read = Some(lock.read().unwrap());
+    if fs::read(&*TEMPLATE_LOCK).unwrap() != b"1" {
+        // We are the first to acquire the lock:
+        // - initialize a new empty temp project;
+        // - run `forge init`;
+        // - run `forge build`;
+        // - copy it over to the global template;
+        // Ideally we would be able to initialize a temp project directly in the global template,
+        // but `TempProject` does not currently allow this: https://github.com/foundry-rs/compilers/issues/22
+
+        // Release the read lock and acquire a write lock, initializing the lock file.
+        _read = None;
+        let mut write = lock.write().unwrap();
+        write.write_all(b"1").unwrap();
+
+        // Initialize and build.
+        let (prj, mut cmd) = setup_forge("template", foundry_compilers::PathStyle::Dapptools);
+        eprintln!("- initializing template dir in {}", prj.root().display());
+
+        cmd.args(["init", "--force"]).assert_success();
+        cmd.forge_fuse().args(["build", "--use", SOLC_VERSION]).assert_success();
+
+        // Remove the existing template, if any.
+        let _ = fs::remove_dir_all(tpath);
+
+        // Copy the template to the global template path.
+        pretty_err(tpath, copy_dir(prj.root(), tpath));
+
+        // Release the write lock and acquire a new read lock.
+        drop(write);
+        _read = Some(lock.read().unwrap());
+    }
+
+    eprintln!("- copying template dir from {}", tpath.display());
+    pretty_err(target, fs::create_dir_all(target));
+    pretty_err(target, copy_dir(tpath, target));
 }
 
-/// Clones a remote repository into the specified directory.
-pub fn clone_remote(
-    repo_url: &str,
-    target_dir: impl AsRef<Path>,
-) -> std::io::Result<process::Output> {
-    Command::new("git")
-        .args([
-            "clone",
-            "--depth",
-            "1",
-            "--recursive",
-            repo_url,
-            target_dir.as_ref().to_str().expect("Target path for git clone does not exist"),
-        ])
-        .output()
+/// Clones a remote repository into the specified directory. Panics if the command fails.
+pub fn clone_remote(repo_url: &str, target_dir: &str) {
+    let mut cmd = Command::new("git");
+    cmd.args(["clone", "--depth=1", "--recursive", "--shallow-submodules", repo_url, target_dir]);
+    eprintln!("{cmd:?}");
+    let status = cmd.status().unwrap();
+    if !status.success() {
+        panic!("git clone failed: {status:?}");
+    }
+    eprintln!();
+}
+
+/// Runs common installation commands, such as `make` and `npm`. Continues if any command fails.
+pub fn run_install_commands(root: &Path) {
+    let root_files =
+        std::fs::read_dir(root).unwrap().flatten().map(|x| x.path()).collect::<Vec<_>>();
+    let contains = |path: &str| root_files.iter().any(|p| p.to_str().unwrap().contains(path));
+    let run = |args: &[&str]| {
+        let mut cmd = Command::new(args[0]);
+        cmd.args(&args[1..]).current_dir(root);
+        eprintln!("cd {}; {cmd:?}", root.display());
+        #[cfg(windows)]
+        let st = cmd.status();
+        #[cfg(not(windows))]
+        let st = cmd.status().unwrap();
+        eprintln!("\n\n{cmd:?}: {st:?}");
+    };
+    let maybe_run = |path: &str, args: &[&str]| {
+        let c = contains(path);
+        if c {
+            run(args);
+        }
+        c
+    };
+
+    maybe_run("Makefile", &["make", "install"]);
+    let pnpm = maybe_run("pnpm-lock.yaml", &["pnpm", "install", "--prefer-offline"]);
+    let yarn = maybe_run("yarn.lock", &["yarn", "install", "--prefer-offline"]);
+    if !pnpm && !yarn && contains("package.json") {
+        run(&["npm", "install"]);
+    }
 }
 
 /// Setup an empty test project and return a command pointing to the forge
@@ -79,10 +163,6 @@ pub fn setup_forge(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
 }
 
 pub fn setup_forge_project(test: TestProject) -> (TestProject, TestCommand) {
-    // preinstall commonly used solc once, we execute this here because this is the shared
-    // entrypoint used by all `forgetest!` macros
-    install_commonly_used_solc();
-
     let cmd = test.forge_command();
     (test, cmd)
 }
@@ -145,7 +225,7 @@ pub fn setup_forge_remote(prj: impl Into<RemoteProject>) -> (TestProject, TestCo
     try_setup_forge_remote(prj).unwrap()
 }
 
-/// Same as `setup_forge_remote` but not panicing
+/// Same as `setup_forge_remote` but not panicking
 pub fn try_setup_forge_remote(
     config: impl Into<RemoteProject>,
 ) -> Result<(TestProject, TestCommand)> {
@@ -187,38 +267,13 @@ pub fn setup_cast_project(test: TestProject) -> (TestProject, TestCommand) {
     (test, cmd)
 }
 
-/// pre-installs commonly used solc versions
-fn install_commonly_used_solc() {
-    let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock();
-    if !*is_preinstalled {
-        let v0_8_19 = std::thread::spawn(|| Solc::blocking_install(&"0.8.19".parse().unwrap()));
-        let v0_8_20 = std::thread::spawn(|| Solc::blocking_install(&"0.8.20".parse().unwrap()));
-        let v0_8_21 = std::thread::spawn(|| Solc::blocking_install(&"0.8.21".parse().unwrap()));
-
-        let wait = |res: std::thread::JoinHandle<_>| -> Result<(), ()> {
-            if let Err(err) = res.join().unwrap() {
-                eprintln!("{err:?}");
-                // there could be another process that's currently installing this version, so we
-                // sleep here for a bit and assume the other process will be finished then
-                std::thread::sleep(std::time::Duration::from_secs(15));
-                Err(())
-            } else {
-                Ok(())
-            }
-        };
-
-        // only set to installed if succeeded
-        *is_preinstalled = wait(v0_8_19).and(wait(v0_8_20)).and(wait(v0_8_21)).is_ok();
-    }
-}
-
 /// `TestProject` represents a temporary project to run tests against.
 ///
 /// Test projects are created from a global atomic counter to avoid duplicates.
 #[derive(Clone, Debug)]
 pub struct TestProject<T: ArtifactOutput = ConfigurableArtifacts> {
     /// The directory in which this test executable is running.
-    root: PathBuf,
+    exe_root: PathBuf,
     /// The project in which the test should run.
     inner: Arc<TempProject<T>>,
 }
@@ -234,9 +289,10 @@ impl TestProject {
     }
 
     pub fn with_project(project: TempProject) -> Self {
-        let root =
-            env::current_exe().unwrap().parent().expect("executable's directory").to_path_buf();
-        Self { root, inner: Arc::new(project) }
+        init_tracing();
+        let this = env::current_exe().unwrap();
+        let exe_root = this.parent().expect("executable's directory").to_path_buf();
+        Self { exe_root, inner: Arc::new(project) }
     }
 
     /// Returns the root path of the project's workspace.
@@ -244,46 +300,98 @@ impl TestProject {
         self.inner.root()
     }
 
-    pub fn inner(&self) -> &TempProject {
-        &self.inner
-    }
-
+    /// Returns the paths config.
     pub fn paths(&self) -> &ProjectPathsConfig {
-        self.inner().paths()
+        self.inner.paths()
     }
 
-    /// Returns the path to the project's `foundry.toml` file
-    pub fn config_path(&self) -> PathBuf {
+    /// Returns the path to the project's `foundry.toml` file.
+    pub fn config(&self) -> PathBuf {
         self.root().join(Config::FILE_NAME)
     }
 
-    /// Returns the path to the project's cache file
-    pub fn cache_path(&self) -> &PathBuf {
+    /// Returns the path to the project's cache file.
+    pub fn cache(&self) -> &PathBuf {
         &self.paths().cache
     }
 
-    /// Writes the given config as toml to `foundry.toml`
+    /// Returns the path to the project's artifacts directory.
+    pub fn artifacts(&self) -> &PathBuf {
+        &self.paths().artifacts
+    }
+
+    /// Removes this project's cache file.
+    pub fn clear_cache(&self) {
+        let _ = fs::remove_file(self.cache());
+    }
+
+    /// Removes this project's artifacts directory.
+    pub fn clear_artifacts(&self) {
+        let _ = fs::remove_dir_all(self.artifacts());
+    }
+
+    /// Writes the given config as toml to `foundry.toml`.
     pub fn write_config(&self, config: Config) {
-        let file = self.config_path();
+        let file = self.config();
         pretty_err(&file, fs::write(&file, config.to_string_pretty().unwrap()));
     }
 
-    /// Asserts that the `<root>/foundry.toml` file exits
+    /// Adds a source file to the project.
+    pub fn add_source(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
+        self.inner.add_source(name, Self::add_source_prelude(contents))
+    }
+
+    /// Adds a source file to the project. Prefer using `add_source` instead.
+    pub fn add_raw_source(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
+        self.inner.add_source(name, contents)
+    }
+
+    /// Adds a script file to the project.
+    pub fn add_script(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
+        self.inner.add_script(name, Self::add_source_prelude(contents))
+    }
+
+    /// Adds a test file to the project.
+    pub fn add_test(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
+        self.inner.add_test(name, Self::add_source_prelude(contents))
+    }
+
+    /// Adds a library file to the project.
+    pub fn add_lib(&self, name: &str, contents: &str) -> SolcResult<PathBuf> {
+        self.inner.add_lib(name, Self::add_source_prelude(contents))
+    }
+
+    fn add_source_prelude(s: &str) -> String {
+        let mut s = s.to_string();
+        if !s.contains("pragma solidity") {
+            s = format!("pragma solidity ={SOLC_VERSION};\n{s}");
+        }
+        if !s.contains("// SPDX") {
+            s = format!("// SPDX-License-Identifier: MIT OR Apache-2.0\n{s}");
+        }
+        s
+    }
+
+    /// Asserts that the `<root>/foundry.toml` file exists.
+    #[track_caller]
     pub fn assert_config_exists(&self) {
-        assert!(self.config_path().exists());
+        assert!(self.config().exists());
     }
 
-    /// Asserts that the `<root>/cache/sol-files-cache.json` file exits
+    /// Asserts that the `<root>/cache/sol-files-cache.json` file exists.
+    #[track_caller]
     pub fn assert_cache_exists(&self) {
-        assert!(self.cache_path().exists());
+        assert!(self.cache().exists());
     }
 
-    /// Asserts that the `<root>/out` file exits
+    /// Asserts that the `<root>/out` file exists.
+    #[track_caller]
     pub fn assert_artifacts_dir_exists(&self) {
         assert!(self.paths().artifacts.exists());
     }
 
     /// Creates all project dirs and ensure they were created
+    #[track_caller]
     pub fn assert_create_dirs_exists(&self) {
         self.paths().create_all().unwrap_or_else(|_| panic!("Failed to create project paths"));
         SolFilesCache::default().write(&self.paths().cache).expect("Failed to create cache");
@@ -291,12 +399,14 @@ impl TestProject {
     }
 
     /// Ensures that the given layout exists
+    #[track_caller]
     pub fn assert_style_paths_exist(&self, style: PathStyle) {
         let paths = style.paths(&self.paths().root).unwrap();
-        config_paths_exist(&paths, self.inner().project().cached);
+        config_paths_exist(&paths, self.inner.project().cached);
     }
 
     /// Copies the project's root directory to the given target
+    #[track_caller]
     pub fn copy_to(&self, target: impl AsRef<Path>) {
         let target = target.as_ref();
         pretty_err(target, fs::create_dir_all(target));
@@ -323,24 +433,23 @@ impl TestProject {
     /// Adds DSTest as a source under "test.sol"
     pub fn insert_ds_test(&self) -> PathBuf {
         let s = include_str!("../../../testdata/lib/ds-test/src/test.sol");
-        self.inner().add_source("test.sol", s).unwrap()
+        self.add_source("test.sol", s).unwrap()
     }
 
     /// Adds `console.sol` as a source under "console.sol"
     pub fn insert_console(&self) -> PathBuf {
         let s = include_str!("../../../testdata/logs/console.sol");
-        self.inner().add_source("console.sol", s).unwrap()
+        self.add_source("console.sol", s).unwrap()
     }
 
-    /// Asserts all project paths exist
-    ///
-    ///   - sources
-    ///   - artifacts
-    ///   - libs
-    ///   - cache
+    /// Asserts all project paths exist. These are:
+    /// - sources
+    /// - artifacts
+    /// - libs
+    /// - cache
     pub fn assert_all_paths_exist(&self) {
         let paths = self.paths();
-        config_paths_exist(paths, self.inner().project().cached);
+        config_paths_exist(paths, self.inner.project().cached);
     }
 
     /// Asserts that the artifacts dir and cache don't exist
@@ -379,18 +488,20 @@ impl TestProject {
     }
 
     /// Returns the path to the forge executable.
-    pub fn forge_bin(&self) -> process::Command {
-        let forge = self.root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
-        let mut cmd = process::Command::new(forge);
+    pub fn forge_bin(&self) -> Command {
+        let forge = self.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
+        let mut cmd = Command::new(forge);
         cmd.current_dir(self.inner.root());
+        // disable color output for comparisons
         cmd.env("NO_COLOR", "1");
         cmd
     }
 
     /// Returns the path to the cast executable.
-    pub fn cast_bin(&self) -> process::Command {
-        let cast = self.root.join(format!("../cast{}", env::consts::EXE_SUFFIX));
-        let mut cmd = process::Command::new(cast);
+    pub fn cast_bin(&self) -> Command {
+        let cast = self.exe_root.join(format!("../cast{}", env::consts::EXE_SUFFIX));
+        let mut cmd = Command::new(cast);
+        // disable color output for comparisons
         cmd.env("NO_COLOR", "1");
         cmd
     }
@@ -404,7 +515,7 @@ impl TestProject {
         let mut cmd = self.forge_bin();
         cmd.arg("config").arg("--root").arg(self.root()).args(args).arg("--json");
         let output = cmd.output().unwrap();
-        let c = String::from_utf8_lossy(&output.stdout);
+        let c = lossy_string(&output.stdout);
         let config: Config = serde_json::from_str(c.as_ref()).unwrap();
         config.sanitized()
     }
@@ -449,7 +560,7 @@ fn config_paths_exist(paths: &ProjectPathsConfig, cached: bool) {
 pub fn pretty_err<T, E: std::error::Error>(path: impl AsRef<Path>, res: Result<T, E>) -> T {
     match res {
         Ok(t) => t,
-        Err(err) => panic!("{}: {err:?}", path.as_ref().display()),
+        Err(err) => panic!("{}: {err}", path.as_ref().display()),
     }
 }
 
@@ -458,7 +569,7 @@ pub fn read_string(path: impl AsRef<Path>) -> String {
     pretty_err(path, std::fs::read_to_string(path))
 }
 
-/// A simple wrapper around a process::Command with some conveniences.
+/// A simple wrapper around a Command with some conveniences.
 pub struct TestCommand {
     saved_cwd: PathBuf,
     /// The project used to launch this command.
@@ -467,7 +578,7 @@ pub struct TestCommand {
     cmd: Command,
     // initial: Command,
     current_dir_lock: Option<parking_lot::lock_api::MutexGuard<'static, parking_lot::RawMutex, ()>>,
-    stdin_fun: Option<Box<dyn FnOnce(process::ChildStdin)>>,
+    stdin_fun: Option<Box<dyn FnOnce(ChildStdin)>>,
 }
 
 impl TestCommand {
@@ -476,22 +587,23 @@ impl TestCommand {
         &mut self.cmd
     }
 
-    /// replaces the command
+    /// Replaces the underlying command.
     pub fn set_cmd(&mut self, cmd: Command) -> &mut TestCommand {
         self.cmd = cmd;
         self
     }
 
-    /// Resets the command
+    /// Resets the command to the default `forge` command.
     pub fn forge_fuse(&mut self) -> &mut TestCommand {
         self.set_cmd(self.project.forge_bin())
     }
 
+    /// Resets the command to the default `cast` command.
     pub fn cast_fuse(&mut self) -> &mut TestCommand {
         self.set_cmd(self.project.cast_bin())
     }
 
-    /// Sets the current working directory
+    /// Sets the current working directory.
     pub fn set_current_dir(&mut self, p: impl AsRef<Path>) {
         drop(self.current_dir_lock.take());
         let lock = CURRENT_DIR_LOCK.lock();
@@ -516,7 +628,7 @@ impl TestCommand {
         self
     }
 
-    pub fn stdin(&mut self, fun: impl FnOnce(process::ChildStdin) + 'static) -> &mut TestCommand {
+    pub fn stdin(&mut self, fun: impl FnOnce(ChildStdin) + 'static) -> &mut TestCommand {
         self.stdin_fun = Some(Box::new(fun));
         self
     }
@@ -548,93 +660,117 @@ impl TestCommand {
     }
 
     /// Returns the `Config` as spit out by `forge config`
+    #[track_caller]
     pub fn config(&mut self) -> Config {
         self.cmd.args(["config", "--json"]);
         let output = self.output();
-        let c = String::from_utf8_lossy(&output.stdout);
+        let c = lossy_string(&output.stdout);
         let config = serde_json::from_str(c.as_ref()).unwrap();
         self.forge_fuse();
         config
     }
 
     /// Runs `git init` inside the project's dir
-    pub fn git_init(&self) -> process::Output {
+    #[track_caller]
+    pub fn git_init(&self) -> Output {
         let mut cmd = Command::new("git");
         cmd.arg("init").current_dir(self.project.root());
         let output = cmd.output().unwrap();
-        self.expect_success(output)
+        self.ensure_success(&output).unwrap();
+        output
     }
 
-    /// Runs and captures the stdout of the given command.
-    pub fn stdout(&mut self) -> String {
-        let o = self.output();
-        let stdout = String::from_utf8_lossy(&o.stdout);
-        match stdout.parse::<String>() {
-            Ok(t) => t.replace("\r\n", "\n"),
-            Err(err) => {
-                panic!("could not convert from string: {err:?}\n\n{stdout}");
-            }
-        }
+    /// Executes the command and returns the `(stdout, stderr)` of the output as lossy `String`s.
+    ///
+    /// Expects the command to be successful.
+    #[track_caller]
+    pub fn output_lossy(&mut self) -> (String, String) {
+        let output = self.output();
+        (lossy_string(&output.stdout), lossy_string(&output.stderr))
     }
 
-    /// Returns the `stderr` of the output as `String`.
-    pub fn stderr_lossy(&mut self) -> String {
-        let output = self.execute();
-        String::from_utf8_lossy(&output.stderr).to_string().replace("\r\n", "\n")
+    /// Executes the command and returns the `(stdout, stderr)` of the output as lossy `String`s.
+    ///
+    /// Does not expect the command to be successful.
+    #[track_caller]
+    pub fn unchecked_output_lossy(&mut self) -> (String, String) {
+        let output = self.unchecked_output();
+        (lossy_string(&output.stdout), lossy_string(&output.stderr))
     }
 
-    /// Returns the `stdout` of the output as `String`.
+    /// Executes the command and returns the stderr as lossy `String`.
+    ///
+    /// **Note**: This function checks whether the command was successful.
+    #[track_caller]
     pub fn stdout_lossy(&mut self) -> String {
-        String::from_utf8_lossy(&self.output().stdout).to_string().replace("\r\n", "\n")
+        lossy_string(&self.output().stdout)
+    }
+
+    /// Executes the command and returns the stderr as lossy `String`.
+    ///
+    /// **Note**: This function does **not** check whether the command was successful.
+    #[track_caller]
+    pub fn stderr_lossy(&mut self) -> String {
+        lossy_string(&self.unchecked_output().stderr)
     }
 
     /// Returns the output but does not expect that the command was successful
-    pub fn unchecked_output(&mut self) -> process::Output {
+    #[track_caller]
+    pub fn unchecked_output(&mut self) -> Output {
         self.execute()
     }
 
     /// Gets the output of a command. If the command failed, then this panics.
-    pub fn output(&mut self) -> process::Output {
+    #[track_caller]
+    pub fn output(&mut self) -> Output {
         let output = self.execute();
-        self.expect_success(output)
+        self.ensure_success(&output).unwrap();
+        output
     }
 
     /// Runs the command and asserts that it resulted in success
+    #[track_caller]
     pub fn assert_success(&mut self) {
         self.output();
     }
 
     /// Executes command, applies stdin function and returns output
-    pub fn execute(&mut self) -> process::Output {
+    #[track_caller]
+    pub fn execute(&mut self) -> Output {
         self.try_execute().unwrap()
     }
 
-    pub fn try_execute(&mut self) -> std::io::Result<process::Output> {
+    #[track_caller]
+    pub fn try_execute(&mut self) -> std::io::Result<Output> {
+        eprintln!("executing {:?}", self.cmd);
         let mut child =
             self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::piped()).spawn()?;
         if let Some(fun) = self.stdin_fun.take() {
-            fun(child.stdin.take().unwrap())
+            fun(child.stdin.take().unwrap());
         }
         child.wait_with_output()
     }
 
     /// Executes command and expects an successful result
     #[track_caller]
-    pub fn ensure_execute_success(&mut self) -> Result<process::Output> {
+    pub fn ensure_execute_success(&mut self) -> Result<Output> {
         let out = self.try_execute()?;
-        self.ensure_success(out)
+        self.ensure_success(&out)?;
+        Ok(out)
     }
 
     /// Runs the command and prints its output
     /// You have to pass --nocapture to cargo test or the print won't be displayed.
     /// The full command would be: cargo test -- --nocapture
+    #[track_caller]
     pub fn print_output(&mut self) {
         let output = self.execute();
-        println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
-        println!("stderr: {}", String::from_utf8_lossy(&output.stderr));
+        println!("stdout:\n{}", lossy_string(&output.stdout));
+        println!("\nstderr:\n{}", lossy_string(&output.stderr));
     }
 
     /// Writes the content of the output to new fixture files
+    #[track_caller]
     pub fn write_fixtures(&mut self, name: impl AsRef<Path>) {
         let name = name.as_ref();
         if let Some(parent) = name.parent() {
@@ -648,164 +784,140 @@ impl TestCommand {
     /// Runs the command and asserts that it resulted in an error exit code.
     #[track_caller]
     pub fn assert_err(&mut self) {
-        let o = self.execute();
-        if o.status.success() {
-            panic!(
-                "\n\n===== {:?} =====\n\
-                 command succeeded but expected failure!\
-                 \n\ncwd: {}\
-                 \n\nstatus: {}\
-                 \n\nstdout: {}\n\nstderr: {}\
-                 \n\n=====\n",
-                self.cmd,
-                self.project.inner.paths(),
-                o.status,
-                String::from_utf8_lossy(&o.stdout),
-                String::from_utf8_lossy(&o.stderr)
-            );
+        let out = self.execute();
+        if out.status.success() {
+            self.make_panic(&out, true);
         }
     }
 
     /// Runs the command and asserts that something was printed to stderr.
     #[track_caller]
     pub fn assert_non_empty_stderr(&mut self) {
-        let o = self.execute();
-        if o.status.success() || o.stderr.is_empty() {
-            panic!(
-                "\n\n===== {:?} =====\n\
-                 command succeeded but expected failure!\
-                 \n\ncwd: {}\
-                 \n\nstatus: {}\
-                 \n\nstdout: {}\n\nstderr: {}\
-                 \n\n=====\n",
-                self.cmd,
-                self.project.inner.paths(),
-                o.status,
-                String::from_utf8_lossy(&o.stdout),
-                String::from_utf8_lossy(&o.stderr)
-            );
+        let out = self.execute();
+        if out.status.success() || out.stderr.is_empty() {
+            self.make_panic(&out, true);
         }
     }
 
     /// Runs the command and asserts that something was printed to stdout.
     #[track_caller]
     pub fn assert_non_empty_stdout(&mut self) {
-        let o = self.execute();
-        if !o.status.success() || o.stdout.is_empty() {
-            panic!(
-                "\n\n===== {:?} =====\n\
-                 command failed but expected success!\
-                 \n\ncwd: {}\
-                 \n\nstatus: {}\
-                 \n\nstdout: {}\n\nstderr: {}\
-                 \n\n=====\n",
-                self.cmd,
-                self.project.inner.paths(),
-                o.status,
-                String::from_utf8_lossy(&o.stdout),
-                String::from_utf8_lossy(&o.stderr)
-            );
+        let out = self.execute();
+        if !out.status.success() || out.stdout.is_empty() {
+            self.make_panic(&out, false);
         }
     }
 
     /// Runs the command and asserts that nothing was printed to stdout.
     #[track_caller]
     pub fn assert_empty_stdout(&mut self) {
-        let o = self.execute();
-        if !o.status.success() || !o.stderr.is_empty() {
-            panic!(
-                "\n\n===== {:?} =====\n\
-                 command succeeded but expected failure!\
-                 \n\ncwd: {}\
-                 \n\nstatus: {}\
-                 \n\nstdout: {}\n\nstderr: {}\
-                 \n\n=====\n",
-                self.cmd,
-                self.project.inner.paths(),
-                o.status,
-                String::from_utf8_lossy(&o.stdout),
-                String::from_utf8_lossy(&o.stderr)
-            );
+        let out = self.execute();
+        if !out.status.success() || !out.stderr.is_empty() {
+            self.make_panic(&out, true);
         }
     }
 
     #[track_caller]
-    fn expect_success(&self, out: process::Output) -> process::Output {
-        self.ensure_success(out).unwrap()
+    pub fn ensure_success(&self, out: &Output) -> Result<()> {
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(self.make_error(out, false))
+        }
     }
 
     #[track_caller]
-    pub fn ensure_success(&self, out: process::Output) -> Result<process::Output> {
-        if !out.status.success() {
-            let suggest = if out.stderr.is_empty() {
-                "\n\nDid your forge command end up with no output?".to_string()
-            } else {
-                "".to_string()
-            };
-            eyre::bail!(
-                "\n\n==========\n\
-                    command failed but expected success!\
-                    {}\
-                    \n\ncommand: {:?}\
-                    \n\ncwd: {}\
-                    \n\nstatus: {}\
-                    \n\nstdout: {}\
-                    \n\nstderr: {}\
-                    \n\n==========\n",
-                suggest,
-                self.cmd,
-                self.project.inner.paths(),
-                out.status,
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-        }
-        Ok(out)
+    fn make_panic(&self, out: &Output, expected_fail: bool) -> ! {
+        panic!("{}", self.make_error_message(out, expected_fail))
+    }
+
+    #[track_caller]
+    fn make_error(&self, out: &Output, expected_fail: bool) -> eyre::Report {
+        eyre::eyre!("{}", self.make_error_message(out, expected_fail))
+    }
+
+    fn make_error_message(&self, out: &Output, expected_fail: bool) -> String {
+        let msg = if expected_fail {
+            "expected failure but command succeeded!"
+        } else {
+            "command failed but expected success!"
+        };
+        format!(
+            "\
+--- {:?} ---
+{msg}
+
+status: {}
+
+paths:
+{}
+
+stdout:
+{}
+
+stderr:
+{}",
+            self.cmd,
+            out.status,
+            self.project.inner.paths(),
+            lossy_string(&out.stdout),
+            lossy_string(&out.stderr),
+        )
     }
 }
 
-/// Extension trait for `std::process::Output`
+/// Extension trait for [`Output`].
 ///
 /// These function will read the path's content and assert that the process' output matches the
 /// fixture. Since `forge` commands may emit colorized output depending on whether the current
 /// terminal is tty, the path argument can be wrapped in [tty_fixture_path()]
 pub trait OutputExt {
     /// Ensure the command wrote the expected data to `stdout`.
-    fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self;
+    fn stdout_matches_path(&self, expected_path: impl AsRef<Path>);
 
     /// Ensure the command wrote the expected data to `stderr`.
-    fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self;
+    fn stderr_matches_path(&self, expected_path: impl AsRef<Path>);
 }
 
 /// Patterns to remove from fixtures before comparing output
 ///
 /// This should strip everything that can vary from run to run, like elapsed time, file paths
 static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(\r|finished in (.*)?s|-->(.*).sol|Location(.|\n)*\.rs(.|\n)*Backtrace|Installing solc version(.*?)\n|Successfully installed solc(.*?)\n|runs: \d+, μ: \d+, ~: \d+)").unwrap()
+    let re = &[
+        // solc version
+        r" ?Solc(?: version)? \d+.\d+.\d+",
+        r" with \d+.\d+.\d+",
+        // solc runs
+        r"runs: \d+, μ: \d+, ~: \d+",
+        // elapsed time
+        "finished in .*?s",
+        // file paths
+        r"-->.*\.sol",
+        r"Location(.|\n)*\.rs(.|\n)*Backtrace",
+        // other
+        r"Transaction hash: 0x[0-9A-Fa-f]{64}",
+    ];
+    Regex::new(&format!("({})", re.join("|"))).unwrap()
 });
 
-impl OutputExt for process::Output {
+fn normalize_output(s: &str) -> String {
+    let s = s.replace("\r\n", "\n").replace('\\', "/");
+    IGNORE_IN_FIXTURES.replace_all(&s, "").into_owned()
+}
+
+impl OutputExt for Output {
     #[track_caller]
-    fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
+    fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) {
         let expected = fs::read_to_string(expected_path).unwrap();
-        let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "").replace('\\', "/");
-        let stdout = String::from_utf8_lossy(&self.stdout);
-        let out = IGNORE_IN_FIXTURES.replace_all(&stdout, "").replace('\\', "/");
-
-        pretty_assertions::assert_eq!(expected, out);
-
-        self
+        let out = lossy_string(&self.stdout);
+        pretty_assertions::assert_eq!(normalize_output(&out), normalize_output(&expected));
     }
 
     #[track_caller]
-    fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
+    fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) {
         let expected = fs::read_to_string(expected_path).unwrap();
-        let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "").replace('\\', "/");
-        let stderr = String::from_utf8_lossy(&self.stderr);
-        let out = IGNORE_IN_FIXTURES.replace_all(&stderr, "").replace('\\', "/");
-
-        pretty_assertions::assert_eq!(expected, out);
-        self
+        let err = lossy_string(&self.stderr);
+        pretty_assertions::assert_eq!(normalize_output(&err), normalize_output(&expected));
     }
 }
 
@@ -833,6 +945,10 @@ pub fn dir_list<P: AsRef<Path>>(dir: P) -> Vec<String> {
         .into_iter()
         .map(|result| result.unwrap().path().to_string_lossy().into_owned())
         .collect()
+}
+
+fn lossy_string(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).replace("\r\n", "\n")
 }
 
 #[cfg(test)]

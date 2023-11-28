@@ -3,9 +3,8 @@ use clap::{
     builder::{PossibleValuesParser, TypedValueParser},
     Arg, Command, Parser, Subcommand,
 };
-use ethers::prelude::Chain;
 use eyre::Result;
-use foundry_config::{cache, Chain as FoundryConfigChain, Config};
+use foundry_config::{cache, Chain, Config, NamedChain};
 use std::{ffi::OsStr, str::FromStr};
 use strum::VariantNames;
 
@@ -61,7 +60,9 @@ impl CleanArgs {
 
         for chain_or_all in chains {
             match chain_or_all {
-                ChainOrAll::Chain(chain) => clean_chain_cache(chain, blocks.to_vec(), etherscan)?,
+                ChainOrAll::NamedChain(chain) => {
+                    clean_chain_cache(chain, blocks.to_vec(), etherscan)?
+                }
                 ChainOrAll::All => {
                     if etherscan {
                         Config::clean_foundry_etherscan_cache()?;
@@ -95,7 +96,7 @@ impl LsArgs {
         let mut cache = Cache::default();
         for chain_or_all in chains {
             match chain_or_all {
-                ChainOrAll::Chain(chain) => {
+                ChainOrAll::NamedChain(chain) => {
                     cache.chains.push(Config::list_foundry_chain_cache(chain.into())?)
                 }
                 ChainOrAll::All => cache = Config::list_foundry_cache()?,
@@ -108,7 +109,7 @@ impl LsArgs {
 
 #[derive(Debug, Clone)]
 pub enum ChainOrAll {
-    Chain(Chain),
+    NamedChain(NamedChain),
     All,
 }
 
@@ -116,8 +117,8 @@ impl FromStr for ChainOrAll {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Ok(chain) = ethers::prelude::Chain::from_str(s) {
-            Ok(ChainOrAll::Chain(chain))
+        if let Ok(chain) = NamedChain::from_str(s) {
+            Ok(ChainOrAll::NamedChain(chain))
         } else if s == "all" {
             Ok(ChainOrAll::All)
         } else {
@@ -126,11 +127,7 @@ impl FromStr for ChainOrAll {
     }
 }
 
-fn clean_chain_cache(
-    chain: impl Into<FoundryConfigChain>,
-    blocks: Vec<u64>,
-    etherscan: bool,
-) -> Result<()> {
+fn clean_chain_cache(chain: impl Into<Chain>, blocks: Vec<u64>, etherscan: bool) -> Result<()> {
     let chain = chain.into();
     if blocks.is_empty() {
         Config::clean_foundry_etherscan_chain_cache(chain)?;
@@ -177,7 +174,7 @@ impl TypedValueParser for ChainOrAllValueParser {
 }
 
 fn possible_chains() -> PossibleValuesParser {
-    Some(&"all").into_iter().chain(Chain::VARIANTS).into()
+    Some(&"all").into_iter().chain(NamedChain::VARIANTS).into()
 }
 
 #[cfg(test)]

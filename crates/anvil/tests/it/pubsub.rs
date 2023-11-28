@@ -16,7 +16,7 @@ use std::sync::Arc;
 async fn test_sub_new_heads() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
-    let provider = handle.ws_provider().await;
+    let provider = handle.ws_provider();
 
     let blocks = provider.subscribe_blocks().await.unwrap();
 
@@ -34,7 +34,7 @@ async fn test_sub_logs_legacy() {
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider().await;
+    let provider = handle.ws_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
@@ -73,7 +73,7 @@ async fn test_sub_logs() {
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider().await;
+    let provider = handle.ws_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
@@ -111,7 +111,7 @@ async fn test_sub_logs_impersonated() {
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider().await;
+    let provider = handle.ws_provider();
 
     // impersonate account
     let impersonate = Address::random();
@@ -253,7 +253,7 @@ async fn test_subscriptions() {
 async fn test_sub_new_heads_fast() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
-    let provider = handle.ws_provider().await;
+    let provider = handle.ws_provider();
 
     let blocks = provider.subscribe_blocks().await.unwrap();
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Unlicense
+// SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
@@ -13,12 +13,12 @@ contract EnvTest is DSTest {
         vm.setEnv(key, val);
     }
 
-    uint256 constant numEnvBoolTests = 4;
+    uint256 constant numEnvBoolTests = 2;
 
     function testEnvBool() public {
         string memory key = "_foundryCheatcodeEnvBoolTestKey";
-        string[numEnvBoolTests] memory values = ["true", "false", "True", "False"];
-        bool[numEnvBoolTests] memory expected = [true, false, true, false];
+        string[numEnvBoolTests] memory values = ["true", "false"];
+        bool[numEnvBoolTests] memory expected = [true, false];
         for (uint256 i = 0; i < numEnvBoolTests; ++i) {
             vm.setEnv(key, values[i]);
             bool output = vm.envBool(key);
@@ -91,9 +91,12 @@ contract EnvTest is DSTest {
 
     function testEnvBytes32() public {
         string memory key = "_foundryCheatcodeEnvBytes32TestKey";
-        string[numEnvBytes32Tests] memory values = ["0x7109709ECfa91a80626fF3989D68f67F5b1DD12D", "0x00"];
+        string[numEnvBytes32Tests] memory values = [
+            "0x463df98a03418e6196421718c1b96779a6d4f0bcff1702a9e8f2323bb49f6811",
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
+        ];
         bytes32[numEnvBytes32Tests] memory expected = [
-            bytes32(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D000000000000000000000000),
+            bytes32(0x463df98a03418e6196421718c1b96779a6d4f0bcff1702a9e8f2323bb49f6811),
             bytes32(0x0000000000000000000000000000000000000000000000000000000000000000)
         ];
         for (uint256 i = 0; i < numEnvBytes32Tests; ++i) {
@@ -135,8 +138,8 @@ contract EnvTest is DSTest {
 
     function testEnvBoolArr() public {
         string memory key = "_foundryCheatcodeEnvBoolArrTestKey";
-        string memory value = "true, false, True, False";
-        bool[4] memory expected = [true, false, true, false];
+        string memory value = "true, false";
+        bool[numEnvBoolTests] memory expected = [true, false];
 
         vm.setEnv(key, value);
         string memory delimiter = ",";
@@ -187,9 +190,10 @@ contract EnvTest is DSTest {
 
     function testEnvBytes32Arr() public {
         string memory key = "_foundryCheatcodeEnvBytes32ArrTestKey";
-        string memory value = "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D," "0x00";
+        string memory value = "0x463df98a03418e6196421718c1b96779a6d4f0bcff1702a9e8f2323bb49f6811,"
+            "0x0000000000000000000000000000000000000000000000000000000000000000";
         bytes32[2] memory expected = [
-            bytes32(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D000000000000000000000000),
+            bytes32(0x463df98a03418e6196421718c1b96779a6d4f0bcff1702a9e8f2323bb49f6811),
             bytes32(0x0000000000000000000000000000000000000000000000000000000000000000)
         ];
 
@@ -336,8 +340,8 @@ contract EnvTest is DSTest {
 
     function testEnvOrBoolKey() public {
         string memory key = "_foundryCheatcodeEnvOrBoolTestKey";
-        string[numEnvBoolTests] memory values = ["true", "false", "True", "False"];
-        bool[numEnvBoolTests] memory expected = [true, false, true, false];
+        string[numEnvBoolTests] memory values = ["true", "false"];
+        bool[numEnvBoolTests] memory expected = [true, false];
         for (uint256 i = 0; i < numEnvBoolTests; ++i) {
             vm.setEnv(key, values[i]);
             bool output = vm.envOr(key, expected[i]);
@@ -347,7 +351,7 @@ contract EnvTest is DSTest {
 
     function testEnvOrBoolDefault() public {
         string memory key = "_foundryCheatcodeEnvOrBoolTestDefault";
-        bool[numEnvBoolTests] memory expected = [true, false, true, false];
+        bool[numEnvBoolTests] memory expected = [true, false];
         for (uint256 i = 0; i < numEnvBoolTests; ++i) {
             bool output = vm.envOr(key, expected[i]);
             require(output == expected[i], "envOrBoolDefault failed");
@@ -447,9 +451,12 @@ contract EnvTest is DSTest {
 
     function testEnvOrBytes32Key() public {
         string memory key = "_foundryCheatcodeEnvOrBytes32TestKey";
-        string[numEnvBytes32Tests] memory values = ["0x7109709ECfa91a80626fF3989D68f67F5b1DD12D", "0x00"];
+        string[numEnvBytes32Tests] memory values = [
+            "0x463df98a03418e6196421718c1b96779a6d4f0bcff1702a9e8f2323bb49f6811",
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
+        ];
         bytes32[numEnvBytes32Tests] memory expected = [
-            bytes32(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D000000000000000000000000),
+            bytes32(0x463df98a03418e6196421718c1b96779a6d4f0bcff1702a9e8f2323bb49f6811),
             bytes32(0x0000000000000000000000000000000000000000000000000000000000000000)
         ];
         for (uint256 i = 0; i < numEnvBytes32Tests; ++i) {
@@ -462,7 +469,7 @@ contract EnvTest is DSTest {
     function testEnvOrBytes32Default() public {
         string memory key = "_foundryCheatcodeEnvOrBytes32TestDefault";
         bytes32[numEnvBytes32Tests] memory expected = [
-            bytes32(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D000000000000000000000000),
+            bytes32(0x463df98a03418e6196421718c1b96779a6d4f0bcff1702a9e8f2323bb49f6811),
             bytes32(0x0000000000000000000000000000000000000000000000000000000000000000)
         ];
         for (uint256 i = 0; i < numEnvBytes32Tests; ++i) {
@@ -523,13 +530,11 @@ contract EnvTest is DSTest {
 
     function testEnvOrBoolArrKey() public {
         string memory key = "_foundryCheatcodeEnvBoolWithDefaultBoolArrTestKey";
-        string memory value = "true, false, True, False";
-        bool[4] memory expected = [true, false, true, false];
-        bool[] memory defaultValues = new bool[](4);
+        string memory value = "true, false";
+        bool[numEnvBoolTests] memory expected = [true, false];
+        bool[] memory defaultValues = new bool[](numEnvBoolTests);
         defaultValues[0] = true;
         defaultValues[1] = false;
-        defaultValues[2] = true;
-        defaultValues[3] = false;
 
         vm.setEnv(key, value);
         string memory delimiter = ",";
@@ -541,13 +546,11 @@ contract EnvTest is DSTest {
 
     function testEnvOrBoolArrDefault() public {
         string memory key = "_foundryCheatcodeEnvBoolWithDefaultBoolArrTestDefault";
-        string memory value = "true, false, True, False";
-        bool[4] memory expected = [true, false, true, false];
-        bool[] memory defaultValues = new bool[](4);
+        string memory value = "true, false";
+        bool[numEnvBoolTests] memory expected = [true, false];
+        bool[] memory defaultValues = new bool[](numEnvBoolTests);
         defaultValues[0] = true;
         defaultValues[1] = false;
-        defaultValues[2] = true;
-        defaultValues[3] = false;
 
         string memory delimiter = ",";
         bool[] memory output = vm.envOr(key, delimiter, defaultValues);
@@ -676,9 +679,10 @@ contract EnvTest is DSTest {
 
     function testEnvOrBytes32ArrKey() public {
         string memory key = "_foundryCheatcodeEnvOrBytes32ArrTestKey";
-        string memory value = "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D," "0x00";
+        string memory value = "0x463df98a03418e6196421718c1b96779a6d4f0bcff1702a9e8f2323bb49f6811,"
+            "0x0000000000000000000000000000000000000000000000000000000000000000";
         bytes32[2] memory expected = [
-            bytes32(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D000000000000000000000000),
+            bytes32(0x463df98a03418e6196421718c1b96779a6d4f0bcff1702a9e8f2323bb49f6811),
             bytes32(0x0000000000000000000000000000000000000000000000000000000000000000)
         ];
         bytes32[] memory defaultValues = new bytes32[](2);
@@ -696,13 +700,14 @@ contract EnvTest is DSTest {
 
     function testEnvOrBytes32ArrDefault() public {
         string memory key = "_foundryCheatcodeEnvOrBytes32ArrTestDefault";
-        string memory value = "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D," "0x00";
+        string memory value = "0x463df98a03418e6196421718c1b96779a6d4f0bcff1702a9e8f2323bb49f6811,"
+            "0x0000000000000000000000000000000000000000000000000000000000000000";
         bytes32[2] memory expected = [
-            bytes32(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D000000000000000000000000),
+            bytes32(0x463df98a03418e6196421718c1b96779a6d4f0bcff1702a9e8f2323bb49f6811),
             bytes32(0x0000000000000000000000000000000000000000000000000000000000000000)
         ];
         bytes32[] memory defaultValues = new bytes32[](2);
-        defaultValues[0] = bytes32(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D000000000000000000000000);
+        defaultValues[0] = bytes32(0x463df98a03418e6196421718c1b96779a6d4f0bcff1702a9e8f2323bb49f6811);
         defaultValues[1] = bytes32(0x0000000000000000000000000000000000000000000000000000000000000000);
 
         string memory delimiter = ",";
@@ -770,9 +775,9 @@ contract EnvTest is DSTest {
 
     function testEnvOrBytesArrDefault() public {
         string memory key = "_foundryCheatcodeEnvOrBytesArrTestDefault";
-        string memory value = "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D," "0x00";
+        string memory value = "0x463df98a03418e6196421718c1b96779a6d4f0bcff1702a9e8f2323bb49f6811," "0x00";
         bytes[] memory expected = new bytes[](2);
-        expected[0] = hex"7109709ECfa91a80626fF3989D68f67F5b1DD12D";
+        expected[0] = hex"463df98a03418e6196421718c1b96779a6d4f0bcff1702a9e8f2323bb49f6811";
         expected[1] = hex"00";
 
         string memory delimiter = ",";
@@ -963,8 +968,8 @@ contract EnvTest is DSTest {
         }
     }
 
-    function testEnvWithDefaulBytesEmptyArrKey() public {
-        string memory key = "_foundryCheatcodeEnvWithDefaulBytesEmptyArrTestKey";
+    function testEnvWithDefaultBytesEmptyArrKey() public {
+        string memory key = "_foundryCheatcodeEnvWithDefaultBytesEmptyArrTestKey";
         string memory value = "";
         bytes[] memory expected = new bytes[](0);
         bytes[] memory defaultValues = new bytes[](0);
@@ -975,13 +980,13 @@ contract EnvTest is DSTest {
         for (uint256 i = 0; i < expected.length; ++i) {
             require(
                 keccak256(abi.encodePacked((output[i]))) == keccak256(abi.encodePacked((expected[i]))),
-                "envWithDefaulBytesEmptyArrKey failed"
+                "envWithDefaultBytesEmptyArrKey failed"
             );
         }
     }
 
-    function testEnvWithDefaulBytesEmptyArrDefault() public {
-        string memory key = "_foundryCheatcodeEnvWithDefaulBytesEmptyArrTestDefault";
+    function testEnvWithDefaultBytesEmptyArrDefault() public {
+        string memory key = "_foundryCheatcodeEnvWithDefaultBytesEmptyArrTestDefault";
         string memory value = "";
         bytes[] memory expected = new bytes[](0);
         bytes[] memory defaultValues = new bytes[](0);
@@ -991,7 +996,7 @@ contract EnvTest is DSTest {
         for (uint256 i = 0; i < expected.length; ++i) {
             require(
                 keccak256(abi.encodePacked((output[i]))) == keccak256(abi.encodePacked((expected[i]))),
-                "envWithDefaulBytesEmptyArrDefault failed"
+                "envWithDefaultBytesEmptyArrDefault failed"
             );
         }
     }

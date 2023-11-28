@@ -1,19 +1,17 @@
+use super::types::{
+    OtsBlockDetails, OtsBlockTransactions, OtsContractCreator, OtsInternalOperation,
+    OtsSearchTransactions, OtsTrace,
+};
 use crate::eth::{
     error::{BlockchainError, Result},
     macros::node_info,
     EthApi,
 };
-
 use ethers::types::{
     Action, Address, Block, BlockId, BlockNumber, Bytes, Call, Create, CreateResult, Res, Reward,
     Transaction, TxHash, H256, U256, U64,
 };
 use itertools::Itertools;
-
-use super::types::{
-    OtsBlockDetails, OtsBlockTransactions, OtsContractCreator, OtsInternalOperation,
-    OtsSearchTransactions, OtsTrace,
-};
 
 impl EthApi {
     /// Otterscan currently requires this endpoint, even though it's not part of the ots_*
@@ -48,7 +46,7 @@ impl EthApi {
         node_info!("ots_getInternalOperations");
 
         self.backend
-            .mined_parity_trace_transaction(hash)
+            .mined_transaction(hash)
             .map(OtsInternalOperation::batch_build)
             .ok_or_else(|| BlockchainError::DataUnavailable)
     }
@@ -146,7 +144,6 @@ impl EthApi {
 
         let mut res: Vec<_> = vec![];
 
-        dbg!(to, from);
         for n in (to..=from).rev() {
             if n == to {
                 last_page = true;
@@ -271,7 +268,7 @@ impl EthApi {
 
         // loop in reverse, since we want the latest deploy to the address
         for n in (from..=to).rev() {
-            if let Some(traces) = dbg!(self.backend.mined_parity_trace_block(n)) {
+            if let Some(traces) = self.backend.mined_parity_trace_block(n) {
                 for trace in traces.into_iter().rev() {
                     match (trace.action, trace.result) {
                         (

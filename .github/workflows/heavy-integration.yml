@@ -1,4 +1,4 @@
-name: Heavy (long-running) integration tests
+name: heavy integration
 
 on:
     schedule:
@@ -17,7 +17,7 @@ jobs:
         env:
             ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: dtolnay/rust-toolchain@stable
             - uses: taiki-e/install-action@nextest
             - uses: Swatinem/rust-cache@v2
@@ -38,7 +38,8 @@ jobs:
               run: git config --global url."https://github.com/".insteadOf "git@github.com:"
             - name: test
               run: |
-                  cargo nextest run -r -p forge --test cli --features heavy-integration-tests --retries 1 -E 'test(~heavy_integration)'
+                  cargo nextest run --profile heavy -p forge \
+                    --test cli --features heavy-integration-tests -E "test(~heavy_integration)"
 
     # If any of the jobs fail, this will create a high-priority issue to signal so.
     issue:
@@ -47,7 +48,7 @@ jobs:
         needs: heavy-integration
         if: ${{ failure() }}
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: JasonEtco/create-an-issue@v2
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,10 +1,7 @@
-use crate::Ui;
+use crate::{TUIExitReason, Tui, Ui};
 use foundry_common::{compile::ContractSources, evm::Breakpoints, get_contract_name};
-use foundry_evm::{debug::DebugArena, trace::CallTraceDecoder};
-use foundry_utils::types::ToAlloy;
-use tracing::trace;
-
-use crate::{TUIExitReason, Tui};
+use foundry_evm_core::debug::DebugArena;
+use foundry_evm_traces::CallTraceDecoder;
 
 /// Standardized way of firing up the debugger
 pub struct DebuggerArgs<'a> {
@@ -19,22 +16,23 @@ pub struct DebuggerArgs<'a> {
 }
 
 impl DebuggerArgs<'_> {
+    /// Starts the debugger
     pub fn run(&self) -> eyre::Result<TUIExitReason> {
         trace!(target: "debugger", "running debugger");
-
         let flattened = self
             .debug
             .last()
             .map(|arena| arena.flatten(0))
-            .expect("We should have collected debug information");
+            .ok_or_else(|| {
+                error!(target: "debugger", debug_entries=?self.debug.len(), "Failed to get debug information for arena");
+                eyre::eyre!("Unable to collected debug information")
+            })?;
 
         let identified_contracts = self
             .decoder
             .contracts
             .iter()
-            .map(|(addr, identifier)| {
-                ((*addr).to_alloy(), get_contract_name(identifier).to_string())
-            })
+            .map(|(addr, identifier)| ((*addr), get_contract_name(identifier).to_string()))
             .collect();
 
         let tui = Tui::new(

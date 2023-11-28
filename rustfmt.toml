@@ -7,6 +7,8 @@ binop_separator = "Back"
 trailing_comma = "Vertical"
 trailing_semicolon = false
 use_field_init_shorthand = true
+format_code_in_doc_comments = true
+doc_comment_code_block_width = 100
 
 # Ignore automatically-generated code.
 ignore = ["crates/abi/src/bindings"]

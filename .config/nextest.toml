@@ -1,0 +1,11 @@
+[profile.default]
+retries = { backoff = "exponential", count = 2, delay = "2s", jitter = true }
+slow-timeout = { period = "1m", terminate-after = 3 }
+
+[[profile.default.overrides]]
+filter = "test(/ext_integration|can_test_forge_std/)"
+slow-timeout = { period = "5m", terminate-after = 4 }
+
+[profile.heavy]
+retries = 1
+slow-timeout = { period = "120m", terminate-after = 1}

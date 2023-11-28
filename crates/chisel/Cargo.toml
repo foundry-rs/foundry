@@ -19,52 +19,45 @@ vergen = { version = "8", default-features = false, features = ["build", "git", 
 
 [dependencies]
 # forge
-foundry-evm.workspace = true
-foundry-config.workspace = true
+forge-fmt.workspace = true
 foundry-cli.workspace = true
 foundry-common.workspace = true
-foundry-utils.workspace = true
-forge-fmt.workspace = true
+foundry-compilers = { workspace = true, features = ["project-util", "full"] }
+foundry-config.workspace = true
+foundry-evm.workspace = true
 
-# ethers
-ethers.workspace = true
-ethers-solc = { workspace = true, features = ["project-util", "full"] }
+alloy-dyn-abi = { workspace = true, features = ["arbitrary"] }
+alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-json-abi.workspace = true
 
-# alloy
-alloy-dyn-abi = { workspace = true, default-features = false, features = ["std", "arbitrary"] }
-alloy-primitives = { workspace = true, default-features = false, features = ["std", "serde", "getrandom", "arbitrary", "rlp"] }
-alloy-json-abi = { workspace = true, default-features = false, features = ["std"]}
+ethers-core.workspace = true
 
-# async
-tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.11", default-features = false }
-
-# misc
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
-rustyline = "11"
-solang-parser.workspace = true
-yansi = "0.5"
-strum = { version = "0.25", features = ["derive"] }
-serde = "1"
-serde_json = { version = "1", features = ["raw_value"] }
-semver = "1"
-bytes = "1"
-revm = { workspace = true, default-features = false, features = ["std"] }
-eyre = "0.6"
 dirs = "5"
-time = { version = "0.3", features = ["formatting"] }
-regex = "1"
+eyre.workspace = true
 once_cell = "1.18.0"
+regex = "1"
+reqwest = { version = "0.11", default-features = false }
+revm.workspace = true
+rustyline = "12"
+semver = "1"
+serde_json.workspace = true
+serde.workspace = true
+solang-parser.workspace = true
+strum = { version = "0.25", features = ["derive"] }
+time = { version = "0.3", features = ["formatting"] }
+tokio = { version = "1", features = ["full"] }
+yansi = "0.5"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio"] }
-serial_test = "2"
 once_cell = "1"
+serial_test = "2"
 
 [features]
 default = ["rustls"]
-rustls = ["ethers/rustls", "reqwest/rustls-tls", "reqwest/rustls-tls-native-roots"]
-openssl = ["ethers/openssl", "reqwest/default-tls"]
+rustls = ["reqwest/rustls-tls", "reqwest/rustls-tls-native-roots"]
+openssl = ["foundry-compilers/openssl", "reqwest/default-tls"]
 
 [[bench]]
 name = "session_source"

@@ -1,9 +1,8 @@
 use alloy_primitives::U256;
-use ethers::prelude::{Middleware, Provider};
+use ethers_providers::{Middleware, Provider};
 use eyre::{Result, WrapErr};
-use foundry_common::{get_http_provider, runtime_client::RuntimeClient, RpcUrl};
+use foundry_common::{get_http_provider, runtime_client::RuntimeClient, types::ToAlloy, RpcUrl};
 use foundry_config::Chain;
-use foundry_utils::types::ToAlloy;
 use std::{
     collections::{hash_map::Entry, HashMap},
     ops::Deref,
@@ -62,7 +61,7 @@ impl ProviderInfo {
         let provider = Arc::new(get_http_provider(rpc));
         let chain = provider.get_chainid().await?.as_u64();
 
-        if let Chain::Named(chain) = Chain::from(chain) {
+        if let Some(chain) = Chain::from(chain).named() {
             is_legacy |= chain.is_legacy();
         };
 

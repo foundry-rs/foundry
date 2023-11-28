@@ -1,4 +1,8 @@
-use ethers::solc::ProjectCompileOutput;
+#[macro_use]
+extern crate tracing;
+
+use alloy_primitives::B256;
+use foundry_compilers::ProjectCompileOutput;
 use foundry_config::{
     validate_profiles, Config, FuzzConfig, InlineConfig, InlineConfigError, InlineConfigParser,
     InvariantConfig, NatSpec,
@@ -7,29 +11,22 @@ use foundry_config::{
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use std::path::Path;
 
-#[macro_use]
-extern crate tracing;
-
-/// Gas reports
-pub mod gas_report;
-
-/// Coverage reports
 pub mod coverage;
 
-/// The Forge test runner
-mod runner;
-pub use runner::ContractRunner;
+pub mod gas_report;
 
-/// Forge test runners for multiple contracts
+pub mod link;
+
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
-/// reexport
-pub use foundry_common::traits::TestFilter;
+mod runner;
+pub use runner::ContractRunner;
 
 pub mod result;
 
-/// The Forge EVM backend
+// TODO: remove
+pub use foundry_common::traits::TestFilter;
 pub use foundry_evm::*;
 
 /// Metadata on how to run fuzz/invariant tests
@@ -158,9 +155,7 @@ impl TestOptions {
 
         if let Some(ref fuzz_seed) = self.fuzz.seed {
             trace!(target: "forge::test", "building deterministic fuzzer with seed {}", fuzz_seed);
-            let mut bytes: [u8; 32] = [0; 32];
-            fuzz_seed.to_big_endian(&mut bytes);
-            let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
+            let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &B256::from(*fuzz_seed).0);
             TestRunner::new_with_rng(cfg, rng)
         } else {
             trace!(target: "forge::test", "building stochastic fuzzer");
@@ -216,3 +211,23 @@ impl TestOptionsBuilder {
         TestOptions::new(output, root, profiles, base_fuzz, base_invariant)
     }
 }
+
+mod utils2 {
+    use alloy_primitives::Address;
+    use ethers_core::types::BlockId;
+    use ethers_providers::{Middleware, Provider};
+    use eyre::Context;
+    use foundry_common::types::{ToAlloy, ToEthers};
+
+    pub async fn next_nonce(
+        caller: Address,
+        provider_url: &str,
+        block: Option<BlockId>,
+    ) -> eyre::Result<u64> {
+        let provider = Provider::try_from(provider_url)
+            .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
+        let res = provider.get_transaction_count(caller.to_ethers(), block).await?.to_alloy();
+        res.try_into().map_err(Into::into)
+    }
+}
+pub use utils2::*;

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Unlicense
+// SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
@@ -27,9 +27,7 @@ contract LoadTest is DSTest {
     }
 
     function testLoadNotAvailableOnPrecompiles() public {
-        vm.expectRevert(
-            bytes("Load cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead")
-        );
+        vm.expectRevert(bytes("cannot call `load` on precompile 0x0000000000000000000000000000000000000001"));
         uint256 val = this.load(address(1), bytes32(0));
     }
 

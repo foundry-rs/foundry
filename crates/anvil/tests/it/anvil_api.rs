@@ -1,9 +1,9 @@
 //! tests for custom anvil endpoints
 use crate::{abi::*, fork::fork_config};
-use anvil::{spawn, Hardfork, NodeConfig};
+use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
 use anvil_core::{
     eth::EthRequest,
-    types::{NodeEnvironment, NodeForkConfig, NodeInfo},
+    types::{AnvilMetadata, ForkedNetwork, Forking, NodeEnvironment, NodeForkConfig, NodeInfo},
 };
 use ethers::{
     abi::{ethereum_types::BigEndianHash, AbiDecode},
@@ -440,7 +440,7 @@ async fn can_get_node_info() {
         transaction_order: "fees".to_owned(),
         environment: NodeEnvironment {
             base_fee: U256::from_str("0x3b9aca00").unwrap(),
-            chain_id: U256::from_str("0x7a69").unwrap(),
+            chain_id: 0x7a69,
             gas_limit: U256::from_str("0x1c9c380").unwrap(),
             gas_price: U256::from_str("0x77359400").unwrap(),
         },
@@ -452,6 +452,76 @@ async fn can_get_node_info() {
     };
 
     assert_eq!(node_info, expected_node_info);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_metadata() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let metadata = api.anvil_metadata().await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let block_number = provider.get_block_number().await.unwrap().as_u64();
+    let chain_id = provider.get_chainid().await.unwrap().as_u64();
+    let block = provider.get_block(block_number).await.unwrap().unwrap();
+
+    let expected_metadata = AnvilMetadata {
+        latest_block_hash: block.hash.unwrap(),
+        latest_block_number: block_number,
+        chain_id,
+        client_version: CLIENT_VERSION,
+        instance_id: api.instance_id(),
+        forked_network: None,
+        snapshots: Default::default(),
+    };
+
+    assert_eq!(metadata, expected_metadata);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_metadata_on_fork() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
+    let provider = Arc::new(handle.http_provider());
+
+    let metadata = api.anvil_metadata().await.unwrap();
+
+    let block_number = provider.get_block_number().await.unwrap().as_u64();
+    let chain_id = provider.get_chainid().await.unwrap().as_u64();
+    let block = provider.get_block(block_number).await.unwrap().unwrap();
+
+    let expected_metadata = AnvilMetadata {
+        latest_block_hash: block.hash.unwrap(),
+        latest_block_number: block_number,
+        chain_id,
+        client_version: CLIENT_VERSION,
+        instance_id: api.instance_id(),
+        forked_network: Some(ForkedNetwork {
+            chain_id,
+            fork_block_number: block_number,
+            fork_block_hash: block.hash.unwrap(),
+        }),
+        snapshots: Default::default(),
+    };
+
+    assert_eq!(metadata, expected_metadata);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metadata_changes_on_reset() {
+    let (api, _) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
+
+    let metadata = api.anvil_metadata().await.unwrap();
+    let instance_id = metadata.instance_id;
+
+    api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: None })).await.unwrap();
+
+    let new_metadata = api.anvil_metadata().await.unwrap();
+    let new_instance_id = new_metadata.instance_id;
+
+    assert_ne!(instance_id, new_instance_id);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -481,5 +551,69 @@ async fn test_get_transaction_receipt() {
     assert_eq!(
         receipt.effective_gas_price.unwrap().as_u64(),
         new_receipt.unwrap().effective_gas_price.unwrap().as_u64()
+    );
+}
+
+// test can set chain id
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_chain_id() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let chain_id = provider.get_chainid().await.unwrap();
+    assert_eq!(chain_id, U256::from(31337));
+
+    let chain_id = 1234;
+    api.anvil_set_chain_id(chain_id).await.unwrap();
+
+    let chain_id = provider.get_chainid().await.unwrap();
+    assert_eq!(chain_id, U256::from(1234));
+}
+
+// <https://github.com/foundry-rs/foundry/issues/6096>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_revert_next_block_timestamp() {
+    let (api, _handle) = spawn(fork_config()).await;
+
+    // Mine a new block, and check the new block gas limit
+    api.mine_one().await;
+    let latest_block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
+
+    let snapshot_id = api.evm_snapshot().await.unwrap();
+    api.mine_one().await;
+    api.evm_revert(snapshot_id).await.unwrap();
+    let block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
+    assert_eq!(block, latest_block);
+
+    api.mine_one().await;
+    let block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
+    assert!(block.timestamp > latest_block.timestamp);
+}
+
+// test that after a snapshot revert, the env block is reset
+// to its correct value (block number, etc.)
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_revert_call_latest_block_timestamp() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // Mine a new block, and check the new block gas limit
+    api.mine_one().await;
+    let latest_block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
+
+    let snapshot_id = api.evm_snapshot().await.unwrap();
+    api.mine_one().await;
+    api.evm_revert(snapshot_id).await.unwrap();
+
+    let multicall = MulticallContract::new(
+        Address::from_str("0xeefba1e63905ef1d7acba5a8513c70307c1ce441").unwrap(),
+        provider.into(),
+    );
+
+    assert_eq!(multicall.get_current_block_timestamp().await.unwrap(), latest_block.timestamp);
+    assert_eq!(multicall.get_current_block_difficulty().await.unwrap(), latest_block.difficulty);
+    assert_eq!(multicall.get_current_block_gas_limit().await.unwrap(), latest_block.gas_limit);
+    assert_eq!(
+        multicall.get_current_block_coinbase().await.unwrap(),
+        latest_block.author.unwrap_or_default()
     );
 }

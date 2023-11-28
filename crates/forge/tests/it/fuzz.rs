@@ -1,8 +1,9 @@
 //! Tests for invariants
 
-use crate::{config::*, test_helpers::filter::Filter};
-use ethers::types::U256;
+use crate::config::*;
+use alloy_primitives::U256;
 use forge::result::{SuiteResult, TestStatus};
+use foundry_test_utils::Filter;
 use std::collections::BTreeMap;
 
 #[tokio::test(flavor = "multi_thread")]

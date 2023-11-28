@@ -1,20 +1,31 @@
 use super::{retry::RetryArgs, verify};
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt, ResolveSolType};
+use alloy_json_abi::{Constructor, JsonAbi as Abi};
+use alloy_primitives::{Address, Bytes};
 use clap::{Parser, ValueHint};
-use ethers::{
-    abi::{Abi, Constructor, Token},
-    prelude::{artifacts::BytecodeObject, ContractFactory, Middleware, MiddlewareBuilder},
-    solc::{info::ContractInfo, utils::canonicalized},
-    types::{transaction::eip2718::TypedTransaction, Chain},
+use ethers_contract::ContractError;
+use ethers_core::{
+    abi::InvalidOutputType,
+    types::{
+        transaction::eip2718::TypedTransaction, BlockNumber, Chain, Eip1559TransactionRequest,
+        TransactionReceipt, TransactionRequest,
+    },
 };
+use ethers_middleware::MiddlewareBuilder;
+use ethers_providers::Middleware;
 use eyre::{Context, Result};
 use foundry_cli::{
     opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
-use foundry_common::{abi::parse_tokens, compile, estimate_eip1559_fees};
-use foundry_utils::types::ToAlloy;
+use foundry_common::{
+    compile, estimate_eip1559_fees,
+    fmt::parse_tokens,
+    types::{ToAlloy, ToEthers},
+};
+use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalized};
 use serde_json::json;
-use std::{path::PathBuf, sync::Arc};
+use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc};
 
 /// CLI arguments for `forge create`.
 #[derive(Debug, Clone, Parser)]
@@ -117,11 +128,16 @@ impl CreateArgs {
             None => vec![],
         };
 
-        let chain_id = provider.get_chainid().await?.as_u64();
+        // respect chain, if set explicitly via cmd args
+        let chain_id = if let Some(chain_id) = self.chain_id() {
+            chain_id
+        } else {
+            provider.get_chainid().await?.as_u64()
+        };
         if self.unlocked {
             // Deploy with unlocked account
             let sender = self.eth.wallet.from.expect("required");
-            let provider = provider.with_sender(sender);
+            let provider = provider.with_sender(sender.to_ethers());
             self.deploy(abi, bin, params, provider, chain_id).await
         } else {
             // Deploy with signer
@@ -129,6 +145,11 @@ impl CreateArgs {
             let provider = provider.with_signer(signer);
             self.deploy(abi, bin, params, provider, chain_id).await
         }
+    }
+
+    /// Returns the provided chain id, if any.
+    fn chain_id(&self) -> Option<u64> {
+        self.eth.etherscan.chain.map(|chain| chain.id())
     }
 
     /// Ensures the verify command can be executed.
@@ -173,7 +194,7 @@ impl CreateArgs {
         self,
         abi: Abi,
         bin: BytecodeObject,
-        args: Vec<Token>,
+        args: Vec<DynSolValue>,
         provider: M,
         chain: u64,
     ) -> Result<()> {
@@ -187,9 +208,9 @@ impl CreateArgs {
 
         let is_args_empty = args.is_empty();
         let deployer =
-            factory.deploy_tokens(args.clone()).context("Failed to deploy contract").map_err(|e| {
+            factory.deploy_tokens(args.clone()).context("failed to deploy contract").map_err(|e| {
                 if is_args_empty {
-                    e.wrap_err("No arguments provided for contract constructor. Consider --constructor-args or --constructor-args-path")
+                    e.wrap_err("no arguments provided for contract constructor; consider --constructor-args or --constructor-args-path")
                 } else {
                     e
                 }
@@ -200,7 +221,7 @@ impl CreateArgs {
 
         // set tx value if specified
         if let Some(value) = self.tx.value {
-            deployer.tx.set_value(value);
+            deployer.tx.set_value(value.to_ethers());
         }
 
         // fill tx first because if you target a lower gas than current base, eth_estimateGas
@@ -212,7 +233,7 @@ impl CreateArgs {
 
         // set gas price if specified
         if let Some(gas_price) = self.tx.gas_price {
-            deployer.tx.set_gas_price(gas_price);
+            deployer.tx.set_gas_price(gas_price.to_ethers());
         } else if !is_legacy {
             // estimate EIP1559 fees
             let (max_fee, max_priority_fee) = estimate_eip1559_fees(&provider, Some(chain))
@@ -220,18 +241,18 @@ impl CreateArgs {
                 .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
             deployer.tx.set_gas_price(max_fee);
             if priority_fee.is_none() {
-                priority_fee = Some(max_priority_fee);
+                priority_fee = Some(max_priority_fee.to_alloy());
             }
         }
 
         // set gas limit if specified
         if let Some(gas_limit) = self.tx.gas_limit {
-            deployer.tx.set_gas(gas_limit);
+            deployer.tx.set_gas(gas_limit.to_ethers());
         }
 
         // set nonce if specified
         if let Some(nonce) = self.tx.nonce {
-            deployer.tx.set_nonce(nonce);
+            deployer.tx.set_nonce(nonce.to_ethers());
         }
 
         // set priority fee if specified
@@ -241,7 +262,7 @@ impl CreateArgs {
             }
             deployer.tx = match deployer.tx {
                 TypedTransaction::Eip1559(eip1559_tx_request) => TypedTransaction::Eip1559(
-                    eip1559_tx_request.max_priority_fee_per_gas(priority_fee),
+                    eip1559_tx_request.max_priority_fee_per_gas(priority_fee.to_ethers()),
                 ),
                 _ => deployer.tx,
             };
@@ -251,14 +272,10 @@ impl CreateArgs {
         let mut constructor_args = None;
         if self.verify {
             if !args.is_empty() {
-                // we're passing an empty vec to the `encode_input` of the constructor because we
-                // only need the constructor arguments and the encoded input is
-                // `code + args`
-                let code = Vec::new();
                 let encoded_args = abi
                     .constructor()
                     .ok_or_else(|| eyre::eyre!("could not find constructor"))?
-                    .encode_input(code, &args)?;
+                    .abi_encode_input(&args)?;
                 constructor_args = Some(hex::encode(encoded_args));
             }
 
@@ -268,17 +285,17 @@ impl CreateArgs {
         // Deploy the actual contract
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
 
-        let address = deployed_contract.address().to_alloy();
+        let address = deployed_contract;
         if self.json {
             let output = json!({
-                "deployer": deployer_address.to_alloy().to_checksum(None),
-                "deployedTo": address.to_checksum(None),
+                "deployer": deployer_address.to_alloy().to_string(),
+                "deployedTo": address.to_string(),
                 "transactionHash": receipt.transaction_hash
             });
             println!("{output}");
         } else {
-            println!("Deployer: {}", deployer_address.to_alloy().to_checksum(None));
-            println!("Deployed to: {}", address.to_checksum(None));
+            println!("Deployer: {}", deployer_address.to_alloy());
+            println!("Deployed to: {address}");
             println!("Transaction hash: {:?}", receipt.transaction_hash);
         };
 
@@ -311,19 +328,250 @@ impl CreateArgs {
         verify.run().await
     }
 
+    /// Parses the given constructor arguments into a vector of `DynSolValue`s, by matching them
+    /// against the constructor's input params.
+    ///
+    /// Returns a list of parsed values that match the constructor's input params.
     fn parse_constructor_args(
         &self,
         constructor: &Constructor,
         constructor_args: &[String],
-    ) -> Result<Vec<Token>> {
-        let params = constructor
-            .inputs
-            .iter()
-            .zip(constructor_args)
-            .map(|(input, arg)| (&input.kind, arg.as_str()))
-            .collect::<Vec<_>>();
+    ) -> Result<Vec<DynSolValue>> {
+        let mut params = Vec::with_capacity(constructor.inputs.len());
+        for (input, arg) in constructor.inputs.iter().zip(constructor_args) {
+            // resolve the input type directly
+            let ty = input
+                .resolve()
+                .wrap_err_with(|| format!("Could not resolve constructor arg: input={input}"))?;
+            params.push((ty, arg));
+        }
+        let params = params.iter().map(|(ty, arg)| (ty, arg.as_str()));
+        parse_tokens(params)
+    }
+}
 
-        parse_tokens(params, true)
+/// `ContractFactory` is a [`DeploymentTxFactory`] object with an
+/// [`Arc`] middleware. This type alias exists to preserve backwards
+/// compatibility with less-abstract Contracts.
+///
+/// For full usage docs, see [`DeploymentTxFactory`].
+pub type ContractFactory<M> = DeploymentTxFactory<Arc<M>, M>;
+
+/// Helper which manages the deployment transaction of a smart contract. It
+/// wraps a deployment transaction, and retrieves the contract address output
+/// by it.
+///
+/// Currently, we recommend using the [`ContractDeployer`] type alias.
+#[derive(Debug)]
+#[must_use = "DeploymentTx does nothing unless you `send` it"]
+pub struct ContractDeploymentTx<B, M, C> {
+    /// the actual deployer, exposed for overriding the defaults
+    pub deployer: Deployer<B, M>,
+    /// marker for the `Contract` type to create afterwards
+    ///
+    /// this type will be used to construct it via `From::from(Contract)`
+    _contract: PhantomData<C>,
+}
+
+impl<B, M, C> Clone for ContractDeploymentTx<B, M, C>
+where
+    B: Clone,
+{
+    fn clone(&self) -> Self {
+        ContractDeploymentTx { deployer: self.deployer.clone(), _contract: self._contract }
+    }
+}
+
+impl<B, M, C> From<Deployer<B, M>> for ContractDeploymentTx<B, M, C> {
+    fn from(deployer: Deployer<B, M>) -> Self {
+        Self { deployer, _contract: PhantomData }
+    }
+}
+
+/// Helper which manages the deployment transaction of a smart contract
+#[derive(Debug)]
+#[must_use = "Deployer does nothing unless you `send` it"]
+pub struct Deployer<B, M> {
+    /// The deployer's transaction, exposed for overriding the defaults
+    pub tx: TypedTransaction,
+    abi: Abi,
+    client: B,
+    confs: usize,
+    block: BlockNumber,
+    _m: PhantomData<M>,
+}
+
+impl<B, M> Clone for Deployer<B, M>
+where
+    B: Clone,
+{
+    fn clone(&self) -> Self {
+        Deployer {
+            tx: self.tx.clone(),
+            abi: self.abi.clone(),
+            client: self.client.clone(),
+            confs: self.confs,
+            block: self.block,
+            _m: PhantomData,
+        }
+    }
+}
+
+impl<B, M> Deployer<B, M>
+where
+    B: Borrow<M> + Clone,
+    M: Middleware,
+{
+    /// Uses a Legacy transaction instead of an EIP-1559 one to do the deployment
+    pub fn legacy(mut self) -> Self {
+        self.tx = match self.tx {
+            TypedTransaction::Eip1559(inner) => {
+                let tx: TransactionRequest = inner.into();
+                TypedTransaction::Legacy(tx)
+            }
+            other => other,
+        };
+        self
+    }
+
+    /// Broadcasts the contract deployment transaction and after waiting for it to
+    /// be sufficiently confirmed (default: 1), it returns a tuple with
+    /// the [`Contract`](crate::Contract) struct at the deployed contract's address
+    /// and the corresponding [`TransactionReceipt`].
+    pub async fn send_with_receipt(
+        self,
+    ) -> Result<(Address, TransactionReceipt), ContractError<M>> {
+        let pending_tx = self
+            .client
+            .borrow()
+            .send_transaction(self.tx, Some(self.block.into()))
+            .await
+            .map_err(ContractError::from_middleware_error)?;
+
+        // TODO: Should this be calculated "optimistically" by address/nonce?
+        let receipt = pending_tx
+            .confirmations(self.confs)
+            .await
+            .ok()
+            .flatten()
+            .ok_or(ContractError::ContractNotDeployed)?;
+        let address = receipt.contract_address.ok_or(ContractError::ContractNotDeployed)?;
+
+        Ok((address.to_alloy(), receipt))
+    }
+}
+
+/// To deploy a contract to the Ethereum network, a `ContractFactory` can be
+/// created which manages the Contract bytecode and Application Binary Interface
+/// (ABI), usually generated from the Solidity compiler.
+///
+/// Once the factory's deployment transaction is mined with sufficient confirmations,
+/// the [`Contract`](crate::Contract) object is returned.
+///
+/// # Example
+///
+/// ```
+/// # async fn foo() -> Result<(), Box<dyn std::error::Error>> {
+/// use alloy_primitives::Bytes;
+/// use ethers_contract::ContractFactory;
+/// use ethers_providers::{Provider, Http};
+///
+/// // get the contract ABI and bytecode
+/// let abi = Default::default();
+/// let bytecode = Bytes::from_static(b"...");
+///
+/// // connect to the network
+/// let client = Provider::<Http>::try_from("http://localhost:8545").unwrap();
+/// let client = std::sync::Arc::new(client);
+///
+/// // create a factory which will be used to deploy instances of the contract
+/// let factory = ContractFactory::new(abi, bytecode, client);
+///
+/// // The deployer created by the `deploy` call exposes a builder which gets consumed
+/// // by the async `send` call
+/// let contract = factory
+///     .deploy("initial value".to_string())?
+///     .confirmations(0usize)
+///     .send()
+///     .await?;
+/// println!("{}", contract.address());
+/// # Ok(())
+/// # }
+#[derive(Debug)]
+pub struct DeploymentTxFactory<B, M> {
+    client: B,
+    abi: Abi,
+    bytecode: Bytes,
+    _m: PhantomData<M>,
+}
+
+impl<B, M> Clone for DeploymentTxFactory<B, M>
+where
+    B: Clone,
+{
+    fn clone(&self) -> Self {
+        DeploymentTxFactory {
+            client: self.client.clone(),
+            abi: self.abi.clone(),
+            bytecode: self.bytecode.clone(),
+            _m: PhantomData,
+        }
+    }
+}
+
+impl<B, M> DeploymentTxFactory<B, M>
+where
+    B: Borrow<M> + Clone,
+    M: Middleware,
+{
+    /// Creates a factory for deployment of the Contract with bytecode, and the
+    /// constructor defined in the abi. The client will be used to send any deployment
+    /// transaction.
+    pub fn new(abi: Abi, bytecode: Bytes, client: B) -> Self {
+        Self { client, abi, bytecode, _m: PhantomData }
+    }
+
+    /// Create a deployment tx using the provided tokens as constructor
+    /// arguments
+    pub fn deploy_tokens(self, params: Vec<DynSolValue>) -> Result<Deployer<B, M>, ContractError<M>>
+    where
+        B: Clone,
+    {
+        // Encode the constructor args & concatenate with the bytecode if necessary
+        let data: Bytes = match (self.abi.constructor(), params.is_empty()) {
+            (None, false) => return Err(ContractError::ConstructorError),
+            (None, true) => self.bytecode.clone(),
+            (Some(constructor), _) => {
+                let input: Bytes = constructor
+                    .abi_encode_input(&params)
+                    .map_err(|f| {
+                        ContractError::DetokenizationError(InvalidOutputType(f.to_string()))
+                    })?
+                    .into();
+                // Concatenate the bytecode and abi-encoded constructor call.
+                self.bytecode.iter().copied().chain(input).collect()
+            }
+        };
+
+        // create the tx object. Since we're deploying a contract, `to` is `None`
+        // We default to EIP1559 transactions, but the sender can convert it back
+        // to a legacy one.
+        let tx = Eip1559TransactionRequest {
+            to: None,
+            data: Some(data.to_ethers()),
+            ..Default::default()
+        };
+
+        let tx = tx.into();
+
+        Ok(Deployer {
+            client: self.client.clone(),
+            abi: self.abi,
+            tx,
+            confs: 1,
+            block: BlockNumber::Latest,
+            _m: PhantomData,
+        })
     }
 }
 
@@ -344,5 +592,45 @@ mod tests {
         ]);
         assert_eq!(args.retry.retries, 10);
         assert_eq!(args.retry.delay, 30);
+    }
+    #[test]
+    fn can_parse_chain_id() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--verify",
+            "--retries",
+            "10",
+            "--delay",
+            "30",
+            "--chain-id",
+            "9999",
+        ]);
+        assert_eq!(args.chain_id(), Some(9999));
+    }
+
+    #[test]
+    fn test_parse_constructor_args() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--constructor-args",
+            "Hello",
+        ]);
+        let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_name","type":"string","internalType":"string"}],"stateMutability":"nonpayable"}"#).unwrap();
+        let params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
+        assert_eq!(params, vec![DynSolValue::String("Hello".to_string())]);
+    }
+
+    #[test]
+    fn test_parse_tuple_constructor_args() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--constructor-args",
+            "[(1,2), (2,3), (3,4)]",
+        ]);
+        let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_points","type":"tuple[]","internalType":"struct Point[]","components":[{"name":"x","type":"uint256","internalType":"uint256"},{"name":"y","type":"uint256","internalType":"uint256"}]}],"stateMutability":"nonpayable"}"#).unwrap();
+        let _params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
     }
 }

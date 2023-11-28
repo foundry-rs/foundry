@@ -1,6 +1,6 @@
 //! Support for forking off another client
 
-use crate::eth::{backend::mem::fork_db::ForkedDatabase, error::BlockchainError};
+use crate::eth::{backend::db::Db, error::BlockchainError};
 use anvil_core::eth::{proof::AccountProof, transaction::EthTransactionRequest};
 use ethers::{
     prelude::BlockNumber,
@@ -19,7 +19,6 @@ use parking_lot::{
 };
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
-use tracing::trace;
 
 /// Represents a fork of a remote client
 ///
@@ -34,14 +33,14 @@ pub struct ClientFork {
     // endpoints
     pub config: Arc<RwLock<ClientForkConfig>>,
     /// This also holds a handle to the underlying database
-    pub database: Arc<AsyncRwLock<ForkedDatabase>>,
+    pub database: Arc<AsyncRwLock<Box<dyn Db>>>,
 }
 
 // === impl ClientFork ===
 
 impl ClientFork {
     /// Creates a new instance of the fork
-    pub fn new(config: ClientForkConfig, database: Arc<AsyncRwLock<ForkedDatabase>>) -> Self {
+    pub fn new(config: ClientForkConfig, database: Arc<AsyncRwLock<Box<dyn Db>>>) -> Self {
         Self { storage: Default::default(), config: Arc::new(RwLock::new(config)), database }
     }
 
@@ -56,7 +55,7 @@ impl ClientFork {
             self.database
                 .write()
                 .await
-                .reset(url.clone(), block_number)
+                .maybe_reset(url.clone(), block_number)
                 .map_err(BlockchainError::Internal)?;
         }
 

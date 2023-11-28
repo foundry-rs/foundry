@@ -19,6 +19,8 @@ pub struct FormatterConfig {
     pub quote_style: QuoteStyle,
     /// Style of underscores in number literals
     pub number_underscore: NumberUnderscore,
+    /// Style of underscores in hex literals
+    pub hex_underscore: HexUnderscore,
     /// Style of single line blocks in statements
     pub single_line_statement_blocks: SingleLineBlockStyle,
     /// Print space in state variable, function and modifier `override` attribute
@@ -44,16 +46,70 @@ pub enum IntTypes {
 }
 
 /// Style of underscores in number literals
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NumberUnderscore {
+    /// Use the underscores defined in the source code
+    Preserve,
     /// Remove all underscores
+    #[default]
     Remove,
     /// Add an underscore every thousand, if greater than 9999
     /// e.g. 1000 -> 1000 and 10000 -> 10_000
     Thousands,
+}
+
+impl NumberUnderscore {
+    /// Returns true if the option is `Preserve`
+    #[inline]
+    pub fn is_preserve(self) -> bool {
+        matches!(self, NumberUnderscore::Preserve)
+    }
+
+    /// Returns true if the option is `Remove`
+    #[inline]
+    pub fn is_remove(self) -> bool {
+        matches!(self, NumberUnderscore::Remove)
+    }
+
+    /// Returns true if the option is `Remove`
+    #[inline]
+    pub fn is_thousands(self) -> bool {
+        matches!(self, NumberUnderscore::Thousands)
+    }
+}
+
+/// Style of underscores in hex literals
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HexUnderscore {
     /// Use the underscores defined in the source code
     Preserve,
+    /// Remove all underscores
+    #[default]
+    Remove,
+    /// Add underscore as separator between byte boundaries
+    Bytes,
+}
+
+impl HexUnderscore {
+    /// Returns true if the option is `Preserve`
+    #[inline]
+    pub fn is_preserve(self) -> bool {
+        matches!(self, HexUnderscore::Preserve)
+    }
+
+    /// Returns true if the option is `Remove`
+    #[inline]
+    pub fn is_remove(self) -> bool {
+        matches!(self, HexUnderscore::Remove)
+    }
+
+    /// Returns true if the option is `Remove`
+    #[inline]
+    pub fn is_bytes(self) -> bool {
+        matches!(self, HexUnderscore::Bytes)
+    }
 }
 
 /// Style of string quotes
@@ -114,6 +170,7 @@ impl Default for FormatterConfig {
             multiline_func_header: MultilineFuncHeaderStyle::AttributesFirst,
             quote_style: QuoteStyle::Double,
             number_underscore: NumberUnderscore::Preserve,
+            hex_underscore: HexUnderscore::Remove,
             single_line_statement_blocks: SingleLineBlockStyle::Preserve,
             override_spacing: false,
             wrap_comments: false,

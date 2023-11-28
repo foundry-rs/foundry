@@ -1,5 +1,28 @@
 [workspace]
-members = ["crates/*"]
+members = [
+    "crates/anvil/",
+    "crates/anvil/core/",
+    "crates/anvil/rpc/",
+    "crates/anvil/server/",
+    "crates/cast/",
+    "crates/cheatcodes/",
+    "crates/cheatcodes/spec/",
+    "crates/chisel/",
+    "crates/cli/",
+    "crates/common/",
+    "crates/config/",
+    "crates/debugger/",
+    "crates/doc/",
+    "crates/evm/core/",
+    "crates/evm/coverage/",
+    "crates/evm/evm/",
+    "crates/evm/fuzz/",
+    "crates/evm/traces/",
+    "crates/fmt/",
+    "crates/forge/",
+    "crates/macros/",
+    "crates/test-utils/",
+]
 resolver = "2"
 
 [workspace.package]
@@ -20,92 +43,29 @@ debug = 0
 # Speed up tests and dev build
 [profile.dev.package]
 # solc
-ethers-solc.opt-level = 3
+foundry-compilers.opt-level = 3
 solang-parser.opt-level = 3
 serde_json.opt-level = 3
 
 # evm
-revm.opt-level = 3
-revm-primitives.opt-level = 3
+alloy-primitives.opt-level = 3
+alloy-sol-types.opt-level = 3
+hashbrown.opt-level = 3
+keccak.opt-level = 3
 revm-interpreter.opt-level = 3
 revm-precompile.opt-level = 3
-tiny-keccak.opt-level = 3
+revm-primitives.opt-level = 3
+revm.opt-level = 3
+ruint.opt-level = 3
 sha2.opt-level = 3
 sha3.opt-level = 3
-keccak.opt-level = 3
-ruint.opt-level = 3
-hashbrown.opt-level = 3
+tiny-keccak.opt-level = 3
 
 # keystores
 scrypt.opt-level = 3
 
 # forking
 axum.opt-level = 3
-
-# Optimized release profile
-[profile.release]
-opt-level = "s"
-lto = "fat"
-strip = true
-panic = "abort"
-codegen-units = 1
-
-# Like release, but with full debug symbols and with stack unwinds. Useful for e.g. `perf`.
-[profile.debug-fast]
-inherits = "release"
-debug = true
-strip = "none"
-panic = "unwind"
-incremental = false
-
-[profile.release.package]
-# Optimize all non-workspace packages for speed
-"*".opt-level = 3
-
-# Package overrides
-foundry-evm.opt-level = 3
-
-foundry-abi.opt-level = 1
-mdbook.opt-level = 1
-protobuf.opt-level = 1
-rusoto_core.opt-level = 1
-rusoto_credential.opt-level = 1
-rusoto_kms.opt-level = 1
-toml_edit.opt-level = 1
-trezor-client.opt-level = 1
-
-# Given that the `"*"` above takes precedence over the defaults for build scripts and macros, we
-# have to override all of them to reduce compile times
-syn.opt-level = 0
-prettyplease.opt-level = 0
-lalrpop.opt-level = 0
-
-ethers-contract-abigen.opt-level = 0
-ethers-contract-derive.opt-level = 0
-async-recursion.opt-level = 0
-miette-derive.opt-level = 0
-strum_macros.opt-level = 0
-enumn.opt-level = 0
-clap_derive.opt-level = 0
-serde_derive.opt-level = 0
-pear_codegen.opt-level = 0
-num_enum_derive.opt-level = 0
-scale-info-derive.opt-level = 0
-parity-scale-codec-derive.opt-level = 0
-time-macros.opt-level = 0
-phf_macros.opt-level = 0
-pin-project-internal.opt-level = 0
-auto_impl.opt-level = 0
-derive_more.opt-level = 0
-rlp-derive.opt-level = 0
-impl-trait-for-tuples.opt-level = 0
-async-trait.opt-level = 0
-tokio-macros.opt-level = 0
-tracing-attributes.opt-level = 0
-futures-macro.opt-level = 0
-thiserror-impl.opt-level = 0
-wasm-bindgen-macro-support.opt-level = 0
-wasm-bindgen-backend.opt-level = 0
 
 # Local "release" mode, more optimized than dev but much faster to compile than release
 [profile.local]
@@ -115,6 +75,32 @@ strip = true
 panic = "abort"
 codegen-units = 16
 
+# Like release, but with full debug symbols and with stack unwinds. Useful for e.g. `perf`.
+[profile.debug-fast]
+inherits = "release"
+debug = true
+strip = "none"
+panic = "unwind"
+incremental = false
+
+# Optimized release profile
+[profile.release]
+opt-level = 3
+lto = "fat"
+strip = true
+panic = "abort"
+codegen-units = 1
+
+# Override packages which aren't perf-sensitive for faster compilation speed
+[profile.release.package]
+mdbook.opt-level = 1
+protobuf.opt-level = 1
+rusoto_core.opt-level = 1
+rusoto_credential.opt-level = 1
+rusoto_kms.opt-level = 1
+toml_edit.opt-level = 1
+trezor-client.opt-level = 1
+
 [workspace.dependencies]
 anvil = { path = "crates/anvil" }
 cast = { path = "crates/cast" }
@@ -123,47 +109,70 @@ forge = { path = "crates/forge" }
 
 forge-doc = { path = "crates/doc" }
 forge-fmt = { path = "crates/fmt" }
-foundry-abi = { path = "crates/abi" }
-foundry-binder = { path = "crates/binder" }
+foundry-cheatcodes = { path = "crates/cheatcodes" }
+foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
 foundry-cli = { path = "crates/cli" }
 foundry-common = { path = "crates/common" }
 foundry-config = { path = "crates/config" }
-foundry-evm = { path = "crates/evm" }
+foundry-debugger = { path = "crates/debugger" }
+foundry-evm = { path = "crates/evm/evm" }
+foundry-evm-core = { path = "crates/evm/core" }
+foundry-evm-coverage = { path = "crates/evm/coverage" }
+foundry-evm-fuzz = { path = "crates/evm/fuzz" }
+foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
-foundry-utils = { path = "crates/utils" }
-foundry-debugger = { path = "crates/debugger" }
+
+foundry-block-explorers = { version = "0.1.1", default-features = false }
+foundry-compilers = { version = "0.1.1", default-features = false }
 
 ## revm
+# no default features to avoid c-kzg
 revm = { version = "3", default-features = false }
 revm-primitives = { version = "1", default-features = false }
 
 ## ethers
-
 ethers = { version = "2.0", default-features = false }
-ethers-addressbook = { version = "2.0", default-features = false }
 ethers-core = { version = "2.0", default-features = false }
 ethers-contract = { version = "2.0", default-features = false }
 ethers-contract-abigen = { version = "2.0", default-features = false }
 ethers-providers = { version = "2.0", default-features = false }
 ethers-signers = { version = "2.0", default-features = false }
 ethers-middleware = { version = "2.0", default-features = false }
-ethers-etherscan = { version = "2.0", default-features = false }
 ethers-solc = { version = "2.0", default-features = false }
 
 ## alloy
+alloy-primitives = "0.5.0"
+alloy-dyn-abi = "0.5.0"
+alloy-json-abi = "0.5.0"
+alloy-sol-types = "0.5.0"
+syn-solidity = "0.5.0"
 
-alloy-primitives = { version = "0.3", default-features = false }
-alloy-dyn-abi = { version = "0.3", default-features = false }
-alloy-json-abi = { version = "0.3", default-features = false }
-
-solang-parser = "=0.3.2"
+alloy-chains = "0.1.3"
+alloy-rlp = "0.3.3"
+solang-parser = "=0.3.3"
 
 ## misc
-toml = "0.8"
-itertools = "0.11"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+color-eyre = "0.6"
+derive_more = "0.99"
+eyre = "0.6"
 hex = { package = "const-hex", version = "1.6", features = ["hex"] }
+itertools = "0.11"
+jsonpath_lib = "0.3"
+pretty_assertions = "1.4"
+protobuf = "=3.2.0"
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["arbitrary_precision"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+axum = "0.6"
+hyper = "0.14"
+tower = "0.4"
+tower-http = "0.4"
 
 #[patch."https://github.com/gakonst/ethers-rs"]
 #ethers = { path = "../ethers-rs/ethers" }
@@ -178,18 +187,16 @@ hex = { package = "const-hex", version = "1.6", features = ["hex"] }
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-ethers = { git = "https://github.com/gakonst/ethers-rs" }
-ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs" }
-ethers-core = { git = "https://github.com/gakonst/ethers-rs" }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs" }
-ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs" }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs" }
-ethers-signers = { git = "https://github.com/gakonst/ethers-rs" }
-ethers-middleware = { git = "https://github.com/gakonst/ethers-rs" }
-ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs" }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs" }
+ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
+ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
+ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
+ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
+ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
 
-revm = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
-revm-interpreter = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
-revm-precompile = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
-revm-primitives = { git = "https://github.com/Evalir/revm/", branch = "reintroduce-alloy-rebased" }
+revm = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
+revm-interpreter = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
+revm-precompile = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
+revm-primitives = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }

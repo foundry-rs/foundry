@@ -1,28 +1,26 @@
-use ethers::{
-    abi::Abi,
-    core::types::Chain,
-    solc::{
-        artifacts::{CompactBytecode, CompactDeployedBytecode},
-        cache::{CacheEntry, SolFilesCache},
-        info::ContractInfo,
-        utils::read_json_file,
-        Artifact, ProjectCompileOutput,
-    },
-};
+use alloy_json_abi::JsonAbi as Abi;
+use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
 use foundry_common::{cli_warn, fs, TestFunctionExt};
-use foundry_config::{error::ExtractConfigError, figment::Figment, Chain as ConfigChain, Config};
+use foundry_compilers::{
+    artifacts::{CompactBytecode, CompactDeployedBytecode},
+    cache::{CacheEntry, SolFilesCache},
+    info::ContractInfo,
+    utils::read_json_file,
+    Artifact, ProjectCompileOutput,
+};
+use foundry_config::{error::ExtractConfigError, figment::Figment, Chain, Config, NamedChain};
 use foundry_debugger::DebuggerArgs;
 use foundry_evm::{
     debug::DebugArena,
-    executor::{opts::EvmOpts, DeployResult, EvmError, ExecutionErr, RawCallResult},
-    trace::{
+    executors::{DeployResult, EvmError, ExecutionErr, RawCallResult},
+    opts::EvmOpts,
+    traces::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
 use std::{fmt::Write, path::PathBuf, str::FromStr};
-use tracing::trace;
 use yansi::Paint;
 
 /// Given a `Project`'s output, removes the matching ABI, Bytecode and
@@ -165,17 +163,29 @@ macro_rules! update_progress {
 }
 
 /// True if the network calculates gas costs differently.
-pub fn has_different_gas_calc(chain: u64) -> bool {
-    if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
-        return matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::ArbitrumGoerli)
+pub fn has_different_gas_calc(chain_id: u64) -> bool {
+    if let Some(chain) = Chain::from(chain_id).named() {
+        return matches!(
+            chain,
+            NamedChain::Arbitrum |
+                NamedChain::ArbitrumTestnet |
+                NamedChain::ArbitrumGoerli |
+                NamedChain::ArbitrumSepolia
+        )
     }
     false
 }
 
 /// True if it supports broadcasting in batches.
-pub fn has_batch_support(chain: u64) -> bool {
-    if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
-        return !matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::ArbitrumGoerli)
+pub fn has_batch_support(chain_id: u64) -> bool {
+    if let Some(chain) = Chain::from(chain_id).named() {
+        return !matches!(
+            chain,
+            NamedChain::Arbitrum |
+                NamedChain::ArbitrumTestnet |
+                NamedChain::ArbitrumGoerli |
+                NamedChain::ArbitrumSepolia
+        )
     }
     true
 }
@@ -358,7 +368,7 @@ impl TryFrom<EvmError> for TraceResult {
 pub async fn handle_traces(
     mut result: TraceResult,
     config: &Config,
-    chain: Option<ethers::types::Chain>,
+    chain: Option<Chain>,
     labels: Vec<String>,
     verbose: bool,
     debug: bool,
@@ -369,9 +379,7 @@ pub async fn handle_traces(
         let mut iter = label_str.split(':');
 
         if let Some(addr) = iter.next() {
-            if let (Ok(address), Some(label)) =
-                (ethers::types::Address::from_str(addr), iter.next())
-            {
+            if let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next()) {
                 return Some((address, label.to_string()))
             }
         }
