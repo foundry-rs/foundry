@@ -960,9 +960,9 @@ impl DatabaseExt for Backend {
         trace!("create fork");
         let (fork_id, fork, _) = self.forks.create_fork(create_fork.clone())?;
 
-        // Check for an edge case where the fork_id already exists, which would mess with the internal mappings.
-        // This can happen when two forks are created with the same endpoint and block number
-        // <https://github.com/foundry-rs/foundry/issues/5935>
+        // Check for an edge case where the fork_id already exists, which would mess with the
+        // internal mappings. This can happen when two forks are created with the same
+        // endpoint and block number <https://github.com/foundry-rs/foundry/issues/5935>
         // This is a hacky solution but a simple fix to ensure URLs are unique
         if self.inner.contains_fork(&fork_id) {
             // ensure URL is unique
@@ -1539,7 +1539,6 @@ pub struct BackendInner {
 // === impl BackendInner ===
 
 impl BackendInner {
-
     /// Returns `true` if the given [ForkId] already exists.
     fn contains_fork(&self, id: &ForkId) -> bool {
         self.created_forks.contains_key(id)
