@@ -4,8 +4,10 @@ use ethers_core::types::TransactionReceipt;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::Result;
 use foundry_cli::{init_progress, update_progress, utils::print_receipt};
-use foundry_common::provider::ethers::RetryProvider;
-use foundry_common::types::{ToAlloy, ToEthers};
+use foundry_common::{
+    provider::ethers::RetryProvider,
+    types::{ToAlloy, ToEthers},
+};
 use futures::StreamExt;
 use std::sync::Arc;
 

@@ -15,7 +15,11 @@ use forge::{
     utils::CallKind,
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
-use foundry_common::{provider::ethers::RpcUrl, shell, types::{ToAlloy, ToEthers}};
+use foundry_common::{
+    provider::ethers::RpcUrl,
+    shell,
+    types::{ToAlloy, ToEthers},
+};
 use foundry_compilers::artifacts::CompactContractBytecode;
 use futures::future::join_all;
 use parking_lot::RwLock;

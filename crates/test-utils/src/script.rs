@@ -3,8 +3,10 @@ use alloy_primitives::{Address, U256};
 use ethers_core::types::NameOrAddress;
 use ethers_providers::Middleware;
 use eyre::Result;
-use foundry_common::provider::ethers::{get_http_provider, RetryProvider};
-use foundry_common::types::{ToAlloy, ToEthers};
+use foundry_common::{
+    provider::ethers::{get_http_provider, RetryProvider},
+    types::{ToAlloy, ToEthers},
+};
 use std::{collections::BTreeMap, fs, path::Path, str::FromStr};
 
 const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
@@ -276,16 +278,16 @@ impl ScriptOutcome {
 
     pub fn is_err(&self) -> bool {
         match self {
-            ScriptOutcome::OkNoEndpoint
-            | ScriptOutcome::OkSimulation
-            | ScriptOutcome::OkBroadcast
-            | ScriptOutcome::WarnSpecifyDeployer => false,
-            ScriptOutcome::MissingSender
-            | ScriptOutcome::MissingWallet
-            | ScriptOutcome::StaticCallNotAllowed
-            | ScriptOutcome::UnsupportedLibraries
-            | ScriptOutcome::ErrorSelectForkOnBroadcast
-            | ScriptOutcome::ScriptFailed => true,
+            ScriptOutcome::OkNoEndpoint |
+            ScriptOutcome::OkSimulation |
+            ScriptOutcome::OkBroadcast |
+            ScriptOutcome::WarnSpecifyDeployer => false,
+            ScriptOutcome::MissingSender |
+            ScriptOutcome::MissingWallet |
+            ScriptOutcome::StaticCallNotAllowed |
+            ScriptOutcome::UnsupportedLibraries |
+            ScriptOutcome::ErrorSelectForkOnBroadcast |
+            ScriptOutcome::ScriptFailed => true,
         }
     }
 }

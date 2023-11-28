@@ -1,7 +1,7 @@
 //! Temporary utility conversion traits between ethers-rs and alloy types.
 
 use alloy_json_abi::{Event, EventParam, Function, InternalType, Param, StateMutability};
-use alloy_primitives::{Address, B256, I256, U128, U256, U64, B64, Bloom, Bytes};
+use alloy_primitives::{Address, Bloom, Bytes, B256, B64, I256, U128, U256, U64};
 use alloy_rpc_types::{AccessList, AccessListItem, CallInput, CallRequest, Signature, Transaction};
 use ethers_core::{
     abi as ethabi,
@@ -9,8 +9,8 @@ use ethers_core::{
         transaction::eip2930::{
             AccessList as EthersAccessList, AccessListItem as EthersAccessListItem,
         },
-        TransactionRequest, H160, H256, I256 as EthersI256, U256 as EthersU256, U64 as EthersU64,
-        Bloom as EthersBloom, Bytes as EthersBytes, H64,
+        Bloom as EthersBloom, Bytes as EthersBytes, TransactionRequest, H160, H256, H64,
+        I256 as EthersI256, U256 as EthersU256, U64 as EthersU64,
     },
 };
 

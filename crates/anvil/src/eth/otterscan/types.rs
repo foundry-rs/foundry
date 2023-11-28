@@ -5,8 +5,8 @@ use crate::eth::{
 use alloy_primitives::{Address, Bytes, B256, U256 as rU256, U256};
 use alloy_rpc_types::{Block, BlockTransactions, Transaction, TransactionReceipt};
 use ethers::types::{Action, CallType, Trace};
-use foundry_evm::{revm::interpreter::InstructionResult, utils::CallKind};
 use foundry_common::types::ToAlloy;
+use foundry_evm::{revm::interpreter::InstructionResult, utils::CallKind};
 use futures::future::join_all;
 use serde::Serialize;
 use serde_repr::Serialize_repr;
@@ -183,11 +183,16 @@ impl OtsBlockTransactions {
             BlockTransactions::Uncle => return Err(BlockchainError::DataUnavailable),
         };
 
-        let block_txs = block_txs.into_iter().skip(page * page_size).take(page_size).collect::<Vec<_>>();
+        let block_txs =
+            block_txs.into_iter().skip(page * page_size).take(page_size).collect::<Vec<_>>();
 
         block.transactions = match block.transactions {
-            BlockTransactions::Full(txs) => BlockTransactions::Full(txs.into_iter().skip(page * page_size).take(page_size).collect()),
-            BlockTransactions::Hashes(txs) => BlockTransactions::Hashes(txs.into_iter().skip(page * page_size).take(page_size).collect()),
+            BlockTransactions::Full(txs) => BlockTransactions::Full(
+                txs.into_iter().skip(page * page_size).take(page_size).collect(),
+            ),
+            BlockTransactions::Hashes(txs) => BlockTransactions::Hashes(
+                txs.into_iter().skip(page * page_size).take(page_size).collect(),
+            ),
             BlockTransactions::Uncle => return Err(BlockchainError::DataUnavailable),
         };
 

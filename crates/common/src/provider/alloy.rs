@@ -8,8 +8,8 @@ use alloy_transport_http::Http;
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use ethers_providers::{JwtAuth, JwtKey};
 use eyre::{Result, WrapErr};
-use foundry_config::NamedChain;
 use foundry_common::types::ToAlloy;
+use foundry_config::NamedChain;
 use reqwest::{header::HeaderValue, Url};
 use std::{
     path::{Path, PathBuf},

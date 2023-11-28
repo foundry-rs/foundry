@@ -9,8 +9,7 @@ use crate::{
             validate::TransactionValidator,
         },
         error::{
-            BlockchainError, FeeHistoryError, InvalidTransactionError,
-            Result, ToRpcResponseResult,
+            BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
         },
         fees::{FeeDetails, FeeHistoryCache},
         macros::node_info,
@@ -30,7 +29,6 @@ use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256, U64};
-use alloy_transport::TransportErrorKind;
 use alloy_rpc_types::{
     state::StateOverride,
     AccessList,
@@ -55,6 +53,7 @@ use alloy_rpc_types::{
     TxpoolInspectSummary,
     TxpoolStatus,
 };
+use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
         block::BlockInfo,
@@ -73,15 +72,13 @@ use anvil_core::{
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{
     prelude::DefaultFrame,
-    types::{
-        transaction::eip712::TypedData,
-        GethDebugTracingOptions,
-        GethTrace,
-        Trace,
-    },
+    types::{transaction::eip712::TypedData, GethDebugTracingOptions, GethTrace, Trace},
     utils::rlp,
 };
-use foundry_common::provider::alloy::ProviderBuilder;
+use foundry_common::{
+    provider::alloy::ProviderBuilder,
+    types::{ToAlloy, ToEthers},
+};
 use foundry_evm::{
     backend::DatabaseError,
     revm::{
@@ -90,7 +87,6 @@ use foundry_evm::{
         primitives::BlockEnv,
     },
 };
-use foundry_common::types::{ToAlloy, ToEthers};
 use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
 use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
@@ -300,10 +296,9 @@ impl EthApi {
                 self.anvil_auto_impersonate_account(enable).await.to_rpc_result()
             }
             EthRequest::GetAutoMine(()) => self.anvil_get_auto_mine().to_rpc_result(),
-            EthRequest::Mine(blocks, interval) => self
-                .anvil_mine(blocks, interval)
-                .await
-                .to_rpc_result(),
+            EthRequest::Mine(blocks, interval) => {
+                self.anvil_mine(blocks, interval).await.to_rpc_result()
+            }
             EthRequest::SetAutomine(enabled) => {
                 self.anvil_set_auto_mine(enabled).await.to_rpc_result()
             }
@@ -343,19 +338,21 @@ impl EthApi {
             EthRequest::AnvilMetadata(_) => self.anvil_metadata().await.to_rpc_result(),
             EthRequest::EvmSnapshot(_) => self.evm_snapshot().await.to_rpc_result(),
             EthRequest::EvmRevert(id) => self.evm_revert(id).await.to_rpc_result(),
-            EthRequest::EvmIncreaseTime(time) => {
-                self.evm_increase_time(time).await.to_rpc_result()
-            }
+            EthRequest::EvmIncreaseTime(time) => self.evm_increase_time(time).await.to_rpc_result(),
             EthRequest::EvmSetNextBlockTimeStamp(time) => {
                 if time >= U256::from(u64::MAX) {
-                    return ResponseResult::Error(RpcError::invalid_params("The timestamp is too big"))
+                    return ResponseResult::Error(RpcError::invalid_params(
+                        "The timestamp is too big",
+                    ))
                 }
                 let time = time.to::<u64>();
                 self.evm_set_next_block_timestamp(time).to_rpc_result()
             }
             EthRequest::EvmSetTime(timestamp) => {
                 if timestamp >= U256::from(u64::MAX) {
-                    return ResponseResult::Error(RpcError::invalid_params("The timestamp is too big"))
+                    return ResponseResult::Error(RpcError::invalid_params(
+                        "The timestamp is too big",
+                    ))
                 }
                 let time = timestamp.to::<u64>();
                 self.evm_set_time(time).to_rpc_result()
@@ -420,10 +417,9 @@ impl EthApi {
             EthRequest::OtsSearchTransactionsAfter(address, num, page_size) => {
                 self.ots_search_transactions_after(address, num, page_size).await.to_rpc_result()
             }
-            EthRequest::OtsGetTransactionBySenderAndNonce(address, nonce) => self
-                .ots_get_transaction_by_sender_and_nonce(address, nonce)
-                .await
-                .to_rpc_result(),
+            EthRequest::OtsGetTransactionBySenderAndNonce(address, nonce) => {
+                self.ots_get_transaction_by_sender_and_nonce(address, nonce).await.to_rpc_result()
+            }
             EthRequest::OtsGetContractCreator(address) => {
                 self.ots_get_contract_creator(address).await.to_rpc_result()
             }
@@ -437,14 +433,18 @@ impl EthApi {
     ) -> Result<TypedTransaction> {
         match request {
             TypedTransactionRequest::Deposit(_) => {
-                const NIL_SIGNATURE: ethers::types::Signature =
-                    ethers::types::Signature { r: ethers::types::U256::zero(), s: ethers::types::U256::zero(), v: 0 };
+                const NIL_SIGNATURE: ethers::types::Signature = ethers::types::Signature {
+                    r: ethers::types::U256::zero(),
+                    s: ethers::types::U256::zero(),
+                    v: 0,
+                };
                 return build_typed_transaction(request, NIL_SIGNATURE)
             }
             _ => {
                 for signer in self.signers.iter() {
                     if signer.accounts().contains(&from.to_ethers()) {
-                        let signature = signer.sign_transaction(request.clone(), &from.to_ethers())?;
+                        let signature =
+                            signer.sign_transaction(request.clone(), &from.to_ethers())?;
                         return build_typed_transaction(request, signature)
                     }
                 }
@@ -864,16 +864,15 @@ impl EthApi {
     /// Signs a transaction
     ///
     /// Handler for ETH RPC call: `eth_signTransaction`
-    pub async fn sign_transaction(&self, request: AlloyTransactionRequest) -> Result<String> {
+    pub async fn sign_transaction(&self, request: EthTransactionRequest) -> Result<String> {
         node_info!("eth_signTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
-        })?;
+            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable).map(|a| a.to_ethers())
+        })?.to_alloy();
 
         let (nonce, _) = self.request_nonce(&request, from).await?;
 
-        let request = to_internal_tx_request(&request);
         let request = self.build_typed_tx_request(request, nonce)?;
 
         let signer = self.get_signer(from).ok_or(BlockchainError::NoSignerAvailable)?;
@@ -884,15 +883,14 @@ impl EthApi {
     /// Sends a transaction
     ///
     /// Handler for ETH RPC call: `eth_sendTransaction`
-    pub async fn send_transaction(&self, request: AlloyTransactionRequest) -> Result<TxHash> {
+    pub async fn send_transaction(&self, request: EthTransactionRequest) -> Result<TxHash> {
         node_info!("eth_sendTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
-        })?;
+            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable).map(|a| a.to_ethers())
+        })?.to_alloy();
 
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
-        let request = to_internal_tx_request(&request);
         let request = self.build_typed_tx_request(request, nonce)?;
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
@@ -1275,11 +1273,7 @@ impl EthApi {
             // efficiently, instead we fetch it from the fork
             if fork.predates_fork_inclusive(number) {
                 return fork
-                    .fee_history(
-                        block_count,
-                        BlockNumber::Number(number),
-                        &reward_percentiles,
-                    )
+                    .fee_history(block_count, BlockNumber::Number(number), &reward_percentiles)
                     .await
                     .map_err(|_| BlockchainError::DataUnavailable);
             }
@@ -1964,7 +1958,11 @@ impl EthApi {
             // let interval = config.provider.get_interval();
             let new_provider = Arc::new(
                 ProviderBuilder::new(&url).max_retry(10).initial_backoff(1000).build().map_err(
-                    |_| TransportErrorKind::custom_str(format!("Failed to parse invalid url {url}").as_str()),
+                    |_| {
+                        TransportErrorKind::custom_str(
+                            format!("Failed to parse invalid url {url}").as_str(),
+                        )
+                    },
                     // TODO: Add interval
                 )?, // .interval(interval),
             );
@@ -1989,15 +1987,13 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_sendUnsignedTransaction`
     pub async fn eth_send_unsigned_transaction(
         &self,
-        request: AlloyTransactionRequest,
+        request: EthTransactionRequest,
     ) -> Result<TxHash> {
         node_info!("eth_sendUnsignedTransaction");
         // either use the impersonated account of the request's `from` field
-        let from = request.from.ok_or(BlockchainError::NoSignerAvailable)?;
+        let from = request.from.ok_or(BlockchainError::NoSignerAvailable)?.to_alloy();
 
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
-
-        let request = to_internal_tx_request(&request);
 
         let request = self.build_typed_tx_request(request, nonce)?;
 
@@ -2574,12 +2570,12 @@ impl EthApi {
     /// This will also check the tx pool for pending transactions from the sender.
     async fn request_nonce(
         &self,
-        request: &AlloyTransactionRequest,
+        request: &EthTransactionRequest,
         from: Address,
     ) -> Result<(U256, U256)> {
         let highest_nonce =
             self.get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending))).await?;
-        let nonce = request.nonce.map(U256::from).unwrap_or(highest_nonce);
+        let nonce = request.nonce.map(|n| n.to_alloy()).unwrap_or(highest_nonce);
 
         Ok((nonce, highest_nonce))
     }

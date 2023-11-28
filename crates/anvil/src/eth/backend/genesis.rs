@@ -63,11 +63,7 @@ impl GenesisConfig {
                 db.insert_account(addr, acc.into());
                 // insert all storage values
                 for (k, v) in storage.iter() {
-                    db.set_storage_at(
-                        addr,
-                        U256::from_be_bytes(k.0),
-                        U256::from_be_bytes(v.0),
-                    )?;
+                    db.set_storage_at(addr, U256::from_be_bytes(k.0), U256::from_be_bytes(v.0))?;
                 }
             }
         }
@@ -117,16 +113,10 @@ impl<'a> DatabaseRef for AtGenesisStateDb<'a> {
     }
 
     fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
-        if let Some(acc) = self
-            .genesis
-            .as_ref()
-            .and_then(|genesis| genesis.alloc.accounts.get(&(address)))
+        if let Some(acc) =
+            self.genesis.as_ref().and_then(|genesis| genesis.alloc.accounts.get(&(address)))
         {
-            let value = acc
-                .storage
-                .get(&B256::from(index))
-                .copied()
-                .unwrap_or_default();
+            let value = acc.storage.get(&B256::from(index)).copied().unwrap_or_default();
             return Ok(U256::from_be_bytes(value.0))
         }
         self.db.storage_ref(address, index)

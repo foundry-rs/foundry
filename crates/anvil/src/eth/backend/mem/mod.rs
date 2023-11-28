@@ -1377,10 +1377,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return fork
-                .block_by_hash(hash)
-                .await
-                .map_err(|_| BlockchainError::DataUnavailable);
+            return fork.block_by_hash(hash).await.map_err(|_| BlockchainError::DataUnavailable);
         }
 
         Ok(None)
@@ -1506,8 +1503,8 @@ impl Backend {
                     BlockNumber::Finalized => {
                         if storage.best_number.to_ethers() > (slots_in_an_epoch.to_ethers() * 2) {
                             *storage.hashes.get(
-                                &(storage.best_number.to_ethers()
-                                    - (slots_in_an_epoch.to_ethers() * 2))
+                                &(storage.best_number.to_ethers() -
+                                    (slots_in_an_epoch.to_ethers() * 2))
                                     .to_alloy(),
                             )?
                         } else {
@@ -2303,8 +2300,8 @@ impl TransactionValidator for Backend {
             if chain_id.to::<u64>() != tx_chain_id {
                 if let Some(legacy) = tx.as_legacy() {
                     // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
-                    if env.cfg.spec_id >= SpecId::SPURIOUS_DRAGON
-                        && !legacy.meets_eip155(chain_id.to::<u64>())
+                    if env.cfg.spec_id >= SpecId::SPURIOUS_DRAGON &&
+                        !legacy.meets_eip155(chain_id.to::<u64>())
                     {
                         warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
                         return Err(InvalidTransactionError::IncompatibleEIP155);
@@ -2410,10 +2407,7 @@ pub fn transaction_build(
             let max_priority_fee_per_gas =
                 transaction.max_priority_fee_per_gas.map(|g| g.to::<U256>()).unwrap_or(U256::ZERO);
             transaction.gas_price = Some(
-                base_fee
-                    .checked_add(max_priority_fee_per_gas)
-                    .unwrap_or(U256::MAX)
-                    .to::<U128>(),
+                base_fee.checked_add(max_priority_fee_per_gas).unwrap_or(U256::MAX).to::<U128>(),
             );
         }
     } else {

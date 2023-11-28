@@ -30,9 +30,9 @@ use ethers::{
     utils::{format_ether, hex, to_checksum, WEI_IN_ETHER},
 };
 use foundry_common::{
-    provider::alloy::ProviderBuilder, types::{ToAlloy, ToEthers},
-    ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING,
-    REQUEST_TIMEOUT,
+    provider::alloy::ProviderBuilder,
+    types::{ToAlloy, ToEthers},
+    ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
 };
 use foundry_config::Config;
 use foundry_evm::{
@@ -824,7 +824,11 @@ impl NodeConfig {
             },
             tx: TxEnv { chain_id: self.get_chain_id().into(), ..Default::default() },
         };
-        let fees = FeeManager::new(env.cfg.spec_id, self.get_base_fee().to_ethers(), self.get_gas_price().to_ethers());
+        let fees = FeeManager::new(
+            env.cfg.spec_id,
+            self.get_base_fee().to_ethers(),
+            self.get_gas_price().to_ethers(),
+        );
 
         let (db, fork): (Arc<tokio::sync::RwLock<Box<dyn Db>>>, Option<ClientFork>) =
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {

@@ -1,6 +1,6 @@
 use alloy_primitives::{TxHash, B256, U256, U64};
-use std::collections::BTreeMap;
 use revm::primitives::SpecId;
+use std::collections::BTreeMap;
 
 #[cfg(feature = "serde")]
 use serde::{de::Error, Deserializer, Serializer};

@@ -4,15 +4,15 @@ use crate::{
     genesis::Genesis,
     AccountGenerator, Hardfork, NodeConfig, CHAIN_ID,
 };
+use alloy_primitives::U256;
 use anvil_server::ServerConfig;
 use clap::Parser;
-use foundry_common::types::ToAlloy;
 use core::fmt;
 use ethers::{
     signers::coins_bip39::{English, Mnemonic},
     utils::WEI_IN_ETHER,
 };
-use alloy_primitives::U256;
+use foundry_common::types::ToAlloy;
 use foundry_config::{Chain, Config};
 use futures::FutureExt;
 use rand::{rngs::StdRng, SeedableRng};

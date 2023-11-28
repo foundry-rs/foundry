@@ -4,8 +4,8 @@ use crate::eth::{
 };
 use anvil_core::eth::transaction::TypedTransaction;
 use ethers::types::{H256, U256};
-use foundry_evm::revm::primitives::SpecId;
 use foundry_common::types::ToAlloy;
+use foundry_evm::revm::primitives::SpecId;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use std::{

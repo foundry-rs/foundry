@@ -1,7 +1,8 @@
 //! general eth api tests
 
 use crate::abi::{MulticallContract, SimpleStorage};
-use alloy_rpc_types::{CallRequest, CallInput};
+use alloy_primitives::U256 as rU256;
+use alloy_rpc_types::{CallInput, CallRequest};
 use anvil::{
     eth::{api::CLIENT_VERSION, EthApi},
     spawn, NodeConfig, CHAIN_ID,
@@ -14,7 +15,6 @@ use ethers::{
     types::{Block, BlockNumber, Chain, Transaction, TransactionRequest, H256, U256},
     utils::get_contract_address,
 };
-use alloy_primitives::U256 as rU256;
 use foundry_common::types::ToAlloy;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
@@ -213,8 +213,12 @@ async fn can_call_on_pending_block() {
             .unwrap();
         assert_eq!(block.header.gas_limit, block_gas_limit.to_alloy());
 
-        let block_coinbase =
-            pending_contract.get_current_block_coinbase().block(block_number_ethers).call().await.unwrap();
+        let block_coinbase = pending_contract
+            .get_current_block_coinbase()
+            .block(block_number_ethers)
+            .call()
+            .await
+            .unwrap();
         assert_eq!(block.header.miner, block_coinbase.to_alloy());
     }
 }

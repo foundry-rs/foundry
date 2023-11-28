@@ -18,7 +18,12 @@ use foundry_cli::{
     opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
-use foundry_common::{compile, fmt::parse_tokens, provider::ethers::estimate_eip1559_fees, types::{ToAlloy, ToEthers}};
+use foundry_common::{
+    compile,
+    fmt::parse_tokens,
+    provider::ethers::estimate_eip1559_fees,
+    types::{ToAlloy, ToEthers},
+};
 use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalized};
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc};
@@ -211,8 +216,8 @@ impl CreateArgs {
                     e
                 }
             })?;
-        let is_legacy = self.tx.legacy
-            || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
+        let is_legacy = self.tx.legacy ||
+            Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
         let mut deployer = if is_legacy { deployer.legacy() } else { deployer };
 
         // set tx value if specified

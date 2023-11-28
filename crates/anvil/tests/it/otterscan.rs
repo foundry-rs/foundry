@@ -1,5 +1,7 @@
 //! tests for otterscan endpoints
 use crate::abi::MulticallContract;
+use alloy_primitives::U256 as rU256;
+use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use anvil::{
     eth::otterscan::types::{
         OtsInternalOperation, OtsInternalOperationType, OtsTrace, OtsTraceType,
@@ -13,10 +15,8 @@ use ethers::{
     types::{Bytes, TransactionRequest, U256},
     utils::get_contract_address,
 };
-use alloy_primitives::U256 as rU256;
-use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
-use foundry_common::types::{ToAlloy, ToEthers};
 use ethers_solc::{project_util::TempProject, Artifact};
+use foundry_common::types::{ToAlloy, ToEthers};
 use std::{collections::VecDeque, str::FromStr, sync::Arc};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -148,7 +148,9 @@ contract Contract {
         res[0],
         OtsInternalOperation {
             r#type: OtsInternalOperationType::Create2,
-            from: Address::from_str("0x4e59b44847b379578588920cA78FbF26c0B4956C").unwrap().to_alloy(),
+            from: Address::from_str("0x4e59b44847b379578588920cA78FbF26c0B4956C")
+                .unwrap()
+                .to_alloy(),
             to: Address::from_str("0x347bcdad821abc09b8c275881b368de36476b62c").unwrap().to_alloy(),
             value: rU256::from(0)
         }
@@ -240,11 +242,17 @@ async fn can_call_ots_has_code() {
     assert_eq!(num, receipt.block_number.unwrap());
 
     // code is detected after deploying
-    assert!(api.ots_has_code(pending_contract_address.to_alloy(), BlockNumberOrTag::Number(num.as_u64())).await.unwrap());
+    assert!(api
+        .ots_has_code(pending_contract_address.to_alloy(), BlockNumberOrTag::Number(num.as_u64()))
+        .await
+        .unwrap());
 
     // code is not detected for the previous block
     assert!(!api
-        .ots_has_code(pending_contract_address.to_alloy(), BlockNumberOrTag::Number(num.as_u64() - 1))
+        .ots_has_code(
+            pending_contract_address.to_alloy(),
+            BlockNumberOrTag::Number(num.as_u64() - 1)
+        )
         .await
         .unwrap());
 }
@@ -389,7 +397,8 @@ contract Contract {
     let call = contract.method::<_, ()>("trigger_revert", ()).unwrap().gas(150_000u64);
     let receipt = call.send().await.unwrap().await.unwrap().unwrap();
 
-    let res = api.ots_get_transaction_error(receipt.transaction_hash.to_alloy()).await.unwrap().unwrap();
+    let res =
+        api.ots_get_transaction_error(receipt.transaction_hash.to_alloy()).await.unwrap().unwrap();
     let res: Bytes = res.0.into();
     assert_eq!(res, Bytes::from_str("0x8d6ea8be00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000012526576657274537472696e67466f6f4261720000000000000000000000000000").unwrap());
 }
@@ -411,7 +420,7 @@ async fn can_call_ots_get_block_details() {
     let hash = match result.block.block.transactions {
         BlockTransactions::Full(txs) => txs[0].hash,
         BlockTransactions::Hashes(hashes) => hashes[0],
-        BlockTransactions::Uncle => unreachable!()
+        BlockTransactions::Uncle => unreachable!(),
     };
     assert_eq!(hash, receipt.transaction_hash.to_alloy());
 }
@@ -434,7 +443,7 @@ async fn can_call_ots_get_block_details_by_hash() {
     let hash = match result.block.block.transactions {
         BlockTransactions::Full(txs) => txs[0].hash,
         BlockTransactions::Hashes(hashes) => hashes[0],
-        BlockTransactions::Uncle => unreachable!()
+        BlockTransactions::Uncle => unreachable!(),
     };
     assert_eq!(hash.to_ethers(), receipt.transaction_hash);
 }
@@ -471,7 +480,10 @@ async fn can_call_ots_get_block_transactions() {
         result.receipts.iter().enumerate().for_each(|(i, receipt)| {
             let expected = hashes.pop_front();
             assert_eq!(Some(expected), Some(receipt.transaction_hash.map(|h| h.to_ethers())));
-            assert_eq!(Some(expected.map(|h| h.to_alloy())), Some(result.clone().fullblock.block.clone().transactions.iter().nth(i)));
+            assert_eq!(
+                Some(expected.map(|h| h.to_alloy())),
+                Some(result.clone().fullblock.block.clone().transactions.iter().nth(i))
+            );
         });
     }
 
@@ -498,7 +510,8 @@ async fn can_call_ots_search_transactions_before() {
     let page_size = 2;
     let mut block = 0;
     for _ in 0..4 {
-        let result = api.ots_search_transactions_before(sender.to_alloy(), block, page_size).await.unwrap();
+        let result =
+            api.ots_search_transactions_before(sender.to_alloy(), block, page_size).await.unwrap();
 
         assert!(result.txs.len() <= page_size);
 
@@ -533,7 +546,8 @@ async fn can_call_ots_search_transactions_after() {
     let page_size = 2;
     let mut block = 0;
     for _ in 0..4 {
-        let result = api.ots_search_transactions_after(sender.to_alloy(), block, page_size).await.unwrap();
+        let result =
+            api.ots_search_transactions_after(sender.to_alloy(), block, page_size).await.unwrap();
 
         assert!(result.txs.len() <= page_size);
 
@@ -564,8 +578,14 @@ async fn can_call_ots_get_transaction_by_sender_and_nonce() {
     let receipt1 = client.send_transaction(tx1, None).await.unwrap().await.unwrap().unwrap();
     let receipt2 = client.send_transaction(tx2, None).await.unwrap().await.unwrap().unwrap();
 
-    let result1 = api.ots_get_transaction_by_sender_and_nonce(sender.to_alloy(), rU256::from(0)).await.unwrap();
-    let result2 = api.ots_get_transaction_by_sender_and_nonce(sender.to_alloy(), rU256::from(1)).await.unwrap();
+    let result1 = api
+        .ots_get_transaction_by_sender_and_nonce(sender.to_alloy(), rU256::from(0))
+        .await
+        .unwrap();
+    let result2 = api
+        .ots_get_transaction_by_sender_and_nonce(sender.to_alloy(), rU256::from(1))
+        .await
+        .unwrap();
 
     assert_eq!(result1.unwrap().hash, receipt1.transaction_hash.to_alloy());
     assert_eq!(result2.unwrap().hash, receipt2.transaction_hash.to_alloy());
@@ -588,7 +608,8 @@ async fn can_call_ots_get_contract_creator() {
 
     let receipt = client.send_transaction(deploy_tx, None).await.unwrap().await.unwrap().unwrap();
 
-    let creator = api.ots_get_contract_creator(pending_contract_address.to_alloy()).await.unwrap().unwrap();
+    let creator =
+        api.ots_get_contract_creator(pending_contract_address.to_alloy()).await.unwrap().unwrap();
 
     assert_eq!(creator.creator, sender.to_alloy());
     assert_eq!(creator.hash, receipt.transaction_hash.to_alloy());

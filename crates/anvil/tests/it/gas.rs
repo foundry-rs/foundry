@@ -1,5 +1,6 @@
 //! Gas related tests
 
+use alloy_primitives::U256;
 use anvil::{eth::fees::INITIAL_BASE_FEE, spawn, NodeConfig};
 use ethers::{
     prelude::Middleware,
@@ -8,7 +9,6 @@ use ethers::{
         TransactionRequest,
     },
 };
-use alloy_primitives::U256;
 use foundry_common::types::ToAlloy;
 
 const GAS_TRANSFER: u64 = 21_000u64;
@@ -16,7 +16,9 @@ const GAS_TRANSFER: u64 = 21_000u64;
 #[tokio::test(flavor = "multi_thread")]
 async fn test_basefee_full_block() {
     let (_api, handle) = spawn(
-        NodeConfig::test().with_base_fee(Some(INITIAL_BASE_FEE.to_alloy())).with_gas_limit(Some(GAS_TRANSFER.to_alloy())),
+        NodeConfig::test()
+            .with_base_fee(Some(INITIAL_BASE_FEE.to_alloy()))
+            .with_gas_limit(Some(GAS_TRANSFER.to_alloy())),
     )
     .await;
     let provider = handle.ethers_http_provider();
@@ -55,7 +57,8 @@ async fn test_basefee_half_block() {
 }
 #[tokio::test(flavor = "multi_thread")]
 async fn test_basefee_empty_block() {
-    let (api, handle) = spawn(NodeConfig::test().with_base_fee(Some(INITIAL_BASE_FEE.to_alloy()))).await;
+    let (api, handle) =
+        spawn(NodeConfig::test().with_base_fee(Some(INITIAL_BASE_FEE.to_alloy()))).await;
 
     let provider = handle.ethers_http_provider();
     let tx = TransactionRequest::new().to(Address::random()).value(1337u64);

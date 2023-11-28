@@ -5,7 +5,9 @@ use ethers_providers::Middleware;
 use ethers_signers::Signer;
 use eyre::Result;
 use foundry_cli::utils::LoadConfig;
-use foundry_common::{contracts::flatten_contracts, provider::ethers::try_get_http_provider, types::ToAlloy};
+use foundry_common::{
+    contracts::flatten_contracts, provider::ethers::try_get_http_provider, types::ToAlloy,
+};
 use foundry_debugger::DebuggerArgs;
 use std::sync::Arc;
 

@@ -13,8 +13,9 @@ use foundry_cli::{
     utils::{has_batch_support, has_different_gas_calc},
 };
 use foundry_common::{
-    provider::ethers::estimate_eip1559_fees, provider::ethers::try_get_http_provider,
-    provider::ethers::RetryProvider, shell, types::{ToAlloy, ToEthers},
+    provider::ethers::{estimate_eip1559_fees, try_get_http_provider, RetryProvider},
+    shell,
+    types::{ToAlloy, ToEthers},
 };
 use futures::StreamExt;
 use std::{cmp::min, collections::HashSet, ops::Mul, sync::Arc};
@@ -248,9 +249,9 @@ impl ScriptArgs {
 
                 // Chains which use `eth_estimateGas` are being sent sequentially and require their
                 // gas to be re-estimated right before broadcasting.
-                if !is_fixed_gas_limit
-                    && (has_different_gas_calc(provider.get_chainid().await?.as_u64())
-                        || self.skip_simulation)
+                if !is_fixed_gas_limit &&
+                    (has_different_gas_calc(provider.get_chainid().await?.as_u64()) ||
+                        self.skip_simulation)
                 {
                     self.estimate_gas(&mut tx, &provider).await?;
                 }
@@ -612,9 +613,9 @@ impl ScriptArgs {
             provider
                 .estimate_gas(tx, None)
                 .await
-                .wrap_err_with(|| format!("Failed to estimate gas for tx: {:?}", tx.sighash()))?
-                * self.gas_estimate_multiplier
-                / 100,
+                .wrap_err_with(|| format!("Failed to estimate gas for tx: {:?}", tx.sighash()))? *
+                self.gas_estimate_multiplier /
+                100,
         );
         Ok(())
     }

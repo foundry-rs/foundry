@@ -19,7 +19,7 @@ use ethers_core::types::{
     transaction::eip2718::TypedTransaction, NameOrAddress, TransactionRequest,
 };
 use ethers_signers::LocalWallet;
-use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl, types::{ToEthers}};
+use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl, types::ToEthers};
 use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_SKIP},
@@ -710,8 +710,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 mocks
                     .iter()
                     .find(|(mock, _)| {
-                        call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..])
-                            && mock.value.map_or(true, |value| value == call.transfer.value)
+                        call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..]) &&
+                            mock.value.map_or(true, |value| value == call.transfer.value)
                     })
                     .map(|(_, v)| v)
             }) {
@@ -721,8 +721,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Apply our prank
         if let Some(prank) = &self.prank {
-            if data.journaled_state.depth() >= prank.depth
-                && call.context.caller == prank.prank_caller
+            if data.journaled_state.depth() >= prank.depth &&
+                call.context.caller == prank.prank_caller
             {
                 let mut prank_applied = false;
 
@@ -754,8 +754,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             //
             // We do this because any subsequent contract calls *must* exist on chain and
             // we only want to grab *this* call, not internal ones
-            if data.journaled_state.depth() == broadcast.depth
-                && call.context.caller == broadcast.original_caller
+            if data.journaled_state.depth() == broadcast.depth &&
+                call.context.caller == broadcast.original_caller
             {
                 // At the target depth we set `msg.sender` & tx.origin.
                 // We are simulating the caller as being an EOA, so *both* must be set to the
@@ -1011,9 +1011,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let TransactTo::Call(test_contract) = data.env.tx.transact_to {
             // if a call to a different contract than the original test contract returned with
             // `Stop` we check if the contract actually exists on the active fork
-            if data.db.is_forked_mode()
-                && status == InstructionResult::Stop
-                && call.contract != test_contract
+            if data.db.is_forked_mode() &&
+                status == InstructionResult::Stop &&
+                call.contract != test_contract
             {
                 self.fork_revert_diagnostic =
                     data.db.diagnose_revert(call.contract, &data.journaled_state);
@@ -1122,8 +1122,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
-            if data.journaled_state.depth() >= broadcast.depth
-                && call.caller == broadcast.original_caller
+            if data.journaled_state.depth() >= broadcast.depth &&
+                call.caller == broadcast.original_caller
             {
                 if let Err(err) = data.journaled_state.load_account(broadcast.new_origin, data.db) {
                     return (InstructionResult::Revert, None, gas, Error::encode(err));
