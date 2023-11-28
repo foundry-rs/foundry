@@ -225,7 +225,7 @@ pub fn setup_forge_remote(prj: impl Into<RemoteProject>) -> (TestProject, TestCo
     try_setup_forge_remote(prj).unwrap()
 }
 
-/// Same as `setup_forge_remote` but not panicing
+/// Same as `setup_forge_remote` but not panicking
 pub fn try_setup_forge_remote(
     config: impl Into<RemoteProject>,
 ) -> Result<(TestProject, TestCommand)> {

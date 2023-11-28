@@ -64,7 +64,7 @@ contract HelloWorld {
         external
     {}
 
-    function docLinePostfixOveflow()
+    function docLinePostfixOverflow()
         external
     {}
 
@@ -113,7 +113,7 @@ contract HelloWorld {
      *   }
      * }
      */
-    function malformedIndentOveflow()
+    function malformedIndentOverflow()
         external
     {}
 }

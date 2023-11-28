@@ -3,8 +3,8 @@
 use crate::constants::TEMPLATE_CONTRACT;
 use alloy_primitives::Address;
 use anvil::{spawn, NodeConfig};
+use foundry_common::{rpc, types::ToEthers};
 use foundry_test_utils::{util::OutputExt, ScriptOutcome, ScriptTester};
-use foundry_utils::{rpc, types::ToEthers};
 use regex::Regex;
 use serde_json::Value;
 use std::{env, path::PathBuf, str::FromStr};
@@ -32,7 +32,7 @@ contract ContractScript is Script {
             )
             .unwrap();
 
-        let rpc = foundry_utils::rpc::next_http_rpc_endpoint();
+        let rpc = foundry_common::rpc::next_http_rpc_endpoint();
 
         cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvvv"]).assert_success();
     }
@@ -1074,4 +1074,17 @@ interface Interface {}
 
     cmd.arg("script").arg(script);
     assert!(cmd.stdout_lossy().contains("Script ran successfully."));
+});
+
+forgetest_async!(assert_can_resume_with_additional_contracts, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    tester
+        .add_deployer(0)
+        .add_sig("ScriptAdditionalContracts", "run()")
+        .broadcast(ScriptOutcome::MissingWallet)
+        .load_private_keys(&[0])
+        .await
+        .resume(ScriptOutcome::OkBroadcast);
 });

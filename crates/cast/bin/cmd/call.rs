@@ -7,11 +7,13 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
-use foundry_common::runtime_client::RuntimeClient;
+use foundry_common::{
+    runtime_client::RuntimeClient,
+    types::{ToAlloy, ToEthers},
+};
 use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{executors::TracingExecutor, opts::EvmOpts};
-use foundry_utils::types::{ToAlloy, ToEthers};
 use std::str::FromStr;
 
 type Provider = ethers_providers::Provider<RuntimeClient>;

@@ -89,8 +89,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-dyn-abi"
-version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9fe14fb6dded4be3f44d053e59402a405bb231561e36a88bc2283a9829d81fe"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -109,8 +110,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-json-abi"
-version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85cbbc8fcae58f39dbfbdc94ead48de0779910528889aebc074aed75959bffe7"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-type-parser",
@@ -120,8 +122,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-primitives"
-version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5def4b5e1bb8fe7ea37eeac1063246d4ef26f56cbdccf864a5a6bdcb80e91f4"
 dependencies = [
  "alloy-rlp",
  "arbitrary",
@@ -167,8 +170,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-sol-macro"
-version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0acd5b8d2699b095a57a0ecea6a6a2045b8e5ed6f2607bfa3382961d2889e82"
 dependencies = [
  "alloy-json-abi",
  "const-hex",
@@ -186,16 +190,18 @@ dependencies = [
 
 [[package]]
 name = "alloy-sol-type-parser"
-version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc77699fb68c8a2cf18efb2c51df43e09b42b53886c6eb552951b19c41ebfc84"
 dependencies = [
  "winnow",
 ]
 
 [[package]]
 name = "alloy-sol-types"
-version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97d483e9c6db659cdb24fc736684ef68b743705fbdb0677c6404815361871b92"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -306,13 +312,13 @@ dependencies = [
  "ctrlc",
  "ethereum-forkid",
  "ethers",
+ "ethers-core",
  "ethers-solc",
  "fdlimit",
  "flate2",
  "foundry-common",
  "foundry-config",
  "foundry-evm",
- "foundry-utils",
  "futures",
  "hash-db",
  "hyper",
@@ -343,9 +349,12 @@ dependencies = [
  "alloy-primitives",
  "anvil-core",
  "bytes",
+ "ethers-contract",
  "ethers-core",
+ "ethers-middleware",
+ "ethers-providers",
+ "foundry-common",
  "foundry-evm",
- "foundry-utils",
  "hash-db",
  "hash256-std-hasher",
  "keccak-hasher",
@@ -1003,10 +1012,10 @@ dependencies = [
  "foundry-config",
  "foundry-evm",
  "foundry-test-utils",
- "foundry-utils",
  "futures",
  "indicatif",
  "itertools 0.11.0",
+ "rand 0.8.5",
  "rayon",
  "regex",
  "rpassword",
@@ -1071,7 +1080,6 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-evm",
- "foundry-utils",
  "once_cell",
  "regex",
  "reqwest",
@@ -1652,9 +1660,9 @@ dependencies = [
 
 [[package]]
 name = "data-encoding"
-version = "2.4.0"
+version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2e66c9d817f1720209181c316d28635c050fa304f9c79e47a520882661b7308"
+checksum = "7e962a19be5cfc3f3bf6dd8f61eb50107f356ad6270fbb3ed41476571db78be5"
 
 [[package]]
 name = "der"
@@ -1862,9 +1870,9 @@ dependencies = [
 
 [[package]]
 name = "elliptic-curve"
-version = "0.13.7"
+version = "0.13.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9775b22bc152ad86a0cf23f0f348b884b26add12bf741e7ffc4d4ab2ab4d205"
+checksum = "b5e6043086bf7973472e0c7dff2142ea0b680d30e18d9cc40f267efbf222bd47"
 dependencies = [
  "base16ct",
  "crypto-bigint",
@@ -2074,7 +2082,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "2.0.11"
-source = "git+https://github.com/gakonst/ethers-rs?rev=4e09be88730045dd6c4ed8a4e198a9956931e7bd#4e09be88730045dd6c4ed8a4e198a9956931e7bd"
+source = "git+https://github.com/gakonst/ethers-rs?rev=8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6#8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -2089,7 +2097,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "2.0.11"
-source = "git+https://github.com/gakonst/ethers-rs?rev=4e09be88730045dd6c4ed8a4e198a9956931e7bd#4e09be88730045dd6c4ed8a4e198a9956931e7bd"
+source = "git+https://github.com/gakonst/ethers-rs?rev=8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6#8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -2100,7 +2108,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "2.0.11"
-source = "git+https://github.com/gakonst/ethers-rs?rev=4e09be88730045dd6c4ed8a4e198a9956931e7bd#4e09be88730045dd6c4ed8a4e198a9956931e7bd"
+source = "git+https://github.com/gakonst/ethers-rs?rev=8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6#8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6"
 dependencies = [
  "const-hex",
  "ethers-contract-abigen",
@@ -2118,7 +2126,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "2.0.11"
-source = "git+https://github.com/gakonst/ethers-rs?rev=4e09be88730045dd6c4ed8a4e198a9956931e7bd#4e09be88730045dd6c4ed8a4e198a9956931e7bd"
+source = "git+https://github.com/gakonst/ethers-rs?rev=8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6#8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6"
 dependencies = [
  "Inflector",
  "const-hex",
@@ -2141,7 +2149,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "2.0.11"
-source = "git+https://github.com/gakonst/ethers-rs?rev=4e09be88730045dd6c4ed8a4e198a9956931e7bd#4e09be88730045dd6c4ed8a4e198a9956931e7bd"
+source = "git+https://github.com/gakonst/ethers-rs?rev=8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6#8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6"
 dependencies = [
  "Inflector",
  "const-hex",
@@ -2156,7 +2164,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "2.0.11"
-source = "git+https://github.com/gakonst/ethers-rs?rev=4e09be88730045dd6c4ed8a4e198a9956931e7bd#4e09be88730045dd6c4ed8a4e198a9956931e7bd"
+source = "git+https://github.com/gakonst/ethers-rs?rev=8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6#8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6"
 dependencies = [
  "arrayvec",
  "bytes",
@@ -2185,7 +2193,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "2.0.11"
-source = "git+https://github.com/gakonst/ethers-rs?rev=4e09be88730045dd6c4ed8a4e198a9956931e7bd#4e09be88730045dd6c4ed8a4e198a9956931e7bd"
+source = "git+https://github.com/gakonst/ethers-rs?rev=8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6#8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6"
 dependencies = [
  "chrono",
  "ethers-core",
@@ -2200,7 +2208,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "2.0.11"
-source = "git+https://github.com/gakonst/ethers-rs?rev=4e09be88730045dd6c4ed8a4e198a9956931e7bd#4e09be88730045dd6c4ed8a4e198a9956931e7bd"
+source = "git+https://github.com/gakonst/ethers-rs?rev=8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6#8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -2225,7 +2233,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "2.0.11"
-source = "git+https://github.com/gakonst/ethers-rs?rev=4e09be88730045dd6c4ed8a4e198a9956931e7bd#4e09be88730045dd6c4ed8a4e198a9956931e7bd"
+source = "git+https://github.com/gakonst/ethers-rs?rev=8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6#8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -2263,7 +2271,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "2.0.11"
-source = "git+https://github.com/gakonst/ethers-rs?rev=4e09be88730045dd6c4ed8a4e198a9956931e7bd#4e09be88730045dd6c4ed8a4e198a9956931e7bd"
+source = "git+https://github.com/gakonst/ethers-rs?rev=8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6#8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -2291,7 +2299,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "2.0.11"
-source = "git+https://github.com/gakonst/ethers-rs?rev=4e09be88730045dd6c4ed8a4e198a9956931e7bd#4e09be88730045dd6c4ed8a4e198a9956931e7bd"
+source = "git+https://github.com/gakonst/ethers-rs?rev=8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6#8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6"
 dependencies = [
  "cfg-if",
  "const-hex",
@@ -2535,7 +2543,6 @@ dependencies = [
  "foundry-debugger",
  "foundry-evm",
  "foundry-test-utils",
- "foundry-utils",
  "futures",
  "globset",
  "hyper",
@@ -2544,6 +2551,7 @@ dependencies = [
  "once_cell",
  "opener",
  "parking_lot",
+ "paste",
  "path-slash",
  "pretty_assertions",
  "proptest",
@@ -2578,9 +2586,9 @@ dependencies = [
  "derive_more",
  "eyre",
  "forge-fmt",
+ "foundry-common",
  "foundry-compilers",
  "foundry-config",
- "foundry-utils",
  "itertools 0.11.0",
  "mdbook",
  "once_cell",
@@ -2611,44 +2619,18 @@ dependencies = [
 
 [[package]]
 name = "form_urlencoded"
-version = "1.2.0"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a62bc1cf6f830c2ec14a513a9fb124d0a213a629668a4186f329db21fe045652"
+checksum = "e13624c2627564efccf4934284bdd98cbaa14e79b0b5a141218e507b3a823456"
 dependencies = [
  "percent-encoding",
 ]
 
 [[package]]
-name = "foundry-abi"
-version = "0.2.0"
-dependencies = [
- "ethers-contract",
- "ethers-contract-abigen",
- "ethers-core",
- "ethers-providers",
- "eyre",
- "foundry-macros",
- "syn 2.0.39",
-]
-
-[[package]]
-name = "foundry-binder"
-version = "0.2.0"
-dependencies = [
- "ethers-contract",
- "eyre",
- "foundry-config",
- "git2",
- "tempfile",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "foundry-block-explorers"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2cc59cf4c18884c485b20f376e98946774b76f3b8e2e71e4f35723ffb34b8544"
+checksum = "47331ff0955a60df66db753f5dcfe3ca0275abe192e58c9eb6d0d8c1a131e604"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -2680,7 +2662,6 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-evm-core",
- "foundry-utils",
  "itertools 0.11.0",
  "jsonpath_lib",
  "revm",
@@ -2716,12 +2697,12 @@ dependencies = [
  "ethers-providers",
  "ethers-signers",
  "eyre",
+ "forge-fmt",
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
  "foundry-debugger",
  "foundry-evm",
- "foundry-utils",
  "indicatif",
  "itertools 0.11.0",
  "once_cell",
@@ -2748,6 +2729,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-primitives",
+ "alloy-sol-types",
  "async-trait",
  "auto_impl",
  "clap",
@@ -2762,8 +2744,11 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-macros",
+ "glob",
  "globset",
  "once_cell",
+ "pretty_assertions",
+ "rand 0.8.5",
  "regex",
  "reqwest",
  "semver 1.0.20",
@@ -2780,9 +2765,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5dcfb3af0dd69f2989ab2311f2c97fdd470227d3c9f657be04092572a3a1db60"
+checksum = "1eec9fd9df7ad0509ae45e2ea8a595cf13b1f35d69980e985b3be00ffabcc01a"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -2795,6 +2780,7 @@ dependencies = [
  "glob",
  "home",
  "md-5 0.10.6",
+ "memmap2 0.9.0",
  "num_cpus",
  "once_cell",
  "path-slash",
@@ -2884,8 +2870,6 @@ dependencies = [
  "foundry-evm-coverage",
  "foundry-evm-fuzz",
  "foundry-evm-traces",
- "foundry-macros",
- "foundry-utils",
  "hashbrown 0.14.2",
  "parking_lot",
  "proptest",
@@ -2903,16 +2887,15 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "const-hex",
- "ethers-contract",
+ "derive_more",
  "ethers-core",
  "ethers-providers",
  "eyre",
- "foundry-abi",
  "foundry-cheatcodes-spec",
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
- "foundry-utils",
+ "foundry-macros",
  "futures",
  "itertools 0.11.0",
  "once_cell",
@@ -2956,7 +2939,6 @@ dependencies = [
  "foundry-evm-core",
  "foundry-evm-coverage",
  "foundry-evm-traces",
- "foundry-utils",
  "hashbrown 0.14.2",
  "itertools 0.11.0",
  "parking_lot",
@@ -2980,12 +2962,10 @@ dependencies = [
  "ethers-core",
  "eyre",
  "foundry-block-explorers",
- "foundry-cheatcodes-spec",
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
  "foundry-evm-core",
- "foundry-utils",
  "futures",
  "hashbrown 0.14.2",
  "itertools 0.11.0",
@@ -3001,16 +2981,6 @@ dependencies = [
 
 [[package]]
 name = "foundry-macros"
-version = "0.2.0"
-dependencies = [
- "ethers-core",
- "foundry-macros-impl",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "foundry-macros-impl"
 version = "0.2.0"
 dependencies = [
  "proc-macro-error",
@@ -3031,7 +3001,6 @@ dependencies = [
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
- "foundry-utils",
  "once_cell",
  "parking_lot",
  "pretty_assertions",
@@ -3040,28 +3009,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "walkdir",
-]
-
-[[package]]
-name = "foundry-utils"
-version = "0.2.0"
-dependencies = [
- "alloy-json-abi",
- "alloy-primitives",
- "alloy-sol-types",
- "dunce",
- "ethers-core",
- "ethers-providers",
- "eyre",
- "forge-fmt",
- "foundry-common",
- "foundry-compilers",
- "futures",
- "glob",
- "once_cell",
- "rand 0.8.5",
- "serde_json",
- "tracing",
 ]
 
 [[package]]
@@ -3260,9 +3207,9 @@ dependencies = [
 
 [[package]]
 name = "gimli"
-version = "0.28.0"
+version = "0.28.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fb8d784f27acf97159b40fc4db5ecd8aa23b9ad5ef69cdd136d3bc80665f0c0"
+checksum = "4271d37baee1b8c7e4b708028c57d816cf9d2434acb33a549475f78c181f6253"
 
 [[package]]
 name = "git2"
@@ -3439,7 +3386,7 @@ dependencies = [
  "gix-path",
  "gix-tempfile",
  "gix-validate",
- "memmap2",
+ "memmap2 0.5.10",
  "nom",
  "thiserror",
 ]
@@ -3648,9 +3595,9 @@ checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
 
 [[package]]
 name = "hidapi-rusb"
-version = "1.3.2"
+version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee9fc48be9eab25c28b413742b38b57b85c10b5efd2d47ef013f82335cbecc8e"
+checksum = "efdc2ec354929a6e8f3c6b6923a4d97427ec2f764cfee8cd4bfe890946cdf08b"
 dependencies = [
  "cc",
  "libc",
@@ -3837,9 +3784,9 @@ dependencies = [
 
 [[package]]
 name = "idna"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d20d6b07bfbc108882d88ed8e37d39636dcc260e15e30c45e6ba089610b917c"
+checksum = "634d9b1461af396cad843f47fdba5597a4f9e6ddd4bfb6ff5d85028c25cb12f6"
 dependencies = [
  "unicode-bidi",
  "unicode-normalization",
@@ -4271,9 +4218,9 @@ checksum = "b5e6163cb8c49088c2c36f57875e58ccd8c87c7427f7fbd50ea6710b2f3f2e8f"
 
 [[package]]
 name = "lru"
-version = "0.12.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1efa59af2ddfad1854ae27d75009d538d0998b4b2fd47083e743ac1a10e46c60"
+checksum = "2994eeba8ed550fd9b47a0b38f0242bc3344e496483c6180b69139cc2fa5d1d7"
 dependencies = [
  "hashbrown 0.14.2",
 ]
@@ -4385,6 +4332,15 @@ name = "memmap2"
 version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83faa42c0a078c393f6b29d5db232d8be22776a891f8f56e5284faee4a20b327"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "memmap2"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "deaba38d7abf1d4cca21cc89e932e542ba2b9258664d2a9ef0e61512039c9375"
 dependencies = [
  "libc",
 ]
@@ -4782,9 +4738,9 @@ dependencies = [
 
 [[package]]
 name = "openssl"
-version = "0.10.59"
+version = "0.10.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a257ad03cd8fb16ad4172fedf8094451e1af1c4b70097636ef2eac9a5f0cc33"
+checksum = "79a4c6c3a2b158f7f8f2a2fc5a969fa3a068df6fc9dbb4a43845436e3af7c800"
 dependencies = [
  "bitflags 2.4.1",
  "cfg-if",
@@ -4814,9 +4770,9 @@ checksum = "ff011a302c396a5197692431fc1948019154afc178baf7d8e37367442a4601cf"
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.95"
+version = "0.9.96"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40a4130519a360279579c2053038317e40eff64d13fd3f004f9e1b72b8a6aaf9"
+checksum = "3812c071ba60da8b5677cc12bcb1d42989a65553772897a7e0355545a819838f"
 dependencies = [
  "cc",
  "libc",
@@ -5024,9 +4980,9 @@ dependencies = [
 
 [[package]]
 name = "percent-encoding"
-version = "2.3.0"
+version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b2a4787296e9989611394c33f193f676704af1686e70b8f8033ab5ba9a35a94"
+checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
 
 [[package]]
 name = "pest"
@@ -5744,7 +5700,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "3.5.0"
-source = "git+https://github.com/bluealloy/revm?rev=1609e07c68048909ad1682c98cf2b9baa76310b5#1609e07c68048909ad1682c98cf2b9baa76310b5"
+source = "git+https://github.com/bluealloy/revm?branch=reth_freeze#b00ebab8b3477f87e3d876a11b8f18d00a8f4103"
 dependencies = [
  "auto_impl",
  "revm-interpreter",
@@ -5756,7 +5712,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "1.3.0"
-source = "git+https://github.com/bluealloy/revm?rev=1609e07c68048909ad1682c98cf2b9baa76310b5#1609e07c68048909ad1682c98cf2b9baa76310b5"
+source = "git+https://github.com/bluealloy/revm?branch=reth_freeze#b00ebab8b3477f87e3d876a11b8f18d00a8f4103"
 dependencies = [
  "revm-primitives",
  "serde",
@@ -5765,7 +5721,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "2.2.0"
-source = "git+https://github.com/bluealloy/revm?rev=1609e07c68048909ad1682c98cf2b9baa76310b5#1609e07c68048909ad1682c98cf2b9baa76310b5"
+source = "git+https://github.com/bluealloy/revm?branch=reth_freeze#b00ebab8b3477f87e3d876a11b8f18d00a8f4103"
 dependencies = [
  "aurora-engine-modexp",
  "c-kzg",
@@ -5781,7 +5737,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "1.3.0"
-source = "git+https://github.com/bluealloy/revm?rev=1609e07c68048909ad1682c98cf2b9baa76310b5#1609e07c68048909ad1682c98cf2b9baa76310b5"
+source = "git+https://github.com/bluealloy/revm?branch=reth_freeze#b00ebab8b3477f87e3d876a11b8f18d00a8f4103"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -6048,9 +6004,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "0.38.24"
+version = "0.38.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ad981d6c340a49cdc40a1028d9c6084ec7e9fa33fcb839cab656a267071e234"
+checksum = "dc99bc2d4f1fed22595588a013687477aedf3cdcfb26558c559edb67b4d9b22e"
 dependencies = [
  "bitflags 2.4.1",
  "errno",
@@ -6360,18 +6316,18 @@ checksum = "cd0b0ec5f1c1ca621c432a25813d8d60c88abe6d3e08a3eb9cf37d97a0fe3d73"
 
 [[package]]
 name = "serde"
-version = "1.0.192"
+version = "1.0.193"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bca2a08484b285dcb282d0f67b26cadc0df8b19f8c12502c13d966bf9482f001"
+checksum = "25dd9975e68d0cb5aa1120c288333fc98731bd1dd12f561e468ea4728c042b89"
 dependencies = [
  "serde_derive",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.192"
+version = "1.0.193"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6c7207fbec9faa48073f3e3074cbe553af6ea512d7c21ba46e434e70ea9fbc1"
+checksum = "43576ca501357b9b071ac53cdc7da8ef0cbd9493d8df094cd821777ea6e894d3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6836,8 +6792,9 @@ dependencies = [
 
 [[package]]
 name = "syn-solidity"
-version = "0.4.2"
-source = "git+https://github.com/alloy-rs/core/#f2981ec49168dd63aa10d55e3e1987c0cc546246"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e349ed2ca56eff703d7c3ea013771bcbab9ad2ad39dddf863fc51d820329dc41"
 dependencies = [
  "paste",
  "proc-macro2",
@@ -7553,9 +7510,9 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "url"
-version = "2.4.1"
+version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "143b538f18257fac9cad154828a57c6bf5157e1aa604d4816b5995bf6de87ae5"
+checksum = "31e6302e3bb753d46e83516cae55ae196fc0c309407cf11ab35cc51a4c2a4633"
 dependencies = [
  "form_urlencoded",
  "idna",
@@ -7790,9 +7747,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "0.25.2"
+version = "0.25.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14247bb57be4f377dfb94c72830b8ce8fc6beac03cf4bf7b9732eadd414123fc"
+checksum = "1778a42e8b3b90bff8d0f5032bf22250792889a5cdc752aa0020c84abe3aaf10"
 
 [[package]]
 name = "which"

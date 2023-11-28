@@ -281,51 +281,34 @@ impl Cheatcode for writeJson_1Call {
 }
 
 fn parse_json(json: &str, path: &str) -> Result {
-    parse_json_inner(json, path, None::<fn(Vec<&Value>) -> Result>)
+    let value = parse_json_str(json)?;
+    let selected = select(&value, path)?;
+    let sol = json_to_sol(&selected)?;
+    Ok(encode(sol))
 }
 
 fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Result {
-    parse_json_inner(
-        json,
-        path,
-        Some(|values: Vec<&Value>| {
-            ensure!(!values.is_empty(), "no matching value found at {path:?}");
-
-            ensure!(
-                values.iter().all(|value| !value.is_object()),
-                "values at {path:?} must not be JSON objects"
-            );
-
-            let to_string = |v: &Value| {
-                let mut s = v.to_string();
-                s.retain(|c: char| c != '"');
-                s
-            };
-            if let Some(array) = values[0].as_array() {
-                string::parse_array(array.iter().map(to_string), ty)
-            } else {
-                string::parse(&to_string(values[0]), ty)
-            }
-        }),
-    )
-}
-
-fn parse_json_inner<F>(json: &str, key: &str, coerce: Option<F>) -> Result
-where
-    F: FnOnce(Vec<&Value>) -> Result,
-{
     let value = parse_json_str(json)?;
-    let selected = select(&value, key)?;
+    let values = select(&value, path)?;
+    ensure!(!values.is_empty(), "no matching value found at {path:?}");
 
-    // don't coerce when selecting the root value
-    if !matches!(key, "$" | ".") {
-        if let Some(coerce) = coerce {
-            return coerce(selected)
-        }
+    ensure!(
+        values.iter().all(|value| !value.is_object()),
+        "values at {path:?} must not be JSON objects"
+    );
+
+    let to_string = |v: &Value| {
+        let mut s = v.to_string();
+        s.retain(|c: char| c != '"');
+        s
+    };
+    if let Some(array) = values[0].as_array() {
+        debug!(target: "cheatcodes", %ty, "parsing array");
+        string::parse_array(array.iter().map(to_string), ty)
+    } else {
+        debug!(target: "cheatcodes", %ty, "parsing string");
+        string::parse(&to_string(values[0]), ty)
     }
-
-    let sol = json_to_sol(&selected)?;
-    Ok(encode(sol))
 }
 
 fn parse_json_str(json: &str) -> Result<Value> {
@@ -345,6 +328,7 @@ fn select<'a>(value: &'a Value, mut path: &str) -> Result<Vec<&'a Value>> {
     if path == "." {
         path = "$";
     }
+    // format error with debug string because json_path errors may contain newlines
     jsonpath_lib::select(value, &canonicalize_json_path(path))
         .map_err(|e| fmt_err!("failed selecting from JSON: {:?}", e.to_string()))
 }
@@ -374,7 +358,7 @@ fn canonicalize_json_path(path: &str) -> Cow<'_, str> {
 /// The function is designed to run recursively, so that in case of an object
 /// it will call itself to convert each of it's value and encode the whole as a
 /// Tuple
-#[instrument(target = "cheatcodes", level = "trace", err, ret)]
+#[instrument(target = "cheatcodes", level = "trace", ret)]
 pub(super) fn value_to_token(value: &Value) -> Result<DynSolValue> {
     match value {
         Value::Null => Ok(DynSolValue::FixedBytes(B256::ZERO, 32)),
@@ -404,7 +388,7 @@ pub(super) fn value_to_token(value: &Value) -> Result<DynSolValue> {
                     // to f64.
                     let s = number.to_string();
 
-                    // Coerced to scientific notation, so short-ciruit to using fallback.
+                    // Coerced to scientific notation, so short-circuit to using fallback.
                     // This will not have a problem with hex numbers, as for parsing these
                     // We'd need to prefix this with 0x.
                     // See also <https://docs.soliditylang.org/en/latest/types.html#rational-and-integer-literals>

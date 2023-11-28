@@ -87,7 +87,7 @@ impl Tracer {
             op: OpCode(interp.current_opcode()),
             contract: interp.contract.address,
             stack: interp.stack.clone(),
-            memory: interp.shared_memory.clone(),
+            memory: interp.shared_memory.context_memory().to_vec(),
             gas: interp.gas.remaining(),
             gas_refund_counter: interp.gas.refunded() as u64,
             gas_cost: 0,

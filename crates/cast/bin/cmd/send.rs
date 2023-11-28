@@ -9,9 +9,11 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
 };
-use foundry_common::cli_warn;
+use foundry_common::{
+    cli_warn,
+    types::{ToAlloy, ToEthers},
+};
 use foundry_config::{Chain, Config};
-use foundry_utils::types::{ToAlloy, ToEthers};
 use std::str::FromStr;
 
 /// CLI arguments for `cast send`.

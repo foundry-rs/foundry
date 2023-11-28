@@ -29,7 +29,9 @@ use foundry_common::{
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
     fmt::{format_token, format_token_raw},
-    shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    shell,
+    types::{ToAlloy, ToEthers},
+    ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::{
     artifacts::{ContractBytecodeSome, Libraries},
@@ -49,7 +51,6 @@ use foundry_evm::{
     decode,
     inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::future;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -428,7 +429,7 @@ impl ScriptArgs {
                 rpc: fork_url.clone(),
                 transaction: TypedTransaction::Legacy(TransactionRequest {
                     from: Some(from.to_ethers()),
-                    data: Some(bytes.clone().0.into()),
+                    data: Some(bytes.clone().to_ethers()),
                     nonce: Some((nonce + i as u64).into()),
                     ..Default::default()
                 }),

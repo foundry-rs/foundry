@@ -1,7 +1,7 @@
 use alloy_primitives::{Sign, I256, U256};
 use ethers_core::utils::ParseUnits;
 use eyre::Result;
-use foundry_utils::types::ToAlloy;
+use foundry_common::types::ToAlloy;
 use std::{
     convert::Infallible,
     fmt::{Binary, Debug, Display, Formatter, LowerHex, Octal, Result as FmtResult, UpperHex},
