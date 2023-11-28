@@ -17,7 +17,6 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 
 /// A regex that matches a basic snapshot entry like
@@ -90,9 +89,9 @@ impl SnapshotArgs {
         self.test.is_watch()
     }
 
-    /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
+    /// Returns the [`watchexec::Config`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
-    pub(crate) fn watchexec_config(&self) -> Result<(InitConfig, RuntimeConfig)> {
+    pub(crate) fn watchexec_config(&self) -> Result<(watchexec::Config)> {
         self.test.watchexec_config()
     }
 
