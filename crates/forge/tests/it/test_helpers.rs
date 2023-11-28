@@ -77,7 +77,7 @@ pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
     ..Default::default()
 });
 
-pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor) -> FuzzedExecutor {
+pub fn fuzz_executor<DB: DatabaseRef>(executor: Executor) -> FuzzedExecutor {
     let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
 
     FuzzedExecutor::new(

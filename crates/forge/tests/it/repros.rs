@@ -199,5 +199,15 @@ test_repro!(6170, false, None, |res| {
 // https://github.com/foundry-rs/foundry/issues/6180
 test_repro!(6180);
 
+// https://github.com/foundry-rs/foundry/issues/6355
+test_repro!(6355, false, None, |res| {
+    let mut res = res.remove("repros/Issue6355.t.sol:Issue6355Test").unwrap();
+    let test = res.test_results.remove("test_shouldFail()").unwrap();
+    assert_eq!(test.status, TestStatus::Failure);
+
+    let test = res.test_results.remove("test_shouldFaillWithRevertTo()").unwrap();
+    assert_eq!(test.status, TestStatus::Failure);
+});
+
 // https://github.com/foundry-rs/foundry/issues/6437
 test_repro!(6437);

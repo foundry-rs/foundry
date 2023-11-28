@@ -224,7 +224,7 @@ impl FuzzedExecutor {
             .map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
 
         let success =
-            self.executor.is_success(address, call.reverted, state_changeset.clone(), should_fail);
+            self.executor.is_raw_call_success(address, state_changeset.clone(), &call, should_fail);
 
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
