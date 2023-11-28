@@ -153,13 +153,21 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
         let bindings = self.get_multi(&artifacts)?.build()?;
         println!("Checking bindings for {} contracts.", bindings.len());
         if !self.module {
-            bindings.ensure_consistent_crate(
-                &self.crate_name,
-                &self.crate_version,
-                self.bindings_root(&artifacts),
-                self.single_file,
-                !self.skip_cargo_toml,
-            )?;
+            bindings
+                .ensure_consistent_crate(
+                    &self.crate_name,
+                    &self.crate_version,
+                    self.bindings_root(&artifacts),
+                    self.single_file,
+                    !self.skip_cargo_toml,
+                )
+                .map_err(|err| {
+                    if !self.skip_cargo_toml && err.to_string().contains("Cargo.toml") {
+                        err.wrap_err("To skip Cargo.toml consistency check, pass --skip-cargo-toml")
+                    } else {
+                        err
+                    }
+                })?;
         } else {
             bindings.ensure_consistent_module(self.bindings_root(&artifacts), self.single_file)?;
         }
