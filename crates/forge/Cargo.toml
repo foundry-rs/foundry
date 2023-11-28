@@ -70,7 +70,7 @@ solang-parser.workspace = true
 strum = { version = "0.25", features = ["derive"] }
 thiserror = "1"
 tokio = { version = "1", features = ["time"] }
-watchexec = "2"
+watchexec = "3"
 
 # doc server
 axum = { workspace = true, features = ["ws"] }

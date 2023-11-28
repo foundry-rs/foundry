@@ -4,16 +4,7 @@ use eyre::Result;
 use foundry_cli::utils::{self, FoundryPathExt};
 use foundry_config::Config;
 use std::{collections::HashSet, convert::Infallible, path::PathBuf, sync::Arc};
-use watchexec::{
-    action::{Action, Outcome, PreSpawn},
-    command::Command,
-    config::{InitConfig, RuntimeConfig},
-    event::{Event, Priority, ProcessEnd},
-    handler::SyncFnHandler,
-    paths::summarise_events_to_env,
-    signal::source::MainSignal,
-    Watchexec,
-};
+use watchexec::{action::{Action, Outcome, PreSpawn}, command::Command, config::{InitConfig, RuntimeConfig}, ErrorHook, event::{Event, Priority, ProcessEnd}, handler::SyncFnHandler, paths::summarise_events_to_env, signal::source::MainSignal, Watchexec};
 
 #[derive(Debug, Clone, Parser, Default)]
 #[clap(next_help_heading = "Watch options")]
@@ -64,29 +55,49 @@ impl WatchArgs {
     pub fn watchexec_config(
         &self,
         f: impl FnOnce() -> Vec<PathBuf>,
-    ) -> Result<(InitConfig, RuntimeConfig)> {
-        let init = init()?;
-        let mut runtime = runtime(self)?;
+    ) -> Result<watchexec::Config> {
+
+        let mut config = watchexec::Config::default();
+
+        config.on_error(|err: ErrorHook| {
+            trace!("[[{:?}]]", err.error)
+        });
+
+        config.pathset(
+            self.watch.clone().unwrap_or_default()
+        );
+        if let Some(delay) = &self.watch_delay {
+            config.throttle(utils::parse_delay(delay)?);
+        }
 
         // contains all the arguments `--watch p1, p2, p3`
         let has_paths = self.watch.as_ref().map(|paths| !paths.is_empty()).unwrap_or_default();
 
         if !has_paths {
             // use alternative pathset, but only those that exists
-            runtime.pathset(f().into_iter().filter(|p| p.exists()));
+            config.pathset(f().into_iter().filter(|p| p.exists()));
         }
-        Ok((init, runtime))
+        Ok(config)
     }
 }
 
 /// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
 /// build`
 pub async fn watch_build(args: BuildArgs) -> Result<()> {
-    let (init, mut runtime) = args.watchexec_config()?;
+    let mut config = args.watchexec_config()?;
     let cmd = cmd_args(args.watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default());
 
+    config.on_action(|action: Action| {
+        let mut out = Outcome::DoNothing;
+        for sig in action.events.iter().flat_map(|e| e.signals()) {
+            out = Outcome::both(out, Outcome::Signal(sig));
+        }
+
+        action.outcome(out);
+        async { Ok::<(), Infallible>(()) }
+    });
     trace!("watch build cmd={:?}", cmd);
-    runtime.command(watch_command(cmd.clone()));
+    config.command(watch_command(cmd.clone()));
 
     let wx = Watchexec::new(init, runtime.clone())?;
     on_action(args.watch, runtime, Arc::clone(&wx), cmd, (), |_| {});
@@ -296,17 +307,6 @@ fn clean_cmd_args(num: usize, mut cmd_args: Vec<String>) -> Vec<String> {
     cmd_args
 }
 
-/// Returns the Initialisation configuration for [`Watchexec`].
-pub fn init() -> Result<InitConfig> {
-    let mut config = InitConfig::default();
-    config.on_error(SyncFnHandler::from(|data| {
-        trace!("[[{:?}]]", data);
-        Ok::<_, Infallible>(())
-    }));
-
-    Ok(config)
-}
-
 /// Contains all necessary context to reconfigure a [`Watchexec`] on the fly
 struct OnActionState<'a, T: Clone> {
     args: &'a WatchArgs,
@@ -414,29 +414,28 @@ fn on_action<F, T>(
     let _ = wx.reconfigure(config);
 }
 
-/// Returns the Runtime configuration for [`Watchexec`].
-pub fn runtime(args: &WatchArgs) -> Result<RuntimeConfig> {
-    let mut config = RuntimeConfig::default();
+// pub fn runtime(args: &WatchArgs) -> Result<RuntimeConfig> {
+//     let mut config = RuntimeConfig::default();
 
-    config.pathset(args.watch.clone().unwrap_or_default());
+    // config.pathset(args.watch.clone().unwrap_or_default());
 
-    if let Some(delay) = &args.watch_delay {
-        config.action_throttle(utils::parse_delay(delay)?);
-    }
+    // if let Some(delay) = &args.watch_delay {
+    //     config.action_throttle(utils::parse_delay(delay)?);
+    // }
 
-    config.on_pre_spawn(move |prespawn: PreSpawn| async move {
-        let envs = summarise_events_to_env(prespawn.events.iter());
-        if let Some(mut command) = prespawn.command().await {
-            for (k, v) in envs {
-                command.env(format!("CARGO_WATCH_{k}_PATH"), v);
-            }
-        }
+    // config.on_pre_spawn(move |prespawn: PreSpawn| async move {
+    //     let envs = summarise_events_to_env(prespawn.events.iter());
+    //     if let Some(mut command) = prespawn.command().await {
+    //         for (k, v) in envs {
+    //             command.env(format!("CARGO_WATCH_{k}_PATH"), v);
+    //         }
+    //     }
+    //
+    //     Ok::<(), Infallible>(())
+    // });
 
-        Ok::<(), Infallible>(())
-    });
-
-    Ok(config)
-}
+//     Ok(config)
+// }
 
 #[cfg(test)]
 mod tests {
