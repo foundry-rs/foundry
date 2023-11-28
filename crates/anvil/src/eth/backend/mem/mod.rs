@@ -1989,7 +1989,7 @@ impl Backend {
             TypedTransaction::Deposit(_) => U256::from(0),
         };
 
-        let deposit_nonce = transaction_type.and_then(|x| (x == 0x7E).then_some(info.nonce));
+        let _deposit_nonce = transaction_type.and_then(|x| (x == 0x7E).then_some(info.nonce));
 
         let inner = TransactionReceipt {
             transaction_hash: Some(info.transaction_hash.to_alloy()),

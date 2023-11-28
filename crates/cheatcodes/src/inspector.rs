@@ -19,7 +19,7 @@ use ethers_core::types::{
     transaction::eip2718::TypedTransaction, NameOrAddress, TransactionRequest,
 };
 use ethers_signers::LocalWallet;
-use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl, types::{ToAlloy, ToEthers}};
+use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl, types::{ToEthers}};
 use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_SKIP},

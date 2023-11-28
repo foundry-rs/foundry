@@ -5,7 +5,7 @@ use ethers::types::{ActionType, CallType, Chain, H256, U256};
 use eyre::ContextCompat;
 pub use foundry_compilers::utils::RuntimeOrHandle;
 pub use revm::primitives::State as StateChangeset;
-use foundry_common::types::ToAlloy;
+
 use revm::{
     interpreter::{opcode, opcode::spec_opcode_gas, CallScheme, CreateInputs, InstructionResult},
     primitives::{CreateScheme, Eval, Halt, SpecId, TransactTo},

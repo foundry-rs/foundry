@@ -1787,9 +1787,8 @@ impl EthApi {
     pub async fn anvil_metadata(&self) -> Result<AnvilMetadata> {
         node_info!("anvil_metadata");
         let fork_config = self.backend.get_fork();
-        let chain_id_uint = U256::from(self.backend.chain_id().to::<u64>());
-        let latest_block_number_uint = U64::from(self.backend.best_number().to::<u64>());
         let snapshots = self.backend.list_snapshots();
+
         Ok(AnvilMetadata {
             client_version: CLIENT_VERSION,
             chain_id: self.backend.chain_id().to::<u64>(),

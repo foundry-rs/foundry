@@ -13,7 +13,6 @@ repository.workspace = true
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 foundry-compilers.workspace = true
 foundry-config.workspace = true
-foundry-macros.workspace = true
 
 ethers-core.workspace = true
 ethers-middleware.workspace = true

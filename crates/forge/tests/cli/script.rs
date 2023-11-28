@@ -3,7 +3,7 @@
 use crate::constants::TEMPLATE_CONTRACT;
 use alloy_primitives::{Address, Bytes};
 use anvil::{spawn, NodeConfig};
-use foundry_common::{rpc, types::ToEthers};
+use foundry_common::rpc;
 use foundry_test_utils::{util::OutputExt, ScriptOutcome, ScriptTester};
 use regex::Regex;
 use serde_json::Value;
