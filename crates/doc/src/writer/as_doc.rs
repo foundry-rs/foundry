@@ -127,32 +127,34 @@ impl AsDoc for Document {
                         if !contract.base.is_empty() {
                             writer.write_bold("Inherits:")?;
 
+                            // Where all the source files are written to
+                            // we need this to find the _relative_ paths
+                            let src_target_dir = self.out_target_dir.join("src");
+
                             let mut bases = vec![];
                             let linked =
                                 read_context!(self, CONTRACT_INHERITANCE_ID, ContractInheritance);
                             for base in contract.base.iter() {
                                 let base_doc = base.as_doc()?;
                                 let base_ident = &base.name.identifiers.last().unwrap().name;
-                                bases.push(
-                                    linked
-                                        .as_ref()
-                                        .and_then(|l| {
-                                            l.get(base_ident).map(|path| {
-                                                let path = Path::new("/").join(
-                                                    path.strip_prefix("docs/src")
-                                                        .ok()
-                                                        .unwrap_or(path),
-                                                );
-                                                Markdown::Link(
-                                                    &base_doc,
-                                                    &path.display().to_string(),
-                                                )
+
+                                let link = linked
+                                    .as_ref()
+                                    .and_then(|link| {
+                                        link.get(base_ident).map(|path| {
+                                            let path = Path::new("/").join(
+                                                path.strip_prefix(&src_target_dir)
+                                                    .ok()
+                                                    .unwrap_or(path),
+                                            );
+                                            Markdown::Link(&base_doc, &path.display().to_string())
                                                 .as_doc()
-                                            })
                                         })
-                                        .transpose()?
-                                        .unwrap_or(base_doc),
-                                )
+                                    })
+                                    .transpose()?
+                                    .unwrap_or(base_doc);
+
+                                bases.push(link);
                             }
 
                             writer.writeln_raw(bases.join(", "))?;

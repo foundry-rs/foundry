@@ -56,6 +56,7 @@ use ethers::{
     utils::{keccak256, rlp},
 };
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
@@ -72,12 +73,11 @@ use foundry_evm::{
     },
     utils::{eval_to_instruction_result, halt_to_instruction_result, u256_to_h256_be},
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     io::{Read, Write},
     ops::Deref,
     sync::Arc,
@@ -470,8 +470,7 @@ impl Backend {
 
     /// Returns the current best number of the chain
     pub fn best_number(&self) -> U64 {
-        let num: u64 = self.env.read().block.number.try_into().unwrap_or(u64::MAX);
-        num.into()
+        self.env.read().block.number.saturating_to::<u64>().into()
     }
 
     /// Sets the block number
@@ -486,8 +485,8 @@ impl Backend {
     }
 
     /// Returns the client coinbase address.
-    pub fn chain_id(&self) -> U256 {
-        self.env.read().cfg.chain_id.into()
+    pub fn chain_id(&self) -> u64 {
+        self.env.read().cfg.chain_id
     }
 
     pub fn set_chain_id(&self, chain_id: u64) {
@@ -554,6 +553,11 @@ impl Backend {
         (self.spec_id() as u8) >= (SpecId::BERLIN as u8)
     }
 
+    /// Returns true if op-stack deposits are active
+    pub fn is_optimism(&self) -> bool {
+        self.env.read().cfg.optimism
+    }
+
     /// Returns an error if EIP1559 is not active (pre Berlin)
     pub fn ensure_eip1559_active(&self) -> Result<(), BlockchainError> {
         if self.is_eip1559() {
@@ -568,6 +572,14 @@ impl Backend {
             return Ok(())
         }
         Err(BlockchainError::EIP2930TransactionUnsupportedAtHardfork)
+    }
+
+    /// Returns an error if op-stack deposits are not active
+    pub fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
+        if self.is_optimism() {
+            return Ok(())
+        }
+        Err(BlockchainError::DepositTransactionUnsupported)
     }
 
     /// Returns the block gas limit
@@ -675,6 +687,10 @@ impl Backend {
             };
         }
         Ok(self.db.write().await.revert(id))
+    }
+
+    pub fn list_snapshots(&self) -> BTreeMap<U256, (u64, H256)> {
+        self.active_snapshots.lock().clone().into_iter().collect()
     }
 
     /// Get the current state.
@@ -1910,7 +1926,10 @@ impl Backend {
                 .unwrap_or(self.base_fee())
                 .checked_add(t.max_priority_fee_per_gas)
                 .unwrap_or_else(U256::max_value),
+            TypedTransaction::Deposit(_) => U256::from(0),
         };
+
+        let deposit_nonce = transaction_type.and_then(|x| (x == 0x7E).then_some(info.nonce));
 
         let inner = TransactionReceipt {
             transaction_hash: info.transaction_hash,
@@ -1953,6 +1972,11 @@ impl Backend {
             logs_bloom,
             transaction_type: transaction_type.map(Into::into),
             effective_gas_price: Some(effective_gas_price),
+            deposit_nonce,
+            l1_fee: None,
+            l1_fee_scalar: None,
+            l1_gas_price: None,
+            l1_gas_used: None,
             other: OtherFields::default(),
         };
 
@@ -2202,11 +2226,10 @@ impl TransactionValidator for Backend {
 
         if let Some(tx_chain_id) = tx.chain_id() {
             let chain_id = self.chain_id();
-            if chain_id != tx_chain_id.into() {
+            if chain_id != tx_chain_id {
                 if let Some(legacy) = tx.as_legacy() {
                     // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
-                    if env.cfg.spec_id >= SpecId::SPURIOUS_DRAGON &&
-                        !legacy.meets_eip155(chain_id.as_u64())
+                    if env.cfg.spec_id >= SpecId::SPURIOUS_DRAGON && !legacy.meets_eip155(chain_id)
                     {
                         warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
                         return Err(InvalidTransactionError::IncompatibleEIP155)
@@ -2232,15 +2255,17 @@ impl TransactionValidator for Backend {
         }
 
         // check nonce
+        let is_deposit_tx =
+            matches!(&pending.transaction.transaction, TypedTransaction::Deposit(_));
         let nonce: u64 =
             (*tx.nonce()).try_into().map_err(|_| InvalidTransactionError::NonceMaxValue)?;
-        if nonce < account.nonce {
+        if nonce < account.nonce && !is_deposit_tx {
             warn!(target: "backend", "[{:?}] nonce too low", tx.hash());
             return Err(InvalidTransactionError::NonceTooLow)
         }
 
         if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
-            if tx.gas_price() < env.block.basefee.to_ethers() {
+            if tx.gas_price() < env.block.basefee.to_ethers() && !is_deposit_tx {
                 warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
                 return Err(InvalidTransactionError::FeeCapTooLow)
             }
@@ -2295,6 +2320,9 @@ pub fn transaction_build(
     base_fee: Option<U256>,
 ) -> Transaction {
     let mut transaction: Transaction = eth_transaction.clone().into();
+    if info.is_some() && transaction.transaction_type.unwrap_or(U64::zero()).as_u64() == 0x7E {
+        transaction.nonce = U256::from(info.as_ref().unwrap().nonce);
+    }
 
     if eth_transaction.is_dynamic_fee() {
         if block.is_none() && info.is_none() {

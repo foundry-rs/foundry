@@ -50,11 +50,7 @@ pub struct ChiselResult {
     /// Called address
     pub address: Option<Address>,
     /// EVM State at the final instruction of the `run()` function
-    pub state: Option<(
-        revm::interpreter::Stack,
-        revm::interpreter::SharedMemory,
-        revm::interpreter::InstructionResult,
-    )>,
+    pub state: Option<(revm::interpreter::Stack, Vec<u8>, InstructionResult)>,
 }
 
 /// ChiselRunner implementation
@@ -96,7 +92,7 @@ impl ChiselRunner {
         // We don't care about deployment traces / logs here
         let DeployResult { address, .. } = self
             .executor
-            .deploy(self.sender, bytecode.0.into(), U256::ZERO, None)
+            .deploy(self.sender, bytecode, U256::ZERO, None)
             .map_err(|err| eyre::eyre!("Failed to deploy REPL contract:\n{}", err))?;
 
         // Reset the sender's balance to the initial balance for calls.

@@ -1,12 +1,15 @@
 use super::{artifacts::ArtifactInfo, ScriptResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, Bytes, B256};
 use ethers_core::types::{transaction::eip2718::TypedTransaction, NameOrAddress};
 use eyre::{ContextCompat, Result, WrapErr};
-use foundry_common::{fmt::format_token_raw, RpcUrl, SELECTOR_LEN};
+use foundry_common::{
+    fmt::format_token_raw,
+    types::{ToAlloy, ToEthers},
+    RpcUrl, SELECTOR_LEN,
+};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder, utils::CallKind};
-use foundry_utils::types::{ToAlloy, ToEthers};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -17,8 +20,7 @@ pub struct AdditionalContract {
     pub opcode: CallKind,
     #[serde(serialize_with = "wrapper::serialize_addr")]
     pub address: Address,
-    #[serde(with = "hex")]
-    pub init_code: Vec<u8>,
+    pub init_code: Bytes,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

@@ -65,7 +65,7 @@ async fn can_call_ots_get_internal_operations_contract_deploy() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_call_ots_get_internal_operations_contract_trasfer() {
+async fn can_call_ots_get_internal_operations_contract_transfer() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 

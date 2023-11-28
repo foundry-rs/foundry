@@ -511,3 +511,20 @@ contract CheckOverrides is DSTest {
         vm.stopBroadcast();
     }
 }
+
+contract Child {}
+
+contract Parent {
+    constructor() {
+        new Child();
+    }
+}
+
+contract ScriptAdditionalContracts is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function run() external {
+        vm.startBroadcast();
+        new Parent();
+    }
+}

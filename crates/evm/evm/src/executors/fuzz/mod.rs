@@ -166,8 +166,11 @@ impl<'a> FuzzedExecutor<'a> {
                 let reason = reason.to_string();
                 result.reason = if reason.is_empty() { None } else { Some(reason) };
 
-                let args =
-                    func.abi_decode_input(&calldata.as_ref()[4..], false).unwrap_or_default();
+                let args = if let Some(data) = calldata.get(4..) {
+                    func.abi_decode_input(data, false).unwrap_or_default()
+                } else {
+                    vec![]
+                };
                 result.counterexample = Some(CounterExample::Single(BaseCounterExample {
                     sender: None,
                     addr: None,

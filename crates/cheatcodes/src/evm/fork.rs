@@ -3,10 +3,12 @@ use alloy_primitives::B256;
 use alloy_sol_types::SolValue;
 use ethers_core::types::Filter;
 use ethers_providers::Middleware;
-use foundry_common::ProviderBuilder;
+use foundry_common::{
+    types::{ToAlloy, ToEthers},
+    ProviderBuilder,
+};
 use foundry_compilers::utils::RuntimeOrHandle;
 use foundry_evm_core::fork::CreateFork;
-use foundry_utils::types::{ToAlloy, ToEthers};
 
 impl Cheatcode for activeForkCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {

@@ -24,7 +24,6 @@ foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["full"] }
 foundry-config.workspace = true
 foundry-evm.workspace = true
-foundry-utils.workspace = true
 
 ethers-contract.workspace = true
 ethers-core.workspace = true
@@ -85,6 +84,7 @@ foundry-test-utils.workspace = true
 
 criterion = "0.5"
 globset = "0.4"
+paste = "1.0"
 path-slash = "0.2"
 pretty_assertions.workspace = true
 serial_test = "2"

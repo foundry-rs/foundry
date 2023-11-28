@@ -115,6 +115,7 @@ where
     }
 }
 
+#[instrument(target = "cheatcodes", level = "debug", skip(ty), fields(%ty), ret)]
 fn parse_value(s: &str, ty: &DynSolType) -> Result<DynSolValue> {
     match ty.coerce_str(s) {
         Ok(value) => Ok(value),

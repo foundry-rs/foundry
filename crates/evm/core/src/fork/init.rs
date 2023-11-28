@@ -3,8 +3,7 @@ use alloy_primitives::{Address, U256};
 use ethers_core::types::{Block, TxHash};
 use ethers_providers::Middleware;
 use eyre::WrapErr;
-use foundry_common::NON_ARCHIVE_NODE_WARNING;
-use foundry_utils::types::ToAlloy;
+use foundry_common::{types::ToAlloy, NON_ARCHIVE_NODE_WARNING};
 use futures::TryFutureExt;
 use revm::primitives::{BlockEnv, CfgEnv, Env, TxEnv};
 

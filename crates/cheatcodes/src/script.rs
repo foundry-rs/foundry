@@ -3,8 +3,8 @@
 use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{Address, U256};
 use ethers_signers::Signer;
+use foundry_common::types::ToAlloy;
 use foundry_config::Config;
-use foundry_utils::types::ToAlloy;
 
 impl Cheatcode for broadcast_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {

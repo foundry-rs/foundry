@@ -4,9 +4,8 @@ use ethers::{
     signers::LocalWallet,
     types::{serde_helpers::*, Address, Bytes, H256, U256},
 };
-use foundry_common::errors::FsPathError;
+use foundry_common::{errors::FsPathError, types::ToAlloy};
 use foundry_evm::revm::primitives::{Bytecode, Env, KECCAK_EMPTY, U256 as rU256};
-use foundry_utils::types::ToAlloy;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},

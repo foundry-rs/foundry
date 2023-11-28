@@ -6,9 +6,8 @@
 use crate::fork::{BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend};
 use ethers_core::types::{BlockId, BlockNumber};
 use ethers_providers::Provider;
-use foundry_common::{runtime_client::RuntimeClient, ProviderBuilder};
+use foundry_common::{runtime_client::RuntimeClient, types::ToEthers, ProviderBuilder};
 use foundry_config::Config;
-use foundry_utils::types::ToEthers;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     stream::{Fuse, Stream},
