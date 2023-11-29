@@ -187,14 +187,14 @@ tower-http = "0.4"
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
-ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
-ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
-ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "8175f0f97070ad69abd5dfa7b8df31f1c1dcc3d6" }
+ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "2e93fa7e0f21a0f4008dae388bb8c59ec26aab32" }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "2e93fa7e0f21a0f4008dae388bb8c59ec26aab32" }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "2e93fa7e0f21a0f4008dae388bb8c59ec26aab32" }
+ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "2e93fa7e0f21a0f4008dae388bb8c59ec26aab32" }
+ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "2e93fa7e0f21a0f4008dae388bb8c59ec26aab32" }
+ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "2e93fa7e0f21a0f4008dae388bb8c59ec26aab32" }
+ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "2e93fa7e0f21a0f4008dae388bb8c59ec26aab32" }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "2e93fa7e0f21a0f4008dae388bb8c59ec26aab32" }
 
 revm = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 revm-interpreter = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
