@@ -93,7 +93,7 @@ pub fn get_cached_entry_by_name(
     }
 
     if let Some(entry) = cached_entry {
-        return Ok(entry);
+        return Ok(entry)
     }
 
     let mut err = format!("could not find artifact: `{name}`");
@@ -175,7 +175,7 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                 | NamedChain::Moonriver
                 | NamedChain::Moonbase
                 | NamedChain::MoonbeamDev
-        );
+        )
     }
     false
 }
@@ -189,7 +189,7 @@ pub fn has_batch_support(chain_id: u64) -> bool {
                 | NamedChain::ArbitrumTestnet
                 | NamedChain::ArbitrumGoerli
                 | NamedChain::ArbitrumSepolia
-        );
+        )
     }
     true
 }
@@ -384,7 +384,7 @@ pub async fn handle_traces(
 
         if let Some(addr) = iter.next() {
             if let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next()) {
-                return Some((address, label.to_string()));
+                return Some((address, label.to_string()))
             }
         }
         None
