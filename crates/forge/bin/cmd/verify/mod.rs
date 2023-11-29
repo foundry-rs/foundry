@@ -45,7 +45,7 @@ pub struct VerifyArgs {
     pub contract: ContractInfo,
 
     /// The ABI-encoded constructor arguments.
-    #[clap(long, conflicts_with = "constructor_args_path", value_name = "ARGS")]
+    #[clap(long, num_args(1..), conflicts_with = "constructor_args_path", value_name = "ARGS")]
     pub constructor_args: Option<String>,
 
     /// The path to a file containing the constructor arguments.
