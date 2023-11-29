@@ -418,9 +418,11 @@ impl ClientFork {
 
     pub async fn block_by_hash(&self, hash: B256) -> Result<Option<Block>, TransportError> {
         if let Some(block) = self.storage_read().blocks.get(&hash).cloned() {
-            return Ok(Some(block));
+            return Ok(Some(self.convert_to_tx_only_block(block)));
         }
-        let block = self.fetch_full_block(hash).await?.map(Into::into);
+
+        let block = self.fetch_full_block(hash).await?.map(Into::into).map(|b| self.convert_to_tx_only_block(b));
+
         Ok(block)
     }
 
@@ -442,10 +444,10 @@ impl ClientFork {
             .copied()
             .and_then(|hash| self.storage_read().blocks.get(&hash).cloned())
         {
-            return Ok(Some(block));
+            return Ok(Some(self.convert_to_tx_only_block(block)));
         }
 
-        let block = self.fetch_full_block(block_number).await?.map(Into::into);
+        let block = self.fetch_full_block(block_number).await?.map(Into::into).map(|b| self.convert_to_tx_only_block(b));
         Ok(block)
     }
 
@@ -477,7 +479,7 @@ impl ClientFork {
             // also insert all transactions
             let block_txs = match block.clone().transactions {
                 BlockTransactions::Full(txs) => txs,
-                _ => panic!("expected full block. This is a bug."),
+                _ => vec![],
             };
             storage.transactions.extend(block_txs.iter().map(|tx| (tx.hash, tx.clone())));
             storage.hashes.insert(block_number, hash);
@@ -520,13 +522,14 @@ impl ClientFork {
             .hash
             // TODO: Nicer way to make a custom error from a TransportError
             .expect("Missing block hash");
+        let block_number = block.header.number.expect("Missing block number");
         if let Some(uncles) = self.storage_read().uncles.get(&block_hash) {
             return Ok(uncles.get(index).cloned());
         }
 
         let mut uncles = Vec::with_capacity(block.uncles.len());
         for (uncle_idx, _) in block.uncles.iter().enumerate() {
-            let uncle = match self.provider().get_uncle(block_hash, U64::from(uncle_idx)).await? {
+            let uncle = match self.provider().get_uncle(block_number.to::<u64>(), U64::from(uncle_idx)).await? {
                 Some(u) => u,
                 None => return Ok(None),
             };
@@ -552,6 +555,13 @@ impl ClientFork {
             }
         }
         block.into_full_block(transactions)
+    }
+
+    /// Converts a full block into a block with only its tx hashes.
+    fn convert_to_tx_only_block(&self, mut block: Block) -> Block {
+        let hashes = block.transactions.iter().map(|tx| tx.clone()).collect();
+        block.transactions = BlockTransactions::Hashes(hashes);
+        block
     }
 }
 
