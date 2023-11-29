@@ -1275,7 +1275,7 @@ impl EthApi {
                 return fork
                     .fee_history(block_count, BlockNumber::Number(number), &reward_percentiles)
                     .await
-                    .map_err(|_| BlockchainError::DataUnavailable);
+                    .map_err(|e| BlockchainError::AlloyForkProvider(e));
             }
         }
 
@@ -1302,7 +1302,7 @@ impl EthApi {
             oldest_block: U256::from(lowest),
             base_fee_per_gas: Vec::new(),
             gas_used_ratio: Vec::new(),
-            reward: Default::default(),
+            reward: Some(Default::default()),
         };
 
         let mut rewards = Vec::new();

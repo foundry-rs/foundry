@@ -2,7 +2,7 @@ mod abi;
 mod anvil;
 // mod anvil_api;
 mod api;
-// mod fork;
+mod fork;
 mod ganache;
 mod gas;
 mod genesis;
