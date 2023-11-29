@@ -26,13 +26,7 @@ use revm::{
     },
     Database, DatabaseCommit, Inspector, JournaledState, EVM,
 };
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-};
+use std::collections::{HashMap, HashSet};
 
 mod diagnostic;
 pub use diagnostic::RevertDiagnostic;
@@ -568,11 +562,12 @@ impl Backend {
     ///
     /// This returns whether there was a reverted snapshot that recorded an error
     pub fn has_snapshot_failure(&self) -> bool {
-        self.inner.has_snapshot_failure.load(Ordering::Relaxed)
+        self.inner.has_snapshot_failure
     }
 
-    pub fn set_snapshot_failure(&self, has_snapshot_failure: bool) {
-        self.inner.has_snapshot_failure.store(has_snapshot_failure, Ordering::Relaxed);
+    /// Sets the snapshot failure flag.
+    pub fn set_snapshot_failure(&mut self, has_snapshot_failure: bool) {
+        self.inner.has_snapshot_failure = has_snapshot_failure
     }
 
     /// Checks if the test contract associated with this backend failed, See
@@ -913,7 +908,7 @@ impl DatabaseExt for Backend {
             // need to check whether there's a global failure which means an error occurred either
             // during the snapshot or even before
             if self.is_global_failure(current_state) {
-                self.inner.has_snapshot_failure.store(true, Ordering::Relaxed);
+                self.set_snapshot_failure(true);
             }
 
             // merge additional logs
@@ -1514,7 +1509,7 @@ pub struct BackendInner {
     /// reverted we get the _current_ `revm::JournaledState` which contains the state that we can
     /// check if the `_failed` variable is set,
     /// additionally
-    pub has_snapshot_failure: Arc<AtomicBool>,
+    pub has_snapshot_failure: bool,
     /// Tracks the address of a Test contract
     ///
     /// This address can be used to inspect the state of the contract when a test is being
@@ -1733,7 +1728,7 @@ impl Default for BackendInner {
             created_forks: Default::default(),
             forks: vec![],
             snapshots: Default::default(),
-            has_snapshot_failure: Arc::new(AtomicBool::new(false)),
+            has_snapshot_failure: false,
             test_contract_address: None,
             caller: None,
             next_fork_id: Default::default(),
