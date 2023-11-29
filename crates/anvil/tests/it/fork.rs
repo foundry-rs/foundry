@@ -142,10 +142,7 @@ async fn test_fork_eth_get_code() {
 
     for address in utils::contract_addresses(Chain::Mainnet) {
         let prev_code = api
-            .get_code(
-                address.to_alloy(),
-                Some(BlockNumberOrTag::Number((BLOCK_NUMBER - 10)).into()),
-            )
+            .get_code(address.to_alloy(), Some(BlockNumberOrTag::Number(BLOCK_NUMBER - 10).into()))
             .await
             .unwrap();
         let code = api.get_code(address.to_alloy(), None).await.unwrap();
