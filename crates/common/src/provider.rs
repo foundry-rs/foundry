@@ -225,6 +225,11 @@ impl ProviderBuilder {
             headers,
         } = self;
         let url = url?;
+        if url.scheme() == "file" {
+            eyre::bail!(
+                "URLs with `file` scheme are not supported: {url}\nExpected `http` or `https`"
+            );
+        }
 
         let client_builder = RuntimeClientBuilder::new(
             url.clone(),
