@@ -82,12 +82,14 @@ async fn test_send_value_deposit_transaction() {
     });
 
     let pending = provider.send_transaction(deposit_tx.clone(), None).await.unwrap();
-    let receipt = pending.await.unwrap().expect("dropped");
-    assert_eq!(receipt.from, from_addr);
-    assert_eq!(receipt.to, Some(to_addr));
 
     // mine block
     api.evm_mine(None).await.unwrap();
+
+    let receipt = provider.get_transaction_receipt(pending.tx_hash()).await.unwrap().unwrap();
+    assert_eq!(receipt.from, from_addr);
+    assert_eq!(receipt.to, Some(to_addr));
+
 
     // the recipient should have received the value
     let balance = provider.get_balance(to_addr, None).await.unwrap();
@@ -129,12 +131,13 @@ async fn test_send_value_raw_deposit_transaction() {
 
     let rlpbytes = deposit_tx.rlp();
     let pending = provider.send_raw_transaction(rlpbytes).await.unwrap();
-    let receipt = pending.await.unwrap().expect("dropped");
-    assert_eq!(receipt.from, from_addr);
-    assert_eq!(receipt.to, Some(to_addr));
 
     // mine block
     api.evm_mine(None).await.unwrap();
+
+    let receipt = provider.get_transaction_receipt(pending.tx_hash()).await.unwrap().unwrap();
+    assert_eq!(receipt.from, from_addr);
+    assert_eq!(receipt.to, Some(to_addr));
 
     // the recipient should have received the value
     let balance = provider.get_balance(to_addr, None).await.unwrap();
