@@ -63,6 +63,13 @@ pub struct CreateArgs {
     #[clap(long, requires = "from")]
     unlocked: bool,
 
+    /// Prints the standard json compiler input if `--verify` is provided.
+    ///
+    /// The standard json compiler input can be used to manually submit contract verification in
+    /// the browser.
+    #[clap(long, requires = "verify")]
+    show_standard_json_input: bool,
+
     #[clap(flatten)]
     opts: CoreBuildArgs,
 
@@ -184,7 +191,7 @@ impl CreateArgs {
             libraries: vec![],
             root: None,
             verifier: self.verifier.clone(),
-            show_standard_json_input: false,
+            show_standard_json_input: self.show_standard_json_input,
         };
         verify.verification_provider()?.preflight_check(verify).await?;
         Ok(())
@@ -323,7 +330,7 @@ impl CreateArgs {
             libraries: vec![],
             root: None,
             verifier: self.verifier,
-            show_standard_json_input: false,
+            show_standard_json_input: self.show_standard_json_input,
         };
         println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier);
         verify.run().await

@@ -558,7 +558,7 @@ impl<'a> ContractRunner<'a> {
         // Run fuzz test
         let start = Instant::now();
         let fuzzed_executor =
-            FuzzedExecutor::new(&self.executor, runner.clone(), self.sender, fuzz_config);
+            FuzzedExecutor::new(self.executor.clone(), runner.clone(), self.sender, fuzz_config);
         let state = fuzzed_executor.build_fuzz_state();
         let mut result = fuzzed_executor.fuzz(func, address, should_fail, self.errors);
 
@@ -598,7 +598,7 @@ impl<'a> ContractRunner<'a> {
             };
             // rerun the last relevant test with traces
             let debug_result = FuzzedExecutor::new(
-                &debug_executor,
+                debug_executor,
                 runner,
                 self.sender,
                 fuzz_config,

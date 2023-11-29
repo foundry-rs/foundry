@@ -28,9 +28,9 @@ pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
 /// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contract with
 /// inputs, until it finds a counterexample. The provided [`TestRunner`] contains all the
 /// configuration which can be overridden via [environment variables](proptest::test_runner::Config)
-pub struct FuzzedExecutor<'a> {
-    /// The VM
-    executor: &'a Executor,
+pub struct FuzzedExecutor {
+    /// The EVM executor
+    executor: Executor,
     /// The fuzzer
     runner: TestRunner,
     /// The account that calls tests
@@ -39,10 +39,10 @@ pub struct FuzzedExecutor<'a> {
     config: FuzzConfig,
 }
 
-impl<'a> FuzzedExecutor<'a> {
+impl FuzzedExecutor {
     /// Instantiates a fuzzed executor given a testrunner
     pub fn new(
-        executor: &'a Executor,
+        executor: Executor,
         runner: TestRunner,
         sender: Address,
         config: FuzzConfig,
@@ -224,7 +224,7 @@ impl<'a> FuzzedExecutor<'a> {
             .map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
 
         let success =
-            self.executor.is_success(address, call.reverted, state_changeset.clone(), should_fail);
+            self.executor.is_raw_call_success(address, state_changeset.clone(), &call, should_fail);
 
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {

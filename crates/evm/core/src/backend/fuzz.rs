@@ -39,16 +39,11 @@ pub struct FuzzBackendWrapper<'a> {
     pub backend: Cow<'a, Backend>,
     /// Keeps track of whether the backed is already initialized
     is_initialized: bool,
-    /// Keeps track of whether there was a snapshot failure.
-    ///
-    /// Necessary as the backend is dropped after usage, but we'll need to persist
-    /// the snapshot failure anyhow.
-    has_snapshot_failure: bool,
 }
 
 impl<'a> FuzzBackendWrapper<'a> {
     pub fn new(backend: &'a Backend) -> Self {
-        Self { backend: Cow::Borrowed(backend), is_initialized: false, has_snapshot_failure: false }
+        Self { backend: Cow::Borrowed(backend), is_initialized: false }
     }
 
     /// Executes the configured transaction of the `env` without committing state changes
@@ -73,14 +68,7 @@ impl<'a> FuzzBackendWrapper<'a> {
     ///
     /// This is bubbled up from the underlying Copy-On-Write backend when a revert occurs.
     pub fn has_snapshot_failure(&self) -> bool {
-        self.has_snapshot_failure
-    }
-
-    /// Sets whether there was a snapshot failure in the fuzz backend.
-    ///
-    /// This is bubbled up from the underlying Copy-On-Write backend when a revert occurs.
-    pub fn set_snapshot_failure(&mut self, has_snapshot_failure: bool) {
-        self.has_snapshot_failure = has_snapshot_failure;
+        self.backend.has_snapshot_failure()
     }
 
     /// Returns a mutable instance of the Backend.
@@ -110,11 +98,7 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         current: &mut Env,
     ) -> Option<JournaledState> {
         trace!(?id, "fuzz: revert snapshot");
-        let journaled_state = self.backend_mut(current).revert(id, journaled_state, current);
-        // Persist the snapshot failure in the fuzz backend, as the underlying backend state is lost
-        // after the call.
-        self.set_snapshot_failure(self.has_snapshot_failure || self.backend.has_snapshot_failure());
-        journaled_state
+        self.backend_mut(current).revert(id, journaled_state, current)
     }
 
     fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<LocalForkId> {

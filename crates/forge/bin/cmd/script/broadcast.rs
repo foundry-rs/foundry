@@ -346,6 +346,10 @@ impl ScriptArgs {
     ) -> Result<()> {
         trace!(target: "script", "broadcasting single chain deployment");
 
+        if self.verify {
+            deployment_sequence.verify_preflight_check(&script_config.config, &verify)?;
+        }
+
         let rpc = script_config.total_rpcs.into_iter().next().expect("exists; qed");
 
         deployment_sequence.add_libraries(libraries);

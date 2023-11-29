@@ -282,6 +282,10 @@ impl Executor {
     /// Performs a raw call to an account on the current state of the VM.
     ///
     /// Any state modifications made by the call are not committed.
+    ///
+    /// This intended for fuzz calls, which try to minimize [Backend] clones by using a Cow of the
+    /// underlying [Backend] so it only gets cloned when cheatcodes that require mutable access are
+    /// used.
     pub fn call_raw(
         &self,
         from: Address,
@@ -296,9 +300,8 @@ impl Executor {
         let result = db.inspect_ref(&mut env, &mut inspector)?;
 
         // Persist the snapshot failure recorded on the fuzz backend wrapper.
-        self.backend
-            .set_snapshot_failure(self.backend.has_snapshot_failure() || db.has_snapshot_failure());
-        convert_executed_result(env, inspector, result)
+        let has_snapshot_failure = db.has_snapshot_failure();
+        convert_executed_result(env, inspector, result, has_snapshot_failure)
     }
 
     /// Execute the transaction configured in `env.tx` and commit the changes
@@ -313,7 +316,7 @@ impl Executor {
         // execute the call
         let mut inspector = self.inspector.clone();
         let result = self.backend.inspect_ref(&mut env, &mut inspector)?;
-        convert_executed_result(env, inspector, result)
+        convert_executed_result(env, inspector, result, self.backend.has_snapshot_failure())
     }
 
     /// Commit the changeset to the database and adjust `self.inspector_config`
@@ -463,6 +466,34 @@ impl Executor {
         should_fail: bool,
     ) -> bool {
         self.ensure_success(address, reverted, state_changeset, should_fail).unwrap_or_default()
+    }
+
+    /// This is the same as [Self::is_success] but intended for outcomes of [Self::call_raw] used in
+    /// fuzzing and invariant testing.
+    ///
+    /// ## Background
+    ///
+    /// Executing and failure checking [Executor::ensure_success] are two steps, for ds-test
+    /// legacy reasons failures can be stored in a global variables and needs to be called via a
+    /// solidity call `failed()(bool)`. For fuzz tests we’re using the
+    /// `FuzzBackendWrapper` which is a Cow of the executor’s backend which lazily clones the
+    /// backend when it’s mutated via cheatcodes like `snapshot`. Snapshots make it even
+    /// more complicated because now we also need to keep track of that global variable when we
+    /// revert to a snapshot (because it is stored in state). Now, the problem is that
+    /// the `FuzzBackendWrapper` is dropped after every call, so we need to keep track of the
+    /// snapshot failure in the [RawCallResult] instead.
+    pub fn is_raw_call_success(
+        &self,
+        address: Address,
+        state_changeset: StateChangeset,
+        call_result: &RawCallResult,
+        should_fail: bool,
+    ) -> bool {
+        if call_result.has_snapshot_failure {
+            // a failure occurred in a reverted snapshot, which is considered a failed test
+            return should_fail
+        }
+        self.is_success(address, call_result.reverted, state_changeset, should_fail)
     }
 
     fn ensure_success(
@@ -646,6 +677,11 @@ pub struct RawCallResult {
     pub exit_reason: InstructionResult,
     /// Whether the call reverted or not
     pub reverted: bool,
+    /// Whether the call includes a snapshot failure
+    ///
+    /// This is tracked separately from revert because a snapshot failure can occur without a
+    /// revert, since assert failures are stored in a global variable (ds-test legacy)
+    pub has_snapshot_failure: bool,
     /// The raw result of the call
     pub result: Bytes,
     /// The gas used for the call
@@ -688,6 +724,7 @@ impl Default for RawCallResult {
         Self {
             exit_reason: InstructionResult::Continue,
             reverted: false,
+            has_snapshot_failure: false,
             result: Bytes::new(),
             gas_used: 0,
             gas_refunded: 0,
@@ -719,6 +756,7 @@ fn convert_executed_result(
     env: Env,
     inspector: InspectorStack,
     result: ResultAndState,
+    has_snapshot_failure: bool,
 ) -> eyre::Result<RawCallResult> {
     let ResultAndState { result: exec_result, state: state_changeset } = result;
     let (exit_reason, gas_refunded, gas_used, out) = match exec_result {
@@ -761,6 +799,7 @@ fn convert_executed_result(
     Ok(RawCallResult {
         exit_reason,
         reverted: !matches!(exit_reason, return_ok!()),
+        has_snapshot_failure,
         result,
         gas_used,
         gas_refunded,

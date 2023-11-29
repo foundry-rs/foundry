@@ -260,6 +260,10 @@ impl ScriptArgs {
             Err(err) => eyre::bail!(err),
         };
 
+        if self.verify {
+            deployment_sequence.verify_preflight_check(&script_config.config, &verify)?;
+        }
+
         receipts::wait_for_pending(provider, &mut deployment_sequence).await?;
 
         if self.resume {
