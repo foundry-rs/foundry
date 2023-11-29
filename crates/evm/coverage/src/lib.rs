@@ -8,6 +8,7 @@
 extern crate tracing;
 
 use alloy_primitives::{Bytes, B256};
+use foundry_compilers::sourcemap::SourceElement;
 use semver::Version;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -39,6 +40,8 @@ pub struct CoverageReport {
     pub anchors: HashMap<ContractId, Vec<ItemAnchor>>,
     /// All the bytecode hits for the codebase
     pub bytecode_hits: HashMap<ContractId, HitMap>,
+    /// The bytecode -> source mappings
+    pub source_maps: HashMap<ContractId, (Vec<SourceElement>, Vec<SourceElement>)>,
 }
 
 impl CoverageReport {
@@ -51,6 +54,12 @@ impl CoverageReport {
     /// Get the source ID for a specific source file path.
     pub fn get_source_id(&self, version: Version, path: String) -> Option<&usize> {
         self.source_paths_to_ids.get(&(version, path))
+    }
+
+    /// Add the source maps
+    pub fn add_source_maps(&mut self, source_maps: HashMap<ContractId, (Vec<SourceElement>, Vec<SourceElement>)>) {
+        self.source_maps.extend(source_maps.into_iter());
+
     }
 
     /// Add coverage items to this report

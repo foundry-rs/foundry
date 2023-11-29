@@ -161,6 +161,8 @@ impl CoverageArgs {
         let mut versioned_asts: HashMap<Version, HashMap<usize, Ast>> = HashMap::new();
         let mut versioned_sources: HashMap<Version, HashMap<usize, String>> = HashMap::new();
         for (path, mut source_file, version) in sources.into_sources_with_version() {
+            report.add_source(version.clone(), source_file.id as usize, path.clone());
+            
             // Filter out dependencies
             if project_paths.has_library_ancestor(std::path::Path::new(&path)) {
                 continue
@@ -180,7 +182,6 @@ impl CoverageArgs {
                     fs::read_to_string(&file)
                         .wrap_err("Could not read source code for analysis")?,
                 );
-                report.add_source(version, source_file.id as usize, path);
             }
         }
 
@@ -278,6 +279,8 @@ impl CoverageArgs {
             report.add_items(version, source_analysis.items);
             report.add_anchors(anchors);
         }
+
+        report.add_source_maps(source_maps);
 
         Ok(report)
     }

@@ -185,14 +185,35 @@ impl BytecodeReporter {
 impl<'a> CoverageReporter for BytecodeReporter {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
         use std::fmt::Write;
+        let no_source_elements = Vec::new();
         for (contract_id, hits) in &report.bytecode_hits {
             let ops = disassemble_bytes(hits.bytecode.to_vec())?;
             let mut formatted = String::new();
-            for op in ops.iter() {
-                let hits = hits.hits.get(&(op.offset as usize))
+            
+            let source_elements = report.source_maps.get(contract_id)
+                .map(|sm| &sm.1)
+                .unwrap_or(&no_source_elements);
+
+            for (code, source_element) in std::iter::zip(ops.iter(), source_elements) {
+                let hits = hits.hits.get(&(code.offset as usize))
                     .map(|h| format!("[{:03}]", h))
                     .unwrap_or("     ".to_owned());
-                writeln!(formatted, "{hits} {op:?}")?;
+                let source_path: String = if let Some(i) = source_element.index {
+                    if let Some(path) = report.source_paths.get(&(contract_id.version.clone(), i as usize)) {
+                        path.clone()
+                    } else {
+                        format!("(srcid:{})", i)
+                    }
+
+                } else {
+                    "---".to_owned()
+                };
+
+                let code = format!("{:?}", code);
+
+                let start = source_element.offset;
+                let end = source_element.offset + source_element.length;
+                writeln!(formatted, "{} {:40} // {}: {}-{}", hits, code, source_path, start, end)?;
             }                        
             fs::write( &self.destdir.join(contract_id.contract_name.clone()).with_extension("asm.deployed"), formatted)?;
         }
