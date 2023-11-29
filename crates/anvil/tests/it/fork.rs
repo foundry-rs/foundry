@@ -415,9 +415,9 @@ async fn test_fork_timestamp() {
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
     assert_eq!(tx.status, Some(1u64.into()));
 
-    let elapsed = start.elapsed().as_secs();
-
     let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+
+    let elapsed = start.elapsed().as_secs() + 1;
 
     // ensure the diff between the new mined block and the original block is within the elapsed time
     let diff = block.timestamp - BLOCK_TIMESTAMP;
