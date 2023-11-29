@@ -123,7 +123,7 @@ dependencies = [
 [[package]]
 name = "alloy-json-rpc"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#60bfad94de1c756abfd7c430dae34c5539ec46b8"
+source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#d6ec3478d8c68e3c12b0eb9bdb65870a113e46a6"
 dependencies = [
  "alloy-primitives",
  "serde",
@@ -134,7 +134,7 @@ dependencies = [
 [[package]]
 name = "alloy-networks"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#60bfad94de1c756abfd7c430dae34c5539ec46b8"
+source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#d6ec3478d8c68e3c12b0eb9bdb65870a113e46a6"
 dependencies = [
  "alloy-json-rpc",
  "alloy-primitives",
@@ -169,7 +169,7 @@ dependencies = [
 [[package]]
 name = "alloy-providers"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#60bfad94de1c756abfd7c430dae34c5539ec46b8"
+source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#d6ec3478d8c68e3c12b0eb9bdb65870a113e46a6"
 dependencies = [
  "alloy-networks",
  "alloy-primitives",
@@ -210,7 +210,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-client"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#60bfad94de1c756abfd7c430dae34c5539ec46b8"
+source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#d6ec3478d8c68e3c12b0eb9bdb65870a113e46a6"
 dependencies = [
  "alloy-json-rpc",
  "alloy-transport",
@@ -227,7 +227,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-types"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#60bfad94de1c756abfd7c430dae34c5539ec46b8"
+source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#d6ec3478d8c68e3c12b0eb9bdb65870a113e46a6"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -284,7 +284,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#60bfad94de1c756abfd7c430dae34c5539ec46b8"
+source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#d6ec3478d8c68e3c12b0eb9bdb65870a113e46a6"
 dependencies = [
  "alloy-json-rpc",
  "base64 0.21.5",
@@ -300,7 +300,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-http"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#60bfad94de1c756abfd7c430dae34c5539ec46b8"
+source = "git+https://github.com/alloy-rs/alloy/?branch=onbjerg/alloy-temp-provider-trait#d6ec3478d8c68e3c12b0eb9bdb65870a113e46a6"
 dependencies = [
  "alloy-json-rpc",
  "alloy-transport",

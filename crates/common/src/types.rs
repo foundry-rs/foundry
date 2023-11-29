@@ -139,6 +139,7 @@ impl ToAlloy for ethers_core::types::Transaction {
     }
 }
 
+/// Converts from a [TransactionRequest] to a [CallRequest].
 pub fn to_call_request_from_tx_request(tx: TransactionRequest) -> CallRequest {
     CallRequest {
         from: tx.from.map(|f| f.to_alloy()),

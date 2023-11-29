@@ -45,7 +45,6 @@ use alloy_rpc_types::{
     Log,
     Transaction,
     TransactionReceipt,
-    TransactionRequest as AlloyTransactionRequest,
     TxpoolContent,
     TxpoolInspect,
     // trace::{geth::{DefaultFrame, GethDebugTracingOptions, GethTrace},
@@ -59,8 +58,8 @@ use anvil_core::{
         block::BlockInfo,
         transaction::{
             call_to_internal_tx_request, to_alloy_proof, to_ethers_access_list,
-            to_internal_tx_request, EthTransactionRequest, LegacyTransaction, PendingTransaction,
-            TransactionKind, TypedTransaction, TypedTransactionRequest,
+            EthTransactionRequest, LegacyTransaction, PendingTransaction, TransactionKind,
+            TypedTransaction, TypedTransactionRequest,
         },
         EthRequest,
     },
@@ -867,9 +866,17 @@ impl EthApi {
     pub async fn sign_transaction(&self, request: EthTransactionRequest) -> Result<String> {
         node_info!("eth_signTransaction");
 
-        let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable).map(|a| a.to_ethers())
-        })?.to_alloy();
+        let from = request
+            .from
+            .map(Ok)
+            .unwrap_or_else(|| {
+                self.accounts()?
+                    .first()
+                    .cloned()
+                    .ok_or(BlockchainError::NoSignerAvailable)
+                    .map(|a| a.to_ethers())
+            })?
+            .to_alloy();
 
         let (nonce, _) = self.request_nonce(&request, from).await?;
 
@@ -886,9 +893,17 @@ impl EthApi {
     pub async fn send_transaction(&self, request: EthTransactionRequest) -> Result<TxHash> {
         node_info!("eth_sendTransaction");
 
-        let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable).map(|a| a.to_ethers())
-        })?.to_alloy();
+        let from = request
+            .from
+            .map(Ok)
+            .unwrap_or_else(|| {
+                self.accounts()?
+                    .first()
+                    .cloned()
+                    .ok_or(BlockchainError::NoSignerAvailable)
+                    .map(|a| a.to_ethers())
+            })?
+            .to_alloy();
 
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
         let request = self.build_typed_tx_request(request, nonce)?;
@@ -1275,7 +1290,7 @@ impl EthApi {
                 return fork
                     .fee_history(block_count, BlockNumber::Number(number), &reward_percentiles)
                     .await
-                    .map_err(|_| BlockchainError::DataUnavailable);
+                    .map_err(BlockchainError::AlloyForkProvider);
             }
         }
 
@@ -1302,7 +1317,7 @@ impl EthApi {
             oldest_block: U256::from(lowest),
             base_fee_per_gas: Vec::new(),
             gas_used_ratio: Vec::new(),
-            reward: Default::default(),
+            reward: Some(Default::default()),
         };
 
         let mut rewards = Vec::new();
