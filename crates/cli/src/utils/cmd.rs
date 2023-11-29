@@ -167,14 +167,14 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
         return matches!(
             chain,
-            NamedChain::Arbitrum
-                | NamedChain::ArbitrumTestnet
-                | NamedChain::ArbitrumGoerli
-                | NamedChain::ArbitrumSepolia
-                | NamedChain::Moonbeam
-                | NamedChain::Moonriver
-                | NamedChain::Moonbase
-                | NamedChain::MoonbeamDev
+            NamedChain::Arbitrum |
+                NamedChain::ArbitrumTestnet |
+                NamedChain::ArbitrumGoerli |
+                NamedChain::ArbitrumSepolia |
+                NamedChain::Moonbeam |
+                NamedChain::Moonriver |
+                NamedChain::Moonbase |
+                NamedChain::MoonbeamDev
         )
     }
     false
@@ -185,10 +185,10 @@ pub fn has_batch_support(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
         return !matches!(
             chain,
-            NamedChain::Arbitrum
-                | NamedChain::ArbitrumTestnet
-                | NamedChain::ArbitrumGoerli
-                | NamedChain::ArbitrumSepolia
+            NamedChain::Arbitrum |
+                NamedChain::ArbitrumTestnet |
+                NamedChain::ArbitrumGoerli |
+                NamedChain::ArbitrumSepolia
         )
     }
     true
