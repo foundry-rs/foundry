@@ -122,7 +122,7 @@ where
                         if let Some(NameOrAddress::Address(addr)) = tx.to() {
                             if let Ok(code) = self.provider.get_code(*addr, block).await {
                                 if code.is_empty() {
-                                    eyre::bail!("contract {addr:?} does not exist")
+                                    eyre::bail!("contract {addr:?} does not have any code")
                                 }
                             }
                         }
