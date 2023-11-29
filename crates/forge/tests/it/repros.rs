@@ -205,7 +205,7 @@ test_repro!(6355, false, None, |res| {
     let test = res.test_results.remove("test_shouldFail()").unwrap();
     assert_eq!(test.status, TestStatus::Failure);
 
-    let test = res.test_results.remove("test_shouldFaillWithRevertTo()").unwrap();
+    let test = res.test_results.remove("test_shouldFailWithRevertTo()").unwrap();
     assert_eq!(test.status, TestStatus::Failure);
 });
 

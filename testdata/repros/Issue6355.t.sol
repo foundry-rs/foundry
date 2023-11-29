@@ -21,7 +21,7 @@ contract Issue6355Test is DSTest {
     }
 
     // always fails
-    function test_shouldFaillWithRevertTo() public {
+    function test_shouldFailWithRevertTo() public {
         assertEq(3, targ.num());
         vm.revertTo(snapshot);
     }
