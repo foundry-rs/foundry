@@ -103,6 +103,7 @@ impl VerifyBundle {
                     etherscan: self.etherscan.clone(),
                     flatten: false,
                     force: false,
+                    skip_is_verified_check: false,
                     watch: true,
                     retry: self.retry,
                     libraries: libraries.to_vec(),
