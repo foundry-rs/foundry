@@ -421,7 +421,11 @@ impl ClientFork {
             return Ok(Some(self.convert_to_tx_only_block(block)));
         }
 
-        let block = self.fetch_full_block(hash).await?.map(Into::into).map(|b| self.convert_to_tx_only_block(b));
+        let block = self
+            .fetch_full_block(hash)
+            .await?
+            .map(Into::into)
+            .map(|b| self.convert_to_tx_only_block(b));
 
         Ok(block)
     }
@@ -447,7 +451,11 @@ impl ClientFork {
             return Ok(Some(self.convert_to_tx_only_block(block)));
         }
 
-        let block = self.fetch_full_block(block_number).await?.map(Into::into).map(|b| self.convert_to_tx_only_block(b));
+        let block = self
+            .fetch_full_block(block_number)
+            .await?
+            .map(Into::into)
+            .map(|b| self.convert_to_tx_only_block(b));
         Ok(block)
     }
 
@@ -529,7 +537,11 @@ impl ClientFork {
 
         let mut uncles = Vec::with_capacity(block.uncles.len());
         for (uncle_idx, _) in block.uncles.iter().enumerate() {
-            let uncle = match self.provider().get_uncle(block_number.to::<u64>(), U64::from(uncle_idx)).await? {
+            let uncle = match self
+                .provider()
+                .get_uncle(block_number.to::<u64>(), U64::from(uncle_idx))
+                .await?
+            {
                 Some(u) => u,
                 None => return Ok(None),
             };
@@ -559,7 +571,7 @@ impl ClientFork {
 
     /// Converts a full block into a block with only its tx hashes.
     fn convert_to_tx_only_block(&self, mut block: Block) -> Block {
-        let hashes = block.transactions.iter().map(|tx| tx.clone()).collect();
+        let hashes = block.transactions.iter().collect();
         block.transactions = BlockTransactions::Hashes(hashes);
         block
     }

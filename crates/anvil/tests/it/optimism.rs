@@ -90,7 +90,6 @@ async fn test_send_value_deposit_transaction() {
     assert_eq!(receipt.from, from_addr);
     assert_eq!(receipt.to, Some(to_addr));
 
-
     // the recipient should have received the value
     let balance = provider.get_balance(to_addr, None).await.unwrap();
     assert_eq!(balance, send_value);

@@ -1,6 +1,8 @@
 //! various fork related test
 
 use crate::{abi::*, utils};
+use alloy_primitives::U256 as rU256;
+use alloy_rpc_types::{BlockNumberOrTag, CallRequest};
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use anvil_core::types::Forking;
 use ethers::{
@@ -13,10 +15,9 @@ use ethers::{
         U256,
     },
 };
-use alloy_primitives::U256 as rU256;
-use alloy_rpc_types::{BlockNumberOrTag, CallRequest};
 use foundry_common::{
-    provider::ethers::get_http_provider, rpc,
+    provider::ethers::get_http_provider,
+    rpc,
     rpc::next_http_rpc_endpoint,
     types::{ToAlloy, ToEthers},
 };
@@ -141,7 +142,10 @@ async fn test_fork_eth_get_code() {
 
     for address in utils::contract_addresses(Chain::Mainnet) {
         let prev_code = api
-            .get_code(address.to_alloy(), Some(BlockNumberOrTag::Number((BLOCK_NUMBER - 10).into()).into()))
+            .get_code(
+                address.to_alloy(),
+                Some(BlockNumberOrTag::Number((BLOCK_NUMBER - 10)).into()),
+            )
             .await
             .unwrap();
         let code = api.get_code(address.to_alloy(), None).await.unwrap();
@@ -176,7 +180,8 @@ async fn test_fork_eth_fee_history() {
     let provider = handle.ethers_http_provider();
 
     let count = 10u64;
-    let _history = api.fee_history(rU256::from(count), BlockNumberOrTag::Latest, vec![]).await.unwrap();
+    let _history =
+        api.fee_history(rU256::from(count), BlockNumberOrTag::Latest, vec![]).await.unwrap();
     let _provider_history = provider.fee_history(count, BlockNumber::Latest, &[]).await.unwrap();
 }
 
@@ -355,13 +360,19 @@ async fn can_reset_properly() {
     let origin_nonce = rU256::from(1u64);
     origin_api.anvil_set_nonce(account.to_alloy(), origin_nonce).await.unwrap();
 
-    assert_eq!(origin_nonce, origin_provider.get_transaction_count(account, None).await.unwrap().to_alloy());
+    assert_eq!(
+        origin_nonce,
+        origin_provider.get_transaction_count(account, None).await.unwrap().to_alloy()
+    );
 
     let (fork_api, fork_handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
 
     let fork_provider = fork_handle.ethers_http_provider();
-    assert_eq!(origin_nonce, fork_provider.get_transaction_count(account, None).await.unwrap().to_alloy());
+    assert_eq!(
+        origin_nonce,
+        fork_provider.get_transaction_count(account, None).await.unwrap().to_alloy()
+    );
 
     let to = Address::random();
     let to_balance = fork_provider.get_balance(to, None).await.unwrap();
@@ -369,13 +380,19 @@ async fn can_reset_properly() {
     let tx = fork_provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     // nonce incremented by 1
-    assert_eq!(origin_nonce + rU256::from(1), fork_provider.get_transaction_count(account, None).await.unwrap().to_alloy());
+    assert_eq!(
+        origin_nonce + rU256::from(1),
+        fork_provider.get_transaction_count(account, None).await.unwrap().to_alloy()
+    );
 
     // resetting to origin state
     fork_api.anvil_reset(Some(Forking::default())).await.unwrap();
 
     // nonce reset to origin
-    assert_eq!(origin_nonce, fork_provider.get_transaction_count(account, None).await.unwrap().to_alloy());
+    assert_eq!(
+        origin_nonce,
+        fork_provider.get_transaction_count(account, None).await.unwrap().to_alloy()
+    );
 
     // balance is reset
     assert_eq!(to_balance, fork_provider.get_balance(to, None).await.unwrap());
@@ -666,7 +683,11 @@ async fn test_fork_call() {
 
     let res1 = api
         .call(
-            CallRequest { to: Some(to.to_alloy()), input: input.to_alloy().into(), ..Default::default() },
+            CallRequest {
+                to: Some(to.to_alloy()),
+                input: input.to_alloy().into(),
+                ..Default::default()
+            },
             None,
             None,
         )
@@ -699,7 +720,10 @@ async fn test_fork_snapshot_block_timestamp() {
     api.anvil_mine(Some(rU256::from(1)), None).await.unwrap();
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
-    assert_eq!(initial_block.header.timestamp.to::<u64>(), latest_block.header.timestamp.to::<u64>());
+    assert_eq!(
+        initial_block.header.timestamp.to::<u64>(),
+        latest_block.header.timestamp.to::<u64>()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -711,7 +735,7 @@ async fn test_fork_uncles_fetch() {
     let block_with_uncles = 190u64;
 
     let block =
-        api.block_by_number(BlockNumberOrTag::Number(block_with_uncles.into())).await.unwrap().unwrap();
+        api.block_by_number(BlockNumberOrTag::Number(block_with_uncles)).await.unwrap().unwrap();
 
     assert_eq!(block.uncles.len(), 2);
 
@@ -770,8 +794,11 @@ async fn test_fork_block_transaction_count() {
         api.block_transaction_count_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(latest_txs.to::<u64>(), 1);
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
-    let latest_txs =
-        api.block_transaction_count_by_hash(latest_block.header.hash.unwrap()).await.unwrap().unwrap();
+    let latest_txs = api
+        .block_transaction_count_by_hash(latest_block.header.hash.unwrap())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(latest_txs.to::<u64>(), 1);
 
     // check txs count on an older block: 420000 has 3 txs on mainnet

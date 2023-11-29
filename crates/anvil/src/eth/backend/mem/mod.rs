@@ -38,12 +38,13 @@ use alloy_rpc_types::{
     Block as AlloyBlock,
     BlockId,
     BlockNumberOrTag as BlockNumber,
+    BlockTransactions,
     Filter,
     FilteredParams,
     Header as AlloyHeader,
     Log,
     Transaction,
-    TransactionReceipt, BlockTransactions,
+    TransactionReceipt,
 };
 use anvil_core::{
     eth::{
@@ -1522,7 +1523,7 @@ impl Backend {
     }
 
     pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<AlloyBlock> {
-        Some(self.convert_block(self.get_block(number)?)).map(|b| convert_to_tx_only_block(b))
+        Some(convert_to_tx_only_block(self.convert_block(self.get_block(number)?)))
     }
 
     pub fn get_full_block(&self, id: impl Into<BlockId>) -> Option<AlloyBlock> {
@@ -2116,10 +2117,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return fork
-                .transaction_by_hash(hash)
-                .await
-                .map_err(|e| BlockchainError::AlloyForkProvider(e))
+            return fork.transaction_by_hash(hash).await.map_err(BlockchainError::AlloyForkProvider)
         }
 
         Ok(None)
@@ -2277,7 +2275,7 @@ fn get_pool_transactions_nonce(
 
 /// Converts a full block into a block with only its tx hashes.
 fn convert_to_tx_only_block(mut block: AlloyBlock) -> AlloyBlock {
-    let hashes = block.transactions.iter().map(|tx| tx.clone()).collect();
+    let hashes = block.transactions.iter().collect();
     block.transactions = BlockTransactions::Hashes(hashes);
     block
 }
