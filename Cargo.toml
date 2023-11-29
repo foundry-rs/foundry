@@ -168,6 +168,7 @@ serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+evm-disassembler = "0.3"
 
 axum = "0.6"
 hyper = "0.14"

@@ -5,7 +5,7 @@ use eyre::{Context, Result};
 use forge::{
     coverage::{
         analysis::SourceAnalyzer, anchors::find_anchors, ContractId, CoverageReport,
-        CoverageReporter, DebugReporter, ItemAnchor, LcovReporter, SummaryReporter,
+        CoverageReporter, DebugReporter, ItemAnchor, LcovReporter, SummaryReporter, BytecodeReporter,
     },
     inspectors::CheatsConfig,
     opts::EvmOpts,
@@ -337,7 +337,7 @@ impl CoverageArgs {
                         contract_name: artifact_id.name.clone(),
                     },
                     &hits,
-                );
+                )?;
             }
         }
 
@@ -362,6 +362,12 @@ impl CoverageArgs {
                             .report(&report)
                     }
                 }
+                CoverageReportKind::Bytecode => {
+                    let destdir = root.join("bytecode-coverage");
+                    fs::create_dir_all(&destdir)?;
+                    BytecodeReporter::new(destdir).report(&report)?;
+                    Ok(())
+                },
                 CoverageReportKind::Debug => DebugReporter.report(&report),
             }?;
         }
@@ -380,6 +386,7 @@ pub enum CoverageReportKind {
     Summary,
     Lcov,
     Debug,
+    Bytecode,
 }
 
 /// Helper function that will link references in unlinked bytecode to the 0 address.

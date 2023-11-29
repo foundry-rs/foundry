@@ -2,7 +2,8 @@
 
 use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Row, Table};
 pub use foundry_evm::coverage::*;
-use std::io::Write;
+use evm_disassembler::{disassemble_bytes};
+use std::{io::Write, path::PathBuf, fs};
 
 /// A coverage reporter.
 pub trait CoverageReporter {
@@ -165,6 +166,35 @@ impl CoverageReporter for DebugReporter {
                 );
             });
             println!();
+        }
+
+        Ok(())
+    }
+}
+
+pub struct BytecodeReporter {
+    destdir: PathBuf,
+}
+
+impl BytecodeReporter {
+    pub fn new(destdir: PathBuf) -> BytecodeReporter {
+        Self { destdir }
+    }
+}
+
+impl<'a> CoverageReporter for BytecodeReporter {
+    fn report(self, report: &CoverageReport) -> eyre::Result<()> {
+        use std::fmt::Write;
+        for (contract_id, hits) in &report.bytecode_hits {
+            let ops = disassemble_bytes(hits.bytecode.to_vec())?;
+            let mut formatted = String::new();
+            for op in ops.iter() {
+                let hits = hits.hits.get(&(op.offset as usize))
+                    .map(|h| format!("[{:03}]", h))
+                    .unwrap_or("     ".to_owned());
+                writeln!(formatted, "{hits} {op:?}")?;
+            }                        
+            fs::write( &self.destdir.join(contract_id.contract_name.clone()).with_extension("asm.deployed"), formatted)?;
         }
 
         Ok(())
