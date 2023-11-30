@@ -92,7 +92,7 @@ impl CreateArgs {
         let project = self.opts.project()?;
         let mut output = if self.json || self.opts.silent {
             // Suppress compile stdout messages when printing json output or when silent
-            compile::suppress_compile(&project, true)
+            compile::suppress_compile(&project)
         } else {
             compile::compile(&project, false, false)
         }?;

@@ -147,7 +147,7 @@ impl StorageArgs {
         project.auto_detect = auto_detect;
 
         // Compile
-        let mut out = suppress_compile(&project, true)?;
+        let mut out = suppress_compile(&project)?;
         let artifact = {
             let (_, mut artifact) = out
                 .artifacts()
@@ -160,7 +160,7 @@ impl StorageArgs {
                 let solc = Solc::find_or_install_svm_version(MIN_SOLC.to_string())?;
                 project.solc = solc;
                 project.auto_detect = false;
-                if let Ok(output) = suppress_compile(&project, true) {
+                if let Ok(output) = suppress_compile(&project) {
                     out = output;
                     let (_, new_artifact) = out
                         .artifacts()

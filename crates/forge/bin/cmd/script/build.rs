@@ -255,7 +255,7 @@ impl ScriptArgs {
 
         // We received `contract_name`, and need to find its file path.
         let output = if self.opts.args.silent {
-            compile::suppress_compile(&project, true)
+            compile::suppress_compile(&project)
         } else {
             compile::compile(&project, false, false)
         }?;

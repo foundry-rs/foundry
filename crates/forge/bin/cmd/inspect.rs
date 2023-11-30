@@ -69,7 +69,7 @@ impl InspectArgs {
             *contract_path = target_path.to_string_lossy().to_string();
             compile::compile_files(&project, vec![target_path], true)
         } else {
-            compile::suppress_compile(&project, true)
+            compile::suppress_compile(&project)
         }?;
 
         // Find the artifact

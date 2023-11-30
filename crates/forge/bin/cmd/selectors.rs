@@ -78,7 +78,7 @@ impl SelectorsSubcommands {
                 };
 
                 let project = build_args.project()?;
-                let outcome = compile::suppress_compile(&project, true)?;
+                let outcome = compile::suppress_compile(&project)?;
                 let artifacts = if all {
                     outcome
                         .into_artifacts_with_files()
@@ -129,7 +129,7 @@ impl SelectorsSubcommands {
                     *contract_path = target_path.to_string_lossy().to_string();
                     compile::compile_files(&first_project, vec![target_path], true)
                 } else {
-                    compile::suppress_compile(&first_project, true)
+                    compile::suppress_compile(&first_project)
                 }?;
 
                 // Build second project
@@ -139,7 +139,7 @@ impl SelectorsSubcommands {
                     *contract_path = target_path.to_string_lossy().to_string();
                     compile::compile_files(&second_project, vec![target_path], true)
                 } else {
-                    compile::suppress_compile(&second_project, true)
+                    compile::suppress_compile(&second_project)
                 }?;
 
                 // Find the artifacts
@@ -197,7 +197,7 @@ impl SelectorsSubcommands {
 
                 // compile the project to get the artifacts/abis
                 let project = build_args.project()?;
-                let outcome = compile::suppress_compile(&project, true)?;
+                let outcome = compile::suppress_compile(&project)?;
                 let artifacts = if let Some(contract) = contract {
                     let found_artifact = outcome.find_first(&contract);
                     let artifact = found_artifact
