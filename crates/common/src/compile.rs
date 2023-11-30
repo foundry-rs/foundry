@@ -284,16 +284,16 @@ pub fn compile_with_filter(
     ProjectCompiler::with_filter(print_names, print_sizes, skip).compile(project)
 }
 
-/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
+/// Compiles the provided [`Project`], throws if there's any compiler error (if throw err is true) and logs whether
 /// compilation was successful or if there was a cache hit.
 /// Doesn't print anything to stdout, thus is "suppressed".
-pub fn suppress_compile(project: &Project) -> Result<ProjectCompileOutput> {
+pub fn suppress_compile(project: &Project, throw_err: bool) -> Result<ProjectCompileOutput> {
     let output = foundry_compilers::report::with_scoped(
         &foundry_compilers::report::Report::new(NoReporter::default()),
         || project.compile(),
     )?;
 
-    if output.has_compiler_errors() {
+    if output.has_compiler_errors() && throw_err {
         eyre::bail!(output.to_string())
     }
 
@@ -301,15 +301,28 @@ pub fn suppress_compile(project: &Project) -> Result<ProjectCompileOutput> {
 }
 
 /// Depending on whether the `skip` is empty this will [`suppress_compile_sparse`] or
-/// [`suppress_compile`]
+/// [`suppress_compile`] and throw if there's any compiler error
 pub fn suppress_compile_with_filter(
     project: &Project,
     skip: Vec<SkipBuildFilter>,
 ) -> Result<ProjectCompileOutput> {
     if skip.is_empty() {
-        suppress_compile(project)
+        suppress_compile(project, true)
     } else {
-        suppress_compile_sparse(project, SkipBuildFilters(skip))
+        suppress_compile_sparse(project, SkipBuildFilters(skip), true)
+    }
+}
+
+/// Depending on whether the `skip` is empty this will [`suppress_compile_sparse`] or
+/// [`suppress_compile`] and does not throw if there's any compiler error
+pub fn suppress_compile_with_filter_json(
+    project: &Project,
+    skip: Vec<SkipBuildFilter>,
+) -> Result<ProjectCompileOutput> {
+    if skip.is_empty() {
+        suppress_compile(project, false)
+    } else {
+        suppress_compile_sparse(project, SkipBuildFilters(skip), false)
     }
 }
 
@@ -321,13 +334,14 @@ pub fn suppress_compile_with_filter(
 pub fn suppress_compile_sparse<F: FileFilter + 'static>(
     project: &Project,
     filter: F,
+    throw_err: bool
 ) -> Result<ProjectCompileOutput> {
     let output = foundry_compilers::report::with_scoped(
         &foundry_compilers::report::Report::new(NoReporter::default()),
         || project.compile_sparse(filter),
     )?;
 
-    if output.has_compiler_errors() {
+    if output.has_compiler_errors() && throw_err {
         eyre::bail!(output.to_string())
     }
 

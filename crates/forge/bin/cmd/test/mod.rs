@@ -162,8 +162,8 @@ impl TestArgs {
         let output = match (config.sparse_mode, self.opts.silent | self.json) {
             (false, false) => compiler.compile(&project),
             (true, false) => compiler.compile_sparse(&project, filter.clone()),
-            (false, true) => compile::suppress_compile(&project),
-            (true, true) => compile::suppress_compile_sparse(&project, filter.clone()),
+            (false, true) => compile::suppress_compile(&project, true),
+            (true, true) => compile::suppress_compile_sparse(&project, filter.clone(), true),
         }?;
         // Create test options from general project settings
         // and compiler output
