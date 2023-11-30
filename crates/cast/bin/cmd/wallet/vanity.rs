@@ -7,7 +7,7 @@ use foundry_common::types::ToAlloy;
 use rayon::iter::{self, ParallelIterator};
 use regex::Regex;
 use std::time::Instant;
-use std::path::PathBuf;
+use std::path::Path;
 use std::fs;
 use serde::{Serialize, Deserialize};
 
@@ -141,7 +141,7 @@ impl VanityArgs {
 
         // If a save path is provided, save the generated vanity wallet to the specified path.
         if let Some(save_path) = save_path {
-            save_wallet_to_file(&wallet, &PathBuf::from(save_path))?;
+            save_wallet_to_file(&wallet, Path::new(&save_path))?;
         }
 
         println!(
@@ -161,7 +161,7 @@ impl VanityArgs {
     }
 }
 
-fn save_wallet_to_file(wallet: &LocalWallet, save_path: &PathBuf) -> Result<()> {
+fn save_wallet_to_file(wallet: &LocalWallet, save_path: &Path) -> Result<()> {
     let file_name = "vanity_addresses.json";
     let full_path = save_path.join(file_name);
 
