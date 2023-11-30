@@ -170,7 +170,11 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
             NamedChain::Arbitrum |
                 NamedChain::ArbitrumTestnet |
                 NamedChain::ArbitrumGoerli |
-                NamedChain::ArbitrumSepolia
+                NamedChain::ArbitrumSepolia |
+                NamedChain::Moonbeam |
+                NamedChain::Moonriver |
+                NamedChain::Moonbase |
+                NamedChain::MoonbeamDev
         )
     }
     false
