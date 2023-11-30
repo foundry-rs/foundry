@@ -1,24 +1,6 @@
-use super::{remove_whitespaces, INLINE_CONFIG_PREFIX};
-use crate::{InlineConfigError, NatSpec};
+use super::{remove_whitespaces, InlineConfigParserError};
+use crate::{inline::INLINE_CONFIG_PREFIX, InlineConfigError, NatSpec};
 use regex::Regex;
-
-/// Errors returned by the [`InlineConfigParser`] trait.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum InlineConfigParserError {
-    /// An invalid configuration property has been provided.
-    /// The property cannot be mapped to the configuration object
-    #[error("'{0}' is an invalid config property")]
-    InvalidConfigProperty(String),
-    /// An invalid profile has been provided
-    #[error("'{0}' specifies an invalid profile. Available profiles are: {1}")]
-    InvalidProfile(String, String),
-    /// An error occurred while trying to parse an integer configuration value
-    #[error("Invalid config value for key '{0}'. Unable to parse '{1}' into an integer value")]
-    ParseInt(String, String),
-    /// An error occurred while trying to parse a boolean configuration value
-    #[error("Invalid config value for key '{0}'. Unable to parse '{1}' into a boolean value")]
-    ParseBool(String, String),
-}
 
 /// This trait is intended to parse configurations from
 /// structured text. Foundry users can annotate Solidity test functions,
