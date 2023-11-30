@@ -638,6 +638,33 @@ impl Cheatcode for setBlockhashCall {
     }
 }
 
+
+impl Cheatcode for startDebugTraceRecordingCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        state.recorded_debug_steps = Some(Default::default());
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        // Ok(Default::default())
+        let res = state
+            .recorded_debug_steps
+            .replace(Default::default())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|record| record.step)
+            .collect::<Vec<_>>();
+        state.recorded_debug_steps = None;
+        Ok(res.abi_encode())
+        // Ok(state.recorded_opcodes.replace(Default::default()).unwrap_or_default())
+    }
+}
+
+
 pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Address) -> Result {
     let account = ccx.ecx.journaled_state.load_account(*address, &mut ccx.ecx.db)?;
     Ok(account.info.nonce.abi_encode())
