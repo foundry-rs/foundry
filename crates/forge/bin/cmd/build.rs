@@ -70,11 +70,11 @@ pub struct BuildArgs {
     #[serde(skip)]
     pub watch: WatchArgs,
 
-    ///Output the compilation errors in the json format.
+    /// Output the compilation errors in the json format.
     /// This is useful when you want to use the output in other tools.
-    #[clap(long)]
+    #[clap(long, conflicts_with = "silent")]
     #[serde(skip)]
-    pub json: bool,
+    pub format_json: bool,
 }
 
 impl BuildArgs {
@@ -92,7 +92,7 @@ impl BuildArgs {
 
         let filters = self.skip.unwrap_or_default();
 
-        if self.json {
+        if self.format_json {
             let output = compile::suppress_compile_with_filter_json(&project, filters)?;
             let json = serde_json::to_string_pretty(&output.clone().output())?;
             println!("{}", json);
