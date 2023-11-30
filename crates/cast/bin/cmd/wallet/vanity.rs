@@ -387,4 +387,23 @@ mod tests {
         let addr = format!("{addr:x}");
         assert!(addr.ends_with("00"));
     }
+
+    #[test]
+    fn find_vanity_with_save_path() {
+        let test_path = "./test_wallet_data";
+        let test_file = "vanity_addresses.json";
+        let full_path = format!("{}/{}", test_path, test_file);
+
+        if !Path::new(test_path).exists() {
+            fs::create_dir(test_path).unwrap();
+        }
+
+        let _ = fs::remove_file(&full_path);
+        let args: VanityArgs = VanityArgs::parse_from(["foundry-cli", "--starts-with", "00", "--save-path", test_path]);
+        args.run().unwrap();
+
+        assert!(Path::new(&full_path).exists());
+        fs::remove_file(&full_path).expect("Failed to clean up test file.");
+        fs::remove_dir(test_path).expect("Failed to clean up test directory.");
+    }
 }
