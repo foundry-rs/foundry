@@ -36,7 +36,8 @@ pub struct VanityArgs {
     #[clap(long)]
     pub nonce: Option<u64>,
 
-    // Path to save the generated vanity contract address. If provided, the vanity address will be saved at this location.
+    // Path to save the generated vanity contract address. If provided, the vanity
+    // address will be saved at this location.
     #[clap(
         long,
         value_hint = clap::ValueHint::FilePath,
