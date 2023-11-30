@@ -7,7 +7,9 @@ use foundry_common::types::ToAlloy;
 use rayon::iter::{self, ParallelIterator};
 use regex::Regex;
 use std::time::Instant;
-use serde_json::{json, Value};
+use std::path::PathBuf;
+use std::fs;
+use serde::{Serialize, Deserialize};
 
 /// Type alias for the result of [generate_wallet].
 pub type GeneratedWallet = (SigningKey, Address);
@@ -35,8 +37,32 @@ pub struct VanityArgs {
     pub nonce: Option<u64>,
 
     // Path to save the generated vanity contract address. If provided, the vanity address will be saved at this location.
-    #[clap(long)]
+    #[clap(
+        long,
+        value_hint = clap::ValueHint::FilePath,
+        value_name = "PATH"
+    )]
     pub save_path: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct WalletData {
+    address: String,
+    private_key: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Wallets {
+    wallets: Vec<WalletData>,
+}
+
+impl WalletData {
+    pub fn new(wallet: &LocalWallet) -> Self {
+        WalletData {
+            address: wallet.address().to_alloy().to_checksum(None),
+            private_key: format!("0x{}", hex::encode(wallet.signer().to_bytes())),
+        }
+    }
 }
 
 impl VanityArgs {
@@ -115,7 +141,7 @@ impl VanityArgs {
 
         // If a save path is provided, save the generated vanity wallet to the specified path.
         if let Some(save_path) = save_path {
-            save_wallet_to_file(&wallet, &save_path)?;
+            save_wallet_to_file(&wallet, &PathBuf::from(save_path))?;
         }
 
         println!(
@@ -135,32 +161,20 @@ impl VanityArgs {
     }
 }
 
-fn save_wallet_to_file(wallet: &LocalWallet, save_path: &str) -> Result<()> {
-    use std::fs::{File, OpenOptions};
-    use std::io::{Read, Write};
-    use std::path::Path;
-
+fn save_wallet_to_file(wallet: &LocalWallet, save_path: &PathBuf) -> Result<()> {
     let file_name = "vanity_addresses.json";
-    let full_path = Path::new(save_path).join(file_name);
+    let full_path = save_path.join(file_name);
 
-    let mut existing_data = if full_path.exists() {
-        let mut file = File::open(&full_path)?;
-        let mut data = String::new();
-        file.read_to_string(&mut data)?;
-        serde_json::from_str::<Vec<Value>>(&data).unwrap_or_else(|_| vec![])
+    let mut wallets = if full_path.exists() {
+        let data = fs::read_to_string(&full_path)?;
+        serde_json::from_str::<Wallets>(&data).unwrap_or_else(|_| Wallets { wallets: vec![] })
     } else {
-        vec![]
+        Wallets { wallets: vec![] }
     };
 
-    let wallet_data = json!({
-        "address": format!("{:?}", wallet.address()),
-        "private_key": format!("0x{}", hex::encode(wallet.signer().to_bytes())),
-    });
+    wallets.wallets.push(WalletData::new(wallet));
 
-    existing_data.push(wallet_data);
-
-    let mut file = OpenOptions::new().write(true).create(true).truncate(true).open(&full_path)?;
-    write!(file, "{}", serde_json::to_string_pretty(&existing_data)?)?;
+    fs::write(&full_path, serde_json::to_string_pretty(&wallets)?)?;
     Ok(())
 }
 
