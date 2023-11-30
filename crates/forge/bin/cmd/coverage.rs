@@ -368,7 +368,7 @@ impl CoverageArgs {
                 CoverageReportKind::Bytecode => {
                     let destdir = root.join("bytecode-coverage");
                     fs::create_dir_all(&destdir)?;
-                    BytecodeReporter::new(destdir).report(&report)?;
+                    BytecodeReporter::new(root.clone(), destdir).report(&report)?;
                     Ok(())
                 },
                 CoverageReportKind::Debug => DebugReporter.report(&report),
