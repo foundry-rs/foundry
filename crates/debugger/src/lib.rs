@@ -974,10 +974,10 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                         Span::styled(
                             format!("{byte:02x} "),
                             if let (Some(offset), Some(size), Some(color)) = (offset, size, color) {
-                                if (i == offset / 32 && j >= offset % 32)
-                                    || (i > offset / 32 && i < (offset + size - 1) / 32)
-                                    || (i == (offset + size - 1) / 32
-                                        && j <= (offset + size - 1) % 32)
+                                if (i == offset / 32 && j >= offset % 32) ||
+                                    (i > offset / 32 && i < (offset + size - 1) / 32) ||
+                                    (i == (offset + size - 1) / 32 &&
+                                        j <= (offset + size - 1) % 32)
                                 {
                                     // [offset, offset + size] is the memory region to be colored.
                                     // If a byte at row i and column j in the memory panel
@@ -1055,18 +1055,18 @@ impl Ui for Tui {
                         let event = event::read().unwrap();
                         if let Event::Key(key) = event {
                             if tx.send(Interrupt::KeyPressed(key)).is_err() {
-                                return;
+                                return
                             }
                         } else if let Event::Mouse(mouse) = event {
                             if tx.send(Interrupt::MouseEvent(mouse)).is_err() {
-                                return;
+                                return
                             }
                         }
                     }
                     // Force update if time has passed
                     if last_tick.elapsed() > tick_rate {
                         if tx.send(Interrupt::IntervalElapsed).is_err() {
-                            return;
+                            return
                         }
                         last_tick = Instant::now();
                     }
@@ -1111,7 +1111,7 @@ impl Ui for Tui {
                                 {
                                     draw_memory.inner_call_index = i;
                                     self.current_step = step;
-                                    break;
+                                    break
                                 }
                             }
                         }
@@ -1127,7 +1127,7 @@ impl Ui for Tui {
                                 LeaveAlternateScreen,
                                 DisableMouseCapture
                             )?;
-                            return Ok(TUIExitReason::CharExit);
+                            return Ok(TUIExitReason::CharExit)
                         }
                         // Move down
                         KeyCode::Char('j') | KeyCode::Down => {
@@ -1137,9 +1137,9 @@ impl Ui for Tui {
                                     let max_mem = (debug_call[draw_memory.inner_call_index].1
                                         [self.current_step]
                                         .memory
-                                        .len()
-                                        / 32)
-                                        .saturating_sub(1);
+                                        .len() /
+                                        32)
+                                    .saturating_sub(1);
                                     if draw_memory.current_mem_startline < max_mem {
                                         draw_memory.current_mem_startline += 1;
                                     }
@@ -1256,8 +1256,8 @@ impl Ui for Tui {
                                     .find_map(|(i, op)| {
                                         if i > 0 {
                                             match (
-                                                prev_ops[i - 1].contains("JUMP")
-                                                    && prev_ops[i - 1] != "JUMPDEST",
+                                                prev_ops[i - 1].contains("JUMP") &&
+                                                    prev_ops[i - 1] != "JUMPDEST",
                                                 &**op,
                                             ) {
                                                 (true, "JUMPDEST") => Some(i - 1),
@@ -1363,7 +1363,7 @@ impl Interrupt {
         if let Self::KeyPressed(event) = &self {
             if let KeyCode::Char(c) = event.code {
                 if c.is_alphanumeric() || c == '\'' {
-                    return Some(c);
+                    return Some(c)
                 }
             }
         }
