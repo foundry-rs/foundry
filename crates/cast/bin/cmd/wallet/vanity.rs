@@ -46,12 +46,14 @@ pub struct VanityArgs {
     pub save_path: Option<String>,
 }
 
+/// WalletData contains address and private_key information for a wallet.
 #[derive(Serialize, Deserialize)]
 struct WalletData {
     address: String,
     private_key: String,
 }
 
+/// Wallets is a collection of WalletData.
 #[derive(Serialize, Deserialize)]
 struct Wallets {
     wallets: Vec<WalletData>,
@@ -162,6 +164,9 @@ impl VanityArgs {
     }
 }
 
+/// Saves the specified `wallet` to a 'vanity_addresses.json' file at the given `save_path`.
+/// If the file exists, the wallet data is appended to the existing content; 
+/// otherwise, a new file is created.
 fn save_wallet_to_file(wallet: &LocalWallet, save_path: &Path) -> Result<()> {
     let file_name = "vanity_addresses.json";
     let full_path = save_path.join(file_name);
