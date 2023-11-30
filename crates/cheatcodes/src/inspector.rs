@@ -1,5 +1,8 @@
 //! Cheatcode EVM inspector.
 
+mod opcode_utils;
+use opcode_utils::{get_stack_inputs_for_opcode, get_memory_input_for_opcode};
+
 use crate::{
     evm::{
         mapping::{self, MappingSlots},
@@ -199,6 +202,12 @@ pub struct BroadcastableTransaction {
 /// List of transactions that can be broadcasted.
 pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 
+#[derive(Debug, Clone)]
+pub struct DebugStep {
+    /// The debug step
+    pub step: crate::Vm::DebugStep,
+}
+
 /// An EVM inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
 /// Cheatcodes can be called by contracts during execution to modify the VM environment, such as
@@ -251,6 +260,12 @@ pub struct Cheatcodes {
     /// depth. Once that call context has ended, the last vector is removed from the matrix and
     /// merged into the previous vector.
     pub recorded_account_diffs_stack: Option<Vec<Vec<AccountAccess>>>,
+
+    /// Recorded debug trace/steps during the call.
+    /// This field stores a debug trace that were recorded during the call.
+    /// It is empty if nothing were recorded.
+    pub recorded_debug_steps: Option<Vec<DebugStep>>,
+
 
     /// Recorded logs
     pub recorded_logs: Option<Vec<crate::Vm::Log>>,
@@ -960,6 +975,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             self.record_state_diffs(interpreter, ecx);
         }
 
+        // `starRecordtDebugTrace`: record the debug trace data
+        if let Some(recorded_debug_steps) = &mut self.recorded_debug_steps {
+            self.record_debug_trace(interpreter, recorded_debug_steps);
+        }
+
         // `expectSafeMemory`: check if the current opcode is allowed to interact with memory.
         if !self.allowed_mem_writes.is_empty() {
             self.check_mem_opcodes(interpreter, ecx.journaled_state.depth());
@@ -968,6 +988,17 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // `startMappingRecording`: record SSTORE and KECCAK256.
         if let Some(mapping_slots) = &mut self.mapping_slots {
             mapping::step(mapping_slots, interpreter);
+        }
+    }
+
+    fn step_end(&mut self, interpreter: &mut Interpreter<'_>, _data: &mut EVMData<'_, DB>) {
+        if let Some(recorded_debug_steps) = &mut self.recorded_debug_steps {
+            if let Some(debug_step) = recorded_debug_steps.last_mut() {
+                let instruction_result = interpreter.instruction_result as u8;
+                if instruction_result != 0 {
+                    debug_step.step.instructionResult = instruction_result;
+                }
+            }
         }
     }
 
@@ -1555,6 +1586,32 @@ impl Cheatcodes {
             }
             _ => {}
         }
+    }
+
+
+    /// Records debug trace data
+    #[cold]
+    fn record_debug_trace(&mut self, interpreter: &mut Interpreter, recorded_debug_steps: &mut Vec<DebugStep>) {
+        // Record opcodes if `startDebugTraceRecording` has been called
+        let current_opcode = interpreter.current_opcode();
+        let instruction_result = interpreter.instruction_result as u8;
+        let stack_inputs = try_or_continue!(
+            get_stack_inputs_for_opcode(
+                current_opcode, interpreter.stack(),
+            )
+        );
+        let mem_inputs = get_memory_input_for_opcode(
+            current_opcode, &stack_inputs, &interpreter.shared_memory
+        );
+        let step = crate::Vm::DebugStep {
+            opcode: current_opcode,
+            stack: stack_inputs,
+            memoryData: mem_inputs,
+            depth: data.journaled_state.depth(),
+            instructionResult: instruction_result, // note: will set again in step_end,
+            contractAddr: interpreter.contract().address
+        };
+        recorded_debug_steps.push(DebugStep{step});
     }
 
     /// Checks to see if the current opcode can either mutate directly or expand memory.
