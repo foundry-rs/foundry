@@ -172,4 +172,11 @@ mod tests {
         let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "tests", "scripts"]);
         assert_eq!(args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
     }
+
+    #[test]
+    fn check_conflicts() {
+        let args: std::result::Result<BuildArgs, clap::Error> = BuildArgs::try_parse_from(["foundry-cli", "--format-json", "--silent"]);
+        assert!(args.is_err());
+        assert!(args.unwrap_err().kind() == clap::error::ErrorKind::ArgumentConflict);
+    }
 }
