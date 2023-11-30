@@ -28,7 +28,7 @@ resolver = "2"
 [workspace.package]
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.72"
+rust-version = "1.74"
 authors = ["Foundry Contributors"]
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/foundry-rs/foundry"
