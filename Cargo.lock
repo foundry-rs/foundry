@@ -2574,8 +2574,6 @@ dependencies = [
  "tracing-subscriber",
  "vergen",
  "watchexec",
- "watchexec-events",
- "watchexec-signals",
  "yansi 0.5.1",
 ]
 
@@ -7681,9 +7679,9 @@ checksum = "0d046c5d029ba91a1ed14da14dca44b68bf2f124cfbaf741c54151fdb3e0750b"
 
 [[package]]
 name = "watchexec"
-version = "2.3.0"
+version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8b97d05a9305a9aa6a7bedef64cd012ebc9b6f1f5ed0368fb48f0fe58f96988"
+checksum = "5931215e14de2355a3039477138ae08a905abd7ad0265519fd79717ff1380f88"
 dependencies = [
  "async-priority-channel",
  "async-recursion",
