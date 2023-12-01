@@ -42,3 +42,22 @@ impl<T> BackendSnapshot<T> {
         self.journaled_state.logs = current.logs.clone();
     }
 }
+
+/// What to do when reverting a snapshot
+///
+/// Whether to remove the snapshot or keep it
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
+pub enum RevertSnapshotAction {
+    /// Remove the snapshot after reverting
+    #[default]
+    RevertRemove,
+    /// Keep the snapshot after reverting
+    RevertKeep,
+}
+
+impl RevertSnapshotAction {
+    /// Returns `true` if the action is to keep the snapshot
+    pub fn is_keep(&self) -> bool {
+        matches!(self, RevertSnapshotAction::RevertKeep)
+    }
+}

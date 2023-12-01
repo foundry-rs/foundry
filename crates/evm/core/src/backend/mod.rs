@@ -41,7 +41,7 @@ mod in_memory_db;
 pub use in_memory_db::{EmptyDBWrapper, FoundryEvmInMemoryDB, MemDb};
 
 mod snapshot;
-pub use snapshot::{BackendSnapshot, StateSnapshot};
+pub use snapshot::{BackendSnapshot, RevertSnapshotAction, StateSnapshot};
 
 // A `revm::Database` that is used in forking mode
 type ForkDB = CacheDB<SharedBackend>;

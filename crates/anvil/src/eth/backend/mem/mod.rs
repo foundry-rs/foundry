@@ -58,7 +58,7 @@ use ethers::{
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
-    backend::{DatabaseError, DatabaseResult},
+    backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::decode_revert,
     inspectors::AccessListTracer,
@@ -686,7 +686,7 @@ impl Backend {
                 ..Default::default()
             };
         }
-        Ok(self.db.write().await.revert(id))
+        Ok(self.db.write().await.revert(id, RevertSnapshotAction::RevertRemove))
     }
 
     pub fn list_snapshots(&self) -> BTreeMap<U256, (u64, H256)> {

@@ -17,6 +17,7 @@ use foundry_evm::{
 };
 
 // reexport for convenience
+use foundry_evm::backend::RevertSnapshotAction;
 pub use foundry_evm::{backend::MemDb, revm::db::DatabaseRef};
 
 impl Db for MemDb {
@@ -71,8 +72,11 @@ impl Db for MemDb {
         id.to_ethers()
     }
 
-    fn revert(&mut self, id: U256) -> bool {
+    fn revert(&mut self, id: U256, action: RevertSnapshotAction) -> bool {
         if let Some(snapshot) = self.snapshots.remove(id.to_alloy()) {
+            if action.is_keep() {
+                self.snapshots.insert_at(snapshot.clone(), id.to_alloy());
+            }
             self.inner = snapshot;
             trace!(target: "backend::memdb", "Reverted snapshot {}", id);
             true
