@@ -497,8 +497,10 @@ pub enum EthRequest {
     )]
     AnvilMetadata(()),
 
-    // Ganache compatible calls
+    /// Ganache compatible calls
     /// Snapshot the state of the blockchain at the current block.
+    ///
+    /// Ref <https://github.com/trufflesuite/ganache/blob/ef1858d5d6f27e4baeb75cccd57fb3dc77a45ae8/src/chains/ethereum/ethereum/RPC-METHODS.md#evm_snapshot>
     #[cfg_attr(
         feature = "serde",
         serde(rename = "anvil_snapshot", alias = "evm_snapshot", with = "empty_params")
@@ -507,6 +509,8 @@ pub enum EthRequest {
 
     /// Revert the state of the blockchain to a previous snapshot.
     /// Takes a single parameter, which is the snapshot id to revert to.
+    ///
+    /// Ref <https://github.com/trufflesuite/ganache/blob/ef1858d5d6f27e4baeb75cccd57fb3dc77a45ae8/src/chains/ethereum/ethereum/RPC-METHODS.md#evm_revert>
     #[cfg_attr(
         feature = "serde",
         serde(
