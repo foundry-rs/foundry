@@ -806,7 +806,7 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
             if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
                 stack_indices_affected(op)
             } else {
-                vec![]
+                &[]
             };
 
         let text: Vec<Line> = stack
