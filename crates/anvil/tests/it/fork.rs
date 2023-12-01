@@ -899,3 +899,32 @@ async fn can_override_fork_chain_id() {
     let chain_id = provider.get_chainid().await.unwrap();
     assert_eq!(chain_id.as_u64(), chain_id_override);
 }
+
+// <https://github.com/foundry-rs/foundry/issues/6485>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_moonbeam() {
+    crate::init_tracing();
+    let (api, handle) = spawn(fork_config()
+        .with_eth_rpc_url(Some("https://rpc.api.moonbeam.network".to_string()))
+        .with_fork_block_number(None::<u64>)
+    ).await;
+    let provider = handle.http_provider();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
+    let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    assert_eq!(tx.status, Some(1u64.into()));
+
+
+    // reset to check timestamp works after resetting
+    api.anvil_reset(Some(Forking { json_rpc_url: Some("https://rpc.api.moonbeam.network".to_string()
+    ), block_number: None }))
+        .await
+        .unwrap();
+
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
+    let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    assert_eq!(tx.status, Some(1u64.into()));
+}
