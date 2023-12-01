@@ -7,7 +7,11 @@ use foundry_common::types::ToAlloy;
 use rayon::iter::{self, ParallelIterator};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path, time::Instant};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 /// Type alias for the result of [generate_wallet].
 pub type GeneratedWallet = (SigningKey, Address);
@@ -34,14 +38,16 @@ pub struct VanityArgs {
     #[clap(long)]
     pub nonce: Option<u64>,
 
-    // Path to save the generated vanity contract address. If provided, the vanity
-    // address will be saved at this location.
+    /// Path to save the generated vanity contract address to.
+    ///
+    /// If provided, the generated vanity addresses will appended to a JSON array in the specified
+    /// file.
     #[clap(
         long,
         value_hint = clap::ValueHint::FilePath,
-        value_name = "PATH"
+        value_name = "PATH",
     )]
-    pub save_path: Option<String>,
+    pub save_path: Option<PathBuf>,
 }
 
 /// WalletData contains address and private_key information for a wallet.
@@ -52,7 +58,7 @@ struct WalletData {
 }
 
 /// Wallets is a collection of WalletData.
-#[derive(Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 struct Wallets {
     wallets: Vec<WalletData>,
 }
@@ -142,7 +148,7 @@ impl VanityArgs {
 
         // If a save path is provided, save the generated vanity wallet to the specified path.
         if let Some(save_path) = save_path {
-            save_wallet_to_file(&wallet, Path::new(&save_path))?;
+            save_wallet_to_file(&wallet, &save_path)?;
         }
 
         println!(
@@ -165,20 +171,17 @@ impl VanityArgs {
 /// Saves the specified `wallet` to a 'vanity_addresses.json' file at the given `save_path`.
 /// If the file exists, the wallet data is appended to the existing content;
 /// otherwise, a new file is created.
-fn save_wallet_to_file(wallet: &LocalWallet, save_path: &Path) -> Result<()> {
-    let file_name = "vanity_addresses.json";
-    let full_path = save_path.join(file_name);
-
-    let mut wallets = if full_path.exists() {
-        let data = fs::read_to_string(&full_path)?;
-        serde_json::from_str::<Wallets>(&data).unwrap_or_else(|_| Wallets { wallets: vec![] })
+fn save_wallet_to_file(wallet: &LocalWallet, path: &Path) -> Result<()> {
+    let mut wallets = if path.exists() {
+        let data = fs::read_to_string(&path)?;
+        serde_json::from_str::<Wallets>(&data).unwrap_or_default()
     } else {
-        Wallets { wallets: vec![] }
+        Wallets::default()
     };
 
     wallets.wallets.push(WalletData::new(wallet));
 
-    fs::write(&full_path, serde_json::to_string_pretty(&wallets)?)?;
+    fs::write(&path, serde_json::to_string_pretty(&wallets)?)?;
     Ok(())
 }
 
@@ -387,27 +390,19 @@ mod tests {
     }
 
     #[test]
-    fn find_vanity_with_save_path() {
-        let test_path = "./test_wallet_data";
-        let test_file = "vanity_addresses.json";
-        let full_path = format!("{}/{}", test_path, test_file);
-
-        if !Path::new(test_path).exists() {
-            fs::create_dir(test_path).unwrap();
-        }
-
-        let _ = fs::remove_file(&full_path);
+    fn save_path() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
         let args: VanityArgs = VanityArgs::parse_from([
             "foundry-cli",
             "--starts-with",
             "00",
             "--save-path",
-            test_path,
+            tmp.path().to_str().unwrap(),
         ]);
         args.run().unwrap();
-
-        assert!(Path::new(&full_path).exists());
-        fs::remove_file(&full_path).expect("Failed to clean up test file.");
-        fs::remove_dir(test_path).expect("Failed to clean up test directory.");
+        assert!(tmp.path().exists());
+        let s = fs::read_to_string(tmp.path()).unwrap();
+        let wallets: Wallets = serde_json::from_str(&s).unwrap();
+        assert!(!wallets.wallets.is_empty());
     }
 }
