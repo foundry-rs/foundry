@@ -314,7 +314,7 @@ async fn test_fork_snapshotting_repeated() {
     let to_balance = provider.get_balance(to, None).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
-    let second_snapshot = api.evm_snapshot().await.unwrap();
+    let _second_snapshot = api.evm_snapshot().await.unwrap();
 
     assert!(api.evm_revert(snapshot).await.unwrap());
 
