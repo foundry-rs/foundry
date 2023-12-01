@@ -287,12 +287,10 @@ pub fn compile_with_filter(
 /// Compiles the provided [`Project`] and does not throw if there's any compiler error
 /// Doesn't print anything to stdout, thus is "suppressed".
 pub fn try_suppress_compile(project: &Project) -> Result<ProjectCompileOutput> {
-    Ok(
-        foundry_compilers::report::with_scoped(
+    Ok(foundry_compilers::report::with_scoped(
         &foundry_compilers::report::Report::new(NoReporter::default()),
         || project.compile(),
-        )?
-    )
+    )?)
 }
 
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
@@ -334,20 +332,18 @@ pub fn suppress_compile_with_filter_json(
     }
 }
 
-/// Compiles the provided [`Project`], 
+/// Compiles the provided [`Project`],
 /// Doesn't print anything to stdout, thus is "suppressed".
 ///
 /// See [`Project::compile_sparse`]
 pub fn try_suppress_compile_sparse<F: FileFilter + 'static>(
     project: &Project,
-    filter: F
+    filter: F,
 ) -> Result<ProjectCompileOutput> {
-    Ok(
-        foundry_compilers::report::with_scoped(
+    Ok(foundry_compilers::report::with_scoped(
         &foundry_compilers::report::Report::new(NoReporter::default()),
         || project.compile_sparse(filter),
-        )?
-    )
+    )?)
 }
 
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
@@ -357,7 +353,7 @@ pub fn try_suppress_compile_sparse<F: FileFilter + 'static>(
 /// See [`Project::compile_sparse`]
 pub fn suppress_compile_sparse<F: FileFilter + 'static>(
     project: &Project,
-    filter: F
+    filter: F,
 ) -> Result<ProjectCompileOutput> {
     let output = try_suppress_compile_sparse(project, filter)?;
 
