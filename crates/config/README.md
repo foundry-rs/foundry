@@ -5,7 +5,7 @@ sensible set of defaults.
 
 ## Profiles
 
-Configurations can be arbitrarily namespaced by profiles. Foundry's default config is also named `default`, but can
+Configurations can be arbitrarily namespaced with profiles. Foundry's default config is also named `default`, but you can
 arbitrarily name and configure profiles as you like and set the `FOUNDRY_PROFILE` environment variable to the selected
 profile's name. This results in foundry's tools (forge) preferring the values in the profile with the named that's set
 in `FOUNDRY_PROFILE`. But all custom profiles inherit from the `default` profile.
@@ -298,5 +298,5 @@ supported, this means that `FOUNDRY_SRC` and `DAPP_SRC` are equivalent.
 
 Some exceptions to the above are [explicitly ignored](https://github.com/foundry-rs/foundry/blob/10440422e63aae660104e079dfccd5b0ae5fd720/config/src/lib.rs#L1539-L15522) due to security concerns.
 
-Environment variables take precedence over values in `foundry.toml`. Values are parsed as loose form of TOML syntax.
+Environment variables take precedence over values in `foundry.toml`. Values are parsed as a loose form of TOML syntax.
 Consider the following examples:
