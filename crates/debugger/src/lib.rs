@@ -1,3 +1,7 @@
+//! # foundry-debugger
+//!
+//! Interactive Solidity TUI debugger.
+
 #![warn(unused_crate_dependencies)]
 
 #[macro_use]
@@ -49,8 +53,8 @@ pub enum TUIExitReason {
     CharExit,
 }
 
-mod op_effects;
-use op_effects::stack_indices_affected;
+mod op;
+use op::OpcodeParam;
 
 mod debugger;
 pub use debugger::*;
@@ -802,12 +806,11 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
             Block::default().title(format!("Stack: {}", stack.len())).borders(Borders::ALL);
         let min_len = usize::max(format!("{}", stack.len()).len(), 2);
 
-        let indices_affected =
-            if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
-                stack_indices_affected(op)
-            } else {
-                &[]
-            };
+        let params = if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
+            OpcodeParam::of(op)
+        } else {
+            &[]
+        };
 
         let text: Vec<Line> = stack
             .iter()
@@ -815,16 +818,14 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
             .enumerate()
             .skip(draw_memory.current_stack_startline)
             .map(|(i, stack_item)| {
-                let affected =
-                    indices_affected.iter().find(|(affected_index, _name)| *affected_index == i);
-
+                let param = params.iter().find(|param| param.index == i);
                 let mut words: Vec<Span> = (0..32)
                     .rev()
                     .map(|i| stack_item.byte(i))
                     .map(|byte| {
                         Span::styled(
                             format!("{byte:02x} "),
-                            if affected.is_some() {
+                            if param.is_some() {
                                 Style::default().fg(Color::Cyan)
                             } else if byte == 0 {
                                 // this improves compatibility across terminals by not combining
@@ -838,8 +839,8 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                     .collect();
 
                 if stack_labels {
-                    if let Some((_, name)) = affected {
-                        words.push(Span::raw(format!("| {name}")));
+                    if let Some(param) = param {
+                        words.push(Span::raw(format!("| {}", param.name)));
                     } else {
                         words.push(Span::raw("| ".to_string()));
                     }
