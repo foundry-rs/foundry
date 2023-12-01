@@ -1,6 +1,6 @@
 # Configuration
 
-Foundry's configuration system allows you to configure it's tools the way _you_ want while also providing with a
+Foundry's configuration system allows you to configure its tools the way _you_ want while also providing with a
 sensible set of defaults.
 
 ## Profiles
