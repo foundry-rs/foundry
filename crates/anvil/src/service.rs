@@ -106,7 +106,7 @@ type BlockMiningFuture =
     Pin<Box<dyn Future<Output = (MinedBlockOutcome, Arc<Backend>)> + Send + Sync>>;
 
 /// A type that exclusively mines one block at a time
-#[must_use = "BlockProducer does nothing unless polled"]
+#[must_use = "streams does nothing unless polled"]
 struct BlockProducer {
     /// Holds the backend if no block is being mined
     idle_backend: Option<Arc<Backend>>,

@@ -6,7 +6,7 @@ use ethers_signers::Signer;
 use eyre::Result;
 use foundry_cli::utils::LoadConfig;
 use foundry_common::{contracts::flatten_contracts, try_get_http_provider, types::ToAlloy};
-use foundry_debugger::DebuggerArgs;
+use foundry_debugger::DebuggerBuilder;
 use std::sync::Arc;
 
 /// Helper alias type for the collection of data changed due to the new sender.
@@ -84,13 +84,13 @@ impl ScriptArgs {
         let mut decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
 
         if self.debug {
-            let debugger = DebuggerArgs {
-                debug: result.debug.clone().unwrap_or_default(),
-                decoder: &decoder,
-                sources,
-                breakpoints: result.breakpoints.clone(),
-            };
-            debugger.run()?;
+            let mut debugger = DebuggerBuilder::new()
+                .debug_arenas(result.debug.as_deref().unwrap_or_default())
+                .decoder(&decoder)
+                .sources(sources)
+                .breakpoints(result.breakpoints.clone())
+                .build()?;
+            debugger.try_run()?;
         }
 
         if let Some((new_traces, updated_libraries, updated_contracts)) = self

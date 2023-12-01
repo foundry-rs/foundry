@@ -10,7 +10,7 @@ use foundry_compilers::{
     Artifact, ProjectCompileOutput,
 };
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain, Config, NamedChain};
-use foundry_debugger::DebuggerArgs;
+use foundry_debugger::DebuggerBuilder;
 use foundry_evm::{
     debug::DebugArena,
     executors::{DeployResult, EvmError, ExecutionErr, RawCallResult},
@@ -404,13 +404,12 @@ pub async fn handle_traces(
 
     if debug {
         let sources = etherscan_identifier.get_compiled_contracts().await?;
-        let debugger = DebuggerArgs {
-            debug: vec![result.debug],
-            decoder: &decoder,
-            sources,
-            breakpoints: Default::default(),
-        };
-        debugger.run()?;
+        let mut debugger = DebuggerBuilder::new()
+            .debug_arena(&result.debug)
+            .decoder(&decoder)
+            .sources(sources)
+            .build()?;
+        debugger.try_run()?;
     } else {
         print_traces(&mut result, &decoder, verbose).await?;
     }
