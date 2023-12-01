@@ -398,11 +398,12 @@ impl Backend {
                     timestamp: fork_block.timestamp.to_alloy(),
                     gas_limit: fork_block.gas_limit.to_alloy(),
                     difficulty: fork_block.difficulty.to_alloy(),
-                    prevrandao: fork_block.mix_hash.map(|h| h.to_alloy()),
+                    // ensures prevrandao is set
+                    prevrandao: Some(fork_block.mix_hash.map(|h| h.to_alloy()).unwrap_or_default()),
                     // Keep previous `coinbase` and `basefee` value
                     coinbase: env.block.coinbase,
                     basefee: env.block.basefee,
-                    ..Default::default()
+                    ..env.block.clone()
                 };
 
                 self.time.reset((env.block.timestamp.to_ethers()).as_u64());
