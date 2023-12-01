@@ -110,10 +110,10 @@ impl ForkedDatabase {
         id
     }
 
+    /// Removes the snapshot from the tracked snapshot and sets it as the current state
     pub fn revert_snapshot(&mut self, id: U256) -> bool {
         let snapshot = { self.snapshots().lock().remove_at(id) };
         if let Some(snapshot) = snapshot {
-            self.snapshots().lock().insert_at(snapshot.clone(), id);
             let ForkDbSnapshot {
                 local,
                 snapshot: StateSnapshot { accounts, storage, block_hashes },
