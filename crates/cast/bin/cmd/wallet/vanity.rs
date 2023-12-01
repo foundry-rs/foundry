@@ -6,10 +6,8 @@ use eyre::Result;
 use foundry_common::types::ToAlloy;
 use rayon::iter::{self, ParallelIterator};
 use regex::Regex;
-use std::time::Instant;
-use std::path::Path;
-use std::fs;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::{fs, path::Path, time::Instant};
 
 /// Type alias for the result of [generate_wallet].
 pub type GeneratedWallet = (SigningKey, Address);
@@ -165,7 +163,7 @@ impl VanityArgs {
 }
 
 /// Saves the specified `wallet` to a 'vanity_addresses.json' file at the given `save_path`.
-/// If the file exists, the wallet data is appended to the existing content; 
+/// If the file exists, the wallet data is appended to the existing content;
 /// otherwise, a new file is created.
 fn save_wallet_to_file(wallet: &LocalWallet, save_path: &Path) -> Result<()> {
     let file_name = "vanity_addresses.json";
@@ -399,7 +397,13 @@ mod tests {
         }
 
         let _ = fs::remove_file(&full_path);
-        let args: VanityArgs = VanityArgs::parse_from(["foundry-cli", "--starts-with", "00", "--save-path", test_path]);
+        let args: VanityArgs = VanityArgs::parse_from([
+            "foundry-cli",
+            "--starts-with",
+            "00",
+            "--save-path",
+            test_path,
+        ]);
         args.run().unwrap();
 
         assert!(Path::new(&full_path).exists());
