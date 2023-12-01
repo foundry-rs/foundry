@@ -173,7 +173,7 @@ impl VanityArgs {
 /// otherwise, a new file is created.
 fn save_wallet_to_file(wallet: &LocalWallet, path: &Path) -> Result<()> {
     let mut wallets = if path.exists() {
-        let data = fs::read_to_string(&path)?;
+        let data = fs::read_to_string(path)?;
         serde_json::from_str::<Wallets>(&data).unwrap_or_default()
     } else {
         Wallets::default()
@@ -181,7 +181,7 @@ fn save_wallet_to_file(wallet: &LocalWallet, path: &Path) -> Result<()> {
 
     wallets.wallets.push(WalletData::new(wallet));
 
-    fs::write(&path, serde_json::to_string_pretty(&wallets)?)?;
+    fs::write(path, serde_json::to_string_pretty(&wallets)?)?;
     Ok(())
 }
 
