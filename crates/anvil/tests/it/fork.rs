@@ -904,10 +904,12 @@ async fn can_override_fork_chain_id() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_reset_moonbeam() {
     crate::init_tracing();
-    let (api, handle) = spawn(fork_config()
-        .with_eth_rpc_url(Some("https://rpc.api.moonbeam.network".to_string()))
-        .with_fork_block_number(None::<u64>)
-    ).await;
+    let (api, handle) = spawn(
+        fork_config()
+            .with_eth_rpc_url(Some("https://rpc.api.moonbeam.network".to_string()))
+            .with_fork_block_number(None::<u64>),
+    )
+    .await;
     let provider = handle.http_provider();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
@@ -917,12 +919,13 @@ async fn test_fork_reset_moonbeam() {
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
     assert_eq!(tx.status, Some(1u64.into()));
 
-
     // reset to check timestamp works after resetting
-    api.anvil_reset(Some(Forking { json_rpc_url: Some("https://rpc.api.moonbeam.network".to_string()
-    ), block_number: None }))
-        .await
-        .unwrap();
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some("https://rpc.api.moonbeam.network".to_string()),
+        block_number: None,
+    }))
+    .await
+    .unwrap();
 
     let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
