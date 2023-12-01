@@ -497,7 +497,7 @@ pub enum EthRequest {
     )]
     AnvilMetadata(()),
 
-    /// Ganache compatible calls
+    // Ganache compatible calls
     /// Snapshot the state of the blockchain at the current block.
     ///
     /// Ref <https://github.com/trufflesuite/ganache/blob/ef1858d5d6f27e4baeb75cccd57fb3dc77a45ae8/src/chains/ethereum/ethereum/RPC-METHODS.md#evm_snapshot>
