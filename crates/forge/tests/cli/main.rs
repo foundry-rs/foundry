@@ -4,6 +4,7 @@ extern crate foundry_test_utils;
 pub mod constants;
 pub mod utils;
 
+mod build;
 mod cache;
 mod cmd;
 mod config;
