@@ -84,7 +84,7 @@ enum BackendRequest {
 ///
 /// This handler will remain active as long as it is reachable (request channel still open) and
 /// requests are in progress.
-#[must_use = "BackendHandler does nothing unless polled."]
+#[must_use = "futures do nothing unless polled"]
 pub struct BackendHandler<M: Middleware> {
     provider: M,
     /// Stores all the data.

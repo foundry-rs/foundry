@@ -306,7 +306,7 @@ impl ScriptRunner {
                     vec![(TraceKind::Execution, traces)]
                 })
                 .unwrap_or_default(),
-            debug: vec![debug].into_iter().collect(),
+            debug: debug.map(|d| vec![d]),
             labeled_addresses: labels,
             transactions,
             address: None,

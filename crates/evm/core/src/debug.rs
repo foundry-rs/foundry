@@ -65,15 +65,24 @@ impl DebugArena {
     ///
     /// This makes it easy to pretty print the execution steps.
     pub fn flatten(&self, entry: usize) -> Vec<(Address, Vec<DebugStep>, CallKind)> {
+        let mut flattened = Vec::new();
+        self.flatten_to(entry, &mut flattened);
+        flattened
+    }
+
+    /// Recursively traverses the tree of debug nodes and flattens it into the given list.
+    ///
+    /// See [`flatten`](Self::flatten) for more information.
+    pub fn flatten_to(&self, entry: usize, out: &mut Vec<(Address, Vec<DebugStep>, CallKind)>) {
         let node = &self.arena[entry];
 
-        let mut flattened = vec![];
         if !node.steps.is_empty() {
-            flattened.push((node.address, node.steps.clone(), node.kind));
+            out.push((node.address, node.steps.clone(), node.kind));
         }
-        flattened.extend(node.children.iter().flat_map(|child| self.flatten(*child)));
 
-        flattened
+        for child in &node.children {
+            self.flatten_to(*child, out);
+        }
     }
 }
 
