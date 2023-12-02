@@ -1,5 +1,5 @@
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
-use alloy_json_abi::{ContractObject, Function};
+use alloy_json_abi::ContractObject;
 use alloy_primitives::{Address, I256, U256};
 use alloy_rlp::Decodable;
 use base::{Base, NumberWithBase, ToBase};
