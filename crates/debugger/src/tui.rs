@@ -30,6 +30,7 @@ use std::{
     cmp::{max, min},
     collections::{BTreeMap, HashMap, VecDeque},
     io,
+    ops::ControlFlow,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
@@ -46,10 +47,6 @@ pub enum ExitReason {
 pub struct Debugger {
     debug_arena: Vec<(Address, Vec<DebugStep>, CallKind)>,
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
-    /// Buffer for keys prior to execution, i.e. '10' + 'k' => move up 10 operations
-    key_buffer: String,
-    /// Current step in the debug steps
-    current_step: usize,
     identified_contracts: HashMap<Address, String>,
     /// Source map of contract sources
     contracts_sources: ContractSources,
@@ -68,7 +65,6 @@ impl Debugger {
     /// Creates a new debugger.
     pub fn new(
         debug_arena: Vec<(Address, Vec<DebugStep>, CallKind)>,
-        current_step: usize,
         identified_contracts: HashMap<Address, String>,
         contracts_sources: ContractSources,
         breakpoints: Breakpoints,
@@ -102,11 +98,9 @@ impl Debugger {
                 })
             })
             .collect();
-        Ok(Debugger {
+        Ok(Self {
             debug_arena,
             terminal,
-            key_buffer: String::new(),
-            current_step,
             identified_contracts,
             contracts_sources,
             pc_ic_maps,
@@ -138,272 +132,402 @@ impl Debugger {
 
     #[instrument(target = "debugger", name = "run", skip_all, ret)]
     fn try_run_real(&mut self) -> Result<ExitReason> {
-        // Setup a channel to send interrupts
+        // Create the context.
+        let mut cx = DebuggerContext::new(self);
+        cx.init()?;
+
+        // Create an event listener in a different thread.
         let (tx, rx) = mpsc::channel();
         thread::Builder::new()
             .name("event-listener".into())
-            .spawn(move || event_listener(tx))
+            .spawn(move || Self::event_listener(tx))
             .expect("failed to spawn thread");
 
-        self.terminal.clear()?;
-        let mut draw_memory = DrawMemory::default();
-
-        let debug_call = self.debug_arena.clone();
-        let mut opcode_list: Vec<String> =
-            debug_call[0].1.iter().map(|step| step.pretty_opcode()).collect();
-        let mut last_index = 0;
-
-        let mut stack_labels = false;
-        let mut mem_utf = false;
-        let mut show_shortcuts = true;
-
-        // UI thread that manages drawing
         loop {
-            if last_index != draw_memory.inner_call_index {
-                opcode_list = debug_call[draw_memory.inner_call_index]
-                    .1
-                    .iter()
-                    .map(|step| step.pretty_opcode())
-                    .collect();
-                last_index = draw_memory.inner_call_index;
+            match cx.handle_event(rx.recv()?) {
+                ControlFlow::Continue(()) => {}
+                ControlFlow::Break(reason) => return Ok(reason),
             }
-
-            // Grab interrupt
-            let receiver = rx.recv()?;
-
-            if let Some(c) = receiver.char_press() {
-                if self.key_buffer.ends_with('\'') {
-                    // Find the location of the called breakpoint in the whole debug arena (at this
-                    // address with this pc)
-                    if let Some((caller, pc)) = self.breakpoints.get(&c) {
-                        for (i, (_caller, debug_steps, _)) in debug_call.iter().enumerate() {
-                            if _caller == caller {
-                                if let Some(step) =
-                                    debug_steps.iter().position(|step| step.pc == *pc)
-                                {
-                                    draw_memory.inner_call_index = i;
-                                    self.current_step = step;
-                                    break
-                                }
-                            }
-                        }
-                    }
-                    self.key_buffer.clear();
-                } else if let Interrupt::KeyEvent(event) = receiver {
-                    match event.code {
-                        // Exit
-                        KeyCode::Char('q') => return Ok(ExitReason::CharExit),
-                        // Move down
-                        KeyCode::Char('j') | KeyCode::Down => {
-                            // Grab number of times to do it
-                            for _ in 0..Debugger::buffer_as_number(&self.key_buffer, 1) {
-                                if event.modifiers.contains(KeyModifiers::CONTROL) {
-                                    let max_mem = (debug_call[draw_memory.inner_call_index].1
-                                        [self.current_step]
-                                        .memory
-                                        .len() /
-                                        32)
-                                    .saturating_sub(1);
-                                    if draw_memory.current_mem_startline < max_mem {
-                                        draw_memory.current_mem_startline += 1;
-                                    }
-                                } else if self.current_step < opcode_list.len() - 1 {
-                                    self.current_step += 1;
-                                } else if draw_memory.inner_call_index < debug_call.len() - 1 {
-                                    draw_memory.inner_call_index += 1;
-                                    self.current_step = 0;
-                                }
-                            }
-                            self.key_buffer.clear();
-                        }
-                        KeyCode::Char('J') => {
-                            for _ in 0..Debugger::buffer_as_number(&self.key_buffer, 1) {
-                                let max_stack = debug_call[draw_memory.inner_call_index].1
-                                    [self.current_step]
-                                    .stack
-                                    .len()
-                                    .saturating_sub(1);
-                                if draw_memory.current_stack_startline < max_stack {
-                                    draw_memory.current_stack_startline += 1;
-                                }
-                            }
-                            self.key_buffer.clear();
-                        }
-                        // Move up
-                        KeyCode::Char('k') | KeyCode::Up => {
-                            for _ in 0..Debugger::buffer_as_number(&self.key_buffer, 1) {
-                                if event.modifiers.contains(KeyModifiers::CONTROL) {
-                                    draw_memory.current_mem_startline =
-                                        draw_memory.current_mem_startline.saturating_sub(1);
-                                } else if self.current_step > 0 {
-                                    self.current_step -= 1;
-                                } else if draw_memory.inner_call_index > 0 {
-                                    draw_memory.inner_call_index -= 1;
-                                    self.current_step =
-                                        debug_call[draw_memory.inner_call_index].1.len() - 1;
-                                }
-                            }
-                            self.key_buffer.clear();
-                        }
-                        KeyCode::Char('K') => {
-                            for _ in 0..Debugger::buffer_as_number(&self.key_buffer, 1) {
-                                draw_memory.current_stack_startline =
-                                    draw_memory.current_stack_startline.saturating_sub(1);
-                            }
-                            self.key_buffer.clear();
-                        }
-                        // Go to top of file
-                        KeyCode::Char('g') => {
-                            draw_memory.inner_call_index = 0;
-                            self.current_step = 0;
-                            self.key_buffer.clear();
-                        }
-                        // Go to bottom of file
-                        KeyCode::Char('G') => {
-                            draw_memory.inner_call_index = debug_call.len() - 1;
-                            self.current_step =
-                                debug_call[draw_memory.inner_call_index].1.len() - 1;
-                            self.key_buffer.clear();
-                        }
-                        // Go to previous call
-                        KeyCode::Char('c') => {
-                            draw_memory.inner_call_index =
-                                draw_memory.inner_call_index.saturating_sub(1);
-                            self.current_step =
-                                debug_call[draw_memory.inner_call_index].1.len() - 1;
-                            self.key_buffer.clear();
-                        }
-                        // Go to next call
-                        KeyCode::Char('C') => {
-                            if debug_call.len() > draw_memory.inner_call_index + 1 {
-                                draw_memory.inner_call_index += 1;
-                                self.current_step = 0;
-                            }
-                            self.key_buffer.clear();
-                        }
-                        // Step forward
-                        KeyCode::Char('s') => {
-                            for _ in 0..Debugger::buffer_as_number(&self.key_buffer, 1) {
-                                let remaining_ops =
-                                    opcode_list[self.current_step..].to_vec().clone();
-                                self.current_step += remaining_ops
-                                    .iter()
-                                    .enumerate()
-                                    .find_map(|(i, op)| {
-                                        if i < remaining_ops.len() - 1 {
-                                            match (
-                                                op.contains("JUMP") && op != "JUMPDEST",
-                                                &*remaining_ops[i + 1],
-                                            ) {
-                                                (true, "JUMPDEST") => Some(i + 1),
-                                                _ => None,
-                                            }
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .unwrap_or(opcode_list.len() - 1);
-                                if self.current_step > opcode_list.len() {
-                                    self.current_step = opcode_list.len() - 1
-                                };
-                            }
-                            self.key_buffer.clear();
-                        }
-                        // Step backwards
-                        KeyCode::Char('a') => {
-                            for _ in 0..Debugger::buffer_as_number(&self.key_buffer, 1) {
-                                let prev_ops = opcode_list[..self.current_step].to_vec().clone();
-                                self.current_step = prev_ops
-                                    .iter()
-                                    .enumerate()
-                                    .rev()
-                                    .find_map(|(i, op)| {
-                                        if i > 0 {
-                                            match (
-                                                prev_ops[i - 1].contains("JUMP") &&
-                                                    prev_ops[i - 1] != "JUMPDEST",
-                                                &**op,
-                                            ) {
-                                                (true, "JUMPDEST") => Some(i - 1),
-                                                _ => None,
-                                            }
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .unwrap_or_default();
-                            }
-                            self.key_buffer.clear();
-                        }
-                        // toggle stack labels
-                        KeyCode::Char('t') => stack_labels = !stack_labels,
-                        // toggle memory utf8 decoding
-                        KeyCode::Char('m') => mem_utf = !mem_utf,
-                        // toggle help notice
-                        KeyCode::Char('h') => show_shortcuts = !show_shortcuts,
-                        KeyCode::Char(other) => match other {
-                            '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '\'' => {
-                                self.key_buffer.push(other);
-                            }
-                            // Invalid key, clear buffer
-                            _ => self.key_buffer.clear(),
-                        },
-                        _ => self.key_buffer.clear(),
-                    }
-                }
-            } else {
-                match receiver {
-                    Interrupt::MouseEvent(event) => match event.kind {
-                        MouseEventKind::ScrollUp => {
-                            if self.current_step > 0 {
-                                self.current_step -= 1;
-                            } else if draw_memory.inner_call_index > 0 {
-                                draw_memory.inner_call_index -= 1;
-                                draw_memory.current_mem_startline = 0;
-                                draw_memory.current_stack_startline = 0;
-                                self.current_step =
-                                    debug_call[draw_memory.inner_call_index].1.len() - 1;
-                            }
-                        }
-                        MouseEventKind::ScrollDown => {
-                            if self.current_step < opcode_list.len() - 1 {
-                                self.current_step += 1;
-                            } else if draw_memory.inner_call_index < debug_call.len() - 1 {
-                                draw_memory.inner_call_index += 1;
-                                draw_memory.current_mem_startline = 0;
-                                draw_memory.current_stack_startline = 0;
-                                self.current_step = 0;
-                            }
-                        }
-                        _ => {}
-                    },
-                    Interrupt::IntervalElapsed => {}
-                    _ => (),
-                }
-            }
-
-            // Draw
-            let current_step = self.current_step;
-            self.terminal.draw(|f| {
-                Debugger::draw_layout(
-                    f,
-                    debug_call[draw_memory.inner_call_index].0,
-                    &self.identified_contracts,
-                    &self.pc_ic_maps,
-                    &self.contracts_sources,
-                    &debug_call[draw_memory.inner_call_index].1[..],
-                    &opcode_list,
-                    current_step,
-                    debug_call[draw_memory.inner_call_index].2,
-                    &mut draw_memory,
-                    stack_labels,
-                    mem_utf,
-                    show_shortcuts,
-                )
-            })?;
+            cx.draw()?;
         }
     }
 
+    fn event_listener(tx: mpsc::Sender<Event>) {
+        // This is the recommend tick rate from `ratatui`, based on their examples
+        let tick_rate = Duration::from_millis(200);
+
+        let mut last_tick = Instant::now();
+        loop {
+            // Poll events since last tick - if last tick is greater than tick_rate, we
+            // demand immediate availability of the event. This may affect interactivity,
+            // but I'm not sure as it is hard to test.
+            if event::poll(tick_rate.saturating_sub(last_tick.elapsed())).unwrap() {
+                let event = event::read().unwrap();
+                if tx.send(event).is_err() {
+                    return;
+                }
+            }
+
+            // Force update if time has passed
+            if last_tick.elapsed() > tick_rate {
+                last_tick = Instant::now();
+            }
+        }
+    }
+}
+
+/// This is currently used to remember last scroll position so screen doesn't wiggle as much.
+#[derive(Default)]
+struct DrawMemory {
+    current_startline: usize,
+    inner_call_index: usize,
+    current_mem_startline: usize,
+    current_stack_startline: usize,
+}
+
+/// Handles terminal state. `restore` should be called before drop to handle errors.
+#[must_use]
+struct DebuggerGuard<'a>(&'a mut Debugger);
+
+impl<'a> DebuggerGuard<'a> {
+    fn setup(dbg: &'a mut Debugger) -> Result<Self> {
+        let this = Self(dbg);
+        enable_raw_mode()?;
+        execute!(*this.0.terminal.backend_mut(), EnterAlternateScreen, EnableMouseCapture)?;
+        this.0.terminal.hide_cursor()?;
+        Ok(this)
+    }
+
+    fn restore(&mut self) -> Result<()> {
+        disable_raw_mode()?;
+        execute!(*self.0.terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+        self.0.terminal.show_cursor()?;
+        Ok(())
+    }
+}
+
+impl Drop for DebuggerGuard<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
+}
+
+struct DebuggerContext<'a> {
+    debugger: &'a mut Debugger,
+
+    /// Buffer for keys prior to execution, i.e. '10' + 'k' => move up 10 operations.
+    key_buffer: String,
+    /// Current step in the debug steps.
+    current_step: usize,
+    draw_memory: DrawMemory,
+    opcode_list: Vec<String>,
+    last_index: usize,
+
+    stack_labels: bool,
+    mem_utf: bool,
+    show_shortcuts: bool,
+}
+
+impl<'a> DebuggerContext<'a> {
+    fn new(debugger: &'a mut Debugger) -> Self {
+        DebuggerContext {
+            debugger,
+
+            key_buffer: String::with_capacity(64),
+            current_step: 0,
+            draw_memory: DrawMemory::default(),
+            opcode_list: Vec::new(),
+            last_index: 0,
+
+            stack_labels: false,
+            mem_utf: false,
+            show_shortcuts: true,
+        }
+    }
+
+    fn init(&mut self) -> Result<()> {
+        self.debugger.terminal.clear()?;
+        self.gen_opcode_list();
+        Ok(())
+    }
+
+    fn debug_arena(&self) -> &[(Address, Vec<DebugStep>, CallKind)] {
+        &self.debugger.debug_arena
+    }
+
+    fn gen_opcode_list(&mut self) {
+        self.opcode_list = self.opcode_list();
+    }
+
+    fn opcode_list(&self) -> Vec<String> {
+        self.debugger.debug_arena[self.draw_memory.inner_call_index]
+            .1
+            .iter()
+            .map(DebugStep::pretty_opcode)
+            .collect()
+    }
+}
+
+impl DebuggerContext<'_> {
+    fn handle_event(&mut self, event: Event) -> ControlFlow<ExitReason> {
+        if self.last_index != self.draw_memory.inner_call_index {
+            self.opcode_list = self.debug_arena()[self.draw_memory.inner_call_index]
+                .1
+                .iter()
+                .map(|step| step.pretty_opcode())
+                .collect();
+            self.last_index = self.draw_memory.inner_call_index;
+        }
+
+        match event {
+            Event::Key(event) => self.handle_key_event(event),
+            Event::Mouse(event) => self.handle_mouse_event(event),
+            _ => ControlFlow::Continue(()),
+        }
+    }
+
+    fn handle_key_event(&mut self, event: KeyEvent) -> ControlFlow<ExitReason> {
+        if let KeyCode::Char(c) = event.code {
+            if c.is_alphanumeric() || c == '\'' {
+                self.handle_breakpoint(c);
+                return ControlFlow::Continue(());
+            }
+        }
+
+        match event.code {
+            // Exit
+            KeyCode::Char('q') => return ControlFlow::Break(ExitReason::CharExit),
+            // Move down
+            KeyCode::Char('j') | KeyCode::Down => {
+                // Grab number of times to do it
+                for _ in 0..Debugger::buffer_as_number(&self.key_buffer, 1) {
+                    if event.modifiers.contains(KeyModifiers::CONTROL) {
+                        let max_mem = (self.debug_arena()[self.draw_memory.inner_call_index].1
+                            [self.current_step]
+                            .memory
+                            .len() /
+                            32)
+                        .saturating_sub(1);
+                        if self.draw_memory.current_mem_startline < max_mem {
+                            self.draw_memory.current_mem_startline += 1;
+                        }
+                    } else if self.current_step < self.opcode_list.len() - 1 {
+                        self.current_step += 1;
+                    } else if self.draw_memory.inner_call_index < self.debug_arena().len() - 1 {
+                        self.draw_memory.inner_call_index += 1;
+                        self.current_step = 0;
+                    }
+                }
+                self.key_buffer.clear();
+            }
+            KeyCode::Char('J') => {
+                for _ in 0..Debugger::buffer_as_number(&self.key_buffer, 1) {
+                    let max_stack = self.debug_arena()[self.draw_memory.inner_call_index].1
+                        [self.current_step]
+                        .stack
+                        .len()
+                        .saturating_sub(1);
+                    if self.draw_memory.current_stack_startline < max_stack {
+                        self.draw_memory.current_stack_startline += 1;
+                    }
+                }
+                self.key_buffer.clear();
+            }
+            // Move up
+            KeyCode::Char('k') | KeyCode::Up => {
+                for _ in 0..Debugger::buffer_as_number(&self.key_buffer, 1) {
+                    if event.modifiers.contains(KeyModifiers::CONTROL) {
+                        self.draw_memory.current_mem_startline =
+                            self.draw_memory.current_mem_startline.saturating_sub(1);
+                    } else if self.current_step > 0 {
+                        self.current_step -= 1;
+                    } else if self.draw_memory.inner_call_index > 0 {
+                        self.draw_memory.inner_call_index -= 1;
+                        self.current_step =
+                            self.debug_arena()[self.draw_memory.inner_call_index].1.len() - 1;
+                    }
+                }
+                self.key_buffer.clear();
+            }
+            KeyCode::Char('K') => {
+                for _ in 0..Debugger::buffer_as_number(&self.key_buffer, 1) {
+                    self.draw_memory.current_stack_startline =
+                        self.draw_memory.current_stack_startline.saturating_sub(1);
+                }
+                self.key_buffer.clear();
+            }
+            // Go to top of file
+            KeyCode::Char('g') => {
+                self.draw_memory.inner_call_index = 0;
+                self.current_step = 0;
+                self.key_buffer.clear();
+            }
+            // Go to bottom of file
+            KeyCode::Char('G') => {
+                self.draw_memory.inner_call_index = self.debug_arena().len() - 1;
+                self.current_step =
+                    self.debug_arena()[self.draw_memory.inner_call_index].1.len() - 1;
+                self.key_buffer.clear();
+            }
+            // Go to previous call
+            KeyCode::Char('c') => {
+                self.draw_memory.inner_call_index =
+                    self.draw_memory.inner_call_index.saturating_sub(1);
+                self.current_step =
+                    self.debug_arena()[self.draw_memory.inner_call_index].1.len() - 1;
+                self.key_buffer.clear();
+            }
+            // Go to next call
+            KeyCode::Char('C') => {
+                if self.debug_arena().len() > self.draw_memory.inner_call_index + 1 {
+                    self.draw_memory.inner_call_index += 1;
+                    self.current_step = 0;
+                }
+                self.key_buffer.clear();
+            }
+            // Step forward
+            KeyCode::Char('s') => {
+                for _ in 0..Debugger::buffer_as_number(&self.key_buffer, 1) {
+                    let remaining_ops = self.opcode_list[self.current_step..].to_vec();
+                    self.current_step += remaining_ops
+                        .iter()
+                        .enumerate()
+                        .find_map(|(i, op)| {
+                            if i < remaining_ops.len() - 1 {
+                                match (
+                                    op.contains("JUMP") && op != "JUMPDEST",
+                                    &*remaining_ops[i + 1],
+                                ) {
+                                    (true, "JUMPDEST") => Some(i + 1),
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(self.opcode_list.len() - 1);
+                    if self.current_step > self.opcode_list.len() {
+                        self.current_step = self.opcode_list.len() - 1
+                    };
+                }
+                self.key_buffer.clear();
+            }
+            // Step backwards
+            KeyCode::Char('a') => {
+                for _ in 0..Debugger::buffer_as_number(&self.key_buffer, 1) {
+                    let prev_ops = self.opcode_list[..self.current_step].to_vec();
+                    self.current_step = prev_ops
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .find_map(|(i, op)| {
+                            if i > 0 {
+                                match (
+                                    prev_ops[i - 1].contains("JUMP") &&
+                                        prev_ops[i - 1] != "JUMPDEST",
+                                    &**op,
+                                ) {
+                                    (true, "JUMPDEST") => Some(i - 1),
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_default();
+                }
+                self.key_buffer.clear();
+            }
+            // toggle stack labels
+            KeyCode::Char('t') => self.stack_labels = !self.stack_labels,
+            // toggle memory utf8 decoding
+            KeyCode::Char('m') => self.mem_utf = !self.mem_utf,
+            // toggle help notice
+            KeyCode::Char('h') => self.show_shortcuts = !self.show_shortcuts,
+            KeyCode::Char(other) => match other {
+                '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '\'' => {
+                    self.key_buffer.push(other);
+                }
+                // Invalid key, clear buffer
+                _ => self.key_buffer.clear(),
+            },
+            _ => self.key_buffer.clear(),
+        };
+
+        ControlFlow::Continue(())
+    }
+
+    fn handle_breakpoint(&mut self, c: char) {
+        // Find the location of the called breakpoint in the whole debug arena (at this address with
+        // this pc)
+        if let Some((caller, pc)) = self.debugger.breakpoints.get(&c) {
+            for (i, (_caller, debug_steps, _)) in self.debug_arena().iter().enumerate() {
+                if _caller == caller {
+                    if let Some(step) = debug_steps.iter().position(|step| step.pc == *pc) {
+                        self.draw_memory.inner_call_index = i;
+                        self.current_step = step;
+                        break
+                    }
+                }
+            }
+        }
+        self.key_buffer.clear();
+    }
+
+    fn handle_mouse_event(&mut self, event: MouseEvent) -> ControlFlow<ExitReason> {
+        match event.kind {
+            MouseEventKind::ScrollUp => {
+                if self.current_step > 0 {
+                    self.current_step -= 1;
+                } else if self.draw_memory.inner_call_index > 0 {
+                    self.draw_memory.inner_call_index -= 1;
+                    self.draw_memory.current_mem_startline = 0;
+                    self.draw_memory.current_stack_startline = 0;
+                    self.current_step =
+                        self.debug_arena()[self.draw_memory.inner_call_index].1.len() - 1;
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if self.current_step < self.opcode_list.len() - 1 {
+                    self.current_step += 1;
+                } else if self.draw_memory.inner_call_index < self.debug_arena().len() - 1 {
+                    self.draw_memory.inner_call_index += 1;
+                    self.draw_memory.current_mem_startline = 0;
+                    self.draw_memory.current_stack_startline = 0;
+                    self.current_step = 0;
+                }
+            }
+            _ => {}
+        }
+
+        ControlFlow::Continue(())
+    }
+
+    fn draw(&mut self) -> Result<()> {
+        self.debugger.terminal.draw(|f| {
+            let debug_arena = &self.debugger.debug_arena;
+            Debugger::draw_layout(
+                f,
+                debug_arena[self.draw_memory.inner_call_index].0,
+                &self.debugger.identified_contracts,
+                &self.debugger.pc_ic_maps,
+                &self.debugger.contracts_sources,
+                &debug_arena[self.draw_memory.inner_call_index].1[..],
+                &self.opcode_list,
+                self.current_step,
+                debug_arena[self.draw_memory.inner_call_index].2,
+                &mut self.draw_memory,
+                self.stack_labels,
+                self.mem_utf,
+                self.show_shortcuts,
+            )
+        })?;
+        Ok(())
+    }
+}
+
+impl Debugger {
     /// Grab number from buffer. Used for something like '10k' to move up 10 operations
     fn buffer_as_number(s: &str, default_value: usize) -> usize {
         match s.parse() {
@@ -1303,98 +1427,5 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
             .collect();
         let paragraph = Paragraph::new(text).block(memory_space).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
-    }
-}
-
-/// Message sent from the event listener to the main thread.
-enum Interrupt {
-    KeyEvent(KeyEvent),
-    MouseEvent(MouseEvent),
-    IntervalElapsed,
-}
-
-impl Interrupt {
-    fn char_press(&self) -> Option<char> {
-        match *self {
-            Self::KeyEvent(KeyEvent { code: KeyCode::Char(code), .. })
-                if code.is_alphanumeric() || code == '\'' =>
-            {
-                Some(code)
-            }
-            _ => None,
-        }
-    }
-}
-
-/// This is currently used to remember last scroll position so screen doesn't wiggle as much.
-#[derive(Default)]
-struct DrawMemory {
-    current_startline: usize,
-    inner_call_index: usize,
-    current_mem_startline: usize,
-    current_stack_startline: usize,
-}
-
-/// Handles terminal state. `restore` should be called before drop to handle errors.
-#[must_use]
-struct DebuggerGuard<'a>(&'a mut Debugger);
-
-impl<'a> DebuggerGuard<'a> {
-    fn setup(dbg: &'a mut Debugger) -> Result<Self> {
-        let this = Self(dbg);
-        enable_raw_mode()?;
-        execute!(*this.0.terminal.backend_mut(), EnterAlternateScreen, EnableMouseCapture)?;
-        this.0.terminal.hide_cursor()?;
-        Ok(this)
-    }
-
-    fn restore(&mut self) -> Result<()> {
-        disable_raw_mode()?;
-        execute!(*self.0.terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
-        self.0.terminal.show_cursor()?;
-        Ok(())
-    }
-}
-
-impl Drop for DebuggerGuard<'_> {
-    #[inline]
-    fn drop(&mut self) {
-        let _ = self.restore();
-    }
-}
-
-fn event_listener(tx: mpsc::Sender<Interrupt>) {
-    // This is the recommend tick rate from `ratatui`, based on their examples
-    let tick_rate = Duration::from_millis(200);
-
-    let mut last_tick = Instant::now();
-    loop {
-        // Poll events since last tick - if last tick is greater than tick_rate, we
-        // demand immediate availability of the event. This may affect interactivity,
-        // but I'm not sure as it is hard to test.
-        if event::poll(tick_rate.saturating_sub(last_tick.elapsed())).unwrap() {
-            let event = event::read().unwrap();
-            match event {
-                Event::Key(key) => {
-                    if tx.send(Interrupt::KeyEvent(key)).is_err() {
-                        return
-                    }
-                }
-                Event::Mouse(mouse) => {
-                    if tx.send(Interrupt::MouseEvent(mouse)).is_err() {
-                        return
-                    }
-                }
-                Event::FocusGained | Event::FocusLost | Event::Paste(_) | Event::Resize(..) => {}
-            }
-        }
-
-        // Force update if time has passed
-        if last_tick.elapsed() > tick_rate {
-            if tx.send(Interrupt::IntervalElapsed).is_err() {
-                return
-            }
-            last_tick = Instant::now();
-        }
     }
 }
