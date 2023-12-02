@@ -248,13 +248,9 @@ impl DebuggerContext<'_> {
             KeyCode::Char('m') => self.mem_utf = !self.mem_utf,
             // toggle help notice
             KeyCode::Char('h') => self.show_shortcuts = !self.show_shortcuts,
-            KeyCode::Char(other) => match other {
-                '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '\'' => {
-                    self.key_buffer.push(other);
-                }
-                // Invalid key, clear buffer
-                _ => self.key_buffer.clear(),
-            },
+            KeyCode::Char(
+                other @ ('0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '\''),
+            ) => self.key_buffer.push(other),
             _ => self.key_buffer.clear(),
         };
 
