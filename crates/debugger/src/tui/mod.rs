@@ -1,34 +1,21 @@
 //! The TUI implementation.
 
-use crate::op::OpcodeParam;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
 use crossterm::{
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
-        MouseEvent, MouseEventKind,
-    },
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use eyre::Result;
 use foundry_common::{compile::ContractSources, evm::Breakpoints};
 use foundry_evm_core::{
-    debug::{DebugStep, Instruction},
+    debug::DebugStep,
     utils::{build_pc_ic_map, CallKind, PCICMap},
 };
-use ratatui::{
-    backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    terminal::Frame,
-    text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph, Wrap},
-    Terminal,
-};
-use revm::{interpreter::opcode, primitives::SpecId};
+use ratatui::{backend::CrosstermBackend, Terminal};
+use revm::primitives::SpecId;
 use std::{
-    cmp::{max, min},
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, HashMap},
     io,
     ops::ControlFlow,
     sync::mpsc,

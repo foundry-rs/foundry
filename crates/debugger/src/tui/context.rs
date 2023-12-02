@@ -1,40 +1,11 @@
 //! Debugger context and event handler implementation.
 
-use crate::{op::OpcodeParam, Debugger, DebuggerBuilder, ExitReason};
-use alloy_primitives::{Address, U256};
-use crossterm::{
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
-        MouseEvent, MouseEventKind,
-    },
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
+use crate::{Debugger, ExitReason};
+use alloy_primitives::Address;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use eyre::Result;
-use foundry_common::{compile::ContractSources, evm::Breakpoints};
-use foundry_evm_core::{
-    debug::{DebugStep, Instruction},
-    utils::{build_pc_ic_map, CallKind, PCICMap},
-};
-use ratatui::{
-    backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    terminal::Frame,
-    text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph, Wrap},
-    Terminal,
-};
-use revm::{interpreter::opcode, primitives::SpecId};
-use std::{
-    cmp::{max, min},
-    collections::{BTreeMap, HashMap, VecDeque},
-    io,
-    ops::ControlFlow,
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
-};
+use foundry_evm_core::{debug::DebugStep, utils::CallKind};
+use std::ops::ControlFlow;
 
 /// This is currently used to remember last scroll position so screen doesn't wiggle as much.
 #[derive(Default)]

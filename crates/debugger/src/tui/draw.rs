@@ -1,42 +1,25 @@
 //! TUI draw implementation.
 
-use crate::{op::OpcodeParam, Debugger, DebuggerBuilder};
+use super::context::DrawMemory;
+use crate::{op::OpcodeParam, Debugger};
 use alloy_primitives::{Address, U256};
-use crossterm::{
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
-        MouseEvent, MouseEventKind,
-    },
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
-use eyre::Result;
-use foundry_common::{compile::ContractSources, evm::Breakpoints};
+use foundry_common::compile::ContractSources;
 use foundry_evm_core::{
     debug::{DebugStep, Instruction},
-    utils::{build_pc_ic_map, CallKind, PCICMap},
+    utils::{CallKind, PCICMap},
 };
 use ratatui::{
-    backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     terminal::Frame,
     text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph, Wrap},
-    Terminal,
 };
-use revm::{interpreter::opcode, primitives::SpecId};
+use revm::interpreter::opcode;
 use std::{
     cmp::{max, min},
     collections::{BTreeMap, HashMap, VecDeque},
-    io,
-    ops::ControlFlow,
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
 };
-
-use super::context::DrawMemory;
 
 impl Debugger {
     /// Create layout and subcomponents
