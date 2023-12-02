@@ -410,7 +410,7 @@ impl CallTraceDecoder {
                 s = funcs.iter().find_map(|func| self.decode_cheatcode_outputs(func));
             }
 
-            if !s.is_none() {
+            if s.is_some() {
                 if let Some(values) =
                     funcs.iter().find_map(|func| func.abi_decode_output(data, false).ok())
                 {
