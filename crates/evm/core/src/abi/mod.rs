@@ -6,4 +6,4 @@ mod console;
 pub use console::Console;
 
 mod hardhat_console;
-pub use hardhat_console::{patch_hardhat_console_selector, HardhatConsole};
+pub use hardhat_console::{hh_console_selector, patch_hh_console_selector, HardhatConsole};
