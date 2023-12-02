@@ -16,7 +16,7 @@ use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
-    abi::encode_function_args,
+    abi::{encode_function_args, get_func},
     fmt::*,
     types::{ToAlloy, ToEthers},
     TransactionReceiptWithRevertReason,
@@ -1561,12 +1561,7 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = match Function::parse(sig) {
-            Ok(func) => func,
-            Err(err) => {
-                eyre::bail!("Could not process human-readable ABI. Please check if you've left the parenthesis unclosed or if some type is incomplete.\nError:\n{}", err)
-            }
-        };
+        let func = get_func(sig)?;
         let calldata = match encode_function_args(&func, args) {
             Ok(res) => hex::encode(res),
             Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
@@ -1589,7 +1584,7 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn calldata_encode(sig: impl AsRef<str>, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = Function::parse(sig.as_ref())?;
+        let func = get_func(sig.as_ref())?;
         let calldata = encode_function_args(&func, args)?;
         Ok(hex::encode_prefixed(calldata))
     }
@@ -1909,7 +1904,7 @@ impl SimpleCast {
             eyre::bail!("number of leading zeroes must not be greater than 4");
         }
         if optimize == 0 {
-            let selector = Function::parse(signature)?.selector();
+            let selector = get_func(signature)?.selector();
             return Ok((selector.to_string(), String::from(signature)))
         }
         let Some((name, params)) = signature.split_once('(') else {
