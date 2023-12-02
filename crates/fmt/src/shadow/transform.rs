@@ -95,17 +95,17 @@ impl fmt::Display for TransformedValue {
     }
 }
 
-/// solang-parser does not generate a lalrpop parser for statements to keep codegen small.
+/// solang-parser only generates parser for source units (file level elements) to keep codegen
+/// small.
 ///
-/// If the value is not a statement that can appear on the top level, we wrap it into a function.
+/// If the value is not a source unit that is allowed to appear on the top level, we wrap it into
+/// something that forms a valid source unit, for example an `emit` Statement into a function and
+/// then extract the parsed statement from that source unit.
 fn transform_value(value: &str) -> Option<TransformedValue> {
     if value.starts_with("event ") {
         let (mut unit, _) = solang_parser::parse(value, 0).ok()?;
         return match unit.0.pop()? {
-            SourceUnitPart::EventDefinition(ev) => {
-                // flatten the body to get rid of the block
-                Some(TransformedValue::EventDefinition(ev))
-            }
+            SourceUnitPart::EventDefinition(ev) => Some(TransformedValue::EventDefinition(ev)),
             _ => None,
         }
     }
