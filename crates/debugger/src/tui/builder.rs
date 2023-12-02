@@ -1,3 +1,5 @@
+//! TUI debugger builder.
+
 use crate::Debugger;
 use alloy_primitives::Address;
 use eyre::Result;
