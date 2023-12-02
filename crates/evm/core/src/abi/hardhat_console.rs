@@ -13,7 +13,7 @@ sol!(
 
 /// Patches the given Hardhat `console` function selector to its ABI-normalized form.
 ///
-/// See `HARDHAT_CONSOLE_SELECTOR_PATCHES` for more details.
+/// See [`HARDHAT_CONSOLE_SELECTOR_PATCHES`] for more details.
 pub fn patch_hh_console_selector(input: &mut [u8]) {
     if let Some(selector) = hh_console_selector(input) {
         input[..4].copy_from_slice(selector.as_slice());
@@ -22,7 +22,7 @@ pub fn patch_hh_console_selector(input: &mut [u8]) {
 
 /// Returns the ABI-normalized selector for the given Hardhat `console` function selector.
 ///
-/// See `HARDHAT_CONSOLE_SELECTOR_PATCHES` for more details.
+/// See [`HARDHAT_CONSOLE_SELECTOR_PATCHES`] for more details.
 pub fn hh_console_selector(input: &[u8]) -> Option<&'static Selector> {
     if let Some(selector) = input.get(..4) {
         let selector: &[u8; 4] = selector.try_into().unwrap();
@@ -38,7 +38,7 @@ pub fn hh_console_selector(input: &[u8]) -> Option<&'static Selector> {
 /// `hardhat/console.log` logs its events manually, and in functions that accept integers they're
 /// encoded as `abi.encodeWithSignature("log(int)", p0)`, which is not the canonical ABI encoding
 /// for `int` that Solc (and [`sol!`]) uses.
-static HARDHAT_CONSOLE_SELECTOR_PATCHES: Lazy<HashMap<[u8; 4], [u8; 4]>> = Lazy::new(|| {
+pub static HARDHAT_CONSOLE_SELECTOR_PATCHES: Lazy<HashMap<[u8; 4], [u8; 4]>> = Lazy::new(|| {
     HashMap::from([
         // log(bool,uint256,uint256,address)
         ([241, 97, 178, 33], [0, 221, 135, 185]),
