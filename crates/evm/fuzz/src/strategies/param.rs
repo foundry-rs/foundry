@@ -166,14 +166,14 @@ pub fn fuzz_param_from_state(
 #[cfg(test)]
 mod tests {
     use crate::strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state};
-    use alloy_json_abi::Function;
+    use foundry_common::abi::get_func;
     use foundry_config::FuzzDictionaryConfig;
     use revm::db::{CacheDB, EmptyDB};
 
     #[test]
     fn can_fuzz_array() {
         let f = "testArray(uint64[2] calldata values)";
-        let func = Function::parse(f).unwrap();
+        let func = get_func(f).unwrap();
         let db = CacheDB::new(EmptyDB::default());
         let state = build_initial_state(&db, &FuzzDictionaryConfig::default());
         let strat = proptest::strategy::Union::new_weighted(vec![
