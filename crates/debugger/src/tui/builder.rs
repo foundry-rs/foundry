@@ -1,3 +1,5 @@
+//! TUI debugger builder.
+
 use crate::Debugger;
 use alloy_primitives::Address;
 use eyre::Result;
@@ -90,6 +92,6 @@ impl DebuggerBuilder {
     #[inline]
     pub fn build(self) -> Result<Debugger> {
         let Self { debug_arena, identified_contracts, sources, breakpoints } = self;
-        Debugger::new(debug_arena, 0, identified_contracts, sources, breakpoints)
+        Debugger::new(debug_arena, identified_contracts, sources, breakpoints)
     }
 }
