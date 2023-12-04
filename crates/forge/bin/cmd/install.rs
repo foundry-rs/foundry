@@ -127,26 +127,9 @@ impl DependencyInstallOpts {
         fs::create_dir_all(&libs)?;
 
         if dependencies.is_empty() && !self.no_git {
-            p_println!(!self.quiet => "Updating dependencies in {}", libs.display());
-
-            let empty_install_dir = libs.read_dir()?.next().is_none();
-
-            if empty_install_dir {
-                fs::create_file(libs.join(".keep"))?;
-                // Update the git project with the newly created folder if we're using git.
-                if !self.no_git {
-                    git.add(Some(&libs.join(".keep")))?;
-                }
-                // recursively fetch all submodules (without fetching latest)
-                git.submodule_update(false, false, false, true, Some(&libs))?;
-                // remove the temporary file
-                fs::remove_file(libs.join(".keep"))?;
-                // Update the git project with the newly deleted folder if we're using git.
-                if !self.no_git {
-                    git.add(Some(&libs.join(".keep")))?;
-                }
-            } else {
-                // just recursively fetch all submodules (without fetching latest)
+            // recursively fetch all submodules (without fetching latest) if the dir is not empty
+            if libs.read_dir()?.next().is_some() {
+                p_println!(!self.quiet => "Updating dependencies in {}", libs.display());
                 git.submodule_update(false, false, false, true, Some(&libs))?;
             }
         }
