@@ -31,7 +31,7 @@ use foundry_config::{
     },
     get_available_profiles, Config,
 };
-use foundry_debugger::DebuggerBuilder;
+use foundry_debugger::Debugger;
 use regex::Regex;
 use std::{collections::BTreeMap, fs, sync::mpsc::channel, time::Duration};
 use watchexec::config::{InitConfig, RuntimeConfig};
@@ -315,7 +315,7 @@ impl TestArgs {
             let test = outcome.clone().into_tests().next().unwrap();
             let result = test.result;
             // Run the debugger
-            let mut debugger = DebuggerBuilder::new()
+            let mut debugger = Debugger::builder()
                 // TODO: `Option::as_slice` in 1.75
                 .debug_arenas(result.debug.as_ref().map(core::slice::from_ref).unwrap_or_default())
                 .decoders(&decoders)
