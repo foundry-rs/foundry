@@ -782,7 +782,13 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
             -2 => Some(1),
             -1 => Some(32),
             0 => None,
-            1.. => Some(stack[stack_len - stack_index as usize].saturating_to()),
+            1.. => {
+                if (stack_index as usize) <= stack_len {
+                    Some(stack[stack_len - stack_index as usize].saturating_to())
+                } else {
+                    None
+                }
+            }
             _ => panic!("invalid stack index"),
         };
 
@@ -862,11 +868,7 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                         Span::styled(
                             format!("{byte:02x} "),
                             if let (Some(offset), Some(size), Some(color)) = (offset, size, color) {
-                                if (i == offset / 32 && j >= offset % 32) ||
-                                    (i > offset / 32 && i < (offset + size - 1) / 32) ||
-                                    (i == (offset + size - 1) / 32 &&
-                                        j <= (offset + size - 1) % 32)
-                                {
+                                if i * 32 + j >= offset && i * 32 + j < offset + size {
                                     // [offset, offset + size] is the memory region to be colored.
                                     // If a byte at row i and column j in the memory panel
                                     // falls in this region, set the color.
