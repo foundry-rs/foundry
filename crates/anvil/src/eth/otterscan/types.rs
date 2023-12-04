@@ -4,10 +4,9 @@ use crate::eth::{
 };
 use alloy_primitives::{Address, Bytes, B256, U256 as rU256, U256};
 use alloy_rpc_types::{Block, BlockTransactions, Transaction, TransactionReceipt};
-use ethers::types::{Action, CallType, Trace};
-use foundry_evm::{revm::interpreter::InstructionResult, utils::CallKind};
-use foundry_utils::types::ToAlloy;
+use foundry_evm::{revm::interpreter::InstructionResult, traces::CallKind};
 use futures::future::join_all;
+use reth_rpc_types::trace::parity::{Action, CallType, LocalizedTransactionTrace};
 use serde::Serialize;
 use serde_repr::Serialize_repr;
 
@@ -183,11 +182,16 @@ impl OtsBlockTransactions {
             BlockTransactions::Uncle => return Err(BlockchainError::DataUnavailable),
         };
 
-        let block_txs = block_txs.into_iter().skip(page * page_size).take(page_size).collect::<Vec<_>>();
+        let block_txs =
+            block_txs.into_iter().skip(page * page_size).take(page_size).collect::<Vec<_>>();
 
         block.transactions = match block.transactions {
-            BlockTransactions::Full(txs) => BlockTransactions::Full(txs.into_iter().skip(page * page_size).take(page_size).collect()),
-            BlockTransactions::Hashes(txs) => BlockTransactions::Hashes(txs.into_iter().skip(page * page_size).take(page_size).collect()),
+            BlockTransactions::Full(txs) => BlockTransactions::Full(
+                txs.into_iter().skip(page * page_size).take(page_size).collect(),
+            ),
+            BlockTransactions::Hashes(txs) => BlockTransactions::Hashes(
+                txs.into_iter().skip(page * page_size).take(page_size).collect(),
+            ),
             BlockTransactions::Uncle => return Err(BlockchainError::DataUnavailable),
         };
 
@@ -258,10 +262,9 @@ impl OtsInternalOperation {
         traces
             .info
             .traces
-            .arena
             .iter()
             .filter_map(|node| {
-                match (node.kind(), node.status()) {
+                match (node.trace.kind, node.trace.status) {
                     (CallKind::Call, _) if node.trace.value != rU256::ZERO => Some(Self {
                         r#type: OtsInternalOperationType::Transfer,
                         from: node.trace.caller,
@@ -299,18 +302,18 @@ impl OtsInternalOperation {
 impl OtsTrace {
     /// Converts the list of traces for a transaction into the expected Otterscan format, as
     /// specified in the [`ots_traceTransaction`](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_tracetransaction) spec
-    pub fn batch_build(traces: Vec<Trace>) -> Vec<Self> {
+    pub fn batch_build(traces: Vec<LocalizedTransactionTrace>) -> Vec<Self> {
         traces
             .into_iter()
-            .filter_map(|trace| match trace.action {
+            .filter_map(|trace| match trace.trace.action {
                 Action::Call(call) => {
                     if let Ok(ots_type) = call.call_type.try_into() {
                         Some(OtsTrace {
                             r#type: ots_type,
-                            depth: trace.trace_address.len(),
-                            from: call.from.to_alloy(),
-                            to: call.to.to_alloy(),
-                            value: call.value.to_alloy(),
+                            depth: trace.trace.trace_address.len(),
+                            from: call.from,
+                            to: call.to,
+                            value: call.value,
                             input: call.input.0.into(),
                         })
                     } else {
@@ -318,7 +321,7 @@ impl OtsTrace {
                     }
                 }
                 Action::Create(_) => None,
-                Action::Suicide(_) => None,
+                Action::Selfdestruct(_) => None,
                 Action::Reward(_) => None,
             })
             .collect()

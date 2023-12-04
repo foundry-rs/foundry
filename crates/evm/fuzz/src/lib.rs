@@ -49,6 +49,7 @@ pub struct BaseCounterExample {
     /// Contract name if it exists
     pub contract_name: Option<String>,
     /// Traces
+    #[serde(skip)]
     pub traces: Option<CallTraceArena>,
     #[serde(skip)]
     pub args: Vec<DynSolValue>,

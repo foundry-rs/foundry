@@ -119,6 +119,7 @@ pub struct TestResult {
     pub kind: TestKind,
 
     /// Traces
+    #[serde(skip)]
     pub traces: Traces,
 
     /// Raw coverage info

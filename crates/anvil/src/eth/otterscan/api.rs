@@ -9,9 +9,11 @@ use crate::eth::{
 };
 use alloy_primitives::{Address, Bytes, B256, U256, U64};
 use alloy_rpc_types::{Block, BlockId, BlockNumberOrTag as BlockNumber, Transaction};
-use ethers::types::{Action, Call, Create, CreateResult, Res, Reward};
 use foundry_utils::types::ToAlloy;
 use itertools::Itertools;
+use reth_rpc_types::trace::parity::{
+    Action, CallAction, CreateAction, CreateOutput, RewardAction, TraceOutput,
+};
 
 impl EthApi {
     /// Otterscan currently requires this endpoint, even though it's not part of the ots_*
@@ -150,11 +152,11 @@ impl EthApi {
                 let hashes = traces
                     .into_iter()
                     .rev()
-                    .filter_map(|trace| match trace.action {
-                        Action::Call(Call { from, to, .. })
-                            if from.to_alloy() == address || to.to_alloy() == address =>
+                    .filter_map(|trace| match trace.trace.action {
+                        Action::Call(CallAction { from, to, .. })
+                            if from == address || to == address =>
                         {
-                            trace.transaction_hash.map(|t| t.to_alloy())
+                            trace.transaction_hash
                         }
                         _ => None,
                     })
@@ -203,17 +205,17 @@ impl EthApi {
                 let hashes = traces
                     .into_iter()
                     .rev()
-                    .filter_map(|trace| match trace.action {
-                        Action::Call(Call { from, to, .. })
-                            if from.to_alloy() == address || to.to_alloy() == address =>
+                    .filter_map(|trace| match trace.trace.action {
+                        Action::Call(CallAction { from, to, .. })
+                            if from == address || to == address =>
                         {
-                            trace.transaction_hash.map(|t| t.to_alloy())
+                            trace.transaction_hash
                         }
-                        Action::Create(Create { from, .. }) if from.to_alloy() == address => {
-                            trace.transaction_hash.map(|t| t.to_alloy())
+                        Action::Create(CreateAction { from, .. }) if from == address => {
+                            trace.transaction_hash
                         }
-                        Action::Reward(Reward { author, .. }) if author.to_alloy() == address => {
-                            trace.transaction_hash.map(|t| t.to_alloy())
+                        Action::Reward(RewardAction { author, .. }) if author == address => {
+                            trace.transaction_hash
                         }
                         _ => None,
                     })
@@ -271,14 +273,14 @@ impl EthApi {
         for n in (from..=to).rev() {
             if let Some(traces) = self.backend.mined_parity_trace_block(n) {
                 for trace in traces.into_iter().rev() {
-                    match (trace.action, trace.result) {
+                    match (trace.trace.action, trace.trace.result) {
                         (
-                            Action::Create(Create { from, .. }),
-                            Some(Res::Create(CreateResult { address, .. })),
-                        ) if address.to_alloy() == addr => {
+                            Action::Create(CreateAction { from, .. }),
+                            Some(TraceOutput::Create(CreateOutput { address, .. })),
+                        ) if address == addr => {
                             return Ok(Some(OtsContractCreator {
-                                hash: trace.transaction_hash.unwrap().to_alloy(),
-                                creator: from.to_alloy(),
+                                hash: trace.transaction_hash.unwrap(),
+                                creator: from,
                             }))
                         }
                         _ => {}

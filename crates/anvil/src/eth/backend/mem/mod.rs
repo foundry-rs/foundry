@@ -32,7 +32,7 @@ use crate::{
 use alloy_primitives::{Address, Bloom, Bytes, TxHash, B256, B64, U128, U256, U64, U8};
 use alloy_rpc_types::{
     state::StateOverride,
-    // trace::{geth::{DefaultFrame, GethDebugTracingOptions, GethTrace},
+    // trace::{geth::{DefaultFrame, GethDefaultTracingOptions, GethTrace},
     // parity::LocalizedTransactionTrace},
     AccessList,
     Block as AlloyBlock,
@@ -62,11 +62,7 @@ use anvil_core::{
 use anvil_rpc::error::RpcError;
 use ethers::{
     abi::ethereum_types::BigEndianHash,
-    prelude::GethTraceFrame,
-    types::{
-        transaction::eip2930::AccessList as EthersAccessList, DefaultFrame,
-        GethDebugTracingOptions, GethTrace, Trace,
-    },
+    types::transaction::eip2930::AccessList as EthersAccessList,
     utils::{keccak256, rlp},
 };
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
@@ -84,6 +80,7 @@ use foundry_evm::{
             SpecId, TransactTo, TxEnv, KECCAK_EMPTY,
         },
     },
+    traces::{TracingInspector, TracingInspectorConfig},
     utils::{eval_to_instruction_result, halt_to_instruction_result, u256_to_h256_be},
 };
 use foundry_utils::types::{ToAlloy, ToEthers};
@@ -91,6 +88,10 @@ use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
+use reth_rpc_types::trace::{
+    geth::{DefaultFrame, GethDefaultTracingOptions, GethTrace},
+    parity::LocalizedTransactionTrace,
+};
 use std::{
     collections::HashMap,
     io::{Read, Write},
@@ -1124,7 +1125,7 @@ impl Backend {
         request: EthTransactionRequest,
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
-        opts: GethDebugTracingOptions,
+        opts: GethDefaultTracingOptions,
     ) -> Result<DefaultFrame, BlockchainError> {
         self.with_database_at(block_request, |state, block| {
             let mut inspector = Inspector::default().with_steps_tracing();
@@ -1148,7 +1149,10 @@ impl Backend {
                     (halt_to_instruction_result(reason), gas_used, None)
                 },
             };
-            let res = inspector.tracer.unwrap_or_default().traces.geth_trace(rU256::from(gas_used), opts);
+            let res = inspector.tracer.unwrap_or(TracingInspector::new(TracingInspectorConfig::all())).into_geth_builder().geth_traces(gas_used, match &out {
+                Some(out) => out.data().clone(),
+                None => Bytes::new()
+            }, opts);
             trace!(target: "backend", "trace call return {:?} out: {:?} gas {} on block {}", exit_reason, out, gas_used, block_number);
             Ok(res)
         })
@@ -1360,10 +1364,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return fork
-                .block_by_hash(hash)
-                .await
-                .map_err(|_| BlockchainError::DataUnavailable);
+            return fork.block_by_hash(hash).await.map_err(|_| BlockchainError::DataUnavailable);
         }
 
         Ok(None)
@@ -1489,8 +1490,8 @@ impl Backend {
                     BlockNumber::Finalized => {
                         if storage.best_number.to_ethers() > (slots_in_an_epoch.to_ethers() * 2) {
                             *storage.hashes.get(
-                                &(storage.best_number.to_ethers()
-                                    - (slots_in_an_epoch.to_ethers() * 2))
+                                &(storage.best_number.to_ethers() -
+                                    (slots_in_an_epoch.to_ethers() * 2))
                                     .to_alloy(),
                             )?
                         } else {
@@ -1817,7 +1818,10 @@ impl Backend {
     }
 
     /// Returns the traces for the given transaction
-    pub async fn trace_transaction(&self, hash: B256) -> Result<Vec<Trace>, BlockchainError> {
+    pub async fn trace_transaction(
+        &self,
+        hash: B256,
+    ) -> Result<Vec<LocalizedTransactionTrace>, BlockchainError> {
         if let Some(traces) = self.mined_parity_trace_transaction(hash) {
             return Ok(traces);
         }
@@ -1830,7 +1834,10 @@ impl Backend {
     }
 
     /// Returns the traces for the given transaction
-    pub(crate) fn mined_parity_trace_transaction(&self, hash: B256) -> Option<Vec<Trace>> {
+    pub(crate) fn mined_parity_trace_transaction(
+        &self,
+        hash: B256,
+    ) -> Option<Vec<LocalizedTransactionTrace>> {
         self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.parity_traces())
     }
 
@@ -1840,7 +1847,10 @@ impl Backend {
     }
 
     /// Returns the traces for the given block
-    pub(crate) fn mined_parity_trace_block(&self, block: u64) -> Option<Vec<Trace>> {
+    pub(crate) fn mined_parity_trace_block(
+        &self,
+        block: u64,
+    ) -> Option<Vec<LocalizedTransactionTrace>> {
         let block = self.get_block(block)?;
         let mut traces = vec![];
         let storage = self.blockchain.storage.read();
@@ -1854,29 +1864,32 @@ impl Backend {
     pub async fn debug_trace_transaction(
         &self,
         hash: B256,
-        opts: GethDebugTracingOptions,
+        opts: GethDefaultTracingOptions,
     ) -> Result<GethTrace, BlockchainError> {
         if let Some(traces) = self.mined_geth_trace_transaction(hash, opts.clone()) {
-            return Ok(GethTrace::Known(GethTraceFrame::Default(traces)));
+            return Ok(GethTrace::Default(traces));
         }
 
         // if let Some(fork) = self.get_fork() {
         //     return Ok(fork.debug_trace_transaction(hash, opts).await.map_err(|_|
         // BlockchainError::DataUnavailable)?) }
 
-        Ok(GethTrace::Known(GethTraceFrame::Default(Default::default())))
+        Ok(GethTrace::Default(Default::default()))
     }
 
     fn mined_geth_trace_transaction(
         &self,
         hash: B256,
-        opts: GethDebugTracingOptions,
+        opts: GethDefaultTracingOptions,
     ) -> Option<DefaultFrame> {
         self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.geth_trace(opts))
     }
 
     /// Returns the traces for the given block
-    pub async fn trace_block(&self, block: BlockNumber) -> Result<Vec<Trace>, BlockchainError> {
+    pub async fn trace_block(
+        &self,
+        block: BlockNumber,
+    ) -> Result<Vec<LocalizedTransactionTrace>, BlockchainError> {
         let number = self.convert_block_number(Some(block));
         if let Some(traces) = self.mined_parity_trace_block(number) {
             return Ok(traces);
@@ -2276,8 +2289,8 @@ impl TransactionValidator for Backend {
             if chain_id.to::<u64>() != tx_chain_id {
                 if let Some(legacy) = tx.as_legacy() {
                     // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
-                    if env.cfg.spec_id >= SpecId::SPURIOUS_DRAGON
-                        && !legacy.meets_eip155(chain_id.to::<u64>())
+                    if env.cfg.spec_id >= SpecId::SPURIOUS_DRAGON &&
+                        !legacy.meets_eip155(chain_id.to::<u64>())
                     {
                         warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
                         return Err(InvalidTransactionError::IncompatibleEIP155);
@@ -2378,10 +2391,7 @@ pub fn transaction_build(
             let max_priority_fee_per_gas =
                 transaction.max_priority_fee_per_gas.map(|g| g.to::<U256>()).unwrap_or(U256::ZERO);
             transaction.gas_price = Some(
-                base_fee
-                    .checked_add(max_priority_fee_per_gas)
-                    .unwrap_or(U256::MAX)
-                    .to::<U128>(),
+                base_fee.checked_add(max_priority_fee_per_gas).unwrap_or(U256::MAX).to::<U128>(),
             );
         }
     } else {

@@ -18,7 +18,7 @@ use forge::{
     opts::EvmOpts,
     traces::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
-        CallTraceDecoder, CallTraceDecoderBuilder, TraceCallData, TraceKind, TraceRetData, Traces,
+        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
     utils::CallKind,
 };
@@ -304,7 +304,7 @@ impl ScriptArgs {
             }
 
             shell::println("Traces:")?;
-            for (kind, trace) in &mut result.traces {
+            for (kind, trace) in &result.traces {
                 let should_include = match kind {
                     TraceKind::Setup => verbosity >= 5,
                     TraceKind::Execution => verbosity > 3,
@@ -312,8 +312,7 @@ impl ScriptArgs {
                 } || !result.success;
 
                 if should_include {
-                    decoder.decode(trace).await;
-                    shell::println(format!("{trace}"))?;
+                    shell::println(format!("{}", render_trace_arena(trace, decoder).await?))?;
                 }
             }
             shell::println(String::new())?;
@@ -511,27 +510,17 @@ impl ScriptArgs {
 
         // From traces
         let create_nodes = result.traces.iter().flat_map(|(_, traces)| {
-            traces
-                .arena
-                .iter()
-                .filter(|node| matches!(node.kind(), CallKind::Create | CallKind::Create2))
+            traces.nodes().iter().filter(|node| node.trace.kind.is_any_create())
         });
         let mut unknown_c = 0usize;
         for node in create_nodes {
-            // Calldata == init code
-            if let TraceCallData::Raw(ref init_code) = node.trace.data {
-                // Output is the runtime code
-                if let TraceRetData::Raw(ref deployed_code) = node.trace.output {
-                    // Only push if it was not present already
-                    if !bytecodes.iter().any(|(_, b, _)| *b == init_code.as_ref()) {
-                        bytecodes.push((format!("Unknown{unknown_c}"), init_code, deployed_code));
-                        unknown_c += 1;
-                    }
-                    continue;
-                }
+            let init_code = &node.trace.data;
+            let deployed_code = &node.trace.output;
+            if !bytecodes.iter().any(|(_, b, _)| *b == init_code.as_ref()) {
+                bytecodes.push((format!("Unknown{unknown_c}"), init_code, deployed_code));
+                unknown_c += 1;
             }
-            // Both should be raw and not decoded since it's just bytecode
-            eyre::bail!("Create node returned decoded data: {:?}", node);
+            continue;
         }
 
         let mut prompt_user = false;
@@ -579,9 +568,9 @@ impl ScriptArgs {
         }
 
         // Only prompt if we're broadcasting and we've not disabled interactivity.
-        if prompt_user
-            && !self.non_interactive
-            && !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()?
+        if prompt_user &&
+            !self.non_interactive &&
+            !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()?
         {
             eyre::bail!("User canceled the script.");
         }
@@ -701,9 +690,7 @@ impl ScriptConfig {
             if let Ok(provider) = ethers_providers::Provider::<Http>::try_from(rpc) {
                 match provider.get_chainid().await {
                     Ok(chain_id) => match TryInto::<Chain>::try_into(chain_id) {
-                        Ok(chain) => {
-                            return Some((SHANGHAI_ENABLED_CHAINS.contains(&chain), chain))
-                        }
+                        Ok(chain) => return Some((SHANGHAI_ENABLED_CHAINS.contains(&chain), chain)),
                         Err(_) => return None,
                     },
                     Err(_) => return None,

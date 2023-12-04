@@ -7,19 +7,12 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::{Address, Bytes, Log as RawLog, B256, U256};
-use ethers_core::types::{DefaultFrame, GethDebugTracingOptions, StructLog};
+use alloy_primitives::U256;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
-use foundry_evm_core::{constants::CHEATCODE_ADDRESS, debug::Instruction, utils::CallKind};
-use foundry_utils::types::ToEthers;
-use hashbrown::HashMap;
-use itertools::Itertools;
-use revm::interpreter::{opcode, CallContext, InstructionResult, SharedMemory, Stack};
+use foundry_evm_core::constants::CHEATCODE_ADDRESS;
+use futures::{future::BoxFuture, FutureExt};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, HashSet},
-    fmt,
-};
+use std::{collections::BTreeMap, fmt::Write};
 use yansi::{Color, Paint};
 
 /// Call trace address identifiers.
@@ -31,20 +24,180 @@ use identifier::LocalTraceIdentifier;
 mod decoder;
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 
+use reth_revm_inspectors::tracing::types::LogCallOrder;
 pub use reth_revm_inspectors::tracing::{
-    types::{CallTrace, CallTraceNode},
-    CallTraceArena, StackSnapshotType, TracingInspector, TracingInspectorConfig,
+    types::{CallKind, CallTrace, CallTraceNode},
+    CallTraceArena, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType, TracingInspector,
+    TracingInspectorConfig,
 };
 
 pub mod utils;
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
+#[derive(Default)]
+pub struct DecodedCallData {
+    pub signature: String,
+    pub args: Vec<String>,
+}
+
+#[derive(Default)]
+pub struct DecodedCallTrace {
+    pub label: Option<String>,
+    pub return_data: Option<String>,
+    pub func: Option<DecodedCallData>,
+}
+
 const PIPE: &str = "  │ ";
 const EDGE: &str = "  └─ ";
 const BRANCH: &str = "  ├─ ";
 const CALL: &str = "→ ";
 const RETURN: &str = "← ";
+
+/// Render a collection of call traces.
+///
+/// The traces will be decoded using the given decoder, if possible.
+pub async fn render_trace_arena(
+    arena: &CallTraceArena,
+    decoder: &CallTraceDecoder,
+) -> Result<String, std::fmt::Error> {
+    fn inner<'a>(
+        arena: &'a [CallTraceNode],
+        decoder: &'a CallTraceDecoder,
+        s: &'a mut String,
+        idx: usize,
+        left: &'a str,
+        child: &'a str,
+    ) -> BoxFuture<'a, Result<(), std::fmt::Error>> {
+        async move {
+            let node = &arena[idx];
+
+            // Display trace header
+            let (trace, return_data) = render_trace(&node.trace, decoder).await?;
+            writeln!(s, "{}", trace)?;
+
+            // Display logs and subcalls
+            let left_prefix = format!("{child}{BRANCH}");
+            let right_prefix = format!("{child}{PIPE}");
+            for child in &node.ordering {
+                match child {
+                    LogCallOrder::Log(index) => {
+                        /*let log = node.logs[*index].to_string();
+                        // Prepend our tree structure symbols to each line of the displayed log
+                        log.lines().enumerate().try_for_each(|(i, line)| {
+                            // todo: render log/decode log
+                            writeln!(
+                                s,
+                                "{}{}",
+                                if i == 0 { &left_prefix } else { &right_prefix },
+                                line
+                            )
+                        })?;*/
+                        // todo
+                    }
+                    LogCallOrder::Call(index) => {
+                        inner(
+                            arena,
+                            decoder,
+                            s,
+                            node.children[*index],
+                            &left_prefix,
+                            &right_prefix,
+                        )
+                        .await?;
+                    }
+                }
+            }
+
+            // Display trace return data
+            let color = trace_color(&node.trace);
+            write!(s, "{child}{EDGE}{}", color.paint(RETURN))?;
+            if node.trace.kind.is_any_create() {
+                match &return_data {
+                    None => {
+                        writeln!(s, "{} bytes of code", node.trace.data.len())?;
+                    }
+                    Some(val) => {
+                        writeln!(s, "{val}")?;
+                    }
+                }
+            } else {
+                writeln!(s, "{}", node.trace.output)?;
+            }
+
+            Ok(())
+        }
+        .boxed()
+    }
+
+    let mut s = String::new();
+    inner(arena.nodes(), decoder, &mut s, 0, "  ", "  ").await?;
+    Ok(s)
+}
+
+/// Render a call trace.
+///
+/// The trace will be decoded using the given decoder, if possible.
+pub async fn render_trace(
+    trace: &CallTrace,
+    decoder: &CallTraceDecoder,
+) -> Result<(String, Option<String>), std::fmt::Error> {
+    let mut s = String::new();
+    write!(&mut s, "[{}]", trace.gas_used)?;
+    let address = trace.address.to_checksum(None);
+
+    let decoded = decoder.decode_function(trace).await;
+    if trace.kind.is_any_create() {
+        write!(
+            &mut s,
+            "{}{} {}@{}",
+            Paint::yellow(CALL),
+            Paint::yellow("new"),
+            decoded.label.as_deref().unwrap_or("<unknown>"),
+            address
+        )?;
+    } else {
+        let (func_name, inputs) = match &decoded.func {
+            Some(DecodedCallData { signature, args }) => {
+                let name = signature.split('(').next().unwrap();
+                (name.to_string(), args.join(", "))
+            }
+            None => {
+                debug!(target: "evm::traces", trace=?trace, "unhandled raw calldata");
+                if trace.data.len() < 4 {
+                    ("fallback".to_string(), hex::encode(&trace.data))
+                } else {
+                    let (selector, data) = trace.data.split_at(4);
+                    (hex::encode(selector), hex::encode(data))
+                }
+            }
+        };
+
+        let action = match trace.kind {
+            CallKind::Call => "",
+            CallKind::StaticCall => " [staticcall]",
+            CallKind::CallCode => " [callcode]",
+            CallKind::DelegateCall => " [delegatecall]",
+            CallKind::Create | CallKind::Create2 => unreachable!(),
+        };
+
+        let color = trace_color(trace);
+        write!(
+            &mut s,
+            "{addr}::{func_name}{opt_value}({inputs}){action}",
+            addr = color.paint(decoded.label.as_deref().unwrap_or(&address)),
+            func_name = color.paint(func_name),
+            opt_value = if trace.value == U256::ZERO {
+                String::new()
+            } else {
+                format!("{{value: {}}}", trace.value)
+            },
+            action = Paint::yellow(action),
+        )?;
+    }
+
+    Ok((s, decoded.return_data))
+}
 
 /// Specifies the kind of trace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

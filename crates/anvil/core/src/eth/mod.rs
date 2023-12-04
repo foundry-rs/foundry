@@ -8,16 +8,17 @@ use alloy_rpc_types::{
     state::StateOverride,
     BlockId, BlockNumberOrTag as BlockNumber, CallRequest, Filter, TransactionRequest,
 };
-use ethers_core::types::{transaction::eip712::TypedData, GethDebugTracingOptions};
+use ethers_core::types::transaction::eip712::TypedData;
+use reth_rpc_types::trace::geth::GethDefaultTracingOptions;
 
 pub mod block;
 pub mod proof;
 pub mod receipt;
+pub mod state;
 pub mod subscription;
 pub mod transaction;
 pub mod trie;
 pub mod utils;
-pub mod state;
 
 #[cfg(feature = "serde")]
 pub mod serde_helpers;
@@ -26,7 +27,9 @@ pub mod serde_helpers;
 use self::serde_helpers::*;
 
 #[cfg(feature = "serde")]
-use foundry_common::serde_helpers::{deserialize_number, deserialize_number_opt, deserialize_number_seq};
+use foundry_common::serde_helpers::{
+    deserialize_number, deserialize_number_opt, deserialize_number_seq,
+};
 
 /// Wrapper type that ensures the type is named `params`
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,9 +91,13 @@ pub enum EthRequest {
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getBlockByNumber"))]
     EthGetBlockByNumber(
-        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number::lenient_block_number"))]
-        BlockNumber, 
-        bool),
+        #[cfg_attr(
+            feature = "serde",
+            serde(deserialize_with = "lenient_block_number::lenient_block_number")
+        )]
+        BlockNumber,
+        bool,
+    ),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getTransactionCount"))]
     EthGetTransactionCount(Address, Option<BlockId>),
@@ -191,9 +198,12 @@ pub enum EthRequest {
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getUncleByBlockNumberAndIndex"))]
     EthGetUncleByBlockNumberAndIndex(
-        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number::lenient_block_number"))]
-        BlockNumber, 
-        Index
+        #[cfg_attr(
+            feature = "serde",
+            serde(deserialize_with = "lenient_block_number::lenient_block_number")
+        )]
+        BlockNumber,
+        Index,
     ),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getLogs", with = "sequence"))]
@@ -251,7 +261,7 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "debug_traceTransaction"))]
     DebugTraceTransaction(
         B256,
-        #[cfg_attr(feature = "serde", serde(default))] GethDebugTracingOptions,
+        #[cfg_attr(feature = "serde", serde(default))] GethDefaultTracingOptions,
     ),
 
     /// geth's `debug_traceCall`  endpoint
@@ -259,7 +269,7 @@ pub enum EthRequest {
     DebugTraceCall(
         CallRequest,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
-        #[cfg_attr(feature = "serde", serde(default))] GethDebugTracingOptions,
+        #[cfg_attr(feature = "serde", serde(default))] GethDefaultTracingOptions,
     ),
 
     /// Trace transaction endpoint for parity's `trace_transaction`
@@ -269,7 +279,10 @@ pub enum EthRequest {
     /// Trace transaction endpoint for parity's `trace_block`
     #[cfg_attr(
         feature = "serde",
-        serde(rename = "trace_block", deserialize_with = "lenient_block_number::lenient_block_number_seq")
+        serde(
+            rename = "trace_block",
+            deserialize_with = "lenient_block_number::lenient_block_number_seq"
+        )
     )]
     TraceBlock(BlockNumber),
 
@@ -606,8 +619,11 @@ pub enum EthRequest {
     /// Related upstream issue: https://github.com/otterscan/otterscan/issues/1081
     #[cfg_attr(feature = "serde", serde(rename = "erigon_getHeaderByNumber"))]
     ErigonGetHeaderByNumber(
-        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number::lenient_block_number_seq"))]
-        BlockNumber
+        #[cfg_attr(
+            feature = "serde",
+            serde(deserialize_with = "lenient_block_number::lenient_block_number_seq")
+        )]
+        BlockNumber,
     ),
 
     /// Otterscan's `ots_getApiLevel` endpoint
@@ -625,9 +641,12 @@ pub enum EthRequest {
     /// Check if an ETH address contains code at a certain block number.
     #[cfg_attr(feature = "serde", serde(rename = "ots_hasCode"))]
     OtsHasCode(
-        Address, 
-        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number::lenient_block_number", default))]
-        BlockNumber
+        Address,
+        #[cfg_attr(
+            feature = "serde",
+            serde(deserialize_with = "lenient_block_number::lenient_block_number", default)
+        )]
+        BlockNumber,
     ),
 
     /// Otterscan's `ots_traceTransaction` endpoint
@@ -646,8 +665,11 @@ pub enum EthRequest {
     /// logBloom
     #[cfg_attr(feature = "serde", serde(rename = "ots_getBlockDetails"))]
     OtsGetBlockDetails(
-        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number::lenient_block_number", default))]
-        BlockNumber
+        #[cfg_attr(
+            feature = "serde",
+            serde(deserialize_with = "lenient_block_number::lenient_block_number", default)
+        )]
+        BlockNumber,
     ),
 
     /// Otterscan's `ots_getBlockDetails` endpoint
@@ -791,16 +813,18 @@ mod tests {
     #[test]
     fn test_custom_impersonate_account() {
         let s = r#"{"method": "anvil_impersonateAccount", "params":
-["0xd84de507f3fada7df80908082d3239466db55a71"]}"#;         let value: serde_json::Value =
-serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();     }
+["0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
 
     #[test]
     fn test_custom_stop_impersonate_account() {
         let s = r#"{"method": "anvil_stopImpersonatingAccount",  "params":
-["0x364d6D0333432C3Ac016Ca832fb8594A8cE43Ca6"]}"#;         let value: serde_json::Value =
-serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();     }
+["0x364d6D0333432C3Ac016Ca832fb8594A8cE43Ca6"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
 
     #[test]
     fn test_custom_auto_impersonate_account() {
@@ -828,11 +852,11 @@ serde_json::from_value::<EthRequest>(value).unwrap();     }
             }
             _ => unreachable!(),
         }
-        let s =
-            r#"{"method": "anvil_mine", "params":
-["0xd84de507f3fada7df80908082d3239466db55a71"]}"#;         let value: serde_json::Value =
-serde_json::from_str(s).unwrap();         let req =
-serde_json::from_value::<EthRequest>(value).unwrap();         match req {
+        let s = r#"{"method": "anvil_mine", "params":
+["0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
             EthRequest::Mine(num, time) => {
                 assert!(num.is_some());
                 assert!(time.is_none());
@@ -874,9 +898,10 @@ serde_json::from_value::<EthRequest>(value).unwrap();         match req {
     #[test]
     fn test_custom_drop_tx() {
         let s = r#"{"method": "anvil_dropTransaction", "params":
-["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;         let value:
-serde_json::Value = serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();     }
+["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
 
     #[test]
     fn test_custom_reset() {
@@ -1019,67 +1044,73 @@ serde_json::from_value::<EthRequest>(value).unwrap();     }
     #[test]
     fn test_custom_set_balance() {
         let s = r#"{"method": "anvil_setBalance", "params":
-["0xd84de507f3fada7df80908082d3239466db55a71", "0x0"]}"#;         let value: serde_json::Value =
-serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();
+["0xd84de507f3fada7df80908082d3239466db55a71", "0x0"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
         let s = r#"{"method": "anvil_setBalance", "params":
-["0xd84de507f3fada7df80908082d3239466db55a71", 1337]}"#;         let value: serde_json::Value =
-serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();     }
+["0xd84de507f3fada7df80908082d3239466db55a71", 1337]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
 
     #[test]
     fn test_custom_set_code() {
         let s = r#"{"method": "anvil_setCode", "params":
-["0xd84de507f3fada7df80908082d3239466db55a71", "0x0123456789abcdef"]}"#;         let value:
-serde_json::Value = serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();
+["0xd84de507f3fada7df80908082d3239466db55a71", "0x0123456789abcdef"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
         let s = r#"{"method": "anvil_setCode", "params":
-["0xd84de507f3fada7df80908082d3239466db55a71", "0x"]}"#;         let value: serde_json::Value =
-serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();
+["0xd84de507f3fada7df80908082d3239466db55a71", "0x"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
         let s = r#"{"method": "anvil_setCode", "params":
-["0xd84de507f3fada7df80908082d3239466db55a71", ""]}"#;         let value: serde_json::Value =
-serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();     }
+["0xd84de507f3fada7df80908082d3239466db55a71", ""]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
 
     #[test]
     fn test_custom_set_nonce() {
         let s = r#"{"method": "anvil_setNonce", "params":
-["0xd84de507f3fada7df80908082d3239466db55a71", "0x0"]}"#;         let value: serde_json::Value =
-serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();         let s = r#"{"method":
+["0xd84de507f3fada7df80908082d3239466db55a71", "0x0"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method":
 "hardhat_setNonce", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", "0x0"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
         let s = r#"{"method": "evm_setAccountNonce", "params":
-["0xd84de507f3fada7df80908082d3239466db55a71", "0x0"]}"#;         let value: serde_json::Value =
-serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();     }
+["0xd84de507f3fada7df80908082d3239466db55a71", "0x0"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
 
     #[test]
     fn test_serde_custom_set_storage_at() {
         let s = r#"{"method": "anvil_setStorageAt", "params":
 ["0x295a70b2de5e3953354a6a8344e616ed314d7251", "0x0",
-"0x0000000000000000000000000000000000000000000000000000000000003039"]}"#;         let value:
-serde_json::Value = serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();
+"0x0000000000000000000000000000000000000000000000000000000000003039"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
         let s = r#"{"method": "hardhat_setStorageAt", "params":
 ["0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56",
 "0xa6eef7e35abe7026729641147f7915573c7e97b47efa546f5f6e3230263bcb49",
-"0x0000000000000000000000000000000000000000000000000000000000003039"]}"#;         let value:
-serde_json::Value = serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();     }
+"0x0000000000000000000000000000000000000000000000000000000000003039"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
 
     #[test]
     fn test_serde_custom_coinbase() {
         let s = r#"{"method": "anvil_setCoinbase", "params":
-["0x295a70b2de5e3953354a6a8344e616ed314d7251"]}"#;         let value: serde_json::Value =
-serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();     }
+["0x295a70b2de5e3953354a6a8344e616ed314d7251"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
 
     #[test]
     fn test_serde_custom_logging() {
@@ -1304,23 +1335,23 @@ serde_json::from_value::<EthRequest>(value).unwrap();     }
 
     #[test]
     fn test_eth_uncle_count_by_block_hash() {
-        let s = r#"{"jsonrpc":"2.0","method":"eth_getUncleCountByBlockHash","params":["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;         
-        let value: serde_json::Value = serde_json::from_str(s).unwrap();         
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();     
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getUncleCountByBlockHash","params":["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_eth_block_tx_count_by_block_hash() {
-        let s = r#"{"jsonrpc":"2.0","method":"eth_getBlockTransactionCountByHash","params":["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;         
-        let value: serde_json::Value = serde_json::from_str(s).unwrap();         
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();     
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getBlockTransactionCountByHash","params":["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_eth_get_logs() {
-        let s = r#"{"jsonrpc":"2.0","method":"eth_getLogs","params":[{"topics":["0x000000000000000000000000a94f5374fce5edbc8e2a8697c15331677e6ebf0b"]}],"id":74}"#;         
-        let value: serde_json::Value = serde_json::from_str(s).unwrap();         
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();     
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getLogs","params":[{"topics":["0x000000000000000000000000a94f5374fce5edbc8e2a8697c15331677e6ebf0b"]}],"id":74}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
@@ -1333,9 +1364,10 @@ serde_json::from_value::<EthRequest>(value).unwrap();     }
     #[test]
     fn test_serde_eth_unsubscribe() {
         let s = r#"{"id": 1, "method": "eth_unsubscribe", "params":
-["0x9cef478923ff08bf67fde6c64013158d"]}"#;         let value: serde_json::Value =
-serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthPubSub>(value).unwrap();     }
+["0x9cef478923ff08bf67fde6c64013158d"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthPubSub>(value).unwrap();
+    }
 
     #[test]
     fn test_serde_eth_subscribe() {
@@ -1345,9 +1377,9 @@ serde_json::from_value::<EthPubSub>(value).unwrap();     }
 
         let s = r#"{"id": 1, "method": "eth_subscribe", "params": ["logs", {"address":
 "0x8320fe7702b96808f7bbc0d4a888ed1468216cfd", "topics":
-["0xd78a0cb8bb633d06981248b816e7bd33c2a35a6089241d099fa519e361cab902"]}]}"#;         let value:
-serde_json::Value = serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthPubSub>(value).unwrap();
+["0xd78a0cb8bb633d06981248b816e7bd33c2a35a6089241d099fa519e361cab902"]}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthPubSub>(value).unwrap();
 
         let s = r#"{"id": 1, "method": "eth_subscribe", "params": ["newPendingTransactions"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
@@ -1361,18 +1393,19 @@ serde_json::from_value::<EthPubSub>(value).unwrap();
     #[test]
     fn test_serde_debug_trace_transaction() {
         let s = r#"{"method": "debug_traceTransaction", "params":
-["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;         let value:
-serde_json::Value = serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();
+["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
         let s = r#"{"method": "debug_traceTransaction", "params":
-["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", {}]}"#;         let value:
-serde_json::Value = serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();
+["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", {}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
         let s = r#"{"method": "debug_traceTransaction", "params":
 ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", {"disableStorage":
-true}]}"#;         let value: serde_json::Value = serde_json::from_str(s).unwrap();
+true}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
@@ -1402,36 +1435,37 @@ true}]}"#;         let value: serde_json::Value = serde_json::from_str(s).unwrap
     #[test]
     fn test_serde_eth_storage() {
         let s = r#"{"method": "eth_getStorageAt", "params":
-["0x295a70b2de5e3953354a6a8344e616ed314d7251", "0x0", "latest"]}"#;         let value:
-serde_json::Value = serde_json::from_str(s).unwrap();         let _req =
-serde_json::from_value::<EthRequest>(value).unwrap();     }
+["0x295a70b2de5e3953354a6a8344e616ed314d7251", "0x0", "latest"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
 
     #[test]
     fn test_eth_call() {
         let req = r#"{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}"#;
-let _req =serde_json::from_str::<CallRequest>(req).unwrap();
+        let _req = serde_json::from_str::<CallRequest>(req).unwrap();
 
-        let s = r#"{"method": "eth_call", "params":[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"},"latest"]}"#;         
+        let s = r#"{"method": "eth_call", "params":[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"},"latest"]}"#;
         let _req = serde_json::from_str::<EthRequest>(s).unwrap();
 
         let s = r#"{"method": "eth_call", "params":[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}]}"#;
         let _req = serde_json::from_str::<EthRequest>(s).unwrap();
 
-        let s = r#"{"method": "eth_call", "params":[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "latest" }]}"#;         
+        let s = r#"{"method": "eth_call", "params":[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "latest" }]}"#;
         let _req = serde_json::from_str::<EthRequest>(s).unwrap();
 
-        let s = r#"{"method": "eth_call", "params":[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "0x0" }]}"#;         
+        let s = r#"{"method": "eth_call", "params":[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "0x0" }]}"#;
         let _req = serde_json::from_str::<EthRequest>(s).unwrap();
 
-        let s = r#"{"method": "eth_call", "params":[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockHash":"0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" }]}"#;         
-        let _req = serde_json::from_str::<EthRequest>(s).unwrap();     
+        let s = r#"{"method": "eth_call", "params":[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockHash":"0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" }]}"#;
+        let _req = serde_json::from_str::<EthRequest>(s).unwrap();
     }
 
     #[test]
     fn test_serde_eth_balance() {
         let s = r#"{"method": "eth_getBalance", "params":
-["0x295a70b2de5e3953354a6a8344e616ed314d7251", "latest"]}"#;         let value: serde_json::Value
-= serde_json::from_str(s).unwrap();
+["0x295a70b2de5e3953354a6a8344e616ed314d7251", "latest"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
 
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

@@ -14,7 +14,7 @@ use ethers_core::{
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
-use foundry_evm::traces::CallTraceArena;
+use foundry_evm::traces::{CallTraceArena, CallTraceNode};
 use foundry_utils::types::ToAlloy;
 use revm::{
     interpreter::InstructionResult,
@@ -26,8 +26,8 @@ use std::ops::Deref;
 mod ethers_compat;
 
 pub use ethers_compat::{
-    call_to_internal_tx_request, from_ethers_access_list, to_alloy_proof, to_ethers_access_list,
-    to_internal_tx_request, to_ethers_state_override, to_alloy_state_override
+    call_to_internal_tx_request, from_ethers_access_list, to_alloy_proof, to_alloy_state_override,
+    to_ethers_access_list, to_ethers_state_override, to_internal_tx_request,
 };
 
 /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
@@ -1283,44 +1283,9 @@ pub struct TransactionInfo {
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
     pub logs_bloom: Bloom,
-    pub traces: CallTraceArena,
+    pub traces: Vec<CallTraceNode>,
     pub exit: InstructionResult,
     pub out: Option<Bytes>,
-}
-
-// === impl TransactionInfo ===
-
-impl TransactionInfo {
-    /// Returns the `traceAddress` of the node in the arena
-    ///
-    /// The `traceAddress` field of all returned traces, gives the exact location in the call trace
-    /// [index in root, index in first CALL, index in second CALL, …].
-    ///
-    /// # Panics
-    ///
-    /// if the `idx` does not belong to a node
-    pub fn trace_address(&self, idx: usize) -> Vec<usize> {
-        if idx == 0 {
-            // root call has empty traceAddress
-            return vec![]
-        }
-        let mut graph = vec![];
-        let mut node = &self.traces.arena[idx];
-        while let Some(parent) = node.parent {
-            // the index of the child call in the arena
-            let child_idx = node.idx;
-            node = &self.traces.arena[parent];
-            // find the index of the child call in the parent node
-            let call_idx = node
-                .children
-                .iter()
-                .position(|child| *child == child_idx)
-                .expect("child exists in parent");
-            graph.push(call_idx);
-        }
-        graph.reverse();
-        graph
-    }
 }
 
 #[cfg(test)]

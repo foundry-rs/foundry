@@ -13,13 +13,20 @@ use anvil_core::eth::{
     receipt::TypedReceipt,
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
-use ethers::{
-    prelude::{DefaultFrame, Trace},
-    types::{ActionType, GethDebugTracingOptions},
+use ethers::{prelude::Trace, types::ActionType};
+use foundry_evm::{
+    revm::{interpreter::InstructionResult, primitives::Env},
+    traces::{GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig},
 };
-use foundry_evm::revm::{interpreter::InstructionResult, primitives::Env};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::RwLock;
+use reth_rpc_types::{
+    trace::{
+        geth::{DefaultFrame, GethDefaultTracingOptions},
+        parity::LocalizedTransactionTrace,
+    },
+    transaction::TransactionInfo as RethTransactionInfo,
+};
 use std::{
     collections::{HashMap, VecDeque},
     fmt,
@@ -396,38 +403,28 @@ pub struct MinedTransaction {
 
 impl MinedTransaction {
     /// Returns the traces of the transaction for `trace_transaction`
-    pub fn parity_traces(&self) -> Vec<Trace> {
-        let mut traces = Vec::with_capacity(self.info.traces.arena.len());
-        for (idx, node) in self.info.traces.arena.iter().cloned().enumerate() {
-            let action = node.parity_action();
-            let result = node.parity_result();
-
-            let action_type = if node.status() == InstructionResult::SelfDestruct {
-                ActionType::Suicide
-            } else {
-                node.kind().into()
-            };
-
-            let trace = Trace {
-                action,
-                result: Some(result),
-                trace_address: self.info.trace_address(idx),
-                subtraces: node.children.len(),
-                transaction_position: Some(self.info.transaction_index as usize),
-                transaction_hash: Some(self.info.transaction_hash),
-                block_number: self.block_number,
-                block_hash: self.block_hash.to_ethers(),
-                action_type,
-                error: None,
-            };
-            traces.push(trace)
-        }
-
-        traces
+    pub fn parity_traces(&self) -> Vec<LocalizedTransactionTrace> {
+        ParityTraceBuilder::new(
+            self.info.traces.clone(),
+            None,
+            TracingInspectorConfig::default_parity(),
+        )
+        .into_localized_transaction_traces(RethTransactionInfo {
+            hash: Some(self.info.transaction_hash.to_alloy()),
+            index: Some(self.info.transaction_index as u64),
+            block_hash: Some(self.block_hash),
+            block_number: Some(self.block_number),
+            base_fee: None,
+        })
     }
 
-    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> DefaultFrame {
-        self.info.traces.geth_trace(self.receipt.gas_used().to_alloy(), opts)
+    pub fn geth_trace(&self, opts: GethDefaultTracingOptions) -> DefaultFrame {
+        GethTraceBuilder::new(self.info.traces.clone(), TracingInspectorConfig::default_geth())
+            .geth_traces(
+                self.receipt.gas_used().as_u64(),
+                Bytes::from(self.info.out.clone().unwrap_or_default().to_vec()),
+                opts,
+            )
     }
 }
 

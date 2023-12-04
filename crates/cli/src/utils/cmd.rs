@@ -17,7 +17,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
-        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
+        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
 use std::{fmt::Write, path::PathBuf, str::FromStr};
@@ -417,20 +417,15 @@ pub async fn handle_traces(
 pub async fn print_traces(
     result: &mut TraceResult,
     decoder: &CallTraceDecoder,
-    verbose: bool,
+    _verbose: bool,
 ) -> Result<()> {
     if result.traces.is_empty() {
         panic!("No traces found")
     }
 
     println!("Traces:");
-    for (_, trace) in &mut result.traces {
-        decoder.decode(trace).await;
-        if !verbose {
-            println!("{trace}");
-        } else {
-            println!("{trace:#}");
-        }
+    for (_, arena) in &result.traces {
+        println!("{}", render_trace_arena(arena, decoder).await?);
     }
     println!();
 

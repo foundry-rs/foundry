@@ -12,6 +12,7 @@ use foundry_evm::{
         primitives::{Address, Bytes, B256},
         EVMData,
     },
+    traces::TracingInspectorConfig,
 };
 
 /// The [`revm::Inspector`] used when transacting in the evm
@@ -34,15 +35,14 @@ impl Inspector {
 
     /// Configures the `Tracer` [`revm::Inspector`]
     pub fn with_tracing(mut self) -> Self {
-        self.tracer = Some(Default::default());
+        self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all()));
         self
     }
 
     /// Enables steps recording for `Tracer`.
-    pub fn with_steps_tracing(mut self) -> Self {
-        let tracer = self.tracer.get_or_insert_with(Default::default);
-        tracer.record_steps();
-        self
+    pub fn with_steps_tracing(self) -> Self {
+        // todo deprecate?
+        self.with_tracing()
     }
 }
 

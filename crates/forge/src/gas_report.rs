@@ -1,7 +1,7 @@
 use crate::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
     hashbrown::HashSet,
-    traces::{CallTraceArena, TraceCallData, TraceKind},
+    traces::{CallTraceArena, TraceKind},
 };
 use alloy_primitives::U256;
 use comfy_table::{presets::ASCII_MARKDOWN, *};
@@ -51,6 +51,8 @@ impl GasReport {
     }
 
     fn analyze_node(&mut self, node_index: usize, arena: &CallTraceArena) {
+        // todo
+        /*
         let node = &arena.arena[node_index];
         let trace = &node.trace;
 
@@ -105,6 +107,7 @@ impl GasReport {
         node.children.iter().for_each(|index| {
             self.analyze_node(*index, arena);
         });
+        */
     }
 
     /// Finalizes the gas report by calculating the min, max, mean, and median for each function.

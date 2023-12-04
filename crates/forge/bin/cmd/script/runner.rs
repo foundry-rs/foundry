@@ -241,7 +241,8 @@ impl ScriptRunner {
                 traces: traces
                     .map(|mut traces| {
                         // Manually adjust gas for the trace to add back the stipend/real used gas
-                        traces.arena[0].trace.gas_cost = gas_used;
+                        // todo(onbjerg): not possible
+                        //traces.arena[0].trace.gas_cost = gas_used;
                         vec![(TraceKind::Execution, traces)]
                     })
                     .unwrap_or_default(),
@@ -302,7 +303,8 @@ impl ScriptRunner {
             traces: traces
                 .map(|mut traces| {
                     // Manually adjust gas for the trace to add back the stipend/real used gas
-                    traces.arena[0].trace.gas_cost = gas_used;
+                    // todo(onbjerg): not possible
+                    //traces.arena[0].trace.gas_cost = gas_used;
                     vec![(TraceKind::Execution, traces)]
                 })
                 .unwrap_or_default(),

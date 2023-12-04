@@ -315,7 +315,7 @@ impl InspectorStack {
                     cheatcodes.labels.clone().into_iter().map(|l| (l.0, l.1)).collect()
                 })
                 .unwrap_or_default(),
-            traces: self.tracer.map(|tracer| tracer.traces),
+            traces: self.tracer.map(|tracer| tracer.get_traces().clone()),
             debug: self.debugger.map(|debugger| debugger.arena),
             coverage: self.coverage.map(|coverage| coverage.maps),
             script_wallets: self

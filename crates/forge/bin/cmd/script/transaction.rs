@@ -5,7 +5,10 @@ use alloy_primitives::{Address, B256};
 use ethers_core::types::{transaction::eip2718::TypedTransaction, NameOrAddress};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{fmt::format_token_raw, provider::ethers::RpcUrl, SELECTOR_LEN};
-use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder, utils::CallKind};
+use foundry_evm::{
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    traces::{CallKind, CallTraceDecoder},
+};
 use foundry_utils::types::{ToAlloy, ToEthers};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

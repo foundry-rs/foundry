@@ -428,6 +428,7 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "rand 0.8.5",
+ "reth-rpc-types",
  "serde",
  "serde_json",
  "serde_repr",
@@ -459,6 +460,7 @@ dependencies = [
  "keccak-hasher",
  "open-fastrlp",
  "reference-trie",
+ "reth-rpc-types",
  "revm",
  "serde",
  "serde_json",
@@ -6314,8 +6316,8 @@ dependencies = [
 
 [[package]]
 name = "reth-revm-inspectors"
-version = "0.1.0-alpha.11"
-source = "git+https://github.com/paradigmxyz/reth/?branch=onbjerg/tracer-snapshot-type#543e8545a18ad402f2cb98adee144d7dcd8b1e65"
+version = "0.1.0-alpha.12"
+source = "git+https://github.com/paradigmxyz/reth/?branch=onbjerg/trace-builder#64b2ce23cad2d3b68700ad5bc007b83e6a61e3ac"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -6331,8 +6333,8 @@ dependencies = [
 
 [[package]]
 name = "reth-rpc-types"
-version = "0.1.0-alpha.11"
-source = "git+https://github.com/paradigmxyz/reth/?branch=onbjerg/tracer-snapshot-type#543e8545a18ad402f2cb98adee144d7dcd8b1e65"
+version = "0.1.0-alpha.12"
+source = "git+https://github.com/paradigmxyz/reth/?branch=onbjerg/trace-builder#64b2ce23cad2d3b68700ad5bc007b83e6a61e3ac"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",

@@ -167,12 +167,12 @@ impl ScriptArgs {
                             .traces
                             .iter()
                             .flat_map(|(_, traces)| {
-                                traces.arena.iter().filter_map(|node| {
-                                    if matches!(node.kind(), CallKind::Create | CallKind::Create2) {
+                                traces.nodes().iter().filter_map(|node| {
+                                    if node.trace.kind.is_any_create() {
                                         return Some(AdditionalContract {
-                                            opcode: node.kind(),
+                                            opcode: node.trace.kind,
                                             address: node.trace.address,
-                                            init_code: node.trace.data.as_bytes().to_vec(),
+                                            init_code: node.trace.data.to_vec(),
                                         });
                                     }
                                     None
@@ -230,9 +230,8 @@ impl ScriptArgs {
                     );
                 }
 
-                for (_kind, trace) in &mut traces {
-                    decoder.decode(trace).await;
-                    println!("{trace}");
+                for (_, trace) in &traces {
+                    println!("{}", render_trace_arena(trace, decoder).await?);
                 }
             }
 
