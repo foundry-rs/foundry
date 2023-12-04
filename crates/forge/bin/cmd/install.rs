@@ -136,17 +136,13 @@ impl DependencyInstallOpts {
             if !empty_install_dir {
                 fs::create_file(libs.join(".keep"))?;
                 // Update the git project with the newly created folder if we're using git.
-                if !self.no_git {
-                    git.add(Some(&libs.join(".keep")))?;
-                }
+                git.add(Some(&libs.join(".keep")))?;
                 // recursively fetch all submodules (without fetching latest)
                 git.submodule_update(false, false, false, true, Some(&libs))?;
                 // remove the temporary file
                 fs::remove_file(libs.join(".keep"))?;
                 // Update the git project with the newly deleted folder if we're using git.
-                if !self.no_git {
-                    git.add(Some(&libs.join(".keep")))?;
-                }
+                git.add(Some(&libs.join(".keep")))?;
             } else {
                 // just recursively fetch all submodules (without fetching latest)
                 git.submodule_update(false, false, false, true, Some(&libs))?;
