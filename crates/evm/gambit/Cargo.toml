@@ -1,5 +1,7 @@
 [package]
 name = "gambit"
+description = "Mutation testing framework"
+
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
