@@ -1,16 +1,16 @@
 /// Named parameter of an EVM opcode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct OpcodeParam {
+pub(crate) struct OpcodeParam {
     /// The name of the parameter.
-    pub name: &'static str,
+    pub(crate) name: &'static str,
     /// The index of the parameter on the stack. This is relative to the top of the stack.
-    pub index: usize,
+    pub(crate) index: usize,
 }
 
 impl OpcodeParam {
     /// Returns the list of named parameters for the given opcode.
     #[inline]
-    pub fn of(op: u8) -> &'static [Self] {
+    pub(crate) fn of(op: u8) -> &'static [Self] {
         MAP[op as usize]
     }
 }
