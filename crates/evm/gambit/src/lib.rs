@@ -8,11 +8,9 @@ use itertools::Itertools;
 use std::path::{Path, PathBuf};
 use foundry_common::{TestFilter, FunctionFilter, TestFunctionExt};
 use alloy_json_abi::{Function, JsonAbi as Abi};
-use rayon::{prelude, iter::{IntoParallelRefIterator, ParallelIterator}};
 
 
 const DEFAULT_GAMBIT_DIR_OUT: &'static str = "gambit_out";
-
 
 pub type GambitArtifacts = Vec<(ArtifactId, Abi)>;
 
