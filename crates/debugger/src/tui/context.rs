@@ -96,7 +96,7 @@ impl<'a> DebuggerContext<'a> {
 impl DebuggerContext<'_> {
     pub(crate) fn handle_event(&mut self, event: Event) -> ControlFlow<ExitReason> {
         if self.last_index != self.draw_memory.inner_call_index {
-            self.opcode_list = self.debug_steps().iter().map(|step| step.pretty_opcode()).collect();
+            self.gen_opcode_list();
             self.last_index = self.draw_memory.inner_call_index;
         }
 
@@ -123,8 +123,7 @@ impl DebuggerContext<'_> {
                 // Grab number of times to do it
                 for _ in 0..buffer_as_number(&self.key_buffer, 1) {
                     if event.modifiers.contains(KeyModifiers::CONTROL) {
-                        let max_mem = (self.debug_steps()[self.current_step].memory.len() / 32)
-                            .saturating_sub(1);
+                        let max_mem = (self.current_step().memory.len() / 32).saturating_sub(1);
                         if self.draw_memory.current_mem_startline < max_mem {
                             self.draw_memory.current_mem_startline += 1;
                         }
@@ -139,8 +138,7 @@ impl DebuggerContext<'_> {
             }
             KeyCode::Char('J') => {
                 for _ in 0..buffer_as_number(&self.key_buffer, 1) {
-                    let max_stack =
-                        self.debug_steps()[self.current_step].stack.len().saturating_sub(1);
+                    let max_stack = self.current_step().stack.len().saturating_sub(1);
                     if self.draw_memory.current_stack_startline < max_stack {
                         self.draw_memory.current_stack_startline += 1;
                     }
