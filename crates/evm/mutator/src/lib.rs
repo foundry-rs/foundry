@@ -8,7 +8,10 @@ use std::path::{Path, PathBuf};
 use foundry_common::{TestFilter, FunctionFilter, TestFunctionExt};
 use alloy_json_abi::{Function, JsonAbi as Abi};
 
+
+mod filter;
 pub use gambit::Mutant;
+pub use filter::*;
 
 const DEFAULT_GAMBIT_DIR_OUT: &'static str = "gambit_out";
 
@@ -196,7 +199,7 @@ impl Mutator {
                     .filter(|func| filter.matches_function(func.name.clone()))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
-
+                
                 (source, name , functions)
             })
             .fold( BTreeMap::new(), | mut acc, (source, name, functions) | {
