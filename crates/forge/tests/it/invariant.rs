@@ -1,4 +1,4 @@
-//! Tests for invariants
+//! Invariant tests.
 
 use crate::config::*;
 use alloy_primitives::U256;

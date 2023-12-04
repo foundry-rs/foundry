@@ -1,4 +1,4 @@
-//! Tests for invariants
+//! Fuzz tests.
 
 use crate::config::*;
 use alloy_primitives::U256;

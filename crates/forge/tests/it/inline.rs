@@ -1,3 +1,5 @@
+//! Inline configuration tests.
+
 use crate::{
     config::runner,
     test_helpers::{COMPILED, PROJECT},
