@@ -1,10 +1,9 @@
 //! Debugger context and event handler implementation.
 
 use crate::{Debugger, ExitReason};
-use alloy_primitives::Address;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use eyre::Result;
-use foundry_evm_core::{debug::DebugStep, utils::CallKind};
+use foundry_evm_core::debug::{DebugNodeFlat, DebugStep};
 use std::ops::ControlFlow;
 
 /// This is currently used to remember last scroll position so screen doesn't wiggle as much.
@@ -55,8 +54,12 @@ impl<'a> DebuggerContext<'a> {
         Ok(())
     }
 
-    fn debug_arena(&self) -> &[(Address, Vec<DebugStep>, CallKind)] {
+    pub(crate) fn debug_arena(&self) -> &[DebugNodeFlat] {
         &self.debugger.debug_arena
+    }
+
+    pub(crate) fn debug_call(&self) -> &DebugNodeFlat {
+        &self.debugger.debug_arena[self.draw_memory.inner_call_index]
     }
 
     fn gen_opcode_list(&mut self) {
@@ -64,22 +67,15 @@ impl<'a> DebuggerContext<'a> {
     }
 
     fn opcode_list(&self) -> Vec<String> {
-        self.debugger.debug_arena[self.draw_memory.inner_call_index]
-            .1
-            .iter()
-            .map(DebugStep::pretty_opcode)
-            .collect()
+        self.debug_call().steps.iter().map(DebugStep::pretty_opcode).collect()
     }
 }
 
 impl DebuggerContext<'_> {
     pub(crate) fn handle_event(&mut self, event: Event) -> ControlFlow<ExitReason> {
         if self.last_index != self.draw_memory.inner_call_index {
-            self.opcode_list = self.debug_arena()[self.draw_memory.inner_call_index]
-                .1
-                .iter()
-                .map(|step| step.pretty_opcode())
-                .collect();
+            self.opcode_list =
+                self.debug_call().steps.iter().map(|step| step.pretty_opcode()).collect();
             self.last_index = self.draw_memory.inner_call_index;
         }
 
@@ -106,10 +102,7 @@ impl DebuggerContext<'_> {
                 // Grab number of times to do it
                 for _ in 0..buffer_as_number(&self.key_buffer, 1) {
                     if event.modifiers.contains(KeyModifiers::CONTROL) {
-                        let max_mem = (self.debug_arena()[self.draw_memory.inner_call_index].1
-                            [self.current_step]
-                            .memory
-                            .len() /
+                        let max_mem = (self.debug_call().steps[self.current_step].memory.len() /
                             32)
                         .saturating_sub(1);
                         if self.draw_memory.current_mem_startline < max_mem {
@@ -126,11 +119,8 @@ impl DebuggerContext<'_> {
             }
             KeyCode::Char('J') => {
                 for _ in 0..buffer_as_number(&self.key_buffer, 1) {
-                    let max_stack = self.debug_arena()[self.draw_memory.inner_call_index].1
-                        [self.current_step]
-                        .stack
-                        .len()
-                        .saturating_sub(1);
+                    let max_stack =
+                        self.debug_call().steps[self.current_step].stack.len().saturating_sub(1);
                     if self.draw_memory.current_stack_startline < max_stack {
                         self.draw_memory.current_stack_startline += 1;
                     }
@@ -147,8 +137,7 @@ impl DebuggerContext<'_> {
                         self.current_step -= 1;
                     } else if self.draw_memory.inner_call_index > 0 {
                         self.draw_memory.inner_call_index -= 1;
-                        self.current_step =
-                            self.debug_arena()[self.draw_memory.inner_call_index].1.len() - 1;
+                        self.current_step = self.debug_call().steps.len() - 1;
                     }
                 }
                 self.key_buffer.clear();
@@ -169,16 +158,14 @@ impl DebuggerContext<'_> {
             // Go to bottom of file
             KeyCode::Char('G') => {
                 self.draw_memory.inner_call_index = self.debug_arena().len() - 1;
-                self.current_step =
-                    self.debug_arena()[self.draw_memory.inner_call_index].1.len() - 1;
+                self.current_step = self.debug_call().steps.len() - 1;
                 self.key_buffer.clear();
             }
             // Go to previous call
             KeyCode::Char('c') => {
                 self.draw_memory.inner_call_index =
                     self.draw_memory.inner_call_index.saturating_sub(1);
-                self.current_step =
-                    self.debug_arena()[self.draw_memory.inner_call_index].1.len() - 1;
+                self.current_step = self.debug_call().steps.len() - 1;
                 self.key_buffer.clear();
             }
             // Go to next call
@@ -261,9 +248,9 @@ impl DebuggerContext<'_> {
         // Find the location of the called breakpoint in the whole debug arena (at this address with
         // this pc)
         if let Some((caller, pc)) = self.debugger.breakpoints.get(&c) {
-            for (i, (_caller, debug_steps, _)) in self.debug_arena().iter().enumerate() {
-                if _caller == caller {
-                    if let Some(step) = debug_steps.iter().position(|step| step.pc == *pc) {
+            for (i, node) in self.debug_arena().iter().enumerate() {
+                if node.address == *caller {
+                    if let Some(step) = node.steps.iter().position(|step| step.pc == *pc) {
                         self.draw_memory.inner_call_index = i;
                         self.current_step = step;
                         break
@@ -283,8 +270,7 @@ impl DebuggerContext<'_> {
                     self.draw_memory.inner_call_index -= 1;
                     self.draw_memory.current_mem_startline = 0;
                     self.draw_memory.current_stack_startline = 0;
-                    self.current_step =
-                        self.debug_arena()[self.draw_memory.inner_call_index].1.len() - 1;
+                    self.current_step = self.debug_call().steps.len() - 1;
                 }
             }
             MouseEventKind::ScrollDown => {

@@ -9,8 +9,8 @@ use crossterm::{
 use eyre::Result;
 use foundry_common::{compile::ContractSources, evm::Breakpoints};
 use foundry_evm_core::{
-    debug::DebugStep,
-    utils::{build_pc_ic_map, CallKind, PCICMap},
+    debug::DebugNodeFlat,
+    utils::{build_pc_ic_map, PCICMap},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use revm::primitives::SpecId;
@@ -40,7 +40,7 @@ pub enum ExitReason {
 
 /// The TUI debugger.
 pub struct Debugger {
-    debug_arena: Vec<(Address, Vec<DebugStep>, CallKind)>,
+    debug_arena: Vec<DebugNodeFlat>,
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
     identified_contracts: HashMap<Address, String>,
     /// Source map of contract sources
@@ -59,7 +59,7 @@ impl Debugger {
 
     /// Creates a new debugger.
     pub fn new(
-        debug_arena: Vec<(Address, Vec<DebugStep>, CallKind)>,
+        debug_arena: Vec<DebugNodeFlat>,
         identified_contracts: HashMap<Address, String>,
         contracts_sources: ContractSources,
         breakpoints: Breakpoints,
