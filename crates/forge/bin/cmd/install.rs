@@ -126,7 +126,9 @@ impl DependencyInstallOpts {
         // Pre-emptively create the directory where deps will be installed if it's missing
         fs::create_dir_all(&libs)?;
 
-        if dependencies.is_empty() && !self.no_git {
+        // Only update submodule deps if there are no other deps to install, we're using git
+        // and an appropiate .gitmodules file exists.
+        if dependencies.is_empty() && !self.no_git && git.root.join(".gitmodules").exists() {
             p_println!(!self.quiet => "Updating dependencies in {}", libs.display());
 
             let empty_install_dir = libs.read_dir()?.next().is_none();
