@@ -759,7 +759,7 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
     ///   (read memory offset, read memory size, write memory offset, write memory size)
     fn get_memory_access(
         op: u8,
-        stack: &Vec<U256>,
+        stack: &[U256],
     ) -> (Option<usize>, Option<usize>, Option<usize>, Option<usize>) {
         let memory_access = match op {
             opcode::KECCAK256 | opcode::RETURN | opcode::REVERT => (1, 2, 0, 0),
