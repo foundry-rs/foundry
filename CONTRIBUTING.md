@@ -24,7 +24,7 @@ There are fundamentally four ways an individual can contribute:
 1. **By opening an issue:** For example, if you believe that you have uncovered a bug
    in Foundry, creating a new issue in the issue tracker is the way to report it.
 2. **By adding context:** Providing additional context to existing issues,
-   such as screenshots, code snippets and helps resolve issues.
+   such as screenshots and code snippets, which help resolve issues.
 3. **By resolving issues:** Typically this is done in the form of either
    demonstrating that the issue reported is not a problem after all, or more often,
    by opening a pull request that fixes the underlying problem, in a concrete and
@@ -47,8 +47,7 @@ The [Foundry Book][foundry-book] is our current best-effort attempt at keeping u
 
 When filing a new bug report in the issue tracker, you will be presented with a basic form to fill out.
 
-If you believe that you have uncovered a bug, please fill out the form to the best of your ability. Do not worry if you cannot answer every detail,
-just fill in what you can. Contributors will ask follow-up questions if something is unclear.
+If you believe that you have uncovered a bug, please fill out the form to the best of your ability. Do not worry if you cannot answer every detail; just fill in what you can. Contributors will ask follow-up questions if something is unclear.
 
 The most important pieces of information we need in a bug report are:
 
@@ -74,7 +73,7 @@ If you have examples of other tools that have the feature you are requesting, pl
 
 Pull requests are the way concrete changes are made to the code, documentation, and dependencies of Foundry.
 
-Even tiny pull requests, like fixing wording, are greatly appreciated. Before making a large change, it is usually
+Even minor pull requests, such as those fixing wording, are greatly appreciated. Before making a large change, it is usually
 a good idea to first open an issue describing the change to solicit feedback and guidance. This will increase
 the likelihood of the PR getting merged.
 

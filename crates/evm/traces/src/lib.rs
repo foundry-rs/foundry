@@ -9,12 +9,14 @@ extern crate tracing;
 
 use alloy_primitives::{Address, Bytes, Log as RawLog, B256, U256};
 use ethers_core::types::{DefaultFrame, GethDebugTracingOptions, StructLog};
-use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use foundry_common::{
+    contracts::{ContractsByAddress, ContractsByArtifact},
+    types::ToEthers,
+};
 use foundry_evm_core::{constants::CHEATCODE_ADDRESS, debug::Instruction, utils::CallKind};
-use foundry_utils::types::ToEthers;
 use hashbrown::HashMap;
 use itertools::Itertools;
-use revm::interpreter::{opcode, CallContext, InstructionResult, SharedMemory, Stack};
+use revm::interpreter::{opcode, CallContext, InstructionResult, Stack};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -177,7 +179,7 @@ impl CallTraceArena {
             // If the top-level trace succeeded, then it was a success
             failed: !main_trace.success,
             gas: receipt_gas_used.to_ethers(),
-            return_value: main_trace.output.to_bytes().0.into(),
+            return_value: main_trace.output.to_bytes().to_ethers(),
             ..Default::default()
         };
 
@@ -390,7 +392,7 @@ pub struct CallTraceStep {
     /// Stack before step execution
     pub stack: Stack,
     /// Memory before step execution
-    pub memory: SharedMemory,
+    pub memory: Vec<u8>,
     /// Remaining gas before step execution
     pub gas: u64,
     /// Gas refund counter before step execution
@@ -412,7 +414,7 @@ impl From<&CallTraceStep> for StructLog {
             error: step.error.clone(),
             gas: step.gas,
             gas_cost: step.gas_cost,
-            memory: Some(convert_memory(step.memory.context_memory())),
+            memory: Some(convert_memory(&step.memory)),
             op: step.op.to_string(),
             pc: step.pc as u64,
             refund_counter: if step.gas_refund_counter > 0 {

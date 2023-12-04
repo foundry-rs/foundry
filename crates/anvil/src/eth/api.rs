@@ -56,12 +56,12 @@ use ethers::{
             eip712::TypedData,
         },
         Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams,
-        GethDebugTracingOptions, GethTrace, Log, Trace, Transaction, TransactionReceipt, TxHash,
-        TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
+        GethDebugTracingOptions, GethTrace, Log, Signature, Trace, Transaction, TransactionReceipt,
+        TxHash, TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
     },
     utils::rlp,
 };
-use foundry_common::ProviderBuilder;
+use foundry_common::{types::ToEthers, ProviderBuilder};
 use foundry_evm::{
     backend::DatabaseError,
     revm::{
@@ -70,7 +70,6 @@ use foundry_evm::{
         primitives::BlockEnv,
     },
 };
-use foundry_utils::types::ToEthers;
 use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
 use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
@@ -409,10 +408,19 @@ impl EthApi {
         from: &Address,
         request: TypedTransactionRequest,
     ) -> Result<TypedTransaction> {
-        for signer in self.signers.iter() {
-            if signer.accounts().contains(from) {
-                let signature = signer.sign_transaction(request.clone(), from)?;
-                return build_typed_transaction(request, signature)
+        match request {
+            TypedTransactionRequest::Deposit(_) => {
+                const NIL_SIGNATURE: ethers::types::Signature =
+                    Signature { r: U256::zero(), s: U256::zero(), v: 0 };
+                return build_typed_transaction(request, NIL_SIGNATURE)
+            }
+            _ => {
+                for signer in self.signers.iter() {
+                    if signer.accounts().contains(from) {
+                        let signature = signer.sign_transaction(request.clone(), from)?;
+                        return build_typed_transaction(request, signature)
+                    }
+                }
             }
         }
         Err(BlockchainError::NoSignerAvailable)
@@ -836,7 +844,6 @@ impl EthApi {
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
         let request = self.build_typed_tx_request(request, nonce)?;
-
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
             let bypass_signature = self.backend.cheats().bypass_signature();
@@ -1640,7 +1647,7 @@ impl EthApi {
         Ok(())
     }
 
-    /// Create a bufer that represents all state on the chain, which can be loaded to separate
+    /// Create a buffer that represents all state on the chain, which can be loaded to separate
     /// process by calling `anvil_loadState`
     ///
     /// Handler for RPC call: `anvil_dumpState`
@@ -1708,6 +1715,7 @@ impl EthApi {
     pub async fn anvil_metadata(&self) -> Result<AnvilMetadata> {
         node_info!("anvil_metadata");
         let fork_config = self.backend.get_fork();
+        let snapshots = self.backend.list_snapshots();
 
         Ok(AnvilMetadata {
             client_version: CLIENT_VERSION,
@@ -1720,6 +1728,7 @@ impl EthApi {
                 fork_block_number: cfg.block_number(),
                 fork_block_hash: cfg.block_hash(),
             }),
+            snapshots,
         })
     }
 
@@ -2426,6 +2435,10 @@ impl EthApi {
                 }
                 TypedTransactionRequest::EIP1559(m)
             }
+            Some(TypedTransactionRequest::Deposit(mut m)) => {
+                m.gas_limit = gas_limit;
+                TypedTransactionRequest::Deposit(m)
+            }
             _ => return Err(BlockchainError::FailedToDecodeTransaction),
         };
         Ok(request)
@@ -2502,6 +2515,7 @@ impl EthApi {
         match &tx {
             TypedTransaction::EIP2930(_) => self.backend.ensure_eip2930_active(),
             TypedTransaction::EIP1559(_) => self.backend.ensure_eip1559_active(),
+            TypedTransaction::Deposit(_) => self.backend.ensure_op_deposits_active(),
             TypedTransaction::Legacy(_) => Ok(()),
         }
     }
@@ -2587,6 +2601,10 @@ fn determine_base_gas_by_kind(request: EthTransactionRequest) -> U256 {
                 TransactionKind::Create => MIN_CREATE_GAS,
             },
             TypedTransactionRequest::EIP2930(req) => match req.kind {
+                TransactionKind::Call(_) => MIN_TRANSACTION_GAS,
+                TransactionKind::Create => MIN_CREATE_GAS,
+            },
+            TypedTransactionRequest::Deposit(req) => match req.kind {
                 TransactionKind::Call(_) => MIN_TRANSACTION_GAS,
                 TransactionKind::Create => MIN_CREATE_GAS,
             },

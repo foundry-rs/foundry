@@ -6,7 +6,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers_core::types::{
-    transaction::eip2718::TypedTransaction, Chain, Log, NameOrAddress, TransactionRequest,
+    transaction::eip2718::TypedTransaction, Log, NameOrAddress, TransactionRequest,
 };
 use ethers_providers::{Http, Middleware};
 use ethers_signers::LocalWallet;
@@ -24,12 +24,14 @@ use forge::{
 };
 use foundry_cli::opts::MultiWallet;
 use foundry_common::{
-    abi::encode_function_args,
+    abi::{encode_function_args, get_func},
     contracts::get_contract_name,
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
     fmt::{format_token, format_token_raw},
-    shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    shell,
+    types::{ToAlloy, ToEthers},
+    ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::{
     artifacts::{ContractBytecodeSome, Libraries},
@@ -42,15 +44,15 @@ use foundry_config::{
         value::{Dict, Map},
         Metadata, Profile, Provider,
     },
-    Config,
+    Config, NamedChain,
 };
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     decode,
     inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::future;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use yansi::Paint;
@@ -67,16 +69,6 @@ mod runner;
 mod sequence;
 pub mod transaction;
 mod verify;
-
-/// List of Chains that support Shanghai.
-static SHANGHAI_ENABLED_CHAINS: &[Chain] = &[
-    Chain::Mainnet,
-    Chain::Goerli,
-    Chain::Sepolia,
-    Chain::OptimismGoerli,
-    Chain::OptimismSepolia,
-    Chain::BaseGoerli,
-];
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_opts);
@@ -212,7 +204,7 @@ pub struct ScriptArgs {
 // === impl ScriptArgs ===
 
 impl ScriptArgs {
-    pub fn decode_traces(
+    fn decode_traces(
         &self,
         script_config: &ScriptConfig,
         result: &mut ScriptResult,
@@ -288,7 +280,7 @@ impl ScriptArgs {
         Ok(returns)
     }
 
-    pub async fn show_traces(
+    async fn show_traces(
         &self,
         script_config: &ScriptConfig,
         decoder: &CallTraceDecoder,
@@ -373,7 +365,7 @@ impl ScriptArgs {
         Ok(())
     }
 
-    pub fn show_json(&self, script_config: &ScriptConfig, result: &ScriptResult) -> Result<()> {
+    fn show_json(&self, script_config: &ScriptConfig, result: &ScriptResult) -> Result<()> {
         let returns = self.get_returns(script_config, &result.returned)?;
 
         let console_logs = decode_console_logs(&result.logs);
@@ -437,7 +429,7 @@ impl ScriptArgs {
                 rpc: fork_url.clone(),
                 transaction: TypedTransaction::Legacy(TransactionRequest {
                     from: Some(from.to_ethers()),
-                    data: Some(bytes.clone().0.into()),
+                    data: Some(bytes.clone().to_ethers()),
                     nonce: Some((nonce + i as u64).into()),
                     ..Default::default()
                 }),
@@ -452,8 +444,8 @@ impl ScriptArgs {
     /// corresponding function by matching the selector, first 4 bytes in the calldata.
     ///
     /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
-    pub fn get_method_and_calldata(&self, abi: &Abi) -> Result<(Function, Bytes)> {
-        let (func, data) = if let Ok(func) = Function::parse(&self.sig) {
+    fn get_method_and_calldata(&self, abi: &Abi) -> Result<(Function, Bytes)> {
+        let (func, data) = if let Ok(func) = get_func(&self.sig) {
             (
                 abi.functions().find(|&abi_func| abi_func.selector() == func.selector()).wrap_err(
                     format!("Function `{}` is not implemented in your script.", self.sig),
@@ -622,10 +614,10 @@ pub struct ScriptResult {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct JsonResult {
-    pub logs: Vec<String>,
-    pub gas_used: u64,
-    pub returns: HashMap<String, NestedValue>,
+struct JsonResult {
+    logs: Vec<String>,
+    gas_used: u64,
+    returns: HashMap<String, NestedValue>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -697,36 +689,24 @@ impl ScriptConfig {
     /// If not, warns the user.
     async fn check_shanghai_support(&self) -> Result<()> {
         let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
-            if let Ok(provider) = ethers_providers::Provider::<Http>::try_from(rpc) {
-                match provider.get_chainid().await {
-                    Ok(chain_id) => match TryInto::<Chain>::try_into(chain_id) {
-                        Ok(chain) => return Some((SHANGHAI_ENABLED_CHAINS.contains(&chain), chain)),
-                        Err(_) => return None,
-                    },
-                    Err(_) => return None,
-                }
-            }
-            None
+            let provider = ethers_providers::Provider::<Http>::try_from(rpc).ok()?;
+            let id = provider.get_chainid().await.ok()?;
+            let id_u64: u64 = id.try_into().ok()?;
+            NamedChain::try_from(id_u64).ok()
         });
 
-        let chain_ids: Vec<_> = future::join_all(chain_ids).await.into_iter().flatten().collect();
-
-        let chain_id_unsupported = chain_ids.iter().any(|(supported, _)| !supported);
-
-        // At least one chain ID is unsupported, therefore we print the message.
-        if chain_id_unsupported {
+        let chains = future::join_all(chain_ids).await;
+        let iter = chains.iter().flatten().map(|c| (c.supports_shanghai(), c));
+        if iter.clone().any(|(s, _)| !s) {
             let msg = format!(
-                r#"
+                "\
 EIP-3855 is not supported in one or more of the RPCs used.
 Unsupported Chain IDs: {}.
 Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
-For more information, please see https://eips.ethereum.org/EIPS/eip-3855"#,
-                chain_ids
-                    .iter()
-                    .filter(|(supported, _)| !supported)
-                    .map(|(_, chain)| format!("{}", *chain as u64))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
+                iter.filter(|(supported, _)| !supported)
+                    .map(|(_, chain)| *chain as u64)
+                    .format(", ")
             );
             shell::println(Paint::yellow(msg))?;
         }

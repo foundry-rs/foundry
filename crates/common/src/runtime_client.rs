@@ -118,7 +118,7 @@ fn build_auth(jwt: String) -> eyre::Result<Authorization> {
     let auth = JwtAuth::new(secret, None, None);
     let token = auth.generate_token()?;
 
-    // Essentially unrolled ethers-rs new_with_auth to accomodate the custom timeout
+    // Essentially unrolled ethers-rs new_with_auth to accommodate the custom timeout
     let auth = Authorization::Bearer(token);
 
     Ok(auth)

@@ -29,8 +29,13 @@ contract FunctionCall {
 
 function a(uint256 foo) {
     foo;
+    MyContract c = new MyContract(address(0), hex"beef");
 }
 
 function b() {
     a({foo: 5});
+}
+
+contract MyContract {
+    constructor(address arg, bytes memory data) {}
 }

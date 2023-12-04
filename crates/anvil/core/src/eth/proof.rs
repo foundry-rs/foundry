@@ -5,8 +5,9 @@ use ethers_core::{
     types::{H256, U256},
     utils::rlp,
 };
-use foundry_utils::types::ToEthers;
+use foundry_common::types::ToEthers;
 use revm::primitives::KECCAK_EMPTY;
+
 // reexport for convenience
 pub use ethers_core::types::{EIP1186ProofResponse as AccountProof, StorageProof};
 

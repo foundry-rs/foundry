@@ -473,6 +473,7 @@ async fn can_get_metadata() {
         client_version: CLIENT_VERSION,
         instance_id: api.instance_id(),
         forked_network: None,
+        snapshots: Default::default(),
     };
 
     assert_eq!(metadata, expected_metadata);
@@ -501,6 +502,7 @@ async fn can_get_metadata_on_fork() {
             fork_block_number: block_number,
             fork_block_hash: block.hash.unwrap(),
         }),
+        snapshots: Default::default(),
     };
 
     assert_eq!(metadata, expected_metadata);

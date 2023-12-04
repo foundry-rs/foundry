@@ -10,13 +10,14 @@ use crate::{
     Address, U256,
 };
 use ethers::{prelude::H256, types::BlockId};
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
     backend::{DatabaseResult, StateSnapshot},
     fork::BlockchainDb,
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 
 // reexport for convenience
+use foundry_evm::backend::RevertSnapshotAction;
 pub use foundry_evm::{backend::MemDb, revm::db::DatabaseRef};
 
 impl Db for MemDb {
@@ -71,8 +72,11 @@ impl Db for MemDb {
         id.to_ethers()
     }
 
-    fn revert(&mut self, id: U256) -> bool {
+    fn revert(&mut self, id: U256, action: RevertSnapshotAction) -> bool {
         if let Some(snapshot) = self.snapshots.remove(id.to_alloy()) {
+            if action.is_keep() {
+                self.snapshots.insert_at(snapshot.clone(), id.to_alloy());
+            }
             self.inner = snapshot;
             trace!(target: "backend::memdb", "Reverted snapshot {}", id);
             true
@@ -141,11 +145,11 @@ mod tests {
     };
     use alloy_primitives::{Bytes, U256 as rU256};
     use ethers::types::U256;
+    use foundry_common::types::ToAlloy;
     use foundry_evm::{
         backend::MemDb,
         revm::primitives::{Bytecode, KECCAK_EMPTY},
     };
-    use foundry_utils::types::ToAlloy;
     use std::{collections::BTreeMap, str::FromStr};
 
     // verifies that all substantial aspects of a loaded account remain the state after an account

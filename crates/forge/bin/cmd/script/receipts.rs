@@ -4,8 +4,10 @@ use ethers_core::types::TransactionReceipt;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::Result;
 use foundry_cli::{init_progress, update_progress, utils::print_receipt};
-use foundry_common::RetryProvider;
-use foundry_utils::types::{ToAlloy, ToEthers};
+use foundry_common::{
+    types::{ToAlloy, ToEthers},
+    RetryProvider,
+};
 use futures::StreamExt;
 use std::sync::Arc;
 
@@ -41,7 +43,7 @@ pub async fn wait_for_pending(
 }
 
 /// Traverses a set of pendings and either finds receipts, or clears them from
-/// the deployment sequnce.
+/// the deployment sequence.
 ///
 /// If no `tx_hashes` are provided, then `deployment_sequence.pending` will be
 /// used. For each `tx_hash`, we check if it has confirmed. If it has
@@ -111,7 +113,7 @@ pub async fn clear_pendings(
         deployment_sequence.add_receipt(receipt);
     }
 
-    // print any erros
+    // print any errors
     if !errors.is_empty() {
         let mut error_msg = errors.join("\n");
         if !deployment_sequence.pending.is_empty() {

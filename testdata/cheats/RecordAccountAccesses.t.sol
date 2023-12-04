@@ -4,7 +4,7 @@ pragma solidity 0.8.18;
 import "ds-test/test.sol";
 import "./Vm.sol";
 
-/// @notice Helper contract with a constructo that makes a call to itself then
+/// @notice Helper contract with a construction that makes a call to itself then
 ///         optionally reverts if zero-length data is passed
 contract SelfCaller {
     constructor(bytes memory) payable {
@@ -315,7 +315,7 @@ contract RecordAccountAccessesTest is DSTest {
         (succ,) = address(123469).call("hello world");
         (succ,) = address(5678).call("");
         // contract calls to self in constructor
-        SelfCaller caller = new SelfCaller{value: 2 ether}('hello2 world2');
+        SelfCaller caller = new SelfCaller{value: 2 ether}("hello2 world2");
 
         Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
         assertEq(called.length, 6);
@@ -1011,8 +1011,8 @@ contract RecordAccountAccessesTest is DSTest {
     function testSelfDestruct() public {
         uint256 startingBalance = address(this).balance;
         this.startRecordingFromLowerDepth();
-        address a = address(new SelfDestructor{value:1 ether}(address(this)));
-        address b = address(new SelfDestructor{value:1 ether}(address(bytes20("doesn't exist yet"))));
+        address a = address(new SelfDestructor{value: 1 ether}(address(this)));
+        address b = address(new SelfDestructor{value: 1 ether}(address(bytes20("doesn't exist yet"))));
         Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
         assertEq(called.length, 5, "incorrect length");
         assertEq(

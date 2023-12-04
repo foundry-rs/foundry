@@ -8,7 +8,7 @@ use foundry_cli::{
     update_progress, utils,
     utils::{handle_traces, TraceResult},
 };
-use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
+use foundry_common::{is_known_system_sender, types::ToAlloy, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{
@@ -16,7 +16,6 @@ use foundry_evm::{
     opts::EvmOpts,
     utils::configure_tx_env,
 };
-use foundry_utils::types::ToAlloy;
 
 /// CLI arguments for `cast run`.
 #[derive(Debug, Clone, Parser)]
@@ -151,7 +150,7 @@ impl RunArgs {
                         update_progress!(pb, index);
                         continue
                     }
-                    if tx.hash.eq(&tx_hash) {
+                    if tx.hash == tx_hash {
                         break
                     }
 

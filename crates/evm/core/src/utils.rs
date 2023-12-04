@@ -2,7 +2,7 @@ use alloy_json_abi::{Function, JsonAbi as Abi};
 use alloy_primitives::{Address, FixedBytes, B256};
 use ethers_core::types::{ActionType, Block, CallType, Chain, Transaction, H256, U256};
 use eyre::ContextCompat;
-use foundry_utils::types::ToAlloy;
+use foundry_common::types::ToAlloy;
 use revm::{
     interpreter::{opcode, opcode::spec_opcode_gas, CallScheme, CreateInputs, InstructionResult},
     primitives::{CreateScheme, Eval, Halt, SpecId, TransactTo},
@@ -132,6 +132,7 @@ pub fn halt_to_instruction_result(halt: Halt) -> InstructionResult {
         Halt::CallNotAllowedInsideStatic => InstructionResult::CallNotAllowedInsideStatic,
         Halt::OutOfFund => InstructionResult::OutOfFund,
         Halt::CallTooDeep => InstructionResult::CallTooDeep,
+        Halt::FailedDeposit => InstructionResult::Return,
     }
 }
 

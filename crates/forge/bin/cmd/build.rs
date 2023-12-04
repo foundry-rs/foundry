@@ -69,6 +69,12 @@ pub struct BuildArgs {
     #[clap(flatten)]
     #[serde(skip)]
     pub watch: WatchArgs,
+
+    /// Output the compilation errors in the json format.
+    /// This is useful when you want to use the output in other tools.
+    #[clap(long, conflicts_with = "silent")]
+    #[serde(skip)]
+    pub format_json: bool,
 }
 
 impl BuildArgs {
@@ -86,7 +92,12 @@ impl BuildArgs {
 
         let filters = self.skip.unwrap_or_default();
 
-        if self.args.silent {
+        if self.format_json {
+            let output = compile::suppress_compile_with_filter_json(&project, filters)?;
+            let json = serde_json::to_string_pretty(&output.clone().output())?;
+            println!("{}", json);
+            Ok(output)
+        } else if self.args.silent {
             compile::suppress_compile_with_filter(&project, filters)
         } else {
             let compiler = ProjectCompiler::with_filter(self.names, self.sizes, filters);
@@ -160,5 +171,13 @@ mod tests {
 
         let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "tests", "scripts"]);
         assert_eq!(args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
+    }
+
+    #[test]
+    fn check_conflicts() {
+        let args: std::result::Result<BuildArgs, clap::Error> =
+            BuildArgs::try_parse_from(["foundry-cli", "--format-json", "--silent"]);
+        assert!(args.is_err());
+        assert!(args.unwrap_err().kind() == clap::error::ErrorKind::ArgumentConflict);
     }
 }

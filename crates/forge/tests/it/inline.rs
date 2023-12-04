@@ -11,7 +11,7 @@ use foundry_test_utils::Filter;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn inline_config_run_fuzz() {
-    let opts = test_options();
+    let opts = default_test_options();
 
     let filter = Filter::new(".*", ".*", ".*inline/FuzzInlineConf.t.sol");
 
@@ -37,7 +37,7 @@ async fn inline_config_run_fuzz() {
 async fn inline_config_run_invariant() {
     const ROOT: &str = "inline/InvariantInlineConf.t.sol";
 
-    let opts = test_options();
+    let opts = default_test_options();
     let filter = Filter::new(".*", ".*", ".*inline/InvariantInlineConf.t.sol");
     let mut runner = runner().await;
     runner.test_options = opts.clone();
@@ -98,7 +98,8 @@ fn build_test_options_just_one_valid_profile() {
     assert!(build_result.is_err());
 }
 
-fn test_options() -> TestOptions {
+/// Returns the [TestOptions] for the testing [PROJECT].
+pub fn default_test_options() -> TestOptions {
     let root = &PROJECT.paths.root;
     TestOptionsBuilder::default()
         .fuzz(FuzzConfig::default())

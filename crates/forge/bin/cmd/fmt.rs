@@ -2,9 +2,8 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge_fmt::{format_to, parse, print_diagnostics_report};
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
-use foundry_common::{fs, term::cli_warn};
+use foundry_common::{fs, glob::expand_globs, term::cli_warn};
 use foundry_config::impl_figment_convert_basic;
-use foundry_utils::glob::expand_globs;
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
 use std::{
@@ -52,7 +51,7 @@ impl FmtArgs {
         // Expand ignore globs and canonicalize from the get go
         let ignored = expand_globs(&config.__root.0, config.fmt.ignore.iter())?
             .iter()
-            .flat_map(foundry_utils::path::canonicalize_path)
+            .flat_map(foundry_common::fs::canonicalize_path)
             .collect::<Vec<_>>();
 
         let cwd = std::env::current_dir()?;

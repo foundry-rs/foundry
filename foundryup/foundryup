@@ -155,8 +155,8 @@ main() {
       say "installed - $(ensure "$bin_path" --version)"
 
       # Check if the default path of the binary is not in FOUNDRY_BIN_DIR
-      which_path="$(which "$bin")"
-      if [ "$which_path" != "$bin_path" ]; then
+      which_path="$(command -v "$bin" || true)"
+      if [ -n "$which_path" ] && [ "$which_path" != "$bin_path" ]; then
         warn ""
         cat 1>&2 <<EOF
 There are multiple binaries with the name '$bin' present in your 'PATH'.
