@@ -122,32 +122,15 @@ impl DependencyInstallOpts {
 
         let install_lib_dir = config.install_lib_dir();
         let libs = git.root.join(install_lib_dir);
+        let root = Git::root_of(git.root)?;
 
-        // Pre-emptively create the directory where deps will be installed if it's missing
-        fs::create_dir_all(&libs)?;
-
-        // Only update submodule deps if there are no other deps to install, we're using git
-        // and an appropiate .gitmodules file exists.
-        if dependencies.is_empty() && !self.no_git && git.root.join(".gitmodules").exists() {
+        if dependencies.is_empty() && !self.no_git && git.has_submodules(Some(&root))? {
             p_println!(!self.quiet => "Updating dependencies in {}", libs.display());
-
-            let empty_install_dir = libs.read_dir()?.next().is_none();
-
-            if !empty_install_dir {
-                fs::create_file(libs.join(".keep"))?;
-                // Update the git project with the newly created folder if we're using git.
-                git.add(Some(&libs.join(".keep")))?;
-                // recursively fetch all submodules (without fetching latest)
-                git.submodule_update(false, false, false, true, Some(&libs))?;
-                // remove the temporary file
-                fs::remove_file(libs.join(".keep"))?;
-                // Update the git project with the newly deleted folder if we're using git.
-                git.add(Some(&libs.join(".keep")))?;
-            } else {
-                // just recursively fetch all submodules (without fetching latest)
-                git.submodule_update(false, false, false, true, Some(&libs))?;
-            }
+            // recursively fetch all submodules (without fetching latest)
+            git.submodule_update(false, false, false, true, Some(&libs))?;
         }
+
+        fs::create_dir_all(&libs)?;
 
         let installer = Installer { git, no_commit };
         for dep in dependencies {
@@ -180,7 +163,6 @@ impl DependencyInstallOpts {
 
                     // update .gitmodules which is at the root of the repo,
                     // not necessarily at the root of the current Foundry project
-                    let root = Git::root_of(git.root)?;
                     git.root(&root).add(Some(".gitmodules"))?;
                 }
 

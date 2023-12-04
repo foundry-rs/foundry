@@ -540,6 +540,18 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
             .map(|stdout| stdout.lines().any(|line| line.starts_with('-')))
     }
 
+    pub fn has_submodules<I, S>(self, paths: I) -> Result<bool>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        self.cmd()
+            .args(["submodule", "status"])
+            .args(paths)
+            .get_stdout_lossy()
+            .map(|stdout| stdout.lines().next().is_some())
+    }
+
     pub fn submodule_add(
         self,
         force: bool,
