@@ -20,107 +20,139 @@ impl DebuggerContext<'_> {
         terminal.draw(|f| self.draw_layout(f)).map(drop)
     }
 
+    #[inline]
     fn draw_layout(&self, f: &mut Frame<'_>) {
         if f.size().width < 225 {
             self.vertical_layout(f);
         } else {
-            self.square_layout(f);
+            self.horizontal_layout(f);
         }
     }
 
+    /// Draws the layout in vertical mode.
+    ///
+    /// ```text
+    /// |-----------------------------|
+    /// |             op              |
+    /// |-----------------------------|
+    /// |            stack            |
+    /// |-----------------------------|
+    /// |             mem             |
+    /// |-----------------------------|
+    /// |                             |
+    /// |             src             |
+    /// |                             |
+    /// |-----------------------------|
+    /// ```
     fn vertical_layout(&self, f: &mut Frame<'_>) {
-        let total_size = f.size();
+        let area = f.size();
         let h_height = if self.show_shortcuts { 4 } else { 0 };
 
-        if let [app, footer] = Layout::default()
-            .constraints(
-                [Constraint::Ratio(100 - h_height, 100), Constraint::Ratio(h_height, 100)].as_ref(),
-            )
+        // NOTE: `Layout::split` always returns a slice of the same length as the number of
+        // constraints, so the `else` branch is unreachable.
+
+        // Split off footer.
+        let [app, footer] = Layout::new()
+            .constraints([Constraint::Ratio(100 - h_height, 100), Constraint::Ratio(h_height, 100)])
             .direction(Direction::Vertical)
-            .split(total_size)[..]
-        {
-            if let [op_pane, stack_pane, memory_pane, src_pane] = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints(
-                    [
-                        Constraint::Ratio(1, 6),
-                        Constraint::Ratio(1, 6),
-                        Constraint::Ratio(1, 6),
-                        Constraint::Ratio(3, 6),
-                    ]
-                    .as_ref(),
-                )
-                .split(app)[..]
-            {
-                if self.show_shortcuts {
-                    Self::draw_footer(f, footer);
-                }
-                self.draw_src(f, src_pane);
-                self.draw_op_list(f, op_pane);
-                self.draw_stack(f, stack_pane);
-                self.draw_memory(f, memory_pane);
-            } else {
-                panic!("unable to create vertical panes")
-            }
-        } else {
-            panic!("unable to create footer / app")
+            .split(area)[..]
+        else {
+            unreachable!()
         };
+
+        // Split the app in 4 vertically to construct all the panes.
+        let [op_pane, stack_pane, memory_pane, src_pane] = Layout::new()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Ratio(1, 6),
+                Constraint::Ratio(1, 6),
+                Constraint::Ratio(1, 6),
+                Constraint::Ratio(3, 6),
+            ])
+            .split(app)[..]
+        else {
+            unreachable!()
+        };
+
+        if self.show_shortcuts {
+            self.draw_footer(f, footer);
+        }
+        self.draw_src(f, src_pane);
+        self.draw_op_list(f, op_pane);
+        self.draw_stack(f, stack_pane);
+        self.draw_memory(f, memory_pane);
     }
 
-    fn square_layout(&self, f: &mut Frame<'_>) {
-        let total_size = f.size();
+    /// Draws the layout in horizontal mode.
+    ///
+    /// ```text
+    /// |-----------------|-----------|
+    /// |        op       |   stack   |
+    /// |-----------------|-----------|
+    /// |                 |           |
+    /// |       src       |    mem    |
+    /// |                 |           |
+    /// |-----------------------------|
+    /// ```
+    fn horizontal_layout(&self, f: &mut Frame<'_>) {
+        let area = f.size();
         let h_height = if self.show_shortcuts { 4 } else { 0 };
 
-        // split in 2 vertically
-
-        if let [app, footer] = Layout::default()
+        // Split off footer.
+        let [app, footer] = Layout::new()
             .direction(Direction::Vertical)
-            .constraints(
-                [Constraint::Ratio(100 - h_height, 100), Constraint::Ratio(h_height, 100)].as_ref(),
-            )
-            .split(total_size)[..]
-        {
-            if let [left_pane, right_pane] = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
-                .split(app)[..]
-            {
-                // split right pane horizontally to construct stack and memory
-                if let [op_pane, src_pane] = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)].as_ref())
-                    .split(left_pane)[..]
-                {
-                    if let [stack_pane, memory_pane] = Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints([Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)].as_ref())
-                        .split(right_pane)[..]
-                    {
-                        if self.show_shortcuts {
-                            Self::draw_footer(f, footer)
-                        };
-                        self.draw_src(f, src_pane);
-                        self.draw_op_list(f, op_pane);
-                        self.draw_stack(f, stack_pane);
-                        self.draw_memory(f, memory_pane);
-                    }
-                } else {
-                    panic!("Couldn't generate horizontal split layout 1:2.");
-                }
-            } else {
-                panic!("Couldn't generate vertical split layout 1:2.");
-            }
-        } else {
-            panic!("Couldn't generate application & footer")
+            .constraints([Constraint::Ratio(100 - h_height, 100), Constraint::Ratio(h_height, 100)])
+            .split(area)[..]
+        else {
+            unreachable!()
+        };
+
+        // Split app in 2 horizontally.
+        let [app_left, app_right] = Layout::new()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
+            .split(app)[..]
+        else {
+            unreachable!()
+        };
+
+        // Split left pane in 2 vertically to opcode list and source.
+        let [op_pane, src_pane] = Layout::new()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)])
+            .split(app_left)[..]
+        else {
+            unreachable!()
+        };
+
+        // Split right pane horizontally to construct stack and memory.
+        let [stack_pane, memory_pane] = Layout::new()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)])
+            .split(app_right)[..]
+        else {
+            unreachable!()
+        };
+
+        if self.show_shortcuts {
+            self.draw_footer(f, footer);
         }
+        self.draw_src(f, src_pane);
+        self.draw_op_list(f, op_pane);
+        self.draw_stack(f, stack_pane);
+        self.draw_memory(f, memory_pane);
     }
 
-    fn draw_footer(f: &mut Frame<'_>, area: Rect) {
+    fn draw_footer(&self, f: &mut Frame<'_>, area: Rect) {
         let block_controls = Block::default();
 
-        let text_output = vec![Line::from(Span::styled(
-            "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end", Style::default().add_modifier(Modifier::DIM))),
-Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint | [h] toggle help", Style::default().add_modifier(Modifier::DIM)))];
+        let top_line = "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end";
+        let bottom_line = "[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint | [h] toggle help";
+        let dimmed = Style::default().add_modifier(Modifier::DIM);
+        let text_output = vec![
+            Line::from(Span::styled(top_line, dimmed)),
+            Line::from(Span::styled(bottom_line, dimmed)),
+        ];
 
         let paragraph = Paragraph::new(text_output)
             .block(block_controls)
@@ -131,17 +163,16 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
     }
 
     fn draw_src(&self, f: &mut Frame<'_>, area: Rect) {
-        let block_source_code = Block::default()
-            .title(match self.call_kind() {
-                CallKind::Create | CallKind::Create2 => "Contract creation",
-                CallKind::Call => "Contract call",
-                CallKind::StaticCall => "Contract staticcall",
-                CallKind::CallCode => "Contract callcode",
-                CallKind::DelegateCall => "Contract delegatecall",
-            })
-            .borders(Borders::ALL);
+        let title = match self.call_kind() {
+            CallKind::Create | CallKind::Create2 => "Contract creation",
+            CallKind::Call => "Contract call",
+            CallKind::StaticCall => "Contract staticcall",
+            CallKind::CallCode => "Contract callcode",
+            CallKind::DelegateCall => "Contract delegatecall",
+        };
+        let block_source_code = Block::default().title(title).borders(Borders::ALL);
 
-        let mut text_output: Text = Text::from("");
+        let mut text_output = Text::from("");
 
         let pc = self.current_step().pc;
         if let Some(contract_name) = self.debugger.identified_contracts.get(self.address()) {

@@ -3,7 +3,7 @@ use std::path::Path;
 
 // Sets up a debuggable test case.
 forgetest_async!(
-    #[ignore]
+    #[ignore = "ran manually"]
     manual_debug_setup,
     |prj, cmd| {
         cmd.args(["init", "--force"]).arg(prj.root()).assert_non_empty_stdout();
