@@ -130,6 +130,10 @@ impl Debugger {
             .spawn(move || Self::event_listener(tx))
             .expect("failed to spawn thread");
 
+        // Draw the initial state.
+        cx.draw(terminal)?;
+
+        // Start the event loop.
         loop {
             match cx.handle_event(rx.recv()?) {
                 ControlFlow::Continue(()) => {}
