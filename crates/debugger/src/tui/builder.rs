@@ -2,12 +2,8 @@
 
 use crate::Debugger;
 use alloy_primitives::Address;
-use eyre::Result;
 use foundry_common::{compile::ContractSources, evm::Breakpoints, get_contract_name};
-use foundry_evm_core::{
-    debug::{DebugArena, DebugStep},
-    utils::CallKind,
-};
+use foundry_evm_core::debug::{DebugArena, DebugNodeFlat};
 use foundry_evm_traces::CallTraceDecoder;
 use std::collections::HashMap;
 
@@ -16,7 +12,7 @@ use std::collections::HashMap;
 #[must_use = "builders do nothing unless you call `build` on them"]
 pub struct DebuggerBuilder {
     /// Debug traces returned from the EVM execution.
-    debug_arena: Vec<(Address, Vec<DebugStep>, CallKind)>,
+    debug_arena: Vec<DebugNodeFlat>,
     /// Identified contracts.
     identified_contracts: HashMap<Address, String>,
     /// Map of source files.
@@ -90,7 +86,7 @@ impl DebuggerBuilder {
 
     /// Builds the debugger.
     #[inline]
-    pub fn build(self) -> Result<Debugger> {
+    pub fn build(self) -> Debugger {
         let Self { debug_arena, identified_contracts, sources, breakpoints } = self;
         Debugger::new(debug_arena, identified_contracts, sources, breakpoints)
     }

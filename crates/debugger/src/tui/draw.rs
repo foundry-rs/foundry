@@ -1,13 +1,9 @@
 //! TUI draw implementation.
 
-use super::context::DrawMemory;
-use crate::{op::OpcodeParam, Debugger};
-use alloy_primitives::{Address, U256};
-use foundry_common::compile::ContractSources;
-use foundry_evm_core::{
-    debug::{DebugStep, Instruction},
-    utils::{CallKind, PCICMap},
-};
+use super::context::DebuggerContext;
+use crate::op::OpcodeParam;
+use alloy_primitives::U256;
+use foundry_evm_core::{debug::Instruction, utils::CallKind};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -16,83 +12,25 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 use revm::interpreter::opcode;
-use std::{
-    cmp::{max, min},
-    collections::{BTreeMap, HashMap, VecDeque},
-};
+use std::{cmp, collections::VecDeque, io};
 
-impl Debugger {
-    /// Create layout and subcomponents
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn draw_layout(
-        f: &mut Frame<'_>,
-        address: Address,
-        identified_contracts: &HashMap<Address, String>,
-        pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
-        contracts_sources: &ContractSources,
-        debug_steps: &[DebugStep],
-        opcode_list: &[String],
-        current_step: usize,
-        call_kind: CallKind,
-        draw_memory: &mut DrawMemory,
-        stack_labels: bool,
-        mem_utf: bool,
-        show_shortcuts: bool,
-    ) {
-        let total_size = f.size();
-        if total_size.width < 225 {
-            Debugger::vertical_layout(
-                f,
-                address,
-                identified_contracts,
-                pc_ic_maps,
-                contracts_sources,
-                debug_steps,
-                opcode_list,
-                current_step,
-                call_kind,
-                draw_memory,
-                stack_labels,
-                mem_utf,
-                show_shortcuts,
-            );
+impl DebuggerContext<'_> {
+    /// Draws the TUI layout and subcomponents to the given terminal.
+    pub(crate) fn draw(&self, terminal: &mut super::DebuggerTerminal) -> io::Result<()> {
+        terminal.draw(|f| self.draw_layout(f)).map(drop)
+    }
+
+    fn draw_layout(&self, f: &mut Frame<'_>) {
+        if f.size().width < 225 {
+            self.vertical_layout(f);
         } else {
-            Debugger::square_layout(
-                f,
-                address,
-                identified_contracts,
-                pc_ic_maps,
-                contracts_sources,
-                debug_steps,
-                opcode_list,
-                current_step,
-                call_kind,
-                draw_memory,
-                stack_labels,
-                mem_utf,
-                show_shortcuts,
-            );
+            self.square_layout(f);
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn vertical_layout(
-        f: &mut Frame<'_>,
-        address: Address,
-        identified_contracts: &HashMap<Address, String>,
-        pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
-        contracts_sources: &ContractSources,
-        debug_steps: &[DebugStep],
-        opcode_list: &[String],
-        current_step: usize,
-        call_kind: CallKind,
-        draw_memory: &mut DrawMemory,
-        stack_labels: bool,
-        mem_utf: bool,
-        show_shortcuts: bool,
-    ) {
+    fn vertical_layout(&self, f: &mut Frame<'_>) {
         let total_size = f.size();
-        let h_height = if show_shortcuts { 4 } else { 0 };
+        let h_height = if self.show_shortcuts { 4 } else { 0 };
 
         if let [app, footer] = Layout::default()
             .constraints(
@@ -114,44 +52,13 @@ impl Debugger {
                 )
                 .split(app)[..]
             {
-                if show_shortcuts {
-                    Debugger::draw_footer(f, footer);
+                if self.show_shortcuts {
+                    Self::draw_footer(f, footer);
                 }
-                Debugger::draw_src(
-                    f,
-                    address,
-                    identified_contracts,
-                    pc_ic_maps,
-                    contracts_sources,
-                    debug_steps[current_step].pc,
-                    call_kind,
-                    src_pane,
-                );
-                Debugger::draw_op_list(
-                    f,
-                    address,
-                    debug_steps,
-                    opcode_list,
-                    current_step,
-                    draw_memory,
-                    op_pane,
-                );
-                Debugger::draw_stack(
-                    f,
-                    debug_steps,
-                    current_step,
-                    stack_pane,
-                    stack_labels,
-                    draw_memory,
-                );
-                Debugger::draw_memory(
-                    f,
-                    debug_steps,
-                    current_step,
-                    memory_pane,
-                    mem_utf,
-                    draw_memory,
-                );
+                self.draw_src(f, src_pane);
+                self.draw_op_list(f, op_pane);
+                self.draw_stack(f, stack_pane);
+                self.draw_memory(f, memory_pane);
             } else {
                 panic!("unable to create vertical panes")
             }
@@ -160,24 +67,9 @@ impl Debugger {
         };
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn square_layout(
-        f: &mut Frame<'_>,
-        address: Address,
-        identified_contracts: &HashMap<Address, String>,
-        pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
-        contracts_sources: &ContractSources,
-        debug_steps: &[DebugStep],
-        opcode_list: &[String],
-        current_step: usize,
-        call_kind: CallKind,
-        draw_memory: &mut DrawMemory,
-        stack_labels: bool,
-        mem_utf: bool,
-        show_shortcuts: bool,
-    ) {
+    fn square_layout(&self, f: &mut Frame<'_>) {
         let total_size = f.size();
-        let h_height = if show_shortcuts { 4 } else { 0 };
+        let h_height = if self.show_shortcuts { 4 } else { 0 };
 
         // split in 2 vertically
 
@@ -204,44 +96,13 @@ impl Debugger {
                         .constraints([Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)].as_ref())
                         .split(right_pane)[..]
                     {
-                        if show_shortcuts {
-                            Debugger::draw_footer(f, footer)
+                        if self.show_shortcuts {
+                            Self::draw_footer(f, footer)
                         };
-                        Debugger::draw_src(
-                            f,
-                            address,
-                            identified_contracts,
-                            pc_ic_maps,
-                            contracts_sources,
-                            debug_steps[current_step].pc,
-                            call_kind,
-                            src_pane,
-                        );
-                        Debugger::draw_op_list(
-                            f,
-                            address,
-                            debug_steps,
-                            opcode_list,
-                            current_step,
-                            draw_memory,
-                            op_pane,
-                        );
-                        Debugger::draw_stack(
-                            f,
-                            debug_steps,
-                            current_step,
-                            stack_pane,
-                            stack_labels,
-                            draw_memory,
-                        );
-                        Debugger::draw_memory(
-                            f,
-                            debug_steps,
-                            current_step,
-                            memory_pane,
-                            mem_utf,
-                            draw_memory,
-                        );
+                        self.draw_src(f, src_pane);
+                        self.draw_op_list(f, op_pane);
+                        self.draw_stack(f, stack_pane);
+                        self.draw_memory(f, memory_pane);
                     }
                 } else {
                     panic!("Couldn't generate horizontal split layout 1:2.");
@@ -269,19 +130,9 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
         f.render_widget(paragraph, area);
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn draw_src(
-        f: &mut Frame<'_>,
-        address: Address,
-        identified_contracts: &HashMap<Address, String>,
-        pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
-        contracts_sources: &ContractSources,
-        pc: usize,
-        call_kind: CallKind,
-        area: Rect,
-    ) {
+    fn draw_src(&self, f: &mut Frame<'_>, area: Rect) {
         let block_source_code = Block::default()
-            .title(match call_kind {
+            .title(match self.call_kind() {
                 CallKind::Create | CallKind::Create2 => "Contract creation",
                 CallKind::Call => "Contract call",
                 CallKind::StaticCall => "Contract staticcall",
@@ -292,15 +143,16 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
 
         let mut text_output: Text = Text::from("");
 
-        if let Some(contract_name) = identified_contracts.get(&address) {
-            if let Some(files_source_code) = contracts_sources.0.get(contract_name) {
-                let pc_ic_map = pc_ic_maps.get(contract_name);
+        let pc = self.current_step().pc;
+        if let Some(contract_name) = self.debugger.identified_contracts.get(self.address()) {
+            if let Some(files_source_code) = self.debugger.contracts_sources.0.get(contract_name) {
+                let pc_ic_map = self.debugger.pc_ic_maps.get(contract_name);
                 // find the contract source with the correct source_element's file_id
                 if let Some((source_element, source_code)) = files_source_code.iter().find_map(
                     |(file_id, (source_code, contract_source))| {
                         // grab either the creation source map or runtime sourcemap
                         if let Some((Ok(source_map), ic)) =
-                            if matches!(call_kind, CallKind::Create | CallKind::Create2) {
+                            if matches!(self.call_kind(), CallKind::Create | CallKind::Create2) {
                                 contract_source
                                     .bytecode
                                     .source_map()
@@ -573,6 +425,7 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                     .extend(Text::from(format!("No srcmap index for contract {contract_name}")));
             }
         } else {
+            let address = self.address();
             text_output.extend(Text::from(format!("Unknown contract at address {address}")));
         }
 
@@ -582,25 +435,14 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
     }
 
     /// Draw opcode list into main component
-    fn draw_op_list(
-        f: &mut Frame<'_>,
-        address: Address,
-        debug_steps: &[DebugStep],
-        opcode_list: &[String],
-        current_step: usize,
-        draw_memory: &mut DrawMemory,
-        area: Rect,
-    ) {
+    fn draw_op_list(&self, f: &mut Frame<'_>, area: Rect) {
+        let step = self.current_step();
         let block_source_code = Block::default()
             .title(format!(
                 "Address: {} | PC: {} | Gas used in call: {}",
-                address,
-                if let Some(step) = debug_steps.get(current_step) {
-                    step.pc.to_string()
-                } else {
-                    "END".to_string()
-                },
-                debug_steps[current_step].total_gas_used,
+                self.address(),
+                step.pc,
+                step.total_gas_used,
             ))
             .borders(Borders::ALL);
         let mut text_output: Vec<Line> = Vec::new();
@@ -611,18 +453,20 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
 
         let height = area.height as i32;
         let extra_top_lines = height / 2;
-        let prev_start = draw_memory.current_startline;
+        let prev_start = *self.draw_memory.current_startline.borrow();
         // Absolute minimum start line
         let abs_min_start = 0;
         // Adjust for weird scrolling for max top line
-        let abs_max_start = (opcode_list.len() as i32 - 1) - (height / 2);
+        let abs_max_start = (self.opcode_list.len() as i32 - 1) - (height / 2);
         // actual minimum start line
         let mut min_start =
-            max(current_step as i32 - height + extra_top_lines, abs_min_start) as usize;
+            cmp::max(self.current_step as i32 - height + extra_top_lines, abs_min_start) as usize;
 
         // actual max start line
-        let mut max_start =
-            max(min(current_step as i32 - extra_top_lines, abs_max_start), abs_min_start) as usize;
+        let mut max_start = cmp::max(
+            cmp::min(self.current_step as i32 - extra_top_lines, abs_max_start),
+            abs_min_start,
+        ) as usize;
 
         // Sometimes, towards end of file, maximum and minim lines have swapped values. Swap if the
         // case
@@ -637,27 +481,26 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
         } else {
             display_start = prev_start;
         }
-        draw_memory.current_startline = display_start;
+        *self.draw_memory.current_startline.borrow_mut() = display_start;
 
         let max_pc_len =
-            debug_steps.iter().fold(0, |max_val, val| val.pc.max(max_val)).to_string().len();
+            self.debug_steps().iter().fold(0, |max_val, val| val.pc.max(max_val)).to_string().len();
 
         // Define closure that prints one more line of source code
         let mut add_new_line = |line_number| {
-            let bg_color = if line_number == current_step { Color::DarkGray } else { Color::Reset };
+            let is_current_step = line_number == self.current_step;
+            let bg_color = if is_current_step { Color::DarkGray } else { Color::Reset };
 
             // Format line number
-            let line_number_format = if line_number == current_step {
-                let step: &DebugStep = &debug_steps[line_number];
+            let line_number_format = if is_current_step {
                 format!("{:0>max_pc_len$x}|▶", step.pc)
-            } else if line_number < debug_steps.len() {
-                let step: &DebugStep = &debug_steps[line_number];
+            } else if line_number < self.debug_steps().len() {
                 format!("{:0>max_pc_len$x}| ", step.pc)
             } else {
                 "END CALL".to_string()
             };
 
-            if let Some(op) = opcode_list.get(line_number) {
+            if let Some(op) = self.opcode_list.get(line_number) {
                 text_output.push(Line::from(Span::styled(
                     format!("{line_number_format}{op}"),
                     Style::default().fg(Color::White).bg(bg_color),
@@ -669,41 +512,32 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                 )));
             }
         };
-        for number in display_start..opcode_list.len() {
+        for number in display_start..self.opcode_list.len() {
             add_new_line(number);
         }
         // Add one more "phantom" line so we see line where current segment execution ends
-        add_new_line(opcode_list.len());
+        add_new_line(self.opcode_list.len());
         let paragraph =
             Paragraph::new(text_output).block(block_source_code).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
 
     /// Draw the stack into the stack pane
-    fn draw_stack(
-        f: &mut Frame<'_>,
-        debug_steps: &[DebugStep],
-        current_step: usize,
-        area: Rect,
-        stack_labels: bool,
-        draw_memory: &DrawMemory,
-    ) {
-        let stack = &debug_steps[current_step].stack;
+    fn draw_stack(&self, f: &mut Frame<'_>, area: Rect) {
+        let step = self.current_step();
+        let stack = &step.stack;
         let stack_space =
             Block::default().title(format!("Stack: {}", stack.len())).borders(Borders::ALL);
         let min_len = usize::max(format!("{}", stack.len()).len(), 2);
 
-        let params = if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
-            OpcodeParam::of(op)
-        } else {
-            &[]
-        };
+        let params =
+            if let Instruction::OpCode(op) = step.instruction { OpcodeParam::of(op) } else { &[] };
 
         let text: Vec<Line> = stack
             .iter()
             .rev()
             .enumerate()
-            .skip(draw_memory.current_stack_startline)
+            .skip(self.draw_memory.current_stack_startline)
             .map(|(i, stack_item)| {
                 let param = params.iter().find(|param| param.index == i);
                 let mut words: Vec<Span> = (0..32)
@@ -725,7 +559,7 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                     })
                     .collect();
 
-                if stack_labels {
+                if self.stack_labels {
                     if let Some(param) = param {
                         words.push(Span::raw(format!("| {}", param.name)));
                     } else {
@@ -802,15 +636,9 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
     }
 
     /// Draw memory in memory pane
-    fn draw_memory(
-        f: &mut Frame<'_>,
-        debug_steps: &[DebugStep],
-        current_step: usize,
-        area: Rect,
-        mem_utf8: bool,
-        draw_mem: &DrawMemory,
-    ) {
-        let memory = &debug_steps[current_step].memory;
+    fn draw_memory(&self, f: &mut Frame<'_>, area: Rect) {
+        let step = self.current_step();
+        let memory = &step.memory;
         let memory_space = Block::default()
             .title(format!("Memory (max expansion: {} bytes)", memory.len()))
             .borders(Borders::ALL);
@@ -821,11 +649,11 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
         let mut offset: Option<usize> = None;
         let mut size: Option<usize> = None;
         let mut color = None;
-        if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
-            let stack_len = debug_steps[current_step].stack.len();
+        if let Instruction::OpCode(op) = step.instruction {
+            let stack_len = step.stack.len();
             if stack_len > 0 {
                 let (read_offset, read_size, write_offset, write_size) =
-                    Debugger::get_memory_access(op, &debug_steps[current_step].stack);
+                    Self::get_memory_access(op, &step.stack);
                 if read_offset.is_some() {
                     offset = read_offset;
                     size = read_size;
@@ -839,11 +667,12 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
         }
 
         // color word on previous write op
-        if current_step > 0 {
-            let prev_step = current_step - 1;
-            if let Instruction::OpCode(op) = debug_steps[prev_step].instruction {
+        if self.current_step > 0 {
+            let prev_step = self.current_step - 1;
+            let prev_step = &self.debug_steps()[prev_step];
+            if let Instruction::OpCode(op) = prev_step.instruction {
                 let (_, _, write_offset, write_size) =
-                    Debugger::get_memory_access(op, &debug_steps[prev_step].stack);
+                    Self::get_memory_access(op, &prev_step.stack);
                 if write_offset.is_some() {
                     offset = write_offset;
                     size = write_size;
@@ -853,12 +682,12 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
         }
 
         let height = area.height as usize;
-        let end_line = draw_mem.current_mem_startline + height;
+        let end_line = self.draw_memory.current_mem_startline + height;
 
         let text: Vec<Line> = memory
             .chunks(32)
             .enumerate()
-            .skip(draw_mem.current_mem_startline)
+            .skip(self.draw_memory.current_mem_startline)
             .take_while(|(i, _)| i < &end_line)
             .map(|(i, mem_word)| {
                 let words: Vec<Span> = mem_word
@@ -893,7 +722,7 @@ Line::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k
                 )];
                 spans.extend(words);
 
-                if mem_utf8 {
+                if self.mem_utf {
                     let chars: Vec<Span> = mem_word
                         .chunks(4)
                         .map(|utf| {

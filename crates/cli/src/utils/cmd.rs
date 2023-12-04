@@ -408,7 +408,7 @@ pub async fn handle_traces(
             .debug_arena(&result.debug)
             .decoder(&decoder)
             .sources(sources)
-            .build()?;
+            .build();
         debugger.try_run()?;
     } else {
         print_traces(&mut result, &decoder, verbose).await?;

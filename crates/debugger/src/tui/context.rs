@@ -3,14 +3,17 @@
 use crate::{Debugger, ExitReason};
 use alloy_primitives::Address;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use eyre::Result;
-use foundry_evm_core::{debug::DebugStep, utils::CallKind};
-use std::ops::ControlFlow;
+use foundry_evm_core::{
+    debug::{DebugNodeFlat, DebugStep},
+    utils::CallKind,
+};
+use std::{cell::RefCell, ops::ControlFlow};
 
 /// This is currently used to remember last scroll position so screen doesn't wiggle as much.
 #[derive(Default)]
 pub(crate) struct DrawMemory {
-    pub(crate) current_startline: usize,
+    // TODO
+    pub(crate) current_startline: RefCell<usize>,
     pub(crate) inner_call_index: usize,
     pub(crate) current_mem_startline: usize,
     pub(crate) current_stack_startline: usize,
@@ -49,14 +52,36 @@ impl<'a> DebuggerContext<'a> {
         }
     }
 
-    pub(crate) fn init(&mut self) -> Result<()> {
-        self.debugger.terminal.clear()?;
+    pub(crate) fn init(&mut self) {
         self.gen_opcode_list();
-        Ok(())
     }
 
-    fn debug_arena(&self) -> &[(Address, Vec<DebugStep>, CallKind)] {
+    pub(crate) fn debug_arena(&self) -> &[DebugNodeFlat] {
         &self.debugger.debug_arena
+    }
+
+    pub(crate) fn debug_call(&self) -> &DebugNodeFlat {
+        &self.debug_arena()[self.draw_memory.inner_call_index]
+    }
+
+    /// Returns the current call address.
+    pub(crate) fn address(&self) -> &Address {
+        &self.debug_call().address
+    }
+
+    /// Returns the current call kind.
+    pub(crate) fn call_kind(&self) -> CallKind {
+        self.debug_call().kind
+    }
+
+    /// Returns the current debug steps.
+    pub(crate) fn debug_steps(&self) -> &[DebugStep] {
+        &self.debug_call().steps
+    }
+
+    /// Returns the current debug step.
+    pub(crate) fn current_step(&self) -> &DebugStep {
+        &self.debug_steps()[self.current_step]
     }
 
     fn gen_opcode_list(&mut self) {
@@ -64,22 +89,14 @@ impl<'a> DebuggerContext<'a> {
     }
 
     fn opcode_list(&self) -> Vec<String> {
-        self.debugger.debug_arena[self.draw_memory.inner_call_index]
-            .1
-            .iter()
-            .map(DebugStep::pretty_opcode)
-            .collect()
+        self.debug_steps().iter().map(DebugStep::pretty_opcode).collect()
     }
 }
 
 impl DebuggerContext<'_> {
     pub(crate) fn handle_event(&mut self, event: Event) -> ControlFlow<ExitReason> {
         if self.last_index != self.draw_memory.inner_call_index {
-            self.opcode_list = self.debug_arena()[self.draw_memory.inner_call_index]
-                .1
-                .iter()
-                .map(|step| step.pretty_opcode())
-                .collect();
+            self.gen_opcode_list();
             self.last_index = self.draw_memory.inner_call_index;
         }
 
@@ -92,7 +109,7 @@ impl DebuggerContext<'_> {
 
     fn handle_key_event(&mut self, event: KeyEvent) -> ControlFlow<ExitReason> {
         if let KeyCode::Char(c) = event.code {
-            if c.is_alphanumeric() || c == '\'' {
+            if c.is_alphabetic() && self.key_buffer.starts_with('\'') {
                 self.handle_breakpoint(c);
                 return ControlFlow::Continue(());
             }
@@ -106,12 +123,7 @@ impl DebuggerContext<'_> {
                 // Grab number of times to do it
                 for _ in 0..buffer_as_number(&self.key_buffer, 1) {
                     if event.modifiers.contains(KeyModifiers::CONTROL) {
-                        let max_mem = (self.debug_arena()[self.draw_memory.inner_call_index].1
-                            [self.current_step]
-                            .memory
-                            .len() /
-                            32)
-                        .saturating_sub(1);
+                        let max_mem = (self.current_step().memory.len() / 32).saturating_sub(1);
                         if self.draw_memory.current_mem_startline < max_mem {
                             self.draw_memory.current_mem_startline += 1;
                         }
@@ -126,11 +138,7 @@ impl DebuggerContext<'_> {
             }
             KeyCode::Char('J') => {
                 for _ in 0..buffer_as_number(&self.key_buffer, 1) {
-                    let max_stack = self.debug_arena()[self.draw_memory.inner_call_index].1
-                        [self.current_step]
-                        .stack
-                        .len()
-                        .saturating_sub(1);
+                    let max_stack = self.current_step().stack.len().saturating_sub(1);
                     if self.draw_memory.current_stack_startline < max_stack {
                         self.draw_memory.current_stack_startline += 1;
                     }
@@ -147,8 +155,7 @@ impl DebuggerContext<'_> {
                         self.current_step -= 1;
                     } else if self.draw_memory.inner_call_index > 0 {
                         self.draw_memory.inner_call_index -= 1;
-                        self.current_step =
-                            self.debug_arena()[self.draw_memory.inner_call_index].1.len() - 1;
+                        self.current_step = self.debug_steps().len() - 1;
                     }
                 }
                 self.key_buffer.clear();
@@ -169,16 +176,14 @@ impl DebuggerContext<'_> {
             // Go to bottom of file
             KeyCode::Char('G') => {
                 self.draw_memory.inner_call_index = self.debug_arena().len() - 1;
-                self.current_step =
-                    self.debug_arena()[self.draw_memory.inner_call_index].1.len() - 1;
+                self.current_step = self.debug_steps().len() - 1;
                 self.key_buffer.clear();
             }
             // Go to previous call
             KeyCode::Char('c') => {
                 self.draw_memory.inner_call_index =
                     self.draw_memory.inner_call_index.saturating_sub(1);
-                self.current_step =
-                    self.debug_arena()[self.draw_memory.inner_call_index].1.len() - 1;
+                self.current_step = self.debug_steps().len() - 1;
                 self.key_buffer.clear();
             }
             // Go to next call
@@ -261,9 +266,9 @@ impl DebuggerContext<'_> {
         // Find the location of the called breakpoint in the whole debug arena (at this address with
         // this pc)
         if let Some((caller, pc)) = self.debugger.breakpoints.get(&c) {
-            for (i, (_caller, debug_steps, _)) in self.debug_arena().iter().enumerate() {
-                if _caller == caller {
-                    if let Some(step) = debug_steps.iter().position(|step| step.pc == *pc) {
+            for (i, node) in self.debug_arena().iter().enumerate() {
+                if node.address == *caller {
+                    if let Some(step) = node.steps.iter().position(|step| step.pc == *pc) {
                         self.draw_memory.inner_call_index = i;
                         self.current_step = step;
                         break
@@ -283,8 +288,7 @@ impl DebuggerContext<'_> {
                     self.draw_memory.inner_call_index -= 1;
                     self.draw_memory.current_mem_startline = 0;
                     self.draw_memory.current_stack_startline = 0;
-                    self.current_step =
-                        self.debug_arena()[self.draw_memory.inner_call_index].1.len() - 1;
+                    self.current_step = self.debug_steps().len() - 1;
                 }
             }
             MouseEventKind::ScrollDown => {
@@ -301,28 +305,6 @@ impl DebuggerContext<'_> {
         }
 
         ControlFlow::Continue(())
-    }
-
-    pub(crate) fn draw(&mut self) -> Result<()> {
-        self.debugger.terminal.draw(|f| {
-            let debug_arena = &self.debugger.debug_arena;
-            Debugger::draw_layout(
-                f,
-                debug_arena[self.draw_memory.inner_call_index].0,
-                &self.debugger.identified_contracts,
-                &self.debugger.pc_ic_maps,
-                &self.debugger.contracts_sources,
-                &debug_arena[self.draw_memory.inner_call_index].1[..],
-                &self.opcode_list,
-                self.current_step,
-                debug_arena[self.draw_memory.inner_call_index].2,
-                &mut self.draw_memory,
-                self.stack_labels,
-                self.mem_utf,
-                self.show_shortcuts,
-            )
-        })?;
-        Ok(())
     }
 }
 
