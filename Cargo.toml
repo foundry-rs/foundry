@@ -22,7 +22,7 @@ members = [
     "crates/forge/",
     "crates/macros/",
     "crates/test-utils/",
-    "crates/evm/gambit/"
+    "crates/evm/mutator/"
 ]
 resolver = "2"
 

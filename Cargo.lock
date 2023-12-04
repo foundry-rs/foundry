@@ -3223,19 +3223,6 @@ dependencies = [
 
 [[package]]
 name = "gambit"
-version = "0.2.0"
-dependencies = [
- "alloy-json-abi",
- "eyre",
- "foundry-cli",
- "foundry-common",
- "foundry-compilers",
- "gambit 0.2.1",
- "itertools 0.11.0",
-]
-
-[[package]]
-name = "gambit"
 version = "0.2.1"
 source = "git+https://github.com/Certora/gambit?rev=05abe4a0380d6028e733d039a03cb9809881aae1#05abe4a0380d6028e733d039a03cb9809881aae1"
 dependencies = [
@@ -4540,6 +4527,19 @@ dependencies = [
  "log",
  "wasi 0.11.0+wasi-snapshot-preview1",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "mutator"
+version = "0.2.0"
+dependencies = [
+ "alloy-json-abi",
+ "eyre",
+ "foundry-cli",
+ "foundry-common",
+ "foundry-compilers",
+ "gambit",
+ "itertools 0.11.0",
 ]
 
 [[package]]

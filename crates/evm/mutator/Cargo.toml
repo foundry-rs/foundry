@@ -1,5 +1,5 @@
 [package]
-name = "gambit"
+name = "mutator"
 description = "Mutation testing framework"
 
 version.workspace = true

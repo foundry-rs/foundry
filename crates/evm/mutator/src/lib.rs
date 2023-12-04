@@ -1,9 +1,9 @@
 use std::{collections::{HashMap, BTreeMap}, sync::{mpsc::Sender, Arc}};
 use foundry_cli::utils::FoundryPathExt;
 use eyre::{eyre, ErrReport, Result};
-use foundry_compilers::{remappings::RelativeRemapping, FileFilter, Artifact, ArtifactOutput, ProjectCompileOutput, ConfigurableArtifacts, ConfigurableContractArtifact, ArtifactId};
+use foundry_compilers::{remappings::RelativeRemapping, FileFilter, Artifact, ArtifactOutput, ProjectCompileOutput, ArtifactId};
 pub use gambit::Mutant;
-use gambit::{run_mutate, MutateParams, Mutator as GambitMutator};
+use gambit::{run_mutate, MutateParams};
 use itertools::Itertools;
 use std::path::{Path, PathBuf};
 use foundry_common::{TestFilter, FunctionFilter, TestFunctionExt};
