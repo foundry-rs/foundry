@@ -3,7 +3,7 @@ use alloy_sol_types::{SolEvent, SolInterface, SolValue};
 use ethers_core::types::Log;
 use foundry_common::{fmt::ConsoleFmt, types::ToEthers, ErrorExt};
 use foundry_evm_core::{
-    abi::{patch_hardhat_console_selector, Console, HardhatConsole},
+    abi::{patch_hh_console_selector, Console, HardhatConsole},
     constants::HARDHAT_CONSOLE_ADDRESS,
 };
 use revm::{
@@ -23,7 +23,7 @@ pub struct LogCollector {
 impl LogCollector {
     fn hardhat_log(&mut self, mut input: Vec<u8>) -> (InstructionResult, Bytes) {
         // Patch the Hardhat-style selector (`uint` instead of `uint256`)
-        patch_hardhat_console_selector(&mut input);
+        patch_hh_console_selector(&mut input);
 
         // Decode the call
         let decoded = match HardhatConsole::HardhatConsoleCalls::abi_decode(&input, false) {
