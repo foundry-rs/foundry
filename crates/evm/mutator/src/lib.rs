@@ -1,14 +1,14 @@
-use std::{collections::{HashMap, BTreeMap}, sync::{mpsc::Sender, Arc}};
+use std::collections::{HashMap, BTreeMap};
 use foundry_cli::utils::FoundryPathExt;
-use eyre::{eyre, ErrReport, Result};
-use foundry_compilers::{remappings::RelativeRemapping, FileFilter, Artifact, ArtifactOutput, ProjectCompileOutput, ArtifactId};
-pub use gambit::Mutant;
+use eyre::{eyre, Result};
+use foundry_compilers::{remappings::RelativeRemapping, Artifact, ArtifactOutput, ProjectCompileOutput, ArtifactId};
 use gambit::{run_mutate, MutateParams};
 use itertools::Itertools;
 use std::path::{Path, PathBuf};
 use foundry_common::{TestFilter, FunctionFilter, TestFunctionExt};
 use alloy_json_abi::{Function, JsonAbi as Abi};
 
+pub use gambit::Mutant;
 
 const DEFAULT_GAMBIT_DIR_OUT: &'static str = "gambit_out";
 
@@ -36,7 +36,7 @@ impl MutatorConfigBuilder {
 
     pub fn build<A: ArtifactOutput>(
         self,
-        root: impl AsRef<Path>,
+        _root: impl AsRef<Path>,
         src_folder_root: PathBuf,
         output: ProjectCompileOutput<A>,
     ) -> Result<Mutator> {
@@ -225,7 +225,7 @@ impl Mutator {
                 &&
                 abi.functions().any(|func| filter.matches_function(&func.name))
             })
-            .map(|(id, abi)| {
+            .map(|(id, _abi)| {
                 let mut current_mutate_params = self.default_mutate_params.clone();
                 current_mutate_params.outdir = Some(id.name.clone());
                 current_mutate_params.functions = Some(self.get_artifact_functions(id, &filter).map(|x| x.clone()).collect());
