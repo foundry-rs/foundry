@@ -540,6 +540,7 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
             .map(|stdout| stdout.lines().any(|line| line.starts_with('-')))
     }
 
+    /// Returns true if the given path has no submodules by checking `git submodule status`
     pub fn has_submodules<I, S>(self, paths: I) -> Result<bool>
     where
         I: IntoIterator<Item = S>,
@@ -549,7 +550,7 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
             .args(["submodule", "status"])
             .args(paths)
             .get_stdout_lossy()
-            .map(|stdout| stdout.lines().next().is_some())
+            .map(|stdout| stdout.trim().lines().next().is_some())
     }
 
     pub fn submodule_add(
