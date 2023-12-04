@@ -43,7 +43,6 @@ impl MutatorConfigBuilder {
         // Converts the compiled output into artifactId and abi
         // It does not include files with .t.sol extension
         let artifacts: Vec<(ArtifactId, Abi)> = output
-            // .with_stripped_file_prefixes(&root)
             .into_artifacts()
             .filter_map(|(id, c)| match (id.source.as_path().is_sol_test(), c.into_abi()) {
                 (false, Some(b)) => Some((id, b)),
@@ -104,7 +103,7 @@ impl Mutator {
             outdir: Some(DEFAULT_GAMBIT_DIR_OUT.into()),
             sourceroot: Some(source_root.into()),
             mutations: None,
-            no_export: false,
+            no_export: true,
             no_overwrite: false,
             solc: solc.into(),
             solc_optimize,
@@ -155,7 +154,6 @@ impl Mutator {
 
     }
 
-
     pub fn filtered_functions<'a, A>(&'a self, filter: &'a A) -> impl Iterator<Item = &Function> 
         where A: TestFilter + FunctionFilter 
     {
@@ -198,7 +196,7 @@ impl Mutator {
                     .filter(|func| filter.matches_function(func.name.clone()))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
-                println!("source {:?}", source);
+
                 (source, name , functions)
             })
             .fold( BTreeMap::new(), | mut acc, (source, name, functions) | {
