@@ -122,12 +122,15 @@ impl DependencyInstallOpts {
 
         let install_lib_dir = config.install_lib_dir();
         let libs = git.root.join(install_lib_dir);
-        let root = Git::root_of(git.root)?;
 
-        if dependencies.is_empty() && !self.no_git && git.has_submodules(Some(&root))? {
-            p_println!(!self.quiet => "Updating dependencies in {}", libs.display());
-            // recursively fetch all submodules (without fetching latest)
-            git.submodule_update(false, false, false, true, Some(&libs))?;
+        if dependencies.is_empty() && !self.no_git {
+            // Use the root of the git repository to look for submodules.
+            let root = Git::root_of(git.root)?;
+            if git.has_submodules(Some(&root))? {
+                p_println!(!self.quiet => "Updating dependencies in {}", libs.display());
+                // recursively fetch all submodules (without fetching latest)
+                git.submodule_update(false, false, false, true, Some(&libs))?;
+            }
         }
 
         fs::create_dir_all(&libs)?;
@@ -163,6 +166,7 @@ impl DependencyInstallOpts {
 
                     // update .gitmodules which is at the root of the repo,
                     // not necessarily at the root of the current Foundry project
+                    let root = Git::root_of(git.root)?;
                     git.root(&root).add(Some(".gitmodules"))?;
                 }
 
