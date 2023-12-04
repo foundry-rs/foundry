@@ -12,3 +12,10 @@ exclude.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+foundry-compilers = { workspace = true, features = ["full"] }
+eyre.workspace = true
+itertools.workspace = true
+foundry-common.workspace = true
+alloy-json-abi.workspace = true
+foundry-cli.workspace = true
+gambit = { git = "https://github.com/Certora/gambit", rev = "05abe4a0380d6028e733d039a03cb9809881aae1" }
