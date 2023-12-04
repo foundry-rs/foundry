@@ -15,7 +15,7 @@ use ethers::{
     },
     utils::hex,
 };
-use foundry_common::types::{ToEthers, ToAlloy};
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::revm::primitives::SpecId;
 use std::{
     str::FromStr,
@@ -41,7 +41,8 @@ async fn can_set_block_gas_limit() {
     assert!(api.evm_set_block_gas_limit(block_gas_limit.to_alloy()).unwrap());
     // Mine a new block, and check the new block gas limit
     api.mine_one().await;
-    let latest_block = api.block_by_number(alloy_rpc_types::BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let latest_block =
+        api.block_by_number(alloy_rpc_types::BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block_gas_limit.to_alloy(), latest_block.header.gas_limit);
 }
 
@@ -158,7 +159,9 @@ async fn can_impersonate_contract() {
     let provider = handle.ethers_http_provider();
 
     // fund the impersonated account
-    api.anvil_set_balance(impersonate.to_alloy(), U256::from(1e18 as u64).to_alloy()).await.unwrap();
+    api.anvil_set_balance(impersonate.to_alloy(), U256::from(1e18 as u64).to_alloy())
+        .await
+        .unwrap();
 
     let tx = TransactionRequest::new().from(impersonate).to(to).value(val);
 
@@ -611,9 +614,18 @@ async fn test_fork_revert_call_latest_block_timestamp() {
         provider.into(),
     );
 
-    assert_eq!(multicall.get_current_block_timestamp().await.unwrap(), latest_block.header.timestamp.to_ethers());
-    assert_eq!(multicall.get_current_block_difficulty().await.unwrap(), latest_block.header.difficulty.to_ethers());
-    assert_eq!(multicall.get_current_block_gas_limit().await.unwrap(), latest_block.header.gas_limit.to_ethers());
+    assert_eq!(
+        multicall.get_current_block_timestamp().await.unwrap(),
+        latest_block.header.timestamp.to_ethers()
+    );
+    assert_eq!(
+        multicall.get_current_block_difficulty().await.unwrap(),
+        latest_block.header.difficulty.to_ethers()
+    );
+    assert_eq!(
+        multicall.get_current_block_gas_limit().await.unwrap(),
+        latest_block.header.gas_limit.to_ethers()
+    );
     assert_eq!(
         multicall.get_current_block_coinbase().await.unwrap(),
         latest_block.header.miner.to_ethers()
