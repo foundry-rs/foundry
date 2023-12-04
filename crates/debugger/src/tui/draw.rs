@@ -5,26 +5,23 @@ use crate::op::OpcodeParam;
 use alloy_primitives::U256;
 use foundry_evm_core::{debug::Instruction, utils::CallKind};
 use ratatui::{
-    backend::Backend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     terminal::Frame,
     text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph, Wrap},
-    Terminal,
 };
 use revm::interpreter::opcode;
 use std::{cmp, collections::VecDeque, io};
 
 impl DebuggerContext<'_> {
-    pub(crate) fn draw(&self, terminal: &mut Terminal<impl Backend>) -> io::Result<()> {
+    /// Draws the TUI layout and subcomponents to the given terminal.
+    pub(crate) fn draw(&self, terminal: &mut super::DebuggerTerminal) -> io::Result<()> {
         terminal.draw(|f| self.draw_layout(f)).map(drop)
     }
 
-    /// Create layout and subcomponents.
     fn draw_layout(&self, f: &mut Frame<'_>) {
-        let total_size = f.size();
-        if total_size.width < 225 {
+        if f.size().width < 225 {
             self.vertical_layout(f);
         } else {
             self.square_layout(f);
