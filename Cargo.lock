@@ -3167,6 +3167,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "gambit"
+version = "0.2.0"
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

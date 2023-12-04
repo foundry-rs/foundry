@@ -22,6 +22,7 @@ members = [
     "crates/forge/",
     "crates/macros/",
     "crates/test-utils/",
+    "crates/evm/gambit/"
 ]
 resolver = "2"
 
