@@ -89,7 +89,7 @@ impl ScriptArgs {
                 .decoder(&decoder)
                 .sources(sources)
                 .breakpoints(result.breakpoints.clone())
-                .build()?;
+                .build();
             debugger.try_run()?;
         }
 

@@ -321,7 +321,7 @@ impl TestArgs {
                 .decoders(&decoders)
                 .sources(sources)
                 .breakpoints(result.breakpoints)
-                .build()?;
+                .build();
             debugger.try_run()?;
         }
 

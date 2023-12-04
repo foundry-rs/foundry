@@ -3,28 +3,22 @@
 use super::context::DebuggerContext;
 use crate::op::OpcodeParam;
 use alloy_primitives::U256;
-use eyre::Result;
 use foundry_evm_core::{debug::Instruction, utils::CallKind};
 use ratatui::{
+    backend::Backend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     terminal::Frame,
     text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph, Wrap},
+    Terminal,
 };
 use revm::interpreter::opcode;
-use std::{cmp, collections::VecDeque};
+use std::{cmp, collections::VecDeque, io};
 
 impl DebuggerContext<'_> {
-    pub(crate) fn draw(&mut self) -> Result<()> {
-        unsafe fn break_rust<'a, 'b, T>(t: &'a mut T) -> &'b mut T {
-            std::mem::transmute(t)
-        }
-
-        // SAFETY: `terminal` is not used in `draw_layout`.
-        let terminal = unsafe { break_rust(&mut self.debugger.terminal) };
-        terminal.draw(|f| self.draw_layout(f))?;
-        Ok(())
+    pub(crate) fn draw(&self, terminal: &mut Terminal<impl Backend>) -> io::Result<()> {
+        terminal.draw(|f| self.draw_layout(f)).map(drop)
     }
 
     /// Create layout and subcomponents.

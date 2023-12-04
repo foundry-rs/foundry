@@ -2,7 +2,6 @@
 
 use crate::Debugger;
 use alloy_primitives::Address;
-use eyre::Result;
 use foundry_common::{compile::ContractSources, evm::Breakpoints, get_contract_name};
 use foundry_evm_core::debug::{DebugArena, DebugNodeFlat};
 use foundry_evm_traces::CallTraceDecoder;
@@ -87,7 +86,7 @@ impl DebuggerBuilder {
 
     /// Builds the debugger.
     #[inline]
-    pub fn build(self) -> Result<Debugger> {
+    pub fn build(self) -> Debugger {
         let Self { debug_arena, identified_contracts, sources, breakpoints } = self;
         Debugger::new(debug_arena, identified_contracts, sources, breakpoints)
     }

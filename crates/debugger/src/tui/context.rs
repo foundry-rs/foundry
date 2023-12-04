@@ -3,7 +3,6 @@
 use crate::{Debugger, ExitReason};
 use alloy_primitives::Address;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use eyre::Result;
 use foundry_evm_core::{
     debug::{DebugNodeFlat, DebugStep},
     utils::CallKind,
@@ -53,10 +52,8 @@ impl<'a> DebuggerContext<'a> {
         }
     }
 
-    pub(crate) fn init(&mut self) -> Result<()> {
-        self.debugger.terminal.clear()?;
+    pub(crate) fn init(&mut self) {
         self.gen_opcode_list();
-        Ok(())
     }
 
     pub(crate) fn debug_arena(&self) -> &[DebugNodeFlat] {
@@ -64,7 +61,7 @@ impl<'a> DebuggerContext<'a> {
     }
 
     pub(crate) fn debug_call(&self) -> &DebugNodeFlat {
-        &self.debugger.debug_arena[self.draw_memory.inner_call_index]
+        &self.debug_arena()[self.draw_memory.inner_call_index]
     }
 
     /// Returns the current call address.

@@ -12,7 +12,10 @@ use foundry_evm_core::{
     debug::DebugNodeFlat,
     utils::{build_pc_ic_map, PCICMap},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{
+    backend::{Backend, CrosstermBackend},
+    Terminal,
+};
 use revm::primitives::SpecId;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -31,6 +34,8 @@ use context::DebuggerContext;
 
 mod draw;
 
+type DebuggerTerminal = Terminal<CrosstermBackend<io::Stdout>>;
+
 /// Debugger exit reason.
 #[derive(Debug)]
 pub enum ExitReason {
@@ -41,7 +46,6 @@ pub enum ExitReason {
 /// The TUI debugger.
 pub struct Debugger {
     debug_arena: Vec<DebugNodeFlat>,
-    terminal: Terminal<CrosstermBackend<io::Stdout>>,
     identified_contracts: HashMap<Address, String>,
     /// Source map of contract sources
     contracts_sources: ContractSources,
@@ -63,9 +67,7 @@ impl Debugger {
         identified_contracts: HashMap<Address, String>,
         contracts_sources: ContractSources,
         breakpoints: Breakpoints,
-    ) -> Result<Self> {
-        let backend = CrosstermBackend::new(io::stdout());
-        let terminal = Terminal::new(backend)?;
+    ) -> Self {
         let pc_ic_maps = contracts_sources
             .0
             .iter()
@@ -93,14 +95,7 @@ impl Debugger {
                 })
             })
             .collect();
-        Ok(Self {
-            debug_arena,
-            terminal,
-            identified_contracts,
-            contracts_sources,
-            pc_ic_maps,
-            breakpoints,
-        })
+        Self { debug_arena, identified_contracts, contracts_sources, pc_ic_maps, breakpoints }
     }
 
     /// Starts the debugger TUI. Terminates the current process on failure or user exit.
@@ -117,19 +112,16 @@ impl Debugger {
 
     /// Starts the debugger TUI.
     pub fn try_run(&mut self) -> Result<ExitReason> {
-        let mut guard = DebuggerGuard::setup(self)?;
-        let r = guard.0.try_run_real();
-        // Cleanup only once.
-        guard.restore()?;
-        std::mem::forget(guard);
-        r
+        let backend = CrosstermBackend::new(io::stdout());
+        let mut terminal = Terminal::new(backend)?;
+        TerminalGuard::with(&mut terminal, |terminal| self.try_run_real(terminal))
     }
 
     #[instrument(target = "debugger", name = "run", skip_all, ret)]
-    fn try_run_real(&mut self) -> Result<ExitReason> {
+    fn try_run_real(&mut self, terminal: &mut DebuggerTerminal) -> Result<ExitReason> {
         // Create the context.
         let mut cx = DebuggerContext::new(self);
-        cx.init()?;
+        cx.init();
 
         // Create an event listener in a different thread.
         let (tx, rx) = mpsc::channel();
@@ -143,7 +135,7 @@ impl Debugger {
                 ControlFlow::Continue(()) => {}
                 ControlFlow::Break(reason) => return Ok(reason),
             }
-            cx.draw()?;
+            cx.draw(terminal)?;
         }
     }
 
@@ -171,30 +163,34 @@ impl Debugger {
     }
 }
 
-/// Handles terminal state. `restore` should be called before drop to handle errors.
+/// Handles terminal state.
 #[must_use]
-struct DebuggerGuard<'a>(&'a mut Debugger);
+struct TerminalGuard<'a, B: Backend + io::Write>(&'a mut Terminal<B>);
 
-impl<'a> DebuggerGuard<'a> {
-    fn setup(dbg: &'a mut Debugger) -> Result<Self> {
-        let this = Self(dbg);
-        enable_raw_mode()?;
-        execute!(*this.0.terminal.backend_mut(), EnterAlternateScreen, EnableMouseCapture)?;
-        this.0.terminal.hide_cursor()?;
-        Ok(this)
+impl<'a, B: Backend + io::Write> TerminalGuard<'a, B> {
+    fn with<T>(terminal: &'a mut Terminal<B>, mut f: impl FnMut(&mut Terminal<B>) -> T) -> T {
+        let mut guard = Self(terminal);
+        guard.setup();
+        f(guard.0)
     }
 
-    fn restore(&mut self) -> Result<()> {
-        disable_raw_mode()?;
-        execute!(*self.0.terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
-        self.0.terminal.show_cursor()?;
-        Ok(())
+    fn setup(&mut self) {
+        let _ = enable_raw_mode();
+        let _ = execute!(*self.0.backend_mut(), EnterAlternateScreen, EnableMouseCapture);
+        let _ = self.0.hide_cursor();
+        let _ = self.0.clear();
+    }
+
+    fn restore(&mut self) {
+        let _ = disable_raw_mode();
+        let _ = execute!(*self.0.backend_mut(), LeaveAlternateScreen, DisableMouseCapture);
+        let _ = self.0.show_cursor();
     }
 }
 
-impl Drop for DebuggerGuard<'_> {
+impl<B: Backend + io::Write> Drop for TerminalGuard<'_, B> {
     #[inline]
     fn drop(&mut self) {
-        let _ = self.restore();
+        self.restore();
     }
 }
