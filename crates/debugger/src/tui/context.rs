@@ -109,7 +109,7 @@ impl DebuggerContext<'_> {
 
     fn handle_key_event(&mut self, event: KeyEvent) -> ControlFlow<ExitReason> {
         if let KeyCode::Char(c) = event.code {
-            if c.is_alphanumeric() || c == '\'' {
+            if c.is_alphabetic() && self.key_buffer.starts_with('\'') {
                 self.handle_breakpoint(c);
                 return ControlFlow::Continue(());
             }
