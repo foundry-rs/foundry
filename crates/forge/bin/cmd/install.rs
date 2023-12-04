@@ -123,12 +123,33 @@ impl DependencyInstallOpts {
         let install_lib_dir = config.install_lib_dir();
         let libs = git.root.join(install_lib_dir);
 
+        // Pre-emptively create the directory where deps will be installed if it's missing
+        fs::create_dir_all(&libs)?;
+
         if dependencies.is_empty() && !self.no_git {
             p_println!(!self.quiet => "Updating dependencies in {}", libs.display());
-            // recursively fetch all submodules (without fetching latest)
-            git.submodule_update(false, false, false, true, Some(&libs))?;
+
+            let empty_install_dir = libs.read_dir()?.next().is_none();
+
+            if empty_install_dir {
+                fs::create_file(libs.join(".keep"))?;
+                // Update the git project with the newly created folder if we're using git.
+                if !self.no_git {
+                    git.add(Some(&libs.join(".keep")))?;
+                }
+                // recursively fetch all submodules (without fetching latest)
+                git.submodule_update(false, false, false, true, Some(&libs))?;
+                // remove the temporary file
+                fs::remove_file(libs.join(".keep"))?;
+                // Update the git project with the newly deleted folder if we're using git.
+                if !self.no_git {
+                    git.add(Some(&libs.join(".keep")))?;
+                }
+            } else {
+                // just recursively fetch all submodules (without fetching latest)
+                git.submodule_update(false, false, false, true, Some(&libs))?;
+            }
         }
-        fs::create_dir_all(&libs)?;
 
         let installer = Installer { git, no_commit };
         for dep in dependencies {
