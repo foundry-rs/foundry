@@ -1,12 +1,12 @@
 //! Runtime transport that connects on first request, which can take either of an HTTP,
 //! WebSocket, or IPC transport.
-use std::{sync::Arc, time::Duration};
+use std::{borrow::BorrowMut, future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_providers::provider::Provider;
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
 use alloy_rpc_client::{ClientBuilder, RpcClient};
-use alloy_transport::{TransportError, TransportFut};
+use alloy_transport::{TransportError, TransportErrorKind, TransportFut};
 use alloy_transport_http::Http;
 use alloy_transport_ws::WsConnect;
 use thiserror::Error;
@@ -15,13 +15,12 @@ use tower::Service;
 use url::Url;
 
 /// An enum representing the different transports that can be used to connect to a runtime.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum InnerTransport {
     /// HTTP transport
     Http(Http<reqwest::Client>),
     Ws(PubSubFrontend),
     // TODO: IPC
-    Ipc,
 }
 
 /// Error type for the runtime transport.
@@ -52,10 +51,6 @@ pub enum RuntimeTransportError {
 pub struct RuntimeTransport {
     inner: Arc<RwLock<Option<InnerTransport>>>,
     url: Url,
-    max_retry: u32,
-    timeout_retry: u32,
-    timeout: Duration,
-    compute_units_per_second: u64,
     jwt: Option<String>,
     headers: Vec<String>,
 }
@@ -85,23 +80,26 @@ impl RuntimeTransport {
     }
 
     /// Send a request
-    async fn request(&self, req: RequestPacket) -> TransportFut<'static> {
-        if self.inner.read().await.is_none() {
-            let mut w = self.inner.write().await;
-            *w = Some(
-                self.connect()
-                    .await
-                    .map_err(|e| TransportError::Other(e.to_string()))
-                    .unwrap(),
-            )
-        }
-        match self.url.scheme() {
-            _ => todo!()
-        }
+    pub fn request(&self, req: RequestPacket) -> TransportFut<'static> {
+        let this = self.clone();
+        Box::pin(async move {
+            if this.inner.read().await.is_none() {
+                let mut w = this.inner.write().await;
+                *w = Some(this.connect().await.unwrap())
+            }
+
+            let mut inner = this.inner.write().await;
+            let inner_mut = inner.as_mut().expect("boom");
+
+            match inner_mut {
+                InnerTransport::Http(http) => todo!(), // http.request(req).await,
+                InnerTransport::Ws(ws) => ws.send_packet(req).await,
+            }
+        })
     }
 }
 
-impl Service<RequestPacket> for RuntimeTransport {
+impl tower::Service<RequestPacket> for RuntimeTransport {
     type Response = ResponsePacket;
     type Error = TransportError;
     type Future = TransportFut<'static>;
@@ -116,7 +114,7 @@ impl Service<RequestPacket> for RuntimeTransport {
 
     #[inline]
     fn call(&mut self, req: RequestPacket) -> Self::Future {
-        todo!()
+        self.request(req)
     }
 }
 
@@ -135,6 +133,6 @@ impl Service<RequestPacket> for &RuntimeTransport {
 
     #[inline]
     fn call(&mut self, req: RequestPacket) -> Self::Future {
-        todo!()
+        self.request(req)
     }
 }
