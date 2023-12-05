@@ -72,45 +72,45 @@ impl MutationTestFilterArgs {
     ) -> MutationProjectPathsAwareFilter {
         let mut filter = self.clone();
         if filter.test_pattern.is_none() {
-            filter.test_pattern = config.mutation.test_pattern.clone().map(|p| p.into());
+            filter.test_pattern = config.mutate.test_pattern.clone().map(|p| p.into());
         }
         if filter.test_pattern_inverse.is_none() {
-            filter.test_pattern_inverse = config.mutation.test_pattern_inverse.clone().map(|p| p.into());
+            filter.test_pattern_inverse = config.mutate.test_pattern_inverse.clone().map(|p| p.into());
         }
         if filter.function_pattern.is_none() {
             filter.function_pattern = config
-                .mutation
+                .mutate
                 .function_pattern
                 .clone()
                 .map(|p| p.into());
         }
         if filter.function_pattern_inverse.is_none() {
             filter.function_pattern_inverse = config
-                .mutation
+                .mutate
                 .function_pattern_inverse
                 .clone()
                 .map(|p| p.into());
         }
         if filter.contract_pattern.is_none() {
             filter.contract_pattern = config
-                .mutation
+                .mutate
                 .contract_pattern
                 .clone()
                 .map(|p| p.into());
         }
         if filter.contract_pattern_inverse.is_none() {
             filter.contract_pattern_inverse = config
-                .mutation
+                .mutate
                 .contract_pattern_inverse
                 .clone()
                 .map(|p| p.into());
         }
         if filter.path_pattern.is_none() {
-            filter.path_pattern = config.mutation.path_pattern.clone().map(Into::into);
+            filter.path_pattern = config.mutate.path_pattern.clone().map(Into::into);
         }
         if filter.path_pattern_inverse.is_none() {
             filter.path_pattern_inverse = config
-                .mutation
+                .mutate
                 .path_pattern_inverse
                 .clone()
                 .map(Into::into);
