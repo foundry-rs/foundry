@@ -21,7 +21,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     io,
     ops::ControlFlow,
-    sync::mpsc,
+    sync::{mpsc, Arc},
     thread,
     time::{Duration, Instant},
 };
@@ -169,26 +169,51 @@ impl Debugger {
 
 /// Handles terminal state.
 #[must_use]
-struct TerminalGuard<'a, B: Backend + io::Write>(&'a mut Terminal<B>);
+struct TerminalGuard<'a, B: Backend + io::Write> {
+    terminal: &'a mut Terminal<B>,
+    hook: Option<Arc<Box<dyn Fn(&std::panic::PanicInfo<'_>) + 'static + Sync + Send>>>,
+}
 
 impl<'a, B: Backend + io::Write> TerminalGuard<'a, B> {
     fn with<T>(terminal: &'a mut Terminal<B>, mut f: impl FnMut(&mut Terminal<B>) -> T) -> T {
-        let mut guard = Self(terminal);
+        let mut guard = Self { terminal, hook: None };
         guard.setup();
-        f(guard.0)
+        f(guard.terminal)
     }
 
     fn setup(&mut self) {
+        let previous = Arc::new(std::panic::take_hook());
+        self.hook = Some(previous.clone());
+        // TODO: `std::panic::update_hook`
+        std::panic::set_hook(Box::new(move |info| {
+            Self::half_restore(&mut std::io::stdout());
+            (previous)(info)
+        }));
+
         let _ = enable_raw_mode();
-        let _ = execute!(*self.0.backend_mut(), EnterAlternateScreen, EnableMouseCapture);
-        let _ = self.0.hide_cursor();
-        let _ = self.0.clear();
+        let _ = execute!(*self.terminal.backend_mut(), EnterAlternateScreen, EnableMouseCapture);
+        let _ = self.terminal.hide_cursor();
+        let _ = self.terminal.clear();
     }
 
     fn restore(&mut self) {
+        if !std::thread::panicking() {
+            let _ = std::panic::take_hook();
+            let prev = self.hook.take().unwrap();
+            let prev = match Arc::try_unwrap(prev) {
+                Ok(prev) => prev,
+                Err(_) => unreachable!(),
+            };
+            std::panic::set_hook(prev);
+        }
+
+        Self::half_restore(self.terminal.backend_mut());
+        let _ = self.terminal.show_cursor();
+    }
+
+    fn half_restore(w: &mut impl io::Write) {
         let _ = disable_raw_mode();
-        let _ = execute!(*self.0.backend_mut(), LeaveAlternateScreen, DisableMouseCapture);
-        let _ = self.0.show_cursor();
+        let _ = execute!(w, LeaveAlternateScreen, DisableMouseCapture);
     }
 }
 
