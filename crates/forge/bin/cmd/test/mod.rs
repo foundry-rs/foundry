@@ -297,10 +297,11 @@ impl TestArgs {
                 // Sources are only required for the debugger, but it *might* mean that there's
                 // something wrong with the build and/or artifacts.
                 if let Some(source) = artifact.source_file() {
-                    let abs_path = source
+                    let path = source
                         .ast
                         .ok_or_else(|| eyre::eyre!("Source from artifact has no AST."))?
                         .absolute_path;
+                    let abs_path = project.root().join(&path);
                     let source_code = fs::read_to_string(abs_path)?;
                     let contract = artifact.clone().into_contract_bytecode();
                     let source_contract = compact_to_contract(contract)?;
