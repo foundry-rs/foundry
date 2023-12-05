@@ -40,7 +40,6 @@ impl MutatorConfigBuilder {
 
     pub fn build<A: ArtifactOutput>(
         self,
-        _root: impl AsRef<Path>,
         src_folder_root: PathBuf,
         output: ProjectCompileOutput<A>,
     ) -> Result<Mutator> {
