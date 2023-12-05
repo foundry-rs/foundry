@@ -1,6 +1,6 @@
 [package]
-name = "mutator"
-description = "Mutation testing framework"
+name = "foundry-evm-mutator"
+description = "Mutation testing framework using `gambit`"
 
 version.workspace = true
 edition.workspace = true

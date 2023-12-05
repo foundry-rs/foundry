@@ -123,6 +123,7 @@ foundry-evm-fuzz = { path = "crates/evm/fuzz" }
 foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
+foundry-evm-mutator = { path = "crates/evm/mutator" }
 
 foundry-block-explorers = { version = "0.1.1", default-features = false }
 foundry-compilers = { version = "0.1.1", default-features = false }
