@@ -145,7 +145,10 @@ ethers-solc = { version = "2.0", default-features = false }
 alloy-providers = "0.1.0"
 alloy-transport = "0.1.0"
 alloy-transport-http = "0.1.0"
+alloy-transport-ws = "0.1.0"
 alloy-rpc-types = "0.1.0"
+alloy-pubsub = "0.1.0"
+alloy-rpc-client = "0.1.0"
 alloy-primitives = "0.5.0"
 alloy-dyn-abi = "0.5.0"
 alloy-json-abi = "0.5.0"
@@ -203,7 +206,10 @@ ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "2e93fa7e0f2
 alloy-providers = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
 alloy-transport = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
 alloy-transport-http = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
+alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
 alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
+alloy-pubsub = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
+alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
 
 revm = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 revm-interpreter = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }

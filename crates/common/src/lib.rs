@@ -8,6 +8,7 @@ extern crate self as foundry_common;
 extern crate tracing;
 
 pub mod abi;
+pub mod alloy_runtime_transport;
 pub mod calc;
 pub mod clap_helpers;
 pub mod compile;
