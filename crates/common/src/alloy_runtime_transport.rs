@@ -2,22 +2,24 @@
 //! WebSocket, or IPC transport.
 use std::{sync::Arc, time::Duration};
 
+use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_providers::provider::Provider;
-use alloy_pubsub::PubSubFrontend;
+use alloy_pubsub::{PubSubConnect, PubSubFrontend};
 use alloy_rpc_client::{ClientBuilder, RpcClient};
-use alloy_transport::TransportError;
+use alloy_transport::{TransportError, TransportFut};
 use alloy_transport_http::Http;
 use alloy_transport_ws::WsConnect;
 use thiserror::Error;
 use tokio::sync::RwLock;
+use tower::Service;
 use url::Url;
 
 /// An enum representing the different transports that can be used to connect to a runtime.
 #[derive(Debug)]
 pub enum InnerTransport {
     /// HTTP transport
-    Http(RpcClient<Http<reqwest::Client>>),
-    Ws(RpcClient<PubSubFrontend>),
+    Http(Http<reqwest::Client>),
+    Ws(PubSubFrontend),
     // TODO: IPC
     Ipc,
 }
@@ -65,19 +67,74 @@ impl ::core::fmt::Display for RuntimeTransport {
 }
 
 impl RuntimeTransport {
+    /// Connect to the runtime transport, depending on the URL scheme.
     async fn connect(&self) -> Result<InnerTransport, RuntimeTransportError> {
         match self.url.scheme() {
-            "http" | "https" => {
-                Ok(InnerTransport::Http(ClientBuilder::default().reqwest_http(self.url.to_owned())))
-            }
-            "ws" | "wss" => Ok(InnerTransport::Ws(
-                ClientBuilder::default()
-                    .ws(WsConnect { url: self.url.to_string(), auth: None })
+            "http" | "https" => Ok(InnerTransport::Http(Http::new(self.url.clone()))),
+            "ws" | "wss" => {
+                // TODO: Auth
+                let ws = WsConnect { url: self.url.to_string(), auth: None }
+                    .into_service()
                     .await
-                    .unwrap(),
-            )),
+                    .unwrap();
+                Ok(InnerTransport::Ws(ws))
+            }
             // TODO: IPC once it's merged
             _ => Err(RuntimeTransportError::BadScheme(self.url.scheme().to_string())),
         }
+    }
+
+    /// Send a request
+    async fn request(&self, req: RequestPacket) -> TransportFut<'static> {
+        if self.inner.read().await.is_none() {
+            let mut w = self.inner.write().await;
+            *w = Some(
+                self.connect()
+                    .await
+                    .map_err(|e| TransportError::Other(e.to_string()))
+                    .unwrap(),
+            )
+        }
+        match self.url.scheme() {
+            _ => todo!()
+        }
+    }
+}
+
+impl Service<RequestPacket> for RuntimeTransport {
+    type Response = ResponsePacket;
+    type Error = TransportError;
+    type Future = TransportFut<'static>;
+
+    #[inline]
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        todo!()
+    }
+
+    #[inline]
+    fn call(&mut self, req: RequestPacket) -> Self::Future {
+        todo!()
+    }
+}
+
+impl Service<RequestPacket> for &RuntimeTransport {
+    type Response = ResponsePacket;
+    type Error = TransportError;
+    type Future = TransportFut<'static>;
+
+    #[inline]
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        todo!()
+    }
+
+    #[inline]
+    fn call(&mut self, req: RequestPacket) -> Self::Future {
+        todo!()
     }
 }

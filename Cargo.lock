@@ -2933,6 +2933,7 @@ version = "0.2.0"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
+ "alloy-json-rpc",
  "alloy-primitives",
  "alloy-providers",
  "alloy-pubsub",
@@ -2969,6 +2970,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tower",
  "tracing",
  "url",
  "walkdir",
