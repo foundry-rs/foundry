@@ -86,7 +86,7 @@ pub struct MutateTestArgs {
     pub export: bool,
 
     /// Print mutation test summary table
-    #[clap(long, help_heading = "Display options", default_value_t = true)]
+    #[clap(long, help_heading = "Display options", default_value_t = false)]
     pub summary: bool,
 
     /// Print detailed mutation test summary table
@@ -123,7 +123,7 @@ impl MutateTestArgs {
         println!("{}\n", Paint::white("[1] Setting up and testing project...").bold());
 
         // let spinner = SpinnerReporter
-        let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+        let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
         // Fetch project filter
         let mut filter = self.filter(&config);
 
@@ -139,8 +139,6 @@ impl MutateTestArgs {
             project = config.project()?;
         }
 
-        let compiler = ProjectCompiler::default();
-        // @TODO should we support the compilation match in tests
         let output = compile::suppress_compile(&project)?;
 
         // Create test options from general project settings
@@ -156,7 +154,7 @@ impl MutateTestArgs {
             .profiles(profiles)
             .build(&output, project_root)?;
 
-        let mut runner_builder = MultiContractRunnerBuilder::default()
+        let runner_builder = MultiContractRunnerBuilder::default()
             .set_debug(false)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
@@ -165,7 +163,7 @@ impl MutateTestArgs {
             .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone()))
             .with_test_options(test_options.clone());
 
-        let mut runner = runner_builder.clone().build(
+        let runner = runner_builder.clone().build(
                 project_root,
                 output.clone(),
                 env.clone(),
@@ -225,6 +223,7 @@ impl MutateTestArgs {
                 if let Some(suggestion) = utils::did_you_mean(function_name, candidates).pop() {
                     println!("\nDid you mean `{suggestion}`?");
                 }
+                std::process::exit(0);
             }
         }
 
@@ -258,10 +257,9 @@ impl MutateTestArgs {
             )
         ).await?.into_iter());
 
-        if !progress_bar.is_finished() {
-            progress_bar.finish();
-        }
-
+        // finish progress bar
+        progress_bar.finish();
+    
         let mutation_test_outcome = MutationTestOutcome::new(
             self.allow_failure,
             mutant_test_suite_results
@@ -317,7 +315,9 @@ pub async fn test_mutant(
     evm_opts: &EvmOpts,
     mutant: Mutant
 ) -> Result<MutantTestResult> {
+
     info!("testing mutants");    
+    
     let start = Instant::now();
 
     // @TODO do test mode matching check here
@@ -349,7 +349,7 @@ pub async fn test_mutant(
     let project_root = &project.root();
 
     let toml = config.get_config_path();
-    // println!("project_root {:?}", toml);
+
     let profiles = get_available_profiles(toml)?;
 
     let test_options: TestOptions = TestOptionsBuilder::default()
@@ -393,6 +393,7 @@ pub async fn test_mutant(
 
     // @TODO if FAIL FAST if a mutant survives then throw ERROR
     let _results = handle.await?;
+
     trace!(target: "forge::mutate", "received results");
     
     Ok(MutantTestResult::new(start.elapsed(), mutant, status))
