@@ -587,7 +587,7 @@ fn list(
 
 /// Runs all the tests
 #[allow(clippy::too_many_arguments)]
-async fn test(
+pub async fn test(
     config: Config,
     mut runner: MultiContractRunner,
     verbosity: u8,

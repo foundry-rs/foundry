@@ -32,13 +32,22 @@ use itertools::Itertools;
 use std::{collections::BTreeMap, fs, sync::mpsc::channel, time::{Duration, Instant}, path::{PathBuf, Path}};
 use yansi::Paint;
 use foundry_evm_mutator::{Mutant, Mutator, MutatorConfigBuilder};
+use crate::cmd::{
+    test::{test, FilterArgs},
+    mutate::mutation_summary::{
+        MutationTestOutcome,
+        MutantTestResult,
+        MutationTestSuiteResult,
+        MutationTestSummaryReporter
+    }
+};
 
 
 mod filter;
 pub use filter::*;
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::merge_impl_figment_convert!(MutationTestArgs, opts, evm_opts);
+foundry_config::merge_impl_figment_convert!(MutateTestArgs, opts, evm_opts);
 
 /// CLI arguments for `forge mutate`.
 #[derive(Debug, Clone, Parser)]
