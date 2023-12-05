@@ -94,8 +94,8 @@ impl RuntimeTransport {
             let inner_mut = inner.as_mut().expect("boom");
 
             match inner_mut {
-                InnerTransport::Http(_) => todo!(), // http.request(req).await,
-                InnerTransport::Ws(ws) => ws.send_packet(req).await,
+                InnerTransport::Http(http) => http.call(req).await,
+                InnerTransport::Ws(ws) => ws.call(req).await,
                 InnerTransport::Ipc => todo!(),
             }
         })
