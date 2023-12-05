@@ -1,12 +1,9 @@
 //! Runtime transport that connects on first request, which can take either of an HTTP,
 //! WebSocket, or IPC transport.
-use std::{borrow::BorrowMut, future::Future, pin::Pin, sync::Arc, time::Duration};
-
+use std::sync::Arc;
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
-use alloy_providers::provider::Provider;
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
-use alloy_rpc_client::{ClientBuilder, RpcClient};
-use alloy_transport::{TransportError, TransportErrorKind, TransportFut};
+use alloy_transport::{TransportError, TransportFut};
 use alloy_transport_http::Http;
 use alloy_transport_ws::WsConnect;
 use thiserror::Error;
@@ -107,9 +104,9 @@ impl tower::Service<RequestPacket> for RuntimeTransport {
     #[inline]
     fn poll_ready(
         &mut self,
-        cx: &mut std::task::Context<'_>,
+        _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        todo!()
+        std::task::Poll::Ready(Ok(()))
     }
 
     #[inline]
@@ -126,9 +123,9 @@ impl Service<RequestPacket> for &RuntimeTransport {
     #[inline]
     fn poll_ready(
         &mut self,
-        cx: &mut std::task::Context<'_>,
+        _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        todo!()
+        std::task::Poll::Ready(Ok(()))
     }
 
     #[inline]
