@@ -2,7 +2,7 @@
 //! WebSocket, or IPC transport.
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
-use alloy_transport::{BoxTransport, TransportError, TransportFut};
+use alloy_transport::{BoxTransport, TransportError, TransportErrorKind, TransportFut};
 use alloy_transport_http::Http;
 use alloy_transport_ws::WsConnect;
 use std::sync::Arc;
@@ -73,7 +73,7 @@ impl RuntimeTransport {
                 let ws = WsConnect { url: self.url.to_string(), auth: None }
                     .into_service()
                     .await
-                    .unwrap();
+                    .map_err(|e| RuntimeTransportError::TransportError(e))?;
                 Ok(InnerTransport::Ws(ws))
             }
             // TODO: IPC once it's merged
@@ -87,7 +87,7 @@ impl RuntimeTransport {
         Box::pin(async move {
             if this.inner.read().await.is_none() {
                 let mut w = this.inner.write().await;
-                *w = Some(this.connect().await.unwrap())
+                *w = Some(this.connect().await.map_err(|e| TransportErrorKind::custom(e))?)
             }
 
             let mut inner = this.inner.write().await;
