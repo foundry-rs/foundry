@@ -95,7 +95,7 @@ pub struct MutateTestArgs {
 }
 
 
-impl MutationTestArgs {
+impl MutateTestArgs {
     /// Returns the flattened [`CoreBuildArgs`].
     pub fn build_args(&self) -> &CoreBuildArgs {
         &self.opts
@@ -221,15 +221,15 @@ impl MutationTestArgs {
             // Try to suggest a function when there's no match
             if let Some(ref function_pattern) = filter.args().function_pattern {
                 let function_name = function_pattern.as_str();
-                let candidates = mutator.get_functions(&filter);
+                let candidates = mutator.get_function_names(&filter);
                 if let Some(suggestion) = utils::did_you_mean(function_name, candidates).pop() {
                     println!("\nDid you mean `{suggestion}`?");
                 }
-
             }
         }
+
         // generate mutation
-        let mutants_output = mutator.run_mutate(&config.src, filter.clone())?;
+        let mutants_output = mutator.run_mutate(filter.clone())?;
         // this is required for progress bar
         let mutants_len_iterator: Vec<&Mutant> = mutants_output.iter().flat_map(|(_, v)| v).collect();
         println!();
@@ -240,6 +240,7 @@ impl MutationTestArgs {
 
         let mutant_test_suite_results: BTreeMap<String, MutationTestSuiteResult> = BTreeMap::from_iter(try_join_all(mutants_output.iter().map(
                 |(file_name, mutants)| async {
+                    let start = Instant::now();
                     let result = try_join_all(
                         mutants.iter().map(|mutant| {
                             test_mutant(
@@ -250,8 +251,9 @@ impl MutationTestArgs {
                             )
                         })
                     ).await?;
+                    let duration = start.elapsed();
                     update_progress!(progress_bar, mutants.len());
-                    Ok::<(String, MutationTestSuiteResult), Error>((file_name.clone(), MutationTestSuiteResult::new(result)))
+                    Ok::<(String, MutationTestSuiteResult), Error>((file_name.clone(), MutationTestSuiteResult::new(duration, result)))
                 }
             )
         ).await?.into_iter());
@@ -283,9 +285,9 @@ impl MutationTestArgs {
     }
 }
 
-impl Provider for MutationTestArgs {
+impl Provider for MutateTestArgs {
     fn metadata(&self) -> Metadata {
-        Metadata::named("Core Build Args - Mutation Test")
+        Metadata::named("Mutation Test: Core Build Args ")
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {

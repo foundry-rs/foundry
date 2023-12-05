@@ -6,8 +6,7 @@ use core::fmt;
 use std::{collections::BTreeMap, time::Duration};
 use yansi::Paint;
 use serde::{Deserialize, Serialize};
-use gambit::{Mutant};
-
+use foundry_evm_mutator::Mutant; 
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MutantTestStatus {
@@ -72,11 +71,9 @@ pub struct MutationTestSuiteResult {
 
 impl MutationTestSuiteResult {
     pub fn new(
-       results: Vec<MutantTestResult>
+        duration: Duration,
+        results: Vec<MutantTestResult>
     ) -> Self {
-        let duration: Duration = results.iter()
-            .fold( Duration::from_secs(0),|init: Duration, e| init + e.duration);
-
         Self { duration, mutation_test_results: results }
     }
 
