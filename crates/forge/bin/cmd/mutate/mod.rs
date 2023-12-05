@@ -6,3 +6,6 @@ use foundry_config::Config;
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
 use std::{fmt, path::Path};
 
+
+mod filter;
+pub use filter::*;

@@ -65,3 +65,4 @@ pub mod tree;
 pub mod update;
 pub mod verify;
 pub mod watch;
+pub mod mutate;
