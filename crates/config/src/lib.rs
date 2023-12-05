@@ -97,6 +97,9 @@ use providers::remappings::RemappingsProvider;
 mod inline;
 pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
 
+mod mutate;
+pub use mutate::MutationConfig;
+
 /// Foundry configuration
 ///
 /// # Defaults
@@ -390,6 +393,9 @@ pub struct Config {
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
     #[serde(default, skip_serializing)]
     pub __warnings: Vec<Warning>,
+
+    /// Configures the Mutation test setup
+    pub mutate: MutationConfig,
 }
 
 /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`]
@@ -1831,6 +1837,7 @@ impl Default for Config {
             build_info_path: None,
             fmt: Default::default(),
             doc: Default::default(),
+            mutate: Default::default(),
             __non_exhaustive: (),
             __warnings: vec![],
         }
