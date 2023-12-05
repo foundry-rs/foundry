@@ -16,8 +16,11 @@ use url::Url;
 pub enum InnerTransport {
     /// HTTP transport
     Http(Http<reqwest::Client>),
+    /// WebSocket transport
     Ws(PubSubFrontend),
     // TODO: IPC
+    /// IPC transport
+    Ipc,
 }
 
 /// Error type for the runtime transport.
@@ -44,12 +47,14 @@ pub enum RuntimeTransportError {
     BadPath(String),
 }
 
+/// A runtime transport that connects on first request, which can take either of an HTTP,
+/// WebSocket, or IPC transport depending on the URL used.
 #[derive(Clone, Debug, Error)]
 pub struct RuntimeTransport {
+    /// The inner actual transport used.
     inner: Arc<RwLock<Option<InnerTransport>>>,
+    /// The URL to connect to.
     url: Url,
-    jwt: Option<String>,
-    headers: Vec<String>,
 }
 
 impl ::core::fmt::Display for RuntimeTransport {
@@ -89,8 +94,9 @@ impl RuntimeTransport {
             let inner_mut = inner.as_mut().expect("boom");
 
             match inner_mut {
-                InnerTransport::Http(http) => todo!(), // http.request(req).await,
+                InnerTransport::Http(_) => todo!(), // http.request(req).await,
                 InnerTransport::Ws(ws) => ws.send_packet(req).await,
+                InnerTransport::Ipc => todo!(),
             }
         })
     }
