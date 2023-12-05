@@ -267,14 +267,14 @@ impl MutateTestArgs {
             mutant_test_suite_results
         );
 
-        println!();
-        mutation_test_outcome.summary();
-
         if self.summary {
             let mut reporter = MutationTestSummaryReporter::new(self.detailed);
             println!();
             reporter.print_summary(&mutation_test_outcome);
         }
+
+        println!();
+        println!("{}", mutation_test_outcome.summary());
 
         Ok(mutation_test_outcome)
     }
@@ -292,6 +292,10 @@ impl Provider for MutateTestArgs {
 
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut dict = Dict::default();
+
+        // let mut mutate_dict = Dict::default();
+        // mutate_dict.insert("export".into(), self.export.into());
+        // dict.insert("mutate".into(), mutate_dict.into());
 
         // Override the fuzz and invariants run
         // We want fuzz and invariant tests to run once

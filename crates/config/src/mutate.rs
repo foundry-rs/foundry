@@ -10,6 +10,9 @@ pub struct MutationConfig {
     /// path to where mutation artifacts should be written to
     pub out: PathBuf,
 
+    /// Flag to write out mutants
+    pub export: bool,
+
     /// Only run test functions matching the specified regex pattern.
     #[serde(rename = "match_test")]
     pub test_pattern: Option<RegexWrapper>,
@@ -47,6 +50,7 @@ impl Default for MutationConfig {
     fn default() -> Self {
         MutationConfig {
             out: "mutant".into(),
+            export: false,
             test_pattern: None,
             test_pattern_inverse: None,
             function_pattern: None,
