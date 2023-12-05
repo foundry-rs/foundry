@@ -1085,6 +1085,20 @@ contract RecordAccountAccessesTest is DSTest {
         );
     }
 
+    /// @notice Asserts interaction between broadcast and recording cheatcodes
+    function testIssue6514() public {
+        cheats.startStateDiffRecording();
+        cheats.startBroadcast();
+
+        StorageAccessor a = new StorageAccessor();
+
+        cheats.stopBroadcast();
+        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
+        assertEq(called.length, 1, "incorrect length");
+        assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Create));
+        assertEq(called[0].account, address(a));
+    }
+
     function startRecordingFromLowerDepth() external {
         cheats.startStateDiffRecording();
         assembly {

@@ -1102,9 +1102,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         let gas = Gas::new(call.gas_limit);
 
-        // allow cheatcodes from the address of the new contract
-        let address = self.allow_cheatcodes_on_create(data, call);
-
         // Apply our prank
         if let Some(prank) = &self.prank {
             if data.journaled_state.depth() >= prank.depth && call.caller == prank.prank_caller {
@@ -1171,6 +1168,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
+        // allow cheatcodes from the address of the new contract
+        // Compute the address *after* any possible broadcast updates, so it's based on the updated
+        // call inputs
+        let address = self.allow_cheatcodes_on_create(data, call);
         // If `recordAccountAccesses` has been called, record the create
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // Record the create context as an account access and create a new vector to record all
