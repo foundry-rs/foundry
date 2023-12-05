@@ -1,11 +1,11 @@
 //! Runtime transport that connects on first request, which can take either of an HTTP,
 //! WebSocket, or IPC transport.
-use std::sync::Arc;
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
-use alloy_transport::{TransportError, TransportFut};
+use alloy_transport::{BoxTransport, TransportError, TransportFut};
 use alloy_transport_http::Http;
 use alloy_transport_ws::WsConnect;
+use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tower::Service;
@@ -99,6 +99,14 @@ impl RuntimeTransport {
                 InnerTransport::Ipc => todo!(),
             }
         })
+    }
+
+    /// Convert this transport into a boxed trait object.
+    pub fn boxed(self) -> BoxTransport
+    where
+        Self: Sized + Clone + Send + Sync + 'static,
+    {
+        BoxTransport::new(self)
     }
 }
 
