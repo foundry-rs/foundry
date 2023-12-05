@@ -34,7 +34,7 @@ use yansi::Paint;
 use foundry_evm_mutator::{Mutant, Mutator, MutatorConfigBuilder};
 use crate::cmd::{
     test::{test, FilterArgs},
-    mutate::mutation_summary::{
+    mutate::summary::{
         MutationTestOutcome,
         MutantTestResult,
         MutationTestSuiteResult,
@@ -45,6 +45,9 @@ use crate::cmd::{
 
 mod filter;
 pub use filter::*;
+mod summary;
+pub use summary::*;
+
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(MutateTestArgs, opts, evm_opts);
@@ -208,7 +211,6 @@ impl MutationTestArgs {
             project.include_paths.paths().map(|x| x.to_owned()).collect(),
             config.remappings
         ).build(
-            project_root.clone(),
             config.src.clone(), 
             output
         )?;
