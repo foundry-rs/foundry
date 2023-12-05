@@ -1,17 +1,18 @@
-use std::collections::{HashMap, BTreeMap};
-use foundry_cli::utils::FoundryPathExt;
+use alloy_json_abi::{Function, JsonAbi as Abi};
 use eyre::{eyre, Result};
-use foundry_compilers::{remappings::RelativeRemapping, Artifact, ArtifactOutput, ProjectCompileOutput, ArtifactId};
+use foundry_cli::utils::FoundryPathExt;
+use foundry_common::{FunctionFilter, TestFilter, TestFunctionExt};
+use foundry_compilers::{
+    remappings::RelativeRemapping, Artifact, ArtifactId, ArtifactOutput, ProjectCompileOutput,
+};
 use gambit::{run_mutate, MutateParams};
 use itertools::Itertools;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use foundry_common::{TestFilter, FunctionFilter, TestFunctionExt};
-use alloy_json_abi::{Function, JsonAbi as Abi};
-
 
 mod filter;
-pub use gambit::Mutant;
 pub use filter::*;
+pub use gambit::Mutant;
 
 const DEFAULT_GAMBIT_DIR_OUT: &'static str = "gambit_out";
 
@@ -34,7 +35,7 @@ impl MutatorConfigBuilder {
         solc_include_paths: Vec<PathBuf>,
         solc_remappings: Vec<RelativeRemapping>,
     ) -> Self {
-        Self {solc, solc_allow_paths, solc_include_paths, solc_remappings, solc_optimize }
+        Self { solc, solc_allow_paths, solc_include_paths, solc_remappings, solc_optimize }
     }
 
     pub fn build<A: ArtifactOutput>(
@@ -49,7 +50,7 @@ impl MutatorConfigBuilder {
             .into_artifacts()
             .filter_map(|(id, c)| match (id.source.as_path().is_sol_test(), c.into_abi()) {
                 (false, Some(b)) => Some((id, b)),
-                _ => None
+                _ => None,
             })
             .collect::<Vec<(ArtifactId, Abi)>>();
 
@@ -88,7 +89,6 @@ pub struct Mutator {
 }
 
 impl Mutator {
-
     pub fn new(
         artifacts: GambitArtifacts,
         source_root: String,
@@ -99,7 +99,7 @@ impl Mutator {
         solc_optimize: bool,
     ) -> Self {
         // create mutate params here
-        let src_root =  PathBuf::from(&source_root);
+        let src_root = PathBuf::from(&source_root);
         let default_mutate_params = MutateParams {
             json: None,
             filename: None,
@@ -126,99 +126,101 @@ impl Mutator {
     }
 
     /// Returns the number of matching functions
-    pub fn matching_function_count<A : TestFilter + FunctionFilter>(&self, filter: &A) -> usize {
+    pub fn matching_function_count<A: TestFilter + FunctionFilter>(&self, filter: &A) -> usize {
         self.filtered_functions(filter).count()
     }
 
     /// Returns the name of the functions to generate Mutants
-    pub fn get_artifact_functions<'a, A>(&'a self,
+    pub fn get_artifact_functions<'a, A>(
+        &'a self,
         filter: &'a A,
-        abi: &'a Abi
+        abi: &'a Abi,
     ) -> impl Iterator<Item = String> + 'a
-        where A: TestFilter + FunctionFilter 
+    where
+        A: TestFilter + FunctionFilter,
     {
-        abi.functions().filter_map(
-            |func| filter.matches_function(&func.name).then_some(func.name.clone())
-        )
+        abi.functions()
+            .filter_map(|func| filter.matches_function(&func.name).then_some(func.name.clone()))
     }
 
     /// Returns an iterator of functions matching filter
-    pub fn filtered_functions<'a, A>(&'a self, filter: &'a A) -> impl Iterator<Item = &Function> 
-        where A: TestFilter + FunctionFilter 
+    pub fn filtered_functions<'a, A>(&'a self, filter: &'a A) -> impl Iterator<Item = &Function>
+    where
+        A: TestFilter + FunctionFilter,
     {
         self.matching_artifacts(filter).flat_map(|(_, abi)| abi.functions())
     }
 
     /// Returns an iterator of function names matching filter
     pub fn get_function_names<'a, A>(&'a self, filter: &'a A) -> impl Iterator<Item = &String> + 'a
-        where A: TestFilter + FunctionFilter 
+    where
+        A: TestFilter + FunctionFilter,
     {
         self.filtered_functions(filter)
             .filter_map(|func| filter.matches_function(&func.name).then_some(&func.name))
     }
 
     /// Returns mutation relevant artifacts matching the filter
-    pub fn matching_artifacts<'a, A>(&'a self, filter: &'a A) -> impl Iterator<Item = &(ArtifactId, Abi)> 
-        where A: TestFilter + FunctionFilter 
+    pub fn matching_artifacts<'a, A>(
+        &'a self,
+        filter: &'a A,
+    ) -> impl Iterator<Item = &(ArtifactId, Abi)>
+    where
+        A: TestFilter + FunctionFilter,
     {
-        self.artifacts.iter()
-            .filter(|(id, abi)| 
-                id.source.starts_with(&self.src_root)
-                &&
-                !id.source.as_path().is_sol_test()
-                &&
-                filter.matches_path(id.source.to_string_lossy()) 
-                &&
-                filter.matches_contract(&id.name)
-                &&
-                abi.functions().any(|func| filter.matches_function(&func.name))
-            )
+        self.artifacts.iter().filter(|(id, abi)| {
+            id.source.starts_with(&self.src_root)
+                && !id.source.as_path().is_sol_test()
+                && filter.matches_path(id.source.to_string_lossy())
+                && filter.matches_contract(&id.name)
+                && abi.functions().any(|func| filter.matches_function(&func.name))
+        })
     }
 
-    /// Returns all matching functions grouped by contract 
+    /// Returns all matching functions grouped by contract
     /// grouped by file (file -> contract -> functions)
-    pub fn list<A : TestFilter + FunctionFilter>(
+    pub fn list<A: TestFilter + FunctionFilter>(
         &self,
-        filter: &A
+        filter: &A,
     ) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
         self.matching_artifacts(filter)
             .map(|(id, abi)| {
                 let source = id.source.as_path().display().to_string();
                 let name = id.name.clone();
-                let functions = abi.functions()
+                let functions = abi
+                    .functions()
                     .filter(|func| !func.name.is_test())
                     .filter(|func| filter.matches_function(func.name.clone()))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
-                
-                (source, name , functions)
+
+                (source, name, functions)
             })
-            .fold( BTreeMap::new(), | mut acc, (source, name, functions) | {
+            .fold(BTreeMap::new(), |mut acc, (source, name, functions)| {
                 acc.entry(source).or_default().insert(name, functions);
                 acc
             })
     }
-    
+
     /// Run mutation on contract functions that match configured filters
-    pub fn run_mutate<A>(
-        self,
-        filter: A
-    ) -> Result<HashMap<String, Vec<Mutant>>>
-        where A : TestFilter + FunctionFilter
+    pub fn run_mutate<A>(self, filter: A) -> Result<HashMap<String, Vec<Mutant>>>
+    where
+        A: TestFilter + FunctionFilter,
     {
-        let mutant_params = self.
-            matching_artifacts(&filter)
+        let mutant_params = self
+            .matching_artifacts(&filter)
             .map(|(id, abi)| {
                 let mut current_mutate_params = self.default_mutate_params.clone();
                 current_mutate_params.outdir = Some(id.name.clone());
-                current_mutate_params.functions = Some(self.get_artifact_functions(&filter, abi).collect_vec());
-                current_mutate_params.filename = Some(String::from(id.source.to_str().expect("failed run mutate filename")));
+                current_mutate_params.functions =
+                    Some(self.get_artifact_functions(&filter, abi).collect_vec());
+                current_mutate_params.filename =
+                    Some(String::from(id.source.to_str().expect("failed run mutate filename")));
                 current_mutate_params.contract = Some(String::from(id.name.clone()));
                 current_mutate_params
             })
             .collect_vec();
 
         run_mutate(mutant_params).map_err(|err| eyre!("{:?}", err))
-
     }
 }

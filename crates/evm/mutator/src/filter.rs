@@ -1,9 +1,8 @@
-use std::path::PathBuf;
+use alloy_json_abi::Function;
 use foundry_cli::utils::FoundryPathExt;
 use foundry_common::{FunctionFilter, TestFilter};
 use foundry_compilers::ArtifactId;
-use alloy_json_abi::Function;
-
+use std::path::PathBuf;
 
 #[derive(Default)]
 pub struct ArtifactFilter {
@@ -17,12 +16,10 @@ impl ArtifactFilter {
     pub fn valid_mutator_source_file<'a>(
         self,
         root: &'a PathBuf,
-        artifact_id: &'a ArtifactId
+        artifact_id: &'a ArtifactId,
     ) -> bool {
         // @TODO discuss if this is required or necessary
-        artifact_id.source.starts_with(&root)
-        &&
-        !artifact_id.source.as_path().is_sol_test()
+        artifact_id.source.starts_with(&root) && !artifact_id.source.as_path().is_sol_test()
     }
 
     /// Returns if a artifact matches the required filter
@@ -30,25 +27,21 @@ impl ArtifactFilter {
         self,
         root: &'a PathBuf,
         id: &'a ArtifactId,
-        filter: &'a A
+        filter: &'a A,
     ) -> bool {
         self.valid_mutator_source_file(root, id)
-        &&
-        filter.matches_path(id.source.to_string_lossy()) 
-        &&
-        filter.matches_contract(&id.name)
+            && filter.matches_path(id.source.to_string_lossy())
+            && filter.matches_contract(&id.name)
     }
 
     /// Returns the name of the functions to generate Mutants
     pub fn get_artifact_functions<'a, A: FunctionFilter>(
         self,
         filter: &'a A,
-        functions: &'a[Function]
+        functions: &'a [Function],
     ) -> impl Iterator<Item = &'a String> {
-        functions.iter().filter_map(
-            |func| filter.matches_function(&func.name).then_some(&func.name)
-        )
+        functions
+            .iter()
+            .filter_map(|func| filter.matches_function(&func.name).then_some(&func.name))
     }
-
 }
-
