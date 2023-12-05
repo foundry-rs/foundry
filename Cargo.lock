@@ -2839,6 +2839,7 @@ dependencies = [
  "crossterm",
  "eyre",
  "foundry-common",
+ "foundry-compilers",
  "foundry-evm-core",
  "foundry-evm-traces",
  "ratatui",

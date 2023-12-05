@@ -3,6 +3,7 @@
 use super::context::DebuggerContext;
 use crate::op::OpcodeParam;
 use alloy_primitives::U256;
+use foundry_compilers::sourcemap::SourceElement;
 use foundry_evm_core::{debug::Instruction, utils::CallKind};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -148,7 +149,7 @@ impl DebuggerContext<'_> {
 
         let top_line = "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end";
         let bottom_line = "[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint | [h] toggle help";
-        let dimmed = Style::default().add_modifier(Modifier::DIM);
+        let dimmed = Style::new().add_modifier(Modifier::DIM);
         let text_output = vec![
             Line::from(Span::styled(top_line, dimmed)),
             Line::from(Span::styled(bottom_line, dimmed)),
@@ -163,6 +164,7 @@ impl DebuggerContext<'_> {
     }
 
     fn draw_src(&self, f: &mut Frame<'_>, area: Rect) {
+        let text_output = self.src_text(area);
         let title = match self.call_kind() {
             CallKind::Create | CallKind::Create2 => "Contract creation",
             CallKind::Call => "Contract call",
@@ -171,298 +173,197 @@ impl DebuggerContext<'_> {
             CallKind::DelegateCall => "Contract delegatecall",
         };
         let block_source_code = Block::default().title(title).borders(Borders::ALL);
-
-        let mut text_output = Text::from("");
-
-        let pc = self.current_step().pc;
-        if let Some(contract_name) = self.debugger.identified_contracts.get(self.address()) {
-            if let Some(files_source_code) = self.debugger.contracts_sources.0.get(contract_name) {
-                let pc_ic_map = self.debugger.pc_ic_maps.get(contract_name);
-                // find the contract source with the correct source_element's file_id
-                if let Some((source_element, source_code)) = files_source_code.iter().find_map(
-                    |(file_id, (source_code, contract_source))| {
-                        // grab either the creation source map or runtime sourcemap
-                        if let Some((Ok(source_map), ic)) =
-                            if matches!(self.call_kind(), CallKind::Create | CallKind::Create2) {
-                                contract_source
-                                    .bytecode
-                                    .source_map()
-                                    .zip(pc_ic_map.and_then(|(c, _)| c.get(&pc)))
-                            } else {
-                                contract_source
-                                    .deployed_bytecode
-                                    .bytecode
-                                    .as_ref()
-                                    .expect("no bytecode")
-                                    .source_map()
-                                    .zip(pc_ic_map.and_then(|(_, r)| r.get(&pc)))
-                            }
-                        {
-                            let source_element = source_map[*ic].clone();
-                            if let Some(index) = source_element.index {
-                                if *file_id == index {
-                                    Some((source_element, source_code))
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    },
-                ) {
-                    // we are handed a vector of SourceElements that give
-                    // us a span of sourcecode that is currently being executed
-                    // This includes an offset and length. This vector is in
-                    // instruction pointer order, meaning the location of
-                    // the instruction - sum(push_bytes[..pc])
-                    let offset = source_element.offset;
-                    let len = source_element.length;
-                    let max = source_code.len();
-
-                    // split source into before, relevant, and after chunks
-                    // split by line as well to do some formatting stuff
-                    let mut before = source_code[..std::cmp::min(offset, max)]
-                        .split_inclusive('\n')
-                        .collect::<Vec<&str>>();
-                    let actual = source_code
-                        [std::cmp::min(offset, max)..std::cmp::min(offset + len, max)]
-                        .split_inclusive('\n')
-                        .map(|s| s.to_string())
-                        .collect::<Vec<String>>();
-                    let mut after = source_code[std::cmp::min(offset + len, max)..]
-                        .split_inclusive('\n')
-                        .collect::<VecDeque<&str>>();
-
-                    let mut line_number = 0;
-
-                    let num_lines = before.len() + actual.len() + after.len();
-                    let height = area.height as usize;
-                    let needed_highlight = actual.len();
-                    let mid_len = before.len() + actual.len();
-
-                    // adjust what text we show of the source code
-                    let (start_line, end_line) = if needed_highlight > height {
-                        // highlighted section is more lines than we have avail
-                        (before.len(), before.len() + needed_highlight)
-                    } else if height > num_lines {
-                        // we can fit entire source
-                        (0, num_lines)
-                    } else {
-                        let remaining = height - needed_highlight;
-                        let mut above = remaining / 2;
-                        let mut below = remaining / 2;
-                        if below > after.len() {
-                            // unused space below the highlight
-                            above += below - after.len();
-                        } else if above > before.len() {
-                            // we have unused space above the highlight
-                            below += above - before.len();
-                        } else {
-                            // no unused space
-                        }
-
-                        (before.len().saturating_sub(above), mid_len + below)
-                    };
-
-                    let max_line_num = num_lines.to_string().len();
-                    // We check if there is other text on the same line before the
-                    // highlight starts
-                    if let Some(last) = before.pop() {
-                        if !last.ends_with('\n') {
-                            before.iter().skip(start_line).for_each(|line| {
-                                text_output.lines.push(Line::from(vec![
-                                    Span::styled(
-                                        format!(
-                                            "{: >max_line_num$}",
-                                            line_number.to_string(),
-                                            max_line_num = max_line_num
-                                        ),
-                                        Style::default().fg(Color::Gray).bg(Color::DarkGray),
-                                    ),
-                                    Span::styled(
-                                        "\u{2800} ".to_string() + line,
-                                        Style::default().add_modifier(Modifier::DIM),
-                                    ),
-                                ]));
-                                line_number += 1;
-                            });
-
-                            text_output.lines.push(Line::from(vec![
-                                Span::styled(
-                                    format!(
-                                        "{: >max_line_num$}",
-                                        line_number.to_string(),
-                                        max_line_num = max_line_num
-                                    ),
-                                    Style::default()
-                                        .fg(Color::Cyan)
-                                        .bg(Color::DarkGray)
-                                        .add_modifier(Modifier::BOLD),
-                                ),
-                                Span::raw("\u{2800} "),
-                                Span::raw(last),
-                                Span::styled(
-                                    actual[0].to_string(),
-                                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                                ),
-                            ]));
-                            line_number += 1;
-
-                            actual.iter().skip(1).for_each(|s| {
-                                text_output.lines.push(Line::from(vec![
-                                    Span::styled(
-                                        format!(
-                                            "{: >max_line_num$}",
-                                            line_number.to_string(),
-                                            max_line_num = max_line_num
-                                        ),
-                                        Style::default()
-                                            .fg(Color::Cyan)
-                                            .bg(Color::DarkGray)
-                                            .add_modifier(Modifier::BOLD),
-                                    ),
-                                    Span::raw("\u{2800} "),
-                                    Span::styled(
-                                        // this is a hack to add coloring
-                                        // because tui does weird trimming
-                                        if s.is_empty() || s == "\n" {
-                                            "\u{2800} \n".to_string()
-                                        } else {
-                                            s.to_string()
-                                        },
-                                        Style::default()
-                                            .fg(Color::Cyan)
-                                            .add_modifier(Modifier::BOLD),
-                                    ),
-                                ]));
-                                line_number += 1;
-                            });
-                        } else {
-                            before.push(last);
-                            before.iter().skip(start_line).for_each(|line| {
-                                text_output.lines.push(Line::from(vec![
-                                    Span::styled(
-                                        format!(
-                                            "{: >max_line_num$}",
-                                            line_number.to_string(),
-                                            max_line_num = max_line_num
-                                        ),
-                                        Style::default().fg(Color::Gray).bg(Color::DarkGray),
-                                    ),
-                                    Span::styled(
-                                        "\u{2800} ".to_string() + line,
-                                        Style::default().add_modifier(Modifier::DIM),
-                                    ),
-                                ]));
-
-                                line_number += 1;
-                            });
-                            actual.iter().for_each(|s| {
-                                text_output.lines.push(Line::from(vec![
-                                    Span::styled(
-                                        format!(
-                                            "{: >max_line_num$}",
-                                            line_number.to_string(),
-                                            max_line_num = max_line_num
-                                        ),
-                                        Style::default()
-                                            .fg(Color::Cyan)
-                                            .bg(Color::DarkGray)
-                                            .add_modifier(Modifier::BOLD),
-                                    ),
-                                    Span::raw("\u{2800} "),
-                                    Span::styled(
-                                        if s.is_empty() || s == "\n" {
-                                            "\u{2800} \n".to_string()
-                                        } else {
-                                            s.to_string()
-                                        },
-                                        Style::default()
-                                            .fg(Color::Cyan)
-                                            .add_modifier(Modifier::BOLD),
-                                    ),
-                                ]));
-                                line_number += 1;
-                            });
-                        }
-                    } else {
-                        actual.iter().for_each(|s| {
-                            text_output.lines.push(Line::from(vec![
-                                Span::styled(
-                                    format!(
-                                        "{: >max_line_num$}",
-                                        line_number.to_string(),
-                                        max_line_num = max_line_num
-                                    ),
-                                    Style::default()
-                                        .fg(Color::Cyan)
-                                        .bg(Color::DarkGray)
-                                        .add_modifier(Modifier::BOLD),
-                                ),
-                                Span::raw("\u{2800} "),
-                                Span::styled(
-                                    if s.is_empty() || s == "\n" {
-                                        "\u{2800} \n".to_string()
-                                    } else {
-                                        s.to_string()
-                                    },
-                                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                                ),
-                            ]));
-                            line_number += 1;
-                        });
-                    }
-
-                    // fill in the rest of the line as unhighlighted
-                    if let Some(last) = actual.last() {
-                        if !last.ends_with('\n') {
-                            if let Some(post) = after.pop_front() {
-                                if let Some(last) = text_output.lines.last_mut() {
-                                    last.spans.push(Span::raw(post));
-                                }
-                            }
-                        }
-                    }
-
-                    // add after highlighted text
-                    while mid_len + after.len() > end_line {
-                        after.pop_back();
-                    }
-                    after.iter().for_each(|line| {
-                        text_output.lines.push(Line::from(vec![
-                            Span::styled(
-                                format!(
-                                    "{: >max_line_num$}",
-                                    line_number.to_string(),
-                                    max_line_num = max_line_num
-                                ),
-                                Style::default().fg(Color::Gray).bg(Color::DarkGray),
-                            ),
-                            Span::styled(
-                                "\u{2800} ".to_string() + line,
-                                Style::default().add_modifier(Modifier::DIM),
-                            ),
-                        ]));
-                        line_number += 1;
-                    });
-                } else {
-                    text_output.extend(Text::from("No sourcemap for contract"));
-                }
-            } else {
-                text_output
-                    .extend(Text::from(format!("No srcmap index for contract {contract_name}")));
-            }
-        } else {
-            let address = self.address();
-            text_output.extend(Text::from(format!("Unknown contract at address {address}")));
-        }
-
         let paragraph =
             Paragraph::new(text_output).block(block_source_code).wrap(Wrap { trim: false });
         f.render_widget(paragraph, area);
+    }
+
+    fn src_text(&self, area: Rect) -> Text {
+        let (source_element, source_code) = match self.src_map() {
+            Ok(r) => r,
+            Err(e) => return Text::from(e),
+        };
+
+        let mut lines = Vec::new();
+
+        // We are handed a vector of SourceElements that give us a span of sourcecode that is
+        // currently being executed. This includes an offset and length.
+        // This vector is in instruction pointer order, meaning the location of the instruction
+        // minus `sum(push_bytes[..pc])`.
+        let offset = source_element.offset;
+        let len = source_element.length;
+        let max = source_code.len();
+
+        // Split source into before, relevant, and after chunks, split by line, for formatting.
+        let actual_start = offset.min(max);
+        let actual_end = (offset + len).min(max);
+
+        let mut before: Vec<_> = source_code[..actual_start].split_inclusive('\n').collect();
+        let actual: Vec<_> = source_code[actual_start..actual_end].split_inclusive('\n').collect();
+        let mut after: VecDeque<_> = source_code[actual_end..].split_inclusive('\n').collect();
+
+        let mut line_number = 0u32;
+
+        let num_lines = before.len() + actual.len() + after.len();
+        let height = area.height as usize;
+        let needed_highlight = actual.len();
+        let mid_len = before.len() + actual.len();
+
+        // adjust what text we show of the source code
+        let (start_line, end_line) = if needed_highlight > height {
+            // highlighted section is more lines than we have avail
+            (before.len(), before.len() + needed_highlight)
+        } else if height > num_lines {
+            // we can fit entire source
+            (0, num_lines)
+        } else {
+            let remaining = height - needed_highlight;
+            let mut above = remaining / 2;
+            let mut below = remaining / 2;
+            if below > after.len() {
+                // unused space below the highlight
+                above += below - after.len();
+            } else if above > before.len() {
+                // we have unused space above the highlight
+                below += above - before.len();
+            } else {
+                // no unused space
+            }
+
+            (before.len().saturating_sub(above), mid_len + below)
+        };
+
+        let gray = Style::new().fg(Color::Gray).bg(Color::DarkGray);
+        let cyan = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+        let dark_cyan = cyan.bg(Color::DarkGray);
+        let dimmed = Style::new().add_modifier(Modifier::DIM);
+
+        // Same as `num_lines.to_string().len()`.
+        let max_line_num = num_lines.ilog10() as usize;
+        // We check if there is other text on the same line before the highlight starts.
+        if let Some(last) = before.pop() {
+            if !last.ends_with('\n') {
+                before.iter().skip(start_line).for_each(|line| {
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("{line_number: >max_line_num$}"), gray),
+                        Span::styled("\u{2800} ".to_string() + line, dimmed),
+                    ]));
+                    line_number += 1;
+                });
+
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{line_number: >max_line_num$}"), dark_cyan),
+                    Span::raw("\u{2800} "),
+                    Span::raw(last),
+                    Span::styled(actual[0].to_string(), cyan),
+                ]));
+                line_number += 1;
+
+                actual.iter().skip(1).for_each(|&s| {
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("{line_number: >max_line_num$}"), dark_cyan),
+                        Span::raw("\u{2800} "),
+                        Span::styled(
+                            // This is a hack to add coloring because TUI does weird trimming.
+                            if s.is_empty() || s == "\n" { "\u{2800} \n" } else { s },
+                            cyan,
+                        ),
+                    ]));
+                    line_number += 1;
+                });
+            } else {
+                before.push(last);
+                before.iter().skip(start_line).for_each(|line| {
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("{line_number: >max_line_num$}"), gray),
+                        Span::styled("\u{2800} ".to_string() + line, dimmed),
+                    ]));
+                    line_number += 1;
+                });
+                actual.iter().for_each(|&s| {
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("{line_number: >max_line_num$}"), dark_cyan),
+                        Span::raw("\u{2800} "),
+                        Span::styled(
+                            if s.is_empty() || s == "\n" { "\u{2800} \n" } else { s },
+                            cyan,
+                        ),
+                    ]));
+                    line_number += 1;
+                });
+            }
+        } else {
+            actual.iter().for_each(|&s| {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{line_number: >max_line_num$}"), dark_cyan),
+                    Span::raw("\u{2800} "),
+                    Span::styled(if s.is_empty() || s == "\n" { "\u{2800} \n" } else { s }, cyan),
+                ]));
+                line_number += 1;
+            });
+        }
+
+        // Fill in the rest of the line as unhighlighted.
+        if let Some(last) = actual.last() {
+            if !last.ends_with('\n') {
+                if let Some(post) = after.pop_front() {
+                    if let Some(last) = lines.last_mut() {
+                        last.spans.push(Span::raw(post));
+                    }
+                }
+            }
+        }
+
+        // Add after highlighted text.
+        while mid_len + after.len() > end_line {
+            after.pop_back();
+        }
+        for line in after {
+            lines.push(Line::from(vec![
+                Span::styled(format!("{line_number: >max_line_num$}"), gray),
+                Span::styled(format!("\u{2800} {line}"), dimmed),
+            ]));
+            line_number += 1;
+        }
+
+        Text::from(lines)
+    }
+
+    fn src_map(&self) -> Result<(SourceElement, &str), String> {
+        let address = self.address();
+        let Some(contract_name) = self.debugger.identified_contracts.get(address) else {
+            return Err(format!("Unknown contract at address {address}"));
+        };
+
+        let Some(files_source_code) = self.debugger.contracts_sources.0.get(contract_name) else {
+            return Err(format!("No source map index for contract {contract_name}"));
+        };
+
+        let Some((create_map, rt_map)) = self.debugger.pc_ic_maps.get(contract_name) else {
+            return Err(format!("No PC-IC maps for contract {contract_name}"));
+        };
+
+        let is_create = matches!(self.call_kind(), CallKind::Create | CallKind::Create2);
+        let pc = self.current_step().pc;
+        let Some((source_element, source_code)) =
+            files_source_code.iter().find_map(|(file_id, (source_code, contract_source))| {
+                let bytecode = if is_create {
+                    &contract_source.bytecode
+                } else {
+                    contract_source.deployed_bytecode.bytecode.as_ref()?
+                };
+                let mut source_map = bytecode.source_map()?.ok()?;
+
+                let pc_ic_map = if is_create { create_map } else { rt_map };
+                let ic = pc_ic_map.get(&pc)?;
+                let source_element = source_map.swap_remove(*ic);
+                (*file_id == source_element.index?).then(|| (source_element, source_code))
+            })
+        else {
+            return Err(format!("No source map for contract {contract_name}"));
+        };
+
+        Ok((source_element, source_code))
     }
 
     /// Draw opcode list into main component
@@ -534,12 +435,12 @@ impl DebuggerContext<'_> {
             if let Some(op) = self.opcode_list.get(line_number) {
                 text_output.push(Line::from(Span::styled(
                     format!("{line_number_format}{op}"),
-                    Style::default().fg(Color::White).bg(bg_color),
+                    Style::new().fg(Color::White).bg(bg_color),
                 )));
             } else {
                 text_output.push(Line::from(Span::styled(
                     line_number_format,
-                    Style::default().fg(Color::White).bg(bg_color),
+                    Style::new().fg(Color::White).bg(bg_color),
                 )));
             }
         };
@@ -578,13 +479,13 @@ impl DebuggerContext<'_> {
                         Span::styled(
                             format!("{byte:02x} "),
                             if param.is_some() {
-                                Style::default().fg(Color::Cyan)
+                                Style::new().fg(Color::Cyan)
                             } else if byte == 0 {
                                 // this improves compatibility across terminals by not combining
                                 // color with DIM modifier
-                                Style::default().add_modifier(Modifier::DIM)
+                                Style::new().add_modifier(Modifier::DIM)
                             } else {
-                                Style::default().fg(Color::White)
+                                Style::new().fg(Color::White)
                             },
                         )
                     })
@@ -598,10 +499,8 @@ impl DebuggerContext<'_> {
                     }
                 }
 
-                let mut spans = vec![Span::styled(
-                    format!("{i:0min_len$}| "),
-                    Style::default().fg(Color::White),
-                )];
+                let mut spans =
+                    vec![Span::styled(format!("{i:0min_len$}| "), Style::new().fg(Color::White))];
                 spans.extend(words);
                 spans.push(Span::raw("\n"));
 
@@ -732,16 +631,16 @@ impl DebuggerContext<'_> {
                                     // [offset, offset + size] is the memory region to be colored.
                                     // If a byte at row i and column j in the memory panel
                                     // falls in this region, set the color.
-                                    Style::default().fg(color)
+                                    Style::new().fg(color)
                                 } else if *byte == 0 {
-                                    Style::default().add_modifier(Modifier::DIM)
+                                    Style::new().add_modifier(Modifier::DIM)
                                 } else {
-                                    Style::default().fg(Color::White)
+                                    Style::new().fg(Color::White)
                                 }
                             } else if *byte == 0 {
-                                Style::default().add_modifier(Modifier::DIM)
+                                Style::new().add_modifier(Modifier::DIM)
                             } else {
-                                Style::default().fg(Color::White)
+                                Style::new().fg(Color::White)
                             },
                         )
                     })
@@ -749,7 +648,7 @@ impl DebuggerContext<'_> {
 
                 let mut spans = vec![Span::styled(
                     format!("{:0min_len$x}| ", i * 32),
-                    Style::default().fg(Color::White),
+                    Style::new().fg(Color::White),
                 )];
                 spans.extend(words);
 
