@@ -26,6 +26,8 @@ pub struct InvariantConfig {
     pub dictionary: FuzzDictionaryConfig,
     /// Attempt to shrink the failure case to its smallest sequence of calls
     pub shrink_sequence: bool,
+    /// The maximum number of attempts to shrink the sequence
+    pub shrink_run_limit: usize,
 }
 
 impl Default for InvariantConfig {
@@ -37,6 +39,7 @@ impl Default for InvariantConfig {
             call_override: false,
             dictionary: FuzzDictionaryConfig { dictionary_weight: 80, ..Default::default() },
             shrink_sequence: true,
+            shrink_run_limit: 2usize.pow(18_u32)
         }
     }
 }

@@ -219,7 +219,7 @@ async fn test_invariant_shrink() {
     let mut runner = runner().await;
 
     let mut opts = test_opts();
-    opts.fuzz.seed = Some(U256::from(102u32));
+    opts.fuzz.seed = Some(U256::from(119u32));
     runner.test_options = opts.clone();
 
     let results = runner
@@ -243,10 +243,9 @@ async fn test_invariant_shrink() {
 
     match counter {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
-        // `fuzz_seed` at 100 makes this sequence shrinkable from 4 to 2.
+        // `fuzz_seed` at 102 makes this sequence shrinkable from 4 to 2.
         CounterExample::Sequence(sequence) => {
-            // there some diff across platforms for some reason, either 3 or 2
-            assert!(sequence.len() <= 3)
+            assert!(sequence.len() == 2)
         }
     };
 }

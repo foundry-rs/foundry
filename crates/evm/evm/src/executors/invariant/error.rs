@@ -1,3 +1,5 @@
+use rayon::iter::ParallelIterator;
+use rayon::iter::IntoParallelRefIterator;
 use super::{BasicTxDetails, InvariantContract};
 use crate::executors::{Executor, RawCallResult};
 use alloy_json_abi::Function;
@@ -12,6 +14,8 @@ use parking_lot::RwLock;
 use proptest::test_runner::TestError;
 use revm::primitives::U256;
 use std::sync::Arc;
+use itertools::Itertools;
+use ethers_core::rand::{seq, Rng, thread_rng};
 
 #[derive(Clone, Default)]
 /// Stores information about failures and reverts of the invariant tests.
@@ -68,6 +72,8 @@ pub struct InvariantFuzzError {
     pub inner_sequence: Vec<Option<BasicTxDetails>>,
     /// Shrink the failed test case to the smallest sequence.
     pub shrink: bool,
+    /// Shrink run limit
+    pub shrink_run_limit: usize,
 }
 
 impl InvariantFuzzError {
@@ -78,6 +84,7 @@ impl InvariantFuzzError {
         call_result: RawCallResult,
         inner_sequence: &[Option<BasicTxDetails>],
         shrink: bool,
+        shrink_run_limit: usize,
     ) -> Self {
         let (func, origin) = if let Some(f) = error_func {
             (Some(f.selector().to_vec().into()), f.name.as_str())
@@ -103,6 +110,7 @@ impl InvariantFuzzError {
             func,
             inner_sequence: inner_sequence.to_vec(),
             shrink,
+            shrink_run_limit,
         }
     }
 
@@ -116,14 +124,14 @@ impl InvariantFuzzError {
         traces: &mut Traces,
     ) -> Result<Option<CounterExample>> {
         let mut counterexample_sequence = vec![];
-        let calls = match self.test_error {
+        let mut calls = match self.test_error {
             // Don't use at the moment.
             TestError::Abort(_) => return Ok(None),
-            TestError::Fail(_, ref calls) => calls,
+            TestError::Fail(_, ref calls) => calls.clone(),
         };
 
         if self.shrink {
-            let _ = self.try_shrinking(calls, &executor);
+            calls = self.try_shrinking(&calls, &executor).into_iter().map(Clone::clone).collect();
         } else {
             trace!(target: "forge::test", "Shrinking disabled.");
         }
@@ -175,23 +183,36 @@ impl InvariantFuzzError {
             .then_some(CounterExample::Sequence(counterexample_sequence)))
     }
 
-    /// Tests that the modified sequence of calls successfully reverts on the error function.
-    fn fails_successfully<'a>(
+    /// Checks that a subsequence of the provided calls fails the provided invariant test
+    /// and updates an Arc Mutex of the indices of the shortest sequence
+    fn set_fails_successfully(
         &self,
         mut executor: Executor,
-        calls: &'a [BasicTxDetails],
-        anchor: usize,
-        removed_calls: &[usize],
-    ) -> Result<Vec<&'a BasicTxDetails>, ()> {
+        calls: &[BasicTxDetails],
+        use_calls: &[usize],
+        curr_seq: Arc<RwLock<Vec<usize>>>,
+    ) {
+        if curr_seq.read().len() == 1 {
+            // if current sequence is already the smallest possible, just return
+            return;
+        }
+
         let mut new_sequence = Vec::with_capacity(calls.len());
-        for (index, details) in calls.iter().enumerate() {
-            if anchor > index || removed_calls.contains(&index) {
+        for index in 0..calls.len() {
+            if !use_calls.contains(&index) {
                 continue
             }
 
-            new_sequence.push(details);
+            new_sequence.push(index);
 
-            let (sender, (addr, bytes)) = details;
+            // if the new sequence is already longer than the known best, skip execution
+            if new_sequence.len() >= curr_seq.read().len() {
+                return
+            }
+        }
+
+        for (j, index) in new_sequence.iter().enumerate() {
+            let (sender, (addr, bytes)) = &calls[*index];
 
             executor
                 .call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)
@@ -202,70 +223,107 @@ impl InvariantFuzzError {
                 let error_call_result = executor
                     .call_raw(CALLER, self.addr, func.clone(), U256::ZERO)
                     .expect("bad call to evm");
-
                 if error_call_result.reverted {
-                    return Ok(new_sequence)
+                    let mut locked = curr_seq.write();
+                    if new_sequence.len() < locked.len() {
+                        // update the curr_sequence if the new sequence is lower than 
+                        *locked = new_sequence[..=j].to_vec();
+                    }
                 }
             }
         }
-
-        Err(())
     }
 
     /// Tries to shrink the failure case to its smallest sequence of calls.
     ///
-    /// Sets an anchor at the beginning (index=0) and tries to remove all other calls one by one,
-    /// until it reaches the last one. The elements which were removed and lead to a failure are
-    /// kept in the removal list. The removed ones that didn't lead to a failure are inserted
-    /// back into the sequence.
-    ///
-    /// Once it reaches the end, it increments the anchor, resets the removal list and starts the
-    /// same process again.
-    ///
-    /// Returns the smallest sequence found.
+    /// If the number of calls is small enough, we can guarantee maximally shrink
     fn try_shrinking<'a>(
-        &self,
+        &self, 
         calls: &'a [BasicTxDetails],
         executor: &Executor,
     ) -> Vec<&'a BasicTxDetails> {
-        let mut anchor = 0;
-        let mut removed_calls = vec![];
-        let mut shrunk = calls.iter().collect::<Vec<_>>();
         trace!(target: "forge::test", "Shrinking.");
+        let seq_idxs = self.try_shrinking_recurse(calls, executor, 0, 0);
 
-        while anchor != calls.len() {
-            // Get the latest removed element, so we know which one to remove next.
-            let removed =
-                match self.fails_successfully(executor.clone(), calls, anchor, &removed_calls) {
-                    Ok(new_sequence) => {
-                        if shrunk.len() > new_sequence.len() {
-                            shrunk = new_sequence;
-                        }
-                        removed_calls.last().cloned()
-                    }
-                    Err(_) => removed_calls.pop(),
-                };
+        calls.iter().enumerate().filter_map(|(i, call)| if seq_idxs.contains(&i) { Some(call) } else { None }).collect()
+    }
 
-            if let Some(last_removed) = removed {
-                // If we haven't reached the end of the sequence, then remove the next element.
-                // Otherwise, restart the process with an incremented anchor.
 
-                let next_removed = last_removed + 1;
+    /// We try to construct a [powerset](https://en.wikipedia.org/wiki/Power_set) of the sequence if
+    /// the configuration allows for it and the length of the sequence is small enough. If we
+    /// do construct the powerset, we run all of the sequences in parallel, finding the smallest one.
+    /// If we have ran the powerset, we are guaranteed to find the smallest sequence for a given set of calls
+    /// (however, not guaranteed *global* smallest if a random sequence was used at any point during recursion).
+    ///
+    /// If we were unable to construct a powerset, we construct a random sample over the sequence and run
+    /// these sequences in parallel instead.
+    ///
+    /// After running either the powerset or the random sequences, we check if we successfully shrunk the
+    /// 
+    fn try_shrinking_recurse(
+        &self, 
+        calls: &[BasicTxDetails],
+        executor: &Executor,
+        runs: usize,
+        retries: usize,
+    ) -> Vec<usize> {
+        let shrunk = Arc::new(RwLock::new((0..calls.len()).collect()));
+        let shrink_limit = self.shrink_run_limit - runs;
 
-                if next_removed > calls.len() - 1 {
-                    anchor += 1;
-                    removed_calls = vec![];
-                    continue
+        // we construct either a full powerset (this guarantees we maximally shrunk for the given calls)
+        // or a random subset
+        let (set, is_powerset): (Vec<_>, bool) = if calls.len() <= 64 && 2_usize.pow(calls.len() as u32) <= shrink_limit {
+            // we add the last tx always because thats ultimately what broke the invariant
+            let powerset = (0..calls.len() - 1).powerset().map(|mut subset| { subset.push(calls.len() - 1); subset}).collect();
+            (powerset, true)
+        } else {
+            let mut rng = thread_rng();
+            ((0..shrink_limit / 3).map(|_| {
+                // select between 1 and calls.len() - 2 number of indices
+                let amt: usize = rng.gen_range(1..calls.len() - 1);
+                // construct a random sequence of indices, up to calls.len() - 1 (sample is exclusive range and we dont include
+                // the last tx because its always included), and amt number of indices
+                let mut seq = seq::index::sample(&mut rng, calls.len() - 1, amt).into_vec();
+                // sort the indices
+                seq.sort();
+                // we add the last tx always because thats what ultimately broke the invariant
+                seq.push(calls.len() - 1);
+                seq
+            }).collect(), false)
+        };
+
+        let new_runs = set.len();
+
+        // just try all of them in parallel
+        set.par_iter().for_each(|use_calls| {
+            self.set_fails_successfully(executor.clone(), calls, use_calls, Arc::clone(&shrunk));
+        });
+
+        // at this point we know shrunk is fine to get the inner value for
+        let shrunk = Arc::<RwLock<Vec<usize>>>::try_unwrap(shrunk).unwrap().into_inner();
+
+        if is_powerset {
+            // a powerset is guaranteed to be smallest subset
+            shrunk
+        } else if shrunk.len() < calls.len() && new_runs + runs < self.shrink_run_limit {
+            let new_calls: Vec<_> = calls.iter().enumerate().filter_map(|(i, call)| if shrunk.contains(&i) { Some(call.clone()) } else { None }).collect();
+            let new_calls_idxs = self.try_shrinking_recurse(&new_calls, executor, runs + new_runs, 0);
+            // map back to parent idx, we only have to do this because we gave a new set of calls in the above function
+            new_calls.iter().enumerate().filter_map(|(idx, new_call)| {
+                if !new_calls_idxs.contains(&idx) {
+                    None
+                } else {
+                    calls.iter().position(|r| r == new_call)
                 }
-
-                removed_calls.push(next_removed);
-            } else {
-                // When the process is restarted, `removed_calls` will be empty.
-                removed_calls.push(anchor + 1);
-            }
+            }).collect()
+        } else if retries <= 3 && new_runs + runs < self.shrink_run_limit {
+            // use the same call set but increase retries which should select a different random subset
+            // we dont need to do the mapping stuff like above because we dont take a subset of the input
+            self.try_shrinking_recurse(calls, executor, runs + new_runs, retries + 1)
+        } else {
+            // no more progress has been made
+            shrunk
         }
-
-        shrunk
     }
 }
 
