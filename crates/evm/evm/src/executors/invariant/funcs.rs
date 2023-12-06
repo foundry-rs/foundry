@@ -57,7 +57,7 @@ pub fn assert_invariants(
                 call_result,
                 &inner_sequence,
                 shrink_sequence,
-                shrink_run_limit
+                shrink_run_limit,
             ));
             return None
         }

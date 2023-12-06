@@ -39,7 +39,7 @@ impl Default for InvariantConfig {
             call_override: false,
             dictionary: FuzzDictionaryConfig { dictionary_weight: 80, ..Default::default() },
             shrink_sequence: true,
-            shrink_run_limit: 2usize.pow(18_u32)
+            shrink_run_limit: 2usize.pow(18_u32),
         }
     }
 }

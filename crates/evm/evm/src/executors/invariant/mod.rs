@@ -744,8 +744,14 @@ fn can_continue(
 
     // Assert invariants IFF the call did not revert and the handlers did not fail.
     if !call_result.reverted && !handlers_failed {
-        call_results =
-            assert_invariants(invariant_contract, executor, calldata, failures, shrink_sequence, shrink_run_limit);
+        call_results = assert_invariants(
+            invariant_contract,
+            executor,
+            calldata,
+            failures,
+            shrink_sequence,
+            shrink_run_limit,
+        );
         if call_results.is_none() {
             return RichInvariantResults::new(false, None)
         }
@@ -761,7 +767,7 @@ fn can_continue(
                 call_result,
                 &[],
                 shrink_sequence,
-                shrink_run_limit
+                shrink_run_limit,
             );
 
             failures.revert_reason = Some(error.revert_reason.clone());

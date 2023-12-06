@@ -123,7 +123,7 @@ pub fn test_opts() -> TestOptions {
                 max_fuzz_dictionary_values: 10_000,
             },
             shrink_sequence: true,
-            shrink_run_limit: 2usize.pow(18u32)
+            shrink_run_limit: 2usize.pow(18u32),
         })
         .build(&COMPILED, &PROJECT.paths.root)
         .expect("Config loaded")

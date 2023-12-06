@@ -243,7 +243,7 @@ async fn test_invariant_shrink() {
 
     match counter {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
-        // `fuzz_seed` at 102 makes this sequence shrinkable from 4 to 2.
+        // `fuzz_seed` at 119 makes this sequence shrinkable from 4 to 2.
         CounterExample::Sequence(sequence) => {
             assert!(sequence.len() == 2)
         }
