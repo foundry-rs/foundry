@@ -43,7 +43,8 @@ async fn repro_config(issue: usize, should_fail: bool, sender: Option<Address>) 
     let filter = Filter::path(&format!(".*repros/Issue{issue}.t.sol"));
 
     let mut config = Config::with_root(PROJECT.root());
-    config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
+    config.fs_permissions =
+        FsPermissions::new(vec![PathPermission::read("./fixtures"), PathPermission::read("out")]);
     if let Some(sender) = sender {
         config.sender = sender;
     }
@@ -189,6 +190,9 @@ test_repro!(5948);
 
 // https://github.com/foundry-rs/foundry/issues/6006
 test_repro!(6006);
+
+// https://github.com/foundry-rs/foundry/issues/6032
+test_repro!(6032);
 
 // https://github.com/foundry-rs/foundry/issues/6070
 test_repro!(6070);

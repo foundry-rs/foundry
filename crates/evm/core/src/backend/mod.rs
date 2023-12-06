@@ -777,6 +777,13 @@ impl Backend {
         self.inner.precompiles().contains(addr)
     }
 
+    /// Sets the initial journaled state to use when initializing forks
+    #[inline]
+    fn set_init_journaled_state(&mut self, journaled_state: JournaledState) {
+        trace!("recording fork init journaled_state");
+        self.fork_init_journaled_state = journaled_state;
+    }
+
     /// Cleans up already loaded accounts that would be initialized without the correct data from
     /// the fork.
     ///
@@ -800,10 +807,21 @@ impl Backend {
             let mut journaled_state = self.fork_init_journaled_state.clone();
             for loaded_account in loaded_accounts.iter().copied() {
                 trace!(?loaded_account, "replacing account on init");
-                let fork_account = Database::basic(&mut fork.db, loaded_account)?
-                    .ok_or(DatabaseError::MissingAccount(loaded_account))?;
                 let init_account =
                     journaled_state.state.get_mut(&loaded_account).expect("exists; qed");
+
+                // here's an edge case where we need to check if this account has been created, in
+                // which case we don't need to replace it with the account from the fork because the
+                // created account takes precedence: for example contract creation in setups
+                if init_account.is_created() {
+                    trace!(?loaded_account, "skipping created account");
+                    continue
+                }
+
+                // otherwise we need to replace the account's info with the one from the fork's
+                // database
+                let fork_account = Database::basic(&mut fork.db, loaded_account)?
+                    .ok_or(DatabaseError::MissingAccount(loaded_account))?;
                 init_account.info = fork_account;
             }
             fork.journaled_state = journaled_state;
@@ -1043,8 +1061,8 @@ impl DatabaseExt for Backend {
             // different forks. Since the `JournaledState` is valid for all forks until the
             // first fork is selected, we need to update it for all forks and use it as init state
             // for all future forks
-            trace!("recording fork init journaled_state");
-            self.fork_init_journaled_state = active_journaled_state.clone();
+
+            self.set_init_journaled_state(active_journaled_state.clone());
             self.prepare_init_journal_state()?;
 
             // Make sure that the next created fork has a depth of 0.
