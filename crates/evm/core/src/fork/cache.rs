@@ -171,27 +171,12 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
 
                 // we check for breaking changes here
                 if let Some(obj) = value.as_object_mut() {
-                    // additional field `disable_eip3607` enabled by the `optional_eip3607` feature
-                    let key = "disable_eip3607";
-                    if !obj.contains_key(key) {
-                        obj.insert(key.to_string(), true.into());
-                    }
-                    // additional field `disable_block_gas_limit` enabled by the
-                    // `optional_block_gas_limit` feature
-                    let key = "disable_block_gas_limit";
-                    if !obj.contains_key(key) {
-                        // keep default value
-                        obj.insert(key.to_string(), false.into());
-                    }
-                    let key = "disable_base_fee";
-                    if !obj.contains_key(key) {
-                        // keep default value
-                        obj.insert(key.to_string(), false.into());
-                    }
-                    let key = "optimism";
-                    if !obj.contains_key(key) {
-                        // keep default value
-                        obj.insert(key.to_string(), false.into());
+                    let default_value =
+                        serde_json::to_value(revm::primitives::CfgEnv::default()).unwrap();
+                    for (key, value) in default_value.as_object().unwrap() {
+                        if !obj.contains_key(key) {
+                            obj.insert(key.to_string(), value.clone());
+                        }
                     }
                 }
 
@@ -217,13 +202,14 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
             {
                 let mut value = serde_json::Value::deserialize(deserializer)?;
 
-                // we check for breaking changes here
+                // we check for any missing fields here
                 if let Some(obj) = value.as_object_mut() {
-                    // additional EIP-4844 fields that are present by default
-                    let key = "blob_excess_gas_and_price";
-                    if !obj.contains_key(key) {
-                        let value = revm::primitives::BlockEnv::default().blob_excess_gas_and_price;
-                        obj.insert(key.to_string(), serde_json::to_value(value).unwrap());
+                    let default_value =
+                        serde_json::to_value(revm::primitives::BlockEnv::default()).unwrap();
+                    for (key, value) in default_value.as_object().unwrap() {
+                        if !obj.contains_key(key) {
+                            obj.insert(key.to_string(), value.clone());
+                        }
                     }
                 }
 
