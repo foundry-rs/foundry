@@ -184,7 +184,8 @@ impl<'a, B: Backend + io::Write> TerminalGuard<'a, B> {
     fn setup(&mut self) {
         let previous = Arc::new(std::panic::take_hook());
         self.hook = Some(previous.clone());
-        // TODO: `std::panic::update_hook`
+        // We need to restore the terminal state before displaying the panic message.
+        // TODO: Use `std::panic::update_hook` when it's stable
         std::panic::set_hook(Box::new(move |info| {
             Self::half_restore(&mut std::io::stdout());
             (previous)(info)
@@ -213,7 +214,7 @@ impl<'a, B: Backend + io::Write> TerminalGuard<'a, B> {
 
     fn half_restore(w: &mut impl io::Write) {
         let _ = disable_raw_mode();
-        let _ = execute!(w, LeaveAlternateScreen, DisableMouseCapture);
+        let _ = execute!(*w, LeaveAlternateScreen, DisableMouseCapture);
     }
 }
 
