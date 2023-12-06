@@ -178,13 +178,11 @@ impl DebuggerContext<'_> {
         f.render_widget(paragraph, area);
     }
 
-    fn src_text(&self, area: Rect) -> Text {
+    fn src_text(&self, area: Rect) -> Text<'_> {
         let (source_element, source_code) = match self.src_map() {
             Ok(r) => r,
             Err(e) => return Text::from(e),
         };
-
-        let mut lines = Vec::new();
 
         // We are handed a vector of SourceElements that give us a span of sourcecode that is
         // currently being executed. This includes an offset and length.
@@ -201,8 +199,6 @@ impl DebuggerContext<'_> {
         let mut before: Vec<_> = source_code[..actual_start].split_inclusive('\n').collect();
         let actual: Vec<_> = source_code[actual_start..actual_end].split_inclusive('\n').collect();
         let mut after: VecDeque<_> = source_code[actual_end..].split_inclusive('\n').collect();
-
-        let mut line_number = 0u32;
 
         let num_lines = before.len() + actual.len() + after.len();
         let height = area.height as usize;
@@ -233,81 +229,53 @@ impl DebuggerContext<'_> {
             (before.len().saturating_sub(above), mid_len + below)
         };
 
-        let gray = Style::new().fg(Color::Gray).bg(Color::DarkGray);
-        let cyan = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-        let dark_cyan = cyan.bg(Color::DarkGray);
-        let dimmed = Style::new().add_modifier(Modifier::DIM);
+        // Unhighlighted line number: gray.
+        let u_num = Style::new().fg(Color::Gray);
+        // Unhighlighted text: default, dimmed.
+        let u_text = Style::new().add_modifier(Modifier::DIM);
+        // Highlighted line number: cyan.
+        let h_num = Style::new().fg(Color::Cyan);
+        // Highlighted text: cyan, bold.
+        let h_text = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
 
         // Same as `num_lines.to_string().len()`.
-        let max_line_num = num_lines.ilog10() as usize;
+        let max_line_num = num_lines.ilog10() as usize + 1;
+        let mut lines = SourceLines::new(max_line_num);
+
         // We check if there is other text on the same line before the highlight starts.
         if let Some(last) = before.pop() {
-            if !last.ends_with('\n') {
-                before.iter().skip(start_line).for_each(|line| {
-                    lines.push(Line::from(vec![
-                        Span::styled(format!("{line_number: >max_line_num$}"), gray),
-                        Span::styled("\u{2800} ".to_string() + line, dimmed),
-                    ]));
-                    line_number += 1;
-                });
+            let last_has_nl = last.ends_with('\n');
 
-                lines.push(Line::from(vec![
-                    Span::styled(format!("{line_number: >max_line_num$}"), dark_cyan),
-                    Span::raw("\u{2800} "),
-                    Span::raw(last),
-                    Span::styled(actual[0].to_string(), cyan),
-                ]));
-                line_number += 1;
-
-                actual.iter().skip(1).for_each(|&s| {
-                    lines.push(Line::from(vec![
-                        Span::styled(format!("{line_number: >max_line_num$}"), dark_cyan),
-                        Span::raw("\u{2800} "),
-                        Span::styled(
-                            // This is a hack to add coloring because TUI does weird trimming.
-                            if s.is_empty() || s == "\n" { "\u{2800} \n" } else { s },
-                            cyan,
-                        ),
-                    ]));
-                    line_number += 1;
-                });
-            } else {
+            if last_has_nl {
                 before.push(last);
-                before.iter().skip(start_line).for_each(|line| {
-                    lines.push(Line::from(vec![
-                        Span::styled(format!("{line_number: >max_line_num$}"), gray),
-                        Span::styled("\u{2800} ".to_string() + line, dimmed),
-                    ]));
-                    line_number += 1;
-                });
-                actual.iter().for_each(|&s| {
-                    lines.push(Line::from(vec![
-                        Span::styled(format!("{line_number: >max_line_num$}"), dark_cyan),
-                        Span::raw("\u{2800} "),
-                        Span::styled(
-                            if s.is_empty() || s == "\n" { "\u{2800} \n" } else { s },
-                            cyan,
-                        ),
-                    ]));
-                    line_number += 1;
-                });
+            }
+            for line in &before[start_line..] {
+                lines.push(u_num, line, u_text);
+            }
+
+            let first = if !last_has_nl {
+                lines.push_raw(h_num, &[Span::raw(last), Span::styled(actual[0], h_text)]);
+                1
+            } else {
+                0
+            };
+
+            // Skip the first line if it has already been handled above.
+            for line in &actual[first..] {
+                lines.push(h_num, line, h_text);
             }
         } else {
-            actual.iter().for_each(|&s| {
-                lines.push(Line::from(vec![
-                    Span::styled(format!("{line_number: >max_line_num$}"), dark_cyan),
-                    Span::raw("\u{2800} "),
-                    Span::styled(if s.is_empty() || s == "\n" { "\u{2800} \n" } else { s }, cyan),
-                ]));
-                line_number += 1;
-            });
+            // No text before the current line.
+            for line in &actual {
+                lines.push(h_num, line, h_text);
+            }
         }
 
         // Fill in the rest of the line as unhighlighted.
         if let Some(last) = actual.last() {
             if !last.ends_with('\n') {
                 if let Some(post) = after.pop_front() {
-                    if let Some(last) = lines.last_mut() {
+                    if let Some(last) = lines.lines.last_mut() {
                         last.spans.push(Span::raw(post));
                     }
                 }
@@ -319,14 +287,10 @@ impl DebuggerContext<'_> {
             after.pop_back();
         }
         for line in after {
-            lines.push(Line::from(vec![
-                Span::styled(format!("{line_number: >max_line_num$}"), gray),
-                Span::styled(format!("\u{2800} {line}"), dimmed),
-            ]));
-            line_number += 1;
+            lines.push(u_num, line, u_text);
         }
 
-        Text::from(lines)
+        Text::from(lines.lines)
     }
 
     fn src_map(&self) -> Result<(SourceElement, &str), String> {
@@ -674,5 +638,36 @@ impl DebuggerContext<'_> {
             .collect();
         let paragraph = Paragraph::new(text).block(memory_space).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
+    }
+}
+
+/// Wrapper around a list of [`Line`]s that prepends the line number on each new line.
+struct SourceLines<'a> {
+    lines: Vec<Line<'a>>,
+    max_line_num: usize,
+}
+
+impl<'a> SourceLines<'a> {
+    fn new(max_line_num: usize) -> Self {
+        Self { lines: Vec::new(), max_line_num }
+    }
+
+    fn push(&mut self, line_number_style: Style, line: &'a str, line_style: Style) {
+        self.push_raw(line_number_style, &[Span::styled(line, line_style)]);
+    }
+
+    fn push_raw(&mut self, line_number_style: Style, spans: &[Span<'a>]) {
+        let mut line_spans = Vec::with_capacity(4);
+
+        let line_number =
+            format!("{number: >width$} ", number = self.lines.len() + 1, width = self.max_line_num);
+        line_spans.push(Span::styled(line_number, line_number_style));
+
+        // This is a hack to add coloring because TUI does weird trimming.
+        line_spans.push(Span::raw("\u{2800} "));
+
+        line_spans.extend_from_slice(spans);
+
+        self.lines.push(Line::from(line_spans));
     }
 }

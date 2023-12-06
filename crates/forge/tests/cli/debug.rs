@@ -2,6 +2,7 @@ use itertools::Itertools;
 use std::path::Path;
 
 // Sets up a debuggable test case.
+// Run with `cargo test-debugger`.
 forgetest_async!(
     #[ignore = "ran manually"]
     manual_debug_setup,
