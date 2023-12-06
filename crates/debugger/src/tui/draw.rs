@@ -23,11 +23,49 @@ impl DebuggerContext<'_> {
 
     #[inline]
     fn draw_layout(&self, f: &mut Frame<'_>) {
-        if f.size().width < 225 {
-            self.vertical_layout(f);
-        } else {
-            self.horizontal_layout(f);
+        // We need 100 columns to display a 32 byte word in the memory and stack panes.
+        let size = f.size();
+        let min_width = 100;
+        let min_height = 16;
+        if size.width < min_width || size.height < min_height {
+            self.size_too_small(f, min_width, min_height);
+            return;
         }
+
+        // The horizontal layout draws these panes at 50% width.
+        let min_column_width_for_horizontal = 200;
+        if size.width >= min_column_width_for_horizontal {
+            self.horizontal_layout(f);
+        } else {
+            self.vertical_layout(f);
+        }
+    }
+
+    fn size_too_small(&self, f: &mut Frame<'_>, min_width: u16, min_height: u16) {
+        let mut lines = Vec::with_capacity(4);
+
+        let l1 = "Terminal size too small:";
+        lines.push(Line::from(l1));
+
+        let size = f.size();
+        let width_color = if size.width >= min_width { Color::Green } else { Color::Red };
+        let height_color = if size.height >= min_height { Color::Green } else { Color::Red };
+        let l2 = vec![
+            Span::raw("Width = "),
+            Span::styled(size.width.to_string(), Style::new().fg(width_color)),
+            Span::raw(" Height = "),
+            Span::styled(size.height.to_string(), Style::new().fg(height_color)),
+        ];
+        lines.push(Line::from(l2));
+
+        let l3 = "Needed for current config:";
+        lines.push(Line::from(l3));
+        let l4 = format!("Width = {min_width} Height = {min_height}");
+        lines.push(Line::from(l4));
+
+        let paragraph =
+            Paragraph::new(lines).alignment(Alignment::Center).wrap(Wrap { trim: true });
+        f.render_widget(paragraph, size)
     }
 
     /// Draws the layout in vertical mode.
