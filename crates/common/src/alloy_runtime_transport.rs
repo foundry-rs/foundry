@@ -12,7 +12,7 @@ use reqwest::header::{HeaderName, HeaderValue};
 use std::{str::FromStr, sync::Arc};
 use thiserror::Error;
 use tokio::sync::RwLock;
-use tower::{Service, ServiceExt};
+use tower::Service;
 use url::Url;
 
 /// An enum representing the different transports that can be used to connect to a runtime.
@@ -111,52 +111,59 @@ impl RuntimeTransport {
     /// Connect to the runtime transport, depending on the URL scheme.
     async fn connect(&self) -> Result<InnerTransport, RuntimeTransportError> {
         match self.url.scheme() {
-            "http" | "https" => {
-                let mut client_builder = reqwest::Client::builder().timeout(self.timeout);
-
-                if let Some(jwt) = self.jwt.clone() {
-                    let auth = build_auth(jwt)
-                        .map_err(|e| RuntimeTransportError::InvalidJwt(e.to_string()))?;
-
-                    let mut auth_value: HeaderValue = HeaderValue::from_str(&auth.to_string())
-                        .expect("Header should be valid string");
-                    auth_value.set_sensitive(true);
-
-                    let mut headers = reqwest::header::HeaderMap::new();
-                    headers.insert(reqwest::header::AUTHORIZATION, auth_value);
-
-                    for header in self.headers.iter() {
-                        let make_err = || RuntimeTransportError::BadHeader(header.to_string());
-
-                        let (key, val) = header.split_once(':').ok_or_else(make_err)?;
-
-                        headers.insert(
-                            HeaderName::from_str(key.trim()).map_err(|_| make_err())?,
-                            HeaderValue::from_str(val.trim()).map_err(|_| make_err())?,
-                        );
-                    }
-
-                    client_builder = client_builder.default_headers(headers);
-                };
-
-                let client = client_builder
-                    .build()
-                    .map_err(|e| RuntimeTransportError::HttpConstructionError(e))?;
-
-                // todo: retry tower layer
-                Ok(InnerTransport::Http(Http::with_client(client, self.url.clone())))
-            }
-            "ws" | "wss" => {
-                let auth = self.jwt.as_ref().and_then(|jwt| build_auth(jwt.clone()).ok());
-                let ws = WsConnect { url: self.url.to_string(), auth }
-                    .into_service()
-                    .await
-                    .map_err(|e| RuntimeTransportError::TransportError(e))?;
-                Ok(InnerTransport::Ws(ws))
-            }
+            "http" | "https" => self.connect_http().await,
+            "ws" | "wss" => self.connect_ws().await,
             // TODO: IPC once it's merged
             _ => Err(RuntimeTransportError::BadScheme(self.url.scheme().to_string())),
         }
+    }
+
+    /// Connects to an HTTP transport.
+    async fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
+        let mut client_builder = reqwest::Client::builder().timeout(self.timeout);
+        let mut headers = reqwest::header::HeaderMap::new();
+
+        // If there's a JWT, add it to the headers if we can decode it.
+        if let Some(jwt) = self.jwt.clone() {
+            let auth =
+                build_auth(jwt).map_err(|e| RuntimeTransportError::InvalidJwt(e.to_string()))?;
+
+            let mut auth_value: HeaderValue =
+                HeaderValue::from_str(&auth.to_string()).expect("Header should be valid string");
+            auth_value.set_sensitive(true);
+
+            headers.insert(reqwest::header::AUTHORIZATION, auth_value);
+        };
+
+        // Add any custom headers.
+        for header in self.headers.iter() {
+            let make_err = || RuntimeTransportError::BadHeader(header.to_string());
+
+            let (key, val) = header.split_once(':').ok_or_else(make_err)?;
+
+            headers.insert(
+                HeaderName::from_str(key.trim()).map_err(|_| make_err())?,
+                HeaderValue::from_str(val.trim()).map_err(|_| make_err())?,
+            );
+        }
+
+        client_builder = client_builder.default_headers(headers);
+
+        let client =
+            client_builder.build().map_err(|e| RuntimeTransportError::HttpConstructionError(e))?;
+
+        // todo: retry tower layer
+        Ok(InnerTransport::Http(Http::with_client(client, self.url.clone())))
+    }
+
+    /// Connects to a WS transport.
+    async fn connect_ws(&self) -> Result<InnerTransport, RuntimeTransportError> {
+        let auth = self.jwt.as_ref().and_then(|jwt| build_auth(jwt.clone()).ok());
+        let ws = WsConnect { url: self.url.to_string(), auth }
+            .into_service()
+            .await
+            .map_err(|e| RuntimeTransportError::TransportError(e))?;
+        Ok(InnerTransport::Ws(ws))
     }
 
     /// Send a request
