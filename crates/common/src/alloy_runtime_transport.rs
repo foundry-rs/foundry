@@ -72,6 +72,51 @@ pub struct RuntimeTransport {
     timeout: std::time::Duration,
 }
 
+/// A builder for [RuntimeTransport].
+pub struct RuntimeTransportBuilder {
+    url: Url,
+    headers: Vec<String>,
+    jwt: Option<String>,
+    timeout: std::time::Duration,
+}
+
+impl RuntimeTransportBuilder {
+    /// Create a new builder with the given URL.
+    pub fn new(url: Url) -> Self {
+        Self { url, headers: vec![], jwt: None, timeout: std::time::Duration::from_secs(30) }
+    }
+
+    /// Set the URL for the transport.
+    pub fn with_headers(mut self, headers: Vec<String>) -> Self {
+        self.headers = headers;
+        self
+    }
+
+    /// Set the JWT for the transport.
+    pub fn with_jwt(mut self, jwt: Option<String>) -> Self {
+        self.jwt = jwt;
+        self
+    }
+
+    /// Set the timeout for the transport.
+    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// Builds the [RuntimeTransport] and returns it in a disconnected state.
+    /// The runtime transport will then connect when the first request happens.
+    pub fn build(self) -> RuntimeTransport {
+        RuntimeTransport {
+            inner: Arc::new(RwLock::new(None)),
+            url: self.url,
+            headers: self.headers,
+            jwt: self.jwt,
+            timeout: self.timeout,
+        }
+    }
+}
+
 impl ::core::fmt::Display for RuntimeTransport {
     fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
         write!(f, "RuntimeTransport {}", self.url)
@@ -80,32 +125,13 @@ impl ::core::fmt::Display for RuntimeTransport {
 
 impl RuntimeTransport {
     /// Create a new, unconnected transport.
-    pub fn new(url: Url) -> Self {
-        Self {
-            inner: Arc::new(RwLock::new(None)),
-            url,
-            headers: vec![],
-            jwt: None,
-            timeout: std::time::Duration::from_secs(30),
-        }
-    }
-
-    /// Add a JWT to the transport
-    pub fn with_jwt(mut self, jwt: Option<String>) -> Self {
-        self.jwt = jwt;
-        self
-    }
-
-    /// Add headers to the transport
-    pub fn with_headers(mut self, headers: Vec<String>) -> Self {
-        self.headers = headers;
-        self
-    }
-
-    /// Set the timeout for the transport
-    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
-        self.timeout = timeout;
-        self
+    pub fn new(
+        url: Url,
+        headers: Vec<String>,
+        jwt: Option<String>,
+        timeout: std::time::Duration,
+    ) -> Self {
+        Self { inner: Arc::new(RwLock::new(None)), url, headers, jwt, timeout }
     }
 
     /// Connect to the runtime transport, depending on the URL scheme.

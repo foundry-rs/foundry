@@ -1,6 +1,8 @@
 //! Commonly used helpers to construct `Provider`s
 
-use crate::{alloy_runtime_transport::RuntimeTransport, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
+use crate::{
+    alloy_runtime_transport::RuntimeTransportBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
+};
 use alloy_primitives::U256;
 use alloy_providers::provider::{Provider, TempProvider};
 use alloy_transport::BoxTransport;
@@ -228,13 +230,12 @@ impl ProviderBuilder {
         // todo: ipc
         // todo: port alchemy compute units logic?
         // todo: provider polling interval
-        let transport = RuntimeTransport::new(url.clone())
+        let transport_builder = RuntimeTransportBuilder::new(url.clone())
             .with_timeout(timeout)
             .with_headers(headers)
-            .with_jwt(jwt)
-            .boxed();
+            .with_jwt(jwt);
 
-        Ok(Provider::new(transport))
+        Ok(Provider::new(transport_builder.build().boxed()))
     }
 }
 
