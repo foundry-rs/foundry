@@ -13,7 +13,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 use revm::interpreter::opcode;
-use std::{cmp, collections::VecDeque, io};
+use std::{cmp, collections::VecDeque, fmt::Write, io};
 
 impl DebuggerContext<'_> {
     /// Draws the TUI layout and subcomponents to the given terminal.
@@ -131,7 +131,7 @@ impl DebuggerContext<'_> {
     /// |                 |           |
     /// |       src       |    mem    |
     /// |                 |           |
-    /// |-----------------------------|
+    /// |-----------------|-----------|
     /// ```
     fn horizontal_layout(&self, f: &mut Frame<'_>) {
         let area = f.size();
@@ -183,21 +183,13 @@ impl DebuggerContext<'_> {
     }
 
     fn draw_footer(&self, f: &mut Frame<'_>, area: Rect) {
-        let block_controls = Block::default();
-
-        let top_line = "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end";
-        let bottom_line = "[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint | [h] toggle help";
+        let l1 = "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end";
+        let l2 = "[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint | [h] toggle help";
         let dimmed = Style::new().add_modifier(Modifier::DIM);
-        let text_output = vec![
-            Line::from(Span::styled(top_line, dimmed)),
-            Line::from(Span::styled(bottom_line, dimmed)),
-        ];
-
-        let paragraph = Paragraph::new(text_output)
-            .block(block_controls)
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: false });
-
+        let lines =
+            vec![Line::from(Span::styled(l1, dimmed)), Line::from(Span::styled(l2, dimmed))];
+        let paragraph =
+            Paragraph::new(lines).alignment(Alignment::Center).wrap(Wrap { trim: false });
         f.render_widget(paragraph, area);
     }
 
@@ -210,9 +202,8 @@ impl DebuggerContext<'_> {
             CallKind::CallCode => "Contract callcode",
             CallKind::DelegateCall => "Contract delegatecall",
         };
-        let block_source_code = Block::default().title(title).borders(Borders::ALL);
-        let paragraph =
-            Paragraph::new(text_output).block(block_source_code).wrap(Wrap { trim: false });
+        let block = Block::default().title(title).borders(Borders::ALL);
+        let paragraph = Paragraph::new(text_output).block(block).wrap(Wrap { trim: false });
         f.render_widget(paragraph, area);
     }
 
@@ -276,9 +267,7 @@ impl DebuggerContext<'_> {
         // Highlighted text: cyan, bold.
         let h_text = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
 
-        // Same as `num_lines.to_string().len()`.
-        let max_line_num = num_lines.ilog10() as usize + 1;
-        let mut lines = SourceLines::new(max_line_num);
+        let mut lines = SourceLines::new(decimal_digits(num_lines));
 
         // We check if there is other text on the same line before the highlight starts.
         if let Some(last) = before.pop() {
@@ -368,26 +357,9 @@ impl DebuggerContext<'_> {
         Ok((source_element, source_code))
     }
 
-    /// Draw opcode list into main component
     fn draw_op_list(&self, f: &mut Frame<'_>, area: Rect) {
-        let step = self.current_step();
-        let block_source_code = Block::default()
-            .title(format!(
-                "Address: {} | PC: {} | Gas used in call: {}",
-                self.address(),
-                step.pc,
-                step.total_gas_used,
-            ))
-            .borders(Borders::ALL);
-        let mut text_output: Vec<Line> = Vec::new();
-
-        // Scroll:
-        // Focused line is line that should always be at the center of the screen.
-        let display_start;
-
         let height = area.height as i32;
         let extra_top_lines = height / 2;
-        let prev_start = *self.draw_memory.current_startline.borrow();
         // Absolute minimum start line
         let abs_min_start = 0;
         // Adjust for weird scrolling for max top line
@@ -408,61 +380,58 @@ impl DebuggerContext<'_> {
             std::mem::swap(&mut min_start, &mut max_start);
         }
 
-        if prev_start < min_start {
-            display_start = min_start;
-        } else if prev_start > max_start {
-            display_start = max_start;
-        } else {
-            display_start = prev_start;
-        }
+        let prev_start = *self.draw_memory.current_startline.borrow();
+        let display_start = prev_start.clamp(min_start, max_start);
         *self.draw_memory.current_startline.borrow_mut() = display_start;
 
-        let max_pc_len =
-            self.debug_steps().iter().fold(0, |max_val, val| val.pc.max(max_val)).to_string().len();
+        let max_pc = self.debug_steps().iter().map(|step| step.pc).max().unwrap_or(0);
+        let max_pc_len = hex_digits(max_pc);
 
-        // Define closure that prints one more line of source code
-        let mut add_new_line = |line_number| {
+        let debug_steps = self.debug_steps();
+        let mut lines = Vec::new();
+        let mut add_new_line = |line_number: usize| {
+            let mut line = String::with_capacity(64);
+
             let is_current_step = line_number == self.current_step;
-            let bg_color = if is_current_step { Color::DarkGray } else { Color::Reset };
-
-            // Format line number
-            let line_number_format = if is_current_step {
-                format!("{:0>max_pc_len$x}|▶", step.pc)
-            } else if line_number < self.debug_steps().len() {
-                format!("{:0>max_pc_len$x}| ", step.pc)
+            if line_number < self.debug_steps().len() {
+                let step = &debug_steps[line_number];
+                write!(line, "{:0>max_pc_len$x}|", step.pc).unwrap();
+                line.push_str(if is_current_step { "▶" } else { " " });
+                if let Some(op) = self.opcode_list.get(line_number) {
+                    line.push_str(op);
+                }
             } else {
-                "END CALL".to_string()
-            };
-
-            if let Some(op) = self.opcode_list.get(line_number) {
-                text_output.push(Line::from(Span::styled(
-                    format!("{line_number_format}{op}"),
-                    Style::new().fg(Color::White).bg(bg_color),
-                )));
-            } else {
-                text_output.push(Line::from(Span::styled(
-                    line_number_format,
-                    Style::new().fg(Color::White).bg(bg_color),
-                )));
+                line.push_str("END CALL");
             }
+
+            let bg_color = if is_current_step { Color::DarkGray } else { Color::Reset };
+            let style = Style::new().fg(Color::White).bg(bg_color);
+            lines.push(Line::from(Span::styled(line, style)));
         };
+
         for number in display_start..self.opcode_list.len() {
             add_new_line(number);
         }
+
         // Add one more "phantom" line so we see line where current segment execution ends
         add_new_line(self.opcode_list.len());
-        let paragraph =
-            Paragraph::new(text_output).block(block_source_code).wrap(Wrap { trim: true });
+
+        let title = format!(
+            "Address: {} | PC: {} | Gas used in call: {}",
+            self.address(),
+            self.current_step().pc,
+            self.current_step().total_gas_used,
+        );
+        let block = Block::default().title(title).borders(Borders::ALL);
+        let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
 
-    /// Draw the stack into the stack pane
     fn draw_stack(&self, f: &mut Frame<'_>, area: Rect) {
         let step = self.current_step();
         let stack = &step.stack;
-        let stack_space =
-            Block::default().title(format!("Stack: {}", stack.len())).borders(Borders::ALL);
-        let min_len = usize::max(format!("{}", stack.len()).len(), 2);
+
+        let min_len = decimal_digits(stack.len()).max(2);
 
         let params =
             if let Instruction::OpCode(op) = step.instruction { OpcodeParam::of(op) } else { &[] };
@@ -474,118 +443,55 @@ impl DebuggerContext<'_> {
             .skip(self.draw_memory.current_stack_startline)
             .map(|(i, stack_item)| {
                 let param = params.iter().find(|param| param.index == i);
-                let mut words: Vec<Span> = (0..32)
-                    .rev()
-                    .map(|i| stack_item.byte(i))
-                    .map(|byte| {
-                        Span::styled(
-                            format!("{byte:02x} "),
-                            if param.is_some() {
-                                Style::new().fg(Color::Cyan)
-                            } else if byte == 0 {
-                                // this improves compatibility across terminals by not combining
-                                // color with DIM modifier
-                                Style::new().add_modifier(Modifier::DIM)
-                            } else {
-                                Style::new().fg(Color::White)
-                            },
-                        )
-                    })
-                    .collect();
+
+                let mut spans = Vec::with_capacity(1 + 32 * 2 + 3);
+
+                // Stack index.
+                spans.push(Span::styled(format!("{i:0min_len$}| "), Style::new().fg(Color::White)));
+
+                // Item hex bytes.
+                hex_bytes_spans(&stack_item.to_be_bytes::<32>(), &mut spans, |_, _| {
+                    if param.is_some() {
+                        Style::new().fg(Color::Cyan)
+                    } else {
+                        Style::new().fg(Color::White)
+                    }
+                });
 
                 if self.stack_labels {
                     if let Some(param) = param {
-                        words.push(Span::raw(format!("| {}", param.name)));
-                    } else {
-                        words.push(Span::raw("| ".to_string()));
+                        spans.push(Span::raw("| "));
+                        spans.push(Span::raw(param.name));
                     }
                 }
 
-                let mut spans =
-                    vec![Span::styled(format!("{i:0min_len$}| "), Style::new().fg(Color::White))];
-                spans.extend(words);
                 spans.push(Span::raw("\n"));
 
                 Line::from(spans)
             })
             .collect();
 
-        let paragraph = Paragraph::new(text).block(stack_space).wrap(Wrap { trim: true });
+        let title = format!("Stack: {}", stack.len());
+        let block = Block::default().title(title).borders(Borders::ALL);
+        let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
 
-    /// The memory_access variable stores the index on the stack that indicates the memory
-    /// offset/size accessed by the given opcode:
-    ///   (read memory offset, read memory size, write memory offset, write memory size)
-    ///   >= 1: the stack index
-    ///   0: no memory access
-    ///   -1: a fixed size of 32 bytes
-    ///   -2: a fixed size of 1 byte
-    /// The return value is a tuple about accessed memory region by the given opcode:
-    ///   (read memory offset, read memory size, write memory offset, write memory size)
-    fn get_memory_access(
-        op: u8,
-        stack: &[U256],
-    ) -> (Option<usize>, Option<usize>, Option<usize>, Option<usize>) {
-        let memory_access = match op {
-            opcode::KECCAK256 | opcode::RETURN | opcode::REVERT => (1, 2, 0, 0),
-            opcode::CALLDATACOPY | opcode::CODECOPY | opcode::RETURNDATACOPY => (0, 0, 1, 3),
-            opcode::EXTCODECOPY => (0, 0, 2, 4),
-            opcode::MLOAD => (1, -1, 0, 0),
-            opcode::MSTORE => (0, 0, 1, -1),
-            opcode::MSTORE8 => (0, 0, 1, -2),
-            opcode::LOG0 | opcode::LOG1 | opcode::LOG2 | opcode::LOG3 | opcode::LOG4 => {
-                (1, 2, 0, 0)
-            }
-            opcode::CREATE | opcode::CREATE2 => (2, 3, 0, 0),
-            opcode::CALL | opcode::CALLCODE => (4, 5, 0, 0),
-            opcode::DELEGATECALL | opcode::STATICCALL => (3, 4, 0, 0),
-            _ => Default::default(),
-        };
-
-        let stack_len = stack.len();
-        let get_size = |stack_index| match stack_index {
-            -2 => Some(1),
-            -1 => Some(32),
-            0 => None,
-            1.. => {
-                if (stack_index as usize) <= stack_len {
-                    Some(stack[stack_len - stack_index as usize].saturating_to())
-                } else {
-                    None
-                }
-            }
-            _ => panic!("invalid stack index"),
-        };
-
-        let (read_offset, read_size, write_offset, write_size) = (
-            get_size(memory_access.0),
-            get_size(memory_access.1),
-            get_size(memory_access.2),
-            get_size(memory_access.3),
-        );
-        (read_offset, read_size, write_offset, write_size)
-    }
-
-    /// Draw memory in memory pane
     fn draw_memory(&self, f: &mut Frame<'_>, area: Rect) {
         let step = self.current_step();
         let memory = &step.memory;
-        let memory_space = Block::default()
-            .title(format!("Memory (max expansion: {} bytes)", memory.len()))
-            .borders(Borders::ALL);
-        let max_i = memory.len() / 32;
-        let min_len = format!("{:x}", max_i * 32).len();
 
-        // color memory region based on write/read
-        let mut offset: Option<usize> = None;
-        let mut size: Option<usize> = None;
+        let min_len = hex_digits(memory.len());
+
+        // Color memory region based on read/write.
+        let mut offset = None;
+        let mut size = None;
         let mut color = None;
         if let Instruction::OpCode(op) = step.instruction {
             let stack_len = step.stack.len();
             if stack_len > 0 {
                 let (read_offset, read_size, write_offset, write_size) =
-                    Self::get_memory_access(op, &step.stack);
+                    get_memory_access(op, &step.stack);
                 if read_offset.is_some() {
                     offset = read_offset;
                     size = read_size;
@@ -603,8 +509,7 @@ impl DebuggerContext<'_> {
             let prev_step = self.current_step - 1;
             let prev_step = &self.debug_steps()[prev_step];
             if let Instruction::OpCode(op) = prev_step.instruction {
-                let (_, _, write_offset, write_size) =
-                    Self::get_memory_access(op, &prev_step.stack);
+                let (_, _, write_offset, write_size) = get_memory_access(op, &prev_step.stack);
                 if write_offset.is_some() {
                     offset = write_offset;
                     size = write_size;
@@ -620,53 +525,40 @@ impl DebuggerContext<'_> {
             .chunks(32)
             .enumerate()
             .skip(self.draw_memory.current_mem_startline)
-            .take_while(|(i, _)| i < &end_line)
+            .take_while(|(i, _)| *i < end_line)
             .map(|(i, mem_word)| {
-                let words: Vec<Span> = mem_word
-                    .iter()
-                    .enumerate()
-                    .map(|(j, byte)| {
-                        Span::styled(
-                            format!("{byte:02x} "),
-                            if let (Some(offset), Some(size), Some(color)) = (offset, size, color) {
-                                if i * 32 + j >= offset && i * 32 + j < offset + size {
-                                    // [offset, offset + size] is the memory region to be colored.
-                                    // If a byte at row i and column j in the memory panel
-                                    // falls in this region, set the color.
-                                    Style::new().fg(color)
-                                } else if *byte == 0 {
-                                    Style::new().add_modifier(Modifier::DIM)
-                                } else {
-                                    Style::new().fg(Color::White)
-                                }
-                            } else if *byte == 0 {
-                                Style::new().add_modifier(Modifier::DIM)
-                            } else {
-                                Style::new().fg(Color::White)
-                            },
-                        )
-                    })
-                    .collect();
+                let mut spans = Vec::with_capacity(1 + 32 * 2 + 1 + 32 / 4 + 1);
 
-                let mut spans = vec![Span::styled(
+                // Memory index.
+                spans.push(Span::styled(
                     format!("{:0min_len$x}| ", i * 32),
                     Style::new().fg(Color::White),
-                )];
-                spans.extend(words);
+                ));
+
+                // Word hex bytes.
+                hex_bytes_spans(mem_word, &mut spans, |j, _| {
+                    let mut byte_color = Color::White;
+                    if let (Some(offset), Some(size), Some(color)) = (offset, size, color) {
+                        let idx = i * 32 + j;
+                        if (offset..offset + size).contains(&idx) {
+                            // [offset, offset + size] is the memory region to be colored.
+                            // If a byte at row i and column j in the memory panel
+                            // falls in this region, set the color.
+                            byte_color = color;
+                        }
+                    }
+                    Style::new().fg(byte_color)
+                });
 
                 if self.mem_utf {
-                    let chars: Vec<Span> = mem_word
-                        .chunks(4)
-                        .map(|utf| {
-                            if let Ok(utf_str) = std::str::from_utf8(utf) {
-                                Span::raw(utf_str.replace(char::from(0), "."))
-                            } else {
-                                Span::raw(".")
-                            }
-                        })
-                        .collect();
                     spans.push(Span::raw("|"));
-                    spans.extend(chars);
+                    for utf in mem_word.chunks(4) {
+                        if let Ok(utf_str) = std::str::from_utf8(utf) {
+                            spans.push(Span::raw(utf_str.replace('\0', ".")));
+                        } else {
+                            spans.push(Span::raw("."));
+                        }
+                    }
                 }
 
                 spans.push(Span::raw("\n"));
@@ -674,7 +566,10 @@ impl DebuggerContext<'_> {
                 Line::from(spans)
             })
             .collect();
-        let paragraph = Paragraph::new(text).block(memory_space).wrap(Wrap { trim: true });
+
+        let title = format!("Memory (max expansion: {} bytes)", memory.len());
+        let block = Block::default().title(title).borders(Borders::ALL);
+        let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
 }
@@ -707,5 +602,116 @@ impl<'a> SourceLines<'a> {
         line_spans.extend_from_slice(spans);
 
         self.lines.push(Line::from(line_spans));
+    }
+}
+
+/// The memory_access variable stores the index on the stack that indicates the memory
+/// offset/size accessed by the given opcode:
+///   (read memory offset, read memory size, write memory offset, write memory size)
+///   >= 1: the stack index
+///   0: no memory access
+///   -1: a fixed size of 32 bytes
+///   -2: a fixed size of 1 byte
+/// The return value is a tuple about accessed memory region by the given opcode:
+///   (read memory offset, read memory size, write memory offset, write memory size)
+fn get_memory_access(
+    op: u8,
+    stack: &[U256],
+) -> (Option<usize>, Option<usize>, Option<usize>, Option<usize>) {
+    let memory_access = match op {
+        opcode::KECCAK256 | opcode::RETURN | opcode::REVERT => (1, 2, 0, 0),
+        opcode::CALLDATACOPY | opcode::CODECOPY | opcode::RETURNDATACOPY => (0, 0, 1, 3),
+        opcode::EXTCODECOPY => (0, 0, 2, 4),
+        opcode::MLOAD => (1, -1, 0, 0),
+        opcode::MSTORE => (0, 0, 1, -1),
+        opcode::MSTORE8 => (0, 0, 1, -2),
+        opcode::LOG0 | opcode::LOG1 | opcode::LOG2 | opcode::LOG3 | opcode::LOG4 => (1, 2, 0, 0),
+        opcode::CREATE | opcode::CREATE2 => (2, 3, 0, 0),
+        opcode::CALL | opcode::CALLCODE => (4, 5, 0, 0),
+        opcode::DELEGATECALL | opcode::STATICCALL => (3, 4, 0, 0),
+        _ => Default::default(),
+    };
+
+    let stack_len = stack.len();
+    let get_size = |stack_index| match stack_index {
+        -2 => Some(1),
+        -1 => Some(32),
+        0 => None,
+        1.. => {
+            if (stack_index as usize) <= stack_len {
+                Some(stack[stack_len - stack_index as usize].saturating_to())
+            } else {
+                None
+            }
+        }
+        _ => panic!("invalid stack index"),
+    };
+
+    let (read_offset, read_size, write_offset, write_size) = (
+        get_size(memory_access.0),
+        get_size(memory_access.1),
+        get_size(memory_access.2),
+        get_size(memory_access.3),
+    );
+    (read_offset, read_size, write_offset, write_size)
+}
+
+fn hex_bytes_spans(bytes: &[u8], spans: &mut Vec<Span<'_>>, f: impl Fn(usize, u8) -> Style) {
+    for (i, &byte) in bytes.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(alloy_primitives::hex::encode(&[byte]), f(i, byte)));
+    }
+}
+
+/// Returns the number of decimal digits in the given number.
+///
+/// This is the same as `n.to_string().len()`.
+fn decimal_digits(n: usize) -> usize {
+    n.checked_ilog10().unwrap_or(0) as usize + 1
+}
+
+/// Returns the number of hexadecimal digits in the given number.
+///
+/// This is the same as `format!("{n:x}").len()`.
+fn hex_digits(n: usize) -> usize {
+    n.checked_ilog(16).unwrap_or(0) as usize + 1
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn decimal_digits() {
+        assert_eq!(super::decimal_digits(0), 1);
+        assert_eq!(super::decimal_digits(1), 1);
+        assert_eq!(super::decimal_digits(2), 1);
+        assert_eq!(super::decimal_digits(9), 1);
+        assert_eq!(super::decimal_digits(10), 2);
+        assert_eq!(super::decimal_digits(11), 2);
+        assert_eq!(super::decimal_digits(50), 2);
+        assert_eq!(super::decimal_digits(99), 2);
+        assert_eq!(super::decimal_digits(100), 3);
+        assert_eq!(super::decimal_digits(101), 3);
+        assert_eq!(super::decimal_digits(201), 3);
+        assert_eq!(super::decimal_digits(999), 3);
+        assert_eq!(super::decimal_digits(1000), 4);
+        assert_eq!(super::decimal_digits(1001), 4);
+    }
+
+    #[test]
+    fn hex_digits() {
+        assert_eq!(super::hex_digits(0), 1);
+        assert_eq!(super::hex_digits(1), 1);
+        assert_eq!(super::hex_digits(2), 1);
+        assert_eq!(super::hex_digits(9), 1);
+        assert_eq!(super::hex_digits(10), 1);
+        assert_eq!(super::hex_digits(11), 1);
+        assert_eq!(super::hex_digits(15), 1);
+        assert_eq!(super::hex_digits(16), 2);
+        assert_eq!(super::hex_digits(17), 2);
+        assert_eq!(super::hex_digits(0xff), 2);
+        assert_eq!(super::hex_digits(0x100), 3);
+        assert_eq!(super::hex_digits(0x101), 3);
     }
 }
