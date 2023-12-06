@@ -37,6 +37,7 @@ revm = { workspace = true, default-features = false, features = [
 
 ethers-core.workspace = true
 ethers-signers.workspace = true
+itertools.workspace = true
 
 eyre = "0.6"
 hex.workspace = true
@@ -44,5 +45,4 @@ parking_lot = "0.12"
 proptest = "1"
 thiserror = "1"
 tracing = "0.1"
-itertools = "0.12.0"
 rayon = "1"
