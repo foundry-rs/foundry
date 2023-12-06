@@ -226,7 +226,7 @@ impl InvariantFuzzError {
                     .expect("bad call to evm");
                 if error_call_result.reverted {
                     let mut locked = curr_seq.write();
-                    if new_sequence.len() < locked.len() {
+                    if new_sequence[..=j].len() < locked.len() {
                         // update the curr_sequence if the new sequence is lower than
                         *locked = new_sequence[..=j].to_vec();
                     }
