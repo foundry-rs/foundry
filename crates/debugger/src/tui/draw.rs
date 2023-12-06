@@ -596,8 +596,8 @@ impl<'a> SourceLines<'a> {
             format!("{number: >width$} ", number = self.lines.len() + 1, width = self.max_line_num);
         line_spans.push(Span::styled(line_number, line_number_style));
 
-        // This is a hack to add coloring because TUI does weird trimming.
-        line_spans.push(Span::raw("\u{2800} "));
+        // Space between line number and line text.
+        line_spans.push(Span::raw("  "));
 
         line_spans.extend_from_slice(spans);
 
