@@ -252,7 +252,9 @@ impl InvariantFuzzError {
         calls
             .iter()
             .enumerate()
-            .filter_map(|(i, call)| if shrunk_call_indices.contains(&i) { Some(call) } else { None })
+            .filter_map(
+                |(i, call)| if shrunk_call_indices.contains(&i) { Some(call) } else { None },
+            )
             .collect()
     }
 
@@ -275,7 +277,8 @@ impl InvariantFuzzError {
         runs: usize,
         retries: usize,
     ) -> ShrunkCallIndices {
-        let shrunk_call_indices: Arc<RwLock<ShrunkCallIndices>> = Arc::new(RwLock::new((0..calls.len()).collect()));
+        let shrunk_call_indices: Arc<RwLock<ShrunkCallIndices>> =
+            Arc::new(RwLock::new((0..calls.len()).collect()));
         let shrink_limit = self.shrink_run_limit - runs;
 
         // We construct either a full powerset (this guarantees we maximally shrunk for the given
@@ -320,21 +323,27 @@ impl InvariantFuzzError {
 
         // just try all of them in parallel
         set_of_indices.par_iter().for_each(|use_calls| {
-            self.set_fails_successfully(executor.clone(), calls, use_calls, Arc::clone(&shrunk_call_indices));
+            self.set_fails_successfully(
+                executor.clone(),
+                calls,
+                use_calls,
+                Arc::clone(&shrunk_call_indices),
+            );
         });
 
         // at this point we know shrunk is fine to get the inner value for
-        let shrunk_call_indices = Arc::<RwLock<Vec<usize>>>::try_unwrap(shrunk_call_indices).unwrap().into_inner();
-        
+        let shrunk_call_indices =
+            Arc::<RwLock<Vec<usize>>>::try_unwrap(shrunk_call_indices).unwrap().into_inner();
+
         if is_powerset {
             // a powerset is guaranteed to be smallest local subset, so we return early
             return shrunk_call_indices
-        } 
+        }
 
         let computation_budget_not_hit = new_runs + runs < self.shrink_run_limit;
         // If the new shrunk_call_indices is less than the input calls length,
-        // we found a subsequence that is shorter. So we can measure if we made progress by comparing
-        // them
+        // we found a subsequence that is shorter. So we can measure if we made progress by
+        // comparing them
         let made_progress = shrunk_call_indices.len() < calls.len();
         // We limit the number of times we can iterate without making progress
         let has_remaining_retries = retries <= 3;
@@ -349,24 +358,33 @@ impl InvariantFuzzError {
                 self.try_shrinking_recurse(calls, executor, runs + new_runs, retries + 1)
             }
             (true, true) => {
-                // We construct a *new* subset of calls using the `shrunk_call_indices` of the passed in calls
-                // i.e. if shrunk_call_indices == [1, 3], and calls is: [call0, call1, call2, call3] then
-                // new_calls == [call1, call3]
+                // We construct a *new* subset of calls using the `shrunk_call_indices` of the
+                // passed in calls i.e. if shrunk_call_indices == [1, 3], and calls
+                // is: [call0, call1, call2, call3] then new_calls == [call1, call3]
                 let new_calls: Vec<_> = calls
                     .iter()
                     .enumerate()
-                    .filter_map(|(i, call)| if shrunk_call_indices.contains(&i) { Some(call.clone()) } else { None })
+                    .filter_map(|(i, call)| {
+                        if shrunk_call_indices.contains(&i) {
+                            Some(call.clone())
+                        } else {
+                            None
+                        }
+                    })
                     .collect();
 
-                // We rerun this algorithm as if the new smaller subset above were the original calls.
-                // i.e. if [call0, call1, call2, call3] got reduced to [call1, call3] (in the above line) and we still have progress
-                // to make, we recall this function with [call1, call3]. Then after this call say it returns [1]. This means
-                // `call3` is all that is required to break the invariant.
+                // We rerun this algorithm as if the new smaller subset above were the original
+                // calls. i.e. if [call0, call1, call2, call3] got reduced to
+                // [call1, call3] (in the above line) and we still have progress
+                // to make, we recall this function with [call1, call3]. Then after this call say it
+                // returns [1]. This means `call3` is all that is required to break
+                // the invariant.
                 let new_calls_idxs =
                     self.try_shrinking_recurse(&new_calls, executor, runs + new_runs, 0);
 
-                // Notably, the indices returned above are relative to `new_calls`, *not* the originally passed in `calls`.
-                // So we map back by filtering `new_calls` by index if the index was returned above, and finding the position
+                // Notably, the indices returned above are relative to `new_calls`, *not* the
+                // originally passed in `calls`. So we map back by filtering
+                // `new_calls` by index if the index was returned above, and finding the position
                 // of the `new_call` in the passed in `call`
                 new_calls
                     .iter()
@@ -381,7 +399,8 @@ impl InvariantFuzzError {
                     .collect()
             }
             _ => {
-                // The computation budget has been hit or no retries remaining, stop trying to make progress
+                // The computation budget has been hit or no retries remaining, stop trying to make
+                // progress
                 shrunk_call_indices
             }
         }
