@@ -348,7 +348,7 @@ impl DebuggerContext<'_> {
                 let pc_ic_map = if is_create { create_map } else { rt_map };
                 let ic = pc_ic_map.get(&pc)?;
                 let source_element = source_map.swap_remove(*ic);
-                (*file_id == source_element.index?).then(|| (source_element, source_code))
+                (*file_id == source_element.index?).then_some((source_element, source_code))
             })
         else {
             return Err(format!("No source map for contract {contract_name}"));
@@ -661,7 +661,7 @@ fn hex_bytes_spans(bytes: &[u8], spans: &mut Vec<Span<'_>>, f: impl Fn(usize, u8
         if i > 0 {
             spans.push(Span::raw(" "));
         }
-        spans.push(Span::styled(alloy_primitives::hex::encode(&[byte]), f(i, byte)));
+        spans.push(Span::styled(alloy_primitives::hex::encode([byte]), f(i, byte)));
     }
 }
 

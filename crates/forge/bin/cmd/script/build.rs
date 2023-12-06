@@ -42,7 +42,7 @@ impl ScriptArgs {
                         .ast
                         .ok_or_else(|| eyre::eyre!("source from artifact has no AST"))?
                         .absolute_path;
-                    let abs_path = project.root().join(&path);
+                    let abs_path = project.root().join(path);
                     let source_code = fs::read_to_string(abs_path).wrap_err_with(|| {
                         format!("failed to read artifact source file for `{}`", id.identifier())
                     })?;

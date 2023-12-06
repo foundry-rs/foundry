@@ -167,11 +167,13 @@ impl Debugger {
     }
 }
 
+type PanicHandler = Box<dyn Fn(&std::panic::PanicInfo<'_>) + 'static + Sync + Send>;
+
 /// Handles terminal state.
 #[must_use]
 struct TerminalGuard<'a, B: Backend + io::Write> {
     terminal: &'a mut Terminal<B>,
-    hook: Option<Arc<Box<dyn Fn(&std::panic::PanicInfo<'_>) + 'static + Sync + Send>>>,
+    hook: Option<Arc<PanicHandler>>,
 }
 
 impl<'a, B: Backend + io::Write> TerminalGuard<'a, B> {
