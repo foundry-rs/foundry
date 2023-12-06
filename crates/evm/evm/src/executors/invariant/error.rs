@@ -264,7 +264,7 @@ impl InvariantFuzzError {
     /// and run these sequences in parallel instead.
     ///
     /// After running either the powerset or the random sequences, we check if we successfully
-    /// shrunk the
+    /// shrunk the call sequence.
     fn try_shrinking_recurse(
         &self,
         calls: &[BasicTxDetails],
