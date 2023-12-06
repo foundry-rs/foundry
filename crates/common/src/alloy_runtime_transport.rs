@@ -64,6 +64,11 @@ impl ::core::fmt::Display for RuntimeTransport {
 }
 
 impl RuntimeTransport {
+    /// Create a new, unconnected transport.
+    pub fn new(url: Url) -> Self {
+        Self { inner: Arc::new(RwLock::new(None)), url }
+    }
+
     /// Connect to the runtime transport, depending on the URL scheme.
     async fn connect(&self) -> Result<InnerTransport, RuntimeTransportError> {
         match self.url.scheme() {
