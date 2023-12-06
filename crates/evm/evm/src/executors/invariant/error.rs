@@ -247,7 +247,7 @@ impl InvariantFuzzError {
     ) -> Vec<&'a BasicTxDetails> {
         trace!(target: "forge::test", "Shrinking.");
 
-        // Special case test: the invariant is *unsatisfiable* - it took 0 calls to 
+        // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
         // break the invariant -- consider emitting a warning.
         if let Some(func) = &self.func {
             let error_call_result = executor
