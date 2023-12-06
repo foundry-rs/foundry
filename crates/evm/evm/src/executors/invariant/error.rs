@@ -246,6 +246,18 @@ impl InvariantFuzzError {
         executor: &Executor,
     ) -> Vec<&'a BasicTxDetails> {
         trace!(target: "forge::test", "Shrinking.");
+
+        // Special case test: the invariant is *unsatisfiable* - it took 0 calls to 
+        // break the invariant -- consider emitting a warning.
+        if let Some(func) = &self.func {
+            let error_call_result = executor
+                .call_raw(CALLER, self.addr, func.clone(), U256::ZERO)
+                .expect("bad call to evm");
+            if error_call_result.reverted {
+                return vec![];
+            }
+        }
+
         let shrunk_call_indices = self.try_shrinking_recurse(calls, executor, 0, 0);
 
         // Filter the calls by if the call index is present in `shrunk_call_indices`
