@@ -1,4 +1,4 @@
-//! Test setup
+//! Test config.
 
 use crate::test_helpers::{COMPILED, EVM_OPTS, PROJECT};
 use forge::{
@@ -16,7 +16,7 @@ use foundry_test_utils::{init_tracing, Filter};
 use itertools::Itertools;
 use std::{collections::BTreeMap, path::Path};
 
-/// How to execute a a test run
+/// How to execute a test run.
 pub struct TestConfig {
     pub runner: MultiContractRunner,
     pub should_fail: bool,

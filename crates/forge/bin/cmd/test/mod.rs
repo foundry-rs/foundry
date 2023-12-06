@@ -31,7 +31,7 @@ use foundry_config::{
     },
     get_available_profiles, Config,
 };
-use foundry_debugger::DebuggerBuilder;
+use foundry_debugger::Debugger;
 use regex::Regex;
 use std::{collections::BTreeMap, fs, sync::mpsc::channel, time::Duration};
 use watchexec::config::{InitConfig, RuntimeConfig};
@@ -297,10 +297,11 @@ impl TestArgs {
                 // Sources are only required for the debugger, but it *might* mean that there's
                 // something wrong with the build and/or artifacts.
                 if let Some(source) = artifact.source_file() {
-                    let abs_path = source
+                    let path = source
                         .ast
                         .ok_or_else(|| eyre::eyre!("Source from artifact has no AST."))?
                         .absolute_path;
+                    let abs_path = project.root().join(&path);
                     let source_code = fs::read_to_string(abs_path)?;
                     let contract = artifact.clone().into_contract_bytecode();
                     let source_contract = compact_to_contract(contract)?;
@@ -315,7 +316,7 @@ impl TestArgs {
             let test = outcome.clone().into_tests().next().unwrap();
             let result = test.result;
             // Run the debugger
-            let mut debugger = DebuggerBuilder::new()
+            let mut debugger = Debugger::builder()
                 // TODO: `Option::as_slice` in 1.75
                 .debug_arenas(result.debug.as_ref().map(core::slice::from_ref).unwrap_or_default())
                 .decoders(&decoders)
