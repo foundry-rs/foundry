@@ -42,6 +42,15 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Add known functions to the decoder.
+    #[inline]
+    pub fn with_functions(mut self, functions: impl IntoIterator<Item = Function>) -> Self {
+        for function in functions {
+            self.decoder.functions.entry(function.selector()).or_default().push(function);
+        }
+        self
+    }
+
     /// Add known events to the decoder.
     #[inline]
     pub fn with_events(mut self, events: impl IntoIterator<Item = Event>) -> Self {

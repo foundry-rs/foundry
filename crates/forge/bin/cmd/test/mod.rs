@@ -243,6 +243,7 @@ impl TestArgs {
                 let mut builder = CallTraceDecoderBuilder::new()
                     .with_labels(result.labeled_addresses.clone())
                     .with_events(local_identifier.events().cloned())
+                    .with_functions(local_identifier.functions().cloned())
                     .with_verbosity(verbosity);
 
                 // Signatures are of no value for gas reports
@@ -693,6 +694,7 @@ async fn test(
             let mut builder = CallTraceDecoderBuilder::new()
                 .with_labels(result.labeled_addresses.iter().map(|(a, s)| (*a, s.clone())))
                 .with_events(local_identifier.events().cloned())
+                .with_functions(local_identifier.functions().cloned())
                 .with_verbosity(verbosity);
 
             // Signatures are of no value for gas reports
