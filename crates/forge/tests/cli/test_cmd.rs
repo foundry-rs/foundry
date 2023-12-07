@@ -371,9 +371,11 @@ forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
 forgetest_init!(repro_6531, |prj, cmd| {
     prj.wipe_contracts();
 
+    let endpoint = rpc::next_http_archive_rpc_endpoint();
+
     prj.add_test(
         "Contract.t.sol",
-        r#"
+        &r#"
 import {Test} from "forge-std/Test.sol";
 
 interface IERC20 {
@@ -382,16 +384,20 @@ interface IERC20 {
 
 contract USDCCallingTest is Test {
     function test() public {
-        vm.createSelectFork("mainnet");
+        vm.createSelectFork("<url>");
         IERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48).name();
     }
 }
-   "#,
+   "#
+        .replace("<url>", &endpoint),
     )
     .unwrap();
 
-    cmd.args(["test", "-vvvv"]);
-    cmd.unchecked_output().stdout_matches_path(
+    let expected = std::fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/repro_6531.stdout"),
     )
+    .unwrap()
+    .replace("<url>", &endpoint);
+
+    cmd.args(["test", "-vvvv"]).unchecked_output().stdout_matches_content(&expected);
 });

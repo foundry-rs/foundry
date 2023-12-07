@@ -898,6 +898,9 @@ stderr:
 /// terminal is tty, the path argument can be wrapped in [tty_fixture_path()]
 pub trait OutputExt {
     /// Ensure the command wrote the expected data to `stdout`.
+    fn stdout_matches_content(&self, expected: &str);
+
+    /// Ensure the command wrote the expected data to `stdout`.
     fn stdout_matches_path(&self, expected_path: impl AsRef<Path>);
 
     /// Ensure the command wrote the expected data to `stderr`.
@@ -932,10 +935,15 @@ fn normalize_output(s: &str) -> String {
 
 impl OutputExt for Output {
     #[track_caller]
+    fn stdout_matches_content(&self, expected: &str) {
+        let out = lossy_string(&self.stdout);
+        pretty_assertions::assert_eq!(normalize_output(&out), normalize_output(expected));
+    }
+
+    #[track_caller]
     fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) {
         let expected = fs::read_to_string(expected_path).unwrap();
-        let out = lossy_string(&self.stdout);
-        pretty_assertions::assert_eq!(normalize_output(&out), normalize_output(&expected));
+        self.stdout_matches_content(&expected);
     }
 
     #[track_caller]
