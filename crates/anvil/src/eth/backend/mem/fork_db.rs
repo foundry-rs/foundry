@@ -7,12 +7,12 @@ use crate::{
     Address, U256,
 };
 use ethers::{prelude::H256, types::BlockId};
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
-    backend::{DatabaseResult, StateSnapshot},
+    backend::{DatabaseResult, RevertSnapshotAction, StateSnapshot},
     fork::{database::ForkDbSnapshot, BlockchainDb},
     revm::Database,
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 
 pub use foundry_evm::fork::database::ForkedDatabase;
 
@@ -68,8 +68,8 @@ impl Db for ForkedDatabase {
         self.insert_snapshot().to_ethers()
     }
 
-    fn revert(&mut self, id: U256) -> bool {
-        self.revert_snapshot(id.to_alloy())
+    fn revert(&mut self, id: U256, action: RevertSnapshotAction) -> bool {
+        self.revert_snapshot(id.to_alloy(), action)
     }
 
     fn current_state(&self) -> StateDb {

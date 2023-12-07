@@ -9,10 +9,9 @@ use foundry_block_explorers::{
     Client,
 };
 use foundry_cli::utils::{get_cached_entry_by_name, read_constructor_args_file, LoadConfig};
-use foundry_common::abi::encode_function_args;
+use foundry_common::{abi::encode_function_args, retry::Retry};
 use foundry_compilers::{artifacts::CompactContract, cache::CacheEntry, Project, Solc};
 use foundry_config::{Chain, Config, SolcReq};
-use foundry_utils::Retry;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -58,7 +57,9 @@ impl VerificationProvider for EtherscanVerificationProvider {
     async fn verify(&mut self, args: VerifyArgs) -> Result<()> {
         let (etherscan, verify_args) = self.prepare_request(&args).await?;
 
-        if self.is_contract_verified(&etherscan, &verify_args).await? {
+        if !args.skip_is_verified_check &&
+            self.is_contract_verified(&etherscan, &verify_args).await?
+        {
             println!(
                 "\nContract [{}] {:?} is already verified. Skipping verification.",
                 verify_args.contract_name,
@@ -71,9 +72,12 @@ impl VerificationProvider for EtherscanVerificationProvider {
         trace!(target: "forge::verify", ?verify_args, "submitting verification request");
 
         let retry: Retry = args.retry.into();
-        let resp = retry.run_async(|| {
-            async {
-                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, verify_args.address.to_checksum(None));
+        let resp = retry
+            .run_async(|| async {
+                println!(
+                    "\nSubmitting verification for [{}] {}.",
+                    verify_args.contract_name, verify_args.address
+                );
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await
@@ -87,7 +91,10 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 trace!(target: "forge::verify", ?resp, "Received verification response");
 
                 if resp.status == "0" {
-                    if resp.result == "Contract source code already verified" {
+                    if resp.result == "Contract source code already verified"
+                        // specific for blockscout response
+                        || resp.result == "Smart-contract already verified."
+                    {
                         return Ok(None)
                     }
 
@@ -98,16 +105,15 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
                     warn!("Failed verify submission: {:?}", resp);
                     eprintln!(
-                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
-                        resp.message, resp.result
-                    );
+                    "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
+                    resp.message, resp.result
+                );
                     std::process::exit(1);
                 }
 
                 Ok(Some(resp))
-            }
-                .boxed()
-        }).await?;
+            })
+            .await?;
 
         if let Some(resp) = resp {
             println!(

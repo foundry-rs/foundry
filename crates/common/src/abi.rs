@@ -1,9 +1,9 @@
 //! ABI related helper functions.
 
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
-use alloy_json_abi::{AbiItem, Event, Function};
+use alloy_json_abi::{Event, Function};
 use alloy_primitives::{hex, Address, Log};
-use eyre::{ContextCompat, Result};
+use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::{contract::ContractMetadata, errors::EtherscanError, Client};
 use foundry_config::Chain;
 use std::{future::Future, pin::Pin};
@@ -28,7 +28,7 @@ pub fn abi_decode_calldata(
     input: bool,
     fn_selector: bool,
 ) -> Result<Vec<DynSolValue>> {
-    let func = Function::parse(sig)?;
+    let func = get_func(sig)?;
     let calldata = hex::decode(calldata)?;
 
     let mut calldata = calldata.as_slice();
@@ -56,7 +56,7 @@ pub fn abi_decode_calldata(
 pub trait IntoFunction {
     /// Consumes self and produces a function
     ///
-    /// # Panic
+    /// # Panics
     ///
     /// This function does not return a Result, so it is expected that the consumer
     /// uses it correctly so that it does not panic.
@@ -70,38 +70,30 @@ impl IntoFunction for Function {
 }
 
 impl IntoFunction for String {
+    #[track_caller]
     fn into(self) -> Function {
         IntoFunction::into(self.as_str())
     }
 }
 
 impl<'a> IntoFunction for &'a str {
+    #[track_caller]
     fn into(self) -> Function {
-        Function::parse(self).expect("could not parse function")
+        match get_func(self) {
+            Ok(func) => func,
+            Err(e) => panic!("could not parse function: {e}"),
+        }
     }
 }
 
 /// Given a function signature string, it tries to parse it as a `Function`
 pub fn get_func(sig: &str) -> Result<Function> {
-    if let Ok(func) = Function::parse(sig) {
-        Ok(func)
-    } else {
-        // Try to parse as human readable ABI.
-        let item = match AbiItem::parse(sig) {
-            Ok(item) => match item {
-                AbiItem::Function(func) => func,
-                _ => return Err(eyre::eyre!("Expected function, got {:?}", item)),
-            },
-            Err(e) => return Err(e.into()),
-        };
-        Ok(item.into_owned().to_owned())
-    }
+    Function::parse(sig).wrap_err("could not parse function signature")
 }
 
 /// Given an event signature string, it tries to parse it as a `Event`
 pub fn get_event(sig: &str) -> Result<Event> {
-    let sig = sig.strip_prefix("event").unwrap_or(sig).trim();
-    Ok(Event::parse(sig)?)
+    Event::parse(sig).wrap_err("could not parse event signature")
 }
 
 /// Given an event without indexed parameters and a rawlog, it tries to return the event with the

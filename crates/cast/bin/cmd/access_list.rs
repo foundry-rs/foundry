@@ -7,8 +7,8 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
 };
+use foundry_common::types::ToEthers;
 use foundry_config::{Chain, Config};
-use foundry_utils::types::ToEthers;
 use std::str::FromStr;
 
 /// CLI arguments for `cast access-list`.

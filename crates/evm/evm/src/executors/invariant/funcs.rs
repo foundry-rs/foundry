@@ -40,10 +40,10 @@ pub fn assert_invariants(
 
     // This will panic and get caught by the executor
     let is_err = call_result.reverted ||
-        !executor.is_success(
+        !executor.is_raw_call_success(
             invariant_contract.address,
-            call_result.reverted,
             call_result.state_changeset.take().expect("we should have a state changeset"),
+            &call_result,
             false,
         );
     if is_err {

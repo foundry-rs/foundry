@@ -1,5 +1,5 @@
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
-use alloy_json_abi::{ContractObject, Function};
+use alloy_json_abi::ContractObject;
 use alloy_primitives::{Address, I256, U256};
 use alloy_rlp::Decodable;
 use base::{Base, NumberWithBase, ToBase};
@@ -15,9 +15,13 @@ use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
 use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::Client;
-use foundry_common::{abi::encode_function_args, fmt::*, TransactionReceiptWithRevertReason};
+use foundry_common::{
+    abi::{encode_function_args, get_func},
+    fmt::*,
+    types::{ToAlloy, ToEthers},
+    TransactionReceiptWithRevertReason,
+};
 use foundry_config::Chain;
-use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
 use std::{
@@ -118,7 +122,7 @@ where
                         if let Some(NameOrAddress::Address(addr)) = tx.to() {
                             if let Ok(code) = self.provider.get_code(*addr, block).await {
                                 if code.is_empty() {
-                                    eyre::bail!("contract {addr:?} does not exist")
+                                    eyre::bail!("contract {addr:?} does not have any code")
                                 }
                             }
                         }
@@ -1557,12 +1561,7 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = match Function::parse(sig) {
-            Ok(func) => func,
-            Err(err) => {
-                eyre::bail!("Could not process human-readable ABI. Please check if you've left the parenthesis unclosed or if some type is incomplete.\nError:\n{}", err)
-            }
-        };
+        let func = get_func(sig)?;
         let calldata = match encode_function_args(&func, args) {
             Ok(res) => hex::encode(res),
             Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
@@ -1585,7 +1584,7 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn calldata_encode(sig: impl AsRef<str>, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = Function::parse(sig.as_ref())?;
+        let func = get_func(sig.as_ref())?;
         let calldata = encode_function_args(&func, args)?;
         Ok(hex::encode_prefixed(calldata))
     }
@@ -1630,7 +1629,7 @@ impl SimpleCast {
             .iter()
             .zip(contract_names)
             .map(|(contract_abi, name)| {
-                let source = foundry_utils::abi::abi_to_solidity(contract_abi, &name)?;
+                let source = foundry_cli::utils::abi_to_solidity(contract_abi, &name)?;
                 Ok(InterfaceSource {
                     name,
                     json_abi: serde_json::to_string_pretty(contract_abi)?,
@@ -1905,7 +1904,7 @@ impl SimpleCast {
             eyre::bail!("number of leading zeroes must not be greater than 4");
         }
         if optimize == 0 {
-            let selector = Function::parse(signature)?.selector();
+            let selector = get_func(signature)?.selector();
             return Ok((selector.to_string(), String::from(signature)))
         }
         let Some((name, params)) = signature.split_once('(') else {

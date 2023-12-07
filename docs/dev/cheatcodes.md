@@ -120,7 +120,7 @@ interface's items, as well as the `sol!`-generated items, such as the `VmCalls` 
 
 This macro performs extra checks on functions and structs at compile time to make sure they are
 documented and have named parameters, and generates a macro which is later used to implement the
-`match { ... }` function that is be used to dispatch the cheatcode implementations after a call is
+`match { ... }` function that is to be used to dispatch the cheatcode implementations after a call is
 decoded.
 
 The latter is what fails compilation when adding a new cheatcode, and is fixed by implementing the

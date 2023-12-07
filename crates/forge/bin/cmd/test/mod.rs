@@ -31,7 +31,7 @@ use foundry_config::{
     },
     get_available_profiles, Config,
 };
-use foundry_debugger::DebuggerArgs;
+use foundry_debugger::Debugger;
 use regex::Regex;
 use std::{collections::BTreeMap, fs, sync::mpsc::channel, time::Duration};
 use watchexec::config::{InitConfig, RuntimeConfig};
@@ -208,10 +208,10 @@ impl TestArgs {
             filter.args_mut().test_pattern = self.debug.clone();
             let num_filtered = runner.matching_test_function_count(&filter);
             if num_filtered != 1 {
-                return Err(
-                        eyre::eyre!("{num_filtered} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
-                        \n
-                        Use --match-contract and --match-path to further limit the search."));
+                eyre::bail!(
+                    "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n\n\
+                     Use --match-contract and --match-path to further limit the search."
+                );
             }
             let test_funcs = runner.get_matching_test_functions(&filter);
             // if we debug a fuzz test, we should not collect data on the first run
@@ -297,10 +297,11 @@ impl TestArgs {
                 // Sources are only required for the debugger, but it *might* mean that there's
                 // something wrong with the build and/or artifacts.
                 if let Some(source) = artifact.source_file() {
-                    let abs_path = source
+                    let path = source
                         .ast
                         .ok_or_else(|| eyre::eyre!("Source from artifact has no AST."))?
                         .absolute_path;
+                    let abs_path = project.root().join(&path);
                     let source_code = fs::read_to_string(abs_path)?;
                     let contract = artifact.clone().into_contract_bytecode();
                     let source_contract = compact_to_contract(contract)?;
@@ -315,13 +316,14 @@ impl TestArgs {
             let test = outcome.clone().into_tests().next().unwrap();
             let result = test.result;
             // Run the debugger
-            let debugger = DebuggerArgs {
-                debug: result.debug.map_or(vec![], |debug| vec![debug]),
-                decoder: decoders.first().unwrap(),
-                sources,
-                breakpoints: result.breakpoints,
-            };
-            debugger.run()?;
+            let mut debugger = Debugger::builder()
+                // TODO: `Option::as_slice` in 1.75
+                .debug_arenas(result.debug.as_ref().map(core::slice::from_ref).unwrap_or_default())
+                .decoders(&decoders)
+                .sources(sources)
+                .breakpoints(result.breakpoints)
+                .build();
+            debugger.try_run()?;
         }
 
         Ok(outcome)
@@ -441,7 +443,7 @@ impl Test {
 }
 
 /// Represents the bundled results of all tests
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TestOutcome {
     /// Whether failures are allowed
     pub allow_failure: bool,

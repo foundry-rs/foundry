@@ -7,6 +7,7 @@ pragma solidity ^0.8.4;
 interface Vm {
     error CheatcodeError(string message);
     enum CallerMode { None, Broadcast, RecurrentBroadcast, Prank, RecurrentPrank }
+    enum AccountAccessKind { Call, DelegateCall, CallCode, StaticCall, Create, SelfDestruct, Resume }
     struct Log { bytes32[] topics; bytes data; address emitter; }
     struct Rpc { string key; string url; }
     struct EthGetLogs { address emitter; bytes32[] topics; bytes data; bytes32 blockHash; uint64 blockNumber; bytes32 transactionHash; uint64 transactionIndex; uint256 logIndex; bool removed; }
@@ -14,6 +15,9 @@ interface Vm {
     struct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created; }
     struct Wallet { address addr; uint256 publicKeyX; uint256 publicKeyY; uint256 privateKey; }
     struct FfiResult { int32 exitCode; bytes stdout; bytes stderr; }
+    struct ChainInfo { uint256 forkId; uint256 chainId; }
+    struct AccountAccess { ChainInfo chainInfo; AccountAccessKind kind; address account; address accessor; bool initialized; uint256 oldBalance; uint256 newBalance; bytes deployedCode; uint256 value; bytes data; bool reverted; StorageAccess[] storageAccesses; }
+    struct StorageAccess { address account; bytes32 slot; bool isWrite; bytes32 previousValue; bytes32 newValue; bool reverted; }
     function accesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
     function activeFork() external view returns (uint256 forkId);
     function addr(uint256 privateKey) external pure returns (address keyAddr);
@@ -209,6 +213,8 @@ interface Vm {
     function startMappingRecording() external;
     function startPrank(address msgSender) external;
     function startPrank(address msgSender, address txOrigin) external;
+    function startStateDiffRecording() external;
+    function stopAndReturnStateDiff() external returns (AccountAccess[] memory accesses);
     function stopBroadcast() external;
     function stopMappingRecording() external;
     function stopPrank() external;

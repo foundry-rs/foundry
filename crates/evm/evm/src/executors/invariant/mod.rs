@@ -749,7 +749,7 @@ fn can_continue(
     } else {
         // Increase the amount of reverts.
         failures.reverts += 1;
-        // If fail on revert is set, we must return inmediately.
+        // If fail on revert is set, we must return immediately.
         if fail_on_revert {
             let error = InvariantFuzzError::new(
                 invariant_contract,

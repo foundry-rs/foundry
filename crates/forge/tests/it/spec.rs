@@ -1,3 +1,5 @@
+//! Integration tests for EVM specifications.
+
 use crate::config::*;
 use foundry_evm::revm::primitives::SpecId;
 use foundry_test_utils::Filter;

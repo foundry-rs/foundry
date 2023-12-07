@@ -76,6 +76,7 @@ pub(super) fn decode(trace: &mut CallTrace, _chain_id: u64) -> bool {
 
     // TODO: Other chain precompiles
 
+    trace!(?signature, ?args, "decoded precompile call");
     trace.data = TraceCallData::Decoded { signature: signature.to_string(), args };
     trace.label = Some("PRECOMPILES".into());
 

@@ -1,4 +1,4 @@
-//! forge tests for core functionality
+//! Forge tests for core functionality.
 
 use crate::config::*;
 use forge::result::SuiteResult;

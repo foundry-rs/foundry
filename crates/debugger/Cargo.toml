@@ -10,9 +10,10 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+foundry-common.workspace = true
+foundry-compilers.workspace = true
 foundry-evm-core.workspace = true
 foundry-evm-traces.workspace = true
-foundry-common.workspace = true
 
 alloy-primitives.workspace = true
 

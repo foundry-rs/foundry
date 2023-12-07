@@ -11,9 +11,8 @@ use ethers_signers::{
     LocalWallet, MnemonicBuilder, Signer, Trezor, TrezorError, TrezorHDPath, WalletError,
 };
 use eyre::{bail, Result, WrapErr};
-use foundry_common::fs;
+use foundry_common::{fs, types::ToAlloy};
 use foundry_config::Config;
-use foundry_utils::types::ToAlloy;
 use rusoto_core::{
     credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
     request::HttpClient as AwsHttpClient, Client as AwsClient,

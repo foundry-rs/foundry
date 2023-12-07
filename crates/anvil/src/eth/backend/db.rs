@@ -8,9 +8,9 @@ use ethers::{
     types::{BlockId, H256},
     utils::keccak256,
 };
-use foundry_common::errors::FsPathError;
+use foundry_common::{errors::FsPathError, types::ToAlloy};
 use foundry_evm::{
-    backend::{DatabaseError, DatabaseResult, MemDb, StateSnapshot},
+    backend::{DatabaseError, DatabaseResult, MemDb, RevertSnapshotAction, StateSnapshot},
     fork::BlockchainDb,
     hashbrown::HashMap,
     revm::{
@@ -19,7 +19,6 @@ use foundry_evm::{
         Database, DatabaseCommit,
     },
 };
-use foundry_utils::types::ToAlloy;
 use hash_db::HashDB;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, path::Path};
@@ -173,7 +172,7 @@ pub trait Db:
     /// Reverts a snapshot
     ///
     /// Returns `true` if the snapshot was reverted
-    fn revert(&mut self, snapshot: U256) -> bool;
+    fn revert(&mut self, snapshot: U256, action: RevertSnapshotAction) -> bool;
 
     /// Returns the state root if possible to compute
     fn maybe_state_root(&self) -> Option<H256> {
@@ -209,7 +208,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
         U256::zero()
     }
 
-    fn revert(&mut self, _snapshot: U256) -> bool {
+    fn revert(&mut self, _snapshot: U256, _action: RevertSnapshotAction) -> bool {
         false
     }
 

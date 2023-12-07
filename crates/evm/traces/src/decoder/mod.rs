@@ -1,23 +1,23 @@
 use crate::{
     identifier::{AddressIdentity, SingleSignaturesIdentifier, TraceIdentifier},
-    utils, CallTrace, CallTraceArena, TraceCallData, TraceLog, TraceRetData,
+    CallTrace, CallTraceArena, TraceCallData, TraceLog, TraceRetData,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Event, Function, JsonAbi as Abi};
 use alloy_primitives::{Address, Selector, B256};
 use foundry_common::{abi::get_indexed_event, fmt::format_token, SELECTOR_LEN};
 use foundry_evm_core::{
-    abi::{CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HEVM_ABI},
+    abi::{Console, HardhatConsole, Vm, HARDHAT_CONSOLE_SELECTOR_PATCHES},
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
         TEST_CONTRACT_ADDRESS,
     },
     decode,
 };
-use foundry_utils::types::ToAlloy;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
+use tracing::field;
 
 mod precompiles;
 
@@ -118,6 +118,23 @@ impl CallTraceDecoder {
     }
 
     fn init() -> Self {
+        /// All functions from the Hardhat console ABI.
+        ///
+        /// See [`HARDHAT_CONSOLE_SELECTOR_PATCHES`] for more details.
+        fn hh_funcs() -> impl Iterator<Item = (Selector, Function)> {
+            let functions = HardhatConsole::abi::functions();
+            let mut functions: Vec<_> =
+                functions.into_values().flatten().map(|func| (func.selector(), func)).collect();
+            let len = functions.len();
+            // `functions` is the list of all patched functions; duplicate the unpatched ones
+            for (unpatched, patched) in HARDHAT_CONSOLE_SELECTOR_PATCHES.iter() {
+                if let Some((_, func)) = functions[..len].iter().find(|(sel, _)| sel == patched) {
+                    functions.push((unpatched.into(), func.clone()));
+                }
+            }
+            functions.into_iter()
+        }
+
         Self {
             contracts: Default::default(),
 
@@ -130,21 +147,20 @@ impl CallTraceDecoder {
             ]
             .into(),
 
-            functions: HARDHAT_CONSOLE_ABI
-                .functions()
-                .chain(HEVM_ABI.functions())
-                .map(|func| {
-                    let func = func.clone().to_alloy();
-                    (func.selector(), vec![func])
-                })
+            functions: hh_funcs()
+                .chain(
+                    Vm::abi::functions()
+                        .into_values()
+                        .flatten()
+                        .map(|func| (func.selector(), func)),
+                )
+                .map(|(selector, func)| (selector, vec![func]))
                 .collect(),
 
-            events: CONSOLE_ABI
-                .events()
-                .map(|event| {
-                    let event = event.clone().to_alloy();
-                    ((event.selector(), indexed_inputs(&event)), vec![event])
-                })
+            events: Console::abi::events()
+                .into_values()
+                .flatten()
+                .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
                 .collect(),
 
             errors: Default::default(),
@@ -228,14 +244,17 @@ impl CallTraceDecoder {
     }
 
     async fn decode_function(&self, trace: &mut CallTrace) {
+        let span = trace_span!("decode_function", label = field::Empty).entered();
+
         // Decode precompile
         if precompiles::decode(trace, 1) {
-            return
+            return;
         }
 
         // Set label
         if trace.label.is_none() {
             if let Some(label) = self.labels.get(&trace.address) {
+                span.record("label", label);
                 trace.label = Some(label.clone());
             }
         }
@@ -250,8 +269,9 @@ impl CallTraceDecoder {
         let TraceCallData::Raw(cdata) = &trace.data else { return };
 
         if trace.address == DEFAULT_CREATE2_DEPLOYER {
+            trace!("decoded as create2");
             trace.data = TraceCallData::Decoded { signature: "create2".to_string(), args: vec![] };
-            return
+            return;
         }
 
         if cdata.len() >= SELECTOR_LEN {
@@ -278,15 +298,15 @@ impl CallTraceDecoder {
             let signature =
                 if cdata.is_empty() && has_receive { "receive()" } else { "fallback()" }.into();
             let args = if cdata.is_empty() { Vec::new() } else { vec![cdata.to_string()] };
+            trace!(?signature, ?args, "decoded fallback data");
             trace.data = TraceCallData::Decoded { signature, args };
 
             if let TraceRetData::Raw(rdata) = &trace.output {
                 if !trace.success {
-                    trace.output = TraceRetData::Decoded(decode::decode_revert(
-                        rdata,
-                        Some(&self.errors),
-                        Some(trace.status),
-                    ));
+                    let decoded =
+                        decode::decode_revert(rdata, Some(&self.errors), Some(trace.status));
+                    trace!(?decoded, "decoded fallback output");
+                    trace.output = TraceRetData::Decoded(decoded);
                 }
             }
         }
@@ -310,8 +330,10 @@ impl CallTraceDecoder {
                 }
             }
         }
-        trace.data =
-            TraceCallData::Decoded { signature: func.signature(), args: args.unwrap_or_default() };
+
+        let signature = func.signature();
+        trace!(?signature, ?args, "decoded function input");
+        trace.data = TraceCallData::Decoded { signature, args: args.unwrap_or_default() };
     }
 
     /// Custom decoding for cheatcode inputs.
@@ -382,34 +404,36 @@ impl CallTraceDecoder {
     /// Decodes a function's output into the given trace.
     fn decode_function_output(&self, trace: &mut CallTrace, funcs: &[Function]) {
         let TraceRetData::Raw(data) = &trace.output else { return };
+        let mut s = None;
         if trace.success {
             if trace.address == CHEATCODE_ADDRESS {
-                if let Some(decoded) =
-                    funcs.iter().find_map(|func| self.decode_cheatcode_outputs(func))
-                {
-                    trace.output = TraceRetData::Decoded(decoded);
-                    return
-                }
+                s = funcs.iter().find_map(|func| self.decode_cheatcode_outputs(func));
             }
 
-            if let Some(values) =
-                funcs.iter().find_map(|func| func.abi_decode_output(data, false).ok())
-            {
-                // Functions coming from an external database do not have any outputs specified,
-                // and will lead to returning an empty list of values.
-                if values.is_empty() {
-                    return
+            if s.is_none() {
+                if let Some(values) =
+                    funcs.iter().find_map(|func| func.abi_decode_output(data, false).ok())
+                {
+                    // Functions coming from an external database do not have any outputs specified,
+                    // and will lead to returning an empty list of values.
+                    if !values.is_empty() {
+                        s = Some(
+                            values
+                                .iter()
+                                .map(|value| self.apply_label(value))
+                                .format(", ")
+                                .to_string(),
+                        );
+                    }
                 }
-                trace.output = TraceRetData::Decoded(
-                    values.iter().map(|value| self.apply_label(value)).format(", ").to_string(),
-                );
             }
         } else {
-            trace.output = TraceRetData::Decoded(decode::decode_revert(
-                data,
-                Some(&self.errors),
-                Some(trace.status),
-            ));
+            s = decode::maybe_decode_revert(data, Some(&self.errors), Some(trace.status));
+        }
+
+        if let Some(decoded) = s {
+            trace!(?decoded, "decoded function output");
+            trace.output = TraceRetData::Decoded(decoded);
         }
     }
 
@@ -445,8 +469,10 @@ impl CallTraceDecoder {
         for event in events {
             if let Ok(decoded) = event.decode_log(raw_log, false) {
                 let params = reconstruct_params(event, &decoded);
+                let name = event.name.clone();
+                trace!(?name, ?params, "decoded event");
                 *log = TraceLog::Decoded(
-                    event.name.clone(),
+                    name,
                     params
                         .into_iter()
                         .zip(event.inputs.iter())
@@ -457,13 +483,18 @@ impl CallTraceDecoder {
                         })
                         .collect(),
                 );
-                break
+                break;
             }
         }
     }
 
     fn apply_label(&self, value: &DynSolValue) -> String {
-        utils::label(value, &self.labels)
+        if let DynSolValue::Address(addr) = value {
+            if let Some(label) = self.labels.get(addr) {
+                return format!("{label}: [{addr}]");
+            }
+        }
+        format_token(value)
     }
 }
 

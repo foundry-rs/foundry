@@ -28,7 +28,7 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
     db::{DatabaseCommit, DatabaseRef},
-    interpreter::{return_ok, CreateScheme, InstructionResult, SharedMemory, Stack},
+    interpreter::{return_ok, CreateScheme, InstructionResult, Stack},
     primitives::{
         BlockEnv, Bytecode, Env, ExecutionResult, Output, ResultAndState, SpecId, TransactTo, TxEnv,
     },
@@ -287,6 +287,10 @@ impl Executor {
     /// Performs a raw call to an account on the current state of the VM.
     ///
     /// Any state modifications made by the call are not committed.
+    ///
+    /// This intended for fuzz calls, which try to minimize [Backend] clones by using a Cow of the
+    /// underlying [Backend] so it only gets cloned when cheatcodes that require mutable access are
+    /// used.
     pub fn call_raw(
         &self,
         from: Address,
@@ -301,9 +305,8 @@ impl Executor {
         let result = db.inspect_ref(&mut env, &mut inspector)?;
 
         // Persist the snapshot failure recorded on the fuzz backend wrapper.
-        self.backend
-            .set_snapshot_failure(self.backend.has_snapshot_failure() || db.has_snapshot_failure());
-        convert_executed_result(env, inspector, result)
+        let has_snapshot_failure = db.has_snapshot_failure();
+        convert_executed_result(env, inspector, result, has_snapshot_failure)
     }
 
     /// Execute the transaction configured in `env.tx` and commit the changes
@@ -318,7 +321,7 @@ impl Executor {
         // execute the call
         let mut inspector = self.inspector.clone();
         let result = self.backend.inspect_ref(&mut env, &mut inspector)?;
-        convert_executed_result(env, inspector, result)
+        convert_executed_result(env, inspector, result, self.backend.has_snapshot_failure())
     }
 
     /// Commit the changeset to the database and adjust `self.inspector_config`
@@ -470,6 +473,34 @@ impl Executor {
         self.ensure_success(address, reverted, state_changeset, should_fail).unwrap_or_default()
     }
 
+    /// This is the same as [Self::is_success] but intended for outcomes of [Self::call_raw] used in
+    /// fuzzing and invariant testing.
+    ///
+    /// ## Background
+    ///
+    /// Executing and failure checking [Executor::ensure_success] are two steps, for ds-test
+    /// legacy reasons failures can be stored in a global variables and needs to be called via a
+    /// solidity call `failed()(bool)`. For fuzz tests we’re using the
+    /// `FuzzBackendWrapper` which is a Cow of the executor’s backend which lazily clones the
+    /// backend when it’s mutated via cheatcodes like `snapshot`. Snapshots make it even
+    /// more complicated because now we also need to keep track of that global variable when we
+    /// revert to a snapshot (because it is stored in state). Now, the problem is that
+    /// the `FuzzBackendWrapper` is dropped after every call, so we need to keep track of the
+    /// snapshot failure in the [RawCallResult] instead.
+    pub fn is_raw_call_success(
+        &self,
+        address: Address,
+        state_changeset: StateChangeset,
+        call_result: &RawCallResult,
+        should_fail: bool,
+    ) -> bool {
+        if call_result.has_snapshot_failure {
+            // a failure occurred in a reverted snapshot, which is considered a failed test
+            return should_fail
+        }
+        self.is_success(address, call_result.reverted, state_changeset, should_fail)
+    }
+
     fn ensure_success(
         &self,
         address: Address,
@@ -494,26 +525,24 @@ impl Executor {
 
         // If this test failed any asserts, then this changeset will contain changes `false -> true`
         // for the contract's `failed` variable and the `globalFailure` flag in the state of the
-        // cheatcode address which are both read when call `"failed()(bool)"` in the next step
+        // cheatcode address which are both read when we call `"failed()(bool)"` in the next step
         backend.commit(state_changeset);
-        let executor =
-            Executor::new(backend, self.env.clone(), self.inspector.clone(), self.gas_limit);
 
         let mut success = !reverted;
         if success {
             // Check if a DSTest assertion failed
-            let call =
-                executor.call::<_, _>(CALLER, address, "failed()(bool)", vec![], U256::ZERO, None);
-
+            let executor =
+                Executor::new(backend, self.env.clone(), self.inspector.clone(), self.gas_limit);
+            let call = executor.call(CALLER, address, "failed()(bool)", vec![], U256::ZERO, None);
             if let Ok(CallResult { result: failed, .. }) = call {
-                let failed = failed
-                    .as_bool()
-                    .expect("Failed to decode DSTest `failed` variable. This is a bug");
-                success = !failed;
+                debug!(?failed, "DSTest");
+                success = !failed.as_bool().unwrap();
             }
         }
 
-        Ok(should_fail ^ success)
+        let result = should_fail ^ success;
+        debug!(should_fail, success, result);
+        Ok(result)
     }
 
     /// Creates the environment to use when executing a transaction in a test context
@@ -653,6 +682,11 @@ pub struct RawCallResult {
     pub exit_reason: InstructionResult,
     /// Whether the call reverted or not
     pub reverted: bool,
+    /// Whether the call includes a snapshot failure
+    ///
+    /// This is tracked separately from revert because a snapshot failure can occur without a
+    /// revert, since assert failures are stored in a global variable (ds-test legacy)
+    pub has_snapshot_failure: bool,
     /// The raw result of the call
     pub result: Bytes,
     /// The gas used for the call
@@ -687,7 +721,7 @@ pub struct RawCallResult {
     /// The raw output of the execution
     pub out: Option<Output>,
     /// The chisel state
-    pub chisel_state: Option<(Stack, SharedMemory, InstructionResult)>,
+    pub chisel_state: Option<(Stack, Vec<u8>, InstructionResult)>,
 }
 
 impl Default for RawCallResult {
@@ -695,6 +729,7 @@ impl Default for RawCallResult {
         Self {
             exit_reason: InstructionResult::Continue,
             reverted: false,
+            has_snapshot_failure: false,
             result: Bytes::new(),
             gas_used: 0,
             gas_refunded: 0,
@@ -726,6 +761,7 @@ fn convert_executed_result(
     env: Env,
     inspector: InspectorStack,
     result: ResultAndState,
+    has_snapshot_failure: bool,
 ) -> eyre::Result<RawCallResult> {
     let ResultAndState { result: exec_result, state: state_changeset } = result;
     let (exit_reason, gas_refunded, gas_used, out) = match exec_result {
@@ -742,9 +778,9 @@ fn convert_executed_result(
     };
     let stipend = calc_stipend(&env.tx.data, env.cfg.spec_id);
 
-    let result = match out {
-        Some(Output::Call(ref data)) => data.to_owned(),
-        _ => Bytes::default(),
+    let result = match &out {
+        Some(Output::Call(data)) => data.clone(),
+        _ => Bytes::new(),
     };
 
     let InspectorData {
@@ -768,11 +804,12 @@ fn convert_executed_result(
     Ok(RawCallResult {
         exit_reason,
         reverted: !matches!(exit_reason, return_ok!()),
+        has_snapshot_failure,
         result,
         gas_used,
         gas_refunded,
         stipend,
-        logs: logs.to_vec(),
+        logs,
         labels,
         traces,
         coverage,

@@ -280,3 +280,47 @@ contract TupleArrayConstructorContract {
         );
     }
 );
+
+// <https://github.com/foundry-rs/foundry/issues/6332>
+forgetest_async!(
+    #[serial_test::serial]
+    can_create_and_call,
+    |prj, cmd| {
+        foundry_test_utils::util::initialize(prj.root());
+
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let rpc = handle.http_endpoint();
+        let wallet = handle.dev_wallets().next().unwrap();
+        let pk = hex::encode(wallet.signer().to_bytes());
+
+        // explicitly byte code hash for consistent checks
+        let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
+        prj.write_config(config);
+
+        prj.add_source(
+            "UniswapV2Swap",
+            r#"
+contract UniswapV2Swap {
+
+    function pairInfo() public view returns (uint reserveA, uint reserveB, uint totalSupply) {
+       (reserveA, reserveB, totalSupply) = (0,0,0);
+    }
+
+}
+"#,
+        )
+        .unwrap();
+
+        cmd.forge_fuse().args([
+            "create",
+            "./src/UniswapV2Swap.sol:UniswapV2Swap",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+        ]);
+
+        let (stdout, _) = cmd.output_lossy();
+        assert!(stdout.contains("Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3"));
+    }
+);

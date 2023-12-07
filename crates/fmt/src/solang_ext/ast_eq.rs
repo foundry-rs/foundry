@@ -148,7 +148,7 @@ where
 impl AstEq for String {
     fn ast_eq(&self, other: &Self) -> bool {
         match (Address::from_str(self), Address::from_str(other)) {
-            (Ok(left), Ok(right)) => left.eq(&right),
+            (Ok(left), Ok(right)) => left == right,
             _ => self == other,
         }
     }
@@ -311,7 +311,7 @@ impl AstEq for Statement {
                 While(loc, expr, stmt1),
                 DoWhile(loc, stmt1, expr),
                 For(loc, stmt1, expr, stmt2, stmt3),
-                Try(loc, expr, params, claus),
+                Try(loc, expr, params, clause),
                 Error(loc)
                 _
                 Block {

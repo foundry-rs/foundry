@@ -13,13 +13,12 @@ use ethers::{
         U256,
     },
 };
-use foundry_common::get_http_provider;
-use foundry_config::Config;
-use foundry_utils::{
-    rpc,
+use foundry_common::{
+    get_http_provider, rpc,
     rpc::next_http_rpc_endpoint,
     types::{ToAlloy, ToEthers},
 };
+use foundry_config::Config;
 use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
 
@@ -290,6 +289,51 @@ async fn test_fork_snapshotting() {
     assert_eq!(block_number, provider.get_block_number().await.unwrap());
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_snapshotting_repeated() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    let snapshot = api.evm_snapshot().await.unwrap();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let block_number = provider.get_block_number().await.unwrap();
+
+    let initial_nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let balance_before = provider.get_balance(to, None).await.unwrap();
+    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+
+    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+
+    let _ = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    assert_eq!(nonce, initial_nonce + 1);
+    let to_balance = provider.get_balance(to, None).await.unwrap();
+    assert_eq!(balance_before.saturating_add(amount), to_balance);
+
+    let _second_snapshot = api.evm_snapshot().await.unwrap();
+
+    assert!(api.evm_revert(snapshot).await.unwrap());
+
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    assert_eq!(nonce, initial_nonce);
+    let balance = provider.get_balance(from, None).await.unwrap();
+    assert_eq!(balance, handle.genesis_balance());
+    let balance = provider.get_balance(to, None).await.unwrap();
+    assert_eq!(balance, handle.genesis_balance());
+    assert_eq!(block_number, provider.get_block_number().await.unwrap());
+
+    // invalidated
+    // TODO enable after <https://github.com/foundry-rs/foundry/pull/6366>
+    // assert!(!api.evm_revert(second_snapshot).await.unwrap());
+
+    // nothing is reverted, snapshot gone
+    assert!(!api.evm_revert(snapshot).await.unwrap());
+}
+
 /// tests that the remote state and local state are kept separate.
 /// changes don't make into the read only Database that holds the remote state, which is flushed to
 /// a cache file.
@@ -503,26 +547,26 @@ async fn test_fork_nft_set_approve_all() {
 
     let nouns = Erc721::new(nouns_addr, Arc::clone(&provider));
 
-    let real_onwer = nouns.owner_of(token_id).call().await.unwrap();
-    assert_eq!(real_onwer, owner);
+    let real_owner = nouns.owner_of(token_id).call().await.unwrap();
+    assert_eq!(real_owner, owner);
     let approval = nouns.set_approval_for_all(nouns_addr, true);
     let tx = approval.send().await.unwrap().await.unwrap().unwrap();
     assert_eq!(tx.status, Some(1u64.into()));
 
     // transfer: impersonate real owner and transfer nft
-    api.anvil_impersonate_account(real_onwer).await.unwrap();
+    api.anvil_impersonate_account(real_owner).await.unwrap();
 
-    api.anvil_set_balance(real_onwer, U256::from(10000e18 as u64)).await.unwrap();
+    api.anvil_set_balance(real_owner, U256::from(10000e18 as u64)).await.unwrap();
 
-    let call = nouns.transfer_from(real_onwer, wallet.address(), token_id);
+    let call = nouns.transfer_from(real_owner, wallet.address(), token_id);
     let mut tx: TypedTransaction = call.tx;
-    tx.set_from(real_onwer);
+    tx.set_from(real_owner);
     provider.fill_transaction(&mut tx, None).await.unwrap();
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
     assert_eq!(tx.status, Some(1u64.into()));
 
-    let real_onwer = nouns.owner_of(token_id).call().await.unwrap();
-    assert_eq!(real_onwer, wallet.address());
+    let real_owner = nouns.owner_of(token_id).call().await.unwrap();
+    assert_eq!(real_owner, wallet.address());
 }
 
 // <https://github.com/foundry-rs/foundry/issues/2261>
@@ -899,4 +943,36 @@ async fn can_override_fork_chain_id() {
     let provider = handle.http_provider();
     let chain_id = provider.get_chainid().await.unwrap();
     assert_eq!(chain_id.as_u64(), chain_id_override);
+}
+
+// <https://github.com/foundry-rs/foundry/issues/6485>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_moonbeam() {
+    crate::init_tracing();
+    let (api, handle) = spawn(
+        fork_config()
+            .with_eth_rpc_url(Some("https://rpc.api.moonbeam.network".to_string()))
+            .with_fork_block_number(None::<u64>),
+    )
+    .await;
+    let provider = handle.http_provider();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
+    let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    assert_eq!(tx.status, Some(1u64.into()));
+
+    // reset to check timestamp works after resetting
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some("https://rpc.api.moonbeam.network".to_string()),
+        block_number: None,
+    }))
+    .await
+    .unwrap();
+
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
+    let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    assert_eq!(tx.status, Some(1u64.into()));
 }

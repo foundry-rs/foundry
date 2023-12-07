@@ -78,10 +78,16 @@ impl ScriptRunner {
         self.executor.set_balance(address, self.initial_balance)?;
 
         // Deploy an instance of the contract
-        let DeployResult { mut logs, traces: constructor_traces, debug: constructor_debug, .. } =
-            self.executor
-                .deploy(CALLER, code.0.into(), U256::ZERO, None)
-                .map_err(|err| eyre::eyre!("Failed to deploy script:\n{}", err))?;
+        let DeployResult {
+            address,
+            mut logs,
+            traces: constructor_traces,
+            debug: constructor_debug,
+            ..
+        } = self
+            .executor
+            .deploy(CALLER, code, U256::ZERO, None)
+            .map_err(|err| eyre::eyre!("Failed to deploy script:\n{}", err))?;
 
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));
 
@@ -217,7 +223,7 @@ impl ScriptRunner {
         } else if to.is_none() {
             let (address, gas_used, logs, traces, debug) = match self.executor.deploy(
                 from,
-                calldata.expect("No data for create transaction").0.into(),
+                calldata.expect("No data for create transaction"),
                 value.unwrap_or(U256::ZERO),
                 None,
             ) {
@@ -306,7 +312,7 @@ impl ScriptRunner {
                     vec![(TraceKind::Execution, traces)]
                 })
                 .unwrap_or_default(),
-            debug: vec![debug].into_iter().collect(),
+            debug: debug.map(|d| vec![d]),
             labeled_addresses: labels,
             transactions,
             address: None,

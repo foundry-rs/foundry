@@ -1,6 +1,7 @@
 use super::*;
 use alloy_primitives::{Address, Bytes};
 use eyre::{Context, ContextCompat, Result};
+use forge::link::{link_with_nonce_or_address, PostLinkInput, ResolvedDependency};
 use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::{
     compact_to_contract,
@@ -14,7 +15,6 @@ use foundry_compilers::{
     info::ContractInfo,
     ArtifactId, Project, ProjectCompileOutput,
 };
-use foundry_utils::{PostLinkInput, ResolvedDependency};
 use std::{collections::BTreeMap, str::FromStr};
 
 impl ScriptArgs {
@@ -38,12 +38,13 @@ impl ScriptArgs {
                 // Sources are only required for the debugger, but it *might* mean that there's
                 // something wrong with the build and/or artifacts.
                 if let Some(source) = artifact.source_file() {
-                    let abs_path = source
+                    let path = source
                         .ast
-                        .ok_or_else(|| eyre::eyre!("Source from artifact has no AST."))?
+                        .ok_or_else(|| eyre::eyre!("source from artifact has no AST"))?
                         .absolute_path;
+                    let abs_path = project.root().join(path);
                     let source_code = fs::read_to_string(abs_path).wrap_err_with(|| {
-                        format!("Failed to read artifact source file for `{}`", id.identifier())
+                        format!("failed to read artifact source file for `{}`", id.identifier())
                     })?;
                     let contract = artifact.clone().into_contract_bytecode();
                     let source_contract = compact_to_contract(contract)?;
@@ -53,7 +54,7 @@ impl ScriptArgs {
                         .or_default()
                         .insert(source.id, (source_code, source_contract));
                 } else {
-                    warn!("source not found for artifact={:?}", id);
+                    warn!(?id, "source not found");
                 }
                 Ok((id, artifact))
             })
@@ -119,7 +120,7 @@ impl ScriptArgs {
             }
         }
 
-        foundry_utils::link_with_nonce_or_address(
+        link_with_nonce_or_address(
             contracts.clone(),
             &mut highlevel_known_contracts,
             libs,

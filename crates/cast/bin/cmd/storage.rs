@@ -14,6 +14,7 @@ use foundry_cli::{
 use foundry_common::{
     abi::find_source,
     compile::{compile, etherscan_project, suppress_compile},
+    types::{ToAlloy, ToEthers},
     RetryProvider,
 };
 use foundry_compilers::{artifacts::StorageLayout, ConfigurableContractArtifact, Project, Solc};
@@ -21,7 +22,6 @@ use foundry_config::{
     figment::{self, value::Dict, Metadata, Profile},
     impl_figment_convert_cast, Config,
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::future::join_all;
 use semver::Version;
 use std::str::FromStr;
@@ -91,8 +91,7 @@ impl StorageArgs {
 
         // No slot was provided
         // Get deployed bytecode at given address
-        let address_code: alloy_primitives::Bytes =
-            provider.get_code(address.clone(), block).await?.0.into();
+        let address_code = provider.get_code(address.clone(), block).await?.to_alloy();
         if address_code.is_empty() {
             eyre::bail!("Provided address has no deployed code and thus no storage");
         }
@@ -218,21 +217,25 @@ async fn fetch_storage_slots(
 fn print_storage(layout: StorageLayout, values: Vec<B256>, pretty: bool) -> Result<()> {
     if !pretty {
         println!("{}", serde_json::to_string_pretty(&serde_json::to_value(layout)?)?);
-        return Ok(())
+        return Ok(());
     }
 
     let mut table = Table::new();
     table.load_preset(ASCII_MARKDOWN);
-    table.set_header(["Name", "Type", "Slot", "Offset", "Bytes", "Value", "Contract"]);
+    table.set_header(["Name", "Type", "Slot", "Offset", "Bytes", "Value", "Hex Value", "Contract"]);
 
     for (slot, value) in layout.storage.into_iter().zip(values) {
         let storage_type = layout.types.get(&slot.storage_type);
+        let raw_value_bytes = value.0;
+        let converted_value = U256::from_be_bytes(raw_value_bytes);
+
         table.add_row([
             slot.label.as_str(),
             storage_type.map_or("?", |t| &t.label),
             &slot.slot,
             &slot.offset.to_string(),
             &storage_type.map_or("?", |t| &t.number_of_bytes),
+            &converted_value.to_string(),
             &value.to_string(),
             &slot.contract,
         ]);

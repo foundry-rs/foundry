@@ -5,9 +5,8 @@ use ethers_providers::Middleware;
 use ethers_signers::Signer;
 use eyre::Result;
 use foundry_cli::utils::LoadConfig;
-use foundry_common::{contracts::flatten_contracts, try_get_http_provider};
-use foundry_debugger::DebuggerArgs;
-use foundry_utils::types::ToAlloy;
+use foundry_common::{contracts::flatten_contracts, try_get_http_provider, types::ToAlloy};
+use foundry_debugger::Debugger;
 use std::sync::Arc;
 
 /// Helper alias type for the collection of data changed due to the new sender.
@@ -33,7 +32,7 @@ impl ScriptArgs {
         if let Some(ref fork_url) = script_config.evm_opts.fork_url {
             // when forking, override the sender's nonce to the onchain value
             script_config.sender_nonce =
-                foundry_utils::next_nonce(script_config.evm_opts.sender, fork_url, None).await?
+                forge::next_nonce(script_config.evm_opts.sender, fork_url, None).await?
         } else {
             // if not forking, then ignore any pre-deployed library addresses
             script_config.config.libraries = Default::default();
@@ -85,13 +84,13 @@ impl ScriptArgs {
         let mut decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
 
         if self.debug {
-            let debugger = DebuggerArgs {
-                debug: result.debug.clone().unwrap_or_default(),
-                decoder: &decoder,
-                sources,
-                breakpoints: result.breakpoints.clone(),
-            };
-            debugger.run()?;
+            let mut debugger = Debugger::builder()
+                .debug_arenas(result.debug.as_deref().unwrap_or_default())
+                .decoder(&decoder)
+                .sources(sources)
+                .breakpoints(result.breakpoints.clone())
+                .build();
+            debugger.try_run()?;
         }
 
         if let Some((new_traces, updated_libraries, updated_contracts)) = self
@@ -259,6 +258,10 @@ impl ScriptArgs {
             Err(err) => eyre::bail!(err),
         };
 
+        if self.verify {
+            deployment_sequence.verify_preflight_check(&script_config.config, &verify)?;
+        }
+
         receipts::wait_for_pending(provider, &mut deployment_sequence).await?;
 
         if self.resume {
@@ -297,7 +300,7 @@ impl ScriptArgs {
     ) -> Result<(Libraries, ArtifactContracts<ContractBytecodeSome>)> {
         // if we had a new sender that requires relinking, we need to
         // get the nonce mainnet for accurate addresses for predeploy libs
-        let nonce = foundry_utils::next_nonce(
+        let nonce = forge::next_nonce(
             new_sender,
             script_config.evm_opts.fork_url.as_ref().ok_or_else(|| {
                 eyre::eyre!("You must provide an RPC URL (see --fork-url) when broadcasting.")

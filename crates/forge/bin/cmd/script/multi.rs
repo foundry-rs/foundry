@@ -120,6 +120,12 @@ impl ScriptArgs {
             eyre::bail!("Libraries are currently not supported on multi deployment setups.");
         }
 
+        if self.verify {
+            for sequence in &deployments.deployments {
+                sequence.verify_preflight_check(config, &verify)?;
+            }
+        }
+
         if self.resume {
             trace!(target: "script", "resuming multi chain deployment");
 
@@ -155,12 +161,8 @@ impl ScriptArgs {
                 )
                 .await
             {
-                Ok(_) => {
-                    if self.verify {
-                        return sequence.verify_contracts(config, verify.clone()).await
-                    }
-                    Ok(())
-                }
+                Ok(_) if self.verify => sequence.verify_contracts(config, verify.clone()).await,
+                Ok(_) => Ok(()),
                 Err(err) => Err(err),
             };
             results.push(result);

@@ -1,10 +1,10 @@
+use alloy_json_abi::JsonAbi;
 use alloy_primitives::U256;
 use ethers_core::types::TransactionReceipt;
 use ethers_providers::Middleware;
 use eyre::{ContextCompat, Result};
-use foundry_common::units::format_units;
+use foundry_common::{types::ToAlloy, units::format_units};
 use foundry_config::{Chain, Config};
-use foundry_utils::types::ToAlloy;
 use std::{
     ffi::OsStr,
     future::Future,
@@ -73,6 +73,12 @@ pub fn subscriber() {
         .with(ErrorLayer::default())
         .with(tracing_subscriber::fmt::layer())
         .init()
+}
+
+pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
+    let s = abi.to_sol(name);
+    let s = forge_fmt::format(&s)?;
+    Ok(s)
 }
 
 /// Returns a [RetryProvider](foundry_common::RetryProvider) instantiated using [Config]'s RPC URL
@@ -532,6 +538,19 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
             .args(paths)
             .get_stdout_lossy()
             .map(|stdout| stdout.lines().any(|line| line.starts_with('-')))
+    }
+
+    /// Returns true if the given path has no submodules by checking `git submodule status`
+    pub fn has_submodules<I, S>(self, paths: I) -> Result<bool>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        self.cmd()
+            .args(["submodule", "status"])
+            .args(paths)
+            .get_stdout_lossy()
+            .map(|stdout| stdout.trim().lines().next().is_some())
     }
 
     pub fn submodule_add(
