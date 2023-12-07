@@ -373,7 +373,7 @@ forgetest_init!(repro_6531, |prj, cmd| {
 
     prj.add_test(
         "Contract.t.sol",
-        &r#"
+        r#"
 import {Test} from "forge-std/Test.sol";
 
 interface IERC20 {
