@@ -55,16 +55,24 @@ pub use reporter::*;
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(MutateTestArgs, opts, evm_opts);
 
+// @TODO
+// json output
+// fail fast
+// allow failure
+// export
+
+
+
 /// CLI arguments for `forge mutate`.
 #[derive(Debug, Clone, Parser)]
 #[clap(next_help_heading = "Mutation Test options")]
 pub struct MutateTestArgs {
-    /// Output Rutant test results in JSON format.
+    /// Output mutate results in JSON format.
     #[clap(long, short, help_heading = "Display options")]
     json: bool,
 
     #[clap(flatten)]
-    filter: MutationTestFilterArgs,
+    filter: MutateFilterArgs,
 
     /// Exit with code 0 even if a test fails.
     #[clap(long, env = "FORGE_ALLOW_FAILURE")]

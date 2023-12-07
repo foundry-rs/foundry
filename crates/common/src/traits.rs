@@ -7,9 +7,13 @@ use auto_impl::auto_impl;
 
 /// Extension trait for matching tests
 #[auto_impl(&)]
-pub trait TestFilter: ContractFilter + Send + Sync {
+pub trait TestFilter: Send + Sync {
     /// Returns whether the test should be included
     fn matches_test(&self, test_name: impl AsRef<str>) -> bool;
+    /// Returns whether the contract should be included
+    fn matches_contract(&self, contract_name: impl AsRef<str>) -> bool;
+    /// Returns a contract with the given path should be included
+    fn matches_path(&self, path: impl AsRef<str>) -> bool;
 }
 
 /// Extension trait for `Function`

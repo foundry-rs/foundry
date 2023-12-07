@@ -178,7 +178,7 @@ impl FileFilter for MutateFilterArgs {
     }
 }
 
-impl TestFilter for MutationTestFilterArgs {
+impl TestFilter for MutateFilterArgs {
     fn matches_test(&self, test_name: impl AsRef<str>) -> bool {
         let mut ok = true;
         let test_name = test_name.as_ref();
