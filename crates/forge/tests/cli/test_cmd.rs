@@ -367,3 +367,32 @@ forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
     // run command and assert error exit code
     cmd.assert_err();
 });
+
+forgetest_init!(repro_6531, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "Contract.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+interface IERC20 {
+    function name() external view returns (string memory);
+}
+
+contract USDCCallingTest is Test {
+    function test() public {
+        vm.createSelectFork("mainnet");
+        IERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48).name();
+    }
+}
+   "#
+    )
+    .unwrap();
+
+    cmd.args(["test", "-vvvv"]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/repro_6531.stdout"),
+    )
+});
