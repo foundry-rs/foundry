@@ -386,13 +386,12 @@ contract USDCCallingTest is Test {
         IERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48).name();
     }
 }
-   "#
+   "#,
     )
     .unwrap();
 
     cmd.args(["test", "-vvvv"]);
     cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/repro_6531.stdout"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/repro_6531.stdout"),
     )
 });
