@@ -16,6 +16,7 @@ use tower::Service;
 use url::Url;
 
 /// An enum representing the different transports that can be used to connect to a runtime.
+/// Only meant to be used internally by [RuntimeTransport].
 #[derive(Clone, Debug)]
 pub enum InnerTransport {
     /// HTTP transport
@@ -59,16 +60,20 @@ pub enum RuntimeTransportError {
     InvalidJwt(String),
 }
 
-/// A runtime transport that connects on first request, which can take either of an HTTP,
-/// WebSocket, or IPC transport depending on the URL used.
+/// A runtime transport is a custom [alloy_transport::Transport] that only connects when the *first*
+/// request is made. When the first request is made, it will connect to the runtime using either an
+/// HTTP WebSocket, or IPC transport depending on the URL used.
 #[derive(Clone, Debug, Error)]
 pub struct RuntimeTransport {
     /// The inner actual transport used.
     inner: Arc<RwLock<Option<InnerTransport>>>,
     /// The URL to connect to.
     url: Url,
+    /// The headers to use for requests.
     headers: Vec<String>,
+    /// The JWT to use for requests.
     jwt: Option<String>,
+    /// The timeout for requests.
     timeout: std::time::Duration,
 }
 
@@ -124,7 +129,7 @@ impl ::core::fmt::Display for RuntimeTransport {
 }
 
 impl RuntimeTransport {
-    /// Create a new, unconnected transport.
+    /// Create a new [RuntimeTransport].
     pub fn new(
         url: Url,
         headers: Vec<String>,
@@ -134,17 +139,16 @@ impl RuntimeTransport {
         Self { inner: Arc::new(RwLock::new(None)), url, headers, jwt, timeout }
     }
 
-    /// Connect to the runtime transport, depending on the URL scheme.
-    async fn connect(&self) -> Result<InnerTransport, RuntimeTransportError> {
+    /// Connects the underlying transport, depending on the URL scheme.
+    pub async fn connect(&self) -> Result<InnerTransport, RuntimeTransportError> {
         match self.url.scheme() {
             "http" | "https" => self.connect_http().await,
             "ws" | "wss" => self.connect_ws().await,
-            // TODO: IPC once it's merged
             _ => Err(RuntimeTransportError::BadScheme(self.url.scheme().to_string())),
         }
     }
 
-    /// Connects to an HTTP transport.
+    /// Connects to an HTTP [alloy_transport_http::Http] transport.
     async fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let mut client_builder = reqwest::Client::builder().timeout(self.timeout);
         let mut headers = reqwest::header::HeaderMap::new();
@@ -192,7 +196,11 @@ impl RuntimeTransport {
         Ok(InnerTransport::Ws(ws))
     }
 
-    /// Send a request
+    /// Sends a request using the underlying transport.
+    /// If this is the first request, it will connect to the appropiate transport depending on the
+    /// URL scheme. For sending the actual request, this action is delegated down to the
+    /// underlying transport through Tower's call. See tower's [tower::Service] trait for more
+    /// information.
     pub fn request(&self, req: RequestPacket) -> TransportFut<'static> {
         let this = self.clone();
         Box::pin(async move {
