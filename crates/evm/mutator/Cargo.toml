@@ -21,3 +21,4 @@ foundry-common.workspace = true
 alloy-json-abi.workspace = true
 foundry-cli.workspace = true
 gambit = { git = "https://github.com/Certora/gambit", rev = "05abe4a0380d6028e733d039a03cb9809881aae1" }
+alloy-primitives = { workspace = true, features = ["serde"] }

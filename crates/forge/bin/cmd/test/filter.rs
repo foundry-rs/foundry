@@ -9,7 +9,7 @@ use std::{fmt, path::Path};
 /// The filter to use during testing.
 ///
 /// See also `FileFilter`.
-#[derive(Clone, Parser)]
+#[derive(Clone, Parser, Default)]
 #[clap(next_help_heading = "Test filtering")]
 pub struct FilterArgs {
     /// Only run test functions matching the specified regex pattern.

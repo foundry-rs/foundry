@@ -6,6 +6,8 @@ use foundry_config::Config;
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
 use std::{fmt, path::Path};
 
+use crate::cmd::test::FilterArgs;
+
 
 /// The filter to use during mutation testing.
 ///
@@ -315,6 +317,22 @@ impl FunctionFilter for MutationProjectPathsAwareFilter {
 impl fmt::Display for MutationProjectPathsAwareFilter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.args_filter.fmt(f)
+    }
+}
+
+
+impl From<MutationProjectPathsAwareFilter> for FilterArgs {
+    fn from(value: MutationProjectPathsAwareFilter) -> Self {
+        let args = value.args();
+
+        FilterArgs {
+            test_pattern: args.test_pattern.clone(),
+            test_pattern_inverse: args.test_pattern_inverse.clone(),
+            contract_pattern: None,
+            contract_pattern_inverse: None,
+            path_pattern: None,
+            path_pattern_inverse: None
+        }
     }
 }
 

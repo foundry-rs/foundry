@@ -1,5 +1,6 @@
 use super::install;
 use clap::Parser;
+use ethers_core::types::Filter;
 use eyre::{eyre, Result, Error};
 use forge::{
     inspectors::CheatsConfig,
@@ -15,7 +16,7 @@ use foundry_cli::{
 use foundry_common::{
     compile::{self, ProjectCompiler},
     evm::EvmArgs,
-    shell::{self}
+    shell::{self}, term::Spinner
 };
 use foundry_compilers::{project_util::{copy_dir, TempProject}, report};
 use foundry_config::{
@@ -29,7 +30,7 @@ use foundry_config::{
 use foundry_evm::opts::EvmOpts;
 use futures::future::try_join_all;
 use itertools::Itertools;
-use std::{collections::BTreeMap, fs, sync::mpsc::channel, time::{Duration, Instant}, path::{PathBuf, Path}};
+use std::{collections::BTreeMap, fs, sync::mpsc::channel, time::{Duration, Instant}, path::{PathBuf, Path}, str::FromStr};
 use yansi::Paint;
 use foundry_evm_mutator::{Mutant, Mutator, MutatorConfigBuilder};
 use crate::cmd::{
@@ -47,6 +48,8 @@ mod filter;
 pub use filter::*;
 mod summary;
 pub use summary::*;
+mod reporter;
+pub use reporter::*;
 
 
 // Loads project's figment and merges the build cli arguments into it
@@ -120,12 +123,12 @@ impl MutateTestArgs {
     /// Returns the mutation test results for all matching functions
     pub async fn execute_mutation_test(self) -> Result<MutationTestOutcome> {
         println!();
-        println!("{}\n", Paint::white("[1] Setting up and testing project...").bold());
+        println!("{}\n", Paint::white("Compiling and testing project...").bold());
 
         // let spinner = SpinnerReporter
         let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
         // Fetch project filter
-        let mut filter = self.filter(&config);
+        let filter = self.filter(&config);
 
         // Set up the project
         let mut project = config.project()?;
@@ -139,7 +142,8 @@ impl MutateTestArgs {
             project = config.project()?;
         }
 
-        let output = compile::suppress_compile(&project)?;
+        let output = project.compile()?;
+        output.assert_success();
 
         // Create test options from general project settings
         // and compiler output
@@ -171,15 +175,7 @@ impl MutateTestArgs {
             )?;
         
         // We use empty filter to run the entire test suite during setup to ensure no failing tests
-        let test_filter_args = FilterArgs {
-            test_pattern: None,
-            test_pattern_inverse: None,
-            contract_pattern: None,
-            contract_pattern_inverse: None,
-            path_pattern: None,
-            path_pattern_inverse: None,
-        };
-        
+        let test_filter_args = FilterArgs::default();
         let test_outcome = test(
             config.clone(),
             runner,
@@ -200,7 +196,9 @@ impl MutateTestArgs {
             test_outcome.ensure_ok()?;
         }
 
-        println!("{}\n", Paint::white("[2] Generating mutants ...").bold());
+        println!();
+        let spinner = MutateSpinnerReporter::new("Generating Mutants...");
+        // println!("{}\n", Paint::white("[2] Generating mutants ...").bold());
 
         let mutator = MutatorConfigBuilder::new(
             project.solc.solc.clone(),
@@ -226,39 +224,63 @@ impl MutateTestArgs {
                 std::process::exit(0);
             }
         }
-
         // generate mutation
         let mutants_output = mutator.run_mutate(filter.clone())?;
         // this is required for progress bar
         let mutants_len_iterator: Vec<&Mutant> = mutants_output.iter().flat_map(|(_, v)| v).collect();
-        println!();
-        println!("{}...\n", Paint::white("[3] Testing mutants").bold());
+        
+        spinner.finish();
 
+        println!();
+
+        println!("[.] Testing Mutants...");
         let progress_bar = init_progress!(mutants_len_iterator, "Mutants");
         progress_bar.set_position(0);
 
-        let mutant_test_suite_results: BTreeMap<String, MutationTestSuiteResult> = BTreeMap::from_iter(try_join_all(mutants_output.iter().map(
-                |(file_name, mutants)| async {
-                    let start = Instant::now();
-                    let result = try_join_all(
-                        mutants.iter().map(|mutant| {
-                            test_mutant(
-                                filter.clone(),
-                                &project.root(),
-                                &evm_opts,
-                                mutant.clone()
-                            )
-                        })
-                    ).await?;
-                    let duration = start.elapsed();
-                    update_progress!(progress_bar, mutants.len());
-                    Ok::<(String, MutationTestSuiteResult), Error>((file_name.clone(), MutationTestSuiteResult::new(duration, result)))
-                }
-            )
-        ).await?.into_iter());
+        // @Notice This is having a race condition on Fuzz and Invariant tests
+        // let mutant_test_suite_results: BTreeMap<String, MutationTestSuiteResult> = BTreeMap::from_iter(try_join_all(mutants_output.iter().map(
+        //         |(file_name, mutants)| async {
+        //             let start = Instant::now();
+        //             let result = try_join_all(
+        //                 mutants.iter().map(|mutant| {
+        //                     test_mutant(
+        //                         filter.clone(),
+        //                         &project.root(),
+        //                         &evm_opts,
+        //                         mutant.clone()
+        //                     )
+        //                 })
+        //             ).await?;
+        //             let duration = start.elapsed();
+        //             update_progress!(progress_bar, mutants.len());
+        //             Ok::<(String, MutationTestSuiteResult), Error>((file_name.clone(), MutationTestSuiteResult::new(duration, result)))
+        //         }
+        //     )
+        // ).await?.into_iter());
+        let mut mutant_test_suite_results: BTreeMap<String, MutationTestSuiteResult> = BTreeMap::new();
+        let mut progress_bar_index = 0;
+        for (file_name, mutants) in mutants_output.iter() {
+            let mut mutant_test_results = vec![];
+            let start = Instant::now();
+            for mutant in mutants.iter() {
+                let result = test_mutant(
+                    FilterArgs::from(filter.clone()),
+                    self.filter.test_mode,
+                    &project.root(),
+                    &evm_opts,
+                    mutant.clone()
+                ).await?;
+                mutant_test_results.push(result);
+                progress_bar_index+=1;
+                update_progress!(progress_bar, progress_bar_index);
+            }
+            let duration = start.elapsed();
+            mutant_test_suite_results.insert(file_name.clone(),  MutationTestSuiteResult::new(duration, mutant_test_results));
+        }
 
         // finish progress bar
         progress_bar.finish();
+
     
         let mutation_test_outcome = MutationTestOutcome::new(
             self.allow_failure,
@@ -296,7 +318,8 @@ impl Provider for MutateTestArgs {
         // dict.insert("mutate".into(), mutate_dict.into());
 
         // Override the fuzz and invariants run
-        // We want fuzz and invariant tests to run once
+        // We want fuzz and invariant tests to run once so the test 
+        // setup is faster
         let mut fuzz_dict = Dict::default();
         fuzz_dict.insert("runs".to_string(),1.into());
         dict.insert("fuzz".to_string(), fuzz_dict.into());
@@ -310,13 +333,14 @@ impl Provider for MutateTestArgs {
 }
 
 pub async fn test_mutant(
-    mut filter: MutationProjectPathsAwareFilter,
+    mut filter: FilterArgs,
+    test_mode: TestMode,
     mutation_project_root: &Path,
     evm_opts: &EvmOpts,
     mutant: Mutant
 ) -> Result<MutantTestResult> {
 
-    info!("testing mutants");    
+    info!("Testing Mutants");    
     
     let start = Instant::now();
 
@@ -341,8 +365,8 @@ pub async fn test_mutant(
     // it's important
     config = config.canonic();
     // override fuzz and invariant runs
-    config.fuzz.runs = 1;
-    config.invariant.runs  = 1;
+    config.fuzz.runs = 0;
+    config.invariant.runs  = 0;
     let project = config.project()?;
     let env = evm_opts.evm_env().await?;
     let output = project.compile()?;
@@ -400,3 +424,20 @@ pub async fn test_mutant(
 
 }
 
+
+async fn test_mode<'a>(
+    contract_name: &str,
+    test_mode: TestMode,
+    filter: &'a mut FilterArgs
+) -> &'a mut FilterArgs {
+    match test_mode {
+        TestMode::File => {
+            let test_contract_name = format!("{}Test", contract_name);
+            filter.contract_pattern = Some(
+                regex::Regex::from_str(&test_contract_name).expect("failed to parse regex")
+            );
+            filter
+        },
+        _ => filter
+    }
+}

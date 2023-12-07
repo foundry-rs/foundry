@@ -1,4 +1,5 @@
 use alloy_json_abi::{Function, JsonAbi as Abi};
+use alloy_primitives::Bytes;
 use eyre::{eyre, Result};
 use foundry_cli::utils::FoundryPathExt;
 use foundry_common::{FunctionFilter, TestFilter, TestFunctionExt};
@@ -8,7 +9,7 @@ use foundry_compilers::{
 use gambit::{run_mutate, MutateParams};
 use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 
 mod filter;
 pub use filter::*;
@@ -16,7 +17,8 @@ pub use gambit::Mutant;
 
 const DEFAULT_GAMBIT_DIR_OUT: &'static str = "gambit_out";
 
-pub type GambitArtifacts = Vec<(ArtifactId, Abi)>;
+/// Array of artifact ids, abi and bytecode
+pub type GambitArtifacts = Vec<(ArtifactId, Abi, Bytes)>;
 
 #[derive(Debug, Clone)]
 pub struct MutatorConfigBuilder {
@@ -45,13 +47,13 @@ impl MutatorConfigBuilder {
     ) -> Result<Mutator> {
         // Converts the compiled output into artifactId and abi
         // It does not include files with .t.sol extension
-        let artifacts: Vec<(ArtifactId, Abi)> = output
+        let artifacts: Vec<(ArtifactId, Abi, Bytes)> = output
             .into_artifacts()
-            .filter_map(|(id, c)| match (id.source.as_path().is_sol_test(), c.into_abi()) {
-                (false, Some(b)) => Some((id, b)),
+            .filter_map(|(id, c)| match (id.source.as_path().is_sol_test(), c.into_parts()) {
+                (false, (Some(abi), Some(bytecode), _)) => Some((id, abi, bytecode)),
                 _ => None,
             })
-            .collect::<Vec<(ArtifactId, Abi)>>();
+            .collect::<Vec<(ArtifactId, Abi, Bytes)>>();
 
         let solc = self.solc.to_str().ok_or(eyre!("failed to decode solc root"))?;
         let solc_allow_paths: Vec<String> = self
@@ -147,7 +149,7 @@ impl Mutator {
     where
         A: TestFilter + FunctionFilter,
     {
-        self.matching_artifacts(filter).flat_map(|(_, abi)| abi.functions())
+        self.matching_artifacts(filter).flat_map(|(_, abi, _)| abi.functions())
     }
 
     /// Returns an iterator of function names matching filter
@@ -163,11 +165,11 @@ impl Mutator {
     pub fn matching_artifacts<'a, A>(
         &'a self,
         filter: &'a A,
-    ) -> impl Iterator<Item = &(ArtifactId, Abi)>
+    ) -> impl Iterator<Item = &(ArtifactId, Abi, Bytes)>
     where
         A: TestFilter + FunctionFilter,
     {
-        self.artifacts.iter().filter(|(id, abi)| {
+        self.artifacts.iter().filter(|(id, abi, _)| {
                 id.source.starts_with(&self.src_root)
                 && !id.source.as_path().is_sol_test()
                 && filter.matches_path(id.source.to_string_lossy())
@@ -183,7 +185,7 @@ impl Mutator {
         filter: &A,
     ) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
         self.matching_artifacts(filter)
-            .map(|(id, abi)| {
+            .map(|(id, abi, _)| {
                 let source = id.source.as_path().display().to_string();
                 let name = id.name.clone();
                 let functions = abi
@@ -208,7 +210,7 @@ impl Mutator {
     {
         let mutant_params = self
             .matching_artifacts(&filter)
-            .map(|(id, abi)| {
+            .map(|(id, abi, _)| {
                 let mut current_mutate_params = self.default_mutate_params.clone();
                 current_mutate_params.outdir = Some(id.name.clone());
                 current_mutate_params.functions =

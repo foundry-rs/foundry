@@ -3007,6 +3007,7 @@ name = "foundry-evm-mutator"
 version = "0.2.0"
 dependencies = [
  "alloy-json-abi",
+ "alloy-primitives",
  "eyre",
  "foundry-cli",
  "foundry-common",
