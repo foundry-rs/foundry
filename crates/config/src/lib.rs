@@ -98,7 +98,7 @@ mod inline;
 pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
 
 mod mutate;
-pub use mutate::MutationConfig;
+pub use mutate::MutateConfig;
 
 /// Foundry configuration
 ///
@@ -394,8 +394,8 @@ pub struct Config {
     #[serde(default, skip_serializing)]
     pub __warnings: Vec<Warning>,
 
-    /// Configures the Mutation test setup
-    pub mutate: MutationConfig,
+    /// Configures the Mutate test setup
+    pub mutate: MutateConfig,
 }
 
 /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`]

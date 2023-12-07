@@ -343,19 +343,19 @@ pub async fn test_mutant(
     info!("Testing Mutants");    
     
     let start = Instant::now();
+    let filter = test_mode()
 
     // @TODO do test mode matching check here
-    let filename = mutant.source.filename_as_str();
+    let mutant_filename = mutant.source.filename_as_str();
     let project = TempProject::dapptools()?;
     // copy project source code to temp dir
     copy_dir(mutation_project_root, &project.root())?;
-
     // get mutant source
     let mutant_contents = mutant.as_source_string().map_err(
         |err| eyre!("{:?}", err)
     )?;
     // setup file source root
-    let file_source_root = project.root().join(filename);
+    let file_source_root = project.root().join(mutant_filename);
     // Write Mutant contents to file in temp_directory
     fs::write(file_source_root.as_path(), mutant_contents)?;
 
@@ -365,8 +365,8 @@ pub async fn test_mutant(
     // it's important
     config = config.canonic();
     // override fuzz and invariant runs
-    config.fuzz.runs = 0;
-    config.invariant.runs  = 0;
+    // config.fuzz.runs = 0;
+    // config.invariant.runs  = 0;
     let project = config.project()?;
     let env = evm_opts.evm_env().await?;
     let output = project.compile()?;
