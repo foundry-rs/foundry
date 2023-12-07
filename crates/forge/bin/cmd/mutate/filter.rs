@@ -193,17 +193,6 @@ impl FileFilter for MutateFilterArgs {
 }
 
 impl ContractFilter for MutateFilterArgs {
-    // fn matches_test(&self, test_name: impl AsRef<str>) -> bool {
-    //     let mut ok = true;
-    //     let test_name = test_name.as_ref();
-    //     if let Some(re) = &self.function_pattern {
-    //         ok &= re.is_match(test_name);
-    //     }
-    //     if let Some(re) = &self.function_pattern_inverse {
-    //         ok &= !re.is_match(test_name);
-    //     }
-    //     ok
-    // }
     fn matches_contract(&self, contract_name: impl AsRef<str>) -> bool {
         let mut ok = true;
         let contract_name = contract_name.as_ref();
@@ -303,10 +292,6 @@ impl FileFilter for MutationProjectPathsAwareFilter {
 }
 
 impl ContractFilter for MutationProjectPathsAwareFilter {
-    // fn matches_test(&self, test_name: impl AsRef<str>) -> bool {
-    //     self.args_filter.matches_test(test_name)
-    // }
-
     fn matches_contract(&self, contract_name: impl AsRef<str>) -> bool {
         self.args_filter.matches_contract(contract_name)
     }

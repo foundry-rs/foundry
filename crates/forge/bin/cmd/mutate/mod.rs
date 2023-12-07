@@ -345,9 +345,6 @@ pub async fn test_mutant(
     info!("Testing Mutants");    
     
     let start = Instant::now();
-
-    // @TODO do test mode matching check here
-    let mutant_filename = mutant.source.filename_as_str();
     let project = TempProject::dapptools()?;
     // copy project source code to temp dir
     copy_dir(mutation_project_root, &project.root())?;
@@ -356,6 +353,7 @@ pub async fn test_mutant(
         |err| eyre!("{:?}", err)
     )?;
     // setup file source root
+    let mutant_filename = mutant.source.filename_as_str();
     let file_source_root = project.root().join(mutant_filename);
     // Write Mutant contents to file in temp_directory
     fs::write(file_source_root.as_path(), mutant_contents)?;
