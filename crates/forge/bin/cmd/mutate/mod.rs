@@ -203,7 +203,7 @@ impl MutateTestArgs {
         }
 
         println!();
-        let spinner = MutateSpinnerReporter::new("Generating Mutants...");
+        let spinner = MutateSpinnerReporter::new("Generating Mutants...\n");
         let mutator = MutatorConfigBuilder::new(
             project.solc.solc.clone(),
             config.optimizer,
@@ -266,10 +266,12 @@ impl MutateTestArgs {
         for (file_name, mutants) in mutants_output.iter() {
             let mut mutant_test_results = vec![];
             let start = Instant::now();
+            let (temp_project, config) = setup_mutant_dir(&project.root())?;
             for mutant in mutants.iter() {
                 let result = test_mutant(
                     test_filter.clone(),
-                    &project.root(),
+                    &temp_project,
+                    &config,
                     &evm_opts,
                     mutant.clone()
                 ).await?;
@@ -321,59 +323,85 @@ impl Provider for MutateTestArgs {
         // dict.insert("mutate".into(), mutate_dict.into());
 
         // Override the fuzz and invariants run
-        // We want fuzz and invariant tests to run once so the test 
-        // setup is faster
+        // We do not want fuzz and invariant tests to run once so the test 
+        // setup is faster. 
         let mut fuzz_dict = Dict::default();
-        fuzz_dict.insert("runs".to_string(),1.into());
+        fuzz_dict.insert("runs".to_string(),0.into());
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
         let mut invariant_dict = Dict::default();
-        invariant_dict.insert("runs".to_string(), 1.into());
+        invariant_dict.insert("runs".to_string(), 0.into());
         dict.insert("invariant".to_string(), invariant_dict.into());
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
 
+pub fn setup_mutant_dir(
+    mutation_project_root: &Path,
+) -> Result<(TempProject, Config)> {
+    info!("Setting up temp mutant project dir");
+    let project = TempProject::dapptools()?;
+
+    // copy project source code to temp dir
+    copy_dir(mutation_project_root, &project.root())?;
+
+    let temp_project_root = project.root();
+    // load config for this temp project
+    let mut config  = Config::load_with_root(&temp_project_root);
+    // appends the root dir to the config folder variables
+    // it's important
+    config = config.canonic();
+    // override fuzz and invariant runs
+    config.fuzz.runs = 0;
+    config.invariant.runs  = 0;
+
+    // We do not recompile the project here because the artifacts generated
+    // have relative paths.
+    // The project has been compiled in the test step so we can re-use the 
+    // artifacts generated
+
+    Ok((project, config))
+}
+
 pub async fn test_mutant(
     filter: ProjectPathsAwareFilter,
-    mutation_project_root: &Path,
+    temp_project: &TempProject,
+    config: &Config,
     evm_opts: &EvmOpts,
     mutant: Mutant
 ) -> Result<MutantTestResult> {
+    info!("Testing Mutants");
 
-    info!("Testing Mutants");    
-    
     let start = Instant::now();
-    let project = TempProject::dapptools()?;
-    // copy project source code to temp dir
-    copy_dir(mutation_project_root, &project.root())?;
     // get mutant source
+    // @TODO can i cache the step and edit the file in memory
     let mutant_contents = mutant.as_source_string().map_err(
         |err| eyre!("{:?}", err)
     )?;
     // setup file source root
     let mutant_filename = mutant.source.filename_as_str();
-    let file_source_root = project.root().join(mutant_filename);
+    let temp_project_root = temp_project.root();
+    let file_source_root = temp_project_root.join(mutant_filename);    
     // Write Mutant contents to file in temp_directory
     fs::write(file_source_root.as_path(), mutant_contents)?;
 
-
-    let mut config  = Config::load_with_root(&project.root());
-    // appends the root dir to the config folder variables
-    // it's important
-    config = config.canonic();
-    // override fuzz and invariant runs
-    // config.fuzz.runs = 0;
-    // config.invariant.runs  = 0;
     let project = config.project()?;
     let env = evm_opts.evm_env().await?;
-    let output = project.compile()?;
+    
+    // This should only recompile the changed file
+    // It makes the compilation step very fast
+    let output = project.compile_sparse(
+        move |path: &Path| path.starts_with(&file_source_root)
+    )?;
     let project_root = &project.root();
 
     let toml = config.get_config_path();
 
     let profiles = get_available_profiles(toml)?;
+
+    println!("tracing how many seconds it takes to get here");
+    println!("{:.2?}", start.elapsed());
 
     let test_options: TestOptions = TestOptionsBuilder::default()
         .fuzz(config.fuzz)
@@ -411,13 +439,15 @@ pub async fn test_mutant(
             status = MutantTestStatus::Killed;
             break 'outer
         }
-
     }
 
     // @TODO if FAIL FAST if a mutant survives then throw ERROR
     let _results = handle.await?;
 
     trace!(target: "forge::mutate", "received results");
+
+    println!("tracing how many seconds it takes to run each test suite");
+    println!("{:.2?}", start.elapsed());
     
     Ok(MutantTestResult::new(start.elapsed(), mutant, status))
 
