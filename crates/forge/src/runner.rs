@@ -115,22 +115,26 @@ impl<'a> ContractRunner<'a> {
             }
         }
 
-        // Deploy the test contract
-        let address =
-            match self.executor.deploy(self.sender, self.code.clone(), U256::ZERO, self.errors) {
-                Ok(d) => {
-                    logs.extend(d.logs);
-                    traces.extend(d.traces.map(|traces| (TraceKind::Deployment, traces)));
-                    d.address
-                }
-                Err(e) => {
-                    return Ok(TestSetup::from_evm_error_with(e, logs, traces, Default::default()))
-                }
-            };
+        let sender_nonce = self.executor.get_nonce(self.sender)?;
+        let address = self.sender.create(sender_nonce);
 
-        // Now we set the contracts initial balance, and we also reset `self.sender`s and `CALLER`s
-        // balance to the initial balance we want
+        // Set the contracts initial balance before deployment, so it is available during
+        // construction
         self.executor.set_balance(address, self.initial_balance)?;
+
+        // Deploy the test contract
+        match self.executor.deploy(self.sender, self.code.clone(), U256::ZERO, self.errors) {
+            Ok(d) => {
+                logs.extend(d.logs);
+                traces.extend(d.traces.map(|traces| (TraceKind::Deployment, traces)));
+                d.address
+            }
+            Err(e) => {
+                return Ok(TestSetup::from_evm_error_with(e, logs, traces, Default::default()))
+            }
+        };
+
+        // Reset `self.sender`s and `CALLER`s balance to the initial balance we want
         self.executor.set_balance(self.sender, self.initial_balance)?;
         self.executor.set_balance(CALLER, self.initial_balance)?;
 
