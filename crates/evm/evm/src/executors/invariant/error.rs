@@ -341,8 +341,9 @@ impl InvariantFuzzError {
             );
         });
 
-        // SAFETY: there are no more live references to shrunk_call_indices as the parallel execution is
-        // finished, so it is fine to get the inner value via unwrap & into_inner
+        // SAFETY: there are no more live references to shrunk_call_indices as the parallel
+        // execution is finished, so it is fine to get the inner value via unwrap &
+        // into_inner
         let shrunk_call_indices =
             Arc::<RwLock<Vec<usize>>>::try_unwrap(shrunk_call_indices).unwrap().into_inner();
 
