@@ -1,4 +1,4 @@
-use super::install;
+use super::{install, test::ProjectPathsAwareFilter};
 use clap::Parser;
 use ethers_core::types::Filter;
 use eyre::{eyre, Result, Error};
@@ -135,8 +135,8 @@ impl MutateTestArgs {
 
         // let spinner = SpinnerReporter
         let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
-        // Fetch project filter
-        let filter = self.filter(&config);
+        // Fetch project mutate and test filter
+        let (mutate_filter, test_filter) = self.filter(&config);
 
         // Set up the project
         let mut project = config.project()?;
@@ -307,8 +307,8 @@ impl MutateTestArgs {
         Ok(mutation_test_outcome)
     }
 
-    /// Returns the flattened [`MutationFilterArgs`] arguments merged with [`Config`].
-    pub fn filter(&self, config: &Config) -> MutationProjectPathsAwareFilter {
+    /// Returns the flattened [`MutateFilterArgs`] arguments merged with [`Config`].
+    pub fn filter(&self, config: &Config) -> (MutationProjectPathsAwareFilter, ProjectPathsAwareFilter) {
         self.filter.merge_with_config(config)
     }
 }

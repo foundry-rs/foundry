@@ -2,7 +2,7 @@ use alloy_json_abi::{Function, JsonAbi as Abi};
 use alloy_primitives::Bytes;
 use eyre::{eyre, Result};
 use foundry_cli::utils::FoundryPathExt;
-use foundry_common::{FunctionFilter, TestFilter, TestFunctionExt};
+use foundry_common::{FunctionFilter, ContractFilter, TestFunctionExt};
 use foundry_compilers::{
     remappings::RelativeRemapping, Artifact, ArtifactId, ArtifactOutput, ProjectCompileOutput,
 };
@@ -127,7 +127,7 @@ impl Mutator {
     }
 
     /// Returns the number of matching functions
-    pub fn matching_function_count<A: TestFilter + FunctionFilter>(&self, filter: &A) -> usize {
+    pub fn matching_function_count<A: ContractFilter + FunctionFilter>(&self, filter: &A) -> usize {
         self.filtered_functions(filter).count()
     }
 
@@ -138,7 +138,7 @@ impl Mutator {
         abi: &'a Abi,
     ) -> impl Iterator<Item = String> + 'a
     where
-        A: TestFilter + FunctionFilter,
+        A: ContractFilter + FunctionFilter,
     {
         abi.functions()
             .filter_map(|func| filter.matches_function(&func.name).then_some(func.name.clone()))
@@ -147,7 +147,7 @@ impl Mutator {
     /// Returns an iterator of functions matching filter
     pub fn filtered_functions<'a, A>(&'a self, filter: &'a A) -> impl Iterator<Item = &Function>
     where
-        A: TestFilter + FunctionFilter,
+        A: ContractFilter + FunctionFilter,
     {
         self.matching_artifacts(filter).flat_map(|(_, abi, _)| abi.functions())
     }
@@ -155,7 +155,7 @@ impl Mutator {
     /// Returns an iterator of function names matching filter
     pub fn get_function_names<'a, A>(&'a self, filter: &'a A) -> impl Iterator<Item = &String> + 'a
     where
-        A: TestFilter + FunctionFilter,
+        A: ContractFilter + FunctionFilter,
     {
         self.filtered_functions(filter)
             .filter_map(|func| filter.matches_function(&func.name).then_some(&func.name))
@@ -167,7 +167,7 @@ impl Mutator {
         filter: &'a A,
     ) -> impl Iterator<Item = &(ArtifactId, Abi, Bytes)>
     where
-        A: TestFilter + FunctionFilter,
+        A: ContractFilter + FunctionFilter,
     {
         self.artifacts.iter().filter(|(id, abi, _)| {
                 id.source.starts_with(&self.src_root)
@@ -180,7 +180,7 @@ impl Mutator {
 
     /// Returns all matching functions grouped by contract
     /// grouped by file (file -> contract -> functions)
-    pub fn list<A: TestFilter + FunctionFilter>(
+    pub fn list<A: ContractFilter + FunctionFilter>(
         &self,
         filter: &A,
     ) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
@@ -206,7 +206,7 @@ impl Mutator {
     /// Run mutation on contract functions that match configured filters
     pub fn run_mutate<A>(self, filter: A) -> Result<HashMap<String, Vec<Mutant>>>
     where
-        A: TestFilter + FunctionFilter,
+        A: ContractFilter + FunctionFilter,
     {
         let mutant_params = self
             .matching_artifacts(&filter)
