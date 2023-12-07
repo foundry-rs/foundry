@@ -9,7 +9,7 @@ use foundry_compilers::{
 use gambit::{run_mutate, MutateParams};
 use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap};
-use std::path::{PathBuf};
+use std::path::PathBuf;
 
 mod filter;
 pub use filter::*;

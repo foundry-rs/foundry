@@ -182,13 +182,11 @@ impl MutateTestArgs {
                 evm_opts.clone(),
             )?;
         
-        // We use empty filter to run the entire test suite during setup to ensure no failing tests
-        let test_filter_args = FilterArgs::default();
         let test_outcome = test(
             config.clone(),
             runner,
             0,
-            test_filter_args.merge_with_config(&config),
+            test_filter.clone(),
             false,
             false,
             test_options,
@@ -198,7 +196,7 @@ impl MutateTestArgs {
             false
         ).await?;
 
-        // ensure test outcome is ok
+        // Ensure test outcome is ok
         // exit if any test is failing
         if test_outcome.failures().count() > 0 {
             test_outcome.ensure_ok()?;
@@ -206,8 +204,6 @@ impl MutateTestArgs {
 
         println!();
         let spinner = MutateSpinnerReporter::new("Generating Mutants...");
-        // println!("{}\n", Paint::white("[2] Generating mutants ...").bold());
-
         let mutator = MutatorConfigBuilder::new(
             project.solc.solc.clone(),
             config.optimizer,
@@ -219,28 +215,28 @@ impl MutateTestArgs {
             output
         )?;
 
-        if mutator.matching_function_count(&filter) == 0 {
+        if mutator.matching_function_count(&mutate_filter) == 0 {
             println!("\nNo functions match the provided pattern");
-            println!("{}", filter.to_string());
+            println!("{}", mutate_filter.to_string());
             // Try to suggest a function when there's no match
-            if let Some(ref function_pattern) = filter.args().function_pattern {
+            if let Some(ref function_pattern) = mutate_filter.args().function_pattern {
                 let function_name = function_pattern.as_str();
-                let candidates = mutator.get_function_names(&filter);
+                let candidates = mutator.get_function_names(&mutate_filter);
                 if let Some(suggestion) = utils::did_you_mean(function_name, candidates).pop() {
                     println!("\nDid you mean `{suggestion}`?");
                 }
                 std::process::exit(0);
             }
         }
-        // generate mutation
-        let mutants_output = mutator.run_mutate(filter.clone())?;
+
+        // generate mutants
+        let mutants_output = mutator.run_mutate(mutate_filter.clone())?;
         // this is required for progress bar
         let mutants_len_iterator: Vec<&Mutant> = mutants_output.iter().flat_map(|(_, v)| v).collect();
-        
+        // Finish spinner
         spinner.finish();
 
         println!();
-
         println!("[.] Testing Mutants...");
         let progress_bar = init_progress!(mutants_len_iterator, "Mutants");
         progress_bar.set_position(0);
@@ -272,8 +268,7 @@ impl MutateTestArgs {
             let start = Instant::now();
             for mutant in mutants.iter() {
                 let result = test_mutant(
-                    FilterArgs::from(filter.clone()),
-                    self.filter.test_mode,
+                    test_filter.clone(),
                     &project.root(),
                     &evm_opts,
                     mutant.clone()
@@ -341,8 +336,7 @@ impl Provider for MutateTestArgs {
 }
 
 pub async fn test_mutant(
-    mut filter: FilterArgs,
-    test_mode: TestMode,
+    filter: ProjectPathsAwareFilter,
     mutation_project_root: &Path,
     evm_opts: &EvmOpts,
     mutant: Mutant
@@ -351,7 +345,6 @@ pub async fn test_mutant(
     info!("Testing Mutants");    
     
     let start = Instant::now();
-    let filter = test_mode()
 
     // @TODO do test mode matching check here
     let mutant_filename = mutant.source.filename_as_str();
@@ -430,22 +423,4 @@ pub async fn test_mutant(
     
     Ok(MutantTestResult::new(start.elapsed(), mutant, status))
 
-}
-
-
-async fn test_mode<'a>(
-    contract_name: &str,
-    test_mode: TestMode,
-    filter: &'a mut FilterArgs
-) -> &'a mut FilterArgs {
-    match test_mode {
-        TestMode::File => {
-            let test_contract_name = format!("{}Test", contract_name);
-            filter.contract_pattern = Some(
-                regex::Regex::from_str(&test_contract_name).expect("failed to parse regex")
-            );
-            filter
-        },
-        _ => filter
-    }
 }

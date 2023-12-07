@@ -124,12 +124,12 @@ impl MutateFilterArgs {
 
         // Parse test filter
         let test_filter: FilterArgs = FilterArgs { 
-            test_pattern: filter.test_pattern,
-            test_pattern_inverse: filter.test_pattern_inverse,
-            contract_pattern: filter.test_contract_pattern,
-            contract_pattern_inverse: filter.test_contract_pattern_inverse,
-            path_pattern: filter.test_path_pattern,
-            path_pattern_inverse: filter.test_path_pattern_inverse
+            test_pattern: filter.test_pattern.clone(),
+            test_pattern_inverse: filter.test_pattern_inverse.clone(),
+            contract_pattern: filter.test_contract_pattern.clone(),
+            contract_pattern_inverse: filter.test_contract_pattern_inverse.clone(),
+            path_pattern: filter.test_path_pattern.clone(),
+            path_pattern_inverse: filter.test_path_pattern_inverse.clone()
         };
         let test_paths_aware_filter = test_filter.merge_with_mutate_config(&config);
 
