@@ -18,8 +18,6 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use revm::primitives::U256;
 use std::sync::Arc;
 
-type ShrunkCallIndices = Vec<usize>;
-
 #[derive(Clone, Default)]
 /// Stores information about failures and reverts of the invariant tests.
 pub struct InvariantFailures {
@@ -288,9 +286,9 @@ impl InvariantFuzzError {
         executor: &Executor,
         runs: usize,
         retries: usize,
-    ) -> ShrunkCallIndices {
-        let shrunk_call_indices: Arc<RwLock<ShrunkCallIndices>> =
-            Arc::new(RwLock::new((0..calls.len()).collect()));
+    ) -> Vec<usize> {
+        // Construct a ArcRwLock vector of indices of `calls`
+        let shrunk_call_indices = Arc::new(RwLock::new((0..calls.len()).collect()));
         let shrink_limit = self.shrink_run_limit - runs;
 
         // We construct either a full powerset (this guarantees we maximally shrunk for the given
@@ -343,7 +341,8 @@ impl InvariantFuzzError {
             );
         });
 
-        // at this point we know shrunk is fine to get the inner value for
+        // SAFETY: there are no more live references to shrunk_call_indices as the parallel execution is
+        // finished, so it is fine to get the inner value via unwrap & into_inner
         let shrunk_call_indices =
             Arc::<RwLock<Vec<usize>>>::try_unwrap(shrunk_call_indices).unwrap().into_inner();
 
