@@ -1,13 +1,12 @@
 use clap::Parser;
-use foundry_common::traits::{TestFilter, FunctionFilter, TestFunctionExt};
+use ethers_core::types::Filter;
+use foundry_common::{traits::{TestFilter, FunctionFilter, TestFunctionExt}, ContractFilter};
 use foundry_cli::utils::FoundryPathExt;
 use foundry_common::glob::GlobMatcher;
 use foundry_config::Config;
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
 use std::{fmt, path::Path};
-
-use crate::cmd::test::FilterArgs;
-
+use crate::cmd::test::{ProjectPathsAwareFilter, FilterArgs};
 
 /// The filter to use during mutation testing.
 ///
@@ -70,7 +69,7 @@ pub struct MutateFilterArgs {
 
     /// Only run tests in source files matching the specified glob pattern.
     #[clap(long = "match_test_path", value_name = "GLOB")]
-    pub test_path_pattern: OOption<GlobMatcher>,
+    pub test_path_pattern: Option<GlobMatcher>,
 
     /// Only run tests in source files that do not match the specified glob pattern.
     #[clap(long = "no_match_test_path", value_name = "GLOB")]
@@ -79,10 +78,11 @@ pub struct MutateFilterArgs {
 
 impl MutateFilterArgs {
     /// Merges the set filter globs with the config's values
+    /// Returns mutate and test filters
     pub fn merge_with_config(
         &self,
         config: &Config,
-    ) -> MutationProjectPathsAwareFilter {
+    ) -> (MutationProjectPathsAwareFilter, ProjectPathsAwareFilter) {
         let mut filter = self.clone();
         if filter.function_pattern.is_none() {
             filter.function_pattern = config
@@ -122,10 +122,25 @@ impl MutateFilterArgs {
                 .clone()
                 .map(Into::into);
         }
-        MutationProjectPathsAwareFilter {
-            args_filter: filter,
-            paths: config.project_paths(),
-        }
+
+        // Parse test filter
+        let test_filter: FilterArgs = FilterArgs { 
+            test_pattern: filter.test_pattern,
+            test_pattern_inverse: filter.test_pattern_inverse,
+            contract_pattern: filter.test_contract_pattern,
+            contract_pattern_inverse: filter.test_contract_pattern_inverse,
+            path_pattern: filter.test_path_pattern,
+            path_pattern_inverse: filter.test_path_pattern_inverse
+        };
+        let test_paths_aware_filter = test_filter.merge_with_mutate_test_config(&config);
+
+        (
+            MutationProjectPathsAwareFilter {
+                args_filter: filter,
+                paths: config.project_paths(),
+            }, 
+            test_paths_aware_filter
+        )
     }
 }
 
@@ -178,19 +193,18 @@ impl FileFilter for MutateFilterArgs {
     }
 }
 
-impl TestFilter for MutateFilterArgs {
-    fn matches_test(&self, test_name: impl AsRef<str>) -> bool {
-        let mut ok = true;
-        let test_name = test_name.as_ref();
-        if let Some(re) = &self.function_pattern {
-            ok &= re.is_match(test_name);
-        }
-        if let Some(re) = &self.function_pattern_inverse {
-            ok &= !re.is_match(test_name);
-        }
-        ok
-    }
-
+impl ContractFilter for MutateFilterArgs {
+    // fn matches_test(&self, test_name: impl AsRef<str>) -> bool {
+    //     let mut ok = true;
+    //     let test_name = test_name.as_ref();
+    //     if let Some(re) = &self.function_pattern {
+    //         ok &= re.is_match(test_name);
+    //     }
+    //     if let Some(re) = &self.function_pattern_inverse {
+    //         ok &= !re.is_match(test_name);
+    //     }
+    //     ok
+    // }
     fn matches_contract(&self, contract_name: impl AsRef<str>) -> bool {
         let mut ok = true;
         let contract_name = contract_name.as_ref();
@@ -289,10 +303,10 @@ impl FileFilter for MutationProjectPathsAwareFilter {
     }
 }
 
-impl TestFilter for MutationProjectPathsAwareFilter {
-    fn matches_test(&self, test_name: impl AsRef<str>) -> bool {
-        self.args_filter.matches_test(test_name)
-    }
+impl ContractFilter for MutationProjectPathsAwareFilter {
+    // fn matches_test(&self, test_name: impl AsRef<str>) -> bool {
+    //     self.args_filter.matches_test(test_name)
+    // }
 
     fn matches_contract(&self, contract_name: impl AsRef<str>) -> bool {
         self.args_filter.matches_contract(contract_name)
