@@ -69,7 +69,7 @@ impl FilterArgs {
     }
 
     /// Merges the set filter globs with mutate test config values
-    pub fn merge_with_mutate_test_config(&self, config: &Config) -> ProjectPathsAwareFilter {
+    pub fn merge_with_mutate_config(&self, config: &Config) -> ProjectPathsAwareFilter {
         let mut filter = self.clone();
 
         if filter.test_pattern.is_none() {

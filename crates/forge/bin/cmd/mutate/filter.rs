@@ -1,6 +1,5 @@
 use clap::Parser;
-use ethers_core::types::Filter;
-use foundry_common::{traits::{TestFilter, FunctionFilter, TestFunctionExt}, ContractFilter};
+use foundry_common::{traits::{FunctionFilter, TestFunctionExt}, ContractFilter};
 use foundry_cli::utils::FoundryPathExt;
 use foundry_common::glob::GlobMatcher;
 use foundry_config::Config;
@@ -132,7 +131,7 @@ impl MutateFilterArgs {
             path_pattern: filter.test_path_pattern,
             path_pattern_inverse: filter.test_path_pattern_inverse
         };
-        let test_paths_aware_filter = test_filter.merge_with_mutate_test_config(&config);
+        let test_paths_aware_filter = test_filter.merge_with_mutate_config(&config);
 
         (
             MutationProjectPathsAwareFilter {
