@@ -51,27 +51,27 @@ pub struct MutateFilterArgs {
     pub path_pattern_inverse: Option<GlobMatcher>,
 
     /// Only run test functions matching the specified regex pattern.
-    #[clap(long = "match_test")]
+    #[clap(long = "match-test")]
     pub test_pattern: Option<regex::Regex>,
 
     /// Only run test functions that do not match the specified regex pattern.
-    #[clap(long = "no_match_test")]
+    #[clap(long = "no-match-test")]
     pub test_pattern_inverse: Option<regex::Regex>,
 
     /// Only run tests in contracts matching the specified regex pattern.
-    #[clap(long = "match_test_contract")]
+    #[clap(long = "match-test-contract")]
     pub test_contract_pattern: Option<regex::Regex>,
 
     /// Only run tests in contracts that do not match the specified regex pattern.
-    #[clap(long = "no_match_test_contract")]
+    #[clap(long = "no-match-test-contract")]
     pub test_contract_pattern_inverse: Option<regex::Regex>,
 
     /// Only run tests in source files matching the specified glob pattern.
-    #[clap(long = "match_test_path", value_name = "GLOB")]
+    #[clap(long = "match-test-path", value_name = "GLOB")]
     pub test_path_pattern: Option<GlobMatcher>,
 
     /// Only run tests in source files that do not match the specified glob pattern.
-    #[clap(long = "no_match_test_path", value_name = "GLOB")]
+    #[clap(long = "no-match-test-path", value_name = "GLOB")]
     pub test_path_pattern_inverse: Option<GlobMatcher>,
 }
 
