@@ -220,8 +220,7 @@ impl ScriptArgs {
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_labels(result.labeled_addresses.clone())
             .with_verbosity(verbosity)
-            .with_events(local_identifier.events().cloned())
-            .with_functions(local_identifier.functions().cloned())
+            .with_local_identifier_abis(&local_identifier)
             .with_signature_identifier(SignaturesIdentifier::new(
                 Config::foundry_cache_dir(),
                 script_config.config.offline,
