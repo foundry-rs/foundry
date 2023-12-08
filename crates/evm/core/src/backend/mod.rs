@@ -82,13 +82,25 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// since the snapshots was created. This way we can show logs that were emitted between
     /// snapshot and its revert.
     /// This will also revert any changes in the `Env` and replace it with the captured `Env` of
-    /// `Self::snapshot`
+    /// `Self::snapshot`.
+    ///
+    /// Depending on [RevertSnapshotAction] it will keep the snapshot alive or delete it.
     fn revert(
         &mut self,
         id: U256,
         journaled_state: &JournaledState,
         env: &mut Env,
+        action: RevertSnapshotAction,
     ) -> Option<JournaledState>;
+
+    /// Deletes the snapshot with the given `id`
+    ///
+    /// Returns `true` if the snapshot was successfully deleted, `false` if no snapshot for that id
+    /// exists.
+    fn delete_snapshot(&mut self, id: U256) -> bool;
+
+    /// Deletes all snapshots.
+    fn delete_snapshots(&mut self);
 
     /// Creates and also selects a new fork
     ///
@@ -918,11 +930,14 @@ impl DatabaseExt for Backend {
         id: U256,
         current_state: &JournaledState,
         current: &mut Env,
+        action: RevertSnapshotAction,
     ) -> Option<JournaledState> {
         trace!(?id, "revert snapshot");
         if let Some(mut snapshot) = self.inner.snapshots.remove_at(id) {
             // Re-insert snapshot to persist it
-            self.inner.snapshots.insert_at(snapshot.clone(), id);
+            if action.is_keep() {
+                self.inner.snapshots.insert_at(snapshot.clone(), id);
+            }
             // need to check whether there's a global failure which means an error occurred either
             // during the snapshot or even before
             if self.is_global_failure(current_state) {
@@ -967,6 +982,14 @@ impl DatabaseExt for Backend {
             warn!(target: "backend", "No snapshot to revert for {}", id);
             None
         }
+    }
+
+    fn delete_snapshot(&mut self, id: U256) -> bool {
+        self.inner.snapshots.remove_at(id).is_some()
+    }
+
+    fn delete_snapshots(&mut self) {
+        self.inner.snapshots.clear()
     }
 
     fn create_fork(&mut self, mut create_fork: CreateFork) -> eyre::Result<LocalForkId> {

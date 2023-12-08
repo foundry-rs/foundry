@@ -48,6 +48,8 @@ interface Vm {
     function createWallet(uint256 privateKey) external returns (Wallet memory wallet);
     function createWallet(uint256 privateKey, string calldata walletLabel) external returns (Wallet memory wallet);
     function deal(address account, uint256 newBalance) external;
+    function deleteSnapshot(uint256 snapshot) external returns (bool);
+    function deleteSnapshots() external;
     function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256 privateKey);
     function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index) external pure returns (uint256 privateKey);
     function deriveKey(string calldata mnemonic, uint32 index, string calldata language) external pure returns (uint256 privateKey);
@@ -172,6 +174,7 @@ interface Vm {
     function resetNonce(address account) external;
     function resumeGasMetering() external;
     function revertTo(uint256 snapshotId) external returns (bool success);
+    function revertToAndDelete(uint256 snapshotId) external returns (bool success);
     function revokePersistent(address account) external;
     function revokePersistent(address[] calldata accounts) external;
     function roll(uint256 newHeight) external;
