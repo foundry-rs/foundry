@@ -437,10 +437,8 @@ pub async fn test_mutant(
     let env = evm_opts.evm_env().await?;
 
     // @TODO compile_sparse should be the preferred approach it makes the compilation step
-    // quite fast.
+    // quite fast and skips output for generated files. But it doesn't re-compile files that inherit the "dirty" file
     // At the moment there is a bug in the implementation.
-    // This should only recompile the changed file. It makes the compilation step very fast
-    // This is quite expensive in terms of time taken
     // let output = project.compile_sparse(
     // move |path: &Path| {
     //     println!("{:?}", path.to_str());

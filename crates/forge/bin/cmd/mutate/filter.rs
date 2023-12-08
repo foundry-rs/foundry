@@ -127,6 +127,12 @@ impl fmt::Debug for MutateFilterArgs {
             .field("no-match-contract", &self.contract_pattern_inverse.as_ref().map(|r| r.as_str()))
             .field("match-path", &self.path_pattern.as_ref().map(|g| g.as_str()))
             .field("no-match-path", &self.path_pattern_inverse.as_ref().map(|g| g.as_str()))
+            .field("match-test", &self.test_pattern.as_ref().map(|r| r.as_str()))
+            .field("no-match-test", &self.test_path_pattern_inverse.as_ref().map(|r| r.as_str()))
+            .field("match-test-contract", &self.test_contract_pattern.as_ref().map(|r| r.as_str()))
+            .field("no-match-test-contract", &self.test_contract_pattern_inverse.as_ref().map(|r| r.as_str()))
+            .field("match-test-path", &self.test_path_pattern.as_ref().map(|g| g.as_str()))
+            .field("no-match-test-path", &self.test_path_pattern_inverse.as_ref().map(|g| g.as_str()))
             .finish_non_exhaustive()
     }
 }
