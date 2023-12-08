@@ -46,7 +46,7 @@ To insert the comments into the appropriate areas, strings get converted to chun
 before being written to the buffer. A chunk is any string that cannot be split by
 whitespace. A chunk also carries with it the surrounding comment information. Thereby
 when writing the chunk the comments can be added before and after the chunk as well
-as any any whitespace surrounding.
+as any whitespace surrounding.
 
 To construct a chunk, the string and the location of the string is given to the
 Formatter and the pre-parsed comments before the start and end of the string are
