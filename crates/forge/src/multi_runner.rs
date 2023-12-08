@@ -167,7 +167,7 @@ impl MultiContractRunner {
 
         self.contracts
             .par_iter()
-            .filter(|(id, _)| {
+            .filter(|(id, _)| {                
                 filter.matches_path(id.source.to_string_lossy()) &&
                     filter.matches_contract(&id.name)
             })

@@ -16,9 +16,9 @@ use foundry_cli::{
 use foundry_common::{
     compile::{self, ProjectCompiler},
     evm::EvmArgs,
-    shell::{self}, term::Spinner
+    shell::{self, println}, term::Spinner
 };
-use foundry_compilers::{project_util::{copy_dir, TempProject}, report};
+use foundry_compilers::{project_util::{copy_dir, TempProject}, report, Project, TestFileFilter};
 use foundry_config::{
     figment,
     figment::{
@@ -60,6 +60,7 @@ foundry_config::merge_impl_figment_convert!(MutateTestArgs, opts, evm_opts);
 // fail fast
 // allow failure
 // export
+// command line output
 
 
 
@@ -229,8 +230,13 @@ impl MutateTestArgs {
             }
         }
 
-        // generate mutants
+        // This step is quite slow and expensive run time wise
+        // This is because Gambit writes to disk multiple files and also general several mutants
+        // per line "caught"
+        // Improvements can be done to improve gambit performance
+        trace!("Running gambit");
         let mutants_output = mutator.run_mutate(mutate_filter.clone())?;
+        trace!("Finished running gambit");
         // this is required for progress bar
         let mutants_len_iterator: Vec<&Mutant> = mutants_output.iter().flat_map(|(_, v)| v).collect();
         // Finish spinner
@@ -266,14 +272,15 @@ impl MutateTestArgs {
         for (file_name, mutants) in mutants_output.iter() {
             let mut mutant_test_results = vec![];
             let start = Instant::now();
-            let (temp_project, config) = setup_mutant_dir(&project.root())?;
+            let (temp_project, config, project) = setup_mutant_dir(&project.root())?;
             for mutant in mutants.iter() {
                 let result = test_mutant(
                     test_filter.clone(),
                     &temp_project,
                     &config,
                     &evm_opts,
-                    mutant.clone()
+                    mutant.clone(),
+                    &project
                 ).await?;
                 mutant_test_results.push(result);
                 progress_bar_index+=1;
@@ -286,6 +293,14 @@ impl MutateTestArgs {
         // finish progress bar
         progress_bar.finish();
 
+        if self.json {
+            println!("{}", serde_json::to_string(&mutant_test_suite_results.values().flat_map(|x| x.mutation_test_results()).collect::<Vec<_>>())?);
+            return Ok(MutationTestOutcome::new(
+                self.allow_failure,
+                mutant_test_suite_results
+            ));
+        
+        }
     
         let mutation_test_outcome = MutationTestOutcome::new(
             self.allow_failure,
@@ -339,7 +354,7 @@ impl Provider for MutateTestArgs {
 
 pub fn setup_mutant_dir(
     mutation_project_root: &Path,
-) -> Result<(TempProject, Config)> {
+) -> Result<(TempProject, Config, Project)> {
     info!("Setting up temp mutant project dir");
     let project = TempProject::dapptools()?;
 
@@ -351,7 +366,7 @@ pub fn setup_mutant_dir(
     let mut config  = Config::load_with_root(&temp_project_root);
     // appends the root dir to the config folder variables
     // it's important
-    config = config.canonic();
+    config = config.canonic_at(&project.root());
     // override fuzz and invariant runs
     config.fuzz.runs = 0;
     config.invariant.runs  = 0;
@@ -360,8 +375,12 @@ pub fn setup_mutant_dir(
     // have relative paths.
     // The project has been compiled in the test step so we can re-use the 
     // artifacts generated
-
-    Ok((project, config))
+    let update_project = config.project()?;
+    let c = update_project.compile()?;
+    // c.
+    // @TODO fix with_stripped_file_prefixes
+    
+    Ok((project, config, update_project))
 }
 
 pub async fn test_mutant(
@@ -369,7 +388,8 @@ pub async fn test_mutant(
     temp_project: &TempProject,
     config: &Config,
     evm_opts: &EvmOpts,
-    mutant: Mutant
+    mutant: Mutant,
+    project: &Project
 ) -> Result<MutantTestResult> {
     info!("Testing Mutants");
 
@@ -379,29 +399,31 @@ pub async fn test_mutant(
     let mutant_contents = mutant.as_source_string().map_err(
         |err| eyre!("{:?}", err)
     )?;
+    // println!("{:?}", mutant_contents);
     // setup file source root
     let mutant_filename = mutant.source.filename_as_str();
-    let temp_project_root = temp_project.root();
-    let file_source_root = temp_project_root.join(mutant_filename);    
+    let file_source_root = temp_project.root().join(mutant_filename);   
+    // println!("{:?}", file_source_root.to_string_lossy()); 
     // Write Mutant contents to file in temp_directory
-    fs::write(file_source_root.as_path(), mutant_contents)?;
+    fs::write(&file_source_root.clone().as_path(), mutant_contents)?;
 
-    let project = config.project()?;
+    // let project = config.project()?;
     let env = evm_opts.evm_env().await?;
-    
-    // This should only recompile the changed file
-    // It makes the compilation step very fast
-    let output = project.compile_sparse(
-        move |path: &Path| path.starts_with(&file_source_root)
-    )?;
+    // This should only recompile the changed file. It makes the compilation step very fast
+    // This is quite expensive in terms of time taken
+    // let output = project.compile_sparse(
+    // move |path: &Path| {
+    //     println!("{:?}", path.to_str());
+    //     path.starts_with(&file_source_root) || path.ends_with(".t.sol")
+
+    // }
+    // )?;
+    let output = project.compile()?;
+    // println!("{:?}", output);
+
     let project_root = &project.root();
-
     let toml = config.get_config_path();
-
     let profiles = get_available_profiles(toml)?;
-
-    println!("tracing how many seconds it takes to get here");
-    println!("{:.2?}", start.elapsed());
 
     let test_options: TestOptions = TestOptionsBuilder::default()
         .fuzz(config.fuzz)
@@ -445,9 +467,6 @@ pub async fn test_mutant(
     let _results = handle.await?;
 
     trace!(target: "forge::mutate", "received results");
-
-    println!("tracing how many seconds it takes to run each test suite");
-    println!("{:.2?}", start.elapsed());
     
     Ok(MutantTestResult::new(start.elapsed(), mutant, status))
 

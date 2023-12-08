@@ -2,11 +2,12 @@ use comfy_table::{
     modifiers::UTF8_ROUND_CORNERS, Attribute, Cell, CellAlignment, Color, Row, Table,
 };
 use foundry_common::shell;
+use similar::TextDiff;
 use core::fmt;
 use std::{collections::BTreeMap, time::Duration};
 use yansi::Paint;
-use serde::{Deserialize, Serialize};
-use foundry_evm_mutator::Mutant; 
+use serde::{Deserialize, Serialize, ser::SerializeStruct};
+use foundry_evm_mutator::Mutant;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MutantTestStatus {
@@ -57,6 +58,32 @@ impl MutantTestResult {
 
     pub fn diff(&self) -> String {
         "".into()
+    }
+}
+
+
+impl Serialize for MutantTestResult {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer 
+    {
+        let mut state = serializer.serialize_struct("MutantTestResult", 6)?;
+        state.serialize_field("name", self.mutant.source.filename())?;
+        state.serialize_field("path", &self.mutant.source.sourceroot().join(&self.mutant.source.filename()).to_string_lossy())?;
+        state.serialize_field("description", &self.mutant.op.to_string())?;
+
+        let orig_contents: String = String::from_utf8_lossy(self.mutant.source.contents()).into();
+        let mutant_contents = self.mutant.as_source_string().unwrap();
+
+        let diff = TextDiff::from_lines(&orig_contents, &mutant_contents)
+            .unified_diff()
+            .header("original", "mutant")
+            .to_string();
+
+        state.serialize_field("diff", &diff)?;
+        state.serialize_field("result", &self.status.to_string())?;
+
+        state.end()
     }
 }
 
