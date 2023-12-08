@@ -762,8 +762,13 @@ async fn test(
         }
     }
 
-    // reattach the task
-    handle.await?;
+    // Reattach the task.
+    if let Err(e) = handle.await {
+        match e.try_into_panic() {
+            Ok(payload) => std::panic::resume_unwind(payload),
+            Err(e) => return Err(e.into()),
+        }
+    }
 
     trace!(target: "forge::test", "received {} results", results.len());
 
