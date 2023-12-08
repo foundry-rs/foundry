@@ -29,9 +29,9 @@ impl ArtifactFilter {
         id: &'a ArtifactId,
         filter: &'a A,
     ) -> bool {
-        self.valid_mutator_source_file(root, id)
-            && filter.matches_path(id.source.to_string_lossy())
-            && filter.matches_contract(&id.name)
+        self.valid_mutator_source_file(root, id) &&
+            filter.matches_path(id.source.to_string_lossy()) &&
+            filter.matches_contract(&id.name)
     }
 
     /// Returns the name of the functions to generate Mutants

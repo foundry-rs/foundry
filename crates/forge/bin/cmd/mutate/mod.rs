@@ -1,24 +1,36 @@
-use super::{install, test::{ProjectPathsAwareFilter, TestOutcome}};
+use super::{
+    install,
+    test::{ProjectPathsAwareFilter, TestOutcome},
+};
+use crate::cmd::{
+    mutate::summary::{
+        MutantTestResult, MutationTestOutcome, MutationTestSuiteResult, MutationTestSummaryReporter,
+    },
+    test::{test, FilterArgs},
+};
 use clap::Parser;
 use ethers_core::types::Filter;
-use eyre::{eyre, Result, Error};
+use eyre::{eyre, Error, Result};
 use forge::{
-    inspectors::CheatsConfig,
-    result::SuiteResult,
-    MultiContractRunnerBuilder, TestOptions, TestOptionsBuilder,
+    inspectors::CheatsConfig, result::SuiteResult, MultiContractRunnerBuilder, TestOptions,
+    TestOptionsBuilder,
 };
 use foundry_cli::{
     init_progress,
-    update_progress,
     opts::CoreBuildArgs,
+    update_progress,
     utils::{self, LoadConfig},
 };
 use foundry_common::{
     compile::{self, ProjectCompiler},
     evm::EvmArgs,
-    shell::{self, println}, term::Spinner
+    shell::{self, println},
+    term::Spinner,
 };
-use foundry_compilers::{project_util::{copy_dir, TempProject}, report, Project, TestFileFilter, ProjectCompileOutput};
+use foundry_compilers::{
+    project_util::{copy_dir, TempProject},
+    report, Project, ProjectCompileOutput, TestFileFilter,
+};
 use foundry_config::{
     figment,
     figment::{
@@ -28,21 +40,18 @@ use foundry_config::{
     get_available_profiles, Config,
 };
 use foundry_evm::opts::EvmOpts;
+use foundry_evm_mutator::{Mutant, Mutator, MutatorConfigBuilder};
 use futures::future::try_join_all;
 use itertools::Itertools;
-use std::{collections::BTreeMap, fs, sync::mpsc::channel, time::{Duration, Instant}, path::{PathBuf, Path}, str::FromStr};
-use yansi::Paint;
-use foundry_evm_mutator::{Mutant, Mutator, MutatorConfigBuilder};
-use crate::cmd::{
-    test::{test, FilterArgs},
-    mutate::summary::{
-        MutationTestOutcome,
-        MutantTestResult,
-        MutationTestSuiteResult,
-        MutationTestSummaryReporter
-    }
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::mpsc::channel,
+    time::{Duration, Instant},
 };
-
+use yansi::Paint;
 
 mod filter;
 pub use filter::*;
@@ -51,15 +60,12 @@ pub use summary::*;
 mod reporter;
 pub use reporter::*;
 
-
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(MutateTestArgs, opts, evm_opts);
 
 // @TODO
 // export
 // command line output
-
-
 
 /// CLI arguments for `forge mutate`.
 #[derive(Debug, Clone, Parser)]
@@ -103,7 +109,6 @@ pub struct MutateTestArgs {
     pub detailed: bool,
 }
 
-
 impl MutateTestArgs {
     /// Returns the flattened [`CoreBuildArgs`].
     pub fn build_args(&self) -> &CoreBuildArgs {
@@ -113,7 +118,8 @@ impl MutateTestArgs {
     pub async fn run(self) -> Result<MutationTestOutcome> {
         trace!(target: "forge::mutate", "executing mutation command");
         shell::set_shell(shell::Shell::from_args(self.opts.silent, self.json))?;
-        println!("\n{}{}", 
+        println!(
+            "\n{}{}",
             Paint::white("[.] Starting Mutation Test. "),
             Paint::white("Go grab a cup of coffee ☕, it's going to take a while").bold()
         );
@@ -121,11 +127,11 @@ impl MutateTestArgs {
     }
 
     /// Executes mutation test for the project
-    /// 
+    ///
     /// This will trigger the build process and run tests that match the configured filter.
     /// On success mutants will get be generated for functions matching configured filter.
     /// On success tests matching configured filter will be executed for all mutants.
-    /// 
+    ///
     /// Returns the mutation test results for all matching functions
     pub async fn execute_mutation_test(self) -> Result<MutationTestOutcome> {
         println!();
@@ -148,7 +154,13 @@ impl MutateTestArgs {
             project = config.project()?;
         }
 
-        let (test_outcome, output) = self.compile_and_test_project(&project, &config, &evm_opts, &test_filter).await?;
+        let (test_outcome, output) = self.compile_and_test_project(
+            &project,
+            &config,
+            &evm_opts,
+            &test_filter
+        ).await?;
+
         // Ensure test outcome is ok, exit if any test is failing
         if test_outcome.failures().count() > 0 {
             test_outcome.ensure_ok()?;
@@ -161,11 +173,9 @@ impl MutateTestArgs {
             config.optimizer,
             project.allowed_paths.paths().map(|x| x.to_owned()).collect_vec(),
             project.include_paths.paths().map(|x| x.to_owned()).collect(),
-            config.remappings
-        ).build(
-            config.src.clone(), 
-            output
-        )?;
+            config.remappings,
+        )
+        .build(config.src.clone(), output)?;
 
         if mutator.matching_function_count(&mutate_filter) == 0 {
             println!("\nNo functions match the provided pattern");
@@ -181,7 +191,7 @@ impl MutateTestArgs {
             }
         }
 
-        // This step is quite slow and expensive run time wise
+        // @NOTE/@TODO This step is quite slow and expensive run time wise
         // This is because Gambit writes to disk multiple files and also general several mutants
         // per line "caught"
         // Improvements can be done to improve gambit performance
@@ -189,7 +199,8 @@ impl MutateTestArgs {
         let mutants_output = mutator.run_mutate(self.export, mutate_filter.clone())?;
         trace!("Finished running gambit");
         // this is required for progress bar
-        let mutants_len_iterator: Vec<&Mutant> = mutants_output.iter().flat_map(|(_, v)| v).collect();
+        let mutants_len_iterator: Vec<&Mutant> =
+            mutants_output.iter().flat_map(|(_, v)| v).collect();
         // Finish spinner
         spinner.finish();
 
@@ -199,8 +210,8 @@ impl MutateTestArgs {
         progress_bar.set_position(0);
 
         // @Notice This is having a race condition on Fuzz and Invariant tests
-        // let mutant_test_suite_results: BTreeMap<String, MutationTestSuiteResult> = BTreeMap::from_iter(try_join_all(mutants_output.iter().map(
-        //         |(file_name, mutants)| async {
+        // let mutant_test_suite_results: BTreeMap<String, MutationTestSuiteResult> =
+        // BTreeMap::from_iter(try_join_all(mutants_output.iter().map(         |(file_name, mutants)| async {
         //             let start = Instant::now();
         //             let result = try_join_all(
         //                 mutants.iter().map(|mutant| {
@@ -214,11 +225,12 @@ impl MutateTestArgs {
         //             ).await?;
         //             let duration = start.elapsed();
         //             update_progress!(progress_bar, mutants.len());
-        //             Ok::<(String, MutationTestSuiteResult), Error>((file_name.clone(), MutationTestSuiteResult::new(duration, result)))
-        //         }
+        //             Ok::<(String, MutationTestSuiteResult), Error>((file_name.clone(),
+        // MutationTestSuiteResult::new(duration, result)))         }
         //     )
         // ).await?.into_iter());
-        let mut mutant_test_suite_results: BTreeMap<String, MutationTestSuiteResult> = BTreeMap::new();
+        let mut mutant_test_suite_results: BTreeMap<String, MutationTestSuiteResult> =
+            BTreeMap::new();
         let mut progress_bar_index = 0;
         for (file_name, mutants) in mutants_output.iter() {
             let mut mutant_test_results = vec![];
@@ -231,38 +243,45 @@ impl MutateTestArgs {
                     &config,
                     &evm_opts,
                     mutant.clone(),
-                    &project
-                ).await?;
+                    &project,
+                )
+                .await?;
                 let mutant_survived = result.survived();
                 mutant_test_results.push(result);
-                progress_bar_index+=1;
+                progress_bar_index += 1;
                 update_progress!(progress_bar, progress_bar_index);
-                
-                // if fail is enabled then we exit on the 
+
+                // if fail is enabled then we exit on the
                 // first mutant we encounter that survived
                 if self.fail_fast && mutant_survived {
                     break;
                 }
             }
             let duration = start.elapsed();
-            mutant_test_suite_results.insert(file_name.clone(),  MutationTestSuiteResult::new(duration, mutant_test_results));
+            mutant_test_suite_results.insert(
+                file_name.clone(),
+                MutationTestSuiteResult::new(duration, mutant_test_results),
+            );
         }
 
         // finish progress bar
         progress_bar.finish();
 
         if self.json {
-            println!("{}", serde_json::to_string_pretty(&mutant_test_suite_results.values().flat_map(|x| x.mutation_test_results()).collect::<Vec<_>>())?);
-            return Ok(MutationTestOutcome::new(
-                self.allow_failure,
-                mutant_test_suite_results
-            ));
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &mutant_test_suite_results
+                        .values()
+                        .flat_map(|x| x.mutation_test_results())
+                        .collect::<Vec<_>>()
+                )?
+            );
+            return Ok(MutationTestOutcome::new(self.allow_failure, mutant_test_suite_results));
         }
-    
-        let mutation_test_outcome = MutationTestOutcome::new(
-            self.allow_failure,
-            mutant_test_suite_results
-        );
+
+        let mutation_test_outcome =
+            MutationTestOutcome::new(self.allow_failure, mutant_test_suite_results);
 
         if self.summary {
             let mut reporter = MutationTestSummaryReporter::new(self.detailed);
@@ -276,11 +295,12 @@ impl MutateTestArgs {
         Ok(mutation_test_outcome)
     }
 
-    pub async fn compile_and_test_project(&self,
+    pub async fn compile_and_test_project(
+        &self,
         project: &Project,
         config: &Config,
         evm_opts: &EvmOpts,
-        test_filter: &ProjectPathsAwareFilter
+        test_filter: &ProjectPathsAwareFilter,
     ) -> Result<(TestOutcome, ProjectCompileOutput)> {
         let output = project.compile()?;
         output.assert_success();
@@ -308,29 +328,36 @@ impl MutateTestArgs {
             .with_test_options(test_options.clone());
 
         let runner = runner_builder.clone().build(
-                project_root,
-                output.clone(),
-                env.clone(),
-                evm_opts.clone(),
-            )?;
-        
-        Ok((test(
-            config.clone(),
-            runner,
-            0,
-            test_filter.clone(),
-            false,
-            false,
-            test_options,
-            false,
-            true,
-            false,
-            false
-        ).await?, output))
+            project_root,
+            output.clone(),
+            env.clone(),
+            evm_opts.clone(),
+        )?;
+
+        Ok((
+            test(
+                config.clone(),
+                runner,
+                0,
+                test_filter.clone(),
+                false,
+                false,
+                test_options,
+                false,
+                true,
+                false,
+                false,
+            )
+            .await?,
+            output,
+        ))
     }
 
     /// Returns the flattened [`MutateFilterArgs`] arguments merged with [`Config`].
-    pub fn filter(&self, config: &Config) -> (MutationProjectPathsAwareFilter, ProjectPathsAwareFilter) {
+    pub fn filter(
+        &self,
+        config: &Config,
+    ) -> (MutationProjectPathsAwareFilter, ProjectPathsAwareFilter) {
         self.filter.merge_with_config(config)
     }
 }
@@ -348,10 +375,10 @@ impl Provider for MutateTestArgs {
         // dict.insert("mutate".into(), mutate_dict.into());
 
         // Override the fuzz and invariants run
-        // We do not want fuzz and invariant tests to run once so the test 
-        // setup is faster. 
+        // We do not want fuzz and invariant tests to run once so the test
+        // setup is faster.
         let mut fuzz_dict = Dict::default();
-        fuzz_dict.insert("runs".to_string(),0.into());
+        fuzz_dict.insert("runs".to_string(), 0.into());
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
         let mut invariant_dict = Dict::default();
@@ -362,9 +389,7 @@ impl Provider for MutateTestArgs {
     }
 }
 
-pub fn setup_mutant_dir(
-    mutation_project_root: &Path,
-) -> Result<(TempProject, Config, Project)> {
+pub fn setup_mutant_dir(mutation_project_root: &Path) -> Result<(TempProject, Config, Project)> {
     info!("Setting up temp mutant project dir");
     let project = TempProject::dapptools()?;
 
@@ -373,23 +398,23 @@ pub fn setup_mutant_dir(
 
     let temp_project_root = project.root();
     // load config for this temp project
-    let mut config  = Config::load_with_root(&temp_project_root);
+    let mut config = Config::load_with_root(&temp_project_root);
     // appends the root dir to the config folder variables
     // it's important
     config = config.canonic_at(&project.root());
     // override fuzz and invariant runs
     config.fuzz.runs = 0;
-    config.invariant.runs  = 0;
+    config.invariant.runs = 0;
 
     // We do not recompile the project here because the artifacts generated
     // have relative paths.
-    // The project has been compiled in the test step so we can re-use the 
+    // The project has been compiled in the test step so we can re-use the
     // artifacts generated
     let update_project = config.project()?;
     let c = update_project.compile()?;
     // c.
     // @TODO fix with_stripped_file_prefixes
-    
+
     Ok((project, config, update_project))
 }
 
@@ -399,21 +424,19 @@ pub async fn test_mutant(
     config: &Config,
     evm_opts: &EvmOpts,
     mutant: Mutant,
-    project: &Project
+    project: &Project,
 ) -> Result<MutantTestResult> {
     info!("Testing Mutants");
 
     let start = Instant::now();
     // get mutant source
     // @TODO can i cache the step and edit the file in memory
-    let mutant_contents = mutant.as_source_string().map_err(
-        |err| eyre!("{:?}", err)
-    )?;
+    let mutant_contents = mutant.as_source_string().map_err(|err| eyre!("{:?}", err))?;
     // println!("{:?}", mutant_contents);
     // setup file source root
     let mutant_filename = mutant.source.filename_as_str();
-    let file_source_root = temp_project.root().join(mutant_filename);   
-    // println!("{:?}", file_source_root.to_string_lossy()); 
+    let file_source_root = temp_project.root().join(mutant_filename);
+    // println!("{:?}", file_source_root.to_string_lossy());
     // Write Mutant contents to file in temp_directory
     fs::write(&file_source_root.clone().as_path(), mutant_contents)?;
 
@@ -450,26 +473,22 @@ pub async fn test_mutant(
         .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone()))
         .with_test_options(test_options.clone());
 
-    let mut runner = runner_builder.build(
-        project_root,
-        output.clone(),
-        env.clone(),
-        evm_opts.clone(),
-    )?;
+    let mut runner =
+        runner_builder.build(project_root, output.clone(), env.clone(), evm_opts.clone())?;
 
     // mpsc channel for reporting test results
     let (tx, rx) = channel::<(String, SuiteResult)>();
     let handle =
         tokio::task::spawn(async move { runner.test(filter, Some(tx), test_options).await });
 
-    let mut status : MutantTestStatus = MutantTestStatus::Survived;
+    let mut status: MutantTestStatus = MutantTestStatus::Survived;
 
     'outer: for (_, suite_result) in rx {
         // If there were any test failures that means the mutant
         // was killed so exit
         if suite_result.failures().count() > 0 {
             status = MutantTestStatus::Killed;
-            break 'outer
+            break 'outer;
         }
     }
 
@@ -477,7 +496,6 @@ pub async fn test_mutant(
     let _results = handle.await?;
 
     trace!(target: "forge::mutate", "received results");
-    
-    Ok(MutantTestResult::new(start.elapsed(), mutant, status))
 
+    Ok(MutantTestResult::new(start.elapsed(), mutant, status))
 }

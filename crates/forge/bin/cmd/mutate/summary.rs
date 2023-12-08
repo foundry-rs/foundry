@@ -1,20 +1,20 @@
 use comfy_table::{
     modifiers::UTF8_ROUND_CORNERS, Attribute, Cell, CellAlignment, Color, Row, Table,
 };
-use foundry_common::shell;
-use similar::TextDiff;
 use core::fmt;
+use foundry_common::shell;
+use foundry_evm_mutator::Mutant;
+use serde::{ser::SerializeStruct, Deserialize, Serialize};
+use similar::TextDiff;
 use std::{collections::BTreeMap, time::Duration};
 use yansi::Paint;
-use serde::{Deserialize, Serialize, ser::SerializeStruct};
-use foundry_evm_mutator::Mutant;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MutantTestStatus {
     Killed,
     Survived,
     #[default]
-    Equivalent
+    Equivalent,
 }
 
 impl fmt::Display for MutantTestStatus {
@@ -22,7 +22,7 @@ impl fmt::Display for MutantTestStatus {
         match self {
             MutantTestStatus::Killed => "KILLED".fmt(f),
             MutantTestStatus::Survived => "SURVIVED".fmt(f),
-            MutantTestStatus::Equivalent => "EQUIVALENT".fmt(f)
+            MutantTestStatus::Equivalent => "EQUIVALENT".fmt(f),
         }
     }
 }
@@ -31,16 +31,11 @@ impl fmt::Display for MutantTestStatus {
 pub struct MutantTestResult {
     pub duration: Duration,
     pub mutant: Mutant,
-    status: MutantTestStatus
+    status: MutantTestStatus,
 }
 
-
 impl MutantTestResult {
-    pub fn new(
-        duration: Duration,
-        mutant: Mutant,
-        status: MutantTestStatus
-    ) -> Self {
+    pub fn new(duration: Duration, mutant: Mutant, status: MutantTestStatus) -> Self {
         Self { duration, mutant, status }
     }
 
@@ -61,15 +56,17 @@ impl MutantTestResult {
     }
 }
 
-
 impl Serialize for MutantTestResult {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: serde::Serializer 
+    where
+        S: serde::Serializer,
     {
         let mut state = serializer.serialize_struct("MutantTestResult", 6)?;
         state.serialize_field("name", self.mutant.source.filename())?;
-        state.serialize_field("path", &self.mutant.source.sourceroot().join(&self.mutant.source.filename()).to_string_lossy())?;
+        state.serialize_field(
+            "path",
+            &self.mutant.source.sourceroot().join(&self.mutant.source.filename()).to_string_lossy(),
+        )?;
         state.serialize_field("description", &self.mutant.op.to_string())?;
 
         let orig_contents: String = String::from_utf8_lossy(self.mutant.source.contents()).into();
@@ -97,29 +94,20 @@ pub struct MutationTestSuiteResult {
 }
 
 impl MutationTestSuiteResult {
-    pub fn new(
-        duration: Duration,
-        results: Vec<MutantTestResult>
-    ) -> Self {
+    pub fn new(duration: Duration, results: Vec<MutantTestResult>) -> Self {
         Self { duration, mutation_test_results: results }
     }
 
-    pub fn killed(&self) -> impl Iterator<Item = &MutantTestResult>  {
-        self.mutation_test_results().filter(
-            |result| result.killed() 
-        )
+    pub fn killed(&self) -> impl Iterator<Item = &MutantTestResult> {
+        self.mutation_test_results().filter(|result| result.killed())
     }
 
-    pub fn survived(&self) -> impl Iterator<Item = &MutantTestResult>  {
-        self.mutation_test_results().filter(
-            |result| result.survived()
-        )
+    pub fn survived(&self) -> impl Iterator<Item = &MutantTestResult> {
+        self.mutation_test_results().filter(|result| result.survived())
     }
 
-    pub fn equivalent(&self) -> impl Iterator<Item = &MutantTestResult>  {
-        self.mutation_test_results().filter(
-            |result| result.equivalent()
-        )
+    pub fn equivalent(&self) -> impl Iterator<Item = &MutantTestResult> {
+        self.mutation_test_results().filter(|result| result.equivalent())
     }
 
     pub fn mutation_test_results(&self) -> impl Iterator<Item = &MutantTestResult> {
@@ -143,38 +131,37 @@ pub struct MutationTestOutcome {
     pub allow_failure: bool,
 
     // this would be Contract -> SuiteResult
-    pub test_suite_result: BTreeMap<String, MutationTestSuiteResult>
+    pub test_suite_result: BTreeMap<String, MutationTestSuiteResult>,
 }
 
 impl MutationTestOutcome {
     pub fn new(
         allow_failure: bool,
-        test_suite_result: BTreeMap<String, MutationTestSuiteResult>
+        test_suite_result: BTreeMap<String, MutationTestSuiteResult>,
     ) -> Self {
-        Self {
-            allow_failure,
-            test_suite_result
-        }
+        Self { allow_failure, test_suite_result }
     }
 
     /// Total duration for tests
     pub fn duration(&self) -> Duration {
-        self.test_suite_result.values().map(|suite| suite.duration)
+        self.test_suite_result
+            .values()
+            .map(|suite| suite.duration)
             .fold(Duration::from_secs(0), |acc, duration| acc + duration)
     }
 
     /// Iterator over all killed mutation tests
-    pub fn killed(&self) -> impl Iterator<Item = &MutantTestResult>  {
+    pub fn killed(&self) -> impl Iterator<Item = &MutantTestResult> {
         self.results().filter(|result| result.killed())
     }
 
     /// Iterator over all surviving mutation tests
-    pub fn survived(&self) -> impl Iterator<Item = &MutantTestResult>  {
+    pub fn survived(&self) -> impl Iterator<Item = &MutantTestResult> {
         self.results().filter(|result| result.survived())
     }
 
     /// Iterator over all equivalent mutation tests
-    pub fn equivalent(&self) -> impl Iterator<Item = &MutantTestResult>   {
+    pub fn equivalent(&self) -> impl Iterator<Item = &MutantTestResult> {
         self.results().filter(|result| result.equivalent())
     }
 
@@ -201,7 +188,7 @@ impl MutationTestOutcome {
         let survived = self.survived().count();
 
         if self.allow_failure || survived == 0 {
-            return Ok(())
+            return Ok(());
         }
 
         if !shell::verbosity().is_normal() {
@@ -215,7 +202,7 @@ impl MutationTestOutcome {
         for (file_name, suite_result) in self.test_suite_result.iter() {
             let survived = suite_result.survived().count();
             if survived == 0 {
-                continue
+                continue;
             }
 
             let term = if survived > 1 { "mutations" } else { "mutation" };
@@ -230,7 +217,6 @@ impl MutationTestOutcome {
         );
         std::process::exit(1);
     }
-
 }
 
 pub struct MutationTestSummaryReporter {
@@ -240,14 +226,11 @@ pub struct MutationTestSummaryReporter {
 }
 
 impl MutationTestSummaryReporter {
-
     pub(crate) fn new(is_detailed: bool) -> Self {
         let mut table = Table::new();
         table.apply_modifier(UTF8_ROUND_CORNERS);
         let mut row = Row::from(vec![
-            Cell::new("Contract")
-                .set_alignment(CellAlignment::Left)
-                .add_attribute(Attribute::Bold),
+            Cell::new("Contract").set_alignment(CellAlignment::Left).add_attribute(Attribute::Bold),
             Cell::new("Killed")
                 .set_alignment(CellAlignment::Center)
                 .add_attribute(Attribute::Bold)
@@ -261,7 +244,7 @@ impl MutationTestSummaryReporter {
                 .add_attribute(Attribute::Bold)
                 .fg(Color::Yellow),
         ]);
-        
+
         if is_detailed {
             // row.add_cell(
             //     Cell::new("Diff")
@@ -277,9 +260,8 @@ impl MutationTestSummaryReporter {
 
         table.set_header(row);
 
-        Self { table , is_detailed }
+        Self { table, is_detailed }
     }
-
 
     pub fn print_summary(&mut self, mut mutation_test_outcome: &MutationTestOutcome) {
         for (contract_name, suite_result) in mutation_test_outcome.test_suite_result.iter() {
@@ -287,11 +269,8 @@ impl MutationTestSummaryReporter {
 
             let contract_title: String;
             if let Some(result) = suite_result.mutation_test_results.first() {
-                contract_title = format!(
-                    "{}:{}",
-                    result.mutant.source.filename_as_str(),
-                    contract_name
-                );
+                contract_title =
+                    format!("{}:{}", result.mutant.source.filename_as_str(), contract_name);
             } else {
                 contract_title = contract_name.to_string();
             }

@@ -2,14 +2,16 @@ use alloy_json_abi::{Function, JsonAbi as Abi};
 use alloy_primitives::Bytes;
 use eyre::{eyre, Result};
 use foundry_cli::utils::FoundryPathExt;
-use foundry_common::{FunctionFilter, ContractFilter, TestFunctionExt};
+use foundry_common::{ContractFilter, FunctionFilter, TestFunctionExt};
 use foundry_compilers::{
     remappings::RelativeRemapping, Artifact, ArtifactId, ArtifactOutput, ProjectCompileOutput,
 };
 use gambit::{run_mutate, MutateParams};
 use itertools::Itertools;
-use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+};
 
 mod filter;
 pub use filter::*;
@@ -170,11 +172,11 @@ impl Mutator {
         A: ContractFilter + FunctionFilter,
     {
         self.artifacts.iter().filter(|(id, abi, _)| {
-                id.source.starts_with(&self.src_root)
-                && !id.source.as_path().is_sol_test()
-                && filter.matches_path(id.source.to_string_lossy())
-                && filter.matches_contract(&id.name)
-                && abi.functions().any(|func| filter.matches_function(&func.name))
+            id.source.starts_with(&self.src_root) &&
+                !id.source.as_path().is_sol_test() &&
+                filter.matches_path(id.source.to_string_lossy()) &&
+                filter.matches_contract(&id.name) &&
+                abi.functions().any(|func| filter.matches_function(&func.name))
         })
     }
 
@@ -205,7 +207,7 @@ impl Mutator {
 
     /// Run mutation on contract functions that match configured filters
     /// @TODO we should support ability to disable writing out artifacts
-    pub fn run_mutate<A>(self, _: bool , filter: A) -> Result<HashMap<String, Vec<Mutant>>>
+    pub fn run_mutate<A>(self, _: bool, filter: A) -> Result<HashMap<String, Vec<Mutant>>>
     where
         A: ContractFilter + FunctionFilter,
     {

@@ -1,11 +1,14 @@
+use crate::cmd::test::{FilterArgs, ProjectPathsAwareFilter};
 use clap::Parser;
-use foundry_common::{traits::{FunctionFilter, TestFunctionExt}, ContractFilter};
 use foundry_cli::utils::FoundryPathExt;
-use foundry_common::glob::GlobMatcher;
-use foundry_config::Config;
+use foundry_common::{
+    glob::GlobMatcher,
+    traits::{FunctionFilter, TestFunctionExt},
+    ContractFilter,
+};
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
+use foundry_config::Config;
 use std::{fmt, path::Path};
-use crate::cmd::test::{ProjectPathsAwareFilter, FilterArgs};
 
 /// The filter to use during mutation testing.
 ///
@@ -18,11 +21,7 @@ pub struct MutateFilterArgs {
     pub function_pattern: Option<regex::Regex>,
 
     /// Only run mutations on functions that do not match the specified regex pattern.
-    #[clap(
-        long = "no-match-function",
-        visible_alias = "nmf",
-        value_name = "REGEX"
-    )]
+    #[clap(long = "no-match-function", visible_alias = "nmf", value_name = "REGEX")]
     pub function_pattern_inverse: Option<regex::Regex>,
 
     /// Only run mutations on functions in contracts matching the specified regex pattern.
@@ -30,11 +29,7 @@ pub struct MutateFilterArgs {
     pub contract_pattern: Option<regex::Regex>,
 
     /// Only run mutations in contracts that do not match the specified regex pattern.
-    #[clap(
-        long = "no-match-contract",
-        visible_alias = "nmc",
-        value_name = "REGEX"
-    )]
+    #[clap(long = "no-match-contract", visible_alias = "nmc", value_name = "REGEX")]
     pub contract_pattern_inverse: Option<regex::Regex>,
 
     /// Only run mutations on source files matching the specified glob pattern.
@@ -84,61 +79,41 @@ impl MutateFilterArgs {
     ) -> (MutationProjectPathsAwareFilter, ProjectPathsAwareFilter) {
         let mut filter = self.clone();
         if filter.function_pattern.is_none() {
-            filter.function_pattern = config
-                .mutate
-                .function_pattern
-                .clone()
-                .map(|p| p.into());
+            filter.function_pattern = config.mutate.function_pattern.clone().map(|p| p.into());
         }
         if filter.function_pattern_inverse.is_none() {
-            filter.function_pattern_inverse = config
-                .mutate
-                .function_pattern_inverse
-                .clone()
-                .map(|p| p.into());
+            filter.function_pattern_inverse =
+                config.mutate.function_pattern_inverse.clone().map(|p| p.into());
         }
         if filter.contract_pattern.is_none() {
-            filter.contract_pattern = config
-                .mutate
-                .contract_pattern
-                .clone()
-                .map(|p| p.into());
+            filter.contract_pattern = config.mutate.contract_pattern.clone().map(|p| p.into());
         }
         if filter.contract_pattern_inverse.is_none() {
-            filter.contract_pattern_inverse = config
-                .mutate
-                .contract_pattern_inverse
-                .clone()
-                .map(|p| p.into());
+            filter.contract_pattern_inverse =
+                config.mutate.contract_pattern_inverse.clone().map(|p| p.into());
         }
         if filter.path_pattern.is_none() {
             filter.path_pattern = config.mutate.path_pattern.clone().map(Into::into);
         }
         if filter.path_pattern_inverse.is_none() {
-            filter.path_pattern_inverse = config
-                .mutate
-                .path_pattern_inverse
-                .clone()
-                .map(Into::into);
+            filter.path_pattern_inverse =
+                config.mutate.path_pattern_inverse.clone().map(Into::into);
         }
 
         // Parse test filter
-        let test_filter: FilterArgs = FilterArgs { 
+        let test_filter: FilterArgs = FilterArgs {
             test_pattern: filter.test_pattern.clone(),
             test_pattern_inverse: filter.test_pattern_inverse.clone(),
             contract_pattern: filter.test_contract_pattern.clone(),
             contract_pattern_inverse: filter.test_contract_pattern_inverse.clone(),
             path_pattern: filter.test_path_pattern.clone(),
-            path_pattern_inverse: filter.test_path_pattern_inverse.clone()
+            path_pattern_inverse: filter.test_path_pattern_inverse.clone(),
         };
         let test_paths_aware_filter = test_filter.merge_with_mutate_config(&config);
 
         (
-            MutationProjectPathsAwareFilter {
-                args_filter: filter,
-                paths: config.project_paths(),
-            }, 
-            test_paths_aware_filter
+            MutationProjectPathsAwareFilter { args_filter: filter, paths: config.project_paths() },
+            test_paths_aware_filter,
         )
     }
 }
@@ -146,30 +121,12 @@ impl MutateFilterArgs {
 impl fmt::Debug for MutateFilterArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MutationTestFilterArgs")
-            .field(
-                "match-function",
-                &self.function_pattern.as_ref().map(|r| r.as_str()),
-            )
-            .field(
-                "no-match-function",
-                &self.function_pattern_inverse.as_ref().map(|r| r.as_str()),
-            )
-            .field(
-                "match-contract",
-                &self.contract_pattern.as_ref().map(|r| r.as_str()),
-            )
-            .field(
-                "no-match-contract",
-                &self.contract_pattern_inverse.as_ref().map(|r| r.as_str()),
-            )
-            .field(
-                "match-path",
-                &self.path_pattern.as_ref().map(|g| g.as_str()),
-            )
-            .field(
-                "no-match-path",
-                &self.path_pattern_inverse.as_ref().map(|g| g.as_str()),
-            )
+            .field("match-function", &self.function_pattern.as_ref().map(|r| r.as_str()))
+            .field("no-match-function", &self.function_pattern_inverse.as_ref().map(|r| r.as_str()))
+            .field("match-contract", &self.contract_pattern.as_ref().map(|r| r.as_str()))
+            .field("no-match-contract", &self.contract_pattern_inverse.as_ref().map(|r| r.as_str()))
+            .field("match-path", &self.path_pattern.as_ref().map(|g| g.as_str()))
+            .field("no-match-path", &self.path_pattern_inverse.as_ref().map(|g| g.as_str()))
             .finish_non_exhaustive()
     }
 }
@@ -304,7 +261,7 @@ impl ContractFilter for MutationProjectPathsAwareFilter {
 }
 
 impl FunctionFilter for MutationProjectPathsAwareFilter {
-    fn matches_function(&self, function_name:impl AsRef<str>) -> bool {
+    fn matches_function(&self, function_name: impl AsRef<str>) -> bool {
         self.args_filter.matches_function(function_name)
     }
 }

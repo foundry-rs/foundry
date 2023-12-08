@@ -1,16 +1,16 @@
-use std::{
-    thread,
-    time::Duration,
-    sync::mpsc::{self, TryRecvError}
-};
 use foundry_common::term::Spinner;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::{
+    sync::mpsc::{self, TryRecvError},
+    thread,
+    time::Duration,
+};
 
 /// This reporter will prefix messages with a spinning cursor
 #[derive(Debug)]
 pub struct MutateSpinnerReporter {
     /// The sender to the spinner thread.
-    progress_bar: ProgressBar
+    progress_bar: ProgressBar,
 }
 
 impl MutateSpinnerReporter {
@@ -20,7 +20,7 @@ impl MutateSpinnerReporter {
         progress_bar.set_style(
             ProgressStyle::with_template("[{spinner:.bold}] {msg}\n\n")
                 .unwrap()
-                .tick_strings(&[" ", "▖", "▘", "▀", "▜", "▟", "▄",  "█"]),
+                .tick_strings(&[" ", "▖", "▘", "▀", "▜", "▟", "▄", "█"]),
         );
 
         progress_bar.set_message(message.to_string());
@@ -35,5 +35,4 @@ impl MutateSpinnerReporter {
     pub fn finish(self) {
         self.progress_bar.finish();
     }
-
 }
