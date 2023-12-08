@@ -188,7 +188,7 @@ impl TestArgs {
         // Prepare the test builder
         let should_debug = self.debug.is_some();
 
-        let mut runner_builder = MultiContractRunnerBuilder::default()
+        let runner_builder = MultiContractRunnerBuilder::default()
             .set_debug(should_debug)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
@@ -197,7 +197,7 @@ impl TestArgs {
             .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone()))
             .with_test_options(test_options.clone());
 
-        let mut runner = runner_builder.clone().build(
+        let runner = runner_builder.clone().build(
             project_root,
             output.clone(),
             env.clone(),
@@ -212,17 +212,6 @@ impl TestArgs {
                     "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n\n\
                      Use --match-contract and --match-path to further limit the search."
                 );
-            }
-            let test_funcs = runner.get_matching_test_functions(&filter);
-            // if we debug a fuzz test, we should not collect data on the first run
-            if !test_funcs.first().expect("matching function exists").inputs.is_empty() {
-                runner_builder = runner_builder.set_debug(false);
-                runner = runner_builder.clone().build(
-                    project_root,
-                    output.clone(),
-                    env.clone(),
-                    evm_opts.clone(),
-                )?;
             }
         }
 
@@ -307,7 +296,7 @@ impl TestArgs {
                     let source_contract = compact_to_contract(contract)?;
                     sources
                         .0
-                        .entry(id.clone().name)
+                        .entry(id.name.clone())
                         .or_default()
                         .insert(source.id, (source_code, source_contract));
                 }
