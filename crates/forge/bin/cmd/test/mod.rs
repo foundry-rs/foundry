@@ -348,7 +348,7 @@ impl TestArgs {
                      Forge looks for functions that starts with `test`."
                 );
             } else {
-                println!("No tests match the provided pattern: {filter_str:?}");
+                println!("No tests match the provided pattern:\n{filter_str}");
                 // Try to suggest a test when there's no match
                 if let Some(test_pattern) = &filter.args().test_pattern {
                     let test_name = test_pattern.as_str();
