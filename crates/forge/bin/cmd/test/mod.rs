@@ -344,11 +344,11 @@ impl TestArgs {
             let filter_str = filter.to_string();
             if filter_str.is_empty() {
                 println!(
-                    "No tests found in project! \
+                    "\nNo tests found in project! \
                      Forge looks for functions that starts with `test`."
                 );
             } else {
-                println!("No tests match the provided pattern:\n{filter_str}");
+                println!("\nNo tests match the provided pattern:\n{filter_str}");
                 // Try to suggest a test when there's no match
                 if let Some(test_pattern) = &filter.args().test_pattern {
                     let test_name = test_pattern.as_str();
