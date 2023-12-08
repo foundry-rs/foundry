@@ -123,7 +123,7 @@ contract NestedRunner {
 
 /// Helper contract that uses all three EXT* opcodes on a given address
 contract ExtChecker {
-    function checkExts(address a) external  {
+    function checkExts(address a) external {
         assembly {
             let x := extcodesize(a)
             let y := extcodehash(a)
@@ -210,6 +210,7 @@ contract RecordAccountAccessesTest is DSTest {
     StorageAccessor test1;
     StorageAccessor test2;
     ExtChecker extChecker;
+
     function setUp() public {
         runner = new NestedRunner();
         nestedStorer = new NestedStorer();
@@ -1112,7 +1113,6 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Create));
         assertEq(called[0].account, address(a));
     }
-
 
     /// @notice Test that EXT* opcodes are recorded as account accesses
     function testExtOpcodes() public {
