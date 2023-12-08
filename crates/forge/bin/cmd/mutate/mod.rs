@@ -6,11 +6,10 @@ use crate::cmd::{
     mutate::summary::{
         MutantTestResult, MutationTestOutcome, MutationTestSuiteResult, MutationTestSummaryReporter,
     },
-    test::{test, FilterArgs},
+    test::{test},
 };
 use clap::Parser;
-use ethers_core::types::Filter;
-use eyre::{eyre, Error, Result};
+use eyre::{eyre, Result};
 use forge::{
     inspectors::CheatsConfig, result::SuiteResult, MultiContractRunnerBuilder, TestOptions,
     TestOptionsBuilder,
@@ -24,8 +23,7 @@ use foundry_cli::{
 use foundry_common::{
     compile::{self, ProjectCompiler},
     evm::EvmArgs,
-    shell::{self, println},
-    term::Spinner,
+    shell::{self}
 };
 use foundry_compilers::{
     project_util::{copy_dir, TempProject},
@@ -120,8 +118,8 @@ impl MutateTestArgs {
         shell::set_shell(shell::Shell::from_args(self.opts.silent, self.json))?;
         println!(
             "\n{}{}",
-            Paint::white("[.] Starting Mutation Test. "),
-            Paint::white("Go grab a cup of coffee ☕, it's going to take a while").bold()
+            Paint::white("[.] Starting Mutation Test\n"),
+            Paint::white("Go grab a cup of coffee ☕, it's going to take a while")
         );
         self.execute_mutation_test().await
     }
@@ -167,7 +165,6 @@ impl MutateTestArgs {
         }
 
         println!();
-        let spinner = MutateSpinnerReporter::new("Generating Mutants...\n");
         let mutator = MutatorConfigBuilder::new(
             project.solc.solc.clone(),
             config.optimizer,
@@ -195,19 +192,14 @@ impl MutateTestArgs {
         // This is because Gambit writes to disk multiple files and also general several mutants
         // per line "caught"
         // Improvements can be done to improve gambit performance
+        println!();
+        let spinner = MutateSpinnerReporter::new("Generating Mutants");
         trace!("Running gambit");
         let mutants_output = mutator.run_mutate(self.export, mutate_filter.clone())?;
         trace!("Finished running gambit");
-        // this is required for progress bar
-        let mutants_len_iterator: Vec<&Mutant> =
-            mutants_output.iter().flat_map(|(_, v)| v).collect();
         // Finish spinner
         spinner.finish();
 
-        println!();
-        println!("[.] Testing Mutants...");
-        let progress_bar = init_progress!(mutants_len_iterator, "Mutants");
-        progress_bar.set_position(0);
 
         // @Notice This is having a race condition on Fuzz and Invariant tests
         // let mutant_test_suite_results: BTreeMap<String, MutationTestSuiteResult> =
@@ -229,6 +221,14 @@ impl MutateTestArgs {
         // MutationTestSuiteResult::new(duration, result)))         }
         //     )
         // ).await?.into_iter());
+        println!();
+        println!("[.] Testing Mutants...");
+        // this is required for progress bar
+        let mutants_len_iterator: Vec<&Mutant> =
+            mutants_output.iter().flat_map(|(_, v)| v).collect();
+        let progress_bar = init_progress!(mutants_len_iterator, "Mutants");
+        progress_bar.set_position(0);
+
         let mut mutant_test_suite_results: BTreeMap<String, MutationTestSuiteResult> =
             BTreeMap::new();
         let mut progress_bar_index = 0;
@@ -265,7 +265,7 @@ impl MutateTestArgs {
         }
 
         // finish progress bar
-        progress_bar.finish();
+        progress_bar.finish_and_clear();
 
         if self.json {
             println!(
@@ -303,7 +303,7 @@ impl MutateTestArgs {
         test_filter: &ProjectPathsAwareFilter,
     ) -> Result<(TestOutcome, ProjectCompileOutput)> {
         let output = project.compile()?;
-        output.assert_success();
+        // output.assert_success();
 
         // Create test options from general project settings
         // and compiler output
@@ -370,10 +370,6 @@ impl Provider for MutateTestArgs {
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut dict = Dict::default();
 
-        // let mut mutate_dict = Dict::default();
-        // mutate_dict.insert("export".into(), self.export.into());
-        // dict.insert("mutate".into(), mutate_dict.into());
-
         // Override the fuzz and invariants run
         // We do not want fuzz and invariant tests to run once so the test
         // setup is faster.
@@ -430,29 +426,28 @@ pub async fn test_mutant(
 
     let start = Instant::now();
     // get mutant source
-    // @TODO can i cache the step and edit the file in memory
     let mutant_contents = mutant.as_source_string().map_err(|err| eyre!("{:?}", err))?;
-    // println!("{:?}", mutant_contents);
     // setup file source root
     let mutant_filename = mutant.source.filename_as_str();
     let file_source_root = temp_project.root().join(mutant_filename);
-    // println!("{:?}", file_source_root.to_string_lossy());
     // Write Mutant contents to file in temp_directory
     fs::write(&file_source_root.clone().as_path(), mutant_contents)?;
 
     // let project = config.project()?;
     let env = evm_opts.evm_env().await?;
+
+    // @TODO compile_sparse should be the preferred approach it makes the compilation step
+    // quite fast.
+    // At the moment there is a bug in the implementation.
     // This should only recompile the changed file. It makes the compilation step very fast
     // This is quite expensive in terms of time taken
     // let output = project.compile_sparse(
     // move |path: &Path| {
     //     println!("{:?}", path.to_str());
     //     path.starts_with(&file_source_root) || path.ends_with(".t.sol")
-
     // }
     // )?;
     let output = project.compile()?;
-    // println!("{:?}", output);
 
     let project_root = &project.root();
     let toml = config.get_config_path();

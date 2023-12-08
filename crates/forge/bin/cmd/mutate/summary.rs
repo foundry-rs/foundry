@@ -6,7 +6,7 @@ use foundry_common::shell;
 use foundry_evm_mutator::Mutant;
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 use similar::TextDiff;
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, time::Duration, ops::Add};
 use yansi::Paint;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -230,19 +230,19 @@ impl MutationTestSummaryReporter {
         let mut table = Table::new();
         table.apply_modifier(UTF8_ROUND_CORNERS);
         let mut row = Row::from(vec![
-            Cell::new("Contract").set_alignment(CellAlignment::Left).add_attribute(Attribute::Bold),
+            Cell::new("File").set_alignment(CellAlignment::Left).add_attribute(Attribute::Bold),
             Cell::new("Killed")
                 .set_alignment(CellAlignment::Center)
                 .add_attribute(Attribute::Bold)
-                .fg(Color::Green),
+                .fg(Color::White),
             Cell::new("Survived")
                 .set_alignment(CellAlignment::Center)
                 .add_attribute(Attribute::Bold)
-                .fg(Color::Red),
+                .fg(Color::White),
             Cell::new("Equivalent")
                 .set_alignment(CellAlignment::Center)
                 .add_attribute(Attribute::Bold)
-                .fg(Color::Yellow),
+                .fg(Color::White)
         ]);
 
         if is_detailed {
@@ -258,12 +258,23 @@ impl MutationTestSummaryReporter {
             );
         }
 
-        table.set_header(row);
+        row.add_cell(
+            Cell::new("% Score")
+                .set_alignment(CellAlignment::Center)
+                .add_attribute(Attribute::Bold)
+                .fg(Color::White)
+        );
 
+        table.set_header(row);
         Self { table, is_detailed }
     }
 
     pub fn print_summary(&mut self, mut mutation_test_outcome: &MutationTestOutcome) {
+
+        let mut total_killed: f64 = 0.0;
+        let mut total_survived: f64 = 0.0;
+        let mut total_equivalent: f64 = 0.0;
+        let mut total_time_taken = Duration::ZERO;
         for (contract_name, suite_result) in mutation_test_outcome.test_suite_result.iter() {
             let mut row = Row::new();
 
@@ -278,34 +289,79 @@ impl MutationTestSummaryReporter {
             let file_cell = Cell::new(contract_title).set_alignment(CellAlignment::Left);
             row.add_cell(file_cell);
 
-            let killed = suite_result.killed().count();
-            let survived = suite_result.survived().count();
-            let equivalent = suite_result.equivalent().count();
+            let killed = suite_result.killed().count() as f64;
+            total_killed += killed;
+            let survived = suite_result.survived().count() as f64;
+            total_survived += survived;
+            let equivalent = suite_result.equivalent().count() as f64;
+            total_equivalent += equivalent;
 
             let mut killed_cell = Cell::new(killed).set_alignment(CellAlignment::Center);
             let mut survived_cell = Cell::new(survived).set_alignment(CellAlignment::Center);
             let mut equivalent_cell = Cell::new(equivalent).set_alignment(CellAlignment::Center);
 
-            if killed > 0 {
+            if killed > 0.0 {
                 killed_cell = killed_cell.fg(Color::Green);
             }
             row.add_cell(killed_cell);
 
-            if survived > 0 {
+            if survived > 0.0 {
                 survived_cell = survived_cell.fg(Color::Red);
             }
             row.add_cell(survived_cell);
 
-            if equivalent > 0 {
+            if equivalent > 0.0 {
                 equivalent_cell = equivalent_cell.fg(Color::Yellow);
             }
             row.add_cell(equivalent_cell);
 
             if self.is_detailed {
+                total_time_taken = total_time_taken.add(suite_result.duration);
                 row.add_cell(Cell::new(format!("{:.2?}", suite_result.duration).to_string()));
             }
+
+            let mut mutation_score: f64 = 0.0;
+            if killed > 0.0 {
+                mutation_score = ((killed / (killed + survived)) * 100.0) as f64;
+            }
+            let mut mutation_score_cell = Cell::new(
+                format!("{:.2}", mutation_score).to_string()
+            ).set_alignment(CellAlignment::Center);
+
+            mutation_score_cell = if mutation_score > 50.0 { mutation_score_cell.fg(Color::Green)} else { mutation_score_cell.fg(Color::Red)};
+
+            row.add_cell(mutation_score_cell);
+
             self.table.add_row(row);
         }
+
+
+        let mut footer  = Row::from(vec![
+            Cell::new("Total").set_alignment(CellAlignment::Center),
+            Cell::new(total_killed).set_alignment(CellAlignment::Center),
+            Cell::new(total_survived).set_alignment(CellAlignment::Center),
+            Cell::new(total_equivalent).set_alignment(CellAlignment::Center),
+        ]);
+
+        if self.is_detailed {
+            footer.add_cell(
+                Cell::new(format!("{:.2?}", total_time_taken).to_string()).set_alignment(CellAlignment::Left)
+            );
+        }
+
+        
+        let mut mutation_score: f64 = 0.0;
+        if total_killed > 0.0 {
+            mutation_score = ((total_killed / (total_killed + total_survived)) * 100.0) as f64;
+        }
+        let mut mutation_score_cell = Cell::new(
+            format!("{:.2}", mutation_score).to_string()
+        ).set_alignment(CellAlignment::Center);
+        mutation_score_cell = if mutation_score > 50.0 { mutation_score_cell.fg(Color::Green)} else { mutation_score_cell.fg(Color::Red)};
+        
+        footer.add_cell(mutation_score_cell);
+        self.table.add_row(footer);
+
         println!("\n{}", self.table);
     }
 }

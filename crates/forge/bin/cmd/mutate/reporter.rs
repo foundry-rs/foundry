@@ -18,7 +18,7 @@ impl MutateSpinnerReporter {
         let progress_bar: ProgressBar = ProgressBar::new_spinner();
         progress_bar.enable_steady_tick(Duration::from_millis(120));
         progress_bar.set_style(
-            ProgressStyle::with_template("[{spinner:.bold}] {msg}\n\n")
+            ProgressStyle::with_template("{spinner:.bold} {msg}\n")
                 .unwrap()
                 .tick_strings(&[" ", "▖", "▘", "▀", "▜", "▟", "▄", "█"]),
         );
@@ -33,6 +33,6 @@ impl MutateSpinnerReporter {
     }
 
     pub fn finish(self) {
-        self.progress_bar.finish();
+        self.progress_bar.finish_and_clear();
     }
 }
