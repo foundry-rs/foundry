@@ -175,7 +175,7 @@ impl<'a> ContractRunner<'a> {
     /// Runs all tests for a contract whose names match the provided regular expression
     pub fn run_tests(
         mut self,
-        filter: impl TestFilter,
+        filter: &dyn TestFilter,
         test_options: TestOptions,
         known_contracts: Option<&ContractsByArtifact>,
     ) -> SuiteResult {
@@ -247,7 +247,7 @@ impl<'a> ContractRunner<'a> {
         let functions: Vec<_> = self.contract.functions().collect();
         let mut test_results = functions
             .par_iter()
-            .filter(|&&func| func.is_test() && filter.matches_test(func.signature()))
+            .filter(|&&func| func.is_test() && filter.matches_test(&func.signature()))
             .map(|&func| {
                 let should_fail = func.is_test_fail();
                 let res = if func.is_fuzz_test() {
@@ -265,7 +265,7 @@ impl<'a> ContractRunner<'a> {
             let identified_contracts = load_contracts(setup.traces.clone(), known_contracts);
             let results: Vec<_> = functions
                 .par_iter()
-                .filter(|&&func| func.is_invariant_test() && filter.matches_test(func.signature()))
+                .filter(|&&func| func.is_invariant_test() && filter.matches_test(&func.signature()))
                 .map(|&func| {
                     let runner = test_options.invariant_runner(self.name, &func.name);
                     let invariant_config = test_options.invariant_config(self.name, &func.name);

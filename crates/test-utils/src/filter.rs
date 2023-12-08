@@ -1,5 +1,6 @@
 use foundry_common::TestFilter;
 use regex::Regex;
+use std::path::Path;
 
 pub struct Filter {
     test_regex: Regex,
@@ -60,25 +61,27 @@ impl Filter {
 }
 
 impl TestFilter for Filter {
-    fn matches_test(&self, test_name: impl AsRef<str>) -> bool {
-        let test_name = test_name.as_ref();
-        if let Some(ref exclude) = self.exclude_tests {
+    fn matches_test(&self, test_name: &str) -> bool {
+        if let Some(exclude) = &self.exclude_tests {
             if exclude.is_match(test_name) {
-                return false
+                return false;
             }
         }
         self.test_regex.is_match(test_name)
     }
 
-    fn matches_contract(&self, contract_name: impl AsRef<str>) -> bool {
-        self.contract_regex.is_match(contract_name.as_ref())
+    fn matches_contract(&self, contract_name: &str) -> bool {
+        self.contract_regex.is_match(contract_name)
     }
 
-    fn matches_path(&self, path: impl AsRef<str>) -> bool {
-        let path = path.as_ref();
-        if let Some(ref exclude) = self.exclude_paths {
+    fn matches_path(&self, path: &Path) -> bool {
+        let Some(path) = path.to_str() else {
+            return false;
+        };
+
+        if let Some(exclude) = &self.exclude_paths {
             if exclude.is_match(path) {
-                return false
+                return false;
             }
         }
         self.path_regex.is_match(path)
