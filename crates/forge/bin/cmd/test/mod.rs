@@ -80,15 +80,15 @@ pub struct TestArgs {
     #[clap(long, short, help_heading = "Display options")]
     json: bool,
 
-    /// Stop running tests after the first failure
+    /// Stop running tests after the first failure.
     #[clap(long)]
     pub fail_fast: bool,
 
-    /// The Etherscan (or equivalent) API key
+    /// The Etherscan (or equivalent) API key.
     #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     etherscan_api_key: Option<String>,
 
-    /// List tests instead of running them
+    /// List tests instead of running them.
     #[clap(long, short, help_heading = "Display options")]
     list: bool,
 
@@ -111,12 +111,12 @@ pub struct TestArgs {
     #[clap(flatten)]
     pub watch: WatchArgs,
 
-    /// Print test summary table
+    /// Print test summary table.
     #[clap(long, help_heading = "Display options")]
     pub summary: bool,
 
-    /// Print detailed test summary table
-    #[clap(long, help_heading = "Display options")]
+    /// Print detailed test summary table.
+    #[clap(long, help_heading = "Display options", requires = "summary")]
     pub detailed: bool,
 }
 
@@ -220,7 +220,7 @@ impl TestArgs {
         let remote_chain_id = runner.evm_opts.get_remote_chain_id();
 
         let outcome = self
-            .run_tests(runner, config.clone(), verbosity, filter.clone(), test_options.clone())
+            .run_tests(runner, config.clone(), verbosity, &filter, test_options.clone())
             .await?;
 
         if should_debug {
@@ -324,38 +324,34 @@ impl TestArgs {
         mut runner: MultiContractRunner,
         config: Config,
         verbosity: u8,
-        mut filter: ProjectPathsAwareFilter,
+        filter: &ProjectPathsAwareFilter,
         test_options: TestOptions,
     ) -> eyre::Result<TestOutcome> {
-        if self.debug.is_some() {
-            filter.args_mut().test_pattern = self.debug.clone();
-            // Run the test
-            let results = runner.test(&filter, None, test_options).await;
-
-            Ok(TestOutcome::new(results, self.allow_failure))
-        } else if self.list {
-            list(runner, filter, self.json)
-        } else {
-            if self.detailed && !self.summary {
-                return Err(eyre::eyre!(
-                    "Missing `--summary` option in your command. You must pass it along with the `--detailed` option to view detailed test summary."
-                ));
-            }
-            test(
-                config,
-                runner,
-                verbosity,
-                filter,
-                self.json,
-                self.allow_failure,
-                test_options,
-                self.gas_report,
-                self.fail_fast,
-                self.summary,
-                self.detailed,
-            )
-            .await
+        if self.list {
+            return list(runner, filter, self.json);
         }
+
+        if let Some(debug_regex) = self.debug.as_ref() {
+            let mut filter = filter.clone();
+            filter.args_mut().test_pattern = Some(debug_regex.clone());
+            let results = runner.test_map(&filter, test_options).await;
+            return Ok(TestOutcome::new(results, self.allow_failure));
+        }
+
+        test(
+            config,
+            runner,
+            verbosity,
+            filter,
+            self.json,
+            self.allow_failure,
+            test_options,
+            self.gas_report,
+            self.fail_fast,
+            self.summary,
+            self.detailed,
+        )
+        .await
     }
 
     /// Returns the flattened [`FilterArgs`] arguments merged with [`Config`].
@@ -556,10 +552,10 @@ fn format_aggregated_summary(
 /// Lists all matching tests
 fn list(
     runner: MultiContractRunner,
-    filter: ProjectPathsAwareFilter,
+    filter: &ProjectPathsAwareFilter,
     json: bool,
 ) -> Result<TestOutcome> {
-    let results = runner.list(&filter);
+    let results = runner.list(filter);
 
     if json {
         println!("{}", serde_json::to_string(&results)?);
@@ -581,7 +577,7 @@ async fn test(
     config: Config,
     mut runner: MultiContractRunner,
     verbosity: u8,
-    filter: ProjectPathsAwareFilter,
+    filter: &ProjectPathsAwareFilter,
     json: bool,
     allow_failure: bool,
     test_options: TestOptions,
@@ -592,7 +588,7 @@ async fn test(
 ) -> Result<TestOutcome> {
     trace!(target: "forge::test", "running all tests");
 
-    if runner.matching_test_function_count(&filter) == 0 {
+    if runner.matching_test_function_count(filter) == 0 {
         let filter_str = filter.to_string();
         if filter_str.is_empty() {
             println!(
@@ -604,7 +600,7 @@ async fn test(
             // Try to suggest a test when there's no match
             if let Some(ref test_pattern) = filter.args().test_pattern {
                 let test_name = test_pattern.as_str();
-                let candidates = runner.get_tests(&filter);
+                let candidates = runner.get_tests(filter);
                 if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
                     println!("\nDid you mean `{suggestion}`?");
                 }
@@ -613,7 +609,7 @@ async fn test(
     }
 
     if json {
-        let results = runner.test(filter, None, test_options).await;
+        let results = runner.test_map(filter, test_options).await;
         println!("{}", serde_json::to_string(&results)?);
         return Ok(TestOutcome::new(results, allow_failure))
     }
@@ -629,8 +625,10 @@ async fn test(
     let (tx, rx) = channel::<(String, SuiteResult)>();
 
     // Run tests
-    let handle =
-        tokio::task::spawn(async move { runner.test(filter, Some(tx), test_options).await });
+    let handle = tokio::task::spawn({
+        let filter = filter.clone();
+        async move { runner.test(&filter, tx, test_options).await }
+    });
 
     let mut results = BTreeMap::new();
     let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
@@ -765,7 +763,7 @@ async fn test(
     }
 
     // reattach the task
-    let _results = handle.await?;
+    handle.await?;
 
     trace!(target: "forge::test", "received {} results", results.len());
 

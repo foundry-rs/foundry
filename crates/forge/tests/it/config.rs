@@ -54,7 +54,7 @@ impl TestConfig {
 
     /// Executes the test runner
     pub async fn test(&mut self) -> BTreeMap<String, SuiteResult> {
-        self.runner.test(&self.filter, None, self.opts.clone()).await
+        self.runner.test_map(&self.filter, self.opts.clone()).await
     }
 
     pub async fn run(&mut self) {
