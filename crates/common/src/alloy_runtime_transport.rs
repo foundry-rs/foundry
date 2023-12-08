@@ -182,7 +182,7 @@ impl RuntimeTransport {
         client_builder = client_builder.default_headers(headers);
 
         let client =
-            client_builder.build().map_err(|e| RuntimeTransportError::HttpConstructionError(e))?;
+            client_builder.build().map_err(RuntimeTransportError::HttpConstructionError)?;
 
         // todo: retry tower layer
         Ok(InnerTransport::Http(Http::with_client(client, self.url.clone())))
@@ -194,7 +194,7 @@ impl RuntimeTransport {
         let ws = WsConnect { url: self.url.to_string(), auth }
             .into_service()
             .await
-            .map_err(|e| RuntimeTransportError::TransportError(e))?;
+            .map_err(RuntimeTransportError::TransportError)?;
         Ok(InnerTransport::Ws(ws))
     }
 
@@ -203,10 +203,8 @@ impl RuntimeTransport {
         let path = url_to_file_path(&self.url)
             .map_err(|_| RuntimeTransportError::BadPath(self.url.to_string()))?;
         let ipc_connector: IpcConnect<PathBuf> = path.into();
-        let ipc = ipc_connector
-            .into_service()
-            .await
-            .map_err(|e| RuntimeTransportError::TransportError(e))?;
+        let ipc =
+            ipc_connector.into_service().await.map_err(RuntimeTransportError::TransportError)?;
         Ok(InnerTransport::Ipc(ipc))
     }
 
@@ -220,7 +218,7 @@ impl RuntimeTransport {
         Box::pin(async move {
             if this.inner.read().await.is_none() {
                 let mut w = this.inner.write().await;
-                *w = Some(this.connect().await.map_err(|e| TransportErrorKind::custom(e))?)
+                *w = Some(this.connect().await.map_err(TransportErrorKind::custom)?)
             }
 
             let mut inner = this.inner.write().await;

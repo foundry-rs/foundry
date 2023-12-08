@@ -227,7 +227,6 @@ impl ProviderBuilder {
         } = self;
         let url = url?;
 
-        // todo: ipc
         // todo: port alchemy compute units logic?
         // todo: provider polling interval
         let transport_builder = RuntimeTransportBuilder::new(url.clone())
