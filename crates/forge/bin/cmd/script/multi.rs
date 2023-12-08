@@ -35,11 +35,9 @@ pub struct SensitiveMultiChainSequence {
     pub deployments: Vec<SensitiveScriptSequence>,
 }
 
-impl From<&mut MultiChainSequence> for SensitiveMultiChainSequence {
-    fn from(sequence: &mut MultiChainSequence) -> Self {
-        SensitiveMultiChainSequence {
-            deployments: sequence.deployments.iter_mut().map(|sequence| sequence.into()).collect(),
-        }
+fn to_sensitive(sequence: &mut MultiChainSequence) -> SensitiveMultiChainSequence {
+    SensitiveMultiChainSequence {
+        deployments: sequence.deployments.iter_mut().map(|sequence| sequence.into()).collect(),
     }
 }
 
@@ -140,7 +138,7 @@ impl MultiChainSequence {
     pub fn save(&mut self) -> Result<()> {
         self.timestamp = now().as_secs();
 
-        let sensitive_sequence: SensitiveMultiChainSequence = self.into();
+        let sensitive_sequence: SensitiveMultiChainSequence = to_sensitive(self);
 
         // broadcast writes
         //../Contract-latest/run.json
