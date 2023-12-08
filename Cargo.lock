@@ -2727,7 +2727,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "async-trait",
- "auto_impl",
  "clap",
  "comfy-table",
  "const-hex",

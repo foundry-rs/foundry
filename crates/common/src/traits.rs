@@ -3,11 +3,9 @@
 use alloy_json_abi::Function;
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolError;
-use auto_impl::auto_impl;
 use std::path::Path;
 
-/// Extension trait for matching tests
-#[auto_impl(&)]
+/// Test filter.
 pub trait TestFilter: Send + Sync {
     /// Returns whether the test should be included.
     fn matches_test(&self, test_name: &str) -> bool;
@@ -20,7 +18,6 @@ pub trait TestFilter: Send + Sync {
 }
 
 /// Extension trait for `Function`.
-#[auto_impl(&)]
 pub trait TestFunctionExt {
     /// Returns whether this function should be executed as invariant test.
     fn is_invariant_test(&self) -> bool;
