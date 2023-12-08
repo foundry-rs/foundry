@@ -506,11 +506,15 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     );
                 }
                 // Record account accesses via the EXT family of opcodes
-                opcode::EXTCODECOPY | opcode::EXTCODESIZE | opcode::EXTCODEHASH => {
+                opcode::EXTCODECOPY |
+                opcode::EXTCODESIZE |
+                opcode::EXTCODEHASH |
+                opcode::BALANCE => {
                     let kind = match interpreter.current_opcode() {
                         opcode::EXTCODECOPY => crate::Vm::AccountAccessKind::Extcodecopy,
                         opcode::EXTCODESIZE => crate::Vm::AccountAccessKind::Extcodesize,
                         opcode::EXTCODEHASH => crate::Vm::AccountAccessKind::Extcodehash,
+                        opcode::BALANCE => crate::Vm::AccountAccessKind::Balance,
                         _ => unreachable!(),
                     };
                     let address = Address::from_word(B256::from(try_or_continue!(interpreter

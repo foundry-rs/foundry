@@ -129,7 +129,7 @@ contract ExtChecker {
             let y := extcodehash(a)
             extcodecopy(a, x, y, 0)
             // sstore to check that storage accesses are correctly stored in a new access with a "resume" context
-            sstore(0, 1)
+            sstore(0, balance(a))
         }
     }
 }
@@ -1119,7 +1119,7 @@ contract RecordAccountAccessesTest is DSTest {
         cheats.startStateDiffRecording();
         extChecker.checkExts(address(1234));
         Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
-        assertEq(called.length, 6, "incorrect length");
+        assertEq(called.length, 7, "incorrect length");
         // initial solidity extcodesize check for calling extChecker
         assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Extcodesize));
         // call to extChecker
@@ -1128,9 +1128,10 @@ contract RecordAccountAccessesTest is DSTest {
         assertEq(toUint(called[2].kind), toUint(Vm.AccountAccessKind.Extcodesize));
         assertEq(toUint(called[3].kind), toUint(Vm.AccountAccessKind.Extcodehash));
         assertEq(toUint(called[4].kind), toUint(Vm.AccountAccessKind.Extcodecopy));
+        assertEq(toUint(called[5].kind), toUint(Vm.AccountAccessKind.Balance));
         // resume of extChecker to hold SSTORE access
-        assertEq(toUint(called[5].kind), toUint(Vm.AccountAccessKind.Resume));
-        assertEq(called[5].storageAccesses.length, 1, "incorrect length");
+        assertEq(toUint(called[6].kind), toUint(Vm.AccountAccessKind.Resume));
+        assertEq(called[6].storageAccesses.length, 1, "incorrect length");
     }
 
     /**

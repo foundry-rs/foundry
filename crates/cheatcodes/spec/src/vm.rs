@@ -53,6 +53,8 @@ interface Vm {
         SelfDestruct,
         /// Synthetic access indicating the current context has resumed after a previous sub-context (AccountAccess).
         Resume,
+        /// The account's balance was read.
+        Balance,
         /// The account's codesize was read.
         Extcodesize,
         /// The account's code was copied.
