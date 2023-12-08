@@ -1,4 +1,4 @@
-use super::{install, test::ProjectPathsAwareFilter};
+use super::{install, test::{ProjectPathsAwareFilter, TestOutcome}};
 use clap::Parser;
 use ethers_core::types::Filter;
 use eyre::{eyre, Result, Error};
@@ -18,7 +18,7 @@ use foundry_common::{
     evm::EvmArgs,
     shell::{self, println}, term::Spinner
 };
-use foundry_compilers::{project_util::{copy_dir, TempProject}, report, Project, TestFileFilter};
+use foundry_compilers::{project_util::{copy_dir, TempProject}, report, Project, TestFileFilter, ProjectCompileOutput};
 use foundry_config::{
     figment,
     figment::{
@@ -56,9 +56,6 @@ pub use reporter::*;
 foundry_config::merge_impl_figment_convert!(MutateTestArgs, opts, evm_opts);
 
 // @TODO
-// json output
-// fail fast
-// allow failure
 // export
 // command line output
 
@@ -79,7 +76,7 @@ pub struct MutateTestArgs {
     #[clap(long, env = "FORGE_ALLOW_FAILURE")]
     allow_failure: bool,
 
-    /// Stop running mutation tests after the first failure
+    /// Stop running mutation tests after the first surviving mutation
     #[clap(long)]
     pub fail_fast: bool,
 
@@ -151,54 +148,8 @@ impl MutateTestArgs {
             project = config.project()?;
         }
 
-        let output = project.compile()?;
-        output.assert_success();
-
-        // Create test options from general project settings
-        // and compiler output
-        let project_root = &project.paths.root;
-        let toml = config.get_config_path();
-        let profiles = get_available_profiles(toml)?;
-        let env = evm_opts.evm_env().await?;
-
-        let test_options: TestOptions = TestOptionsBuilder::default()
-            .fuzz(config.fuzz)
-            .invariant(config.invariant)
-            .profiles(profiles)
-            .build(&output, project_root)?;
-
-        let runner_builder = MultiContractRunnerBuilder::default()
-            .set_debug(false)
-            .initial_balance(evm_opts.initial_balance)
-            .evm_spec(config.evm_spec_id())
-            .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone()))
-            .with_test_options(test_options.clone());
-
-        let runner = runner_builder.clone().build(
-                project_root,
-                output.clone(),
-                env.clone(),
-                evm_opts.clone(),
-            )?;
-        
-        let test_outcome = test(
-            config.clone(),
-            runner,
-            0,
-            test_filter.clone(),
-            false,
-            false,
-            test_options,
-            false,
-            true,
-            false,
-            false
-        ).await?;
-
-        // Ensure test outcome is ok
-        // exit if any test is failing
+        let (test_outcome, output) = self.compile_and_test_project(&project, &config, &evm_opts, &test_filter).await?;
+        // Ensure test outcome is ok, exit if any test is failing
         if test_outcome.failures().count() > 0 {
             test_outcome.ensure_ok()?;
         }
@@ -235,7 +186,7 @@ impl MutateTestArgs {
         // per line "caught"
         // Improvements can be done to improve gambit performance
         trace!("Running gambit");
-        let mutants_output = mutator.run_mutate(mutate_filter.clone())?;
+        let mutants_output = mutator.run_mutate(self.export, mutate_filter.clone())?;
         trace!("Finished running gambit");
         // this is required for progress bar
         let mutants_len_iterator: Vec<&Mutant> = mutants_output.iter().flat_map(|(_, v)| v).collect();
@@ -282,9 +233,16 @@ impl MutateTestArgs {
                     mutant.clone(),
                     &project
                 ).await?;
+                let mutant_survived = result.survived();
                 mutant_test_results.push(result);
                 progress_bar_index+=1;
                 update_progress!(progress_bar, progress_bar_index);
+                
+                // if fail is enabled then we exit on the 
+                // first mutant we encounter that survived
+                if self.fail_fast && mutant_survived {
+                    break;
+                }
             }
             let duration = start.elapsed();
             mutant_test_suite_results.insert(file_name.clone(),  MutationTestSuiteResult::new(duration, mutant_test_results));
@@ -294,12 +252,11 @@ impl MutateTestArgs {
         progress_bar.finish();
 
         if self.json {
-            println!("{}", serde_json::to_string(&mutant_test_suite_results.values().flat_map(|x| x.mutation_test_results()).collect::<Vec<_>>())?);
+            println!("{}", serde_json::to_string_pretty(&mutant_test_suite_results.values().flat_map(|x| x.mutation_test_results()).collect::<Vec<_>>())?);
             return Ok(MutationTestOutcome::new(
                 self.allow_failure,
                 mutant_test_suite_results
             ));
-        
         }
     
         let mutation_test_outcome = MutationTestOutcome::new(
@@ -317,6 +274,59 @@ impl MutateTestArgs {
         println!("{}", mutation_test_outcome.summary());
 
         Ok(mutation_test_outcome)
+    }
+
+    pub async fn compile_and_test_project(&self,
+        project: &Project,
+        config: &Config,
+        evm_opts: &EvmOpts,
+        test_filter: &ProjectPathsAwareFilter
+    ) -> Result<(TestOutcome, ProjectCompileOutput)> {
+        let output = project.compile()?;
+        output.assert_success();
+
+        // Create test options from general project settings
+        // and compiler output
+        let project_root = &project.paths.root;
+        let toml = config.get_config_path();
+        let profiles = get_available_profiles(toml)?;
+        let env = evm_opts.evm_env().await?;
+
+        let test_options: TestOptions = TestOptionsBuilder::default()
+            .fuzz(config.fuzz)
+            .invariant(config.invariant)
+            .profiles(profiles)
+            .build(&output, project_root)?;
+
+        let runner_builder = MultiContractRunnerBuilder::default()
+            .set_debug(false)
+            .initial_balance(evm_opts.initial_balance)
+            .evm_spec(config.evm_spec_id())
+            .sender(evm_opts.sender)
+            .with_fork(evm_opts.get_fork(&config, env.clone()))
+            .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone()))
+            .with_test_options(test_options.clone());
+
+        let runner = runner_builder.clone().build(
+                project_root,
+                output.clone(),
+                env.clone(),
+                evm_opts.clone(),
+            )?;
+        
+        Ok((test(
+            config.clone(),
+            runner,
+            0,
+            test_filter.clone(),
+            false,
+            false,
+            test_options,
+            false,
+            true,
+            false,
+            false
+        ).await?, output))
     }
 
     /// Returns the flattened [`MutateFilterArgs`] arguments merged with [`Config`].

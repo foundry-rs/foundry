@@ -37,13 +37,3 @@ impl MutateSpinnerReporter {
     }
 
 }
-
-
-// impl Drop for SpinnerReporter {
-//     fn drop(&mut self) {
-//         let (tx, rx) = mpsc::channel();
-//         if self.sender.send(SpinnerMsg::Shutdown(tx)).is_ok() {
-//             let _ = rx.recv();
-//         }
-//     }
-// }

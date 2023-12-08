@@ -20,9 +20,9 @@ pub enum MutantTestStatus {
 impl fmt::Display for MutantTestStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            MutantTestStatus::Killed => Paint::green("[KILLED]").fmt(f),
-            MutantTestStatus::Survived => Paint::red("[SURVIVED]").fmt(f),
-            MutantTestStatus::Equivalent => Paint::yellow("[EQUIVALENT]").fmt(f)
+            MutantTestStatus::Killed => "KILLED".fmt(f),
+            MutantTestStatus::Survived => "SURVIVED".fmt(f),
+            MutantTestStatus::Equivalent => "EQUIVALENT".fmt(f)
         }
     }
 }

@@ -204,7 +204,8 @@ impl Mutator {
     }
 
     /// Run mutation on contract functions that match configured filters
-    pub fn run_mutate<A>(self, filter: A) -> Result<HashMap<String, Vec<Mutant>>>
+    /// @TODO we should support ability to disable writing out artifacts
+    pub fn run_mutate<A>(self, _: bool , filter: A) -> Result<HashMap<String, Vec<Mutant>>>
     where
         A: ContractFilter + FunctionFilter,
     {
