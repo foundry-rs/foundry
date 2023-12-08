@@ -121,6 +121,19 @@ contract NestedRunner {
     }
 }
 
+/// Helper contract that uses all three EXT* opcodes on a given address
+contract ExtChecker {
+    function checkExts(address a) external  {
+        assembly {
+            let x := extcodesize(a)
+            let y := extcodehash(a)
+            extcodecopy(a, x, y, 0)
+            // sstore to check that storage accesses are correctly stored in a new access with a "resume" context
+            sstore(0, 1)
+        }
+    }
+}
+
 /// @notice Helper contract that writes to storage in a nested call
 contract NestedStorer {
     mapping(bytes32 key => uint256 value) slots;
@@ -196,13 +209,14 @@ contract RecordAccountAccessesTest is DSTest {
     Create2or create2or;
     StorageAccessor test1;
     StorageAccessor test2;
-
+    ExtChecker extChecker;
     function setUp() public {
         runner = new NestedRunner();
         nestedStorer = new NestedStorer();
         create2or = new Create2or();
         test1 = new StorageAccessor();
         test2 = new StorageAccessor();
+        extChecker = new ExtChecker();
     }
 
     function testStorageAccessDelegateCall() public {
@@ -211,7 +225,7 @@ contract RecordAccountAccessesTest is DSTest {
 
         cheats.startStateDiffRecording();
         address(proxy).call(abi.encodeCall(StorageAccessor.read, bytes32(uint256(1234))));
-        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
 
         assertEq(called.length, 2, "incorrect length");
 
@@ -246,7 +260,7 @@ contract RecordAccountAccessesTest is DSTest {
         two.write(bytes32(uint256(5678)), bytes32(uint256(123469)));
         two.write(bytes32(uint256(5678)), bytes32(uint256(1234)));
 
-        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 4, "incorrect length");
 
         assertEq(called[0].storageAccesses.length, 1, "incorrect storage length");
@@ -317,7 +331,7 @@ contract RecordAccountAccessesTest is DSTest {
         // contract calls to self in constructor
         SelfCaller caller = new SelfCaller{value: 2 ether}("hello2 world2");
 
-        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 6);
         assertEq(
             called[0],
@@ -430,7 +444,7 @@ contract RecordAccountAccessesTest is DSTest {
         uint256 initBalance = address(this).balance;
         cheats.startStateDiffRecording();
         try this.revertingCall{value: 1 ether}(address(1234), "") {} catch {}
-        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 2);
         assertEq(
             called[0],
@@ -485,7 +499,7 @@ contract RecordAccountAccessesTest is DSTest {
     /// @param shouldRevert Whether the first call should revert
     function runNested(bool shouldRevert, bool expectFirstCall) public {
         try runner.run{value: 1 ether}(shouldRevert) {} catch {}
-        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 7 + toUint(expectFirstCall), "incorrect length");
 
         uint256 startingIndex = toUint(expectFirstCall);
@@ -737,7 +751,7 @@ contract RecordAccountAccessesTest is DSTest {
     function testNestedStorage() public {
         cheats.startStateDiffRecording();
         nestedStorer.run();
-        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 3, "incorrect account access length");
 
         assertEq(called[0].storageAccesses.length, 2, "incorrect run storage length");
@@ -858,7 +872,7 @@ contract RecordAccountAccessesTest is DSTest {
         bytes memory creationCode = abi.encodePacked(type(ConstructorStorer).creationCode, abi.encode(true));
         address hypotheticalStorer = deriveCreate2Address(address(create2or), bytes32(0), keccak256(creationCode));
 
-        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 3, "incorrect account access length");
         assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Create), "incorrect kind");
         assertEq(toUint(called[1].kind), toUint(Vm.AccountAccessKind.Call), "incorrect kind");
@@ -967,7 +981,7 @@ contract RecordAccountAccessesTest is DSTest {
         try create2or.create2(bytes32(0), creationCode) {} catch {}
         address hypotheticalAddress = deriveCreate2Address(address(create2or), bytes32(0), keccak256(creationCode));
 
-        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 3, "incorrect length");
         assertEq(
             called[1],
@@ -1013,7 +1027,7 @@ contract RecordAccountAccessesTest is DSTest {
         this.startRecordingFromLowerDepth();
         address a = address(new SelfDestructor{value: 1 ether}(address(this)));
         address b = address(new SelfDestructor{value: 1 ether}(address(bytes20("doesn't exist yet"))));
-        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 5, "incorrect length");
         assertEq(
             called[1],
@@ -1093,10 +1107,56 @@ contract RecordAccountAccessesTest is DSTest {
         StorageAccessor a = new StorageAccessor();
 
         cheats.stopBroadcast();
-        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 1, "incorrect length");
         assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Create));
         assertEq(called[0].account, address(a));
+    }
+
+
+    /// @notice Test that EXT* opcodes are recorded as account accesses
+    function testExtOpcodes() public {
+        cheats.startStateDiffRecording();
+        extChecker.checkExts(address(1234));
+        Vm.AccountAccess[] memory called = cheats.stopAndReturnStateDiff();
+        assertEq(called.length, 6, "incorrect length");
+        // initial solidity extcodesize check for calling extChecker
+        assertEq(toUint(called[0].kind), toUint(Vm.AccountAccessKind.Extcodesize));
+        // call to extChecker
+        assertEq(toUint(called[1].kind), toUint(Vm.AccountAccessKind.Call));
+        // extChecker checks
+        assertEq(toUint(called[2].kind), toUint(Vm.AccountAccessKind.Extcodesize));
+        assertEq(toUint(called[3].kind), toUint(Vm.AccountAccessKind.Extcodehash));
+        assertEq(toUint(called[4].kind), toUint(Vm.AccountAccessKind.Extcodecopy));
+        // resume of extChecker to hold SSTORE access
+        assertEq(toUint(called[5].kind), toUint(Vm.AccountAccessKind.Resume));
+        assertEq(called[5].storageAccesses.length, 1, "incorrect length");
+    }
+
+    /**
+     * @notice Filter out extcodesize account accesses for legacy tests written before
+     *         EXT* opcodes were supported.
+     */
+    function filterExtcodesizeForLegacyTests(Vm.AccountAccess[] memory inArr)
+        internal
+        pure
+        returns (Vm.AccountAccess[] memory out)
+    {
+        // allocate max length for out array
+        out = new Vm.AccountAccess[](inArr.length);
+        // track end size
+        uint256 size;
+        for (uint256 i = 0; i < inArr.length; ++i) {
+            // only append if not extcodesize
+            if (inArr[i].kind != Vm.AccountAccessKind.Extcodesize) {
+                out[size] = inArr[i];
+                ++size;
+            }
+        }
+        // manually truncate out array
+        assembly {
+            mstore(out, size)
+        }
     }
 
     function startRecordingFromLowerDepth() external {

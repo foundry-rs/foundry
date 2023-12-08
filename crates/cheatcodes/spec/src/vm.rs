@@ -53,6 +53,12 @@ interface Vm {
         SelfDestruct,
         /// Synthetic access indicating the current context has resumed after a previous sub-context (AccountAccess).
         Resume,
+        /// The account's codesize was read.
+        Extcodesize,
+        /// The account's code was copied.
+        Extcodecopy,
+        /// The account's codehash was read.
+        Extcodehash,
     }
 
     /// An Ethereum log. Returned by `getRecordedLogs`.
