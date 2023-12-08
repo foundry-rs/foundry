@@ -6,10 +6,11 @@ use alloy_transport::{
     Authorization, BoxTransport, TransportError, TransportErrorKind, TransportFut,
 };
 use alloy_transport_http::Http;
+use alloy_transport_ipc::IpcConnect;
 use alloy_transport_ws::WsConnect;
 use ethers_providers::{JwtAuth, JwtKey};
 use reqwest::header::{HeaderName, HeaderValue};
-use std::{str::FromStr, sync::Arc};
+use std::{path::PathBuf, str::FromStr, sync::Arc};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tower::Service;
@@ -25,7 +26,7 @@ pub enum InnerTransport {
     Ws(PubSubFrontend),
     // TODO: IPC
     /// IPC transport
-    Ipc,
+    Ipc(PubSubFrontend),
 }
 
 /// Error type for the runtime transport.
@@ -144,6 +145,7 @@ impl RuntimeTransport {
         match self.url.scheme() {
             "http" | "https" => self.connect_http().await,
             "ws" | "wss" => self.connect_ws().await,
+            "file" => self.connect_ipc().await,
             _ => Err(RuntimeTransportError::BadScheme(self.url.scheme().to_string())),
         }
     }
@@ -196,6 +198,18 @@ impl RuntimeTransport {
         Ok(InnerTransport::Ws(ws))
     }
 
+    /// Connects to an IPC transport.
+    async fn connect_ipc(&self) -> Result<InnerTransport, RuntimeTransportError> {
+        let path = url_to_file_path(&self.url)
+            .map_err(|_| RuntimeTransportError::BadPath(self.url.to_string()))?;
+        let ipc_connector: IpcConnect<PathBuf> = path.into();
+        let ipc = ipc_connector
+            .into_service()
+            .await
+            .map_err(|e| RuntimeTransportError::TransportError(e))?;
+        Ok(InnerTransport::Ipc(ipc))
+    }
+
     /// Sends a request using the underlying transport.
     /// If this is the first request, it will connect to the appropiate transport depending on the
     /// URL scheme. For sending the actual request, this action is delegated down to the
@@ -215,7 +229,7 @@ impl RuntimeTransport {
             match inner_mut {
                 InnerTransport::Http(http) => http.call(req).await,
                 InnerTransport::Ws(ws) => ws.call(req).await,
-                InnerTransport::Ipc => todo!(),
+                InnerTransport::Ipc(ipc) => ipc.call(req).await,
             }
         })
     }
@@ -278,4 +292,24 @@ fn build_auth(jwt: String) -> eyre::Result<Authorization> {
     let auth = Authorization::Bearer(token);
 
     Ok(auth)
+}
+
+#[cfg(windows)]
+fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
+    const PREFIX: &str = "file:///pipe/";
+
+    let url_str = url.as_str();
+
+    if url_str.starts_with(PREFIX) {
+        let pipe_name = &url_str[PREFIX.len()..];
+        let pipe_path = format!(r"\\.\pipe\{}", pipe_name);
+        return Ok(PathBuf::from(pipe_path));
+    }
+
+    url.to_file_path()
+}
+
+#[cfg(not(windows))]
+fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
+    url.to_file_path()
 }
