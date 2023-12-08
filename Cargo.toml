@@ -123,7 +123,7 @@ foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 
-foundry-block-explorers = { version = "0.1.1", default-features = false }
+foundry-block-explorers = { version = "0.1.2", default-features = false }
 foundry-compilers = { version = "0.1.1", default-features = false }
 
 ## revm
