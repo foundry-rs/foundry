@@ -334,7 +334,7 @@ impl TestArgs {
         if let Some(debug_regex) = self.debug.as_ref() {
             let mut filter = filter.clone();
             filter.args_mut().test_pattern = Some(debug_regex.clone());
-            let results = runner.test_map(&filter, test_options).await;
+            let results = runner.test_collect(&filter, test_options).await;
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
 
@@ -361,7 +361,7 @@ impl TestArgs {
         }
 
         if self.json {
-            let results = runner.test_map(filter, test_options).await;
+            let results = runner.test_collect(filter, test_options).await;
             println!("{}", serde_json::to_string(&results)?);
             return Ok(TestOutcome::new(results, self.allow_failure))
         }

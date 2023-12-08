@@ -13,7 +13,7 @@ use foundry_test_utils::Filter;
 async fn test_cheats_fork_revert() {
     let mut runner = runner().await;
     let suite_result = runner
-        .test_map(
+        .test_collect(
             &Filter::new(
                 "testNonExistingContractRevert",
                 ".*",

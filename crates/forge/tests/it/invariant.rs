@@ -11,7 +11,7 @@ async fn test_invariant() {
     let mut runner = runner().await;
 
     let results = runner
-        .test_map(
+        .test_collect(
             &Filter::new(".*", ".*", ".*fuzz/invariant/(target|targetAbi|common)"),
             test_opts(),
         )
@@ -131,7 +131,7 @@ async fn test_invariant_override() {
     runner.test_options = opts.clone();
 
     let results = runner
-        .test_map(
+        .test_collect(
             &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantReentrancy.t.sol"),
             opts,
         )
@@ -157,7 +157,7 @@ async fn test_invariant_fail_on_revert() {
     runner.test_options = opts.clone();
 
     let results = runner
-        .test_map(
+        .test_collect(
             &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantHandlerFailure.t.sol"),
             opts,
         )
@@ -189,7 +189,7 @@ async fn test_invariant_storage() {
     runner.test_options = opts.clone();
 
     let results = runner
-        .test_map(
+        .test_collect(
             &Filter::new(".*", ".*", ".*fuzz/invariant/storage/InvariantStorageTest.t.sol"),
             opts,
         )
@@ -219,7 +219,7 @@ async fn test_invariant_shrink() {
     runner.test_options = opts.clone();
 
     let results = runner
-        .test_map(
+        .test_collect(
             &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantInnerContract.t.sol"),
             opts,
         )

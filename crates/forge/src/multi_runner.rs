@@ -129,7 +129,7 @@ impl MultiContractRunner {
     /// The same as [`test`](Self::test), but returns the results instead of streaming them.
     ///
     /// Note that returns only when all tests have been executed.
-    pub async fn test_map(
+    pub async fn test_collect(
         &mut self,
         filter: &dyn TestFilter,
         test_options: TestOptions,

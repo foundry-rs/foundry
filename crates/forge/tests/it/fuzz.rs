@@ -11,7 +11,7 @@ async fn test_fuzz() {
     let mut runner = runner().await;
 
     let suite_result = runner
-        .test_map(
+        .test_collect(
             &Filter::new(".*", ".*", ".*fuzz/")
                 .exclude_tests(r"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)")
                 .exclude_paths("invariant"),
@@ -61,7 +61,7 @@ async fn test_fuzz_collection() {
     runner.test_options = opts.clone();
 
     let results =
-        runner.test_map(&Filter::new(".*", ".*", ".*fuzz/FuzzCollection.t.sol"), opts).await;
+        runner.test_collect(&Filter::new(".*", ".*", ".*fuzz/FuzzCollection.t.sol"), opts).await;
 
     assert_multiple(
         &results,
