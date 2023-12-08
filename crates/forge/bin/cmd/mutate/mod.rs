@@ -62,8 +62,8 @@ pub use reporter::*;
 foundry_config::merge_impl_figment_convert!(MutateTestArgs, opts, evm_opts);
 
 // @TODO
-// export
-// command line output
+// command line output should output lines where mutants failed
+// modify gambit to output in a directory
 
 /// CLI arguments for `forge mutate`.
 #[derive(Debug, Clone, Parser)]

@@ -2,7 +2,7 @@ use comfy_table::{
     modifiers::UTF8_ROUND_CORNERS, Attribute, Cell, CellAlignment, Color, Row, Table,
 };
 use core::fmt;
-use foundry_common::shell;
+use foundry_common::shell::{self, println};
 use foundry_evm_mutator::Mutant;
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 use similar::TextDiff;
@@ -207,7 +207,10 @@ impl MutationTestOutcome {
 
             let term = if survived > 1 { "mutations" } else { "mutation" };
             println!("Encountered {} surviving {term} in {}", survived, file_name);
-            // @TODO println surviving diff
+            // @TODO print only first 5
+            for survive in suite_result.survived().take(5) {
+                // println!("{}")
+            }
         }
 
         println!(
@@ -358,7 +361,7 @@ impl MutationTestSummaryReporter {
             format!("{:.2}", mutation_score).to_string()
         ).set_alignment(CellAlignment::Center);
         mutation_score_cell = if mutation_score > 50.0 { mutation_score_cell.fg(Color::Green)} else { mutation_score_cell.fg(Color::Red)};
-        
+
         footer.add_cell(mutation_score_cell);
         self.table.add_row(footer);
 
