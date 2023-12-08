@@ -71,11 +71,6 @@ impl MultiContractRunner {
     }
 
     /// Returns all test functions matching the filter
-    pub fn get_matching_test_functions<'a>(&'a self, filter: &'a dyn TestFilter) -> Vec<&Function> {
-        self.matching_test_functions(filter).collect()
-    }
-
-    /// Returns all test functions matching the filter
     pub fn matching_test_functions<'a>(
         &'a self,
         filter: &'a dyn TestFilter,
