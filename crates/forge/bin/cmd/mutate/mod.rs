@@ -56,8 +56,6 @@ mod filter;
 pub use filter::*;
 mod summary;
 pub use summary::*;
-mod reporter;
-pub use reporter::*;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(MutateTestArgs, opts, evm_opts);
@@ -207,9 +205,7 @@ impl MutateTestArgs {
             mutants_len_iterator.len(), elapsed
         );
         
-        // Finish spinner
-
-
+        // 
         // @Notice This is having a race condition on Fuzz and Invariant tests
         // let mutant_test_suite_results: BTreeMap<String, MutationTestSuiteResult> =
         // BTreeMap::from_iter(try_join_all(mutants_output.iter().map(         |(file_name, mutants)| async {
@@ -240,6 +236,7 @@ impl MutateTestArgs {
             BTreeMap::new();
 
         let mut progress_bar_index = 0;
+        
         for (out_dir, mutants) in mutants_output.into_iter() {
             let mut mutant_test_results = vec![];
             let start = Instant::now();

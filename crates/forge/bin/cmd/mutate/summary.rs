@@ -2,12 +2,15 @@ use comfy_table::{
     modifiers::UTF8_ROUND_CORNERS, Attribute, Cell, CellAlignment, Color, Row, Table,
 };
 use core::fmt;
-use foundry_common::shell::{self, println};
+use foundry_common::shell::{self};
 use foundry_evm_mutator::Mutant;
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 use similar::TextDiff;
 use std::{collections::BTreeMap, time::Duration, ops::Add};
 use yansi::Paint;
+use eyre::{eyre, Result};
+
+const MAX_SURVIVE_RESULT_LOG_SIZE: usize = 5;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MutantTestStatus {
@@ -69,13 +72,7 @@ impl Serialize for MutantTestResult {
         )?;
         state.serialize_field("description", &self.mutant.op.to_string())?;
 
-        let orig_contents: String = String::from_utf8_lossy(self.mutant.source.contents()).into();
-        let mutant_contents = self.mutant.as_source_string().unwrap();
-
-        let diff = TextDiff::from_lines(&orig_contents, &mutant_contents)
-            .unified_diff()
-            .header("original", "mutant")
-            .to_string();
+        let diff = mutant_diff(&self.mutant);
 
         state.serialize_field("diff", &diff)?;
         state.serialize_field("result", &self.status.to_string())?;
@@ -199,20 +196,29 @@ impl MutationTestOutcome {
         println!();
         println!("Surviving Mutations:");
 
-        for (file_name, suite_result) in self.test_suite_result.iter() {
+        for (contract_name, suite_result) in self.test_suite_result.iter() {
             let survived = suite_result.survived().count();
             if survived == 0 {
                 continue;
             }
 
             let term = if survived > 1 { "mutations" } else { "mutation" };
-            println!("Encountered {} surviving {term} in {}", survived, file_name);
+            println!("Encountered {} surviving {term} in {}", survived, contract_name);
             // @TODO print only first 5
-            for survive in suite_result.survived().take(5) {
-                // println!("{}")
+            for survive_result in suite_result.survived().take(MAX_SURVIVE_RESULT_LOG_SIZE) {
+                let description = survive_result.mutant.op.to_string();
+                let (line, _) = survive_result.mutant.get_line_column().map_err(|x| eyre!(
+                    format!("{:?}", x)
+                ))?;
+                println!("\t Location: {}:{}, MutationType: {}", survive_result.mutant.source.filename_as_str(), line, description);
+            }
+
+            if survived > MAX_SURVIVE_RESULT_LOG_SIZE {
+                println!("More ...");
             }
         }
 
+        println!();
         println!(
             "Encountered a total of {} surviving mutations, {} mutations killed",
             Paint::red(survived.to_string()),
@@ -351,7 +357,6 @@ impl MutationTestSummaryReporter {
                 Cell::new(format!("{:.2?}", total_time_taken).to_string()).set_alignment(CellAlignment::Left)
             );
         }
-
         
         let mut mutation_score: f64 = 0.0;
         if total_killed > 0.0 {
@@ -367,4 +372,14 @@ impl MutationTestSummaryReporter {
 
         println!("\n{}", self.table);
     }
+}
+
+pub fn mutant_diff(mutant: &Mutant) -> String {
+    let orig_contents: String = String::from_utf8_lossy(mutant.source.contents()).into();
+    let mutant_contents = mutant.as_source_string().unwrap();
+
+    TextDiff::from_lines(&orig_contents, &mutant_contents)
+        .unified_diff()
+        .header("original", "mutant")
+        .to_string()
 }
