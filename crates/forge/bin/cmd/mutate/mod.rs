@@ -49,8 +49,6 @@ use std::{
     sync::mpsc::channel,
     time::{Duration, Instant},
 };
-use yansi::Paint;
-use rayon::prelude::*;
 
 mod filter;
 pub use filter::*;
@@ -61,8 +59,8 @@ pub use summary::*;
 foundry_config::merge_impl_figment_convert!(MutateTestArgs, opts, evm_opts);
 
 // @TODO
-// command line output should output lines where mutants failed
-// modify gambit to output in a directory
+// figure parallelizing the mutant testing
+
 
 /// CLI arguments for `forge mutate`.
 #[derive(Debug, Clone, Parser)]
@@ -236,7 +234,7 @@ impl MutateTestArgs {
             BTreeMap::new();
 
         let mut progress_bar_index = 0;
-        
+
         for (out_dir, mutants) in mutants_output.into_iter() {
             let mut mutant_test_results = vec![];
             let start = Instant::now();
