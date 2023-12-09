@@ -117,8 +117,8 @@ impl MutateTestArgs {
         trace!(target: "forge::mutate", "executing mutation command");
         shell::set_shell(shell::Shell::from_args(self.opts.silent, self.json))?;
         println!(
-            "\n{}{}",
-            Paint::white("[.] Starting Mutation Test\n"),
+            "{}{}",
+            Paint::white("[.] Starting Mutation Test"),
             Paint::white("Go grab a cup of coffee ☕, it's going to take a while")
         );
         self.execute_mutation_test().await
@@ -132,10 +132,6 @@ impl MutateTestArgs {
     ///
     /// Returns the mutation test results for all matching functions
     pub async fn execute_mutation_test(self) -> Result<MutationTestOutcome> {
-        println!();
-        println!("{}\n", Paint::white("Compiling and testing project...").bold());
-
-        // let spinner = SpinnerReporter
         let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
         // Fetch project mutate and test filter
         let (mutate_filter, test_filter) = self.filter(&config);
@@ -231,19 +227,19 @@ impl MutateTestArgs {
 
         let mut mutant_test_suite_results: BTreeMap<String, MutationTestSuiteResult> =
             BTreeMap::new();
+
         let mut progress_bar_index = 0;
-        for (file_name, mutants) in mutants_output.iter() {
+        for (out_dir, mutants) in mutants_output.into_iter() {
             let mut mutant_test_results = vec![];
             let start = Instant::now();
-            let (temp_project, config, project) = setup_mutant_dir(&project.root())?;
+            let (temp_project, config) = setup_mutant_dir(&project.root())?;
             for mutant in mutants.iter() {
                 let result = test_mutant(
                     test_filter.clone(),
                     &temp_project,
                     &config,
                     &evm_opts,
-                    mutant.clone(),
-                    &project,
+                    mutant.clone()
                 )
                 .await?;
                 let mutant_survived = result.survived();
@@ -258,8 +254,12 @@ impl MutateTestArgs {
                 }
             }
             let duration = start.elapsed();
+            // out_dir is of the format
+            let contract_name = out_dir.split(std::path::MAIN_SEPARATOR_STR)
+                .nth(1)
+                .ok_or(eyre!("Failed to parse contract name"))?;
             mutant_test_suite_results.insert(
-                file_name.clone(),
+                contract_name.to_string(),
                 MutationTestSuiteResult::new(duration, mutant_test_results),
             );
         }
@@ -302,9 +302,8 @@ impl MutateTestArgs {
         evm_opts: &EvmOpts,
         test_filter: &ProjectPathsAwareFilter,
     ) -> Result<(TestOutcome, ProjectCompileOutput)> {
-        let output = project.compile()?;
-        // output.assert_success();
-
+        let compiler = ProjectCompiler::default();
+        let output =  compiler.compile(&project)?;
         // Create test options from general project settings
         // and compiler output
         let project_root = &project.paths.root;
@@ -385,7 +384,7 @@ impl Provider for MutateTestArgs {
     }
 }
 
-pub fn setup_mutant_dir(mutation_project_root: &Path) -> Result<(TempProject, Config, Project)> {
+pub fn setup_mutant_dir(mutation_project_root: &Path) -> Result<(TempProject, Config)> {
     info!("Setting up temp mutant project dir");
     let project = TempProject::dapptools()?;
 
@@ -402,16 +401,7 @@ pub fn setup_mutant_dir(mutation_project_root: &Path) -> Result<(TempProject, Co
     config.fuzz.runs = 0;
     config.invariant.runs = 0;
 
-    // We do not recompile the project here because the artifacts generated
-    // have relative paths.
-    // The project has been compiled in the test step so we can re-use the
-    // artifacts generated
-    let update_project = config.project()?;
-    let c = update_project.compile()?;
-    // c.
-    // @TODO fix with_stripped_file_prefixes
-
-    Ok((project, config, update_project))
+    Ok((project, config))
 }
 
 pub async fn test_mutant(
@@ -419,8 +409,7 @@ pub async fn test_mutant(
     temp_project: &TempProject,
     config: &Config,
     evm_opts: &EvmOpts,
-    mutant: Mutant,
-    project: &Project,
+    mutant: Mutant
 ) -> Result<MutantTestResult> {
     info!("Testing Mutants");
 
@@ -445,8 +434,8 @@ pub async fn test_mutant(
     //     path.starts_with(&file_source_root) || path.ends_with(".t.sol")
     // }
     // )?;
+    let project = config.project()?;
     let output = project.compile()?;
-
     let project_root = &project.root();
     let toml = config.get_config_path();
     let profiles = get_available_profiles(toml)?;

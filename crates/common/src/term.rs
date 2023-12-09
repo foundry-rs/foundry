@@ -214,6 +214,68 @@ pub fn with_spinner_reporter<T>(f: impl FnOnce() -> T) -> T {
     report::with_scoped(&reporter, f)
 }
 
+/// A spinner used for reporting in Mutation tests
+///
+/// This reporter will prefix messages with a spinning cursor
+#[derive(Debug)]
+pub struct MutatorSpinnerReporter {
+    /// The sender to the spinner thread.
+    sender: mpsc::Sender<SpinnerMsg>
+}
+
+impl Drop for MutatorSpinnerReporter {
+    fn drop(&mut self) {
+        let (tx, rx) = mpsc::channel();
+        if self.sender.send(SpinnerMsg::Shutdown(tx)).is_ok() {
+            let _ = rx.recv();
+        }
+    }
+}
+
+impl MutatorSpinnerReporter {
+    /// Spawns the [`Spinner`] on a new thread
+    ///
+    /// The spinner's message will be updated via the `reporter` events
+    ///
+    /// On drop the channel will disconnect and the thread will terminate
+    pub fn spawn(message: String) -> Self {
+        let (sender, rx) = mpsc::channel::<SpinnerMsg>();
+
+        std::thread::Builder::new()
+            .name("mutator".into())
+            .spawn(move || {
+                let mut spinner = Spinner::new(message);
+                loop {
+                    spinner.tick();
+                    match rx.try_recv() {
+                        Ok(SpinnerMsg::Msg(msg)) => {
+                            spinner.message(msg);
+                            // new line so past messages are not overwritten
+                            println!();
+                        }
+                        Ok(SpinnerMsg::Shutdown(ack)) => {
+                            // end with a newline
+                            println!();
+                            let _ = ack.send(());
+                            break
+                        }
+                        Err(TryRecvError::Disconnected) => break,
+                        Err(TryRecvError::Empty) => thread::sleep(Duration::from_millis(100)),
+                    }
+                }
+            })
+            .expect("failed to spawn thread");
+
+        MutatorSpinnerReporter { sender }
+    }
+
+    fn send_msg(&self, msg: impl Into<String>) {
+        let _ = self.sender.send(SpinnerMsg::Msg(msg.into()));
+    }
+}
+
+
+
 #[macro_export]
 /// Displays warnings on the cli
 macro_rules! cli_warn {

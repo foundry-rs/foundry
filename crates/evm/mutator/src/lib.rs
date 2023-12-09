@@ -10,14 +10,14 @@ use gambit::{run_mutate, MutateParams};
 use itertools::Itertools;
 use std::{
     collections::{BTreeMap, HashMap},
-    path::PathBuf,
+    path::{PathBuf, Path}, str::FromStr,
 };
 
 mod filter;
 pub use filter::*;
 pub use gambit::Mutant;
 
-const DEFAULT_GAMBIT_DIR_OUT: &'static str = "gambit_out";
+const DEFAULT_GAMBIT_DIR_OUT: &'static str = ".gambit";
 
 /// Array of artifact ids, abi and bytecode
 pub type GambitArtifacts = Vec<(ArtifactId, Abi, Bytes)>;
@@ -215,7 +215,8 @@ impl Mutator {
             .matching_artifacts(&filter)
             .map(|(id, abi, _)| {
                 let mut current_mutate_params = self.default_mutate_params.clone();
-                current_mutate_params.outdir = Some(id.name.clone());
+                let outdir = PathBuf::from(DEFAULT_GAMBIT_DIR_OUT).join(id.name.clone());
+                current_mutate_params.outdir = outdir.to_str().map(|x| x.to_owned());
                 current_mutate_params.functions =
                     Some(self.get_artifact_functions(&filter, abi).collect_vec());
                 current_mutate_params.filename =
