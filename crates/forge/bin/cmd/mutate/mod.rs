@@ -231,7 +231,6 @@ impl MutateTestArgs {
         //     )
         // ).await?.into_iter());
         
-        // spinner.on_mutator_test_start();
         // this is required for progress bar
         println!("[⠆] Testing Mutants...");
         let progress_bar = init_progress!(mutants_len_iterator, "Mutants");
@@ -385,7 +384,7 @@ impl MutateTestArgs {
 
         // stop reporter
         drop(test_reporter);
-        
+
         println!("Finished running project tests in {:2?}", start.elapsed());
         Ok((
             TestOutcome::new(results, false),

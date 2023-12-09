@@ -270,16 +270,9 @@ impl MutatorSpinnerReporter {
     }
 
     
-    fn send_msg(&self, msg: impl Into<String>) {
-        let _ = self.sender.send(SpinnerMsg::Msg(msg.into()));
-    }
-
-    /// Invoked when mutants are being tested
-    pub fn on_mutator_test_start(&self) {
-        self.send_msg(
-            "Testing Mutants...\n"
-        );
-    }
+    // fn send_msg(&self, msg: impl Into<String>) {
+    //     let _ = self.sender.send(SpinnerMsg::Msg(msg.into()));
+    // }
 }
 
 
