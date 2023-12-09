@@ -217,12 +217,13 @@ impl RuntimeTransport {
         let this = self.clone();
         Box::pin(async move {
             if this.inner.read().await.is_none() {
-                let mut w = this.inner.write().await;
-                *w = Some(this.connect().await.map_err(TransportErrorKind::custom)?)
+                let mut inner = this.inner.write().await;
+                *inner = Some(this.connect().await.map_err(TransportErrorKind::custom)?)
             }
 
             let mut inner = this.inner.write().await;
-            let inner_mut = inner.as_mut().expect("boom");
+            // SAFETY: We just checked that the inner transport exists.
+            let inner_mut = inner.as_mut().expect("We should have an inner transport.");
 
             match inner_mut {
                 InnerTransport::Http(http) => http.call(req).await,
