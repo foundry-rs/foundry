@@ -451,7 +451,7 @@ pub struct TestOutcome {
 }
 
 impl TestOutcome {
-    fn new(results: BTreeMap<String, SuiteResult>, allow_failure: bool) -> Self {
+    pub fn new(results: BTreeMap<String, SuiteResult>, allow_failure: bool) -> Self {
         Self { results, allow_failure }
     }
 

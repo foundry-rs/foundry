@@ -23,7 +23,7 @@ use foundry_cli::{
 use foundry_common::{
     compile::{self, ProjectCompiler},
     evm::EvmArgs,
-    shell::{self}
+    shell::{self, println}, term::MutatorSpinnerReporter
 };
 use foundry_compilers::{
     project_util::{copy_dir, TempProject},
@@ -50,6 +50,7 @@ use std::{
     time::{Duration, Instant},
 };
 use yansi::Paint;
+use rayon::prelude::*;
 
 mod filter;
 pub use filter::*;
@@ -117,9 +118,8 @@ impl MutateTestArgs {
         trace!(target: "forge::mutate", "executing mutation command");
         shell::set_shell(shell::Shell::from_args(self.opts.silent, self.json))?;
         println!(
-            "{}{}",
-            Paint::white("[.] Starting Mutation Test"),
-            Paint::white("Go grab a cup of coffee ☕, it's going to take a while")
+            "{}",
+            "[⠆] Starting Mutation Test. Go grab a cup of coffee ☕, it's going to take a while"
         );
         self.execute_mutation_test().await
     }
@@ -152,7 +152,7 @@ impl MutateTestArgs {
             &project,
             &config,
             &evm_opts,
-            &test_filter
+            test_filter.clone()
         ).await?;
 
         // Ensure test outcome is ok, exit if any test is failing
@@ -160,7 +160,6 @@ impl MutateTestArgs {
             test_outcome.ensure_ok()?;
         }
 
-        println!();
         let mutator = MutatorConfigBuilder::new(
             project.solc.solc.clone(),
             config.optimizer,
@@ -188,13 +187,27 @@ impl MutateTestArgs {
         // This is because Gambit writes to disk multiple files and also general several mutants
         // per line "caught"
         // Improvements can be done to improve gambit performance
-        println!();
-        let spinner = MutateSpinnerReporter::new("Generating Mutants");
-        trace!("Running gambit");
+        let now = Instant::now();
+        // init spinner
+        let spinner = MutatorSpinnerReporter::spawn("Generating Mutants...".into());
+        trace!("running gambit");
         let mutants_output = mutator.run_mutate(self.export, mutate_filter.clone())?;
-        trace!("Finished running gambit");
+
+        let elapsed = now.elapsed();
+        trace!(?elapsed, "finished running gambit");
+        drop(spinner);
+
+
+        let mutants_len_iterator: Vec<&Mutant> = mutants_output.iter()
+            .flat_map(|(_, v)| v)
+            .collect();
+
+        println!(
+            "Generated {} mutants in {:.2?}",
+            mutants_len_iterator.len(), elapsed
+        );
+        
         // Finish spinner
-        spinner.finish();
 
 
         // @Notice This is having a race condition on Fuzz and Invariant tests
@@ -217,11 +230,10 @@ impl MutateTestArgs {
         // MutationTestSuiteResult::new(duration, result)))         }
         //     )
         // ).await?.into_iter());
-        println!();
-        println!("[.] Testing Mutants...");
+        
+        // spinner.on_mutator_test_start();
         // this is required for progress bar
-        let mutants_len_iterator: Vec<&Mutant> =
-            mutants_output.iter().flat_map(|(_, v)| v).collect();
+        println!("[⠆] Testing Mutants...");
         let progress_bar = init_progress!(mutants_len_iterator, "Mutants");
         progress_bar.set_position(0);
 
@@ -247,7 +259,7 @@ impl MutateTestArgs {
                 progress_bar_index += 1;
                 update_progress!(progress_bar, progress_bar_index);
 
-                // if fail is enabled then we exit on the
+                // if fail_fast is enabled then we exit on the
                 // first mutant we encounter that survived
                 if self.fail_fast && mutant_survived {
                     break;
@@ -300,12 +312,14 @@ impl MutateTestArgs {
         project: &Project,
         config: &Config,
         evm_opts: &EvmOpts,
-        test_filter: &ProjectPathsAwareFilter,
+        filter: ProjectPathsAwareFilter,
     ) -> Result<(TestOutcome, ProjectCompileOutput)> {
         let compiler = ProjectCompiler::default();
         let output =  compiler.compile(&project)?;
         // Create test options from general project settings
         // and compiler output
+        let start = Instant::now();
+        let test_reporter = MutatorSpinnerReporter::spawn("Running Project Tests...".into());
         let project_root = &project.paths.root;
         let toml = config.get_config_path();
         let profiles = get_available_profiles(toml)?;
@@ -326,28 +340,55 @@ impl MutateTestArgs {
             .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone()))
             .with_test_options(test_options.clone());
 
-        let runner = runner_builder.clone().build(
+        let mut runner = runner_builder.clone().build(
             project_root,
             output.clone(),
             env.clone(),
             evm_opts.clone(),
         )?;
 
+        if runner.matching_test_function_count(&filter) == 0 {
+            let filter_str = filter.to_string();
+            if filter_str.is_empty() {
+                println!(
+                    "\nNo tests found in project! Forge looks for functions that starts with `test`."
+                );
+            } else {
+                println!("\nNo tests match the provided pattern:");
+                println!("{filter_str}");
+                // Try to suggest a test when there's no match
+                if let Some(ref test_pattern) = filter.args().test_pattern {
+                    let test_name = test_pattern.as_str();
+                    let candidates = runner.get_tests(&filter);
+                    if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
+                        println!("\nDid you mean `{suggestion}`?");
+                    }
+                }
+            }
+        }
+        
+        let mut results = BTreeMap::new();
+        // Set up test reporter channel
+        let (tx, rx) = channel::<(String, SuiteResult)>();
+
+        // Run tests
+        let handle =
+            tokio::task::spawn(async move { runner.test(filter.clone(), Some(tx), test_options).await });
+
+        'outer: for (contract_name, suite_result) in rx {
+            results.insert(contract_name.clone(), suite_result.clone());
+            if suite_result.failures().count() > 0 {
+                break 'outer
+            }
+        }
+        let _results = handle.await?;
+
+        // stop reporter
+        drop(test_reporter);
+        
+        println!("Finished running project tests in {:2?}", start.elapsed());
         Ok((
-            test(
-                config.clone(),
-                runner,
-                0,
-                test_filter.clone(),
-                false,
-                false,
-                test_options,
-                false,
-                true,
-                false,
-                false,
-            )
-            .await?,
+            TestOutcome::new(results, false),
             output,
         ))
     }

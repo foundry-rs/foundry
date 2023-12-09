@@ -3239,7 +3239,7 @@ dependencies = [
 [[package]]
 name = "gambit"
 version = "0.2.1"
-source = "git+https://github.com/Certora/gambit?rev=05abe4a0380d6028e733d039a03cb9809881aae1#05abe4a0380d6028e733d039a03cb9809881aae1"
+source = "git+https://github.com/samparsky/gambit?rev=dbdc911a450f2ada494016dbbc522245b5f3dc94#dbdc911a450f2ada494016dbbc522245b5f3dc94"
 dependencies = [
  "ansi_term",
  "clap",
