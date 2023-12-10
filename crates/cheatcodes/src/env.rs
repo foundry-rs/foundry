@@ -271,7 +271,10 @@ fn map_env_err<'a>(key: &'a str, value: &'a str) -> impl FnOnce(Error) -> Error 
         // <value>
         //   ^
         //   expected at least one digit
-        Error::from(e.to_string().replace(value, &format!("${key}")))
+        let mut e = e.to_string();
+        e = e.replacen(&format!("\"{value}\""), &format!("${key}"), 1);
+        e = e.replacen(&format!("\n{value}\n"), &format!("\n${key}\n"), 1);
+        Error::from(e)
     }
 }
 
@@ -282,11 +285,10 @@ mod tests {
     #[test]
     fn parse_env_uint() {
         let key = "parse_env_uint";
-        let value = "123xyz";
+        let value = "t";
         env::set_var(key, value);
 
         let err = env(key, &DynSolType::Uint(256)).unwrap_err().to_string();
-        assert!(!err.contains(value));
         assert_eq!(err.matches("$parse_env_uint").count(), 2, "{err:?}");
         env::remove_var(key);
     }
