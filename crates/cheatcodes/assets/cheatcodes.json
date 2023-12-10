@@ -65,6 +65,22 @@
         {
           "name": "Resume",
           "description": "Synthetic access indicating the current context has resumed after a previous sub-context (AccountAccess)."
+        },
+        {
+          "name": "Balance",
+          "description": "The account's balance was read."
+        },
+        {
+          "name": "Extcodesize",
+          "description": "The account's codesize was read."
+        },
+        {
+          "name": "Extcodecopy",
+          "description": "The account's code was copied."
+        },
+        {
+          "name": "Extcodehash",
+          "description": "The account's codehash was read."
         }
       ]
     }
