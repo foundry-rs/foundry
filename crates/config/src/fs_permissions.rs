@@ -25,6 +25,11 @@ impl FsPermissions {
         Self { permissions: permissions.into_iter().collect() }
     }
 
+    /// Adds a new permission
+    pub fn add(&mut self, permission: PathPermission) {
+        self.permissions.push(permission)
+    }
+
     /// Returns true if access to the specified path is allowed with the specified.
     ///
     /// This first checks permission, and only if it is granted, whether the path is allowed.
@@ -37,9 +42,29 @@ impl FsPermissions {
         self.find_permission(path).map(|perm| perm.is_granted(kind)).unwrap_or_default()
     }
 
-    /// Returns the permission for the matching path
+    /// Returns the permission for the matching path.
+    ///
+    /// This finds the longest matching path, e.g. if we have the following permissions:
+    ///
+    /// `./out` = `read`
+    /// `./out/contracts` = `read-write`
+    ///
+    /// And we check for `./out/contracts/MyContract.sol` we will get `read-write` as permission.
     pub fn find_permission(&self, path: &Path) -> Option<FsAccessPermission> {
-        self.permissions.iter().find(|perm| path.starts_with(&perm.path)).map(|perm| perm.access)
+        // self.permissions.iter().find(|perm| path.starts_with(&perm.path)).map(|perm| perm.access)
+        let mut permission: Option<&PathPermission> = None;
+        for perm in &self.permissions {
+            if path.starts_with(&perm.path) {
+                if let Some(active_perm) = permission.as_ref() {
+                    // the longest path takes precedence
+                    if perm.path < active_perm.path {
+                        continue;
+                    }
+                }
+                permission = Some(perm);
+            }
+        }
+        permission.map(|perm| perm.access)
     }
 
     /// Updates all `allowed_paths` and joins ([`Path::join`]) the `root` with all entries
@@ -237,5 +262,20 @@ mod tests {
         assert_eq!(FsAccessPermission::None, "none".parse().unwrap());
         assert_eq!(FsAccessPermission::Read, "read".parse().unwrap());
         assert_eq!(FsAccessPermission::Write, "write".parse().unwrap());
+    }
+
+    #[test]
+    fn nested_permissions() {
+        let permissions = FsPermissions::new(vec![
+            PathPermission::read("./"),
+            PathPermission::write("./out"),
+            PathPermission::read_write("./out/contracts"),
+        ]);
+
+        let permission =
+            permissions.find_permission(Path::new("./out/contracts/MyContract.sol")).unwrap();
+        assert_eq!(FsAccessPermission::ReadWrite, permission);
+        let permission = permissions.find_permission(Path::new("./out/MyContract.sol")).unwrap();
+        assert_eq!(FsAccessPermission::Write, permission);
     }
 }

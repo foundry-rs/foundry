@@ -37,6 +37,16 @@ macro_rules! test_repro {
             }
         }
     };
+    ($issue_number:literal; |$config:ident| $e:expr $(,)?) => {
+        paste::paste! {
+            #[tokio::test(flavor = "multi_thread")]
+            async fn [< issue_ $issue_number >]() {
+                let mut $config = repro_config($issue_number, false, None).await;
+                $e
+                $config.run().await;
+            }
+        }
+    };
 }
 
 async fn repro_config(issue: usize, should_fail: bool, sender: Option<Address>) -> TestConfig {
@@ -266,4 +276,12 @@ test_repro!(6501, false, None, |res| {
             }
         );
     }
+});
+
+// https://github.com/foundry-rs/foundry/issues/6554
+test_repro!(6554; |config| {
+    let mut cheats_config = config.runner.cheats_config.as_ref().clone();
+    let path = cheats_config.root.join("out/Issue6554.t.sol");
+    cheats_config.fs_permissions.add(PathPermission::read_write(path));
+    config.runner.cheats_config = std::sync::Arc::new(cheats_config);
 });
