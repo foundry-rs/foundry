@@ -747,7 +747,15 @@ struct Transactions {
 
 #[derive(serde::Deserialize)]
 struct Transaction {
-    arguments: Vec<String>,
+    #[serde(rename = "transactionType")]
+    transaction_type: String,
+    arguments: Option<Vec<String>>,
+    transaction: RawTransaction,
+}
+
+#[derive(serde::Deserialize)]
+struct RawTransaction {
+    nonce: String,
 }
 
 // test we output arguments <https://github.com/foundry-rs/foundry/issues/3053>
@@ -817,7 +825,7 @@ contract Script0 is Script {
     assert_eq!(transactions.len(), 1);
     assert_eq!(
         transactions[0].arguments,
-        vec![
+        Some(vec![
             "0x00a329c0648769A73afAc7F9381E08FB43dBEA72".to_string(),
             "4294967296".to_string(),
             "-4294967296".to_string(),
@@ -826,7 +834,7 @@ contract Script0 is Script {
             "0x616263646566".to_string(),
             "(10, 99)".to_string(),
             "\"hello\"".to_string(),
-        ]
+        ])
     );
 });
 
@@ -902,7 +910,7 @@ contract Script0 is Script {
     assert_eq!(transactions.len(), 1);
     assert_eq!(
         transactions[0].arguments,
-        vec![
+        Some(vec![
             "0x00a329c0648769A73afAc7F9381E08FB43dBEA72".to_string(),
             "4294967296".to_string(),
             "-4294967296".to_string(),
@@ -910,7 +918,7 @@ contract Script0 is Script {
             "true".to_string(),
             "0x616263646566".to_string(),
             "\"hello\"".to_string(),
-        ]
+        ])
     );
 });
 
@@ -1087,4 +1095,36 @@ forgetest_async!(assert_can_resume_with_additional_contracts, |prj, cmd| {
         .load_private_keys(&[0])
         .await
         .resume(ScriptOutcome::OkBroadcast);
+});
+
+forgetest_async!(assert_tracks_nonces_correctly_when_broadcasting_from_contract, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    tester.add_sig("ScriptBroadcastContract", "run()").simulate(ScriptOutcome::OkSimulation);
+
+    let run_latest = foundry_common::fs::json_files(prj.root().join("broadcast"))
+        .into_iter()
+        .find(|file| file.ends_with("run-latest.json"))
+        .expect("No broadcast artifacts");
+
+    let content = foundry_common::fs::read_to_string(run_latest).unwrap();
+    let transactions: Transactions = serde_json::from_str(&content).unwrap();
+    let transactions = transactions.transactions;
+
+    for i in 0..transactions.len() - 1 {
+        let current = &transactions[i];
+        let next = &transactions[i + 1];
+        let current_nonce = i32::from_str_radix(&current.transaction.nonce[2..], 16).unwrap();
+        let next_nonce = i32::from_str_radix(&next.transaction.nonce[2..], 16).unwrap();
+        if current.transaction_type == "CREATE" {
+            assert_eq!(current_nonce + 1, next_nonce);
+        } else {
+            assert_eq!(current_nonce, next_nonce);
+        }
+
+        if i == 0 {
+            assert_eq!(current_nonce, 1);
+        }
+    }
 });

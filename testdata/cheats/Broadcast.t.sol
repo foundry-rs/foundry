@@ -528,3 +528,29 @@ contract ScriptAdditionalContracts is DSTest {
         new Parent();
     }
 }
+
+contract Box {
+    uint value;
+
+    constructor(uint256 _value) {
+        value = _value;
+    }
+
+    function setValue(uint256 _value) public {
+        value = _value;
+    }
+}
+
+contract ScriptBroadcastContract is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function run() external {
+        vm.startContractBroadcast(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        Box box1 = new Box(0);
+        box1.setValue(1);
+        box1.setValue(2);
+        Box box2 = new Box{salt: 0}(0);
+        box2.setValue(1);
+        box2.setValue(2);
+    }
+}

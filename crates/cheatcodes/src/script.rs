@@ -48,6 +48,13 @@ impl Cheatcode for startBroadcast_2Call {
     }
 }
 
+impl Cheatcode for startContractBroadcastCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { signer } = self;
+        broadcast_contract(ccx, signer)
+    }
+}
+
 impl Cheatcode for stopBroadcastCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
@@ -71,6 +78,8 @@ pub struct Broadcast {
     pub depth: u64,
     /// Whether the prank stops by itself after the next call
     pub single_call: bool,
+    /// Whether the broadcast sender should operate like a contract.
+    pub contract_broadcast: bool,
 }
 
 /// Sets up broadcasting from a script using `new_origin` as the sender.
@@ -93,6 +102,7 @@ fn broadcast<DB: DatabaseExt>(
         original_origin: ccx.data.env.tx.caller,
         depth: ccx.data.journaled_state.depth(),
         single_call,
+        contract_broadcast: false,
     };
     debug!(target: "cheatcodes", ?broadcast, "started");
     ccx.state.broadcast = Some(broadcast);
@@ -113,6 +123,26 @@ fn broadcast_key<DB: DatabaseExt>(
     let result = broadcast(ccx, Some(new_origin), single_call);
     if result.is_ok() {
         ccx.state.script_wallets.push(wallet);
+    }
+    result
+}
+
+/// Sets up broadcasting from a script with a sender that counts nonces like a contract according to
+/// EIP-161.
+fn broadcast_contract<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, signer: &Address) -> Result {
+    let result = broadcast(ccx, Some(signer), false);
+    ccx.state.broadcast = ccx
+        .state
+        .broadcast
+        .as_mut()
+        .map(|b| {
+            b.contract_broadcast = true;
+            b
+        })
+        .cloned();
+    let account = super::evm::journaled_account(ccx.data, *signer)?;
+    if account.info.nonce == 0 {
+        account.info.nonce = 1;
     }
     result
 }

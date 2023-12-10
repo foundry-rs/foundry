@@ -4255,6 +4255,26 @@
     },
     {
       "func": {
+        "id": "startContractBroadcast",
+        "description": "Has all subsequent calls (at this call depth only) create transactions with the address\nprovided using nonces determined as if the address is a contract (incrementing only when\na contract is deployed using CREATE or CREATE2).",
+        "declaration": "function startContractBroadcast(address signer) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "startContractBroadcast(address)",
+        "selector": "0x732c0600",
+        "selectorBytes": [
+          115,
+          44,
+          6,
+          0
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "startMappingRecording",
         "description": "Starts recording all map SSTOREs for later retrieval.",
         "declaration": "function startMappingRecording() external;",

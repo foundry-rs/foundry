@@ -853,7 +853,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
                     let prev = account.info.nonce;
-                    account.info.nonce += 1;
+                    if !broadcast.contract_broadcast {
+                        account.info.nonce += 1;
+                        debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
+                    }
                     debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
                 } else if broadcast.single_call {
                     let msg = "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
@@ -1183,17 +1186,13 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 data.env.tx.caller = broadcast.new_origin;
 
                 if data.journaled_state.depth() == broadcast.depth {
-                    let (bytecode, to, nonce) = match process_create(
-                        broadcast.new_origin,
-                        call.init_code.clone(),
-                        data,
-                        call,
-                    ) {
-                        Ok(val) => val,
-                        Err(err) => {
-                            return (InstructionResult::Revert, None, gas, Error::encode(err))
-                        }
-                    };
+                    let (bytecode, to, nonce) =
+                        match process_create(broadcast, call.init_code.clone(), data, call) {
+                            Ok(val) => val,
+                            Err(err) => {
+                                return (InstructionResult::Revert, None, gas, Error::encode(err))
+                            }
+                        };
 
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(data, call.gas_limit);
 
@@ -1396,11 +1395,12 @@ fn mstore_revert_string(interpreter: &mut Interpreter<'_>, bytes: &[u8]) {
 }
 
 fn process_create<DB: DatabaseExt>(
-    broadcast_sender: Address,
+    broadcast: &Broadcast,
     bytecode: Bytes,
     data: &mut EVMData<'_, DB>,
     call: &mut CreateInputs,
 ) -> Result<(Bytes, Option<Address>, u64), DB::Error> {
+    let broadcast_sender = broadcast.new_origin;
     match call.scheme {
         CreateScheme::Create => {
             call.caller = broadcast_sender;
@@ -1424,9 +1424,10 @@ fn process_create<DB: DatabaseExt>(
             // by the create2_deployer
             let account = data.journaled_state.state().get_mut(&broadcast_sender).unwrap();
             let prev = account.info.nonce;
-            account.info.nonce += 1;
-            debug!(target: "cheatcodes", address=%broadcast_sender, nonce=prev+1, prev, "incremented nonce in create2");
-
+            if !broadcast.contract_broadcast {
+                account.info.nonce += 1;
+                debug!(target: "cheatcodes", address=%broadcast_sender, nonce=prev+1, prev, "incremented nonce in create2");
+            }
             // Proxy deployer requires the data to be `salt ++ init_code`
             let calldata = [&salt.to_be_bytes::<32>()[..], &bytecode[..]].concat();
             Ok((calldata.into(), Some(DEFAULT_CREATE2_DEPLOYER), prev))

@@ -973,6 +973,12 @@ interface Vm {
     #[cheatcode(group = Scripting)]
     function startBroadcast(uint256 privateKey) external;
 
+    /// Has all subsequent calls (at this call depth only) create transactions with the address
+    /// provided using nonces determined as if the address is a contract (incrementing only when
+    /// a contract is deployed using CREATE or CREATE2).
+    #[cheatcode(group = Scripting)]
+    function startContractBroadcast(address signer) external;
+
     /// Stops collecting onchain transactions.
     #[cheatcode(group = Scripting)]
     function stopBroadcast() external;
