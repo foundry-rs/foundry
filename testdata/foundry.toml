@@ -1,15 +1,15 @@
 [profile.default]
-solc = '0.8.19'
+solc = "0.8.18"
 block_base_fee_per_gas = 0
-block_coinbase = '0x0000000000000000000000000000000000000000'
+block_coinbase = "0x0000000000000000000000000000000000000000"
 block_difficulty = 0
-block_prevrandao = '0x0000000000000000000000000000000000000000000000000000000000000000'
+block_prevrandao = "0x0000000000000000000000000000000000000000000000000000000000000000"
 block_number = 0
 block_timestamp = 0
-bytecode_hash = 'ipfs'
+bytecode_hash = "ipfs"
 cache = true
-cache_path = 'cache'
-evm_version = 'paris'
+cache_path = "cache"
+evm_version = "paris"
 extra_output = []
 extra_output_files = []
 ffi = false
@@ -19,35 +19,37 @@ invariant_call_override = false
 invariant_shrink_sequence = true
 gas_limit = 9223372036854775807
 gas_price = 0
-gas_reports = ['*']
+gas_reports = ["*"]
 ignored_error_codes = [1878]
 deny_warnings = false
-initial_balance = '0xffffffffffffffffffffffff'
+initial_balance = "0xffffffffffffffffffffffff"
 libraries = []
-libs = ['lib']
+libs = ["lib"]
 names = false
 no_storage_caching = false
 no_rpc_rate_limit = false
 offline = false
 optimizer = true
 optimizer_runs = 200
-out = 'out'
-remappings = ['ds-test/=lib/ds-test/src/']
-sender = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
+out = "out"
+remappings = ["ds-test/=lib/ds-test/src/"]
+sender = "0x00a329c0648769a73afac7f9381e08fb43dbea72"
 sizes = false
 sparse_mode = false
-src = 'src'
-test = 'test'
-tx_origin = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
-verbosity = 0
+src = "./"
+test = "./"
+tx_origin = "0x00a329c0648769a73afac7f9381e08fb43dbea72"
+verbosity = 3
 via_ir = false
 fs_permissions = [{ access = "read-write", path = "./" }]
 
-
 [profile.default.rpc_storage_caching]
-chains = 'all'
-endpoints = 'all'
+chains = "all"
+endpoints = "all"
 
 [fuzz]
 runs = 256
 max_test_rejects = 65536
+
+[fmt]
+ignore = ["cheats/Vm.sol"]

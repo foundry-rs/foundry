@@ -1,0 +1,43 @@
+[package]
+name = "anvil-core"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+foundry-common.workspace = true
+foundry-evm.workspace = true
+
+alloy-primitives = { workspace = true, features = ["serde"] }
+revm = { workspace = true, default-features = false, features = ["std", "serde", "memory_limit"] }
+ethers-core = { workspace = true, features = ["optimism"] }
+# theses are not used by anvil-core, but are required by ethers, because pulled in via foundry-common
+ethers-contract = { workspace = true, features = ["optimism"] }
+ethers-providers = { workspace = true, features = ["optimism"] }
+ethers-middleware = { workspace = true, features = ["optimism"] }
+
+serde = { workspace = true, optional = true }
+serde_json.workspace = true
+bytes = { version = "1.4" }
+open-fastrlp = { version = "0.1.4", optional = true }
+
+# trie
+hash-db = { version = "0.15", default-features = false }
+hash256-std-hasher = { version = "0.15", default-features = false }
+triehash = { version = "0.8", default-features = false }
+reference-trie = "0.25"
+keccak-hasher = "0.15"
+
+[dev-dependencies]
+anvil-core = { path = ".", features = ["serde"] }
+
+[features]
+default = ["serde"]
+impersonated-tx = []
+fastrlp = ["dep:open-fastrlp"]
+serde = ["dep:serde"]

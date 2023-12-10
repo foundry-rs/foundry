@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -eo pipefail
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -14,7 +14,7 @@ main() {
   need_cmd git
   need_cmd curl
 
-  while [[ $1 ]]; do
+  while [[ -n $1 ]]; do
     case $1 in
       --)               shift; break;;
 
@@ -24,6 +24,8 @@ main() {
       -p|--path)        shift; FOUNDRYUP_LOCAL_REPO=$1;;
       -P|--pr)          shift; FOUNDRYUP_PR=$1;;
       -C|--commit)      shift; FOUNDRYUP_COMMIT=$1;;
+      --arch)           shift; FOUNDRYUP_ARCH=$1;;
+      --platform)       shift; FOUNDRYUP_PLATFORM=$1;;
       -h|--help)
         usage
         exit 0
@@ -58,7 +60,7 @@ main() {
     # Enter local repo and build
     say "installing from $FOUNDRYUP_LOCAL_REPO"
     cd "$FOUNDRYUP_LOCAL_REPO"
-    ensure cargo build --release # need 4 speed
+    ensure cargo build --bins --release # need 4 speed
 
     for bin in "${BINS[@]}"; do
       # Remove prior installations if they exist
@@ -79,16 +81,7 @@ main() {
     FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
 
     # Normalize versions (handle channels, versions without v prefix
-    if [[ "$FOUNDRYUP_VERSION" == "nightly" ]]; then
-      # Locate real nightly tag
-      SHA=$(ensure curl -sSf "https://api.github.com/repos/$FOUNDRYUP_REPO/git/refs/tags/nightly" \
-        | grep -Eo '"sha"[^,]*' \
-        | grep -Eo '[^:]*$' \
-        | tr -d '"' \
-        | tr -d ' ' \
-        | cut -d ':' -f2 )
-      FOUNDRYUP_TAG="nightly-${SHA}"
-    elif [[ "$FOUNDRYUP_VERSION" == nightly* ]]; then
+    if [[ "$FOUNDRYUP_VERSION" =~ ^nightly ]]; then
       FOUNDRYUP_VERSION="nightly"
     elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
       # Add v prefix
@@ -98,16 +91,15 @@ main() {
 
     say "installing foundry (version ${FOUNDRYUP_VERSION}, tag ${FOUNDRYUP_TAG})"
 
-    PLATFORM="$(uname -s)"
+    uname_s=$(uname -s)
+    PLATFORM=$(tolower "${FOUNDRYUP_PLATFORM:-$uname_s}")
     EXT="tar.gz"
     case $PLATFORM in
-      Linux)
-        PLATFORM="linux"
-        ;;
-      Darwin)
+      linux) ;;
+      darwin|mac*)
         PLATFORM="darwin"
         ;;
-      MINGW*)
+      mingw*|win*)
         EXT="zip"
         PLATFORM="win32"
         ;;
@@ -116,7 +108,8 @@ main() {
         ;;
     esac
 
-    ARCHITECTURE="$(uname -m)"
+    uname_m=$(uname -m)
+    ARCHITECTURE=$(tolower "${FOUNDRYUP_ARCH:-$uname_m}")
     if [ "${ARCHITECTURE}" = "x86_64" ]; then
       # Redirect stderr to /dev/null to avoid printing errors if non Rosetta.
       if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
@@ -162,8 +155,8 @@ main() {
       say "installed - $(ensure "$bin_path" --version)"
 
       # Check if the default path of the binary is not in FOUNDRY_BIN_DIR
-      which_path="$(which "$bin")"
-      if [ "$which_path" != "$bin_path" ]; then
+      which_path="$(command -v "$bin" || true)"
+      if [ -n "$which_path" ] && [ "$which_path" != "$bin_path" ]; then
         warn ""
         cat 1>&2 <<EOF
 There are multiple binaries with the name '$bin' present in your 'PATH'.
@@ -204,12 +197,15 @@ EOF
     fi
 
     # Build the repo and install the binaries locally to the .foundry bin directory.
-    # --root appends /bin to the directory it is given, so we pass FOUNDRY_DIR.
-    ensure cargo install --path ./cli --bins --locked --force --root "$FOUNDRY_DIR"
-    # install anvil
-    ensure cargo install --path ./anvil --bin anvil --locked --force --root "$FOUNDRY_DIR"
-    # install chisel
-    ensure cargo install --path ./chisel --bin chisel --locked --force --root "$FOUNDRY_DIR"
+    ensure cargo build --bins --release
+    for bin in "${BINS[@]}"; do
+      for try_path in target/release/$bin target/release/$bin.exe; do
+        if [ -f "$try_path" ]; then
+          [ -e "$FOUNDRY_BIN_DIR/$bin" ] && warn "overwriting existing $bin in $FOUNDRY_BIN_DIR"
+          mv -f "$try_path" "$FOUNDRY_BIN_DIR"
+        fi
+      done
+    done
 
     # If help2man is installed, use it to add Foundry man pages.
     if check_cmd help2man; then
@@ -239,6 +235,8 @@ OPTIONS:
     -C, --commit    Install a specific commit
     -r, --repo      Install from a remote GitHub repo (uses default branch if no other options are set)
     -p, --path      Install a local repository
+    --arch          Install a specific architecture (supports amd64 and arm64)
+    --platform      Install a specific platform (supports win32, linux, and darwin)
 EOF
 }
 
@@ -255,6 +253,10 @@ err() {
   exit 1
 }
 
+tolower() {
+  echo "$1" | awk '{print tolower($0)}'
+}
+
 need_cmd() {
   if ! check_cmd "$1"; then
     err "need '$1' (command not found)"
@@ -266,15 +268,14 @@ check_cmd() {
 }
 
 # Run a command that should never fail. If the command fails execution
-# will immediately terminate with an error showing the failing
-# command.
+# will immediately terminate with an error showing the failing command.
 ensure() {
   if ! "$@"; then err "command failed: $*"; fi
 }
 
 # Downloads $1 into $2 or stdout
 download() {
-  if [ "$2" ]; then
+  if [ -n "$2" ]; then
     # output into $2
     if check_cmd curl; then
       curl -#o "$2" -L "$1"
@@ -315,4 +316,4 @@ Contribute : https://github.com/orgs/foundry-rs/projects/2/
 }
 
 
-main "$@" || exit 1
+main "$@"

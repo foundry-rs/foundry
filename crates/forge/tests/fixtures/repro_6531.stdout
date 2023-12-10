@@ -1,0 +1,19 @@
+Compiling 1 files with 0.8.23
+ 
+Compiler run successful!
+
+Running 1 test for test/Contract.t.sol:USDCCallingTest
+[PASS] test() (gas: 16799)
+Traces:
+  [16799] USDCCallingTest::test()
+    ├─ [0] VM::createSelectFork("<url>")
+    │   └─ ← 0
+    ├─ [10350] 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48::name() [staticcall]
+    │   ├─ [3061] 0xa2327a938Febf5FEC13baCFb16Ae10EcBc4cbDCF::name() [delegatecall]
+    │   │   └─ ← "USD Coin"
+    │   └─ ← "USD Coin"
+    └─ ← ()
+
+Test result: ok. 1 passed; 0 failed; 0 skipped; finished in 3.43s
+ 
+Ran 1 test suites: 1 tests passed, 0 failed, 0 skipped (1 total tests)

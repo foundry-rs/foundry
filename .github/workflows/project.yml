@@ -1,4 +1,5 @@
 name: project
+
 on:
     issues:
         types: [opened, transferred]
@@ -7,7 +8,7 @@ jobs:
     add-to-project:
         name: add issue
         runs-on: ubuntu-latest
-        timeout-minutes: 60
+        timeout-minutes: 30
         steps:
             - uses: actions/add-to-project@main
               with:

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Unlicense
+// SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
@@ -509,5 +509,22 @@ contract CheckOverrides is DSTest {
         require(msg.sender == script_caller);
 
         vm.stopBroadcast();
+    }
+}
+
+contract Child {}
+
+contract Parent {
+    constructor() {
+        new Child();
+    }
+}
+
+contract ScriptAdditionalContracts is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function run() external {
+        vm.startBroadcast();
+        new Parent();
     }
 }

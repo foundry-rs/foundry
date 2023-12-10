@@ -1,4 +1,6 @@
 # auto-detection may fail for human-readable files, like the ones in abi/abi/*.sol
 **/*.sol linguist-language=Solidity
 
-abi/src/bindings/*.rs linguist-generated
+crates/abi/src/bindings/*.rs linguist-generated
+crates/cheatcodes/assets/*.json linguist-generated
+testdata/cheats/Vm.sol linguist-generated

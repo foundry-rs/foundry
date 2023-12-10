@@ -1,0 +1,33 @@
+[package]
+name = "forge-doc"
+description = "Solidity documentation generator"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+forge-fmt.workspace = true
+foundry-common.workspace = true
+foundry-compilers.workspace = true
+foundry-config.workspace = true
+
+alloy-primitives.workspace = true
+
+auto_impl = "1"
+derive_more = "0.99"
+eyre.workspace = true
+itertools.workspace = true
+mdbook = { version = "0.4", default-features = false, features = ["search"] }
+once_cell = "1"
+rayon = "1"
+serde_json.workspace = true
+serde.workspace = true
+solang-parser.workspace = true
+thiserror = "1"
+toml.workspace = true
+tracing.workspace = true

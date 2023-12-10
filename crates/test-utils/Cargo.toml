@@ -1,0 +1,37 @@
+[package]
+name = "foundry-test-utils"
+description = "Foundry testing utilities"
+publish = false
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+foundry-common.workspace = true
+foundry-compilers = { workspace = true, features = ["project-util"] }
+foundry-config.workspace = true
+
+alloy-primitives.workspace = true
+
+ethers-core.workspace = true
+ethers-providers.workspace = true
+
+eyre.workspace = true
+fd-lock = "4.0.0"
+once_cell = "1"
+parking_lot = "0.12"
+pretty_assertions.workspace = true
+regex = "1"
+serde_json.workspace = true
+tracing = "0.1"
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+walkdir = "2"
+
+[features]
+# feature for integration tests that test external projects
+external-integration-tests = []

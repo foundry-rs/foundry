@@ -1,0 +1,27 @@
+[package]
+name = "forge-fmt"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+foundry-config.workspace = true
+
+alloy-primitives.workspace = true
+
+ariadne = "0.3"
+itertools.workspace = true
+solang-parser.workspace = true
+thiserror = "1"
+tracing.workspace = true
+
+[dev-dependencies]
+itertools.workspace = true
+pretty_assertions.workspace = true
+toml.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }

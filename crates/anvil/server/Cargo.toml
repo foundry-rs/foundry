@@ -1,0 +1,44 @@
+[package]
+name = "anvil-server"
+description = "Customizable RPC server"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+anvil-rpc = { path = "../rpc" }
+
+# axum related
+axum = { workspace = true, features = ["ws"] }
+hyper.workspace = true
+tower-http = { workspace = true, features = ["trace", "cors"] }
+
+# tracing
+tracing.workspace = true
+
+# async
+parking_lot = "0.12"
+futures = "0.3"
+
+# ipc
+parity-tokio-ipc = { version = "0.9", optional = true }
+bytes = { version = "1.4", optional = true }
+tokio-util = { version = "0.7", features = ["codec"], optional = true }
+
+# misc
+serde_json.workspace = true
+serde.workspace = true
+async-trait = "0.1"
+thiserror = "1"
+
+clap = { version = "4", features = ["derive", "env"], optional = true }
+pin-project = "1"
+
+[features]
+default = ["ipc"]
+ipc = ["parity-tokio-ipc", "bytes", "tokio-util"]

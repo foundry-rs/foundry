@@ -1,0 +1,41 @@
+[package]
+name = "foundry-evm-traces"
+description = "EVM trace identifying and decoding"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+foundry-block-explorers.workspace = true
+foundry-common.workspace = true
+foundry-compilers.workspace = true
+foundry-config.workspace = true
+foundry-evm-core.workspace = true
+
+alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
+alloy-json-abi.workspace = true
+alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-sol-types.workspace = true
+revm.workspace = true
+
+ethers-core.workspace = true
+
+eyre = "0.6"
+futures = "0.3"
+hashbrown = "0.14"
+hex.workspace = true
+itertools.workspace = true
+once_cell = "1"
+ordered-float = "4"
+serde = "1"
+tokio = { version = "1", features = ["time", "macros"] }
+tracing = "0.1"
+yansi = "0.5"
+
+[dev-dependencies]
+tempfile = "3"

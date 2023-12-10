@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Unlicense
+// SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
@@ -35,10 +35,10 @@ contract TargetArtifacts is DSTest {
     }
 
     function invariantShouldPass() public {
-        require(target2.world() == true || target1.world() == true || hello.world() == true, "false world.");
+        require(target2.world() == true || target1.world() == true || hello.world() == true, "false world");
     }
 
     function invariantShouldFail() public {
-        require(target2.world() == true || target1.world() == true, "false world.");
+        require(target2.world() == true || target1.world() == true, "false world");
     }
 }

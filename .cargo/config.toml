@@ -1,15 +1,11 @@
+[alias]
+cheats = "test -p foundry-cheatcodes-spec --features schema tests::"
+test-debugger = "test -p forge --test cli manual_debug_setup -- --include-ignored --nocapture"
+
+# Increase the stack size to 10MB for Windows targets, which is in line with Linux
+# (whereas default for Windows is 1MB).
 [target.x86_64-pc-windows-msvc]
-rustflags = [
-    # Increases the stack size to 10MB, which is
-    # in line with Linux (whereas default for Windows is 1MB)
-    "-C",
-    "link-arg=/STACK:10000000",
-]
+rustflags = ["-Clink-arg=/STACK:10000000"]
 
 [target.i686-pc-windows-msvc]
-rustflags = [
-    # Increases the stack size to 10MB, which is
-    # in line with Linux (whereas default for Windows is 1MB)
-    "-C",
-    "link-arg=/STACK:10000000",
-]
+rustflags = ["-Clink-arg=/STACK:10000000"]

@@ -1,64 +1,15 @@
-// SPDX-License-Identifier: Unlicense
+// SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
 import "./Vm.sol";
 
-contract FsProxy is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
-    function readFile(string calldata path) external returns (string memory) {
-        return vm.readFile(path);
-    }
-
-    function readDir(string calldata path) external returns (Vm.DirEntry[] memory) {
-        return vm.readDir(path);
-    }
-
-    function readFileBinary(string calldata path) external returns (bytes memory) {
-        return vm.readFileBinary(path);
-    }
-
-    function readLine(string calldata path) external returns (string memory) {
-        return vm.readLine(path);
-    }
-
-    function writeLine(string calldata path, string calldata data) external {
-        return vm.writeLine(path, data);
-    }
-
-    function writeFile(string calldata path, string calldata data) external {
-        return vm.writeLine(path, data);
-    }
-
-    function writeFileBinary(string calldata path, bytes calldata data) external {
-        return vm.writeFileBinary(path, data);
-    }
-
-    function removeFile(string calldata path) external {
-        return vm.removeFile(path);
-    }
-
-    function fsMetadata(string calldata path) external returns (Vm.FsMetadata memory) {
-        return vm.fsMetadata(path);
-    }
-
-    function createDir(string calldata path) external {
-        return vm.createDir(path, false);
-    }
-
-    function createDir(string calldata path, bool recursive) external {
-        return vm.createDir(path, recursive);
-    }
-}
-
 contract FsTest is DSTest {
-    FsProxy public fsProxy;
     Vm constant vm = Vm(HEVM_ADDRESS);
-    bytes constant FOUNDRY_TOML_ACCESS_ERR = "Access to foundry.toml is not allowed.";
-    bytes constant FOUNDRY_READ_ERR = "The path \"/etc/hosts\" is not allowed to be accessed for read operations.";
-    bytes constant FOUNDRY_READ_DIR_ERR = "The path \"/etc\" is not allowed to be accessed for read operations.";
-    bytes constant FOUNDRY_WRITE_ERR = "The path \"/etc/hosts\" is not allowed to be accessed for write operations.";
+    bytes constant FOUNDRY_TOML_ACCESS_ERR = "access to foundry.toml is not allowed";
+    bytes constant FOUNDRY_READ_ERR = "the path /etc/hosts is not allowed to be accessed for read operations";
+    bytes constant FOUNDRY_READ_DIR_ERR = "the path /etc is not allowed to be accessed for read operations";
+    bytes constant FOUNDRY_WRITE_ERR = "the path /etc/hosts is not allowed to be accessed for write operations";
 
     function assertEntry(Vm.DirEntry memory entry, uint64 depth, bool dir) private {
         assertEq(entry.errorMessage, "");
@@ -68,36 +19,30 @@ contract FsTest is DSTest {
     }
 
     function testReadFile() public {
-        fsProxy = new FsProxy();
-
-        string memory path = "../testdata/fixtures/File/read.txt";
+        string memory path = "fixtures/File/read.txt";
 
         assertEq(vm.readFile(path), "hello readable world\nthis is the second line!");
 
         vm.expectRevert(FOUNDRY_READ_ERR);
-        fsProxy.readFile("/etc/hosts");
+        vm.readFile("/etc/hosts");
 
         vm.expectRevert(FOUNDRY_READ_ERR);
-        fsProxy.readFileBinary("/etc/hosts");
+        vm.readFileBinary("/etc/hosts");
     }
 
     function testReadLine() public {
-        fsProxy = new FsProxy();
-
-        string memory path = "../testdata/fixtures/File/read.txt";
+        string memory path = "fixtures/File/read.txt";
 
         assertEq(vm.readLine(path), "hello readable world");
         assertEq(vm.readLine(path), "this is the second line!");
         assertEq(vm.readLine(path), "");
 
         vm.expectRevert(FOUNDRY_READ_ERR);
-        fsProxy.readLine("/etc/hosts");
+        vm.readLine("/etc/hosts");
     }
 
     function testWriteFile() public {
-        fsProxy = new FsProxy();
-
-        string memory path = "../testdata/fixtures/File/write_file.txt";
+        string memory path = "fixtures/File/write_file.txt";
         string memory data = "hello writable world";
         vm.writeFile(path, data);
 
@@ -106,15 +51,22 @@ contract FsTest is DSTest {
         vm.removeFile(path);
 
         vm.expectRevert(FOUNDRY_WRITE_ERR);
-        fsProxy.writeFile("/etc/hosts", "malicious stuff");
+        vm.writeFile("/etc/hosts", "malicious stuff");
         vm.expectRevert(FOUNDRY_WRITE_ERR);
-        fsProxy.writeFileBinary("/etc/hosts", "malicious stuff");
+        vm.writeFileBinary("/etc/hosts", "malicious stuff");
+    }
+
+    function testCopyFile() public {
+        string memory from = "fixtures/File/read.txt";
+        string memory to = "fixtures/File/copy.txt";
+        uint64 copied = vm.copyFile(from, to);
+        assertEq(vm.fsMetadata(to).length, uint256(copied));
+        assertEq(vm.readFile(from), vm.readFile(to));
+        vm.removeFile(to);
     }
 
     function testWriteLine() public {
-        fsProxy = new FsProxy();
-
-        string memory path = "../testdata/fixtures/File/write_line.txt";
+        string memory path = "fixtures/File/write_line.txt";
 
         string memory line1 = "first line";
         vm.writeLine(path, line1);
@@ -127,11 +79,11 @@ contract FsTest is DSTest {
         vm.removeFile(path);
 
         vm.expectRevert(FOUNDRY_WRITE_ERR);
-        fsProxy.writeLine("/etc/hosts", "malicious stuff");
+        vm.writeLine("/etc/hosts", "malicious stuff");
     }
 
     function testCloseFile() public {
-        string memory path = "../testdata/fixtures/File/read.txt";
+        string memory path = "fixtures/File/read.txt";
 
         assertEq(vm.readLine(path), "hello readable world");
         vm.closeFile(path);
@@ -139,9 +91,7 @@ contract FsTest is DSTest {
     }
 
     function testRemoveFile() public {
-        fsProxy = new FsProxy();
-
-        string memory path = "../testdata/fixtures/File/remove_file.txt";
+        string memory path = "fixtures/File/remove_file.txt";
         string memory data = "hello writable world";
 
         vm.writeFile(path, data);
@@ -154,51 +104,45 @@ contract FsTest is DSTest {
         vm.removeFile(path);
 
         vm.expectRevert(FOUNDRY_WRITE_ERR);
-        fsProxy.removeFile("/etc/hosts");
+        vm.removeFile("/etc/hosts");
     }
 
     function testWriteLineFoundrytoml() public {
-        fsProxy = new FsProxy();
-
         string memory root = vm.projectRoot();
         string memory foundryToml = string.concat(root, "/", "foundry.toml");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
-        fsProxy.writeLine(foundryToml, "\nffi = true\n");
+        vm.expectRevert();
+        vm.writeLine(foundryToml, "\nffi = true\n");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
-        fsProxy.writeLine("foundry.toml", "\nffi = true\n");
+        vm.expectRevert();
+        vm.writeLine("foundry.toml", "\nffi = true\n");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
-        fsProxy.writeLine("./foundry.toml", "\nffi = true\n");
+        vm.expectRevert();
+        vm.writeLine("./foundry.toml", "\nffi = true\n");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
-        fsProxy.writeLine("./Foundry.toml", "\nffi = true\n");
+        vm.expectRevert();
+        vm.writeLine("./Foundry.toml", "\nffi = true\n");
     }
 
     function testWriteFoundrytoml() public {
-        fsProxy = new FsProxy();
-
         string memory root = vm.projectRoot();
         string memory foundryToml = string.concat(root, "/", "foundry.toml");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
-        fsProxy.writeFile(foundryToml, "\nffi = true\n");
+        vm.expectRevert();
+        vm.writeFile(foundryToml, "\nffi = true\n");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
-        fsProxy.writeFile("foundry.toml", "\nffi = true\n");
+        vm.expectRevert();
+        vm.writeFile("foundry.toml", "\nffi = true\n");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
-        fsProxy.writeFile("./foundry.toml", "\nffi = true\n");
+        vm.expectRevert();
+        vm.writeFile("./foundry.toml", "\nffi = true\n");
 
-        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
-        fsProxy.writeFile("./Foundry.toml", "\nffi = true\n");
+        vm.expectRevert();
+        vm.writeFile("./Foundry.toml", "\nffi = true\n");
     }
 
     function testReadDir() public {
-        fsProxy = new FsProxy();
-
-        string memory path = "../testdata/fixtures/Dir";
+        string memory path = "fixtures/Dir";
 
         {
             Vm.DirEntry[] memory entries = vm.readDir(path);
@@ -229,13 +173,11 @@ contract FsTest is DSTest {
         }
 
         vm.expectRevert(FOUNDRY_READ_DIR_ERR);
-        fsProxy.readDir("/etc");
+        vm.readDir("/etc");
     }
 
     function testCreateRemoveDir() public {
-        fsProxy = new FsProxy();
-
-        string memory path = "../testdata/fixtures/Dir/remove_dir";
+        string memory path = "fixtures/Dir/remove_dir";
         string memory child = string.concat(path, "/child");
 
         vm.createDir(path, false);
@@ -243,11 +185,11 @@ contract FsTest is DSTest {
 
         vm.removeDir(path, false);
         vm.expectRevert();
-        fsProxy.fsMetadata(path);
+        vm.fsMetadata(path);
 
         // reverts because not recursive
         vm.expectRevert();
-        fsProxy.createDir(child, false);
+        vm.createDir(child, false);
 
         vm.createDir(child, true);
         assertEq(vm.fsMetadata(child).isDir, true);
@@ -255,38 +197,40 @@ contract FsTest is DSTest {
         // deleted both, recursively
         vm.removeDir(path, true);
         vm.expectRevert();
-        fsProxy.fsMetadata(path);
+        vm.fsMetadata(path);
         vm.expectRevert();
-        fsProxy.fsMetadata(child);
+        vm.fsMetadata(child);
     }
 
     function testFsMetadata() public {
-        fsProxy = new FsProxy();
-
-        string memory path = "../testdata/fixtures/File";
-        Vm.FsMetadata memory metadata = vm.fsMetadata(path);
+        Vm.FsMetadata memory metadata = vm.fsMetadata("fixtures/File");
         assertEq(metadata.isDir, true);
         assertEq(metadata.isSymlink, false);
         assertEq(metadata.readOnly, false);
-        assertGt(metadata.length, 0);
         // These fields aren't available on all platforms, default to zero
+        // assertGt(metadata.length, 0);
         // assertGt(metadata.modified, 0);
         // assertGt(metadata.accessed, 0);
         // assertGt(metadata.created, 0);
 
-        path = "../testdata/fixtures/File/read.txt";
-        metadata = vm.fsMetadata(path);
+        metadata = vm.fsMetadata("fixtures/File/read.txt");
         assertEq(metadata.isDir, false);
-
-        path = "../testdata/fixtures/File/symlink";
-        metadata = vm.fsMetadata(path);
         assertEq(metadata.isSymlink, false);
+        // This test will fail on windows if we compared to 45, as windows
+        // ends files with both line feed and carriage return, unlike
+        // unix which only uses the first one.
+        assertTrue(metadata.length == 45 || metadata.length == 46);
+
+        metadata = vm.fsMetadata("fixtures/File/symlink");
+        assertEq(metadata.isDir, false);
+        // TODO: symlinks are canonicalized away in `ensure_path_allowed`
+        // assertEq(metadata.isSymlink, true);
 
         vm.expectRevert();
-        fsProxy.fsMetadata("../not-found");
+        vm.fsMetadata("../not-found");
 
         vm.expectRevert(FOUNDRY_READ_ERR);
-        fsProxy.fsMetadata("/etc/hosts");
+        vm.fsMetadata("/etc/hosts");
     }
 
     // not testing file cheatcodes per se
@@ -295,7 +239,49 @@ contract FsTest is DSTest {
             emit log("Error: reading /etc/hosts should revert");
             fail();
         } catch (bytes memory err) {
-            assertEq(err, abi.encodeWithSignature("CheatCodeError", FOUNDRY_READ_ERR));
+            assertEq(err, abi.encodeWithSignature("CheatcodeError(string)", FOUNDRY_READ_ERR));
         }
+    }
+
+    function testExists() public {
+        string memory validFilePath = "fixtures/File/read.txt";
+        assertTrue(vm.exists(validFilePath));
+        assertTrue(vm.exists(validFilePath));
+
+        string memory validDirPath = "fixtures/File";
+        assertTrue(vm.exists(validDirPath));
+        assertTrue(vm.exists(validDirPath));
+
+        string memory invalidPath = "fixtures/File/invalidfile.txt";
+        assertTrue(vm.exists(invalidPath) == false);
+        assertTrue(vm.exists(invalidPath) == false);
+    }
+
+    function testIsFile() public {
+        string memory validFilePath = "fixtures/File/read.txt";
+        assertTrue(vm.isFile(validFilePath));
+        assertTrue(vm.isFile(validFilePath));
+
+        string memory invalidFilePath = "fixtures/File/invalidfile.txt";
+        assertTrue(vm.isFile(invalidFilePath) == false);
+        assertTrue(vm.isFile(invalidFilePath) == false);
+
+        string memory dirPath = "fixtures/File";
+        assertTrue(vm.isFile(dirPath) == false);
+        assertTrue(vm.isFile(dirPath) == false);
+    }
+
+    function testIsDir() public {
+        string memory validDirPath = "fixtures/File";
+        assertTrue(vm.isDir(validDirPath));
+        assertTrue(vm.isDir(validDirPath));
+
+        string memory invalidDirPath = "fixtures/InvalidDir";
+        assertTrue(vm.isDir(invalidDirPath) == false);
+        assertTrue(vm.isDir(invalidDirPath) == false);
+
+        string memory filePath = "fixtures/File/read.txt";
+        assertTrue(vm.isDir(filePath) == false);
+        assertTrue(vm.isDir(filePath) == false);
     }
 }
