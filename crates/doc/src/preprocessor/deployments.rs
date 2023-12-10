@@ -1,7 +1,10 @@
 use super::{Preprocessor, PreprocessorId};
 use crate::{Document, PreprocessorOutput};
 use alloy_primitives::Address;
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 /// [Deployments] preprocessor id.
 pub const DEPLOYMENTS_ID: PreprocessorId = PreprocessorId("deployments");
@@ -33,20 +36,21 @@ impl Preprocessor for Deployments {
 
     fn preprocess(&self, documents: Vec<Document>) -> Result<Vec<Document>, eyre::Error> {
         let deployments_dir =
-            self.root.join(self.deployments.as_ref().unwrap_or(&PathBuf::from("deployments")));
+            self.root.join(self.deployments.as_deref().unwrap_or(Path::new("deployments")));
 
         // Gather all networks from the deployments directory.
         let networks = fs::read_dir(&deployments_dir)?
-            .map(|x| {
-                x.map(|y| {
-                    if y.file_type()?.is_dir() {
-                        Ok(y.file_name().into_string().map_err(|e| {
-                            eyre::eyre!("Failed to extract directory name: {:?}", e)
-                        })?)
-                    } else {
-                        eyre::bail!("Not a directory.")
-                    }
-                })?
+            .map(|entry| {
+                let entry = entry?;
+                let path = entry.path();
+                if entry.file_type()?.is_dir() {
+                    entry
+                        .file_name()
+                        .into_string()
+                        .map_err(|e| eyre::eyre!("failed to extract directory name: {e:?}"))
+                } else {
+                    eyre::bail!("not a directory: {}", path.display())
+                }
             })
             .collect::<Result<Vec<_>, _>>()?;
 
