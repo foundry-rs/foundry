@@ -156,7 +156,7 @@ impl ScriptArgs {
                             tx.data.clone().map(|b| b.to_alloy()),
                             tx.value.map(|v| v.to_alloy()),
                         )
-                        .expect("Internal EVM error");
+                        .wrap_err("Internal EVM error during simulation")?;
 
                         if !result.success || result.traces.is_empty() {
                             return Ok((None, result.traces))

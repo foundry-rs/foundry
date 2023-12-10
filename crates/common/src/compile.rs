@@ -453,7 +453,12 @@ pub async fn compile_from_source(
         .map(|(aid, art)| {
             (aid, art.source_file().expect("no source file").id, art.into_contract_bytecode())
         })
-        .expect("there should be a contract with bytecode");
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "Unable to find bytecode in compiled output for contract: {}",
+                metadata.contract_name
+            )
+        })?;
     let bytecode = compact_to_contract(contract)?;
 
     root.close()?;

@@ -334,6 +334,56 @@ async fn test_fork_snapshotting_repeated() {
     assert!(!api.evm_revert(snapshot).await.unwrap());
 }
 
+// <https://github.com/foundry-rs/foundry/issues/6463>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_snapshotting_blocks() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // create a snapshot
+    let snapshot = api.evm_snapshot().await.unwrap();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let block_number = provider.get_block_number().await.unwrap();
+
+    let initial_nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let balance_before = provider.get_balance(to, None).await.unwrap();
+    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+
+    // send the transaction
+    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+    let _ = provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
+
+    let block_number_after = provider.get_block_number().await.unwrap();
+    assert_eq!(block_number_after, block_number + 1);
+
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    assert_eq!(nonce, initial_nonce + 1);
+    let to_balance = provider.get_balance(to, None).await.unwrap();
+    assert_eq!(balance_before.saturating_add(amount), to_balance);
+
+    // revert snapshot
+    assert!(api.evm_revert(snapshot).await.unwrap());
+
+    assert_eq!(initial_nonce, provider.get_transaction_count(from, None).await.unwrap());
+    let block_number_after = provider.get_block_number().await.unwrap();
+    assert_eq!(block_number_after, block_number);
+
+    // repeat transaction
+    let _ = provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    assert_eq!(nonce, initial_nonce + 1);
+
+    // revert again: nothing to revert since snapshot gone
+    assert!(!api.evm_revert(snapshot).await.unwrap());
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    assert_eq!(nonce, initial_nonce + 1);
+    let block_number_after = provider.get_block_number().await.unwrap();
+    assert_eq!(block_number_after, block_number + 1);
+}
+
 /// tests that the remote state and local state are kept separate.
 /// changes don't make into the read only Database that holds the remote state, which is flushed to
 /// a cache file.

@@ -208,6 +208,9 @@ test_repro!(6170, false, None, |res| {
     assert_eq!(test.reason, Some("log != expected log".to_string()));
 });
 
+// <https://github.com/foundry-rs/foundry/issues/6293>
+test_repro!(6293);
+
 // https://github.com/foundry-rs/foundry/issues/6180
 test_repro!(6180);
 
