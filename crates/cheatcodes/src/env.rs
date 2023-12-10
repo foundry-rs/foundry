@@ -267,20 +267,11 @@ fn get_env(key: &str) -> Result<String> {
 /// doesn't leak the value.
 fn map_env_err<'a>(key: &'a str, value: &'a str) -> impl FnOnce(Error) -> Error + 'a {
     move |e| {
-        let e = e.to_string(); // failed parsing \"xy(123)\" as type `uint256`: parser error:\nxy(123)\n ^\nexpected at
-                               // least one digit
-        let mut e = e.as_str();
-        // cut off the message to not leak the value
-        let sep = if let Some(idx) = e.rfind(" as type `") {
-            e = &e[idx..];
-            ""
-        } else {
-            ": "
-        };
-        // ensure we're also removing the value from the underlying alloy parser error message, See
-        // [alloy_dyn_abi::parser::Error::parser]
-        let e = e.replacen(&format!("\n{value}\n"), &format!("\n${key}\n"), 1);
-        fmt_err!("failed parsing ${key}{sep}{e}")
+        // failed parsing <value> as type `uint256`: parser error:
+        // <value>
+        //   ^
+        //   expected at least one digit
+        Error::from(e.to_string().replace(value, &format!("${key}")))
     }
 }
 
@@ -291,17 +282,11 @@ mod tests {
     #[test]
     fn parse_env_uint() {
         let key = "parse_env_uint";
-        let value = "xy(123)";
+        let value = "123xyz";
         env::set_var(key, value);
 
         let err = env(key, &DynSolType::Uint(256)).unwrap_err().to_string();
         assert!(!err.contains(value));
-        // Something like:
-        //     failed parsing $parse_env_uint as type `uint256`: parser error:
-        //     $parse_env_uint
-        //     ^
-        //     expected at least one digit
-        // where both instances of `$parse_env_uint` are intentional.
         assert_eq!(err.matches("$parse_env_uint").count(), 2, "{err:?}");
         env::remove_var(key);
     }
