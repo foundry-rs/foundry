@@ -999,6 +999,46 @@
     },
     {
       "func": {
+        "id": "deleteSnapshot",
+        "description": "Removes the snapshot with the given ID created by `snapshot`.\nTakes the snapshot ID to delete.\nReturns `true` if the snapshot was successfully deleted.\nReturns `false` if the snapshot does not exist.",
+        "declaration": "function deleteSnapshot(uint256 snapshotId) external returns (bool success);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deleteSnapshot(uint256)",
+        "selector": "0xa6368557",
+        "selectorBytes": [
+          166,
+          54,
+          133,
+          87
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "deleteSnapshots",
+        "description": "Removes _all_ snapshots previously created by `snapshot`.",
+        "declaration": "function deleteSnapshots() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deleteSnapshots()",
+        "selector": "0x421ae469",
+        "selectorBytes": [
+          66,
+          26,
+          228,
+          105
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "deriveKey_0",
         "description": "Derive a private key from a provided mnenomic string (or mnenomic file path)\nat the derivation path `m/44'/60'/0'/0/{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256 privateKey);",
@@ -3460,7 +3500,7 @@
     {
       "func": {
         "id": "revertTo",
-        "description": "Revert the state of the EVM to a previous snapshot\nTakes the snapshot ID to revert to.\nThis deletes the snapshot and all snapshots taken after the given snapshot ID.",
+        "description": "Revert the state of the EVM to a previous snapshot\nTakes the snapshot ID to revert to.\nReturns `true` if the snapshot was successfully reverted.\nReturns `false` if the snapshot does not exist.\n**Note:** This does not automatically delete the snapshot. To delete the snapshot use `deleteSnapshot`.",
         "declaration": "function revertTo(uint256 snapshotId) external returns (bool success);",
         "visibility": "external",
         "mutability": "",
@@ -3471,6 +3511,26 @@
           215,
           240,
           164
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "revertToAndDelete",
+        "description": "Revert the state of the EVM to a previous snapshot and automatically deletes the snapshots\nTakes the snapshot ID to revert to.\nReturns `true` if the snapshot was successfully reverted and deleted.\nReturns `false` if the snapshot does not exist.",
+        "declaration": "function revertToAndDelete(uint256 snapshotId) external returns (bool success);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "revertToAndDelete(uint256)",
+        "selector": "0x03e0aca9",
+        "selectorBytes": [
+          3,
+          224,
+          172,
+          169
         ]
       },
       "group": "evm",
