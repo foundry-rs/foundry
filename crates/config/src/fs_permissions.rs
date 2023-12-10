@@ -51,7 +51,6 @@ impl FsPermissions {
     ///
     /// And we check for `./out/contracts/MyContract.sol` we will get `read-write` as permission.
     pub fn find_permission(&self, path: &Path) -> Option<FsAccessPermission> {
-        // self.permissions.iter().find(|perm| path.starts_with(&perm.path)).map(|perm| perm.access)
         let mut permission: Option<&PathPermission> = None;
         for perm in &self.permissions {
             if path.starts_with(&perm.path) {
