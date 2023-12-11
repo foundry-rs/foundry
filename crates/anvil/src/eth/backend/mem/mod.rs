@@ -1594,6 +1594,7 @@ impl Backend {
             ),
             uncles: vec![],
             withdrawals: None,
+            other: Default::default(),
         }
     }
 
@@ -2003,9 +2004,9 @@ impl Backend {
             TypedTransaction::Deposit(_) => U256::from(0),
         };
 
-        let _deposit_nonce = transaction_type.and_then(|x| (x == 0x7E).then_some(info.nonce));
+        let deposit_nonce = transaction_type.and_then(|x| (x == 0x7E).then_some(info.nonce));
 
-        let inner = TransactionReceipt {
+        let mut inner = TransactionReceipt {
             transaction_hash: Some(info.transaction_hash.to_alloy()),
             transaction_index: U64::from(info.transaction_index),
             block_hash: Some(block_hash),
@@ -2042,19 +2043,17 @@ impl Backend {
             status_code: Some(U64::from(status_code)),
             state_root: None,
             logs_bloom: Bloom::from_slice(logs_bloom.as_bytes()),
-            // TODO: Should this be unwrap_or_default, or is this guaranteed to exist?
             transaction_type: transaction_type.map(U8::from).unwrap_or_default(),
             effective_gas_price: effective_gas_price.to::<U128>(),
             blob_gas_price: None,
             blob_gas_used: None,
-            // TODO: Optimism TX types
-            // deposit_nonce,
-            // l1_fee: None,
-            // l1_fee_scalar: None,
-            // l1_gas_price: None,
-            // l1_gas_used: None,
-            // other: OtherFields::default(),
+            other: Default::default(),
         };
+
+        inner.other.insert(
+            "deposit_nonce".to_string(),
+            serde_json::to_value(deposit_nonce).expect("Infallible"),
+        );
 
         Some(MinedTransactionReceipt { inner, out: info.out.map(|o| o.0.into()) })
     }
