@@ -31,7 +31,7 @@ pub struct FormatterConfig {
     pub ignore: Vec<String>,
     /// Add new line at start and end of contract declarations
     pub contract_new_lines: bool,
-    /// Sort imports
+    /// Sort import statements alphabetically in groups (a group is separated by a newline).
     pub sort_imports: bool,
 }
 

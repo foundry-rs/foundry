@@ -11,7 +11,7 @@ fn tracing() {
     let _ = tracing::subscriber::set_global_default(subscriber);
 }
 
-fn test_directory(base_name: &str) {
+fn test_directory(base_name: &str, test_config: TestConfig) {
     tracing();
     let mut original = None;
 
@@ -74,6 +74,7 @@ fn test_directory(base_name: &str) {
             config,
             original.as_ref().expect("original.sol not found"),
             &formatted,
+            test_config,
         );
     }
 }
@@ -82,7 +83,13 @@ fn assert_eof(content: &str) {
     assert!(content.ends_with('\n') && !content.ends_with("\n\n"));
 }
 
-fn test_formatter(filename: &str, config: FormatterConfig, source: &str, expected_source: &str) {
+fn test_formatter(
+    filename: &str,
+    config: FormatterConfig,
+    source: &str,
+    expected_source: &str,
+    test_config: TestConfig,
+) {
     #[derive(Eq)]
     struct PrettyString(String);
 
@@ -103,7 +110,7 @@ fn test_formatter(filename: &str, config: FormatterConfig, source: &str, expecte
     let source_parsed = parse(source).unwrap();
     let expected_parsed = parse(expected_source).unwrap();
 
-    if !source_parsed.pt.ast_eq(&expected_parsed.pt) {
+    if !test_config.skip_compare_ast_eq && !source_parsed.pt.ast_eq(&expected_parsed.pt) {
         pretty_assertions::assert_eq!(
             source_parsed.pt,
             expected_parsed.pt,
@@ -118,7 +125,6 @@ fn test_formatter(filename: &str, config: FormatterConfig, source: &str, expecte
     format_to(&mut source_formatted, source_parsed, config.clone()).unwrap();
     assert_eof(&source_formatted);
 
-    // println!("{}", source_formatted);
     let source_formatted = PrettyString(source_formatted);
 
     pretty_assertions::assert_eq!(
@@ -142,13 +148,34 @@ fn test_formatter(filename: &str, config: FormatterConfig, source: &str, expecte
     );
 }
 
-macro_rules! test_directories {
-    ($($dir:ident),+ $(,)?) => {$(
+#[derive(Default, Copy, Clone)]
+struct TestConfig {
+    /// Whether to compare the formatted source code AST with the original AST
+    skip_compare_ast_eq: bool,
+}
+
+impl TestConfig {
+    fn skip_compare_ast_eq() -> Self {
+        Self { skip_compare_ast_eq: true }
+    }
+}
+
+macro_rules! test_dir {
+    ($dir:ident $(,)?) => {
+        test_dir!($dir, Default::default());
+    };
+    ($dir:ident, $config:expr $(,)?) => {
         #[allow(non_snake_case)]
         #[test]
         fn $dir() {
-            test_directory(stringify!($dir));
+            test_directory(stringify!($dir), $config);
         }
+    };
+}
+
+macro_rules! test_directories {
+    ($($dir:ident),+ $(,)?) => {$(
+        test_dir!($dir);
     )+};
 }
 
@@ -201,5 +228,6 @@ test_directories! {
     MappingType,
     EmitStatement,
     Repros,
-    SortedImports
 }
+
+test_dir!(SortedImports, TestConfig::skip_compare_ast_eq());
