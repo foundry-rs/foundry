@@ -1,11 +1,9 @@
 use super::{EtherscanSourceProvider, VerifyArgs};
-use ethers::{
-    etherscan::verify::CodeFormat, prelude::artifacts::StandardJsonCompilerInput, solc::Project,
-};
 use eyre::{Context, Result};
+use foundry_block_explorers::verify::CodeFormat;
+use foundry_compilers::{artifacts::StandardJsonCompilerInput, Project};
 use semver::Version;
 use std::path::Path;
-use tracing::trace;
 
 #[derive(Debug)]
 pub struct EtherscanStandardJsonSource;
@@ -36,7 +34,7 @@ impl EtherscanSourceProvider for EtherscanStandardJsonSource {
         let source =
             serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?;
 
-        trace!(target: "forge::verify",  standard_json = source, "determined standard json input");
+        trace!(target: "forge::verify", standard_json=source, "determined standard json input");
 
         let name = format!(
             "{}:{}",

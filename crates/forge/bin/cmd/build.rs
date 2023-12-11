@@ -1,6 +1,5 @@
 use super::{install, watch::WatchArgs};
 use clap::Parser;
-use ethers::solc::{Project, ProjectCompileOutput};
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::compile::{ProjectCompiler, SkipBuildFilter};
@@ -66,6 +65,12 @@ pub struct BuildArgs {
     #[clap(flatten)]
     #[serde(skip)]
     pub watch: WatchArgs,
+
+    /// Output the compilation errors in the json format.
+    /// This is useful when you want to use the output in other tools.
+    #[clap(long, conflicts_with = "silent")]
+    #[serde(skip)]
+    pub format_json: bool,
 }
 
 impl BuildArgs {
@@ -152,5 +157,13 @@ mod tests {
 
         let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "tests", "scripts"]);
         assert_eq!(args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
+    }
+
+    #[test]
+    fn check_conflicts() {
+        let args: std::result::Result<BuildArgs, clap::Error> =
+            BuildArgs::try_parse_from(["foundry-cli", "--format-json", "--silent"]);
+        assert!(args.is_err());
+        assert!(args.unwrap_err().kind() == clap::error::ErrorKind::ArgumentConflict);
     }
 }

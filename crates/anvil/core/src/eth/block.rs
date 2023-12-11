@@ -322,14 +322,12 @@ impl From<Header> for PartialHeader {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
+    use super::*;
     use ethers_core::{
         types::H160,
         utils::{hex, hex::FromHex},
     };
-
-    use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn header_rlp_roundtrip() {

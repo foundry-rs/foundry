@@ -15,7 +15,6 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
-use tracing::trace;
 
 /// Maximum number of entries in the fee history cache
 pub const MAX_FEE_HISTORY_CACHE_SIZE: u64 = 2048u64;
@@ -257,6 +256,7 @@ impl FeeHistoryService {
                             .max_priority_fee_per_gas
                             .min(t.max_fee_per_gas.saturating_sub(base_fee))
                             .as_u64(),
+                        Some(TypedTransaction::Deposit(_)) => 0,
                         None => 0,
                     };
 
@@ -405,7 +405,7 @@ impl FeeDetails {
 }
 
 impl fmt::Debug for FeeDetails {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(fmt, "Fees {{ ")?;
         write!(fmt, "gaPrice: {:?}, ", self.gas_price)?;
         write!(fmt, "max_fee_per_gas: {:?}, ", self.max_fee_per_gas)?;

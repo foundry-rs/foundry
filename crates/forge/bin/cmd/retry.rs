@@ -1,5 +1,6 @@
 use clap::{builder::RangedU64ValueParser, Parser};
-use foundry_utils::Retry;
+use foundry_common::retry::Retry;
+use std::time::Duration;
 
 /// Retry config used when waiting for verification
 pub const RETRY_CHECK_ON_VERIFY: RetryArgs = RetryArgs { retries: 8, delay: 15 };
@@ -36,7 +37,7 @@ impl Default for RetryArgs {
 
 impl From<RetryArgs> for Retry {
     fn from(r: RetryArgs) -> Self {
-        Retry::new(r.retries, Some(r.delay))
+        Retry::new(r.retries, Some(Duration::from_secs(r.delay as u64)))
     }
 }
 

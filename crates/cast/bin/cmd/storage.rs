@@ -1,21 +1,23 @@
 use crate::opts::parse_slot;
+use alloy_primitives::{B256, U256};
 use cast::Cast;
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
-use ethers::{
-    abi::ethabi::ethereum_types::BigEndianHash, etherscan::Client, prelude::*,
-    solc::artifacts::StorageLayout,
-};
+use ethers_core::types::{BlockId, NameOrAddress};
+use ethers_providers::Middleware;
 use eyre::Result;
+use foundry_block_explorers::Client;
 use foundry_cli::{
     opts::{CoreBuildArgs, EtherscanOpts, RpcOpts},
     utils,
 };
 use foundry_common::{
     abi::find_source,
-    compile::{etherscan_project, ProjectCompiler},
+    compile::{compile, etherscan_project, suppress_compile},
+    types::{ToAlloy, ToEthers},
     RetryProvider,
 };
+use foundry_compilers::{artifacts::StorageLayout, ConfigurableContractArtifact, Project, Solc};
 use foundry_config::{
     figment::{self, value::Dict, Metadata, Profile},
     impl_figment_convert_cast, Config,
@@ -38,7 +40,7 @@ pub struct StorageArgs {
 
     /// The storage slot number.
     #[clap(value_parser = parse_slot)]
-    slot: Option<H256>,
+    slot: Option<B256>,
 
     /// The block height to query at.
     ///
@@ -79,21 +81,17 @@ impl StorageArgs {
         let Self { address, slot, block, build, .. } = self;
 
         let provider = utils::get_provider(&config)?;
-        let address = match address {
-            NameOrAddress::Name(name) => provider.resolve_name(&name).await?,
-            NameOrAddress::Address(address) => address,
-        };
 
         // Slot was provided, perform a simple RPC call
         if let Some(slot) = slot {
             let cast = Cast::new(provider);
-            println!("{}", cast.storage(address, slot, block).await?);
+            println!("{}", cast.storage(address, slot.to_ethers(), block).await?);
             return Ok(())
         }
 
         // No slot was provided
         // Get deployed bytecode at given address
-        let address_code = provider.get_code(address, block).await?;
+        let address_code = provider.get_code(address.clone(), block).await?.to_alloy();
         if address_code.is_empty() {
             eyre::bail!("Provided address has no deployed code and thus no storage");
         }
@@ -112,7 +110,7 @@ impl StorageArgs {
             let artifact =
                 out.artifacts().find(|(_, artifact)| match_code(artifact).unwrap_or_default());
             if let Some((_, artifact)) = artifact {
-                return fetch_and_print_storage(provider, address, artifact, true).await
+                return fetch_and_print_storage(provider, address.clone(), artifact, true).await
             }
         }
 
@@ -120,10 +118,18 @@ impl StorageArgs {
         // Get code from Etherscan
         sh_note!("No matching artifacts found, fetching source code from Etherscan...")?;
 
-        let chain = utils::get_chain(config.chain_id, &provider).await?;
+        if self.etherscan.key.is_none() {
+            eyre::bail!("You must provide an Etherscan API key if you're fetching a remote contract's storage.");
+        }
+
+        let chain = utils::get_chain(config.chain, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-        let client = Client::new(chain.named()?, api_key)?;
-        let source = find_source(client, address).await?;
+        let client = Client::new(chain, api_key)?;
+        let addr = address
+            .as_address()
+            .ok_or_else(|| eyre::eyre!("Could not resolve address"))?
+            .to_alloy();
+        let source = find_source(client, addr).await?;
         let metadata = source.items.first().unwrap();
         if metadata.is_vyper() {
             eyre::bail!("Contract at provided address is not a valid Solidity contract")
@@ -176,7 +182,7 @@ impl StorageArgs {
 
 async fn fetch_and_print_storage(
     provider: RetryProvider,
-    address: Address,
+    address: NameOrAddress,
     artifact: &ConfigurableContractArtifact,
     pretty: bool,
 ) -> Result<()> {
@@ -184,52 +190,53 @@ async fn fetch_and_print_storage(
         sh_note!("Storage layout is empty.")
     } else {
         let layout = artifact.storage_layout.as_ref().unwrap().clone();
-        let values = fetch_storage_values(provider, address, &layout).await?;
+        let values = fetch_storage_slots(provider, address, &layout).await?;
         print_storage(layout, values, pretty)
     }
 }
 
-/// Overrides the `value` field in [StorageLayout] with the slot's value to avoid creating new data
-/// structures.
-async fn fetch_storage_values(
+async fn fetch_storage_slots(
     provider: RetryProvider,
-    address: Address,
+    address: NameOrAddress,
     layout: &StorageLayout,
-) -> Result<Vec<String>> {
-    // TODO: Batch request; handle array values
+) -> Result<Vec<B256>> {
+    // TODO: Batch request
     let futures: Vec<_> = layout
         .storage
         .iter()
         .map(|slot| {
-            let slot_h256 = H256::from_uint(&U256::from_dec_str(&slot.slot)?);
-            Ok(provider.get_storage_at(address, slot_h256, None))
+            let slot = B256::from(U256::from_str(&slot.slot)?);
+            Ok(provider.get_storage_at(address.clone(), slot.to_ethers(), None))
         })
         .collect::<Result<_>>()?;
 
-    // TODO: Better format values according to their Solidity type
-    join_all(futures).await.into_iter().map(|value| Ok(format!("{}", value?.into_uint()))).collect()
+    join_all(futures).await.into_iter().map(|r| Ok(r?.to_alloy())).collect()
 }
 
-fn print_storage(layout: StorageLayout, values: Vec<String>, pretty: bool) -> Result<()> {
+fn print_storage(layout: StorageLayout, values: Vec<B256>, pretty: bool) -> Result<()> {
     if !pretty {
         println!("{}", serde_json::to_string_pretty(&serde_json::to_value(layout)?)?);
-        return Ok(())
+        return Ok(());
     }
 
     let mut table = Table::new();
     table.load_preset(ASCII_MARKDOWN);
-    table.set_header(vec!["Name", "Type", "Slot", "Offset", "Bytes", "Value", "Contract"]);
+    table.set_header(["Name", "Type", "Slot", "Offset", "Bytes", "Value", "Hex Value", "Contract"]);
 
     for (slot, value) in layout.storage.into_iter().zip(values) {
         let storage_type = layout.types.get(&slot.storage_type);
-        table.add_row(vec![
-            slot.label,
-            storage_type.as_ref().map_or("?".to_string(), |t| t.label.clone()),
-            slot.slot,
-            slot.offset.to_string(),
-            storage_type.as_ref().map_or("?".to_string(), |t| t.number_of_bytes.clone()),
-            value,
-            slot.contract,
+        let raw_value_bytes = value.0;
+        let converted_value = U256::from_be_bytes(raw_value_bytes);
+
+        table.add_row([
+            slot.label.as_str(),
+            storage_type.map_or("?", |t| &t.label),
+            &slot.slot,
+            &slot.offset.to_string(),
+            &storage_type.map_or("?", |t| &t.number_of_bytes),
+            &converted_value.to_string(),
+            &value.to_string(),
+            &slot.contract,
         ]);
     }
 

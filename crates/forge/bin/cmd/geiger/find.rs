@@ -60,7 +60,7 @@ impl<'a, 'b> fmt::Display for SolFileMetricsPrinter<'a, 'b> {
                     for &loc in $field {
                         let content = &metrics.contents[loc.range()];
                         let (line, col) = offset_to_line_column(&metrics.contents, loc.start());
-                        let pos = format!("  --> {}:{}:{}", file.display(),  line, col);
+                        let pos = format!("  --> {}:{}:{}", file.display(), line, col);
                         writeln!(f,"{}", Paint::red(pos))?;
                         for line in content.lines() {
                             writeln!(f, "      {}", Paint::red(line))?;
@@ -136,14 +136,14 @@ mod tests {
 
     #[test]
     fn can_find_calls() {
-        let s = r#"
+        let s = r"
         contract A is Test {
             function do_ffi() public {
                 string[] memory inputs = new string[](1);
                 vm.ffi(inputs);
             }
         }
-        "#;
+        ";
 
         let count = find_cheatcodes_in_string(s).unwrap();
         assert_eq!(count.ffi.len(), 1);
@@ -152,14 +152,14 @@ mod tests {
 
     #[test]
     fn can_find_call_in_assignment() {
-        let s = r#"
+        let s = r"
         contract A is Test {
             function do_ffi() public {
                 string[] memory inputs = new string[](1);
                 bytes stuff = vm.ffi(inputs);
             }
         }
-        "#;
+        ";
 
         let count = find_cheatcodes_in_string(s).unwrap();
         assert_eq!(count.ffi.len(), 1);

@@ -1,10 +1,9 @@
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use forge_fmt::{format, parse, print_diagnostics_report};
+use forge_fmt::{format_to, parse, print_diagnostics_report};
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
-use foundry_common::fs;
+use foundry_common::{fs, glob::expand_globs, term::cli_warn};
 use foundry_config::impl_figment_convert_basic;
-use foundry_utils::glob::expand_globs;
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
 use std::{
@@ -13,7 +12,6 @@ use std::{
     io::{Read, Write as _},
     path::{Path, PathBuf},
 };
-use tracing::log::warn;
 use yansi::Color;
 
 /// CLI arguments for `forge fmt`.
@@ -53,7 +51,7 @@ impl FmtArgs {
         // Expand ignore globs and canonicalize from the get go
         let ignored = expand_globs(&config.__root.0, config.fmt.ignore.iter())?
             .iter()
-            .flat_map(foundry_utils::path::canonicalize_path)
+            .flat_map(foundry_common::fs::canonicalize_path)
             .collect::<Vec<_>>();
 
         let cwd = std::env::current_dir()?;
@@ -83,7 +81,7 @@ impl FmtArgs {
                     }
 
                     if path.is_dir() {
-                        inputs.extend(ethers::solc::utils::source_files_iter(path));
+                        inputs.extend(foundry_compilers::utils::source_files_iter(path));
                     } else if path.is_sol() {
                         inputs.push(path.to_path_buf());
                     } else {
@@ -117,7 +115,7 @@ impl FmtArgs {
             }
 
             let mut output = String::new();
-            format(&mut output, parsed, config.fmt.clone()).unwrap();
+            format_to(&mut output, parsed, config.fmt.clone()).unwrap();
 
             // validate
             let _ = solang_parser::parse(&output, 0).map_err(|diags| {
@@ -196,7 +194,7 @@ enum Input {
 }
 
 impl fmt::Display for Line {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
             None => f.write_str("    "),
             Some(idx) => write!(f, "{:<4}", idx + 1),

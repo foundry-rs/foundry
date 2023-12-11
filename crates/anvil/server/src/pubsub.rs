@@ -17,7 +17,6 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
-use tracing::{error, trace};
 
 /// The general purpose trait for handling RPC requests and subscriptions
 #[async_trait::async_trait]
@@ -171,7 +170,7 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let pin = self.get_mut();
         loop {
-            // drive the sink
+            // drive the websocket
             while let Poll::Ready(Ok(())) = pin.connection.poll_ready_unpin(cx) {
                 // only start sending if socket is ready
                 if let Some(msg) = pin.pending.pop_front() {
@@ -181,6 +180,14 @@ where
                 } else {
                     break
                 }
+            }
+
+            // Ensure any pending messages are flushed
+            // this needs to be called manually for tungsenite websocket: <https://github.com/foundry-rs/foundry/issues/6345>
+            if let Poll::Ready(Err(err)) = pin.connection.poll_flush_unpin(cx) {
+                trace!(target: "rpc", ?err, "websocket err");
+                // close the connection
+                return Poll::Ready(())
             }
 
             loop {

@@ -1,6 +1,7 @@
-use ethers::prelude::{Middleware, Provider, U256};
+use alloy_primitives::U256;
+use ethers_providers::{Middleware, Provider};
 use eyre::{Result, WrapErr};
-use foundry_common::{get_http_provider, runtime_client::RuntimeClient, RpcUrl};
+use foundry_common::{get_http_provider, runtime_client::RuntimeClient, types::ToAlloy, RpcUrl};
 use foundry_config::Chain;
 use std::{
     collections::{hash_map::Entry, HashMap},
@@ -60,17 +61,25 @@ impl ProviderInfo {
         let provider = Arc::new(get_http_provider(rpc));
         let chain = provider.get_chainid().await?.as_u64();
 
-        if let Chain::Named(chain) = Chain::from(chain) {
+        if let Some(chain) = Chain::from(chain).named() {
             is_legacy |= chain.is_legacy();
         };
 
         let gas_price = if is_legacy {
             GasPrice::Legacy(
-                provider.get_gas_price().await.wrap_err("Failed to get legacy gas price"),
+                provider
+                    .get_gas_price()
+                    .await
+                    .wrap_err("Failed to get legacy gas price")
+                    .map(|p| p.to_alloy()),
             )
         } else {
             GasPrice::EIP1559(
-                provider.estimate_eip1559_fees(None).await.wrap_err("Failed to get EIP-1559 fees"),
+                provider
+                    .estimate_eip1559_fees(None)
+                    .await
+                    .wrap_err("Failed to get EIP-1559 fees")
+                    .map(|p| (p.0.to_alloy(), p.1.to_alloy())),
             )
         };
 

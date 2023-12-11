@@ -14,10 +14,11 @@ use ethers_core::{
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
-use foundry_evm::trace::CallTraceArena;
+use foundry_common::types::ToAlloy;
+use foundry_evm::traces::CallTraceArena;
 use revm::{
     interpreter::InstructionResult,
-    primitives::{CreateScheme, TransactTo, TxEnv},
+    primitives::{CreateScheme, OptimismFields, TransactTo, TxEnv},
 };
 use std::ops::Deref;
 
@@ -35,11 +36,13 @@ pub const IMPERSONATED_SIGNATURE: Signature =
 /// 1. Legacy (pre-EIP2718) [`LegacyTransactionRequest`]
 /// 2. EIP2930 (state access lists) [`EIP2930TransactionRequest`]
 /// 3. EIP1559 [`EIP1559TransactionRequest`]
+/// 4. Deposit [`DepositTransactionRequest`]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum TypedTransactionRequest {
     Legacy(LegacyTransactionRequest),
     EIP2930(EIP2930TransactionRequest),
     EIP1559(EIP1559TransactionRequest),
+    Deposit(DepositTransactionRequest),
 }
 
 /// Represents _all_ transaction requests received from RPC
@@ -66,6 +69,7 @@ pub struct EthTransactionRequest {
     /// value of th tx in wei
     pub value: Option<U256>,
     /// Any additional data sent
+    #[cfg_attr(feature = "serde", serde(alias = "input"))]
     pub data: Option<Bytes>,
     /// Transaction nonce
     pub nonce: Option<U256>,
@@ -78,6 +82,22 @@ pub struct EthTransactionRequest {
     /// EIP-2718 type
     #[cfg_attr(feature = "serde", serde(rename = "type"))]
     pub transaction_type: Option<U256>,
+    /// Optimism Deposit Request Fields
+    #[serde(flatten)]
+    pub optimism_fields: Option<OptimismDepositRequestFields>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct OptimismDepositRequestFields {
+    /// op-stack deposit source hash
+    pub source_hash: H256,
+    /// op-stack deposit mint
+    pub mint: U256,
+    /// op-stack deposit system tx
+    pub is_system_tx: bool,
 }
 
 // == impl EthTransactionRequest ==
@@ -86,6 +106,7 @@ impl EthTransactionRequest {
     /// Converts the request into a [TypedTransactionRequest]
     pub fn into_typed_request(self) -> Option<TypedTransactionRequest> {
         let EthTransactionRequest {
+            from,
             to,
             gas_price,
             max_fee_per_gas,
@@ -97,10 +118,27 @@ impl EthTransactionRequest {
             mut access_list,
             chain_id,
             transaction_type,
+            optimism_fields,
             ..
         } = self;
         let chain_id = chain_id.map(|id| id.as_u64());
         let transaction_type = transaction_type.map(|id| id.as_u64());
+        // op-stack deposit tx
+        if optimism_fields.is_some() && transaction_type == Some(126) {
+            return Some(TypedTransactionRequest::Deposit(DepositTransactionRequest {
+                source_hash: optimism_fields.clone()?.source_hash,
+                from: from.unwrap_or_default(),
+                kind: match to {
+                    Some(to) => TransactionKind::Call(to),
+                    None => TransactionKind::Create,
+                },
+                mint: optimism_fields.clone()?.mint,
+                value: value.unwrap_or_default(),
+                gas_limit: gas.unwrap_or_default(),
+                is_system_tx: optimism_fields.clone()?.is_system_tx,
+                input: data.clone().unwrap_or_default(),
+            }));
+        }
         match (
             transaction_type,
             gas_price,
@@ -412,6 +450,55 @@ impl Encodable for EIP1559TransactionRequest {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DepositTransactionRequest {
+    pub from: Address,
+    pub source_hash: H256,
+    pub kind: TransactionKind,
+    pub mint: U256,
+    pub value: U256,
+    pub gas_limit: U256,
+    pub is_system_tx: bool,
+    pub input: Bytes,
+}
+
+// == impl DepositTransactionRequest ==
+
+impl DepositTransactionRequest {
+    pub fn hash(&self) -> H256 {
+        H256::from_slice(keccak256(&rlp::encode(self)).as_slice())
+    }
+}
+
+impl From<DepositTransaction> for DepositTransactionRequest {
+    fn from(tx: DepositTransaction) -> Self {
+        Self {
+            from: tx.from,
+            source_hash: tx.source_hash,
+            kind: tx.kind,
+            mint: tx.mint,
+            value: tx.value,
+            gas_limit: tx.gas_limit,
+            is_system_tx: tx.is_system_tx,
+            input: tx.input,
+        }
+    }
+}
+
+impl Encodable for DepositTransactionRequest {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        s.begin_list(8);
+        s.append(&self.from);
+        s.append(&self.source_hash);
+        s.append(&self.kind);
+        s.append(&self.mint);
+        s.append(&self.value);
+        s.append(&self.gas_limit);
+        s.append(&self.is_system_tx);
+        s.append(&self.input.as_ref());
+    }
+}
+
 /// A wrapper for `TypedTransaction` that allows impersonating accounts.
 ///
 /// This is a helper that carries the `impersonated` sender so that the right hash
@@ -530,6 +617,8 @@ pub enum TypedTransaction {
     EIP2930(EIP2930Transaction),
     /// EIP-1559 transaction
     EIP1559(EIP1559Transaction),
+    /// op-stack deposit transaction
+    Deposit(DepositTransaction),
 }
 
 // == impl TypedTransaction ==
@@ -545,6 +634,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => tx.gas_price,
             TypedTransaction::EIP2930(tx) => tx.gas_price,
             TypedTransaction::EIP1559(tx) => tx.max_fee_per_gas,
+            TypedTransaction::Deposit(_) => U256::from(0),
         }
     }
 
@@ -553,6 +643,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => tx.gas_limit,
             TypedTransaction::EIP2930(tx) => tx.gas_limit,
             TypedTransaction::EIP1559(tx) => tx.gas_limit,
+            TypedTransaction::Deposit(tx) => tx.gas_limit,
         }
     }
 
@@ -561,6 +652,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => tx.value,
             TypedTransaction::EIP2930(tx) => tx.value,
             TypedTransaction::EIP1559(tx) => tx.value,
+            TypedTransaction::Deposit(tx) => tx.value,
         }
     }
 
@@ -569,6 +661,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => &tx.input,
             TypedTransaction::EIP2930(tx) => &tx.input,
             TypedTransaction::EIP1559(tx) => &tx.input,
+            TypedTransaction::Deposit(tx) => &tx.input,
         }
     }
 
@@ -578,6 +671,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(_) => None,
             TypedTransaction::EIP2930(_) => Some(1),
             TypedTransaction::EIP1559(_) => Some(2),
+            TypedTransaction::Deposit(_) => Some(0x7E),
         }
     }
 
@@ -625,6 +719,18 @@ impl TypedTransaction {
                 chain_id: Some(t.chain_id),
                 access_list: t.access_list.clone(),
             },
+            TypedTransaction::Deposit(t) => TransactionEssentials {
+                kind: t.kind,
+                input: t.input.clone(),
+                nonce: t.nonce,
+                gas_limit: t.gas_limit,
+                gas_price: Some(U256::from(0)),
+                max_fee_per_gas: None,
+                max_priority_fee_per_gas: None,
+                value: t.value,
+                chain_id: t.chain_id(),
+                access_list: Default::default(),
+            },
         }
     }
 
@@ -633,6 +739,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(t) => t.nonce(),
             TypedTransaction::EIP2930(t) => t.nonce(),
             TypedTransaction::EIP1559(t) => t.nonce(),
+            TypedTransaction::Deposit(t) => t.nonce(),
         }
     }
 
@@ -641,6 +748,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(t) => t.chain_id(),
             TypedTransaction::EIP2930(t) => Some(t.chain_id),
             TypedTransaction::EIP1559(t) => Some(t.chain_id),
+            TypedTransaction::Deposit(t) => t.chain_id(),
         }
     }
 
@@ -670,6 +778,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(t) => t.hash(),
             TypedTransaction::EIP2930(t) => t.hash(),
             TypedTransaction::EIP1559(t) => t.hash(),
+            TypedTransaction::Deposit(t) => t.hash(),
         }
     }
 
@@ -695,6 +804,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => tx.recover(),
             TypedTransaction::EIP2930(tx) => tx.recover(),
             TypedTransaction::EIP1559(tx) => tx.recover(),
+            TypedTransaction::Deposit(tx) => tx.recover(),
         }
     }
 
@@ -704,6 +814,7 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => &tx.kind,
             TypedTransaction::EIP2930(tx) => &tx.kind,
             TypedTransaction::EIP1559(tx) => &tx.kind,
+            TypedTransaction::Deposit(tx) => &tx.kind,
         }
     }
 
@@ -728,6 +839,7 @@ impl TypedTransaction {
                 let s = U256::from_big_endian(&tx.s[..]);
                 Signature { r, s, v: v.into() }
             }
+            TypedTransaction::Deposit(_) => Signature { r: U256::zero(), s: U256::zero(), v: 0 },
         }
     }
 }
@@ -738,25 +850,28 @@ impl Encodable for TypedTransaction {
             TypedTransaction::Legacy(tx) => tx.rlp_append(s),
             TypedTransaction::EIP2930(tx) => enveloped(1, tx, s),
             TypedTransaction::EIP1559(tx) => enveloped(2, tx, s),
+            TypedTransaction::Deposit(tx) => enveloped(0x7E, tx, s),
         }
     }
 }
 
 impl Decodable for TypedTransaction {
     fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-        let data = rlp.data()?;
-        let first = *data.first().ok_or(DecoderError::Custom("empty slice"))?;
         if rlp.is_list() {
             return Ok(TypedTransaction::Legacy(rlp.as_val()?))
         }
-        let s = data.get(1..).ok_or(DecoderError::Custom("no tx body"))?;
-        if first == 0x01 {
-            return rlp::decode(s).map(TypedTransaction::EIP2930)
+        let [first, s @ ..] = rlp.data()? else {
+            return Err(DecoderError::Custom("empty slice"));
+        };
+        // "advance" the header, see comments in fastrlp impl below
+        let s = if s.is_empty() { &rlp.as_raw()[1..] } else { s };
+
+        match *first {
+            0x01 => rlp::decode(s).map(TypedTransaction::EIP2930),
+            0x02 => rlp::decode(s).map(TypedTransaction::EIP1559),
+            0x7E => rlp::decode(s).map(TypedTransaction::Deposit),
+            _ => Err(DecoderError::Custom("invalid tx type")),
         }
-        if first == 0x02 {
-            return rlp::decode(s).map(TypedTransaction::EIP1559)
-        }
-        Err(DecoderError::Custom("invalid tx type"))
     }
 }
 
@@ -769,6 +884,7 @@ impl open_fastrlp::Encodable for TypedTransaction {
                 let payload_len = match tx {
                     TypedTransaction::EIP2930(tx) => tx.length() + 1,
                     TypedTransaction::EIP1559(tx) => tx.length() + 1,
+                    TypedTransaction::Deposit(tx) => tx.length() + 1,
                     _ => unreachable!("legacy tx length already matched"),
                 };
 
@@ -789,6 +905,14 @@ impl open_fastrlp::Encodable for TypedTransaction {
                         out.put_u8(0x02);
                         tx.encode(out);
                     }
+                    TypedTransaction::Deposit(tx) => {
+                        let tx_string_header =
+                            open_fastrlp::Header { list: false, payload_length: payload_len };
+
+                        tx_string_header.encode(out);
+                        out.put_u8(0x7E);
+                        tx.encode(out);
+                    }
                     _ => unreachable!("legacy tx encode already matched"),
                 }
             }
@@ -801,6 +925,7 @@ impl open_fastrlp::Encodable for TypedTransaction {
                 let payload_len = match tx {
                     TypedTransaction::EIP2930(tx) => tx.length() + 1,
                     TypedTransaction::EIP1559(tx) => tx.length() + 1,
+                    TypedTransaction::Deposit(tx) => tx.length() + 1,
                     _ => unreachable!("legacy tx length already matched"),
                 };
                 // we include a string header for signed types txs, so include the length here
@@ -846,6 +971,10 @@ impl open_fastrlp::Decodable for TypedTransaction {
                     buf.advance(1);
                     <EIP1559Transaction as open_fastrlp::Decodable>::decode(buf)
                         .map(TypedTransaction::EIP1559)
+                } else if tx_type == 0x7E {
+                    buf.advance(1);
+                    <DepositTransaction as open_fastrlp::Decodable>::decode(buf)
+                        .map(TypedTransaction::Deposit)
                 } else {
                     Err(open_fastrlp::DecodeError::Custom("invalid tx type"))
                 }
@@ -1121,6 +1250,76 @@ impl Decodable for EIP1559Transaction {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+
+pub struct DepositTransaction {
+    pub nonce: U256,
+    pub source_hash: H256,
+    pub from: Address,
+    pub kind: TransactionKind,
+    pub mint: U256,
+    pub value: U256,
+    pub gas_limit: U256,
+    pub is_system_tx: bool,
+    pub input: Bytes,
+}
+
+impl DepositTransaction {
+    pub fn nonce(&self) -> &U256 {
+        &self.nonce
+    }
+
+    pub fn hash(&self) -> H256 {
+        H256::from_slice(keccak256(&rlp::encode(self)).as_slice())
+    }
+
+    /// Recovers the Ethereum address which was used to sign the transaction.
+    pub fn recover(&self) -> Result<Address, SignatureError> {
+        Ok(self.from)
+    }
+
+    pub fn chain_id(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl Encodable for DepositTransaction {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        s.begin_list(9);
+        s.append(&self.nonce);
+        s.append(&self.source_hash);
+        s.append(&self.from);
+        s.append(&self.kind);
+        s.append(&self.mint);
+        s.append(&self.value);
+        s.append(&self.gas_limit);
+        s.append(&self.is_system_tx);
+        s.append(&self.input.as_ref());
+    }
+}
+
+impl Decodable for DepositTransaction {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        if rlp.item_count()? != 8 {
+            return Err(DecoderError::RlpIncorrectListLen)
+        }
+
+        Ok(Self {
+            source_hash: rlp.val_at(0)?,
+            from: rlp.val_at(1)?,
+            kind: rlp.val_at(2)?,
+            mint: rlp.val_at(3)?,
+            value: rlp.val_at(4)?,
+            gas_limit: rlp.val_at(5)?,
+            is_system_tx: rlp.val_at(6)?,
+            input: rlp.val_at::<Vec<u8>>(7)?.into(),
+            nonce: U256::from(0),
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TransactionEssentials {
     pub kind: TransactionKind,
@@ -1185,7 +1384,7 @@ impl PendingTransaction {
     pub fn to_revm_tx_env(&self) -> TxEnv {
         fn transact_to(kind: &TransactionKind) -> TransactTo {
             match kind {
-                TransactionKind::Call(c) => TransactTo::Call((*c).into()),
+                TransactionKind::Call(c) => TransactTo::Call((*c).to_alloy()),
                 TransactionKind::Create => TransactTo::Create(CreateScheme::Create),
             }
         }
@@ -1196,16 +1395,17 @@ impl PendingTransaction {
                 let chain_id = tx.chain_id();
                 let LegacyTransaction { nonce, gas_price, gas_limit, value, kind, input, .. } = tx;
                 TxEnv {
-                    caller: caller.into(),
+                    caller: caller.to_alloy(),
                     transact_to: transact_to(kind),
-                    data: input.0.clone(),
+                    data: alloy_primitives::Bytes(input.0.clone()),
                     chain_id,
                     nonce: Some(nonce.as_u64()),
-                    value: (*value).into(),
-                    gas_price: (*gas_price).into(),
+                    value: (*value).to_alloy(),
+                    gas_price: (*gas_price).to_alloy(),
                     gas_priority_fee: None,
                     gas_limit: gas_limit.as_u64(),
                     access_list: vec![],
+                    ..Default::default()
                 }
             }
             TypedTransaction::EIP2930(tx) => {
@@ -1221,16 +1421,17 @@ impl PendingTransaction {
                     ..
                 } = tx;
                 TxEnv {
-                    caller: caller.into(),
+                    caller: (caller).to_alloy(),
                     transact_to: transact_to(kind),
-                    data: input.0.clone(),
+                    data: alloy_primitives::Bytes(input.0.clone()),
                     chain_id: Some(*chain_id),
                     nonce: Some(nonce.as_u64()),
-                    value: (*value).into(),
-                    gas_price: (*gas_price).into(),
+                    value: (*value).to_alloy(),
+                    gas_price: (*gas_price).to_alloy(),
                     gas_priority_fee: None,
                     gas_limit: gas_limit.as_u64(),
                     access_list: to_revm_access_list(access_list.0.clone()),
+                    ..Default::default()
                 }
             }
             TypedTransaction::EIP1559(tx) => {
@@ -1247,16 +1448,50 @@ impl PendingTransaction {
                     ..
                 } = tx;
                 TxEnv {
-                    caller: caller.into(),
+                    caller: (caller).to_alloy(),
                     transact_to: transact_to(kind),
-                    data: input.0.clone(),
+                    data: alloy_primitives::Bytes(input.0.clone()),
                     chain_id: Some(*chain_id),
                     nonce: Some(nonce.as_u64()),
-                    value: (*value).into(),
-                    gas_price: (*max_fee_per_gas).into(),
-                    gas_priority_fee: Some((*max_priority_fee_per_gas).into()),
+                    value: (*value).to_alloy(),
+                    gas_price: (*max_fee_per_gas).to_alloy(),
+                    gas_priority_fee: Some((*max_priority_fee_per_gas).to_alloy()),
                     gas_limit: gas_limit.as_u64(),
                     access_list: to_revm_access_list(access_list.0.clone()),
+                    ..Default::default()
+                }
+            }
+            TypedTransaction::Deposit(tx) => {
+                let chain_id = tx.chain_id();
+                let DepositTransaction {
+                    nonce,
+                    source_hash,
+                    gas_limit,
+                    value,
+                    kind,
+                    mint,
+                    input,
+                    is_system_tx,
+                    ..
+                } = tx;
+                TxEnv {
+                    caller: caller.to_alloy(),
+                    transact_to: transact_to(kind),
+                    data: alloy_primitives::Bytes(input.0.clone()),
+                    chain_id,
+                    nonce: Some(nonce.as_u64()),
+                    value: (*value).to_alloy(),
+                    gas_price: 0.to_alloy(),
+                    gas_priority_fee: None,
+                    gas_limit: gas_limit.as_u64(),
+                    access_list: vec![],
+                    optimism: OptimismFields {
+                        source_hash: Some(source_hash.to_alloy()),
+                        mint: Some(mint.as_u128()),
+                        is_system_transaction: Some(*is_system_tx),
+                        enveloped_tx: None,
+                    },
+                    ..Default::default()
                 }
             }
         }
@@ -1276,6 +1511,7 @@ pub struct TransactionInfo {
     pub traces: CallTraceArena,
     pub exit: InstructionResult,
     pub out: Option<Bytes>,
+    pub nonce: u64,
 }
 
 // === impl TransactionInfo ===
@@ -1320,6 +1556,24 @@ mod tests {
 
     #[test]
     fn can_recover_sender() {
+        // random mainnet tx: https://etherscan.io/tx/0x86718885c4b4218c6af87d3d0b0d83e3cc465df2a05c048aa4db9f1a6f9de91f
+        let bytes = hex::decode("02f872018307910d808507204d2cb1827d0094388c818ca8b9251b393131c08a736a67ccb19297880320d04823e2701c80c001a0cf024f4815304df2867a1a74e9d2707b6abda0337d2d54a4438d453f4160f190a07ac0e6b3bc9395b5b9c8b9e6d77204a236577a5b18467b9175c01de4faa208d9").unwrap();
+
+        let Ok(TypedTransaction::EIP1559(tx)) = rlp::decode(&bytes) else {
+            panic!("decoding TypedTransaction failed");
+        };
+        assert_eq!(
+            tx.hash(),
+            "0x86718885c4b4218c6af87d3d0b0d83e3cc465df2a05c048aa4db9f1a6f9de91f".parse().unwrap()
+        );
+        assert_eq!(
+            tx.recover().unwrap(),
+            "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5".parse().unwrap()
+        );
+    }
+
+    #[test]
+    fn can_recover_sender_not_normalized() {
         let bytes = hex::decode("f85f800182520894095e7baea6a6c7c4c2dfeb977efac326af552d870a801ba048b55bfa915ac795c431978d8a6a992b628d557da5ff759b307d495a36649353a0efffd310ac743f371de3b9f7f9cb56c0b28ad43601b4ab949f53faa07bd2c804").unwrap();
 
         let tx: TypedTransaction = rlp::decode(&bytes).expect("decoding TypedTransaction failed");
@@ -1561,6 +1815,28 @@ mod tests {
         assert_eq!(
             expected,
             <TypedTransaction as open_fastrlp::Decodable>::decode(bytes_fifth).unwrap()
+        );
+
+        let bytes_sixth = &mut &hex::decode("b8587ef85507a0000000000000000000000000000000000000000000000000000000000000000094cf7f9e66af820a19257a2108375b180b0ec491679461815774383099e24810ab832a5b2a5425c154d5808230398287fb0180").unwrap()[..];
+        let expected: TypedTransaction = TypedTransaction::Deposit(DepositTransaction {
+            nonce: 7u64.into(),
+            source_hash: H256::from_str(
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            )
+            .unwrap(),
+            from: "cf7f9e66af820a19257a2108375b180b0ec49167".parse().unwrap(),
+            kind: TransactionKind::Call(Address::from_slice(
+                &hex::decode("61815774383099e24810ab832a5b2a5425c154d5").unwrap()[..],
+            )),
+            mint: U256::zero(),
+            value: 12345u64.into(),
+            gas_limit: 34811u64.into(),
+            input: Bytes::default(),
+            is_system_tx: true,
+        });
+        assert_eq!(
+            expected,
+            <TypedTransaction as open_fastrlp::Decodable>::decode(bytes_sixth).unwrap()
         );
     }
 

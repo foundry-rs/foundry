@@ -4,7 +4,6 @@ use eyre::Result;
 use foundry_cli::utils::{self, FoundryPathExt};
 use foundry_config::Config;
 use std::{collections::HashSet, convert::Infallible, path::PathBuf, sync::Arc};
-use tracing::trace;
 use watchexec::{
     action::{Action, Outcome, PreSpawn},
     command::Command,
@@ -263,10 +262,35 @@ fn watch_command(mut args: Vec<String>) -> Command {
 
 /// Returns the env args without the `--watch` flag from the args for the Watchexec command
 fn cmd_args(num: usize) -> Vec<String> {
-    // all the forge arguments including path to forge bin
-    let mut cmd_args: Vec<_> = std::env::args().collect();
+    clean_cmd_args(num, std::env::args().collect())
+}
+fn clean_cmd_args(num: usize, mut cmd_args: Vec<String>) -> Vec<String> {
     if let Some(pos) = cmd_args.iter().position(|arg| arg == "--watch" || arg == "-w") {
         cmd_args.drain(pos..=(pos + num));
+    }
+
+    // There's another edge case where short flags are combined into one which is supported by clap,
+    // like `-vw` for verbosity and watch
+    // this removes any `w` from concatenated short flags
+    if let Some(pos) = cmd_args.iter().position(|arg| {
+        fn contains_w_in_short(arg: &str) -> Option<bool> {
+            let mut iter = arg.chars();
+            if iter.next()? != '-' {
+                return None
+            }
+            if iter.next()? == '-' {
+                return None
+            }
+            Some(iter.any(|c| c == 'w'))
+        }
+        contains_w_in_short(arg).unwrap_or(false)
+    }) {
+        let clean_arg = cmd_args[pos].replace('w', "");
+        if clean_arg == "-" {
+            cmd_args.remove(pos);
+        } else {
+            cmd_args[pos] = clean_arg;
+        }
     }
 
     cmd_args
@@ -275,9 +299,9 @@ fn cmd_args(num: usize) -> Vec<String> {
 /// Returns the Initialisation configuration for [`Watchexec`].
 pub fn init() -> Result<InitConfig> {
     let mut config = InitConfig::default();
-    config.on_error(SyncFnHandler::from(|data| -> std::result::Result<(), Infallible> {
+    config.on_error(SyncFnHandler::from(|data| {
         trace!("[[{:?}]]", data);
-        Ok(())
+        Ok::<_, Infallible>(())
     }));
 
     Ok(config)
@@ -338,20 +362,20 @@ fn on_action<F, T>(
             if let Some(status) = completion {
                 match status {
                     Some(ProcessEnd::ExitError(code)) => {
-                        tracing::trace!("Command exited with {code}")
+                        trace!("Command exited with {code}")
                     }
                     Some(ProcessEnd::ExitSignal(sig)) => {
-                        tracing::trace!("Command killed by {:?}", sig)
+                        trace!("Command killed by {:?}", sig)
                     }
                     Some(ProcessEnd::ExitStop(sig)) => {
-                        tracing::trace!("Command stopped by {:?}", sig)
+                        trace!("Command stopped by {:?}", sig)
                     }
-                    Some(ProcessEnd::Continued) => tracing::trace!("Command continued"),
+                    Some(ProcessEnd::Continued) => trace!("Command continued"),
                     Some(ProcessEnd::Exception(ex)) => {
-                        tracing::trace!("Command ended by exception {:#x}", ex)
+                        trace!("Command ended by exception {:#x}", ex)
                     }
-                    Some(ProcessEnd::Success) => tracing::trace!("Command was successful"),
-                    None => tracing::trace!("Command completed"),
+                    Some(ProcessEnd::Success) => trace!("Command was successful"),
+                    None => trace!("Command completed"),
                 };
 
                 action.outcome(Outcome::DoNothing);
@@ -412,4 +436,16 @@ pub fn runtime(args: &WatchArgs) -> Result<RuntimeConfig> {
     });
 
     Ok(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_cmd_args() {
+        let args = vec!["-vw".to_string()];
+        let cleaned = clean_cmd_args(0, args);
+        assert_eq!(cleaned, vec!["-v".to_string()]);
+    }
 }

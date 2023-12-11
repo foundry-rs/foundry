@@ -2,12 +2,15 @@
 
 use super::EthTransactionRequest;
 use crate::eth::transaction::{
-    EIP1559TransactionRequest, EIP2930TransactionRequest, LegacyTransactionRequest,
-    MaybeImpersonatedTransaction, TypedTransaction, TypedTransactionRequest,
+    DepositTransactionRequest, EIP1559TransactionRequest, EIP2930TransactionRequest,
+    LegacyTransactionRequest, MaybeImpersonatedTransaction, TypedTransaction,
+    TypedTransactionRequest,
 };
 use ethers_core::types::{
-    transaction::eip2718::TypedTransaction as EthersTypedTransactionRequest, Address,
-    Eip1559TransactionRequest as EthersEip1559TransactionRequest,
+    transaction::{
+        eip2718::TypedTransaction as EthersTypedTransactionRequest, optimism::DepositTransaction,
+    },
+    Address, Eip1559TransactionRequest as EthersEip1559TransactionRequest,
     Eip2930TransactionRequest as EthersEip2930TransactionRequest, NameOrAddress,
     Transaction as EthersTransaction, TransactionRequest as EthersLegacyTransactionRequest,
     TransactionRequest, H256, U256, U64,
@@ -87,6 +90,33 @@ impl From<TypedTransactionRequest> for EthersTypedTransactionRequest {
                     chain_id: Some(chain_id.into()),
                 })
             }
+            TypedTransactionRequest::Deposit(tx) => {
+                let DepositTransactionRequest {
+                    source_hash,
+                    from,
+                    kind,
+                    mint,
+                    value,
+                    gas_limit,
+                    is_system_tx,
+                    input,
+                } = tx;
+                EthersTypedTransactionRequest::DepositTransaction(DepositTransaction {
+                    tx: TransactionRequest {
+                        from: Some(from),
+                        to: kind.as_call().cloned().map(Into::into),
+                        gas: Some(gas_limit),
+                        value: Some(value),
+                        data: Some(input),
+                        gas_price: Some(0.into()),
+                        nonce: Some(0.into()),
+                        chain_id: None,
+                    },
+                    source_hash,
+                    mint: Some(mint),
+                    is_system_tx,
+                })
+            }
         }
     }
 }
@@ -117,6 +147,9 @@ fn to_ethers_transaction_with_hash_and_sender(
             s: t.signature.s,
             access_list: None,
             transaction_type: None,
+            source_hash: H256::zero(),
+            mint: None,
+            is_system_tx: false,
             other: Default::default(),
         },
         TypedTransaction::EIP2930(t) => EthersTransaction {
@@ -139,6 +172,9 @@ fn to_ethers_transaction_with_hash_and_sender(
             s: U256::from(t.s.as_bytes()),
             access_list: Some(t.access_list),
             transaction_type: Some(1u64.into()),
+            source_hash: H256::zero(),
+            mint: None,
+            is_system_tx: false,
             other: Default::default(),
         },
         TypedTransaction::EIP1559(t) => EthersTransaction {
@@ -161,6 +197,34 @@ fn to_ethers_transaction_with_hash_and_sender(
             s: U256::from(t.s.as_bytes()),
             access_list: Some(t.access_list),
             transaction_type: Some(2u64.into()),
+            source_hash: H256::zero(),
+            mint: None,
+            is_system_tx: false,
+            other: Default::default(),
+        },
+        TypedTransaction::Deposit(t) => EthersTransaction {
+            hash,
+            nonce: t.nonce,
+            block_hash: None,
+            block_number: None,
+            transaction_index: None,
+            from,
+            to: None,
+            value: t.value,
+            gas_price: Some(0.into()),
+            max_fee_per_gas: Some(0.into()),
+            max_priority_fee_per_gas: Some(0.into()),
+            gas: t.gas_limit,
+            input: t.input.clone(),
+            chain_id: t.chain_id().map(Into::into),
+            v: 0.into(),
+            r: 0.into(),
+            s: 0.into(),
+            access_list: None,
+            transaction_type: Some(126u64.into()),
+            source_hash: t.source_hash,
+            mint: Some(t.mint),
+            is_system_tx: t.is_system_tx,
             other: Default::default(),
         },
     }
@@ -201,6 +265,7 @@ impl From<TransactionRequest> for EthTransactionRequest {
             chain_id,
             access_list: None,
             transaction_type: None,
+            optimism_fields: None,
         }
     }
 }

@@ -1,11 +1,11 @@
-use ethers_core::types::{H160, I256, U256};
+use alloy_primitives::{Address, I256, U256};
 use solang_parser::pt::*;
 use std::str::FromStr;
 
 /// Helper to convert a string number into a comparable one
 fn to_num(string: &str) -> I256 {
     if string.is_empty() {
-        return I256::from(0)
+        return I256::ZERO
     }
     string.replace('_', "").trim().parse().unwrap()
 }
@@ -147,8 +147,8 @@ where
 
 impl AstEq for String {
     fn ast_eq(&self, other: &Self) -> bool {
-        match (H160::from_str(self), H160::from_str(other)) {
-            (Ok(left), Ok(right)) => left.eq(&right),
+        match (Address::from_str(self), Address::from_str(other)) {
+            (Ok(left), Ok(right)) => left == right,
             _ => self == other,
         }
     }
@@ -311,7 +311,7 @@ impl AstEq for Statement {
                 While(loc, expr, stmt1),
                 DoWhile(loc, stmt1, expr),
                 For(loc, stmt1, expr, stmt2, stmt3),
-                Try(loc, expr, params, claus),
+                Try(loc, expr, params, clause),
                 Error(loc)
                 _
                 Block {

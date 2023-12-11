@@ -1,16 +1,22 @@
-//! test outcomes
+//! Test outcomes.
 
-use crate::Address;
-use ethers::prelude::Log;
+use alloy_primitives::Address;
+use ethers_core::types::Log;
 use foundry_common::evm::Breakpoints;
 use foundry_evm::{
     coverage::HitMaps,
-    executor::EvmError,
-    fuzz::{types::FuzzCase, CounterExample},
-    trace::{TraceKind, Traces},
+    debug::DebugArena,
+    executors::EvmError,
+    fuzz::{CounterExample, FuzzCase},
+    traces::{TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt, time::Duration};
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Write},
+    time::Duration,
+};
+use yansi::Paint;
 
 /// Results and duration for a set of tests included in the same test contract
 #[derive(Debug, Clone, Serialize)]
@@ -122,8 +128,44 @@ pub struct TestResult {
     /// Labeled addresses
     pub labeled_addresses: BTreeMap<Address, String>,
 
+    /// The debug nodes of the call
+    pub debug: Option<DebugArena>,
+
     /// pc breakpoint char map
     pub breakpoints: Breakpoints,
+}
+
+impl fmt::Display for TestResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.status {
+            TestStatus::Success => Paint::green("[PASS]").fmt(f),
+            TestStatus::Skipped => Paint::yellow("[SKIP]").fmt(f),
+            TestStatus::Failure => {
+                let mut s = String::from("[FAIL. Reason: ");
+
+                let reason = self.reason.as_deref().unwrap_or("assertion failed");
+                s.push_str(reason);
+
+                if let Some(counterexample) = &self.counterexample {
+                    match counterexample {
+                        CounterExample::Single(ex) => {
+                            write!(s, "; counterexample: {ex}]").unwrap();
+                        }
+                        CounterExample::Sequence(sequence) => {
+                            s.push_str("]\n\t[Sequence]\n");
+                            for ex in sequence {
+                                writeln!(s, "\t\t{ex}").unwrap();
+                            }
+                        }
+                    }
+                } else {
+                    s.push(']');
+                }
+
+                Paint::red(s).fmt(f)
+            }
+        }
+    }
 }
 
 impl TestResult {
@@ -226,6 +268,8 @@ pub struct TestSetup {
     pub labeled_addresses: BTreeMap<Address, String>,
     /// The reason the setup failed, if it did
     pub reason: Option<String>,
+    /// Coverage info during setup
+    pub coverage: Option<HitMaps>,
 }
 
 impl TestSetup {
@@ -247,7 +291,7 @@ impl TestSetup {
                 logs,
                 traces,
                 labeled_addresses,
-                format!("Failed to deploy contract: {e}"),
+                format!("failed to deploy contract: {e}"),
             ),
         }
     }
@@ -257,8 +301,9 @@ impl TestSetup {
         logs: Vec<Log>,
         traces: Traces,
         labeled_addresses: BTreeMap<Address, String>,
+        coverage: Option<HitMaps>,
     ) -> Self {
-        Self { address, logs, traces, labeled_addresses, reason: None }
+        Self { address, logs, traces, labeled_addresses, reason: None, coverage }
     }
 
     pub fn failed_with(
@@ -267,7 +312,14 @@ impl TestSetup {
         labeled_addresses: BTreeMap<Address, String>,
         reason: String,
     ) -> Self {
-        Self { address: Address::zero(), logs, traces, labeled_addresses, reason: Some(reason) }
+        Self {
+            address: Address::ZERO,
+            logs,
+            traces,
+            labeled_addresses,
+            reason: Some(reason),
+            coverage: None,
+        }
     }
 
     pub fn failed(reason: String) -> Self {

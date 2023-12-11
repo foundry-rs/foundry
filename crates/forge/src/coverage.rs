@@ -1,3 +1,5 @@
+//! Coverage reports.
+
 use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Row, Table};
 pub use foundry_evm::coverage::*;
 use std::io::Write;

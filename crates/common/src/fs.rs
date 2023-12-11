@@ -14,6 +14,7 @@ pub fn create_file(path: impl AsRef<Path>) -> Result<fs::File> {
     let path = path.as_ref();
     File::create(path).map_err(|err| FsPathError::create_file(err, path))
 }
+
 /// Wrapper for [`std::fs::remove_file`].
 pub fn remove_file(path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
@@ -146,6 +147,14 @@ pub fn files_with_ext(root: impl AsRef<Path>, ext: &str) -> Vec<PathBuf> {
 /// Returns a list of absolute paths to all the json files under the root
 pub fn json_files(root: impl AsRef<Path>) -> Vec<PathBuf> {
     files_with_ext(root, "json")
+}
+
+/// Canonicalize a path, returning an error if the path does not exist.
+///
+/// Mainly useful to apply canonicalization to paths obtained from project files but still error
+/// properly instead of flattening the errors.
+pub fn canonicalize_path(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
+    dunce::canonicalize(path)
 }
 
 #[cfg(test)]

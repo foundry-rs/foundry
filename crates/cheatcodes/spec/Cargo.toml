@@ -1,0 +1,26 @@
+[package]
+name = "foundry-cheatcodes-spec"
+description = "Foundry cheatcodes specification"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[dependencies]
+foundry-macros.workspace = true
+alloy-sol-types = { workspace = true, features = ["json"] }
+serde.workspace = true
+
+# schema
+schemars = { version = "0.8.15", optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[features]
+schema = ["dep:schemars"]

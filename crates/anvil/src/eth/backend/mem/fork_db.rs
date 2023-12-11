@@ -1,19 +1,20 @@
 use crate::{
     eth::backend::db::{
-        Db, MaybeHashDatabase, SerializableAccountRecord, SerializableState, StateDb,
+        Db, MaybeForkedDatabase, MaybeHashDatabase, SerializableAccountRecord, SerializableState,
+        StateDb,
     },
     revm::primitives::AccountInfo,
     Address, U256,
 };
-use ethers::prelude::H256;
-pub use foundry_evm::executor::fork::database::ForkedDatabase;
+use ethers::{prelude::H256, types::BlockId};
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
-    executor::{
-        backend::{snapshot::StateSnapshot, DatabaseResult},
-        fork::database::ForkDbSnapshot,
-    },
+    backend::{DatabaseResult, RevertSnapshotAction, StateSnapshot},
+    fork::{database::ForkDbSnapshot, BlockchainDb},
     revm::Database,
 };
+
+pub use foundry_evm::fork::database::ForkedDatabase;
 
 /// Implement the helper for the fork database
 impl Db for ForkedDatabase {
@@ -23,12 +24,12 @@ impl Db for ForkedDatabase {
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()> {
         // this ensures the account is loaded first
-        let _ = Database::basic(self, address.into())?;
+        let _ = Database::basic(self, address.to_alloy())?;
         self.database_mut().set_storage_at(address, slot, val)
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: H256) {
-        self.inner().block_hashes().write().insert(number.into(), hash.into());
+        self.inner().block_hashes().write().insert(number.to_alloy(), hash.to_alloy());
     }
 
     fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
@@ -46,15 +47,15 @@ impl Db for ForkedDatabase {
                 }
                 .to_checked();
                 Ok((
-                    k.into(),
+                    k.to_ethers(),
                     SerializableAccountRecord {
                         nonce: v.info.nonce,
-                        balance: v.info.balance.into(),
+                        balance: v.info.balance.to_ethers(),
                         code: code.bytes()[..code.len()].to_vec().into(),
                         storage: v
                             .storage
                             .into_iter()
-                            .map(|kv| (kv.0.into(), kv.1.into()))
+                            .map(|kv| (kv.0.to_ethers(), kv.1.to_ethers()))
                             .collect(),
                     },
                 ))
@@ -64,11 +65,11 @@ impl Db for ForkedDatabase {
     }
 
     fn snapshot(&mut self) -> U256 {
-        self.insert_snapshot()
+        self.insert_snapshot().to_ethers()
     }
 
-    fn revert(&mut self, id: U256) -> bool {
-        self.revert_snapshot(id)
+    fn revert(&mut self, id: U256, action: RevertSnapshotAction) -> bool {
+        self.revert_snapshot(id.to_alloy(), action)
     }
 
     fn current_state(&self) -> StateDb {
@@ -98,6 +99,7 @@ impl MaybeHashDatabase for ForkedDatabase {
         *db.block_hashes.write() = block_hashes;
     }
 }
+
 impl MaybeHashDatabase for ForkDbSnapshot {
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         std::mem::take(&mut self.snapshot)
@@ -110,5 +112,20 @@ impl MaybeHashDatabase for ForkDbSnapshot {
 
     fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
         self.snapshot = snapshot;
+    }
+}
+
+impl MaybeForkedDatabase for ForkedDatabase {
+    fn maybe_reset(&mut self, url: Option<String>, block_number: BlockId) -> Result<(), String> {
+        self.reset(url, block_number)
+    }
+
+    fn maybe_flush_cache(&self) -> Result<(), String> {
+        self.flush_cache();
+        Ok(())
+    }
+
+    fn maybe_inner(&self) -> Result<&BlockchainDb, String> {
+        Ok(self.inner())
     }
 }

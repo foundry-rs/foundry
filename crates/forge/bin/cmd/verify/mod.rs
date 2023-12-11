@@ -1,8 +1,9 @@
 use super::retry::RetryArgs;
+use alloy_primitives::Address;
 use clap::{Parser, ValueHint};
-use ethers::{abi::Address, solc::info::ContractInfo};
 use eyre::Result;
 use foundry_cli::{opts::EtherscanOpts, utils::LoadConfig};
+use foundry_compilers::info::ContractInfo;
 use foundry_config::{figment, impl_figment_convert, impl_figment_convert_cast, Config};
 use provider::VerificationProviderType;
 use reqwest::Url;
@@ -67,6 +68,10 @@ pub struct VerifyArgs {
     #[clap(short, long)]
     pub force: bool,
 
+    /// Do not check if the contract is already verified before verifying.
+    #[clap(long)]
+    pub skip_is_verified_check: bool,
+
     /// Wait for verification result after submission.
     #[clap(long)]
     pub watch: bool,
@@ -127,7 +132,7 @@ impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(mut self) -> Result<()> {
         let config = self.load_config_emit_warnings();
-        let chain = config.chain_id.unwrap_or_default();
+        let chain = config.chain.unwrap_or_default();
         self.etherscan.chain = Some(chain);
         self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
 
@@ -138,7 +143,7 @@ impl VerifyArgs {
         }
 
         let verifier_url = self.verifier.verifier_url.clone();
-        sh_println!("Start verifying contract `{:?}` deployed on {chain}", self.address)?;
+        sh_println!("Start verifying contract `{}` deployed on {chain}", self.address)?;
         self.verifier.verifier.client(&self.etherscan.key)?.verify(self).await.map_err(|err| {
             if let Some(verifier_url) = verifier_url {
                  match Url::parse(&verifier_url) {

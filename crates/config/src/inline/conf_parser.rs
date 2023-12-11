@@ -1,26 +1,6 @@
+use super::{remove_whitespaces, InlineConfigParserError};
+use crate::{inline::INLINE_CONFIG_PREFIX, InlineConfigError, NatSpec};
 use regex::Regex;
-
-use crate::{InlineConfigError, NatSpec};
-
-use super::{remove_whitespaces, INLINE_CONFIG_PREFIX};
-
-/// Errors returned by the [`InlineConfigParser`] trait.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum InlineConfigParserError {
-    /// An invalid configuration property has been provided.
-    /// The property cannot be mapped to the configuration object
-    #[error("'{0}' is an invalid config property")]
-    InvalidConfigProperty(String),
-    /// An invalid profile has been provided
-    #[error("'{0}' specifies an invalid profile. Available profiles are: {1}")]
-    InvalidProfile(String, String),
-    /// An error occurred while trying to parse an integer configuration value
-    #[error("Invalid config value for key '{0}'. Unable to parse '{1}' into an integer value")]
-    ParseInt(String, String),
-    /// An error occurred while trying to parse a boolean configuration value
-    #[error("Invalid config value for key '{0}'. Unable to parse '{1}' into a boolean value")]
-    ParseBool(String, String),
-}
 
 /// This trait is intended to parse configurations from
 /// structured text. Foundry users can annotate Solidity test functions,
@@ -82,25 +62,21 @@ where
         Ok(())
     }
 
-    /// Given a list of `config_lines, returns all available pairs (key, value)
-    /// matching the current config key
+    /// Given a list of config lines, returns all available pairs (key, value) matching the current
+    /// config key.
     ///
-    /// i.e. Given the `invariant` config key and a vector of config lines
-    /// ```rust
-    /// let _config_lines = vec![
-    ///     "forge-config: default.invariant.runs = 500",
-    ///     "forge-config: default.invariant.depth = 500",
-    ///     "forge-config: ci.invariant.depth = 500",
-    ///     "forge-config: ci.fuzz.runs = 10"
-    /// ];
-    /// ```
-    /// would return the whole set of `invariant` configs.
-    /// ```rust
-    ///  let _result = vec![
-    ///     ("runs", "500"),
-    ///     ("depth", "500"),
-    ///     ("depth", "500"),
-    ///  ];
+    /// # Examples
+    ///
+    /// ```ignore
+    /// assert_eq!(
+    ///     get_config_overrides(&[
+    ///         "forge-config: default.invariant.runs = 500",
+    ///         "forge-config: default.invariant.depth = 500",
+    ///         "forge-config: ci.invariant.depth = 500",
+    ///         "forge-config: ci.fuzz.runs = 10",
+    ///     ]),
+    ///     [("runs", "500"), ("depth", "500"), ("depth", "500")]
+    /// );
     /// ```
     fn get_config_overrides(config_lines: &[String]) -> Vec<(String, String)> {
         let mut result: Vec<(String, String)> = vec![];
@@ -172,10 +148,10 @@ mod tests {
             contract: Default::default(),
             function: Default::default(),
             line: Default::default(),
-            docs: r#"
+            docs: r"
             forge-config: ciii.invariant.depth = 1 
             forge-config: default.invariant.depth = 1
-            "#
+            "
             .into(),
         };
 
@@ -190,10 +166,10 @@ mod tests {
             contract: Default::default(),
             function: Default::default(),
             line: Default::default(),
-            docs: r#"
+            docs: r"
             forge-config: ci.invariant.depth = 1 
             forge-config: default.invariant.depth = 1
-            "#
+            "
             .into(),
         };
 

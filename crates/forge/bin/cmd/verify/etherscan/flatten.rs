@@ -1,12 +1,10 @@
 use super::{EtherscanSourceProvider, VerifyArgs};
-use ethers::{
-    etherscan::verify::CodeFormat,
-    solc::{
-        artifacts::{BytecodeHash, Source},
-        AggregatedCompilerOutput, CompilerInput, Project, Solc,
-    },
-};
 use eyre::{Context, Result};
+use foundry_block_explorers::verify::CodeFormat;
+use foundry_compilers::{
+    artifacts::{BytecodeHash, Source},
+    AggregatedCompilerOutput, CompilerInput, Project, Solc,
+};
 use semver::{BuildMetadata, Version};
 use std::{collections::BTreeMap, path::Path};
 

@@ -20,7 +20,8 @@ const ALIAS_SEPARATOR: char = '=';
 /// Commonly used aliases for solidity repos,
 ///
 /// These will be autocorrected when used in place of the `org`
-const COMMON_ORG_ALIASES: &[(&str, &str); 1] = &[("@openzeppelin", "openzeppelin")];
+const COMMON_ORG_ALIASES: &[(&str, &str); 2] =
+    &[("@openzeppelin", "openzeppelin"), ("@aave", "aave")];
 
 /// A git dependency which will be installed as a submodule
 ///
@@ -151,7 +152,7 @@ impl Dependency {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers::solc::info::ContractInfo;
+    use foundry_compilers::info::ContractInfo;
 
     #[test]
     fn parses_dependencies() {
@@ -345,6 +346,21 @@ mod tests {
             dep.url,
             Some("https://github.com/OpenZeppelin/openzeppelin-contracts".to_string())
         );
+    }
+
+    #[test]
+    fn can_parse_aave() {
+        let dep = Dependency::from_str("@aave/aave-v3-core").unwrap();
+        assert_eq!(dep.name, "aave-v3-core");
+        assert_eq!(dep.url, Some("https://github.com/aave/aave-v3-core".to_string()));
+    }
+
+    #[test]
+    fn can_parse_aave_with_alias() {
+        let dep = Dependency::from_str("@aave=aave/aave-v3-core").unwrap();
+        assert_eq!(dep.name, "aave-v3-core");
+        assert_eq!(dep.alias, Some("@aave".to_string()));
+        assert_eq!(dep.url, Some("https://github.com/aave/aave-v3-core".to_string()));
     }
 
     #[test]

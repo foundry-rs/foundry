@@ -1,24 +1,23 @@
 //! Helper types for working with [revm](foundry_evm::revm)
 
 use crate::{mem::state::trie_hash_db, revm::primitives::AccountInfo, U256};
+use alloy_primitives::{Address as B160, B256, U256 as rU256};
 use anvil_core::eth::trie::KeccakHasher;
 use ethers::{
     prelude::{Address, Bytes},
-    types::H256,
+    types::{BlockId, H256},
     utils::keccak256,
 };
-use foundry_common::errors::FsPathError;
+use foundry_common::{errors::FsPathError, types::ToAlloy};
 use foundry_evm::{
-    executor::{
-        backend::{snapshot::StateSnapshot, DatabaseError, DatabaseResult, MemDb},
-        DatabaseRef,
-    },
+    backend::{DatabaseError, DatabaseResult, MemDb, RevertSnapshotAction, StateSnapshot},
+    fork::BlockchainDb,
+    hashbrown::HashMap,
     revm::{
-        db::{CacheDB, DbAccount},
-        primitives::{Bytecode, B160, B256, KECCAK_EMPTY, U256 as rU256},
+        db::{CacheDB, DatabaseRef, DbAccount},
+        primitives::{Bytecode, KECCAK_EMPTY},
         Database, DatabaseCommit,
     },
-    HashMap,
 };
 use hash_db::HashDB;
 use serde::{Deserialize, Serialize};
@@ -69,12 +68,24 @@ where
     fn init_from_snapshot(&mut self, _snapshot: StateSnapshot) {}
 }
 
+/// Helper trait to reset the DB if it's forked
+#[auto_impl::auto_impl(Box)]
+pub trait MaybeForkedDatabase {
+    fn maybe_reset(&mut self, _url: Option<String>, block_number: BlockId) -> Result<(), String>;
+
+    fn maybe_flush_cache(&self) -> Result<(), String>;
+
+    fn maybe_inner(&self) -> Result<&BlockchainDb, String>;
+}
+
 /// This bundles all required revm traits
+#[auto_impl::auto_impl(Box)]
 pub trait Db:
     DatabaseRef<Error = DatabaseError>
     + Database<Error = DatabaseError>
     + DatabaseCommit
     + MaybeHashDatabase
+    + MaybeForkedDatabase
     + fmt::Debug
     + Send
     + Sync
@@ -84,7 +95,7 @@ pub trait Db:
 
     /// Sets the nonce of the given address
     fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<()> {
-        let mut info = self.basic(address.into())?.unwrap_or_default();
+        let mut info = self.basic(address.to_alloy())?.unwrap_or_default();
         info.nonce = nonce;
         self.insert_account(address, info);
         Ok(())
@@ -92,22 +103,22 @@ pub trait Db:
 
     /// Sets the balance of the given address
     fn set_balance(&mut self, address: Address, balance: U256) -> DatabaseResult<()> {
-        let mut info = self.basic(address.into())?.unwrap_or_default();
-        info.balance = balance.into();
+        let mut info = self.basic(address.to_alloy())?.unwrap_or_default();
+        info.balance = balance.to_alloy();
         self.insert_account(address, info);
         Ok(())
     }
 
     /// Sets the balance of the given address
     fn set_code(&mut self, address: Address, code: Bytes) -> DatabaseResult<()> {
-        let mut info = self.basic(address.into())?.unwrap_or_default();
+        let mut info = self.basic(address.to_alloy())?.unwrap_or_default();
         let code_hash = if code.as_ref().is_empty() {
             KECCAK_EMPTY
         } else {
             B256::from_slice(&keccak256(code.as_ref())[..])
         };
         info.code_hash = code_hash;
-        info.code = Some(Bytecode::new_raw(code.0).to_checked());
+        info.code = Some(Bytecode::new_raw(alloy_primitives::Bytes(code.0)).to_checked());
         self.insert_account(address, info);
         Ok(())
     }
@@ -124,7 +135,7 @@ pub trait Db:
     /// Deserialize and add all chain data to the backend storage
     fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
         for (addr, account) in state.accounts.into_iter() {
-            let old_account_nonce = DatabaseRef::basic(self, addr.into())
+            let old_account_nonce = DatabaseRef::basic_ref(self, addr.to_alloy())
                 .ok()
                 .and_then(|acc| acc.map(|acc| acc.nonce))
                 .unwrap_or_default();
@@ -135,12 +146,14 @@ pub trait Db:
             self.insert_account(
                 addr,
                 AccountInfo {
-                    balance: account.balance.into(),
+                    balance: account.balance.to_alloy(),
                     code_hash: KECCAK_EMPTY, // will be set automatically
                     code: if account.code.0.is_empty() {
                         None
                     } else {
-                        Some(Bytecode::new_raw(account.code.0).to_checked())
+                        Some(
+                            Bytecode::new_raw(alloy_primitives::Bytes(account.code.0)).to_checked(),
+                        )
                     },
                     nonce,
                 },
@@ -159,7 +172,7 @@ pub trait Db:
     /// Reverts a snapshot
     ///
     /// Returns `true` if the snapshot was reverted
-    fn revert(&mut self, snapshot: U256) -> bool;
+    fn revert(&mut self, snapshot: U256, action: RevertSnapshotAction) -> bool;
 
     /// Returns the state root if possible to compute
     fn maybe_state_root(&self) -> Option<H256> {
@@ -176,15 +189,15 @@ pub trait Db:
 /// [Backend::pending_block()](crate::eth::backend::mem::Backend::pending_block())
 impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> Db for CacheDB<T> {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
-        self.insert_account_info(address.into(), account)
+        self.insert_account_info(address.to_alloy(), account)
     }
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()> {
-        self.insert_account_storage(address.into(), slot.into(), val.into())
+        self.insert_account_storage(address.to_alloy(), slot.to_alloy(), val.to_alloy())
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: H256) {
-        self.block_hashes.insert(number.into(), hash.into());
+        self.block_hashes.insert(number.to_alloy(), hash.to_alloy());
     }
 
     fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
@@ -195,7 +208,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
         U256::zero()
     }
 
-    fn revert(&mut self, _snapshot: U256) -> bool {
+    fn revert(&mut self, _snapshot: U256, _action: RevertSnapshotAction) -> bool {
         false
     }
 
@@ -247,6 +260,20 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeHashDatabase for CacheDB<T> {
     }
 }
 
+impl<T: DatabaseRef<Error = DatabaseError>> MaybeForkedDatabase for CacheDB<T> {
+    fn maybe_reset(&mut self, _url: Option<String>, _block_number: BlockId) -> Result<(), String> {
+        Err("not supported".to_string())
+    }
+
+    fn maybe_flush_cache(&self) -> Result<(), String> {
+        Err("not supported".to_string())
+    }
+
+    fn maybe_inner(&self) -> Result<&BlockchainDb, String> {
+        Err("not supported".to_string())
+    }
+}
+
 /// Represents a state at certain point
 pub struct StateDb(pub(crate) Box<dyn MaybeHashDatabase + Send + Sync>);
 
@@ -260,20 +287,20 @@ impl StateDb {
 
 impl DatabaseRef for StateDb {
     type Error = DatabaseError;
-    fn basic(&self, address: B160) -> DatabaseResult<Option<AccountInfo>> {
-        self.0.basic(address)
+    fn basic_ref(&self, address: B160) -> DatabaseResult<Option<AccountInfo>> {
+        self.0.basic_ref(address)
     }
 
-    fn code_by_hash(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
-        self.0.code_by_hash(code_hash)
+    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
+        self.0.code_by_hash_ref(code_hash)
     }
 
-    fn storage(&self, address: B160, index: rU256) -> DatabaseResult<rU256> {
-        self.0.storage(address, index)
+    fn storage_ref(&self, address: B160, index: rU256) -> DatabaseResult<rU256> {
+        self.0.storage_ref(address, index)
     }
 
-    fn block_hash(&self, number: rU256) -> DatabaseResult<B256> {
-        self.0.block_hash(number)
+    fn block_hash_ref(&self, number: rU256) -> DatabaseResult<B256> {
+        self.0.block_hash_ref(number)
     }
 }
 

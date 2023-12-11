@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Unlicense
+// SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity >=0.8.18;
 
 import "ds-test/test.sol";
@@ -17,7 +17,7 @@ contract TryFfiTest is DSTest {
         Vm.FfiResult memory f = vm.tryFfi(inputs);
         (string memory output) = abi.decode(f.stdout, (string));
         assertEq(output, "ffi works", "ffi failed");
-        assertEq(f.exit_code, 0, "ffi failed");
+        assertEq(f.exitCode, 0, "ffi failed");
     }
 
     function testTryFfiFail() public {
@@ -26,6 +26,6 @@ contract TryFfiTest is DSTest {
         inputs[1] = "wad";
 
         Vm.FfiResult memory f = vm.tryFfi(inputs);
-        assertTrue(f.exit_code != 0);
+        assertTrue(f.exitCode != 0);
     }
 }

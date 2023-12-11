@@ -8,7 +8,7 @@ use crate::{
 };
 use anvil_core::eth::{
     block::{Block, BlockInfo, Header, PartialHeader},
-    receipt::{EIP1559Receipt, EIP2930Receipt, EIP658Receipt, Log, TypedReceipt},
+    receipt::{DepositReceipt, EIP1559Receipt, EIP2930Receipt, EIP658Receipt, Log, TypedReceipt},
     transaction::{PendingTransaction, TransactionInfo, TypedTransaction},
     trie,
 };
@@ -17,21 +17,18 @@ use ethers::{
     types::{Bloom, H256, U256},
     utils::rlp,
 };
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
-    executor::backend::DatabaseError,
+    backend::DatabaseError,
     revm,
     revm::{
         interpreter::InstructionResult,
         primitives::{BlockEnv, CfgEnv, EVMError, Env, ExecutionResult, Output, SpecId},
     },
-    trace::{node::CallTraceNode, CallTraceArena},
-    utils::{
-        b160_to_h160, eval_to_instruction_result, h160_to_b160, halt_to_instruction_result,
-        ru256_to_u256,
-    },
+    traces::{CallTraceArena, CallTraceNode},
+    utils::{eval_to_instruction_result, halt_to_instruction_result},
 };
 use std::sync::Arc;
-use tracing::{trace, warn};
 
 /// Represents an executed transaction (transacted on the DB)
 pub struct ExecutedTransaction {
@@ -41,6 +38,7 @@ pub struct ExecutedTransaction {
     gas_used: u64,
     logs: Vec<Log>,
     traces: Vec<CallTraceNode>,
+    nonce: u64,
 }
 
 // == impl ExecutedTransaction ==
@@ -69,6 +67,12 @@ impl ExecutedTransaction {
                 logs,
             }),
             TypedTransaction::EIP1559(_) => TypedReceipt::EIP1559(EIP1559Receipt {
+                status_code,
+                gas_used: used_gas,
+                logs_bloom: bloom,
+                logs,
+            }),
+            TypedTransaction::Deposit(_) => TypedReceipt::Deposit(DepositReceipt {
                 status_code,
                 gas_used: used_gas,
                 logs_bloom: bloom,
@@ -121,7 +125,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         let block_number = self.block_env.number;
         let difficulty = self.block_env.difficulty;
         let beneficiary = self.block_env.coinbase;
-        let timestamp = ru256_to_u256(self.block_env.timestamp).as_u64();
+        let timestamp = self.block_env.timestamp.to_ethers().as_u64();
         let base_fee = if (self.cfg_env.spec_id as u8) >= (SpecId::LONDON as u8) {
             Some(self.block_env.basefee)
         } else {
@@ -164,16 +168,17 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                 transaction_index,
                 from: *transaction.pending_transaction.sender(),
                 to: transaction.pending_transaction.transaction.to().copied(),
-                contract_address: contract_address.map(b160_to_h160),
+                contract_address: contract_address.map(|c| c.to_ethers()),
                 logs,
                 logs_bloom: *receipt.logs_bloom(),
                 traces: CallTraceArena { arena: traces },
                 exit,
                 out: match out {
-                    Some(Output::Call(b)) => Some(b.into()),
-                    Some(Output::Create(b, _)) => Some(b.into()),
+                    Some(Output::Call(b)) => Some(ethers::types::Bytes(b.0)),
+                    Some(Output::Create(b, _)) => Some(ethers::types::Bytes(b.0)),
                     _ => None,
                 },
+                nonce: tx.nonce,
             };
 
             transaction_infos.push(info);
@@ -186,19 +191,19 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
 
         let partial_header = PartialHeader {
             parent_hash,
-            beneficiary: b160_to_h160(beneficiary),
+            beneficiary: beneficiary.to_ethers(),
             state_root: self.db.maybe_state_root().unwrap_or_default(),
             receipts_root,
             logs_bloom: bloom,
-            difficulty: difficulty.into(),
-            number: block_number.into(),
-            gas_limit: gas_limit.into(),
+            difficulty: difficulty.to_ethers(),
+            number: block_number.to_ethers(),
+            gas_limit: gas_limit.to_ethers(),
             gas_used: cumulative_gas_used,
             timestamp,
             extra_data: Default::default(),
             mix_hash: Default::default(),
             nonce: Default::default(),
-            base_fee: base_fee.map(|x| x.into()),
+            base_fee: base_fee.map(|b| b.to_ethers()),
         };
 
         let block = Block::new(partial_header, transactions.clone(), ommers);
@@ -231,14 +236,14 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
     fn next(&mut self) -> Option<Self::Item> {
         let transaction = self.pending.next()?;
         let sender = *transaction.pending_transaction.sender();
-        let account = match self.db.basic(h160_to_b160(sender)).map(|acc| acc.unwrap_or_default()) {
+        let account = match self.db.basic(sender.to_alloy()).map(|acc| acc.unwrap_or_default()) {
             Ok(account) => account,
             Err(err) => return Some(TransactionExecutionOutcome::DatabaseError(transaction, err)),
         };
         let env = self.env_for(&transaction.pending_transaction);
         // check that we comply with the block's gas limit
         let max_gas = self.gas_used.saturating_add(U256::from(env.tx.gas_limit));
-        if max_gas > env.block.gas_limit.into() {
+        if max_gas > env.block.gas_limit.to_ethers() {
             return Some(TransactionExecutionOutcome::Exhausted(transaction))
         }
 
@@ -251,6 +256,8 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             warn!(target: "backend", "Skipping invalid tx execution [{:?}] {}", transaction.hash(), err);
             return Some(TransactionExecutionOutcome::Invalid(transaction, err))
         }
+
+        let nonce = account.nonce;
 
         let mut evm = revm::EVM::new();
         evm.env = env;
@@ -315,6 +322,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             gas_used,
             logs: logs.unwrap_or_default().into_iter().map(Into::into).collect(),
             traces: inspector.tracer.unwrap_or_default().traces.arena,
+            nonce,
         };
 
         Some(TransactionExecutionOutcome::Executed(tx))

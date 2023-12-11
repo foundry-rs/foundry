@@ -16,7 +16,6 @@ use std::{
     time::Duration,
 };
 use tokio::time::Interval;
-use tracing::trace;
 
 #[derive(Debug, Clone)]
 pub struct Miner {
@@ -180,7 +179,7 @@ impl Default for FixedBlockTimeMiner {
 pub struct ReadyTransactionMiner {
     /// how many transactions to mine per block
     max_transactions: usize,
-    /// stores whether there are pending transacions (if known)
+    /// stores whether there are pending transactions (if known)
     has_pending_txs: Option<bool>,
     /// Receives hashes of transactions that are ready
     rx: Fuse<Receiver<TxHash>>,

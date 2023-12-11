@@ -65,6 +65,151 @@ async fn can_call_ots_get_internal_operations_contract_deploy() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_call_ots_get_internal_operations_contract_transfer() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    //let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+
+    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+
+    let receipt = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+
+    let res = api.ots_get_internal_operations(receipt.transaction_hash).await.unwrap();
+
+    assert_eq!(res.len(), 1);
+    assert_eq!(
+        res[0],
+        OtsInternalOperation {
+            r#type: OtsInternalOperationType::Transfer,
+            from,
+            to,
+            value: amount
+        }
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_call_ots_get_internal_operations_contract_create2() {
+    let prj = TempProject::dapptools().unwrap();
+    prj.add_source(
+        "Contract",
+        r"
+pragma solidity 0.8.13;
+contract Contract {
+    address constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+    constructor() {}
+    function deploy() public {
+        uint256 salt = 0;
+        uint256 code = 0;
+        bytes memory creationCode = abi.encodePacked(code);
+        (bool success,) = address(CREATE2_DEPLOYER).call(abi.encodePacked(salt, creationCode));
+        require(success);
+    }
+}
+",
+    )
+    .unwrap();
+
+    let mut compiled = prj.compile().unwrap();
+    assert!(!compiled.has_compiler_errors());
+    let contract = compiled.remove_first("Contract").unwrap();
+    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider();
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
+
+    // deploy successfully
+    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
+    let contract = factory.deploy(()).unwrap().send().await.unwrap();
+
+    let contract = ContractInstance::new(
+        contract.address(),
+        abi.unwrap(),
+        SignerMiddleware::new(handle.http_provider(), wallets[1].clone()),
+    );
+    let call = contract.method::<_, ()>("deploy", ()).unwrap();
+
+    let receipt = call.send().await.unwrap().await.unwrap().unwrap();
+    let res = api.ots_get_internal_operations(receipt.transaction_hash).await.unwrap();
+
+    assert_eq!(res.len(), 1);
+    assert_eq!(
+        res[0],
+        OtsInternalOperation {
+            r#type: OtsInternalOperationType::Create2,
+            from: Address::from_str("0x4e59b44847b379578588920cA78FbF26c0B4956C").unwrap(),
+            to: Address::from_str("0x347bcdad821abc09b8c275881b368de36476b62c").unwrap(),
+            value: 0.into()
+        }
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_call_ots_get_internal_operations_contract_selfdestruct() {
+    let prj = TempProject::dapptools().unwrap();
+    prj.add_source(
+        "Contract",
+        r"
+pragma solidity 0.8.13;
+contract Contract {
+    address payable private owner;
+    constructor() public {
+        owner = payable(msg.sender);
+    }
+    function goodbye() public {
+        selfdestruct(owner);
+    }
+}
+",
+    )
+    .unwrap();
+
+    let mut compiled = prj.compile().unwrap();
+    assert!(!compiled.has_compiler_errors());
+    let contract = compiled.remove_first("Contract").unwrap();
+    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider();
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
+
+    // deploy successfully
+    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
+    let contract = factory.deploy(()).unwrap().send().await.unwrap();
+
+    let contract = ContractInstance::new(
+        contract.address(),
+        abi.unwrap(),
+        SignerMiddleware::new(handle.http_provider(), wallets[1].clone()),
+    );
+    let call = contract.method::<_, ()>("goodbye", ()).unwrap();
+
+    let receipt = call.send().await.unwrap().await.unwrap().unwrap();
+
+    let res = api.ots_get_internal_operations(receipt.transaction_hash).await.unwrap();
+
+    assert_eq!(res.len(), 1);
+    assert_eq!(
+        res[0],
+        OtsInternalOperation {
+            r#type: OtsInternalOperationType::SelfDestruct,
+            from: contract.address(),
+            to: Default::default(),
+            value: 0.into()
+        }
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_call_ots_has_code() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -85,9 +230,12 @@ async fn can_call_ots_has_code() {
         .await
         .unwrap());
 
-    client.send_transaction(deploy_tx, None).await.unwrap();
+    let pending = client.send_transaction(deploy_tx, None).await.unwrap();
+    let receipt = pending.await.unwrap().unwrap();
 
     let num = client.get_block_number().await.unwrap();
+    assert_eq!(num, receipt.block_number.unwrap());
+
     // code is detected after deploying
     assert!(api.ots_has_code(pending_contract_address, BlockNumber::Number(num)).await.unwrap());
 
@@ -137,7 +285,7 @@ contract Contract {
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider().await;
+    let provider = handle.ws_provider();
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
@@ -226,7 +374,7 @@ contract Contract {
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider().await;
+    let provider = handle.ws_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
@@ -237,10 +385,6 @@ contract Contract {
 
     let call = contract.method::<_, ()>("trigger_revert", ()).unwrap().gas(150_000u64);
     let receipt = call.send().await.unwrap().await.unwrap().unwrap();
-
-    let block = api.block_by_number_full(BlockNumber::Latest).await.unwrap().unwrap();
-    dbg!(block);
-    // let tx = block.transactions[0].hashVg
 
     let res = api.ots_get_transaction_error(receipt.transaction_hash).await.unwrap().unwrap();
     assert_eq!(res, Bytes::from_str("0x8d6ea8be00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000012526576657274537472696e67466f6f4261720000000000000000000000000000").unwrap());
@@ -260,7 +404,7 @@ async fn can_call_ots_get_block_details() {
     let result = api.ots_get_block_details(1.into()).await.unwrap();
 
     assert_eq!(result.block.transaction_count, 1);
-    assert_eq!(result.block.block.transactions[0].hash, receipt.transaction_hash);
+    assert_eq!(result.block.block.transactions[0], receipt.transaction_hash);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -278,7 +422,7 @@ async fn can_call_ots_get_block_details_by_hash() {
     let result = api.ots_get_block_details_by_hash(block_hash).await.unwrap();
 
     assert_eq!(result.block.transaction_count, 1);
-    assert_eq!(result.block.block.transactions[0].hash, receipt.transaction_hash);
+    assert_eq!(result.block.block.transactions[0], receipt.transaction_hash);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -299,13 +443,11 @@ async fn can_call_ots_get_block_transactions() {
         hashes.push_back(receipt.tx_hash());
     }
 
-    dbg!(&hashes);
     api.mine_one().await;
 
     let page_size = 3;
     for page in 0..4 {
         let result = api.ots_get_block_transactions(1, page, page_size).await.unwrap();
-        dbg!(&result);
 
         assert!(result.receipts.len() <= page_size);
         assert!(result.fullblock.block.transactions.len() <= page_size);

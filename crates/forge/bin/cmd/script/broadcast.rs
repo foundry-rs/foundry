@@ -2,11 +2,9 @@ use super::{
     multi::MultiChainSequence, providers::ProvidersManager, receipts::clear_pendings,
     sequence::ScriptSequence, transaction::TransactionWithMetadata, verify::VerifyBundle, *,
 };
-use ethers::{
-    prelude::{Provider, Signer, TxHash},
-    providers::{JsonRpcClient, Middleware},
-    utils::format_units,
-};
+use ethers_core::{types::TxHash, utils::format_units};
+use ethers_providers::{JsonRpcClient, Middleware, Provider};
+use ethers_signers::Signer;
 use eyre::{bail, ContextCompat, Result, WrapErr};
 use foundry_cli::{
     init_progress,
@@ -17,7 +15,6 @@ use foundry_cli::{
 use foundry_common::{estimate_eip1559_fees, try_get_http_provider, RetryProvider};
 use futures::StreamExt;
 use std::{cmp::min, collections::HashSet, ops::Mul, sync::Arc};
-use tracing::trace;
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.
@@ -31,11 +28,11 @@ impl ScriptArgs {
         let already_broadcasted = deployment_sequence.receipts.len();
 
         if already_broadcasted < deployment_sequence.transactions.len() {
-            let required_addresses = deployment_sequence
+            let required_addresses: HashSet<Address> = deployment_sequence
                 .typed_transactions()
                 .into_iter()
                 .skip(already_broadcasted)
-                .map(|(_, tx)| *tx.from().expect("No sender for onchain transaction!"))
+                .map(|(_, tx)| (*tx.from().expect("No sender for onchain transaction!")).to_alloy())
                 .collect();
 
             let (send_kind, chain) = if self.unlocked {
@@ -49,7 +46,7 @@ impl ScriptArgs {
                     deployment_sequence
                         .typed_transactions()
                         .iter()
-                        .filter_map(|(_, tx)| tx.from().copied()),
+                        .filter_map(|(_, tx)| tx.from().copied().map(|addr| addr.to_alloy())),
                 );
                 (SendTransactionsKind::Unlocked(senders), chain.as_u64())
             } else {
@@ -70,9 +67,6 @@ impl ScriptArgs {
             // Make a one-time gas price estimation
             let (gas_price, eip1559_fees) = {
                 match deployment_sequence.transactions.front().unwrap().typed_tx() {
-                    TypedTransaction::Legacy(_) | TypedTransaction::Eip2930(_) => {
-                        (provider.get_gas_price().await.ok(), None)
-                    }
                     TypedTransaction::Eip1559(_) => {
                         let fees = estimate_eip1559_fees(&provider, Some(chain))
                             .await
@@ -80,6 +74,7 @@ impl ScriptArgs {
 
                         (None, Some(fees))
                     }
+                    _ => (provider.get_gas_price().await.ok(), None),
                 }
             };
 
@@ -91,7 +86,7 @@ impl ScriptArgs {
                 .skip(already_broadcasted)
                 .map(|tx_with_metadata| {
                     let tx = tx_with_metadata.typed_tx();
-                    let from = *tx.from().expect("No sender for onchain transaction!");
+                    let from = (*tx.from().expect("No sender for onchain transaction!")).to_alloy();
 
                     let kind = send_kind.for_sender(&from)?;
                     let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
@@ -101,22 +96,23 @@ impl ScriptArgs {
                     tx.set_chain_id(chain);
 
                     if let Some(gas_price) = self.with_gas_price {
-                        tx.set_gas_price(gas_price);
+                        tx.set_gas_price(gas_price.to_ethers());
                     } else {
                         // fill gas price
                         match tx {
-                            TypedTransaction::Eip2930(_) | TypedTransaction::Legacy(_) => {
-                                tx.set_gas_price(gas_price.expect("Could not get gas_price."));
-                            }
                             TypedTransaction::Eip1559(ref mut inner) => {
                                 let eip1559_fees =
                                     eip1559_fees.expect("Could not get eip1559 fee estimation.");
                                 if let Some(priority_gas_price) = self.priority_gas_price {
-                                    inner.max_priority_fee_per_gas = Some(priority_gas_price);
+                                    inner.max_priority_fee_per_gas =
+                                        Some(priority_gas_price.to_ethers());
                                 } else {
                                     inner.max_priority_fee_per_gas = Some(eip1559_fees.1);
                                 }
                                 inner.max_fee_per_gas = Some(eip1559_fees.0);
+                            }
+                            _ => {
+                                tx.set_gas_price(gas_price.expect("Could not get gas_price."));
                             }
                         }
                     }
@@ -153,13 +149,17 @@ impl ScriptArgs {
 
                     if sequential_broadcast {
                         let tx_hash = tx_hash.await?;
-                        deployment_sequence.add_pending(index, tx_hash);
+                        deployment_sequence.add_pending(index, tx_hash.to_alloy());
 
                         update_progress!(pb, (index + already_broadcasted));
                         index += 1;
 
-                        clear_pendings(provider.clone(), deployment_sequence, Some(vec![tx_hash]))
-                            .await?;
+                        clear_pendings(
+                            provider.clone(),
+                            deployment_sequence,
+                            Some(vec![tx_hash.to_alloy()]),
+                        )
+                        .await?;
                     } else {
                         pending_transactions.push(tx_hash);
                     }
@@ -170,7 +170,7 @@ impl ScriptArgs {
 
                     while let Some(tx_hash) = buffer.next().await {
                         let tx_hash = tx_hash?;
-                        deployment_sequence.add_pending(index, tx_hash);
+                        deployment_sequence.add_pending(index, tx_hash.to_alloy());
 
                         update_progress!(pb, (index + already_broadcasted));
                         index += 1;
@@ -194,16 +194,17 @@ impl ScriptArgs {
         sh_eprintln!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
 
         let (total_gas, total_gas_price, total_paid) = deployment_sequence.receipts.iter().fold(
-            (U256::zero(), U256::zero(), U256::zero()),
+            (U256::ZERO, U256::ZERO, U256::ZERO),
             |acc, receipt| {
-                let gas_used = receipt.gas_used.unwrap_or_default();
-                let gas_price = receipt.effective_gas_price.unwrap_or_default();
+                let gas_used = receipt.gas_used.unwrap_or_default().to_alloy();
+                let gas_price = receipt.effective_gas_price.unwrap_or_default().to_alloy();
                 (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used.mul(gas_price))
             },
         );
-        let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
-        let avg_gas_price = format_units(total_gas_price / deployment_sequence.receipts.len(), 9)
-            .unwrap_or_else(|_| "N/A".to_string());
+        let paid = format_units(total_paid.to_ethers(), 18).unwrap_or_else(|_| "N/A".to_string());
+        let avg_gas_price =
+            format_units(total_gas_price.to_ethers() / deployment_sequence.receipts.len(), 9)
+                .unwrap_or_else(|_| "N/A".to_string());
         sh_eprintln!(
             "Total Paid: {} ETH ({} gas * avg {} gwei)",
             paid.trim_end_matches('0'),
@@ -226,20 +227,21 @@ impl ScriptArgs {
         let from = tx.from().expect("no sender");
 
         if sequential_broadcast {
-            let nonce = foundry_utils::next_nonce(*from, fork_url, None)
+            let nonce = forge::next_nonce((*from).to_alloy(), fork_url, None)
                 .await
                 .map_err(|_| eyre::eyre!("Not able to query the EOA nonce."))?;
 
             let tx_nonce = tx.nonce().expect("no nonce");
-
-            if nonce != *tx_nonce {
-                bail!("EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider.")
+            if let Ok(tx_nonce) = u64::try_from(tx_nonce.to_alloy()) {
+                if nonce != tx_nonce {
+                    bail!("EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider.")
+                }
             }
         }
 
         match kind {
             SendTransactionKind::Unlocked(addr) => {
-                tracing::debug!("sending transaction from unlocked account {:?}: {:?}", addr, tx);
+                debug!("sending transaction from unlocked account {:?}: {:?}", addr, tx);
 
                 // Chains which use `eth_estimateGas` are being sent sequentially and require their
                 // gas to be re-estimated right before broadcasting.
@@ -339,6 +341,10 @@ impl ScriptArgs {
         verify: VerifyBundle,
     ) -> Result<()> {
         trace!(target: "script", "broadcasting single chain deployment");
+
+        if self.verify {
+            deployment_sequence.verify_preflight_check(&script_config.config, &verify)?;
+        }
 
         let rpc = script_config.total_rpcs.into_iter().next().expect("exists; qed");
 
@@ -444,7 +450,7 @@ impl ScriptArgs {
 
         // Config is used to initialize the sequence chain, so we need to change when handling a new
         // sequence. This makes sure we don't lose the original value.
-        let original_config_chain = config.chain_id;
+        let original_config_chain = config.chain;
 
         // Peeking is used to check if the next rpc url is different. If so, it creates a
         // [`ScriptSequence`] from all the collected transactions up to this point.
@@ -493,8 +499,8 @@ impl ScriptArgs {
                     }
                 }
 
-                let total_gas = total_gas_per_rpc.entry(tx_rpc.clone()).or_insert(U256::zero());
-                *total_gas += *typed_tx.gas().expect("gas is set");
+                let total_gas = total_gas_per_rpc.entry(tx_rpc.clone()).or_insert(U256::ZERO);
+                *total_gas += (*typed_tx.gas().expect("gas is set")).to_alloy();
             }
 
             new_sequence.push_back(tx);
@@ -506,7 +512,7 @@ impl ScriptArgs {
                 }
             }
 
-            config.chain_id = Some(provider_info.chain.into());
+            config.chain = Some(provider_info.chain.into());
             let sequence = ScriptSequence::new(
                 new_sequence,
                 returns.clone(),
@@ -523,7 +529,7 @@ impl ScriptArgs {
         }
 
         // Restore previous config chain.
-        config.chain_id = original_config_chain;
+        config.chain = original_config_chain;
 
         if !self.skip_simulation {
             // Present gas information on a per RPC basis.
@@ -542,7 +548,7 @@ impl ScriptArgs {
 
                 sh_eprintln!(
                     "\nEstimated gas price: {} gwei",
-                    format_units(per_gas, 9)
+                    format_units(per_gas.to_ethers(), 9)
                         .unwrap_or_else(|_| "[Could not calculate]".to_string())
                         .trim_end_matches('0')
                         .trim_end_matches('.')
@@ -550,7 +556,7 @@ impl ScriptArgs {
                 sh_eprintln!("\nEstimated total gas used for script: {total_gas}")?;
                 sh_eprintln!(
                     "\nEstimated amount required: {} ETH",
-                    format_units(total_gas.saturating_mul(per_gas), 18)
+                    format_units(total_gas.saturating_mul(per_gas).to_ethers(), 18)
                         .unwrap_or_else(|_| "[Could not calculate]".to_string())
                         .trim_end_matches('0')
                 )?;
@@ -568,7 +574,7 @@ impl ScriptArgs {
         signer: &WalletSigner,
         mut legacy_or_1559: TypedTransaction,
     ) -> Result<TxHash> {
-        tracing::debug!("sending transaction: {:?}", legacy_or_1559);
+        debug!("sending transaction: {:?}", legacy_or_1559);
 
         // Chains which use `eth_estimateGas` are being sent sequentially and require their gas
         // to be re-estimated right before broadcasting.

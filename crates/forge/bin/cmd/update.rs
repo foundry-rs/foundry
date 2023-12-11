@@ -23,6 +23,10 @@ pub struct UpdateArgs {
     /// Override the up-to-date check.
     #[clap(short, long)]
     force: bool,
+
+    /// Recursively update submodules.
+    #[clap(short, long)]
+    recursive: bool,
 }
 impl_figment_convert_basic!(UpdateArgs);
 
@@ -30,7 +34,18 @@ impl UpdateArgs {
     pub fn run(self) -> Result<()> {
         let config = self.try_load_config_emit_warnings()?;
         let (root, paths) = dependencies_paths(&self.dependencies, &config)?;
-        Git::new(&root).submodule_update(self.force, true, paths)
+        // fetch the latest changes for each submodule (recursively if flag is set)
+        let git = Git::new(&root);
+        if self.recursive {
+            // update submodules recursively
+            git.submodule_update(self.force, true, false, true, paths)
+        } else {
+            // update root submodules
+            git.submodule_update(self.force, true, false, false, paths)?;
+            // initialize submodules of each submodule recursively (otherwise direct submodule
+            // dependencies will revert to last commit)
+            git.submodule_foreach(false, "git submodule update --init --progress --recursive ")
+        }
     }
 }
 

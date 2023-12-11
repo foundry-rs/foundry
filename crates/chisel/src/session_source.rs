@@ -4,14 +4,14 @@
 //! the REPL contract's source code. It provides simple compilation, parsing, and
 //! execution helpers.
 
-use ethers_solc::{
+use eyre::Result;
+use forge_fmt::solang_ext::SafeUnwrap;
+use foundry_compilers::{
     artifacts::{Source, Sources},
     CompilerInput, CompilerOutput, EvmVersion, Solc,
 };
-use eyre::Result;
-use forge_fmt::solang_ext::SafeUnwrap;
 use foundry_config::{Config, SolcReq};
-use foundry_evm::executor::{opts::EvmOpts, Backend};
+use foundry_evm::{backend::Backend, opts::EvmOpts};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt;
@@ -185,7 +185,8 @@ impl SessionSource {
     /// A new instance of [SessionSource]
     #[track_caller]
     pub fn new(solc: Solc, config: SessionSourceConfig) -> Self {
-        debug_assert!(solc.version().is_ok(), "{:?}", solc.version());
+        #[cfg(debug_assertions)]
+        let _ = solc.version().unwrap();
 
         Self {
             file_name: PathBuf::from("ReplContract.sol".to_string()),
@@ -303,7 +304,7 @@ impl SessionSource {
         self
     }
 
-    /// Generates and ethers_solc::CompilerInput from the source
+    /// Generates and foundry_compilers::CompilerInput from the source
     ///
     /// ### Returns
     ///
@@ -371,7 +372,7 @@ impl SessionSource {
         // Construct variable definitions
         let variable_definitions = intermediate_contracts
             .get("REPL")
-            .ok_or(eyre::eyre!("Could not find intermediate REPL contract!"))?
+            .ok_or_else(|| eyre::eyre!("Could not find intermediate REPL contract!"))?
             .variable_definitions
             .clone()
             .into_iter()
@@ -608,13 +609,13 @@ impl IntermediateOutput {
         match self
             .intermediate_contracts
             .get("REPL")
-            .ok_or(eyre::eyre!("Could not find REPL intermediate contract!"))?
+            .ok_or_else(|| eyre::eyre!("Could not find REPL intermediate contract!"))?
             .function_definitions
             .get("run")
-            .ok_or(eyre::eyre!("Could not find run function definition in REPL contract!"))?
+            .ok_or_else(|| eyre::eyre!("Could not find run function definition in REPL contract!"))?
             .body
             .as_ref()
-            .ok_or(eyre::eyre!("Could not find run function body!"))?
+            .ok_or_else(|| eyre::eyre!("Could not find run function body!"))?
         {
             pt::Statement::Block { statements, .. } => Ok(statements),
             _ => eyre::bail!("Could not find statements within run function body!"),

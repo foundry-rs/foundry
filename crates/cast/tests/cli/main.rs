@@ -2,21 +2,18 @@
 
 #![allow(clippy::disallowed_macros)]
 
-use foundry_test_utils::{
-    casttest,
-    util::{OutputExt, TestCommand, TestProject},
-};
-use foundry_utils::rpc::{next_http_rpc_endpoint, next_ws_rpc_endpoint};
+use foundry_common::rpc::{next_http_rpc_endpoint, next_ws_rpc_endpoint};
+use foundry_test_utils::{casttest, util::OutputExt};
 use std::{io::Write, path::Path};
 
 // tests `--help` is printed to std out
-casttest!(print_help, |_: TestProject, mut cmd: TestCommand| {
+casttest!(print_help, |_prj, cmd| {
     cmd.arg("--help");
     cmd.assert_non_empty_stdout();
 });
 
 // tests that the `cast block` command works correctly
-casttest!(latest_block, |_: TestProject, mut cmd: TestCommand| {
+casttest!(latest_block, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
 
     // Call `cast find-block`
@@ -32,7 +29,7 @@ casttest!(latest_block, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // tests that the `cast find-block` command works correctly
-casttest!(finds_block, |_: TestProject, mut cmd: TestCommand| {
+casttest!(finds_block, |_prj, cmd| {
     // Construct args
     let timestamp = "1647843609".to_string();
     let eth_rpc_url = next_http_rpc_endpoint();
@@ -50,7 +47,7 @@ casttest!(finds_block, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // tests that we can create a new wallet with keystore
-casttest!(new_wallet_keystore_with_password, |_: TestProject, mut cmd: TestCommand| {
+casttest!(new_wallet_keystore_with_password, |_prj, cmd| {
     cmd.args(["wallet", "new", ".", "--unsafe-password", "test"]);
     let out = cmd.stdout_lossy();
     assert!(out.contains("Created new encrypted keystore file"));
@@ -58,7 +55,7 @@ casttest!(new_wallet_keystore_with_password, |_: TestProject, mut cmd: TestComma
 });
 
 // tests that we can get the address of a keystore file
-casttest!(wallet_address_keystore_with_password_file, |_: TestProject, mut cmd: TestCommand| {
+casttest!(wallet_address_keystore_with_password_file, |_prj, cmd| {
     let keystore_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/keystore");
 
     cmd.args([
@@ -77,7 +74,7 @@ casttest!(wallet_address_keystore_with_password_file, |_: TestProject, mut cmd: 
 });
 
 // tests that `cast wallet sign message` outputs the expected signature
-casttest!(cast_wallet_sign_message_utf8_data, |_: TestProject, mut cmd: TestCommand| {
+casttest!(wallet_sign_message_utf8_data, |_prj, cmd| {
     cmd.args([
         "wallet",
         "sign",
@@ -90,7 +87,7 @@ casttest!(cast_wallet_sign_message_utf8_data, |_: TestProject, mut cmd: TestComm
 });
 
 // tests that `cast wallet sign message` outputs the expected signature, given a 0x-prefixed data
-casttest!(cast_wallet_sign_message_hex_data, |_: TestProject, mut cmd: TestCommand| {
+casttest!(wallet_sign_message_hex_data, |_prj, cmd| {
     cmd.args([
         "wallet",
         "sign",
@@ -103,7 +100,7 @@ casttest!(cast_wallet_sign_message_hex_data, |_: TestProject, mut cmd: TestComma
 });
 
 // tests that `cast wallet sign typed-data` outputs the expected signature, given a JSON string
-casttest!(cast_wallet_sign_typed_data_string, |_: TestProject, mut cmd: TestCommand| {
+casttest!(wallet_sign_typed_data_string, |_prj, cmd| {
     cmd.args([
         "wallet",
         "sign",
@@ -117,7 +114,7 @@ casttest!(cast_wallet_sign_typed_data_string, |_: TestProject, mut cmd: TestComm
 });
 
 // tests that `cast wallet sign typed-data` outputs the expected signature, given a JSON file
-casttest!(cast_wallet_sign_typed_data_file, |_: TestProject, mut cmd: TestCommand| {
+casttest!(wallet_sign_typed_data_file, |_prj, cmd| {
     cmd.args([
         "wallet",
         "sign",
@@ -137,11 +134,11 @@ casttest!(cast_wallet_sign_typed_data_file, |_: TestProject, mut cmd: TestComman
 });
 
 // tests that `cast estimate` is working correctly.
-casttest!(estimate_function_gas, |_: TestProject, mut cmd: TestCommand| {
+casttest!(estimate_function_gas, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
     cmd.args([
         "estimate",
-        "vitalik.eth",
+        "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", // vitalik.eth
         "--value",
         "100",
         "deposit()",
@@ -154,7 +151,7 @@ casttest!(estimate_function_gas, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // tests that `cast estimate --create` is working correctly.
-casttest!(estimate_contract_deploy_gas, |_: TestProject, mut cmd: TestCommand| {
+casttest!(estimate_contract_deploy_gas, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
     // sample contract code bytecode. Wouldn't run but is valid bytecode that the estimate method
     // accepts and could be deployed.
@@ -176,7 +173,7 @@ casttest!(estimate_contract_deploy_gas, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // tests that the `cast upload-signatures` command works correctly
-casttest!(upload_signatures, |_: TestProject, mut cmd: TestCommand| {
+casttest!(upload_signatures, |_prj, cmd| {
     // test no prefix is accepted as function
     cmd.args(["upload-signature", "transfer(address,uint256)"]);
     let output = cmd.stdout_lossy();
@@ -188,6 +185,16 @@ casttest!(upload_signatures, |_: TestProject, mut cmd: TestCommand| {
     let output = cmd.stdout_lossy();
 
     assert!(output.contains("Event Transfer(address,uint256): 0x69ca02dd4edd7bf0a4abb9ed3b7af3f14778db5d61921c7dc7cd545266326de2"), "{}", output);
+
+    // test error prefix
+    cmd.args(["upload-signature", "error ERC20InsufficientBalance(address,uint256,uint256)"]);
+    let output = cmd.stdout_lossy();
+
+    assert!(
+        output.contains("Function ERC20InsufficientBalance(address,uint256,uint256): 0xe450d38c"),
+        "{}",
+        output
+    ); // Custom error is interpreted as function
 
     // test multiple sigs
     cmd.args([
@@ -207,6 +214,7 @@ casttest!(upload_signatures, |_: TestProject, mut cmd: TestCommand| {
         "upload-signature",
         "event Transfer(address,uint256)",
         "transfer(address,uint256)",
+        "error ERC20InsufficientBalance(address,uint256,uint256)",
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/ERC20Artifact.json")
             .into_os_string()
@@ -221,10 +229,15 @@ casttest!(upload_signatures, |_: TestProject, mut cmd: TestCommand| {
     assert!(output.contains("Function approve(address,uint256): 0x095ea7b3"), "{}", output);
     assert!(output.contains("Function decimals(): 0x313ce567"), "{}", output);
     assert!(output.contains("Function allowance(address,address): 0xdd62ed3e"), "{}", output);
+    assert!(
+        output.contains("Function ERC20InsufficientBalance(address,uint256,uint256): 0xe450d38c"),
+        "{}",
+        output
+    );
 });
 
 // tests that the `cast to-rlp` and `cast from-rlp` commands work correctly
-casttest!(cast_rlp, |_: TestProject, mut cmd: TestCommand| {
+casttest!(rlp, |_prj, cmd| {
     cmd.args(["--to-rlp", "[\"0xaa\", [[\"bb\"]], \"0xcc\"]"]);
     let out = cmd.stdout_lossy();
     assert!(out.contains("0xc881aac3c281bb81cc"), "{}", out);
@@ -236,7 +249,7 @@ casttest!(cast_rlp, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // test for cast_rpc without arguments
-casttest!(cast_rpc_no_args, |_: TestProject, mut cmd: TestCommand| {
+casttest!(rpc_no_args, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
 
     // Call `cast rpc eth_chainId`
@@ -246,7 +259,7 @@ casttest!(cast_rpc_no_args, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // test for cast_rpc without arguments using websocket
-casttest!(cast_ws_rpc_no_args, |_: TestProject, mut cmd: TestCommand| {
+casttest!(ws_rpc_no_args, |_prj, cmd| {
     let eth_rpc_url = next_ws_rpc_endpoint();
 
     // Call `cast rpc eth_chainId`
@@ -256,7 +269,7 @@ casttest!(cast_ws_rpc_no_args, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // test for cast_rpc with arguments
-casttest!(cast_rpc_with_args, |_: TestProject, mut cmd: TestCommand| {
+casttest!(rpc_with_args, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
 
     // Call `cast rpc eth_getBlockByNumber 0x123 false`
@@ -266,7 +279,7 @@ casttest!(cast_rpc_with_args, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // test for cast_rpc with raw params
-casttest!(cast_rpc_raw_params, |_: TestProject, mut cmd: TestCommand| {
+casttest!(rpc_raw_params, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
 
     // Call `cast rpc eth_getBlockByNumber --raw '["0x123", false]'`
@@ -283,7 +296,7 @@ casttest!(cast_rpc_raw_params, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // test for cast_rpc with direct params
-casttest!(cast_rpc_raw_params_stdin, |_: TestProject, mut cmd: TestCommand| {
+casttest!(rpc_raw_params_stdin, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
 
     // Call `echo "\n[\n\"0x123\",\nfalse\n]\n" | cast rpc  eth_getBlockByNumber --raw
@@ -297,7 +310,7 @@ casttest!(cast_rpc_raw_params_stdin, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // checks `cast calldata` can handle arrays
-casttest!(calldata_array, |_: TestProject, mut cmd: TestCommand| {
+casttest!(calldata_array, |_prj, cmd| {
     cmd.args(["calldata", "propose(string[])", "[\"\"]"]);
     let out = cmd.stdout_lossy();
     assert_eq!(out.trim(),"0xcde2baba0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000"
@@ -305,7 +318,7 @@ casttest!(calldata_array, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
-casttest!(cast_run_succeeds, |_: TestProject, mut cmd: TestCommand| {
+casttest!(run_succeeds, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
     cmd.args([
         "run",
@@ -321,7 +334,7 @@ casttest!(cast_run_succeeds, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // tests that `cast --to-base` commands are working correctly.
-casttest!(cast_to_base, |_: TestProject, mut cmd: TestCommand| {
+casttest!(to_base, |_prj, cmd| {
     let values = [
         "1",
         "100",
@@ -349,7 +362,7 @@ casttest!(cast_to_base, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // tests that revert reason is only present if transaction has reverted.
-casttest!(cast_receipt_revert_reason, |_: TestProject, mut cmd: TestCommand| {
+casttest!(receipt_revert_reason, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
 
     // <https://etherscan.io/tx/0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
@@ -375,7 +388,7 @@ casttest!(cast_receipt_revert_reason, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // tests that `cast --parse-bytes32-address` command is working correctly.
-casttest!(parse_bytes32_address, |_: TestProject, mut cmd: TestCommand| {
+casttest!(parse_bytes32_address, |_prj, cmd| {
     cmd.args([
         "--parse-bytes32-address",
         "0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045",
@@ -384,7 +397,7 @@ casttest!(parse_bytes32_address, |_: TestProject, mut cmd: TestCommand| {
     assert_eq!(output.trim(), "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 });
 
-casttest!(cast_access_list, |_: TestProject, mut cmd: TestCommand| {
+casttest!(access_list, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
     cmd.args([
         "access-list",
@@ -403,7 +416,7 @@ casttest!(cast_access_list, |_: TestProject, mut cmd: TestCommand| {
     assert!(output.contains("0x7fba2702a7d6e85ac783a88eacdc48e51310443458071f6db9ac66f8ca7068b8"));
 });
 
-casttest!(cast_logs_topics, |_: TestProject, mut cmd: TestCommand| {
+casttest!(logs_topics, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
     cmd.args([
         "logs",
@@ -422,7 +435,7 @@ casttest!(cast_logs_topics, |_: TestProject, mut cmd: TestCommand| {
     );
 });
 
-casttest!(cast_logs_topic_2, |_: TestProject, mut cmd: TestCommand| {
+casttest!(logs_topic_2, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
     cmd.args([
         "logs",
@@ -443,7 +456,7 @@ casttest!(cast_logs_topic_2, |_: TestProject, mut cmd: TestCommand| {
     );
 });
 
-casttest!(cast_logs_sig, |_: TestProject, mut cmd: TestCommand| {
+casttest!(logs_sig, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
     cmd.args([
         "logs",
@@ -462,7 +475,7 @@ casttest!(cast_logs_sig, |_: TestProject, mut cmd: TestCommand| {
     );
 });
 
-casttest!(cast_logs_sig_2, |_: TestProject, mut cmd: TestCommand| {
+casttest!(logs_sig_2, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
     cmd.args([
         "logs",
@@ -483,7 +496,7 @@ casttest!(cast_logs_sig_2, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // tests that the raw encoded transaction is returned
-casttest!(cast_tx_raw, |_: TestProject, mut cmd: TestCommand| {
+casttest!(tx_raw, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
 
     // <https://etherscan.io/tx/0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
@@ -511,4 +524,37 @@ casttest!(cast_tx_raw, |_: TestProject, mut cmd: TestCommand| {
     ]);
     let output2 = cmd.stdout_lossy();
     assert_eq!(output, output2);
+});
+
+// ensure receipt or code is required
+casttest!(send_requires_to, |_prj, cmd| {
+    cmd.args([
+        "send",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+    ]);
+    let output = cmd.stderr_lossy();
+    assert_eq!(
+        output.trim(),
+        "Error: \nMust specify a recipient address or contract code to deploy"
+    );
+});
+
+casttest!(storage, |_prj, cmd| {
+    let empty = "0x0000000000000000000000000000000000000000000000000000000000000000";
+
+    let rpc = next_http_rpc_endpoint();
+    cmd.cast_fuse().args(["storage", "vitalik.eth", "1", "--rpc-url", &rpc]);
+    assert_eq!(cmd.stdout_lossy().trim(), empty);
+
+    let rpc = next_http_rpc_endpoint();
+    cmd.cast_fuse().args(["storage", "vitalik.eth", "0x01", "--rpc-url", &rpc]);
+    assert_eq!(cmd.stdout_lossy().trim(), empty);
+
+    let rpc = next_http_rpc_endpoint();
+    let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7";
+    let decimals_slot = "0x09";
+    let six = "0x0000000000000000000000000000000000000000000000000000000000000006";
+    cmd.cast_fuse().args(["storage", usdt, decimals_slot, "--rpc-url", &rpc]);
+    assert_eq!(cmd.stdout_lossy().trim(), six);
 });

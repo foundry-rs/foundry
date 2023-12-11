@@ -1,20 +1,14 @@
 use super::{install, test::FilterArgs};
-use clap::{Parser, ValueEnum};
-use ethers::{
-    abi::Address,
-    prelude::{
-        artifacts::{Ast, CompactBytecode, CompactDeployedBytecode},
-        Artifact, Bytes, Project, ProjectCompileOutput, U256,
-    },
-    solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap},
-};
+use alloy_primitives::{Address, Bytes, U256};
+use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, Result};
 use forge::{
     coverage::{
         analysis::SourceAnalyzer, anchors::find_anchors, ContractId, CoverageReport,
         CoverageReporter, DebugReporter, ItemAnchor, LcovReporter, SummaryReporter,
     },
-    executor::{inspector::CheatsConfig, opts::EvmOpts},
+    inspectors::CheatsConfig,
+    opts::EvmOpts,
     result::SuiteResult,
     revm::primitives::SpecId,
     utils::{build_ic_pc_map, ICPCMap},
@@ -25,10 +19,15 @@ use foundry_cli::{
     utils::{LoadConfig, STATIC_FUZZ_SEED},
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
+use foundry_compilers::{
+    artifacts::{contract::CompactContractBytecode, Ast, CompactBytecode, CompactDeployedBytecode},
+    sourcemap::SourceMap,
+    Artifact, Project, ProjectCompileOutput,
+};
 use foundry_config::{Config, SolcReq};
 use semver::Version;
-use std::{collections::HashMap, sync::mpsc::channel};
-use tracing::trace;
+use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel};
+use yansi::Paint;
 
 /// A map, keyed by contract ID, to a tuple of the deployment source map and the runtime source map.
 type SourceMaps = HashMap<ContractId, (SourceMap, SourceMap)>;
@@ -52,6 +51,17 @@ pub struct CoverageArgs {
     #[clap(long)]
     ir_minimum: bool,
 
+    /// The path to output the report.
+    ///
+    /// If not specified, the report will be stored in the root of the project.
+    #[clap(
+        long,
+        short,
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH"
+    )]
+    report_file: Option<PathBuf>,
+
     #[clap(flatten)]
     filter: FilterArgs,
 
@@ -73,7 +83,7 @@ impl CoverageArgs {
         }
 
         // Set fuzz seed so coverage reports are deterministic
-        config.fuzz.seed = Some(U256::from_big_endian(&STATIC_FUZZ_SEED));
+        config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
         let (project, output) = self.build(&config)?;
         sh_eprintln!("Analysing contracts...")?;
@@ -92,7 +102,7 @@ impl CoverageArgs {
             if self.ir_minimum {
                 // TODO: How to detect solc version if the user does not specify a solc version in
                 // config  case1: specify local installed solc ?
-                //  case2: mutliple solc versions used and  auto_detect_solc == true
+                //  case2: multiple solc versions used and  auto_detect_solc == true
                 if let Some(SolcReq::Version(version)) = &config.solc {
                     if *version < Version::new(0, 8, 13) {
                         return Err(eyre::eyre!(
@@ -134,7 +144,7 @@ impl CoverageArgs {
     }
 
     /// Builds the coverage report.
-    #[tracing::instrument(name = "prepare coverage", skip_all)]
+    #[instrument(name = "prepare coverage", skip_all)]
     fn prepare(&self, config: &Config, output: ProjectCompileOutput) -> Result<CoverageReport> {
         let project_paths = config.project_paths();
 
@@ -285,7 +295,7 @@ impl CoverageArgs {
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
+            .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone()))
             .with_test_options(TestOptions { fuzz: config.fuzz, ..Default::default() })
             .set_coverage(true)
             .build(root.clone(), output, env, evm_opts)?;
@@ -295,12 +305,10 @@ impl CoverageArgs {
         let filter = self.filter;
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let handle =
-            tokio::task::spawn(
-                async move { runner.test(filter, Some(tx), Default::default()).await },
-            );
+            tokio::task::spawn(async move { runner.test(&filter, tx, Default::default()).await });
 
         // Add hit data to the coverage report
-        for (artifact_id, hits) in rx
+        let data = rx
             .into_iter()
             .flat_map(|(_, suite)| suite.test_results.into_values())
             .filter_map(|mut result| result.coverage.take())
@@ -308,8 +316,8 @@ impl CoverageArgs {
                 hit_maps.0.into_values().filter_map(|map| {
                     Some((known_contracts.find_by_code(map.bytecode.as_ref())?.0, map))
                 })
-            })
-        {
+            });
+        for (artifact_id, hits) in data {
             // TODO: Note down failing tests
             if let Some(source_id) = report.get_source_id(
                 artifact_id.version.clone(),
@@ -329,15 +337,25 @@ impl CoverageArgs {
         }
 
         // Reattach the thread
-        let _ = handle.await;
+        if let Err(e) = handle.await {
+            match e.try_into_panic() {
+                Ok(payload) => std::panic::resume_unwind(payload),
+                Err(e) => return Err(e.into()),
+            }
+        }
 
         // Output final report
         for report_kind in self.report {
             match report_kind {
                 CoverageReportKind::Summary => SummaryReporter::default().report(&report),
-                // TODO: Sensible place to put the LCOV file
                 CoverageReportKind::Lcov => {
-                    LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?).report(&report)
+                    if let Some(report_file) = self.report_file {
+                        return LcovReporter::new(&mut fs::create_file(root.join(report_file))?)
+                            .report(&report)
+                    } else {
+                        return LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?)
+                            .report(&report)
+                    }
                 }
                 CoverageReportKind::Debug => DebugReporter.report(&report),
             }?;
@@ -366,7 +384,7 @@ fn dummy_link_bytecode(mut obj: CompactBytecode) -> Option<Bytes> {
     let link_references = obj.link_references.clone();
     for (file, libraries) in link_references {
         for library in libraries.keys() {
-            obj.link(&file, library, Address::zero());
+            obj.link(&file, library, Address::ZERO);
         }
     }
 

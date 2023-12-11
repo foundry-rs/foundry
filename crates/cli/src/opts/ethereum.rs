@@ -85,12 +85,12 @@ impl RpcOpts {
 
 #[derive(Clone, Debug, Default, Parser, Serialize)]
 pub struct EtherscanOpts {
-    /// The Etherscan (or equivalent) API key
+    /// The Etherscan (or equivalent) API key.
     #[clap(short = 'e', long = "etherscan-api-key", alias = "api-key", env = "ETHERSCAN_API_KEY")]
     #[serde(rename = "etherscan_api_key", skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
 
-    /// The chain name or EIP-155 chain ID
+    /// The chain name or EIP-155 chain ID.
     #[clap(
         short,
         long,
@@ -160,7 +160,7 @@ impl figment::Provider for EthereumOpts {
         dict.extend(self.rpc.dict());
 
         if let Some(from) = self.wallet.from {
-            dict.insert("sender".to_string(), format!("{from:?}").into());
+            dict.insert("sender".to_string(), from.to_string().into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))

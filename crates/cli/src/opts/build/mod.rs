@@ -1,5 +1,5 @@
 use clap::Parser;
-use ethers::solc::{artifacts::output_selection::ContractOutputSelection, EvmVersion};
+use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, EvmVersion};
 use serde::Serialize;
 
 mod core;

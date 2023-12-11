@@ -1,18 +1,18 @@
-//! Support for compiling [ethers::solc::Project].
+//! Support for compiling [foundry_compilers::Project]
 
-use crate::{glob::GlobMatcher, term::SpinnerReporter, TestFunctionExt};
+use crate::{compact_to_contract, glob::GlobMatcher, term, term::SpinnerReporter, TestFunctionExt};
 use comfy_table::{presets::ASCII_MARKDOWN, *};
-use ethers_etherscan::contract::Metadata;
-use ethers_solc::{
+use eyre::Result;
+use foundry_block_explorers::contract::Metadata;
+use foundry_compilers::{
     artifacts::{BytecodeObject, ContractBytecodeSome},
     remappings::Remapping,
     report::{BasicStdoutReporter, NoReporter, Report},
     Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
     Solc, SolcConfig,
 };
-use eyre::Result;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     convert::Infallible,
     fmt::Display,
     path::{Path, PathBuf},
@@ -171,9 +171,10 @@ impl ProjectCompiler {
     /// let config = foundry_config::Config::load();
     /// let prj = config.project().unwrap();
     /// ProjectCompiler::default()
-    ///     .compile_with(&prj, || Ok(prj.compile()?)).unwrap();
+    ///     .compile_with(&config.project().unwrap(), |prj| Ok(prj.compile()?))
+    ///     .unwrap();
     /// ```
-    #[tracing::instrument(target = "forge::compile", skip_all)]
+    #[instrument(target = "forge::compile", skip_all)]
     pub fn compile_with<F>(self, project: &Project, f: F) -> Result<ProjectCompileOutput>
     where
         F: FnOnce() -> Result<ProjectCompileOutput>,
@@ -197,7 +198,7 @@ impl ProjectCompiler {
             }
         };
 
-        let output = ethers_solc::report::with_scoped(&reporter, || {
+        let output = foundry_compilers::report::with_scoped(&reporter, || {
             tracing::debug!("compiling project");
 
             let timer = std::time::Instant::now();
@@ -261,15 +262,14 @@ impl ProjectCompiler {
             for (name, artifact) in artifacts {
                 let size = deployed_contract_size(artifact).unwrap_or_default();
 
-                let dev_functions = artifact
-                    .abi
-                    .as_ref()
-                    .map(|abi| abi.abi.functions())
-                    .into_iter()
-                    .flatten()
-                    .filter(|func| {
-                        func.name.is_test() || func.name.eq("IS_TEST") || func.name.eq("IS_SCRIPT")
-                    });
+                let dev_functions =
+                    artifact.abi.as_ref().map(|abi| abi.functions()).into_iter().flatten().filter(
+                        |&func| {
+                            func.name.is_test() ||
+                                func.name == "IS_TEST" ||
+                                func.name == "IS_SCRIPT"
+                        },
+                    );
 
                 let is_dev_contract = dev_functions.count() > 0;
                 size_report.contracts.insert(name, ContractInfo { size, is_dev_contract });
@@ -285,6 +285,10 @@ impl ProjectCompiler {
         }
     }
 }
+
+/// Map over artifacts contract sources name -> file_id -> (source, contract)
+#[derive(Default, Debug, Clone)]
+pub struct ContractSources(pub HashMap<String, HashMap<u32, (String, ContractBytecodeSome)>>);
 
 // https://eips.ethereum.org/EIPS/eip-170
 const CONTRACT_SIZE_LIMIT: usize = 24576;
@@ -314,10 +318,10 @@ impl SizeReport {
 }
 
 impl Display for SizeReport {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         let mut table = Table::new();
         table.load_preset(ASCII_MARKDOWN);
-        table.set_header(vec![
+        table.set_header([
             Cell::new("Contract").add_attribute(Attribute::Bold).fg(Color::Blue),
             Cell::new("Size (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
             Cell::new("Margin (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
@@ -332,7 +336,7 @@ impl Display for SizeReport {
                 _ => Color::Red,
             };
 
-            table.add_row(vec![
+            table.add_row([
                 Cell::new(name).fg(color),
                 Cell::new(contract.size as f64 / 1000.0).fg(color),
                 Cell::new(margin as f64 / 1000.0).fg(color),
@@ -372,6 +376,136 @@ pub struct ContractInfo {
     pub is_dev_contract: bool,
 }
 
+/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
+/// compilation was successful or if there was a cache hit.
+pub fn compile(
+    project: &Project,
+    print_names: bool,
+    print_sizes: bool,
+) -> Result<ProjectCompileOutput> {
+    ProjectCompiler::new(print_names, print_sizes).compile(project)
+}
+
+/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
+/// compilation was successful or if there was a cache hit.
+///
+/// Takes a list of [`SkipBuildFilter`] for files to exclude from the build.
+pub fn compile_with_filter(
+    project: &Project,
+    print_names: bool,
+    print_sizes: bool,
+    skip: Vec<SkipBuildFilter>,
+) -> Result<ProjectCompileOutput> {
+    ProjectCompiler::with_filter(print_names, print_sizes, skip).compile(project)
+}
+
+/// Compiles the provided [`Project`] and does not throw if there's any compiler error
+/// Doesn't print anything to stdout, thus is "suppressed".
+pub fn try_suppress_compile(project: &Project) -> Result<ProjectCompileOutput> {
+    Ok(foundry_compilers::report::with_scoped(
+        &foundry_compilers::report::Report::new(NoReporter::default()),
+        || project.compile(),
+    )?)
+}
+
+/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
+/// compilation was successful or if there was a cache hit.
+/// Doesn't print anything to stdout, thus is "suppressed".
+pub fn suppress_compile(project: &Project) -> Result<ProjectCompileOutput> {
+    let output = try_suppress_compile(project)?;
+
+    if output.has_compiler_errors() {
+        eyre::bail!(output.to_string())
+    }
+
+    Ok(output)
+}
+
+/// Depending on whether the `skip` is empty this will [`suppress_compile_sparse`] or
+/// [`suppress_compile`] and throw if there's any compiler error
+pub fn suppress_compile_with_filter(
+    project: &Project,
+    skip: Vec<SkipBuildFilter>,
+) -> Result<ProjectCompileOutput> {
+    if skip.is_empty() {
+        suppress_compile(project)
+    } else {
+        suppress_compile_sparse(project, SkipBuildFilters(skip))
+    }
+}
+
+/// Depending on whether the `skip` is empty this will [`suppress_compile_sparse`] or
+/// [`suppress_compile`] and does not throw if there's any compiler error
+pub fn suppress_compile_with_filter_json(
+    project: &Project,
+    skip: Vec<SkipBuildFilter>,
+) -> Result<ProjectCompileOutput> {
+    if skip.is_empty() {
+        try_suppress_compile(project)
+    } else {
+        try_suppress_compile_sparse(project, SkipBuildFilters(skip))
+    }
+}
+
+/// Compiles the provided [`Project`],
+/// Doesn't print anything to stdout, thus is "suppressed".
+///
+/// See [`Project::compile_sparse`]
+pub fn try_suppress_compile_sparse<F: FileFilter + 'static>(
+    project: &Project,
+    filter: F,
+) -> Result<ProjectCompileOutput> {
+    Ok(foundry_compilers::report::with_scoped(
+        &foundry_compilers::report::Report::new(NoReporter::default()),
+        || project.compile_sparse(filter),
+    )?)
+}
+
+/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
+/// compilation was successful or if there was a cache hit.
+/// Doesn't print anything to stdout, thus is "suppressed".
+///
+/// See [`Project::compile_sparse`]
+pub fn suppress_compile_sparse<F: FileFilter + 'static>(
+    project: &Project,
+    filter: F,
+) -> Result<ProjectCompileOutput> {
+    let output = try_suppress_compile_sparse(project, filter)?;
+
+    if output.has_compiler_errors() {
+        eyre::bail!(output.to_string())
+    }
+
+    Ok(output)
+}
+
+/// Compile a set of files not necessarily included in the `project`'s source dir
+///
+/// If `silent` no solc related output will be emitted to stdout
+pub fn compile_files(
+    project: &Project,
+    files: Vec<PathBuf>,
+    silent: bool,
+) -> Result<ProjectCompileOutput> {
+    let output = if silent {
+        foundry_compilers::report::with_scoped(
+            &foundry_compilers::report::Report::new(NoReporter::default()),
+            || project.compile_files(files),
+        )
+    } else {
+        term::with_spinner_reporter(|| project.compile_files(files))
+    }?;
+
+    if output.has_compiler_errors() {
+        eyre::bail!(output.to_string())
+    }
+    if !silent {
+        println!("{output}");
+    }
+
+    Ok(output)
+}
+
 /// Compiles target file path.
 ///
 /// If `verify` and it's a standalone script, throw error. Only allowed for projects.
@@ -396,10 +530,11 @@ pub fn compile_target_with_filter(
     compiler.compile(project)
 }
 
-/// Creates and compiles a project from an Etherscan source.
+/// Compiles an Etherscan source from metadata by creating a project.
+/// Returns the artifact_id, the file_id, and the bytecode
 pub async fn compile_from_source(
     metadata: &Metadata,
-) -> Result<(ArtifactId, ContractBytecodeSome)> {
+) -> Result<(ArtifactId, u32, ContractBytecodeSome)> {
     let root = tempfile::tempdir()?;
     let root_path = root.path();
     let project = etherscan_project(metadata, root_path)?;
@@ -410,19 +545,23 @@ pub async fn compile_from_source(
         eyre::bail!("{project_output}")
     }
 
-    let (artifact_id, contract) = project_output
-        .into_contract_bytecodes()
+    let (artifact_id, file_id, contract) = project_output
+        .into_artifacts()
         .find(|(artifact_id, _)| artifact_id.name == metadata.contract_name)
-        .expect("there should be a contract with bytecode");
-    let bytecode = ContractBytecodeSome {
-        abi: contract.abi.unwrap(),
-        bytecode: contract.bytecode.unwrap().into(),
-        deployed_bytecode: contract.deployed_bytecode.unwrap().into(),
-    };
+        .map(|(aid, art)| {
+            (aid, art.source_file().expect("no source file").id, art.into_contract_bytecode())
+        })
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "Unable to find bytecode in compiled output for contract: {}",
+                metadata.contract_name
+            )
+        })?;
+    let bytecode = compact_to_contract(contract)?;
 
     root.close()?;
 
-    Ok((artifact_id, bytecode))
+    Ok((artifact_id, file_id, bytecode))
 }
 
 /// Creates a [Project] from an Etherscan source.

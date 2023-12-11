@@ -46,7 +46,7 @@ contract HelloWorld {
     /// A long doc line comment that will be wrapped 
     function docLineOverflow() external {}
 
-    function docLinePostfixOveflow() external {} /// A long doc line comment that will be wrapped 
+    function docLinePostfixOverflow() external {} /// A long doc line comment that will be wrapped 
 
     /**
      * @notice Here is my comment
@@ -82,7 +82,7 @@ function withALongNameThatWillCauseCommentWrap() public {
       }
     }
     */
-    function malformedIndentOveflow() external {}
+    function malformedIndentOverflow() external {}
 }
 
 /**

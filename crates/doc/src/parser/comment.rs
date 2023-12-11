@@ -45,7 +45,7 @@ impl CommentTag {
                 }
             }
             _ => {
-                tracing::warn!(target: "forge::doc", tag = trimmed, "unknown comment tag. custom tags must be preceded by `custom:`");
+                warn!(target: "forge::doc", tag=trimmed, "unknown comment tag. custom tags must be preceded by `custom:`");
                 return None
             }
         };
@@ -87,7 +87,7 @@ impl Comment {
     pub fn match_first_word(&self, expected: &str) -> Option<&str> {
         self.split_first_word().and_then(
             |(word, rest)| {
-                if word.eq(expected) {
+                if word == expected {
                     Some(rest)
                 } else {
                     None
@@ -213,7 +213,7 @@ mod tests {
         assert_eq!(CommentTag::from_str("param"), Some(CommentTag::Param));
         assert_eq!(CommentTag::from_str("return"), Some(CommentTag::Return));
         assert_eq!(CommentTag::from_str("inheritdoc"), Some(CommentTag::Inheritdoc));
-        assert_eq!(CommentTag::from_str("custom:"), Some(CommentTag::Custom("".to_owned())));
+        assert_eq!(CommentTag::from_str("custom:"), Some(CommentTag::Custom(String::new())));
         assert_eq!(
             CommentTag::from_str("custom:some"),
             Some(CommentTag::Custom("some".to_owned()))

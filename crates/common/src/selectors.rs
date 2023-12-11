@@ -1,8 +1,7 @@
-//! Support for handling/identifying selectors
-#![allow(missing_docs)]
+//! Support for handling/identifying selectors.
 
-use crate::abi::abi_decode;
-use ethers_solc::artifacts::LosslessAbi;
+use crate::abi::abi_decode_calldata;
+use alloy_json_abi::JsonAbi;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
@@ -14,7 +13,6 @@ use std::{
     },
     time::Duration,
 };
-use tracing::warn;
 
 static SELECTOR_DATABASE_URL: &str = "https://api.openchain.xyz/signature-database/v1/";
 static SELECTOR_IMPORT_URL: &str = "https://api.openchain.xyz/signature-database/v1/import";
@@ -189,7 +187,7 @@ impl SignEthClient {
 
         Ok(decoded
             .get(selector)
-            .ok_or(eyre::eyre!("No signature found"))?
+            .ok_or_else(|| eyre::eyre!("No signature found"))?
             .iter()
             .filter(|&d| !d.filtered)
             .map(|d| d.name.clone())
@@ -225,7 +223,7 @@ impl SignEthClient {
         // filter for signatures that can be decoded
         Ok(sigs
             .iter()
-            .filter(|sig| abi_decode(sig, calldata, true, true).is_ok())
+            .filter(|sig| abi_decode_calldata(sig, calldata, true, true).is_ok())
             .cloned()
             .collect::<Vec<String>>())
     }
@@ -241,14 +239,18 @@ impl SignEthClient {
 
     /// Pretty print calldata and if available, fetch possible function signatures
     ///
-    /// ```
+    /// ```no_run
     /// use foundry_common::selectors::SignEthClient;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// SignEthClient::new()?.pretty_calldata(
-    ///     "0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5",
-    ///     false,
-    /// ).await?;
+    /// let pretty_data = SignEthClient::new()?
+    ///     .pretty_calldata(
+    ///         "0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5"
+    ///             .to_string(),
+    ///         false,
+    ///     )
+    ///     .await?;
+    /// println!("{}", pretty_data);
     /// # Ok(())
     /// # }
     /// ```
@@ -296,21 +298,27 @@ impl SignEthClient {
 
         let request = match data {
             SelectorImportData::Abi(abis) => {
-                let names: Vec<String> = abis
+                let functions_and_errors: Vec<String> = abis
                     .iter()
                     .flat_map(|abi| {
-                        abi.abi
-                            .functions()
-                            .map(|func| {
-                                func.signature().split(':').next().unwrap_or("").to_string()
-                            })
+                        abi.functions()
+                            .map(|func| func.signature())
+                            .chain(abi.errors().map(|error| error.signature()))
                             .collect::<Vec<_>>()
                     })
                     .collect();
-                SelectorImportRequest { function: names, event: Default::default() }
+
+                let events = abis
+                    .iter()
+                    .flat_map(|abi| abi.events().map(|event| event.signature()))
+                    .collect::<Vec<_>>();
+
+                SelectorImportRequest { function: functions_and_errors, event: events }
             }
             SelectorImportData::Raw(raw) => {
-                SelectorImportRequest { function: raw.function, event: raw.event }
+                let function_and_error =
+                    raw.function.iter().chain(raw.error.iter()).cloned().collect::<Vec<_>>();
+                SelectorImportRequest { function: function_and_error, event: raw.event }
             }
         };
 
@@ -389,14 +397,16 @@ pub async fn decode_event_topic(topic: &str) -> eyre::Result<Vec<String>> {
 
 /// Pretty print calldata and if available, fetch possible function signatures
 ///
-/// ```
+/// ```no_run
 /// use foundry_common::selectors::pretty_calldata;
 ///
 /// # async fn foo() -> eyre::Result<()> {
-/// pretty_calldata(
-///     "0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5",
+/// let pretty_data = pretty_calldata(
+///     "0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5".to_string(),
 ///     false,
-/// ).await?;
+/// )
+/// .await?;
+/// println!("{}", pretty_data);
 /// # Ok(())
 /// # }
 /// ```
@@ -423,7 +433,7 @@ impl RawSelectorImportData {
 #[derive(Serialize)]
 #[serde(untagged)]
 pub enum SelectorImportData {
-    Abi(Vec<LosslessAbi>),
+    Abi(Vec<JsonAbi>),
     Raw(RawSelectorImportData),
 }
 
@@ -478,12 +488,12 @@ pub async fn import_selectors(data: SelectorImportData) -> eyre::Result<Selector
 #[derive(PartialEq, Default, Debug)]
 pub struct ParsedSignatures {
     pub signatures: RawSelectorImportData,
-    pub abis: Vec<LosslessAbi>,
+    pub abis: Vec<JsonAbi>,
 }
 
 #[derive(Deserialize)]
 struct Artifact {
-    abi: LosslessAbi,
+    abi: JsonAbi,
 }
 
 /// Parses a list of tokens into function, event, and error signatures.
@@ -579,7 +589,7 @@ mod tests {
             "0xa9059cbb"
         );
 
-        let abi: LosslessAbi = serde_json::from_str(r#"[{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function", "methodIdentifiers": {"transfer(address,uint256)(uint256)": "0xa9059cbb"}}]"#).unwrap();
+        let abi: JsonAbi = serde_json::from_str(r#"[{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function", "methodIdentifiers": {"transfer(address,uint256)(uint256)": "0xa9059cbb"}}]"#).unwrap();
         let result = import_selectors(SelectorImportData::Abi(vec![abi])).await;
         assert_eq!(
             result.unwrap().result.function.duplicated.get("transfer(address,uint256)").unwrap(),
@@ -622,6 +632,7 @@ mod tests {
         let result = parse_signatures(vec![
             "transfer(address,uint256)".to_string(),
             "event Approval(address,address,uint256)".to_string(),
+            "error ERC20InsufficientBalance(address,uint256,uint256)".to_string(),
         ]);
         assert_eq!(
             result,
@@ -629,7 +640,7 @@ mod tests {
                 signatures: RawSelectorImportData {
                     function: vec!["transfer(address,uint256)".to_string()],
                     event: vec!["Approval(address,address,uint256)".to_string()],
-                    ..Default::default()
+                    error: vec!["ERC20InsufficientBalance(address,uint256,uint256)".to_string()]
                 },
                 ..Default::default()
             }

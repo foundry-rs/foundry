@@ -1,6 +1,6 @@
 //! cli arguments for configuring the evm settings
+use alloy_primitives::{Address, B256, U256};
 use clap::{ArgAction, Parser};
-use ethers_core::types::{Address, H256, U256};
 use eyre::ContextCompat;
 use foundry_config::{
     figment::{
@@ -55,6 +55,13 @@ pub struct EvmArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
+    /// Number of retries.
+    ///
+    /// See --fork-url.
+    #[clap(long, requires = "fork_url", value_name = "RETRIES")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fork_retries: Option<u32>,
+
     /// Initial retry backoff on encountering errors.
     ///
     /// See --fork-url.
@@ -105,7 +112,7 @@ pub struct EvmArgs {
     ///
     /// default value: 330
     ///
-    /// See also --fork-url and https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    /// See also --fork-url and https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
     #[clap(
         long,
         requires = "fork_url",
@@ -117,7 +124,7 @@ pub struct EvmArgs {
 
     /// Disables rate limiting for this node's provider.
     ///
-    /// See also --fork-url and https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    /// See also --fork-url and https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
     #[clap(
         long,
         requires = "fork_url",
@@ -185,10 +192,10 @@ pub struct EnvArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code_size_limit: Option<usize>,
 
-    /// The chain ID.
-    #[clap(long, alias = "chain", value_name = "CHAIN_ID")]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub chain_id: Option<Chain>,
+    /// The chain name or EIP-155 chain ID.
+    #[clap(long, visible_alias = "chain-id", value_name = "CHAIN")]
+    #[serde(rename = "chain_id", skip_serializing_if = "Option::is_none", serialize_with = "id")]
+    pub chain: Option<Chain>,
 
     /// The gas price.
     #[clap(long, value_name = "GAS_PRICE")]
@@ -228,14 +235,17 @@ pub struct EnvArgs {
     /// The block prevrandao value. NOTE: Before merge this field was mix_hash.
     #[clap(long, value_name = "PREVRANDAO")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub block_prevrandao: Option<H256>,
+    pub block_prevrandao: Option<B256>,
 
     /// The block gas limit.
     #[clap(long, value_name = "GAS_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<u64>,
 
-    /// The memory limit of the EVM in bytes (32 MB by default)
+    /// The memory limit per EVM execution in bytes.
+    /// If this limit is exceeded, a `MemoryLimitOOG` result is thrown.
+    ///
+    /// The default is 128MiB.
     #[clap(long, value_name = "MEMORY_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_limit: Option<u64>,
@@ -248,33 +258,40 @@ impl EvmArgs {
     }
 }
 
+/// We have to serialize chain IDs and not names because when extracting an EVM `Env`, it expects
+/// `chain_id` to be `u64`.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn id<S: serde::Serializer>(chain: &Option<Chain>, s: S) -> Result<S::Ok, S::Error> {
+    if let Some(chain) = chain {
+        s.serialize_u64(chain.id())
+    } else {
+        // skip_serializing_if = "Option::is_none" should prevent this branch from being taken
+        unreachable!()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_config::NamedChain;
 
     #[test]
     fn can_parse_chain_id() {
         let args = EvmArgs {
-            env: EnvArgs {
-                chain_id: Some(ethers_core::types::Chain::Mainnet.into()),
-                ..Default::default()
-            },
+            env: EnvArgs { chain: Some(NamedChain::Mainnet.into()), ..Default::default() },
             ..Default::default()
         };
         let config = Config::from_provider(Config::figment().merge(args));
-        assert_eq!(config.chain_id, Some(ethers_core::types::Chain::Mainnet.into()));
+        assert_eq!(config.chain, Some(NamedChain::Mainnet.into()));
 
         let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "goerli"]);
-        assert_eq!(env.chain_id, Some(ethers_core::types::Chain::Goerli.into()));
+        assert_eq!(env.chain, Some(NamedChain::Goerli.into()));
     }
 
     #[test]
     fn test_memory_limit() {
         let args = EvmArgs {
-            env: EnvArgs {
-                chain_id: Some(ethers_core::types::Chain::Mainnet.into()),
-                ..Default::default()
-            },
+            env: EnvArgs { chain: Some(NamedChain::Mainnet.into()), ..Default::default() },
             ..Default::default()
         };
         let config = Config::from_provider(Config::figment().merge(args));
@@ -282,5 +299,17 @@ mod tests {
 
         let env = EnvArgs::parse_from(["foundry-common", "--memory-limit", "100"]);
         assert_eq!(env.memory_limit, Some(100));
+    }
+
+    #[test]
+    fn test_chain_id() {
+        let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "1"]);
+        assert_eq!(env.chain, Some(Chain::mainnet()));
+
+        let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "mainnet"]);
+        assert_eq!(env.chain, Some(Chain::mainnet()));
+        let args = EvmArgs { env, ..Default::default() };
+        let config = Config::from_provider(Config::figment().merge(args));
+        assert_eq!(config.chain, Some(Chain::mainnet()));
     }
 }

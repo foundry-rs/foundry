@@ -1,8 +1,9 @@
-//! Tests for invariants
+//! Fuzz tests.
 
-use crate::{config::*, test_helpers::filter::Filter};
-use ethers::types::U256;
+use crate::config::*;
+use alloy_primitives::U256;
 use forge::result::{SuiteResult, TestStatus};
+use foundry_test_utils::Filter;
 use std::collections::BTreeMap;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -10,11 +11,10 @@ async fn test_fuzz() {
     let mut runner = runner().await;
 
     let suite_result = runner
-        .test(
+        .test_collect(
             &Filter::new(".*", ".*", ".*fuzz/")
                 .exclude_tests(r"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)")
                 .exclude_paths("invariant"),
-            None,
             test_opts(),
         )
         .await;
@@ -61,7 +61,7 @@ async fn test_fuzz_collection() {
     runner.test_options = opts.clone();
 
     let results =
-        runner.test(&Filter::new(".*", ".*", ".*fuzz/FuzzCollection.t.sol"), None, opts).await;
+        runner.test_collect(&Filter::new(".*", ".*", ".*fuzz/FuzzCollection.t.sol"), opts).await;
 
     assert_multiple(
         &results,

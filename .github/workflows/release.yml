@@ -1,4 +1,4 @@
-name: Release version
+name: release
 
 on:
     push:
@@ -9,20 +9,20 @@ on:
     workflow_dispatch:
 
 env:
-    IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     CARGO_TERM_COLOR: always
+    IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 
 jobs:
     prepare:
         name: Prepare release
-        runs-on: ubuntu-20.04
+        runs-on: ubuntu-latest
         timeout-minutes: 30
         outputs:
             tag_name: ${{ steps.release_info.outputs.tag_name }}
             release_name: ${{ steps.release_info.outputs.release_name }}
             changelog: ${{ steps.build_changelog.outputs.changelog }}
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
               with:
                   fetch-depth: 0
 
@@ -43,7 +43,7 @@ jobs:
             # the changelog.
             - name: Create build-specific nightly tag
               if: ${{ env.IS_NIGHTLY }}
-              uses: actions/github-script@v5
+              uses: actions/github-script@v6
               env:
                   TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
               with:
@@ -53,7 +53,7 @@ jobs:
 
             - name: Build changelog
               id: build_changelog
-              uses: mikepenz/release-changelog-builder-action@v2
+              uses: mikepenz/release-changelog-builder-action@v4
               with:
                   configuration: "./.github/changelog.json"
                   fromTag: ${{ env.IS_NIGHTLY && 'nightly' || '' }}
@@ -66,59 +66,61 @@ jobs:
         uses: ./.github/workflows/docker-publish.yml
 
     release:
-        name: ${{ matrix.job.target }} (${{ matrix.job.os }})
-        runs-on: ${{ matrix.job.os }}
-        timeout-minutes: 60
+        name: ${{ matrix.target }} (${{ matrix.os }})
+        runs-on: ${{ matrix.os }}
+        timeout-minutes: 240
         needs: prepare
         strategy:
+            fail-fast: false
             matrix:
-                job:
-                    # The OS is used for the runner
-                    # The platform is a generic platform name
-                    # The target is used by Cargo
-                    # The arch is either 386, arm64 or amd64
-                    # The svm target platform to use for the binary https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
+                include:
+                    # `os`: GHA runner
+                    # `target`: Rust build target triple
+                    # `platform` and `arch`: Used in tarball names
+                    # `svm`: target platform to use for the Solc binary: https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
                     - os: ubuntu-20.04
-                      platform: linux
                       target: x86_64-unknown-linux-gnu
-                      arch: amd64
                       svm_target_platform: linux-amd64
-                    - os: ubuntu-20.04
                       platform: linux
+                      arch: amd64
+                    - os: ubuntu-20.04
                       target: aarch64-unknown-linux-gnu
-                      arch: arm64
                       svm_target_platform: linux-aarch64
-                    - os: macos-latest
-                      platform: darwin
-                      target: x86_64-apple-darwin
-                      arch: amd64
-                      svm_target_platform: macosx-amd64
-                    - os: macos-latest
-                      platform: darwin
-                      target: aarch64-apple-darwin
+                      platform: linux
                       arch: arm64
-                      svm_target_platform: macosx-aarch64
-                    - os: windows-latest
-                      platform: win32
-                      target: x86_64-pc-windows-msvc
+                    - os: macos-latest
+                      target: x86_64-apple-darwin
+                      svm_target_platform: macosx-amd64
+                      platform: darwin
                       arch: amd64
+                    - os: macos-latest
+                      target: aarch64-apple-darwin
+                      svm_target_platform: macosx-aarch64
+                      platform: darwin
+                      arch: arm64
+                    - os: windows-latest
+                      target: x86_64-pc-windows-msvc
                       svm_target_platform: windows-amd64
-
+                      platform: win32
+                      arch: amd64
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
             - uses: dtolnay/rust-toolchain@stable
               with:
-                  targets: ${{ matrix.job.target }}
+                  targets: ${{ matrix.target }}
             - uses: Swatinem/rust-cache@v2
+              with:
+                  key: ${{ matrix.target }}
+                  cache-on-failure: true
 
             - name: Apple M1 setup
-              if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
+              if: matrix.target == 'aarch64-apple-darwin'
               run: |
                   echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> $GITHUB_ENV
                   echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> $GITHUB_ENV
 
             - name: Linux ARM setup
-              if: ${{ matrix.job.target == 'aarch64-unknown-linux-gnu' }}
+              if: matrix.target == 'aarch64-unknown-linux-gnu'
               run: |
                   sudo apt-get update -y
                   sudo apt-get install -y gcc-aarch64-linux-gnu
@@ -126,15 +128,20 @@ jobs:
 
             - name: Build binaries
               env:
-                  SVM_TARGET_PLATFORM: ${{ matrix.job.svm_target_platform }}
-              run: cargo build --release --bins --target ${{ matrix.job.target }}
+                  SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
+              shell: bash
+              # Windows runs out of RAM when building binaries with LLVM
+              run: |
+                  flags=()
+                  [[ "${{ matrix.target }}" == *windows* ]] && flags+=(-j1)
+                  cargo build --release --bins --target ${{ matrix.target }} "${flags[@]}"
 
             - name: Archive binaries
               id: artifacts
               env:
-                  PLATFORM_NAME: ${{ matrix.job.platform }}
-                  TARGET: ${{ matrix.job.target }}
-                  ARCH: ${{ matrix.job.arch }}
+                  PLATFORM_NAME: ${{ matrix.platform }}
+                  TARGET: ${{ matrix.target }}
+                  ARCH: ${{ matrix.arch }}
                   VERSION_NAME:
                       ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
               shell: bash
@@ -156,10 +163,10 @@ jobs:
 
             - name: Build man page
               id: man
-              if: ${{ matrix.job.target == 'x86_64-unknown-linux-gnu' }}
+              if: matrix.target == 'x86_64-unknown-linux-gnu'
               env:
-                  PLATFORM_NAME: ${{ matrix.job.platform }}
-                  TARGET: ${{ matrix.job.target }}
+                  PLATFORM_NAME: ${{ matrix.platform }}
+                  TARGET: ${{ matrix.target }}
                   VERSION_NAME:
                       ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
               shell: bash
@@ -204,23 +211,24 @@ jobs:
 
     cleanup:
         name: Release cleanup
-        runs-on: ubuntu-20.04
+        runs-on: ubuntu-latest
         timeout-minutes: 30
         needs: release
+        if: always()
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
 
             # Moves the `nightly` tag to `HEAD`
             - name: Move nightly tag
               if: ${{ env.IS_NIGHTLY }}
-              uses: actions/github-script@v5
+              uses: actions/github-script@v6
               with:
                   script: |
                       const moveTag = require('./.github/scripts/move-tag.js')
                       await moveTag({ github, context }, 'nightly')
 
             - name: Delete old nightlies
-              uses: actions/github-script@v5
+              uses: actions/github-script@v6
               with:
                   script: |
                       const prunePrereleases = require('./.github/scripts/prune-prereleases.js')
@@ -231,8 +239,9 @@ jobs:
         name: Open an issue
         runs-on: ubuntu-latest
         needs: [prepare, release-docker, release, cleanup]
-        if: ${{ failure() }}
+        if: failure()
         steps:
+            - uses: actions/checkout@v4
             - uses: JasonEtco/create-an-issue@v2
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

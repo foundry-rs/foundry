@@ -1,4 +1,4 @@
-msrv = "1.72"
+msrv = "1.74"
 
 disallowed-macros = [
     # See `foundry_common::shell`

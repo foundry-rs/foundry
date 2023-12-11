@@ -1,28 +1,28 @@
-use ethers::{
-    abi::Abi,
-    core::types::Chain,
-    solc::{
-        artifacts::{CompactBytecode, CompactDeployedBytecode, ContractBytecodeSome},
-        cache::{CacheEntry, SolFilesCache},
-        info::ContractInfo,
-        utils::read_json_file,
-        Artifact, ArtifactId, ProjectCompileOutput,
-    },
-};
+use alloy_json_abi::JsonAbi as Abi;
+use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
-use foundry_common::{fs, TestFunctionExt};
-use foundry_config::{error::ExtractConfigError, figment::Figment, Chain as ConfigChain, Config};
+use foundry_common::{cli_warn, fs, TestFunctionExt};
+use foundry_compilers::{
+    artifacts::{CompactBytecode, CompactDeployedBytecode},
+    cache::{CacheEntry, SolFilesCache},
+    info::ContractInfo,
+    utils::read_json_file,
+    Artifact, ProjectCompileOutput,
+};
+use foundry_config::{
+    error::ExtractConfigError, figment::Figment, Chain as ConfigChain, Chain, Config, NamedChain,
+};
+use foundry_debugger::Debugger;
 use foundry_evm::{
     debug::DebugArena,
-    executor::{opts::EvmOpts, DeployResult, EvmError, ExecutionErr, RawCallResult},
-    trace::{
+    executors::{DeployResult, EvmError, ExecutionErr, RawCallResult},
+    opts::EvmOpts,
+    traces::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
-use std::{collections::BTreeMap, fmt::Write, path::PathBuf, str::FromStr};
-use tracing::trace;
-use ui::{TUIExitReason, Tui, Ui};
+use std::{fmt::Write, path::PathBuf, str::FromStr};
 use yansi::Paint;
 
 /// Given a `Project`'s output, removes the matching ABI, Bytecode and
@@ -164,17 +164,33 @@ macro_rules! update_progress {
 }
 
 /// True if the network calculates gas costs differently.
-pub fn has_different_gas_calc(chain: u64) -> bool {
-    if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
-        return matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::ArbitrumGoerli)
+pub fn has_different_gas_calc(chain_id: u64) -> bool {
+    if let Some(chain) = Chain::from(chain_id).named() {
+        return matches!(
+            chain,
+            NamedChain::Arbitrum |
+                NamedChain::ArbitrumTestnet |
+                NamedChain::ArbitrumGoerli |
+                NamedChain::ArbitrumSepolia |
+                NamedChain::Moonbeam |
+                NamedChain::Moonriver |
+                NamedChain::Moonbase |
+                NamedChain::MoonbeamDev
+        )
     }
     false
 }
 
 /// True if it supports broadcasting in batches.
-pub fn has_batch_support(chain: u64) -> bool {
-    if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
-        return !matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::ArbitrumGoerli)
+pub fn has_batch_support(chain_id: u64) -> bool {
+    if let Some(chain) = Chain::from(chain_id).named() {
+        return !matches!(
+            chain,
+            NamedChain::Arbitrum |
+                NamedChain::ArbitrumTestnet |
+                NamedChain::ArbitrumGoerli |
+                NamedChain::ArbitrumSepolia
+        )
     }
     true
 }
@@ -363,7 +379,7 @@ impl TryFrom<EvmError> for TraceResult {
 pub async fn handle_traces(
     mut result: TraceResult,
     config: &Config,
-    chain: Option<ethers::types::Chain>,
+    chain: Option<Chain>,
     labels: Vec<String>,
     verbose: bool,
     debug: bool,
@@ -374,9 +390,7 @@ pub async fn handle_traces(
         let mut iter = label_str.split(':');
 
         if let Some(addr) = iter.next() {
-            if let (Ok(address), Some(label)) =
-                (ethers::types::Address::from_str(addr), iter.next())
-            {
+            if let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next()) {
                 return Some((address, label.to_string()))
             }
         }
@@ -396,8 +410,13 @@ pub async fn handle_traces(
     }
 
     if debug {
-        let (sources, bytecode) = etherscan_identifier.get_compiled_contracts().await?;
-        run_debugger(result, decoder, bytecode, sources)?;
+        let sources = etherscan_identifier.get_compiled_contracts().await?;
+        let mut debugger = Debugger::builder()
+            .debug_arena(&result.debug)
+            .decoder(&decoder)
+            .sources(sources)
+            .build();
+        debugger.try_run()?;
     } else {
         print_traces(&mut result, &decoder, verbose).await?;
     }
@@ -432,32 +451,4 @@ pub async fn print_traces(
     }
 
     sh_println!("Gas used: {}", result.gas_used)
-}
-
-pub fn run_debugger(
-    result: TraceResult,
-    decoder: CallTraceDecoder,
-    known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
-    sources: BTreeMap<ArtifactId, String>,
-) -> Result<()> {
-    let calls: Vec<DebugArena> = vec![result.debug];
-    let flattened = calls.last().expect("we should have collected debug info").flatten(0);
-    let tui = Tui::new(
-        flattened,
-        0,
-        decoder.contracts,
-        known_contracts.into_iter().map(|(id, artifact)| (id.name, artifact)).collect(),
-        sources
-            .into_iter()
-            .map(|(id, source)| {
-                let mut sources = BTreeMap::new();
-                sources.insert(0, source);
-                (id.name, sources)
-            })
-            .collect(),
-        Default::default(),
-    )?;
-    match tui.start().expect("Failed to start tui") {
-        TUIExitReason::CharExit => Ok(()),
-    }
 }

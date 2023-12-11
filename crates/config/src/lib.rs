@@ -3,29 +3,32 @@
 #![allow(clippy::disallowed_macros)]
 #![warn(missing_docs, unused_crate_dependencies)]
 
+#[macro_use]
+extern crate tracing;
+
 use crate::cache::StorageCachingConfig;
-use ethers_core::types::{Address, Chain::Mainnet, H160, H256, U256};
-pub use ethers_solc::{self, artifacts::OptimizerDetails};
-use ethers_solc::{
-    artifacts::{
-        output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
-        Libraries, ModelCheckerSettings, ModelCheckerTarget, Optimizer, RevertStrings, Settings,
-        SettingsMetadata, Severity,
-    },
-    cache::SOLIDITY_FILES_CACHE_FILENAME,
-    error::SolcError,
-    remappings::{RelativeRemapping, Remapping},
-    ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
-};
+use alloy_primitives::{address, Address, B256, U256};
 use eyre::{ContextCompat, WrapErr};
 use figment::{
     providers::{Env, Format, Serialized, Toml},
     value::{Dict, Map, Value},
     Error, Figment, Metadata, Profile, Provider,
 };
+use foundry_compilers::{
+    artifacts::{
+        output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
+        Libraries, ModelCheckerSettings, ModelCheckerTarget, Optimizer, OptimizerDetails,
+        RevertStrings, Settings, SettingsMetadata, Severity,
+    },
+    cache::SOLIDITY_FILES_CACHE_FILENAME,
+    error::SolcError,
+    remappings::{RelativeRemapping, Remapping},
+    ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
+};
 use inflector::Inflector;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use revm_primitives::SpecId;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -35,7 +38,6 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-pub(crate) use tracing::trace;
 
 // Macros useful for creating a figment.
 mod macros;
@@ -53,9 +55,6 @@ pub use resolve::UnresolvedEnvVarError;
 
 pub mod cache;
 use cache::{Cache, ChainCache};
-
-mod chain;
-pub use chain::Chain;
 
 pub mod fmt;
 pub use fmt::FormatterConfig;
@@ -76,9 +75,8 @@ pub use warning::*;
 pub mod fix;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
+pub use alloy_chains::{Chain, NamedChain};
 pub use figment;
-use revm_primitives::SpecId;
-use tracing::warn;
 
 /// config providers
 pub mod providers;
@@ -252,50 +250,58 @@ pub struct Config {
     pub block_number: u64,
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
-    /// The chain id to use
-    pub chain_id: Option<Chain>,
-    /// Block gas limit
+    /// The chain name or EIP-155 chain ID.
+    #[serde(rename = "chain_id", alias = "chain")]
+    pub chain: Option<Chain>,
+    /// Block gas limit.
     pub gas_limit: GasLimit,
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests.
     pub code_size_limit: Option<usize>,
-    /// `tx.gasprice` value during EVM execution"
+    /// `tx.gasprice` value during EVM execution.
     ///
     /// This is an Option, so we can determine in fork mode whether to use the config's gas price
-    /// (if set by user) or the remote client's gas price
+    /// (if set by user) or the remote client's gas price.
     pub gas_price: Option<u64>,
-    /// the base fee in a block
+    /// The base fee in a block.
     pub block_base_fee_per_gas: u64,
-    /// the `block.coinbase` value during EVM execution
+    /// The `block.coinbase` value during EVM execution.
     pub block_coinbase: Address,
-    /// the `block.timestamp` value during EVM execution
+    /// The `block.timestamp` value during EVM execution.
     pub block_timestamp: u64,
-    /// the `block.difficulty` value during EVM execution
+    /// The `block.difficulty` value during EVM execution.
     pub block_difficulty: u64,
-    /// Before merge the `block.max_hash` after merge it is `block.prevrandao`
-    pub block_prevrandao: H256,
+    /// Before merge the `block.max_hash`, after merge it is `block.prevrandao`.
+    pub block_prevrandao: B256,
     /// the `block.gaslimit` value during EVM execution
     pub block_gas_limit: Option<GasLimit>,
-    /// The memory limit of the EVM (32 MB by default)
-    pub memory_limit: u64,
-    /// Additional output selection for all contracts
-    /// such as "ir", "devdoc", "storageLayout", etc.
-    /// See [Solc Compiler Api](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-api)
+    /// The memory limit per EVM execution in bytes.
+    /// If this limit is exceeded, a `MemoryLimitOOG` result is thrown.
     ///
-    /// The following values are always set because they're required by `forge`
-    //{
-    //   "*": [
-    //       "abi",
-    //       "evm.bytecode",
-    //       "evm.deployedBytecode",
-    //       "evm.methodIdentifiers"
-    //     ]
-    // }
-    // "#
+    /// The default is 128MiB.
+    pub memory_limit: u64,
+    /// Additional output selection for all contracts, such as "ir", "devdoc", "storageLayout",
+    /// etc.
+    ///
+    /// See the [Solc Compiler Api](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-api) for more information.
+    ///
+    /// The following values are always set because they're required by `forge`:
+    /// ```json
+    /// {
+    ///   "*": [
+    ///       "abi",
+    ///       "evm.bytecode",
+    ///       "evm.deployedBytecode",
+    ///       "evm.methodIdentifiers"
+    ///     ]
+    /// }
+    /// ```
     #[serde(default)]
     pub extra_output: Vec<ContractOutputSelection>,
-    /// If set , a separate `json` file will be emitted for every contract depending on the
+    /// If set, a separate JSON file will be emitted for every contract depending on the
     /// selection, eg. `extra_output_files = ["metadata"]` will create a `metadata.json` for
-    /// each contract in the project. See [Contract Metadata](https://docs.soliditylang.org/en/latest/metadata.html)
+    /// each contract in the project.
+    ///
+    /// See [Contract Metadata](https://docs.soliditylang.org/en/latest/metadata.html) for more information.
     ///
     /// The difference between `extra_output = ["metadata"]` and
     /// `extra_output_files = ["metadata"]` is that the former will include the
@@ -303,9 +309,9 @@ pub struct Config {
     /// output selection as separate files.
     #[serde(default)]
     pub extra_output_files: Vec<ContractOutputSelection>,
-    /// Print the names of the compiled contracts
+    /// Whether to print the names of the compiled contracts.
     pub names: bool,
-    /// Print the sizes of the compiled contracts
+    /// Whether to print the sizes of the compiled contracts.
     pub sizes: bool,
     /// If set to true, changes compilation pipeline to go through the Yul intermediate
     /// representation.
@@ -340,7 +346,7 @@ pub struct Config {
     ///
     /// If this option is enabled, only the required contracts/files will be selected to be
     /// included in solc's output selection, see also
-    /// [OutputSelection](ethers_solc::artifacts::output_selection::OutputSelection)
+    /// [OutputSelection](foundry_compilers::artifacts::output_selection::OutputSelection)
     pub sparse_mode: bool,
     /// Whether to emit additional build info files
     ///
@@ -374,13 +380,10 @@ pub struct Config {
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
     ///
-    /// ```rust
+    /// ```ignore
     /// use foundry_config::Config;
     ///
-    /// let config = Config {
-    ///     src: "other".into(),
-    ///     ..Default::default()
-    /// };
+    /// let config = Config { src: "other".into(), ..Default::default() };
     /// ```
     #[doc(hidden)]
     #[serde(skip)]
@@ -420,10 +423,7 @@ impl Config {
     /// Default address for tx.origin
     ///
     /// `0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38`
-    pub const DEFAULT_SENDER: H160 = H160([
-        0x18, 0x04, 0xc8, 0xAB, 0x1F, 0x12, 0xE6, 0xbb, 0xF3, 0x89, 0x4D, 0x40, 0x83, 0xF3, 0x3E,
-        0x07, 0x30, 0x9D, 0x1F, 0x38,
-    ]);
+    pub const DEFAULT_SENDER: Address = address!("1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
 
     /// Returns the current `Config`
     ///
@@ -451,13 +451,12 @@ impl Config {
     /// # Example
     ///
     /// ```no_run
+    /// use figment::providers::{Env, Format, Toml};
     /// use foundry_config::Config;
-    /// use figment::providers::{Toml, Format, Env};
     ///
     /// // Use foundry's default `Figment`, but allow values from `other.toml`
     /// // to supersede its values.
-    /// let figment = Config::figment()
-    ///     .merge(Toml::file("other.toml").nested());
+    /// let figment = Config::figment().merge(Toml::file("other.toml").nested());
     ///
     /// let config = Config::from_provider(figment);
     /// ```
@@ -472,13 +471,12 @@ impl Config {
     /// # Example
     ///
     /// ```rust
+    /// use figment::providers::{Env, Format, Toml};
     /// use foundry_config::Config;
-    /// use figment::providers::{Toml, Format, Env};
     ///
     /// // Use foundry's default `Figment`, but allow values from `other.toml`
     /// // to supersede its values.
-    /// let figment = Config::figment()
-    ///     .merge(Toml::file("other.toml").nested());
+    /// let figment = Config::figment().merge(Toml::file("other.toml").nested());
     ///
     /// let config = Config::try_from(figment);
     /// ```
@@ -613,7 +611,7 @@ impl Config {
     /// let project = config.project();
     /// ```
     pub fn project(&self) -> Result<Project, SolcError> {
-        self.create_project(true, false)
+        self.create_project(self.cache, false)
     }
 
     /// Same as [`Self::project()`] but sets configures the project to not emit artifacts and ignore
@@ -780,11 +778,10 @@ impl Config {
     /// # Example
     ///
     /// ```
-    /// 
     /// use foundry_config::Config;
     /// # fn t() {
-    ///     let config = Config::with_root("./");
-    ///     let rpc_jwt = config.get_rpc_jwt_secret().unwrap().unwrap();
+    /// let config = Config::with_root("./");
+    /// let rpc_jwt = config.get_rpc_jwt_secret().unwrap().unwrap();
     /// # }
     /// ```
     pub fn get_rpc_jwt_secret(&self) -> Result<Option<Cow<str>>, UnresolvedEnvVarError> {
@@ -800,11 +797,10 @@ impl Config {
     /// # Example
     ///
     /// ```
-    /// 
     /// use foundry_config::Config;
     /// # fn t() {
-    ///     let config = Config::with_root("./");
-    ///     let rpc_url = config.get_rpc_url().unwrap().unwrap();
+    /// let config = Config::with_root("./");
+    /// let rpc_url = config.get_rpc_url().unwrap().unwrap();
     /// # }
     /// ```
     pub fn get_rpc_url(&self) -> Option<Result<Cow<str>, UnresolvedEnvVarError>> {
@@ -825,11 +821,10 @@ impl Config {
     /// # Example
     ///
     /// ```
-    /// 
     /// use foundry_config::Config;
     /// # fn t() {
-    ///     let config = Config::with_root("./");
-    ///     let rpc_url = config.get_rpc_url_with_alias("mainnet").unwrap().unwrap();
+    /// let config = Config::with_root("./");
+    /// let rpc_url = config.get_rpc_url_with_alias("mainnet").unwrap().unwrap();
     /// # }
     /// ```
     pub fn get_rpc_url_with_alias(
@@ -845,11 +840,10 @@ impl Config {
     /// # Example
     ///
     /// ```
-    /// 
     /// use foundry_config::Config;
     /// # fn t() {
-    ///     let config = Config::with_root("./");
-    ///     let rpc_url = config.get_rpc_url_or("http://localhost:8545").unwrap();
+    /// let config = Config::with_root("./");
+    /// let rpc_url = config.get_rpc_url_or("http://localhost:8545").unwrap();
     /// # }
     /// ```
     pub fn get_rpc_url_or<'a>(
@@ -868,11 +862,10 @@ impl Config {
     /// # Example
     ///
     /// ```
-    /// 
     /// use foundry_config::Config;
     /// # fn t() {
-    ///     let config = Config::with_root("./");
-    ///     let rpc_url = config.get_rpc_url_or_localhost_http().unwrap();
+    /// let config = Config::with_root("./");
+    /// let rpc_url = config.get_rpc_url_or_localhost_http().unwrap();
     /// # }
     /// ```
     pub fn get_rpc_url_or_localhost_http(&self) -> Result<Cow<str>, UnresolvedEnvVarError> {
@@ -889,12 +882,11 @@ impl Config {
     /// # Example
     ///
     /// ```
-    /// 
     /// use foundry_config::Config;
     /// # fn t() {
-    ///     let config = Config::with_root("./");
-    ///     let etherscan_config = config.get_etherscan_config().unwrap().unwrap();
-    ///     let client = etherscan_config.into_client().unwrap();
+    /// let config = Config::with_root("./");
+    /// let etherscan_config = config.get_etherscan_config().unwrap().unwrap();
+    /// let client = etherscan_config.into_client().unwrap();
     /// # }
     /// ```
     pub fn get_etherscan_config(
@@ -909,7 +901,7 @@ impl Config {
 
         // we treat the `etherscan_api_key` as actual API key
         // if no chain provided, we assume mainnet
-        let chain = self.chain_id.unwrap_or(Chain::Named(Mainnet));
+        let chain = self.chain.unwrap_or(Chain::mainnet());
         let api_key = self.etherscan_api_key.as_ref()?;
         ResolvedEtherscanConfig::create(api_key, chain).map(Ok)
     }
@@ -922,9 +914,8 @@ impl Config {
     /// over the chain's entry in the table.
     pub fn get_etherscan_config_with_chain(
         &self,
-        chain: Option<impl Into<Chain>>,
+        chain: Option<Chain>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
-        let chain = chain.map(Into::into);
         if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref()) {
             if self.etherscan.contains_key(maybe_alias) {
                 return self.etherscan.clone().resolved().remove(maybe_alias).transpose()
@@ -952,7 +943,7 @@ impl Config {
 
         // etherscan fallback via API key
         if let Some(key) = self.etherscan_api_key.as_ref() {
-            let chain = chain.or(self.chain_id).unwrap_or_default();
+            let chain = chain.or(self.chain).unwrap_or_default();
             return Ok(ResolvedEtherscanConfig::create(key, chain))
         }
 
@@ -960,7 +951,7 @@ impl Config {
     }
 
     /// Helper function to just get the API key
-    pub fn get_etherscan_api_key(&self, chain: Option<impl Into<Chain>>) -> Option<String> {
+    pub fn get_etherscan_api_key(&self, chain: Option<Chain>) -> Option<String> {
         self.get_etherscan_config_with_chain(chain).ok().flatten().map(|c| c.key)
     }
 
@@ -1000,7 +991,7 @@ impl Config {
         Optimizer { enabled: Some(self.optimizer), runs: Some(self.optimizer_runs), details }
     }
 
-    /// returns the [`ethers_solc::ConfigurableArtifacts`] for this config, that includes the
+    /// returns the [`foundry_compilers::ConfigurableArtifacts`] for this config, that includes the
     /// `extra_output` fields
     pub fn configured_artifacts_handler(&self) -> ConfigurableArtifacts {
         let mut extra_output = self.extra_output.clone();
@@ -1146,7 +1137,7 @@ impl Config {
     /// Returns the default config that uses dapptools style paths
     pub fn dapptools() -> Self {
         Config {
-            chain_id: Some(Chain::Id(99)),
+            chain: Some(Chain::from_id(99)),
             block_timestamp: 0,
             block_number: 0,
             ..Config::default()
@@ -1802,17 +1793,17 @@ impl Default for Config {
             initial_balance: U256::from(0xffffffffffffffffffffffffu128),
             block_number: 1,
             fork_block_number: None,
-            chain_id: None,
+            chain: None,
             gas_limit: i64::MAX.into(),
             code_size_limit: None,
             gas_price: None,
             block_base_fee_per_gas: 0,
-            block_coinbase: Address::zero(),
+            block_coinbase: Address::ZERO,
             block_timestamp: 1,
             block_difficulty: 0,
             block_prevrandao: Default::default(),
             block_gas_limit: None,
-            memory_limit: 2u64.pow(25),
+            memory_limit: 1 << 27, // 2**27 = 128MiB = 134_217_728 bytes
             eth_rpc_url: None,
             eth_rpc_jwt: None,
             etherscan_api_key: None,
@@ -2054,8 +2045,14 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
             .map(Value::from)
             .ok();
         for (profile, mut dict) in self.0.data()? {
-            if let Some(v) = solc_env.clone().or_else(|| dict.remove("solc_version")) {
+            if let Some(v) = solc_env.clone() {
+                // ENV var takes precedence over config file
                 dict.insert("solc".to_string(), v);
+            } else if let Some(v) = dict.remove("solc_version") {
+                // only insert older variant if not already included
+                if !dict.contains_key("solc") {
+                    dict.insert("solc".to_string(), v);
+                }
             }
             map.insert(profile, dict);
         }
@@ -2164,7 +2161,7 @@ impl Provider for DappEnvCompatProvider {
             let val = val.parse::<u8>().map_err(figment::Error::custom)?;
             if val > 1 {
                 return Err(
-                    format!("Invalid $DAPP_BUILD_OPTIMIZE value `{val}`,  expected 0 or 1").into()
+                    format!("Invalid $DAPP_BUILD_OPTIMIZE value `{val}`, expected 0 or 1").into()
                 )
             }
             dict.insert("optimizer".to_string(), (val == 1).into());
@@ -2450,7 +2447,7 @@ impl<P: Provider> ProviderExt for P {}
 /// # Example
 ///
 /// ```rust
-/// use foundry_config::{Config, BasicConfig};
+/// use foundry_config::{BasicConfig, Config};
 /// use serde::Deserialize;
 ///
 /// let my_config = Config::figment().extract::<BasicConfig>();
@@ -2488,9 +2485,8 @@ impl BasicConfig {
 }
 
 pub(crate) mod from_str_lowercase {
-    use std::str::FromStr;
-
     use serde::{Deserialize, Deserializer, Serializer};
+    use std::str::FromStr;
 
     pub fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -2512,7 +2508,7 @@ pub(crate) mod from_str_lowercase {
 
 fn canonic(path: impl Into<PathBuf>) -> PathBuf {
     let path = path.into();
-    ethers_solc::utils::canonicalize(&path).unwrap_or(path)
+    foundry_compilers::utils::canonicalize(&path).unwrap_or(path)
 }
 
 #[cfg(test)]
@@ -2524,12 +2520,13 @@ mod tests {
         etherscan::ResolvedEtherscanConfigs,
         fs_permissions::PathPermission,
     };
-    use ethers_core::types::Chain::Moonbeam;
-    use ethers_solc::artifacts::{ModelCheckerEngine, YulDetails};
+    use alloy_primitives::Address;
     use figment::{error::Kind::InvalidType, value::Value, Figment};
+    use foundry_compilers::artifacts::{ModelCheckerEngine, YulDetails};
     use pretty_assertions::assert_eq;
     use std::{collections::BTreeMap, fs::File, io::Write, str::FromStr};
     use tempfile::tempdir;
+    use NamedChain::Moonbeam;
 
     // Helper function to clear `__warnings` in config, since it will be populated during loading
     // from file, causing testing problem when comparing to those created from `default()`, etc.
@@ -2541,14 +2538,14 @@ mod tests {
     fn default_sender() {
         assert_eq!(
             Config::DEFAULT_SENDER,
-            "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38".parse().unwrap()
+            Address::from_str("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38").unwrap()
         );
     }
 
     #[test]
     fn test_caching() {
         let mut config = Config::default();
-        let chain_id = ethers_core::types::Chain::Mainnet;
+        let chain_id = NamedChain::Mainnet;
         let url = "https://eth-mainnet.alchemyapi";
         assert!(config.enable_caching(url, chain_id));
 
@@ -2556,7 +2553,7 @@ mod tests {
         assert!(!config.enable_caching(url, chain_id));
 
         config.no_storage_caching = false;
-        assert!(!config.enable_caching(url, ethers_core::types::Chain::Dev));
+        assert!(!config.enable_caching(url, NamedChain::Dev));
     }
 
     #[test]
@@ -2566,20 +2563,20 @@ mod tests {
             assert_eq!(config.install_lib_dir(), PathBuf::from("lib"));
             jail.create_file(
                 "foundry.toml",
-                r#"
+                r"
                 [profile.default]
                 libs = ['node_modules', 'lib']
-            "#,
+            ",
             )?;
             let config = Config::load();
             assert_eq!(config.install_lib_dir(), PathBuf::from("lib"));
 
             jail.create_file(
                 "foundry.toml",
-                r#"
+                r"
                 [profile.default]
                 libs = ['custom', 'node_modules', 'lib']
-            "#,
+            ",
             )?;
             let config = Config::load();
             assert_eq!(config.install_lib_dir(), PathBuf::from("custom"));
@@ -2637,12 +2634,12 @@ mod tests {
 
             jail.create_file(
                 "foundry.toml",
-                r#"
+                r"
                 [profile.default]
                 libs = ['lib']
                 [profile.local]
                 libs = ['modules']
-            "#,
+            ",
             )?;
             jail.set_env("FOUNDRY_PROFILE", "local");
             let config = Config::load();
@@ -2746,10 +2743,10 @@ mod tests {
 
             jail.create_file(
                 "remappings.txt",
-                r#"
+                r"
                 file-ds-test/=lib/ds-test/
                 file-other/=lib/other/
-            "#,
+            ",
             )?;
 
             let config = Config::load();
@@ -2797,10 +2794,10 @@ mod tests {
 
             jail.create_file(
                 "remappings.txt",
-                r#"
+                r"
                 ds-test/=lib/ds-test/
                 other/=lib/other/
-            "#,
+            ",
             )?;
 
             let config = Config::load();
@@ -2930,18 +2927,15 @@ mod tests {
             )?;
 
             let config = Config::load();
-            assert!(config.get_etherscan_config_with_chain(None::<u64>).unwrap().is_none());
             assert!(config
-                .get_etherscan_config_with_chain(Some(ethers_core::types::Chain::BinanceSmartChain))
+                .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain.into()))
                 .is_err());
 
             std::env::set_var(env_key, env_value);
 
             assert_eq!(
                 config
-                    .get_etherscan_config_with_chain(Some(
-                        ethers_core::types::Chain::BinanceSmartChain
-                    ))
+                    .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain.into()))
                     .unwrap()
                     .unwrap()
                     .key,
@@ -2953,9 +2947,7 @@ mod tests {
 
             assert_eq!(
                 with_key
-                    .get_etherscan_config_with_chain(Some(
-                        ethers_core::types::Chain::BinanceSmartChain
-                    ))
+                    .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain.into()))
                     .unwrap()
                     .unwrap()
                     .key,
@@ -2991,7 +2983,7 @@ mod tests {
             assert!(!configs.has_unresolved());
 
             let mb_urls = Moonbeam.etherscan_urls().unwrap();
-            let mainnet_urls = Mainnet.etherscan_urls().unwrap();
+            let mainnet_urls = NamedChain::Mainnet.etherscan_urls().unwrap();
             assert_eq!(
                 configs,
                 ResolvedEtherscanConfigs::new([
@@ -2999,7 +2991,7 @@ mod tests {
                         "mainnet",
                         ResolvedEtherscanConfig {
                             api_url: mainnet_urls.0.to_string(),
-                            chain: Some(Mainnet.into()),
+                            chain: Some(NamedChain::Mainnet.into()),
                             browser_url: Some(mainnet_urls.1.to_string()),
                             key: "FX42Z3BBJJEWXWGYV2X1CIPRSCN".to_string(),
                         }
@@ -3171,13 +3163,12 @@ mod tests {
 
             let mut config = Config::load();
 
-            let optimism = config.get_etherscan_api_key(Some(ethers_core::types::Chain::Optimism));
+            let optimism = config.get_etherscan_api_key(Some(NamedChain::Optimism.into()));
             assert_eq!(optimism, Some("https://etherscan-optimism.com/".to_string()));
 
             config.etherscan_api_key = Some("mumbai".to_string());
 
-            let mumbai =
-                config.get_etherscan_api_key(Some(ethers_core::types::Chain::PolygonMumbai));
+            let mumbai = config.get_etherscan_api_key(Some(NamedChain::PolygonMumbai.into()));
             assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
 
             Ok(())
@@ -3200,7 +3191,7 @@ mod tests {
             let config = Config::load();
 
             let mumbai = config
-                .get_etherscan_config_with_chain(Some(ethers_core::types::Chain::PolygonMumbai))
+                .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai.into()))
                 .unwrap()
                 .unwrap();
             assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
@@ -3225,7 +3216,7 @@ mod tests {
             let config = Config::load();
 
             let mumbai = config
-                .get_etherscan_config_with_chain(Some(ethers_core::types::Chain::PolygonMumbai))
+                .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai.into()))
                 .unwrap()
                 .unwrap();
             assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
@@ -3254,8 +3245,7 @@ mod tests {
 
             let config = Config::load();
 
-            let mumbai =
-                config.get_etherscan_config_with_chain(Option::<u64>::None).unwrap().unwrap();
+            let mumbai = config.get_etherscan_config_with_chain(None).unwrap().unwrap();
             assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
 
             let mumbai_rpc = config.get_rpc_url().unwrap().unwrap();
@@ -3307,9 +3297,9 @@ mod tests {
                     via_ir: true,
                     rpc_storage_caching: StorageCachingConfig {
                         chains: CachedChains::Chains(vec![
-                            Chain::Named(ethers_core::types::Chain::Mainnet),
-                            Chain::Named(ethers_core::types::Chain::Optimism),
-                            Chain::Id(999999)
+                            Chain::mainnet(),
+                            Chain::optimism_mainnet(),
+                            Chain::from_id(999999)
                         ]),
                         endpoints: CachedEndpoints::All
                     },
@@ -3349,10 +3339,10 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r#"
+                r"
                 [profile.default]
                 remappings = ['nested/=lib/nested/']
-            "#,
+            ",
             )?;
 
             let config = Config::load_with_root(jail.directory());
@@ -3397,7 +3387,7 @@ mod tests {
                 initial_balance = '0xffffffffffffffffffffffff'
                 libraries = []
                 libs = ['lib']
-                memory_limit = 33554432
+                memory_limit = 134217728
                 names = false
                 no_storage_caching = false
                 no_rpc_rate_limit = false
@@ -3440,7 +3430,7 @@ mod tests {
 
             let config = Config::load_with_root(jail.directory());
 
-            assert_eq!(config.fuzz.seed, Some(1000.into()));
+            assert_eq!(config.fuzz.seed, Some(U256::from(1000)));
             assert_eq!(
                 config.remappings,
                 vec![Remapping::from_str("nested/=lib/nested/").unwrap().into()]
@@ -3503,6 +3493,41 @@ mod tests {
             jail.set_env("FOUNDRY_SOLC_VERSION", "0.6.6");
             let config = Config::load();
             assert_eq!(config.solc, Some(SolcReq::Version("0.6.6".parse().unwrap())));
+            Ok(())
+        });
+    }
+
+    // ensures the newer `solc` takes precedence over `solc_version`
+    #[test]
+    fn test_backwards_solc_version() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                solc = "0.8.12"
+                solc_version = "0.8.20"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(config.solc, Some(SolcReq::Version("0.8.12".parse().unwrap())));
+
+            Ok(())
+        });
+
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                solc_version = "0.8.20"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(config.solc, Some(SolcReq::Version("0.8.20".parse().unwrap())));
+
             Ok(())
         });
     }
@@ -3589,7 +3614,7 @@ mod tests {
                 }
             );
 
-            jail.set_env("FOUNDRY_SRC", r#"other-src"#);
+            jail.set_env("FOUNDRY_SRC", r"other-src");
             let config = Config::load();
             assert_eq!(
                 config,
@@ -3639,7 +3664,7 @@ mod tests {
                     remappings: default.remappings.clone(),
                 }
             );
-            jail.set_env("FOUNDRY_PROFILE", r#"other"#);
+            jail.set_env("FOUNDRY_PROFILE", r"other");
             let base = Config::figment().extract::<BasicConfig>().unwrap();
             assert_eq!(
                 base,
@@ -3661,10 +3686,10 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r#"
+                r"
                 [fuzz]
                 dictionary_weight = 101
-            "#,
+            ",
             )?;
             let _config = Config::load();
             Ok(())
@@ -3676,7 +3701,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r#"
+                r"
                 [fuzz]
                 runs = 1
                 include_storage = false
@@ -3690,7 +3715,7 @@ mod tests {
 
                 [profile.ci.invariant]
                 runs = 400
-            "#,
+            ",
             )?;
 
             let invariant_default = InvariantConfig::default();
@@ -3736,7 +3761,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r#"
+                r"
                 [fuzz]
                 runs = 100
 
@@ -3748,7 +3773,7 @@ mod tests {
 
                 [profile.ci.invariant]
                 runs = 500
-            "#,
+            ",
             )?;
 
             let config = Config::load();
@@ -3839,7 +3864,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r#"
+                r"
                 [profile.default]
                libraries= [
                         './src/SizeAuctionDiscount.sol:Chainlink:0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5',
@@ -3848,7 +3873,7 @@ mod tests {
                         './src/test/ChainlinkTWAP.t.sol:ChainlinkTWAP:0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5',
                         './src/SizeAuctionDiscount.sol:Math:0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c',
                     ]       
-            "#,
+            ",
             )?;
             let config = Config::load();
 
@@ -3956,7 +3981,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r#"
+                r"
                 [profile.default]
                 optimizer = true
 
@@ -3965,7 +3990,7 @@ mod tests {
 
                 [profile.default.optimizer_details.yulDetails]
                 stackAllocation = true
-            "#,
+            ",
             )?;
             let mut loaded = Config::load();
             clear_warning(&mut loaded);
@@ -3997,7 +4022,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r#"
+                r"
                 [profile.default]
 
                 [profile.default.model_checker]
@@ -4005,7 +4030,7 @@ mod tests {
                 engine = 'chc'
                 targets = [ 'assert', 'outOfBounds' ]
                 timeout = 10000
-            "#,
+            ",
             )?;
             let mut loaded = Config::load();
             clear_warning(&mut loaded);
@@ -4047,7 +4072,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r#"
+                r"
                 [profile.default]
 
                 [profile.default.model_checker]
@@ -4055,7 +4080,7 @@ mod tests {
                 engine = 'chc'
                 targets = [ 'assert', 'outOfBounds' ]
                 timeout = 10000
-            "#,
+            ",
             )?;
             let loaded = Config::load().sanitized();
 
@@ -4063,7 +4088,7 @@ mod tests {
             // canonicalize the jail path using the standard library. The standard library *always*
             // transforms Windows paths to some weird extended format, which none of our code base
             // does.
-            let dir = ethers_solc::utils::canonicalize(jail.directory())
+            let dir = foundry_compilers::utils::canonicalize(jail.directory())
                 .expect("Could not canonicalize jail path");
             assert_eq!(
                 loaded.model_checker,
@@ -4102,12 +4127,12 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r#"
+                r"
                 [fmt]
                 line_length = 100
                 tab_width = 2
                 bracket_spacing = true
-            "#,
+            ",
             )?;
             let loaded = Config::load().sanitized();
             assert_eq!(
@@ -4129,11 +4154,11 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r#"
+                r"
                 [invariant]
                 runs = 512
                 depth = 10
-            "#,
+            ",
             )?;
 
             let loaded = Config::load().sanitized();
@@ -4151,13 +4176,13 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r#"
+                r"
                 [fuzz]
                 runs = 100
 
                 [invariant]
                 depth = 1
-            "#,
+            ",
             )?;
 
             jail.set_env("FOUNDRY_FMT_LINE_LENGTH", "95");
@@ -4175,14 +4200,14 @@ mod tests {
 
     #[test]
     fn test_parse_with_profile() {
-        let foundry_str = r#"
+        let foundry_str = r"
             [profile.default]
             src = 'src'
             out = 'out'
             libs = ['lib']
 
             # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
-        "#;
+        ";
         assert_eq!(
             parse_with_profile::<BasicConfig>(foundry_str).unwrap().unwrap(),
             (
@@ -4203,11 +4228,11 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r#"
+                r"
                 [default]
                 src = 'my-src'
                 out = 'my-out'
-            "#,
+            ",
             )?;
             let loaded = Config::load().sanitized();
             assert_eq!(loaded.src.file_name().unwrap(), "my-src");
@@ -4379,10 +4404,10 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r#"
+                r"
                 [default]
                [profile.default.optimizer_details]
-            "#,
+            ",
             )?;
 
             let config = Config::load();

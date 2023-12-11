@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Unlicense
+// SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
@@ -274,10 +274,7 @@ contract PrankTest is DSTest {
     function testPrankConstructorSender(address sender) public {
         vm.prank(sender);
         ConstructorVictim victim = new ConstructorVictim(
-            sender,
-            "msg.sender was not set during prank",
-            tx.origin,
-            "tx.origin invariant failed"
+            sender, "msg.sender was not set during prank", tx.origin, "tx.origin invariant failed"
         );
 
         // Ensure we cleaned up correctly
@@ -290,10 +287,7 @@ contract PrankTest is DSTest {
         // Perform the prank
         vm.prank(sender, origin);
         ConstructorVictim victim = new ConstructorVictim(
-            sender,
-            "msg.sender was not set during prank",
-            origin,
-            "tx.origin was not set during prank"
+            sender, "msg.sender was not set during prank", origin, "tx.origin was not set during prank"
         );
 
         // Ensure we cleaned up correctly
@@ -329,10 +323,7 @@ contract PrankTest is DSTest {
         // Perform the prank
         vm.startPrank(sender, origin);
         ConstructorVictim victim = new ConstructorVictim(
-            sender,
-            "msg.sender was not set during prank",
-            origin,
-            "tx.origin was not set during prank"
+            sender, "msg.sender was not set during prank", origin, "tx.origin was not set during prank"
         );
         new ConstructorVictim(
             sender,

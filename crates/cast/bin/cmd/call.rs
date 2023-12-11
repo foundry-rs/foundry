@@ -1,20 +1,22 @@
+use alloy_primitives::U256;
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::{
-    solc::EvmVersion,
-    types::{BlockId, NameOrAddress, U256},
-};
+use ethers_core::types::{BlockId, NameOrAddress};
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
-use foundry_common::runtime_client::RuntimeClient;
+use foundry_common::{
+    runtime_client::RuntimeClient,
+    types::{ToAlloy, ToEthers},
+};
+use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
-use foundry_evm::{executor::opts::EvmOpts, trace::TracingExecutor};
+use foundry_evm::{executors::TracingExecutor, opts::EvmOpts};
 use std::str::FromStr;
 
-type Provider = ethers::providers::Provider<RuntimeClient>;
+type Provider = ethers_providers::Provider<RuntimeClient>;
 
 /// CLI arguments for `cast call`.
 #[derive(Debug, Parser)]
@@ -125,11 +127,11 @@ impl CallArgs {
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
-        let chain = utils::get_chain(config.chain_id, &provider).await?;
+        let chain = utils::get_chain(config.chain, &provider).await?;
         let sender = eth.wallet.sender().await;
 
         let mut builder: TxBuilder<'_, Provider> =
-            TxBuilder::new(&provider, sender, to, chain, tx.legacy).await?;
+            TxBuilder::new(&provider, sender.to_ethers(), to, chain, tx.legacy).await?;
 
         builder
             .gas(tx.gas_limit)
@@ -150,13 +152,13 @@ impl CallArgs {
                         TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
                     let mut executor =
-                        foundry_evm::trace::TracingExecutor::new(env, fork, evm_version, debug)
+                        foundry_evm::executors::TracingExecutor::new(env, fork, evm_version, debug)
                             .await;
 
                     let trace = match executor.deploy(
                         sender,
-                        code.into(),
-                        value.unwrap_or(U256::zero()),
+                        code.into_bytes().into(),
+                        value.unwrap_or(U256::ZERO),
                         None,
                     ) {
                         Ok(deploy_result) => TraceResult::from(deploy_result),
@@ -185,16 +187,16 @@ impl CallArgs {
                         TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
                     let mut executor =
-                        foundry_evm::trace::TracingExecutor::new(env, fork, evm_version, debug)
+                        foundry_evm::executors::TracingExecutor::new(env, fork, evm_version, debug)
                             .await;
 
                     let (tx, _) = builder.build();
 
                     let trace = TraceResult::from(executor.call_raw_committing(
                         sender,
-                        tx.to_addr().copied().expect("an address to be here"),
+                        tx.to_addr().copied().expect("an address to be here").to_alloy(),
                         tx.data().cloned().unwrap_or_default().to_vec().into(),
-                        tx.value().copied().unwrap_or_default(),
+                        tx.value().copied().unwrap_or_default().to_alloy(),
                     )?);
 
                     handle_traces(trace, &config, chain, labels, verbose, debug).await?;
@@ -204,11 +206,7 @@ impl CallArgs {
             }
         };
 
-        let builder_output: (
-            ethers::types::transaction::eip2718::TypedTransaction,
-            Option<ethers::abi::Function>,
-        ) = builder.build();
-
+        let builder_output = builder.build();
         println!("{}", Cast::new(provider).call(builder_output, block).await?);
 
         Ok(())
@@ -262,7 +260,7 @@ async fn fill_tx(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers::types::Address;
+    use alloy_primitives::Address;
 
     #[test]
     fn can_parse_call_data() {
@@ -278,10 +276,10 @@ mod tests {
     #[test]
     fn call_sig_and_data_exclusive() {
         let data = hex::encode("hello");
-        let to = Address::zero();
+        let to = Address::ZERO;
         let args = CallArgs::try_parse_from([
             "foundry-cli",
-            format!("{to:?}").as_str(),
+            to.to_string().as_str(),
             "signature",
             "--data",
             format!("0x{data}").as_str(),

@@ -1,9 +1,9 @@
 use super::install::DependencyInstallOpts;
 use clap::{Parser, ValueHint};
-use ethers::solc::remappings::Remapping;
 use eyre::Result;
 use foundry_cli::utils::Git;
 use foundry_common::fs;
+use foundry_compilers::remappings::Remapping;
 use foundry_config::Config;
 use std::{
     fmt::Write,
@@ -56,29 +56,39 @@ impl InitArgs {
         let root = dunce::canonicalize(&root)?;
         let git = Git::new(&root).shallow(shallow);
 
-        // if a template is provided, then this command clones the template repo, removes the .git
-        // folder, and initializes a new git repo—-this ensures there is no history from the
-        // template and the template is not set as a remote.
-        if let Some(template) = &template {
+        // if a template is provided, then this command initializes a git repo,
+        // fetches the template repo, and resets the git history to the head of the fetched
+        // repo with no other history
+        if let Some(template) = template {
             let template = if template.contains("://") {
                 template.clone()
             } else {
                 "https://github.com/".to_string() + &template
             };
-
-            if let Some(branch) = branch {
-                Git::clone_with_branch(shallow, &template, branch, Some(&root))?;
-            } else {
-                Git::clone(shallow, &template, Some(&root))?;
-            }
-            // Modify the git history.
-            let commit_hash = git.commit_hash(true)?;
-            std::fs::remove_dir_all(".git")?;
-
+            p_println!(!quiet => "Initializing {} from {}...", root.display(), template);
+            // initialize the git repository
             git.init()?;
-            git.add(Some("--all"))?;
+
+            // fetch the template - always fetch shallow for templates since git history will be
+            // collapsed. gitmodules will be initialized after the template is fetched
+            git.fetch(true, &template, branch)?;
+            // reset git history to the head of the template
+            // first get the commit hash that was fetched
+            let commit_hash = git.commit_hash(true, "FETCH_HEAD")?;
+            // format a commit message for the new repo
             let commit_msg = format!("chore: init from {template} at {commit_hash}");
-            git.commit(&commit_msg)?;
+            // get the hash of the FETCH_HEAD with the new commit message
+            let new_commit_hash = git.commit_tree("FETCH_HEAD^{tree}", Some(commit_msg))?;
+            // reset head of this repo to be the head of the template repo
+            git.reset(true, new_commit_hash)?;
+
+            // if shallow, just initialize submodules
+            if shallow {
+                git.submodule_init()?;
+            } else {
+                // if not shallow, initialize and clone submodules (without fetching latest)
+                git.submodule_update(false, false, true, true, None::<PathBuf>)?;
+            }
         } else {
             // if target is not empty
             if root.read_dir().map_or(false, |mut i| i.next().is_some()) {
@@ -163,7 +173,7 @@ impl InitArgs {
 
 /// Returns the commit hash of the project if it exists
 pub fn get_commit_hash(root: &Path) -> Option<String> {
-    Git::new(root).commit_hash(true).ok()
+    Git::new(root).commit_hash(true, "HEAD").ok()
 }
 
 /// Initialises `root` as a git repository, if it isn't one already.
@@ -220,7 +230,7 @@ fn init_vscode(root: &Path) -> Result<()> {
         fs::create_dir_all(&vscode_dir)?;
         serde_json::json!({})
     } else if settings_file.exists() {
-        ethers::solc::utils::read_json_file(&settings_file)?
+        foundry_compilers::utils::read_json_file(&settings_file)?
     } else {
         serde_json::json!({})
     };

@@ -1,10 +1,10 @@
 use super::ProjectPathsArgs;
 use crate::{opts::CompilerArgs, utils::LoadConfig};
 use clap::{Parser, ValueHint};
-use ethers::solc::{
+use eyre::Result;
+use foundry_compilers::{
     artifacts::RevertStrings, remappings::Remapping, utils::canonicalized, Project,
 };
-use eyre::Result;
 use foundry_config::{
     figment,
     figment::{
@@ -25,6 +25,11 @@ pub struct CoreBuildArgs {
     #[clap(long, help_heading = "Cache options")]
     #[serde(skip)]
     pub force: bool,
+
+    /// Disable the cache.
+    #[clap(long)]
+    #[serde(skip)]
+    pub no_cache: bool,
 
     /// Set pre-linked libraries.
     #[clap(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
@@ -196,6 +201,10 @@ impl Provider for CoreBuildArgs {
 
         if self.force {
             dict.insert("force".to_string(), self.force.into());
+        }
+        // we need to ensure no_cache set accordingly
+        if self.no_cache {
+            dict.insert("cache".to_string(), false.into());
         }
 
         if self.build_info {

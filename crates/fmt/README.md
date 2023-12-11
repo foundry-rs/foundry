@@ -134,6 +134,17 @@ Alternatively, the comment can also be placed at the end of the line. In this ca
 uint x = 100; // forgefmt: disable-line
 ```
 
+### Disable Block
+
+The formatter can be disabled for a section of code by adding a comment `// forgefmt: disable-start` before and a comment `// forgefmt: disable-end` after, like this:
+
+```solidity
+// forgefmt: disable-start
+uint x = 100;
+uint y = 101;
+// forgefmt: disable-end
+```
+
 ### Testing
 
 Tests reside under the `fmt/testdata` folder and specify the malformatted & expected Solidity code. The source code file is named `original.sol` and expected file(s) are named in a format `({prefix}.)?fmt.sol`. Multiple expected files are needed for tests covering available configuration options.

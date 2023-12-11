@@ -1,19 +1,41 @@
 use crate::errors::FunctionSignatureError;
-use ethers_core::{
-    abi::Function,
-    types::{
-        transaction::eip2718::TypedTransaction, Eip1559TransactionRequest, NameOrAddress,
-        TransactionRequest, H160, U256,
-    },
+use alloy_json_abi::Function;
+use alloy_primitives::{Address, U256};
+use ethers_core::types::{
+    transaction::eip2718::TypedTransaction, Eip1559TransactionRequest, NameOrAddress,
+    TransactionRequest,
 };
 use ethers_providers::Middleware;
 use eyre::{eyre, Result};
-use foundry_common::abi::{encode_args, get_func, get_func_etherscan};
+use foundry_common::{
+    abi::{encode_function_args, get_func, get_func_etherscan},
+    types::{ToAlloy, ToEthers},
+};
 use foundry_config::Chain;
 use futures::future::join_all;
 
+pub type TxBuilderOutput = (TypedTransaction, Option<Function>);
+pub type TxBuilderPeekOutput<'a> = (&'a TypedTransaction, &'a Option<Function>);
+
+/// Transaction builder
+///
+/// # Examples
+///
+/// ```
+/// # async fn foo() -> eyre::Result<()> {
+/// # use alloy_primitives::U256;
+/// # use cast::TxBuilder;
+/// # use foundry_config::NamedChain;
+/// let provider = ethers_providers::test_provider::MAINNET.provider();
+/// let mut builder =
+///     TxBuilder::new(&provider, "a.eth", Some("b.eth"), NamedChain::Mainnet, false).await?;
+/// builder.gas(Some(U256::from(1)));
+/// let (tx, _) = builder.build();
+/// # Ok(())
+/// # }
+/// ```
 pub struct TxBuilder<'a, M: Middleware> {
-    to: Option<H160>,
+    to: Option<Address>,
     chain: Chain,
     tx: TypedTransaction,
     func: Option<Function>,
@@ -21,22 +43,6 @@ pub struct TxBuilder<'a, M: Middleware> {
     provider: &'a M,
 }
 
-pub type TxBuilderOutput = (TypedTransaction, Option<Function>);
-pub type TxBuilderPeekOutput<'a> = (&'a TypedTransaction, &'a Option<Function>);
-
-/// Transaction builder
-/// ```
-/// async fn foo() -> eyre::Result<()> {
-///   use ethers_core::types::{Chain, U256};
-///   use cast::TxBuilder;
-///   let provider = ethers_providers::test_provider::MAINNET.provider();
-///   let mut builder = TxBuilder::new(&provider, "a.eth", Some("b.eth"), Chain::Mainnet, false).await?;
-///   builder
-///       .gas(Some(U256::from(1)));
-///   let (tx, _) = builder.build();
-///   Ok(())
-/// }
-/// ```
 impl<'a, M: Middleware> TxBuilder<'a, M> {
     /// Create a new TxBuilder
     /// `provider` - provider to use
@@ -55,16 +61,14 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         let from_addr = resolve_ens(provider, from).await?;
 
         let mut tx: TypedTransaction = if chain.is_legacy() || legacy {
-            TransactionRequest::new().from(from_addr).chain_id(chain.id()).into()
+            TransactionRequest::new().from(from_addr.to_ethers()).chain_id(chain.id()).into()
         } else {
-            Eip1559TransactionRequest::new().from(from_addr).chain_id(chain.id()).into()
+            Eip1559TransactionRequest::new().from(from_addr.to_ethers()).chain_id(chain.id()).into()
         };
 
         let to_addr = if let Some(to) = to {
-            let addr =
-                resolve_ens(provider, foundry_utils::resolve_addr(to, chain.try_into().ok())?)
-                    .await?;
-            tx.set_to(addr);
+            let addr = resolve_ens(provider, to).await?;
+            tx.set_to(addr.to_ethers());
             Some(addr)
         } else {
             None
@@ -74,7 +78,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
 
     /// Set gas for tx
     pub fn set_gas(&mut self, v: U256) -> &mut Self {
-        self.tx.set_gas(v);
+        self.tx.set_gas(v.to_ethers());
         self
     }
 
@@ -88,7 +92,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
 
     /// Set gas price
     pub fn set_gas_price(&mut self, v: U256) -> &mut Self {
-        self.tx.set_gas_price(v);
+        self.tx.set_gas_price(v.to_ethers());
         self
     }
 
@@ -103,7 +107,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
     /// Set priority gas price
     pub fn set_priority_gas_price(&mut self, v: U256) -> &mut Self {
         if let TypedTransaction::Eip1559(tx) = &mut self.tx {
-            tx.max_priority_fee_per_gas = Some(v)
+            tx.max_priority_fee_per_gas = Some(v.to_ethers())
         }
         self
     }
@@ -118,7 +122,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
 
     /// Set value
     pub fn set_value(&mut self, v: U256) -> &mut Self {
-        self.tx.set_value(v);
+        self.tx.set_value(v.to_ethers());
         self
     }
 
@@ -132,7 +136,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
 
     /// Set nonce
     pub fn set_nonce(&mut self, v: U256) -> &mut Self {
-        self.tx.set_nonce(v);
+        self.tx.set_nonce(v.to_ethers());
         self
     }
 
@@ -181,15 +185,11 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
             // if only calldata is provided, returning a dummy function
             get_func("x()")?
         } else {
-            let chain = self
-                .chain
-                .try_into()
-                .map_err(|_| FunctionSignatureError::UnknownChain(self.chain))?;
             get_func_etherscan(
                 sig,
                 self.to.ok_or(FunctionSignatureError::MissingToAddress)?,
                 &args,
-                chain,
+                self.chain,
                 self.etherscan_api_key.as_ref().ok_or_else(|| {
                     FunctionSignatureError::MissingEtherscan { sig: sig.to_string() }
                 })?,
@@ -200,7 +200,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         if sig.starts_with("0x") {
             Ok((hex::decode(sig)?, func))
         } else {
-            Ok((encode_args(&func, &args)?, func))
+            Ok((encode_function_args(&func, &args)?, func))
         }
     }
 
@@ -244,13 +244,16 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
     }
 }
 
-async fn resolve_ens<M: Middleware, T: Into<NameOrAddress>>(provider: &M, addr: T) -> Result<H160> {
+async fn resolve_ens<M: Middleware, T: Into<NameOrAddress>>(
+    provider: &M,
+    addr: T,
+) -> Result<Address> {
     let from_addr = match addr.into() {
         NameOrAddress::Name(ref ens_name) => provider.resolve_name(ens_name).await,
         NameOrAddress::Address(addr) => Ok(addr),
     }
     .map_err(|x| eyre!("Failed to resolve ENS name: {x}"))?;
-    Ok(from_addr)
+    Ok(from_addr.to_alloy())
 }
 
 async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<String> {
@@ -258,7 +261,7 @@ async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<
         if arg.contains('.') {
             let addr = provider.resolve_name(arg).await;
             match addr {
-                Ok(addr) => format!("0x{}", hex::encode(addr.as_bytes())),
+                Ok(addr) => format!("{addr:?}"),
                 Err(_) => arg.to_string(),
             }
         } else {
@@ -271,11 +274,12 @@ async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<
 #[cfg(test)]
 mod tests {
     use crate::TxBuilder;
+    use alloy_primitives::{Address, U256};
     use async_trait::async_trait;
-    use ethers_core::types::{
-        transaction::eip2718::TypedTransaction, Address, Chain, NameOrAddress, H160, U256,
-    };
+    use ethers_core::types::{transaction::eip2718::TypedTransaction, NameOrAddress, H160};
     use ethers_providers::{JsonRpcClient, Middleware, ProviderError};
+    use foundry_common::types::ToEthers;
+    use foundry_config::NamedChain;
     use serde::{de::DeserializeOwned, Serialize};
     use std::str::FromStr;
 
@@ -309,7 +313,7 @@ mod tests {
             self
         }
 
-        async fn resolve_name(&self, ens_name: &str) -> Result<Address, Self::Error> {
+        async fn resolve_name(&self, ens_name: &str) -> Result<H160, Self::Error> {
             match ens_name {
                 "a.eth" => Ok(H160::from_str(ADDR_1).unwrap()),
                 "b.eth" => Ok(H160::from_str(ADDR_2).unwrap()),
@@ -321,10 +325,13 @@ mod tests {
     async fn builder_new_non_legacy() -> eyre::Result<()> {
         let provider = MyProvider {};
         let builder =
-            TxBuilder::new(&provider, "a.eth", Some("b.eth"), Chain::Mainnet, false).await?;
+            TxBuilder::new(&provider, "a.eth", Some("b.eth"), NamedChain::Mainnet, false).await?;
         let (tx, args) = builder.build();
-        assert_eq!(*tx.from().unwrap(), H160::from_str(ADDR_1).unwrap());
-        assert_eq!(*tx.to().unwrap(), NameOrAddress::Address(H160::from_str(ADDR_2).unwrap()));
+        assert_eq!(*tx.from().unwrap(), Address::from_str(ADDR_1).unwrap().to_ethers());
+        assert_eq!(
+            *tx.to().unwrap(),
+            NameOrAddress::Address(Address::from_str(ADDR_2).unwrap().to_ethers())
+        );
         assert_eq!(args, None);
 
         match tx {
@@ -340,7 +347,7 @@ mod tests {
     async fn builder_new_legacy() -> eyre::Result<()> {
         let provider = MyProvider {};
         let builder =
-            TxBuilder::new(&provider, "a.eth", Some("b.eth"), Chain::Mainnet, true).await?;
+            TxBuilder::new(&provider, "a.eth", Some("b.eth"), NamedChain::Mainnet, true).await?;
         // don't check anything other than the tx type - the rest is covered in the non-legacy case
         let (tx, _) = builder.build();
         match tx {
@@ -356,7 +363,9 @@ mod tests {
     async fn builder_fields() -> eyre::Result<()> {
         let provider = MyProvider {};
         let mut builder =
-            TxBuilder::new(&provider, "a.eth", Some("b.eth"), Chain::Mainnet, false).await.unwrap();
+            TxBuilder::new(&provider, "a.eth", Some("b.eth"), NamedChain::Mainnet, false)
+                .await
+                .unwrap();
         builder
             .gas(Some(U256::from(12u32)))
             .gas_price(Some(U256::from(34u32)))
@@ -378,7 +387,9 @@ mod tests {
     async fn builder_args() -> eyre::Result<()> {
         let provider = MyProvider {};
         let mut builder =
-            TxBuilder::new(&provider, "a.eth", Some("b.eth"), Chain::Mainnet, false).await.unwrap();
+            TxBuilder::new(&provider, "a.eth", Some("b.eth"), NamedChain::Mainnet, false)
+                .await
+                .unwrap();
         builder.args(Some(("what_a_day(int)", vec![String::from("31337")]))).await?;
         let (_, function_maybe) = builder.build();
 

@@ -1,24 +1,24 @@
-//! forge tests for cheat codes
+//! Forge forking tests.
 
 use crate::{
     config::*,
-    test_helpers::{filter::Filter, PROJECT, RE_PATH_SEPARATOR},
+    test_helpers::{PROJECT, RE_PATH_SEPARATOR},
 };
 use forge::result::SuiteResult;
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
+use foundry_test_utils::Filter;
 
 /// Executes reverting fork test
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cheats_fork_revert() {
     let mut runner = runner().await;
     let suite_result = runner
-        .test(
+        .test_collect(
             &Filter::new(
                 "testNonExistingContractRevert",
                 ".*",
                 &format!(".*cheats{RE_PATH_SEPARATOR}Fork"),
             ),
-            None,
             test_opts(),
         )
         .await;
@@ -70,7 +70,7 @@ async fn test_rpc_fork() {
 /// Tests that we can launch in forking mode
 #[tokio::test(flavor = "multi_thread")]
 async fn test_launch_fork() {
-    let rpc_url = foundry_utils::rpc::next_http_archive_rpc_endpoint();
+    let rpc_url = foundry_common::rpc::next_http_archive_rpc_endpoint();
     let runner = forked_runner(&rpc_url).await;
     let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}Launch"));
     TestConfig::with_filter(runner, filter).run().await;
@@ -79,7 +79,7 @@ async fn test_launch_fork() {
 /// Smoke test that forking workings with websockets
 #[tokio::test(flavor = "multi_thread")]
 async fn test_launch_fork_ws() {
-    let rpc_url = foundry_utils::rpc::next_ws_archive_rpc_endpoint();
+    let rpc_url = foundry_common::rpc::next_ws_archive_rpc_endpoint();
     let runner = forked_runner(&rpc_url).await;
     let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}Launch"));
     TestConfig::with_filter(runner, filter).run().await;

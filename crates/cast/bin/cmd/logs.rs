@@ -1,16 +1,20 @@
 use cast::Cast;
 use clap::Parser;
-use ethers::{
-    abi::{Address, Event, RawTopicFilter, Topic, TopicFilter},
-    providers::Middleware,
-    types::{BlockId, BlockNumber, Filter, FilterBlockOption, NameOrAddress, ValueOrArray, H256},
+use ethers_core::{
+    abi::{
+        token::{LenientTokenizer, StrictTokenizer, Tokenizer},
+        Address, Event, HumanReadableParser, ParamType, RawTopicFilter, Token, Topic, TopicFilter,
+    },
+    types::{
+        BlockId, BlockNumber, Filter, FilterBlockOption, NameOrAddress, ValueOrArray, H256, U256,
+    },
 };
-use eyre::Result;
+use ethers_providers::Middleware;
+use eyre::{Result, WrapErr};
 use foundry_cli::{opts::EthereumOpts, utils};
-use foundry_common::abi::{get_event, parse_tokens};
 use foundry_config::Config;
 use itertools::Itertools;
-use std::str::FromStr;
+use std::{io, str::FromStr};
 
 /// CLI arguments for `cast logs`.
 #[derive(Debug, Parser)]
@@ -44,7 +48,12 @@ pub struct LogsArgs {
     #[clap(value_name = "TOPICS_OR_ARGS")]
     topics_or_args: Vec<String>,
 
-    /// Print the logs as JSON.
+    /// If the RPC type and endpoints supports `eth_subscribe` stream logs instead of printing and
+    /// exiting. Will continue until interrupted or TO_BLOCK is reached.
+    #[clap(long)]
+    subscribe: bool,
+
+    /// Print the logs as JSON.s
     #[clap(long, short, help_heading = "Display options")]
     json: bool,
 
@@ -55,11 +64,20 @@ pub struct LogsArgs {
 impl LogsArgs {
     pub async fn run(self) -> Result<()> {
         let LogsArgs {
-            from_block, to_block, address, topics_or_args, sig_or_topic, json, eth, ..
+            from_block,
+            to_block,
+            address,
+            sig_or_topic,
+            topics_or_args,
+            subscribe,
+            json,
+            eth,
         } = self;
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
+
+        let cast = Cast::new(&provider);
 
         let address = match address {
             Some(address) => {
@@ -72,48 +90,29 @@ impl LogsArgs {
             None => None,
         };
 
-        let from_block = convert_block_number(&provider, from_block).await?;
-        let to_block = convert_block_number(&provider, to_block).await?;
-
-        let cast = Cast::new(&provider);
+        let from_block = cast.convert_block_number(from_block).await?;
+        let to_block = cast.convert_block_number(to_block).await?;
 
         let filter = build_filter(from_block, to_block, address, sig_or_topic, topics_or_args)?;
 
-        let logs = cast.filter_logs(filter, json).await?;
+        if !subscribe {
+            let logs = cast.filter_logs(filter, json).await?;
 
-        println!("{}", logs);
+            println!("{}", logs);
+
+            return Ok(())
+        }
+
+        let mut stdout = io::stdout();
+        cast.subscribe(filter, &mut stdout, json).await?;
 
         Ok(())
     }
 }
 
-/// Converts a block identifier into a block number.
-///
-/// If the block identifier is a block number, then this function returns the block number. If the
-/// block identifier is a block hash, then this function returns the block number of that block
-/// hash. If the block identifier is `None`, then this function returns `None`.
-async fn convert_block_number<M: Middleware>(
-    provider: M,
-    block: Option<BlockId>,
-) -> Result<Option<BlockNumber>, eyre::Error>
-where
-    M::Error: 'static,
-{
-    match block {
-        Some(block) => match block {
-            BlockId::Number(block_number) => Ok(Some(block_number)),
-            BlockId::Hash(hash) => {
-                let block = provider.get_block(hash).await?;
-                Ok(block.map(|block| block.number.unwrap()).map(BlockNumber::from))
-            }
-        },
-        None => Ok(None),
-    }
-}
-
-// First tries to parse the `sig_or_topic` as an event signature. If successful, `topics_or_args` is
-// parsed as indexed inputs and converted to topics. Otherwise, `sig_or_topic` is prepended to
-// `topics_or_args` and used as raw topics.
+/// Builds a Filter by first trying to parse the `sig_or_topic` as an event signature. If
+/// successful, `topics_or_args` is parsed as indexed inputs and converted to topics. Otherwise,
+/// `sig_or_topic` is prepended to `topics_or_args` and used as raw topics.
 fn build_filter(
     from_block: Option<BlockNumber>,
     to_block: Option<BlockNumber>,
@@ -124,7 +123,7 @@ fn build_filter(
     let block_option = FilterBlockOption::Range { from_block, to_block };
     let topic_filter = match sig_or_topic {
         // Try and parse the signature as an event signature
-        Some(sig_or_topic) => match get_event(sig_or_topic.as_str()) {
+        Some(sig_or_topic) => match HumanReadableParser::parse_event(sig_or_topic.as_str()) {
             Ok(event) => build_filter_event_sig(event, topics_or_args)?,
             Err(_) => {
                 let topics = [vec![sig_or_topic], topics_or_args].concat();
@@ -154,7 +153,7 @@ fn build_filter(
     Ok(filter)
 }
 
-// Creates a TopicFilter for the given event signature and arguments.
+/// Creates a TopicFilter from the given event signature and arguments.
 fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<TopicFilter, eyre::Error> {
     let args = args.iter().map(|arg| arg.as_str()).collect::<Vec<_>>();
 
@@ -170,8 +169,7 @@ fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<TopicFilter
         .partition(|(_, (_, arg))| !arg.is_empty());
 
     // Only parse the inputs with arguments
-    let indexed_tokens =
-        parse_tokens(with_args.clone().into_iter().map(|(_, p)| p).collect::<Vec<_>>(), true)?;
+    let indexed_tokens = parse_params(with_args.iter().map(|(_, p)| *p), true)?;
 
     // Merge the inputs restoring the original ordering
     let mut tokens = with_args
@@ -195,7 +193,7 @@ fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<TopicFilter
     Ok(event.filter(raw)?)
 }
 
-// Creates a TopicFilter from raw topic hashes.
+/// Creates a TopicFilter from raw topic hashes.
 fn build_filter_topics(topics: Vec<String>) -> Result<TopicFilter, eyre::Error> {
     let mut topics = topics
         .into_iter()
@@ -212,10 +210,83 @@ fn build_filter_topics(topics: Vec<String>) -> Result<TopicFilter, eyre::Error> 
     })
 }
 
+fn parse_params<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
+    params: I,
+    lenient: bool,
+) -> eyre::Result<Vec<Token>> {
+    let mut tokens = Vec::new();
+
+    for (param, value) in params {
+        let mut token = if lenient {
+            LenientTokenizer::tokenize(param, value)
+        } else {
+            StrictTokenizer::tokenize(param, value)
+        };
+        if token.is_err() && value.starts_with("0x") {
+            match param {
+                ParamType::FixedBytes(32) => {
+                    if value.len() < 66 {
+                        let padded_value = [value, &"0".repeat(66 - value.len())].concat();
+                        token = if lenient {
+                            LenientTokenizer::tokenize(param, &padded_value)
+                        } else {
+                            StrictTokenizer::tokenize(param, &padded_value)
+                        };
+                    }
+                }
+                ParamType::Uint(_) => {
+                    // try again if value is hex
+                    if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
+                        token = if lenient {
+                            LenientTokenizer::tokenize(param, &value)
+                        } else {
+                            StrictTokenizer::tokenize(param, &value)
+                        };
+                    }
+                }
+                // TODO: Not sure what to do here. Put the no effect in for now, but that is not
+                // ideal. We could attempt massage for every value type?
+                _ => {}
+            }
+        }
+
+        let token = token.map(sanitize_token).wrap_err_with(|| {
+            format!("Failed to parse `{value}`, expected value of type: {param}")
+        })?;
+        tokens.push(token);
+    }
+    Ok(tokens)
+}
+
+pub fn sanitize_token(token: Token) -> Token {
+    match token {
+        Token::Array(tokens) => {
+            let mut sanitized = Vec::with_capacity(tokens.len());
+            for token in tokens {
+                let token = match token {
+                    Token::String(val) => {
+                        let val = match val.as_str() {
+                            // this is supposed to be an empty string
+                            "\"\"" | "''" => String::new(),
+                            _ => val,
+                        };
+                        Token::String(val)
+                    }
+                    _ => sanitize_token(token),
+                };
+                sanitized.push(token)
+            }
+            Token::Array(sanitized)
+        }
+        _ => token,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers::types::H160;
+    use ethers_core::types::{H160, H256};
+    use std::str::FromStr;
 
     const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
     const TRANSFER_SIG: &str = "Transfer(address indexed,address indexed,uint256)";
@@ -306,7 +377,7 @@ mod tests {
             None,
             None,
             Some(TRANSFER_SIG.to_string()),
-            vec!["".to_string(), ADDRESS.to_string()],
+            vec![String::new(), ADDRESS.to_string()],
         )
         .unwrap();
         assert_eq!(filter, expected)
@@ -353,7 +424,7 @@ mod tests {
             None,
             None,
             Some(TRANSFER_TOPIC.to_string()),
-            vec!["".to_string(), TRANSFER_TOPIC.to_string()],
+            vec![String::new(), TRANSFER_TOPIC.to_string()],
         )
         .unwrap();
 

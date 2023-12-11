@@ -1,24 +1,22 @@
+use alloy_json_abi::JsonAbi;
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
-use ethers::{
-    abi::{ErrorExt, EventExt, RawAbi},
-    prelude::{
-        artifacts::output_selection::{
+use eyre::Result;
+use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
+use foundry_common::compile;
+use foundry_compilers::{
+    artifacts::{
+        output_selection::{
             BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
             EvmOutputSelection, EwasmOutputSelection,
         },
-        info::ContractInfo,
+        StorageLayout,
     },
-    solc::{
-        artifacts::{LosslessAbi, StorageLayout},
-        utils::canonicalize,
-    },
+    info::ContractInfo,
+    utils::canonicalize,
 };
-use eyre::Result;
-use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
-use foundry_common::{compile::ProjectCompiler, Shell};
-use std::{collections::BTreeMap, fmt};
-use tracing::trace;
+use serde_json::{to_value, Value};
+use std::fmt;
 
 /// CLI arguments for `forge inspect`.
 #[derive(Debug, Clone, Parser)]
@@ -47,7 +45,7 @@ impl InspectArgs {
 
         // Map field to ContractOutputSelection
         let mut cos = build.compiler.extra_output;
-        if !field.is_default() && !cos.iter().any(|selected| field.eq(selected)) {
+        if !field.is_default() && !cos.iter().any(|selected| field == *selected) {
             cos.push(field.into());
         }
 
@@ -111,7 +109,7 @@ impl InspectArgs {
                 print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
-                print_storage_layout(&artifact.storage_layout, pretty)?;
+                print_storage_layout(artifact.storage_layout.as_ref(), pretty)?;
             }
             ContractArtifactField::DevDoc => {
                 print_json(&artifact.devdoc)?;
@@ -132,24 +130,34 @@ impl InspectArgs {
                 print_json_str(&artifact.ewasm, None)?;
             }
             ContractArtifactField::Errors => {
-                let Some(LosslessAbi { abi, .. }) = &artifact.abi else {
-                    return sh_println!("{{}}")
-                };
-                let map = abi
-                    .errors()
-                    .map(|error| (error.abi_signature(), hex::encode(error.selector())))
-                    .collect::<BTreeMap<_, _>>();
-                print_json(&map)?;
+                let mut out = serde_json::Map::new();
+                if let Some(abi) = &artifact.abi {
+                    // Print the signature of all errors
+                    for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
+                        let types = er.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
+                        let sig = format!("{:x}", er.selector());
+                        let sig_trimmed = &sig[0..8];
+                        out.insert(
+                            format!("{}({})", er.name, types.join(",")),
+                            sig_trimmed.to_string().into(),
+                        );
+                    }
+                }
+                println!("{}", serde_json::to_string_pretty(&out)?);
             }
             ContractArtifactField::Events => {
-                let Some(LosslessAbi { abi, .. }) = &artifact.abi else {
-                    return sh_println!("{{}}")
-                };
-                let map = abi
-                    .events()
-                    .map(|event| (event.abi_signature(), hex::encode(event.signature())))
-                    .collect::<BTreeMap<_, _>>();
-                print_json(&map)?;
+                let mut out = serde_json::Map::new();
+                if let Some(abi) = &artifact.abi {
+                    // print the signature of all events including anonymous
+                    for ev in abi.events.iter().flat_map(|(_, events)| events) {
+                        let types = ev.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
+                        out.insert(
+                            format!("{}({})", ev.name, types.join(",")),
+                            format!("{:?}", ev.signature()).into(),
+                        );
+                    }
+                }
+                println!("{}", serde_json::to_string_pretty(&out)?);
             }
         };
 
@@ -157,9 +165,19 @@ impl InspectArgs {
     }
 }
 
-pub fn print_storage_layout(storage_layout: &Option<StorageLayout>, pretty: bool) -> Result<()> {
-    let Some(storage_layout) = storage_layout.as_ref() else {
-        eyre::bail!("Could not get storage layout")
+pub fn print_abi(abi: &JsonAbi, pretty: bool) -> Result<()> {
+    let s = if pretty {
+        foundry_cli::utils::abi_to_solidity(abi, "")?
+    } else {
+        serde_json::to_string_pretty(&abi)?
+    };
+    println!("{s}");
+    Ok(())
+}
+
+pub fn print_storage_layout(storage_layout: Option<&StorageLayout>, pretty: bool) -> Result<()> {
+    let Some(storage_layout) = storage_layout else {
+        eyre::bail!("Could not get storage layout");
     };
 
     if !pretty {
@@ -168,17 +186,17 @@ pub fn print_storage_layout(storage_layout: &Option<StorageLayout>, pretty: bool
 
     let mut table = Table::new();
     table.load_preset(ASCII_MARKDOWN);
-    table.set_header(vec!["Name", "Type", "Slot", "Offset", "Bytes", "Contract"]);
+    table.set_header(["Name", "Type", "Slot", "Offset", "Bytes", "Contract"]);
 
     for slot in &storage_layout.storage {
         let storage_type = storage_layout.types.get(&slot.storage_type);
-        table.add_row(vec![
-            slot.label.clone(),
-            storage_type.as_ref().map_or_else(|| "?".into(), |t| t.label.clone()),
-            slot.slot.clone(),
-            slot.offset.to_string(),
-            storage_type.as_ref().map_or_else(|| "?".into(), |t| t.number_of_bytes.clone()),
-            slot.contract.clone(),
+        table.add_row([
+            slot.label.as_str(),
+            storage_type.map_or("?", |t| &t.label),
+            &slot.slot,
+            &slot.offset.to_string(),
+            &storage_type.map_or("?", |t| &t.number_of_bytes),
+            &slot.contract,
         ]);
     }
 

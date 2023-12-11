@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate tracing;
+
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
@@ -12,10 +15,6 @@ mod opts;
 use cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch};
 use opts::{Opts, Subcommands};
 
-#[cfg(not(target_env = "msvc"))]
-#[global_allocator]
-static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-
 fn main() {
     if let Err(err) = run() {
         let _ = foundry_common::Shell::get().error(&err);
@@ -24,8 +23,8 @@ fn main() {
 }
 
 fn run() -> Result<()> {
+    handler::install()?;
     utils::load_dotenv();
-    handler::install();
     utils::subscriber();
     utils::enable_paint();
 
@@ -41,7 +40,14 @@ fn run() -> Result<()> {
                 outcome.ensure_ok()
             }
         }
-        Subcommands::Script(cmd) => utils::block_on(cmd.run_script(Default::default())),
+        Subcommands::Script(cmd) => {
+            // install the shell before executing the command
+            foundry_common::shell::set_shell(foundry_common::shell::Shell::from_args(
+                cmd.opts.args.silent,
+                cmd.json,
+            ))?;
+            utils::block_on(cmd.run_script())
+        }
         Subcommands::Coverage(cmd) => utils::block_on(cmd.run()),
         Subcommands::Bind(cmd) => cmd.run(),
         Subcommands::Build(cmd) => {
@@ -51,7 +57,7 @@ fn run() -> Result<()> {
                 cmd.run().map(|_| ())
             }
         }
-        Subcommands::Debug(cmd) => utils::block_on(cmd.debug(Default::default())),
+        Subcommands::Debug(cmd) => utils::block_on(cmd.run()),
         Subcommands::VerifyContract(args) => utils::block_on(args.run()),
         Subcommands::VerifyCheck(args) => utils::block_on(args.run()),
         Subcommands::Cache(cmd) => match cmd.sub {
@@ -93,7 +99,6 @@ fn run() -> Result<()> {
         Subcommands::Config(cmd) => cmd.run(),
         Subcommands::Flatten(cmd) => cmd.run(),
         Subcommands::Inspect(cmd) => cmd.run(),
-        Subcommands::UploadSelectors(args) => utils::block_on(args.run()),
         Subcommands::Tree(cmd) => cmd.run(),
         Subcommands::Geiger(cmd) => {
             let check = cmd.check;

@@ -171,6 +171,14 @@ impl Visitor for Parser {
         Ok(())
     }
 
+    fn visit_enum(&mut self, enumerable: &mut EnumDefinition) -> ParserResult<()> {
+        self.add_element_to_parent(ParseSource::Enum(enumerable.clone()), enumerable.loc)
+    }
+
+    fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> ParserResult<()> {
+        self.add_element_to_parent(ParseSource::Variable(var.clone()), var.loc)
+    }
+
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> ParserResult<()> {
         // If the function parameter doesn't have a name, try to set it with
         // `@custom:name` tag if any was provided
@@ -195,8 +203,8 @@ impl Visitor for Parser {
         self.add_element_to_parent(ParseSource::Function(func.clone()), func.loc)
     }
 
-    fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> ParserResult<()> {
-        self.add_element_to_parent(ParseSource::Variable(var.clone()), var.loc)
+    fn visit_struct(&mut self, structure: &mut StructDefinition) -> ParserResult<()> {
+        self.add_element_to_parent(ParseSource::Struct(structure.clone()), structure.loc)
     }
 
     fn visit_event(&mut self, event: &mut EventDefinition) -> ParserResult<()> {
@@ -205,14 +213,6 @@ impl Visitor for Parser {
 
     fn visit_error(&mut self, error: &mut ErrorDefinition) -> ParserResult<()> {
         self.add_element_to_parent(ParseSource::Error(error.clone()), error.loc)
-    }
-
-    fn visit_struct(&mut self, structure: &mut StructDefinition) -> ParserResult<()> {
-        self.add_element_to_parent(ParseSource::Struct(structure.clone()), structure.loc)
-    }
-
-    fn visit_enum(&mut self, enumerable: &mut EnumDefinition) -> ParserResult<()> {
-        self.add_element_to_parent(ParseSource::Enum(enumerable.clone()), enumerable.loc)
     }
 
     fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> ParserResult<()> {
@@ -264,15 +264,15 @@ mod tests {
     #[test]
     fn multiple_shallow_contracts() {
         let items = parse_source(
-            r#"
+            r"
             contract A { }
             contract B { }
             contract C { }
-        "#,
+        ",
         );
         assert_eq!(items.len(), 3);
 
-        let first_item = items.get(0).unwrap();
+        let first_item = items.first().unwrap();
         assert!(matches!(first_item.source, ParseSource::Contract(_)));
         assert_eq!(first_item.source.ident(), "A");
 
@@ -288,7 +288,7 @@ mod tests {
     #[test]
     fn contract_with_children_items() {
         let items = parse_source(
-            r#"
+            r"
             event TopLevelEvent();
 
             contract Contract {
@@ -304,12 +304,12 @@ mod tests {
                     bool localVar; // must be ignored
                 }
             }
-        "#,
+        ",
         );
 
         assert_eq!(items.len(), 2);
 
-        let event = items.get(0).unwrap();
+        let event = items.first().unwrap();
         assert!(event.comments.is_empty());
         assert!(event.children.is_empty());
         assert_eq!(event.source.ident(), "TopLevelEvent");
@@ -327,11 +327,11 @@ mod tests {
     #[test]
     fn contract_with_fallback() {
         let items = parse_source(
-            r#"
+            r"
             contract Contract {
                 fallback() external payable {}
             }
-        "#,
+        ",
         );
 
         assert_eq!(items.len(), 1);

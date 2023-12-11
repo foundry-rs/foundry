@@ -1,35 +1,29 @@
-//! commonly used calculations
+//! Commonly used calculations.
 
-use ethers_core::types::U256;
-use std::ops::{Add, Div};
+use alloy_primitives::{Sign, U256};
+use std::ops::Div;
 
 /// Returns the mean of the slice
 #[inline]
-pub fn mean<T>(values: &[T]) -> U256
-where
-    T: Into<U256> + Copy,
-{
+pub fn mean(values: &[U256]) -> U256 {
     if values.is_empty() {
-        return U256::zero()
+        return U256::ZERO
     }
 
-    values.iter().copied().fold(U256::zero(), |sum, val| sum + val.into()) / values.len()
+    values.iter().copied().fold(U256::ZERO, |sum, val| sum + val).div(U256::from(values.len()))
 }
 
 /// Returns the median of a _sorted_ slice
 #[inline]
-pub fn median_sorted<T>(values: &[T]) -> T
-where
-    T: Add<Output = T> + Div<u64, Output = T> + From<u64> + Copy,
-{
+pub fn median_sorted(values: &[U256]) -> U256 {
     if values.is_empty() {
-        return 0u64.into()
+        return U256::ZERO
     }
 
     let len = values.len();
     let mid = len / 2;
     if len % 2 == 0 {
-        (values[mid - 1] + values[mid]) / 2u64
+        (values[mid - 1] + values[mid]) / U256::from(2u64)
     } else {
         values[mid]
     }
@@ -50,7 +44,7 @@ where
 ///     10000000 -> 1e7
 /// ```
 #[inline]
-pub fn to_exponential_notation(value: U256, precision: usize, trim_end_zeros: bool) -> String {
+pub fn to_exp_notation(value: U256, precision: usize, trim_end_zeros: bool, sign: Sign) -> String {
     let stringified = value.to_string();
     let exponent = stringified.len() - 1;
     let mut mantissa = stringified.chars().take(precision).collect::<String>();
@@ -67,7 +61,7 @@ pub fn to_exponential_notation(value: U256, precision: usize, trim_end_zeros: bo
         mantissa.insert(1, '.');
     }
 
-    format!("{}e{}", mantissa, exponent)
+    format!("{sign}{mantissa}e{exponent}")
 }
 
 #[cfg(test)]
@@ -76,57 +70,67 @@ mod tests {
 
     #[test]
     fn calc_mean_empty() {
-        let values: [u64; 0] = [];
+        let values: [U256; 0] = [];
         let m = mean(&values);
-        assert_eq!(m, U256::zero());
+        assert_eq!(m, U256::ZERO);
     }
 
     #[test]
     fn calc_mean() {
-        let values = [0u64, 1u64, 2u64, 3u64, 4u64, 5u64, 6u64];
+        let values = [
+            U256::ZERO,
+            U256::from(1),
+            U256::from(2u64),
+            U256::from(3u64),
+            U256::from(4u64),
+            U256::from(5u64),
+            U256::from(6u64),
+        ];
         let m = mean(&values);
-        assert_eq!(m, 3u64.into());
+        assert_eq!(m, U256::from(3u64));
     }
 
     #[test]
     fn calc_median_empty() {
-        let values: Vec<u64> = vec![];
+        let values: Vec<U256> = vec![];
         let m = median_sorted(&values);
-        assert_eq!(m, 0);
+        assert_eq!(m, U256::from(0));
     }
 
     #[test]
     fn calc_median() {
-        let mut values = vec![29, 30, 31, 40, 59, 61, 71];
+        let mut values =
+            vec![29, 30, 31, 40, 59, 61, 71].into_iter().map(U256::from).collect::<Vec<_>>();
         values.sort();
         let m = median_sorted(&values);
-        assert_eq!(m, 40);
+        assert_eq!(m, U256::from(40));
     }
 
     #[test]
     fn calc_median_even() {
-        let mut values = vec![80, 90, 30, 40, 50, 60, 10, 20];
+        let mut values =
+            vec![80, 90, 30, 40, 50, 60, 10, 20].into_iter().map(U256::from).collect::<Vec<_>>();
         values.sort();
         let m = median_sorted(&values);
-        assert_eq!(m, 45);
+        assert_eq!(m, U256::from(45));
     }
 
     #[test]
     fn test_format_to_exponential_notation() {
         let value = 1234124124u64;
 
-        let formatted = to_exponential_notation(value.into(), 4, false);
+        let formatted = to_exp_notation(U256::from(value), 4, false, Sign::Positive);
         assert_eq!(formatted, "1.234e9");
 
-        let formatted = to_exponential_notation(value.into(), 3, true);
+        let formatted = to_exp_notation(U256::from(value), 3, true, Sign::Positive);
         assert_eq!(formatted, "1.23e9");
 
         let value = 10000000u64;
 
-        let formatted = to_exponential_notation(value.into(), 4, false);
+        let formatted = to_exp_notation(U256::from(value), 4, false, Sign::Positive);
         assert_eq!(formatted, "1.000e7");
 
-        let formatted = to_exponential_notation(value.into(), 3, true);
+        let formatted = to_exp_notation(U256::from(value), 3, true, Sign::Positive);
         assert_eq!(formatted, "1e7");
     }
 }

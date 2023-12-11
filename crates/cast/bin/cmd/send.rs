@@ -1,12 +1,17 @@
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::{
-    prelude::MiddlewareBuilder, providers::Middleware, signers::Signer, types::NameOrAddress,
-};
+use ethers_core::types::NameOrAddress;
+use ethers_middleware::MiddlewareBuilder;
+use ethers_providers::Middleware;
+use ethers_signers::Signer;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
+};
+use foundry_common::{
+    cli_warn,
+    types::{ToAlloy, ToEthers},
 };
 use foundry_config::{Chain, Config};
 use std::str::FromStr;
@@ -87,12 +92,8 @@ impl SendTxArgs {
             command,
             unlocked,
         } = self;
-        let config = Config::from(&eth);
-        let provider = utils::get_provider(&config)?;
-        let chain = utils::get_chain(config.chain_id, &provider).await?;
-        let api_key = config.get_etherscan_api_key(Some(chain));
-        let mut sig = sig.unwrap_or_default();
 
+        let mut sig = sig.unwrap_or_default();
         let code = if let Some(SendTxSubcommands::Create {
             code,
             sig: constructor_sig,
@@ -106,13 +107,23 @@ impl SendTxArgs {
             None
         };
 
+        // ensure mandatory fields are provided
+        if code.is_none() && to.is_none() {
+            eyre::bail!("Must specify a recipient address or contract code to deploy");
+        }
+
+        let config = Config::from(&eth);
+        let provider = utils::get_provider(&config)?;
+        let chain = utils::get_chain(config.chain, &provider).await?;
+        let api_key = config.get_etherscan_api_key(Some(chain));
+
         // Case 1:
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
         // This should be the only way this RPC method is used as it requires a local node
         // or remote RPC with unlocked accounts.
         if unlocked {
             // only check current chain id if it was specified in the config
-            if let Some(config_chain) = config.chain_id {
+            if let Some(config_chain) = config.chain {
                 let current_chain_id = provider.get_chainid().await?.as_u64();
                 let config_chain_id = config_chain.id();
                 // switch chain if current chain id is not the same as the one specified in the
@@ -131,12 +142,17 @@ impl SendTxArgs {
             }
 
             if resend {
-                tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
+                tx.nonce = Some(
+                    provider
+                        .get_transaction_count(config.sender.to_ethers(), None)
+                        .await?
+                        .to_alloy(),
+                );
             }
 
             cast_send(
                 provider,
-                config.sender,
+                config.sender.to_ethers(),
                 to,
                 code,
                 (sig, args),
@@ -150,7 +166,7 @@ impl SendTxArgs {
             .await
         // Case 2:
         // An option to use a local signer was provided.
-        // If we cannot successfully instanciate a local signer, then we will assume we don't have
+        // If we cannot successfully instantiate a local signer, then we will assume we don't have
         // enough information to sign and we must bail.
         } else {
             // Retrieve the signer, and bail if it can't be constructed.
@@ -160,7 +176,7 @@ impl SendTxArgs {
             // prevent misconfigured hwlib from sending a transaction that defies
             // user-specified --from
             if let Some(specified_from) = eth.wallet.from {
-                if specified_from != from {
+                if specified_from != from.to_alloy() {
                     eyre::bail!(
                         "\
 The specified sender via CLI/env vars does not match the sender configured via
@@ -172,7 +188,7 @@ corresponds to the sender, or let foundry automatically detect it by not specify
             }
 
             if resend {
-                tx.nonce = Some(provider.get_transaction_count(from, None).await?);
+                tx.nonce = Some(provider.get_transaction_count(from, None).await?.to_alloy());
             }
 
             let provider = provider.with_signer(signer);

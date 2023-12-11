@@ -10,13 +10,19 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-# foundry internal
-foundry-evm = { path = "../../evm" }
-revm = { workspace = true, default-features = false, features = ["std", "serde", "memory_limit"] }
+foundry-common.workspace = true
+foundry-evm.workspace = true
 
-ethers-core.workspace = true
-serde = { version = "1", features = ["derive"], optional = true }
-serde_json = "1"
+alloy-primitives = { workspace = true, features = ["serde"] }
+revm = { workspace = true, default-features = false, features = ["std", "serde", "memory_limit"] }
+ethers-core = { workspace = true, features = ["optimism"] }
+# theses are not used by anvil-core, but are required by ethers, because pulled in via foundry-common
+ethers-contract = { workspace = true, features = ["optimism"] }
+ethers-providers = { workspace = true, features = ["optimism"] }
+ethers-middleware = { workspace = true, features = ["optimism"] }
+
+serde = { workspace = true, optional = true }
+serde_json.workspace = true
 bytes = { version = "1.4" }
 open-fastrlp = { version = "0.1.4", optional = true }
 
@@ -24,14 +30,14 @@ open-fastrlp = { version = "0.1.4", optional = true }
 hash-db = { version = "0.15", default-features = false }
 hash256-std-hasher = { version = "0.15", default-features = false }
 triehash = { version = "0.8", default-features = false }
-reference-trie = { version = "0.25" }
-keccak-hasher = { version = "0.15" }
+reference-trie = "0.25"
+keccak-hasher = "0.15"
 
 [dev-dependencies]
-serde = { version = "1.0", features = ["derive"] }
+anvil-core = { path = ".", features = ["serde"] }
 
 [features]
-default = []
+default = ["serde"]
 impersonated-tx = []
 fastrlp = ["dep:open-fastrlp"]
 serde = ["dep:serde"]

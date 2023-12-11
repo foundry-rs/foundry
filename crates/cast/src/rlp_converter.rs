@@ -1,6 +1,6 @@
-use ethers_core::utils::rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
+use alloy_rlp::{Buf, Decodable, Encodable, Header};
 use serde_json::Value;
-use std::fmt::{Debug, Display, Formatter, Write};
+use std::fmt;
 
 /// Arbitrary nested data
 /// Item::Array(vec![]); is equivalent to []
@@ -12,28 +12,33 @@ pub enum Item {
 }
 
 impl Encodable for Item {
-    fn rlp_append(&self, s: &mut RlpStream) {
+    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
         match self {
-            Item::Array(arr) => {
-                s.begin_unbounded_list();
-                for item in arr {
-                    s.append(item);
-                }
-                s.finalize_unbounded_list();
-            }
-            Item::Data(data) => {
-                s.append(data);
-            }
+            Item::Array(arr) => arr.encode(out),
+            Item::Data(data) => <[u8]>::encode(data, out),
         }
     }
 }
 
 impl Decodable for Item {
-    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-        if rlp.is_data() {
-            return Ok(Item::Data(Vec::from(rlp.data()?)))
+    fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+        let h = Header::decode(buf)?;
+        if buf.len() < h.payload_length {
+            return Err(alloy_rlp::Error::InputTooShort);
         }
-        Ok(Item::Array(rlp.as_list()?))
+        let mut d = &buf[..h.payload_length];
+        let r = if h.list {
+            let view = &mut d;
+            let mut v = Vec::new();
+            while !view.is_empty() {
+                v.push(Item::decode(view)?);
+            }
+            Ok(Item::Array(v))
+        } else {
+            Ok(Item::Data(d.to_vec()))
+        };
+        buf.advance(h.payload_length);
+        r
     }
 }
 
@@ -57,27 +62,26 @@ impl Item {
 
 impl FromIterator<Item> for Item {
     fn from_iter<T: IntoIterator<Item = Item>>(iter: T) -> Self {
-        Item::Array(iter.into_iter().collect())
+        Item::Array(Vec::from_iter(iter))
     }
 }
 
 // Display as hex values
-impl Display for Item {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Item {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Item::Data(dat) => {
                 write!(f, "\"0x{}\"", hex::encode(dat))?;
             }
-            Item::Array(arr) => {
-                write!(f, "[")?;
-                let mut iter = arr.iter().peekable();
-                while let Some(item) = iter.next() {
-                    write!(f, "{item}")?;
-                    if iter.peek().is_some() {
-                        f.write_char(',')?;
+            Item::Array(items) => {
+                f.write_str("[")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(",")?;
                     }
+                    fmt::Display::fmt(item, f)?;
                 }
-                write!(f, "]")?;
+                f.write_str("]")?;
             }
         };
         Ok(())
@@ -87,7 +91,7 @@ impl Display for Item {
 #[cfg(test)]
 mod test {
     use crate::rlp_converter::Item;
-    use ethers_core::utils::{rlp, rlp::DecoderError};
+    use alloy_rlp::Decodable;
     use serde_json::Result as JsonResult;
 
     // https://en.wikipedia.org/wiki/Set-theoretic_definition_of_natural_numbers
@@ -100,7 +104,7 @@ mod test {
     }
 
     #[test]
-    fn encode_decode_test() -> Result<(), DecoderError> {
+    fn encode_decode_test() -> alloy_rlp::Result<()> {
         let parameters = vec![
             (1, b"\xc0".to_vec(), Item::Array(vec![])),
             (2, b"\xc1\x80".to_vec(), Item::Array(vec![Item::Data(vec![])])),
@@ -130,10 +134,11 @@ mod test {
             ),
         ];
         for params in parameters {
-            let encoded = rlp::encode::<Item>(&params.2);
-            assert_eq!(rlp::decode::<Item>(&encoded)?, params.2);
-            let decoded = rlp::decode::<Item>(&params.1);
-            assert_eq!(rlp::encode::<Item>(&decoded?), params.1);
+            let encoded = alloy_rlp::encode(&params.2);
+            assert_eq!(Item::decode(&mut &encoded[..])?, params.2);
+            let decoded = Item::decode(&mut &params.1[..])?;
+            assert_eq!(alloy_rlp::encode(&decoded), params.1);
+            println!("case {} validated", params.0)
         }
 
         Ok(())

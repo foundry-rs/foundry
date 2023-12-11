@@ -1,15 +1,15 @@
 use super::sequence::ScriptSequence;
-use ethers::{
-    prelude::{PendingTransaction, TxHash},
-    providers::Middleware,
-    types::TransactionReceipt,
-};
+use alloy_primitives::TxHash;
+use ethers_core::types::TransactionReceipt;
+use ethers_providers::{Middleware, PendingTransaction};
 use eyre::Result;
 use foundry_cli::{init_progress, update_progress, utils::print_receipt};
-use foundry_common::RetryProvider;
+use foundry_common::{
+    types::{ToAlloy, ToEthers},
+    RetryProvider,
+};
 use futures::StreamExt;
 use std::sync::Arc;
-use tracing::{trace, warn};
 
 /// Convenience enum for internal signalling of transaction status
 enum TxStatus {
@@ -43,7 +43,7 @@ pub async fn wait_for_pending(
 }
 
 /// Traverses a set of pendings and either finds receipts, or clears them from
-/// the deployment sequnce.
+/// the deployment sequence.
 ///
 /// If no `tx_hashes` are provided, then `deployment_sequence.pending` will be
 /// used. For each `tx_hash`, we check if it has confirmed. If it has
@@ -86,16 +86,16 @@ pub async fn clear_pendings(
                 errors.push(format!("Transaction dropped from the mempool: {tx_hash:?}"));
             }
             Ok(TxStatus::Success(receipt)) => {
-                trace!(tx_hash = ?tx_hash, "received tx receipt");
-                deployment_sequence.remove_pending(receipt.transaction_hash);
+                trace!(tx_hash=?tx_hash, "received tx receipt");
+                deployment_sequence.remove_pending(receipt.transaction_hash.to_alloy());
                 receipts.push(receipt);
             }
             Ok(TxStatus::Revert(receipt)) => {
                 // consider:
                 // if this is not removed from pending, then the script becomes
                 // un-resumable. Is this desirable on reverts?
-                warn!(tx_hash = ?tx_hash, "Transaction Failure");
-                deployment_sequence.remove_pending(receipt.transaction_hash);
+                warn!(tx_hash=?tx_hash, "Transaction Failure");
+                deployment_sequence.remove_pending(receipt.transaction_hash.to_alloy());
                 errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash));
             }
         }
@@ -113,7 +113,7 @@ pub async fn clear_pendings(
         deployment_sequence.add_receipt(receipt);
     }
 
-    // print any erros
+    // print any errors
     if !errors.is_empty() {
         let mut error_msg = errors.join("\n");
         if !deployment_sequence.pending.is_empty() {
@@ -136,14 +136,14 @@ async fn check_tx_status(
     // still neatly return the tuple
     let result = async move {
         // First check if there's a receipt
-        let receipt_opt = provider.get_transaction_receipt(hash).await?;
+        let receipt_opt = provider.get_transaction_receipt(hash.to_ethers()).await?;
         if let Some(receipt) = receipt_opt {
             return Ok(receipt.into())
         }
 
         // If the tx is present in the mempool, run the pending tx future, and
         // assume the next drop is really really real
-        let pending_res = PendingTransaction::new(hash, provider).await?;
+        let pending_res = PendingTransaction::new(hash.to_ethers(), provider).await?;
         match pending_res {
             Some(receipt) => Ok(receipt.into()),
             None => Ok(TxStatus::Dropped),

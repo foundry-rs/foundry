@@ -1,6 +1,7 @@
 use clap::{Parser, ValueHint};
-use ethers::prelude::{errors::EtherscanError, Abigen, Client, MultiAbigen};
+use ethers_contract::{Abigen, MultiAbigen};
 use eyre::Result;
+use foundry_block_explorers::{errors::EtherscanError, Client};
 use foundry_cli::opts::EtherscanOpts;
 use foundry_config::Config;
 use std::path::{Path, PathBuf};
@@ -78,9 +79,8 @@ impl BindArgs {
     async fn abigen_etherscan(&self) -> Result<MultiAbigen> {
         let config = Config::from(&self.etherscan);
 
-        let chain = config.chain_id.unwrap_or_default();
+        let chain = config.chain.unwrap_or_default();
         let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-        let chain = chain.named()?;
 
         let client = Client::new(chain, api_key)?;
         let address = self.path_or_address.parse()?;

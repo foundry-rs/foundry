@@ -1,4 +1,5 @@
 name: project
+
 on:
     issues:
         types: [opened, transferred]
