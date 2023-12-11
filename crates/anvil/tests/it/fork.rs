@@ -296,7 +296,7 @@ async fn test_fork_snapshotting() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_snapshotting_repeated() {
     let (api, handle) = spawn(fork_config()).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     let snapshot = api.evm_snapshot().await.unwrap();
 
@@ -342,7 +342,7 @@ async fn test_fork_snapshotting_repeated() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_snapshotting_blocks() {
     let (api, handle) = spawn(fork_config()).await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     // create a snapshot
     let snapshot = api.evm_snapshot().await.unwrap();
@@ -1033,7 +1033,7 @@ async fn test_fork_reset_moonbeam() {
             .with_fork_block_number(None::<u64>),
     )
     .await;
-    let provider = handle.http_provider();
+    let provider = handle.ethers_http_provider();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
