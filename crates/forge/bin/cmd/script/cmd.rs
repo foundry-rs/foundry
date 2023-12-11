@@ -8,7 +8,7 @@ use foundry_cli::utils::LoadConfig;
 use foundry_common::{
     contracts::flatten_contracts, provider::ethers::try_get_http_provider, types::ToAlloy,
 };
-use foundry_debugger::DebuggerArgs;
+use foundry_debugger::Debugger;
 use std::sync::Arc;
 
 /// Helper alias type for the collection of data changed due to the new sender.

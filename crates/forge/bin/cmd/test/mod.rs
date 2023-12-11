@@ -344,7 +344,7 @@ impl TestArgs {
         if self.json {
             let results = runner.test_collect(filter, test_options).await;
             println!("{}", serde_json::to_string(&results)?);
-            return Ok(TestOutcome::new(results, self.allow_failure))
+            return Ok(TestOutcome::new(results, self.allow_failure));
         }
 
         // Set up identifiers
@@ -390,7 +390,7 @@ impl TestArgs {
 
                 // If the test failed, we want to stop processing the rest of the tests
                 if self.fail_fast && result.status == TestStatus::Failure {
-                    break 'outer
+                    break 'outer;
                 }
 
                 // We only display logs at level 2 and above
@@ -407,7 +407,7 @@ impl TestArgs {
                 }
 
                 if result.traces.is_empty() {
-                    continue
+                    continue;
                 }
 
                 // Identify addresses in each trace
@@ -425,9 +425,9 @@ impl TestArgs {
 
                 // Decode the traces
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
-                for (kind, trace) in &mut result.traces {
-                    decoder.identify(trace, &mut local_identifier);
-                    decoder.identify(trace, &mut etherscan_identifier);
+                for (kind, arena) in &mut result.traces {
+                    decoder.identify(arena, &mut local_identifier);
+                    decoder.identify(arena, &mut etherscan_identifier);
 
                     // verbosity:
                     // - 0..3: nothing
@@ -444,14 +444,8 @@ impl TestArgs {
                         TraceKind::Deployment => false,
                     };
 
-                    // Decode the trace if we either need to build a gas report or we need to print
-                    // it
-                    if should_include || self.gas_report {
-                        decoder.decode(trace).await;
-                    }
-
                     if should_include {
-                        decoded_traces.push(trace.to_string());
+                        decoded_traces.push(render_trace_arena(arena, &decoder).await?);
                     }
                 }
 
@@ -461,7 +455,7 @@ impl TestArgs {
                 }
 
                 if self.gas_report {
-                    gas_report.analyze(&result.traces);
+                    gas_report.analyze(&result.traces, &decoder).await;
                 }
             }
             let block_outcome = TestOutcome::new(
@@ -637,7 +631,7 @@ impl TestOutcome {
     pub fn ensure_ok(&self) -> Result<()> {
         let failures = self.failures().count();
         if self.allow_failure || failures == 0 {
-            return Ok(())
+            return Ok(());
         }
 
         if !shell::verbosity().is_normal() {
@@ -650,7 +644,7 @@ impl TestOutcome {
         for (suite_name, suite) in self.results.iter() {
             let failures = suite.failures().count();
             if failures == 0 {
-                continue
+                continue;
             }
 
             let term = if failures > 1 { "tests" } else { "test" };
