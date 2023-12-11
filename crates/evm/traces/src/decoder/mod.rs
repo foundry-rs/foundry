@@ -1,5 +1,7 @@
 use crate::{
-    identifier::{AddressIdentity, SingleSignaturesIdentifier, TraceIdentifier},
+    identifier::{
+        AddressIdentity, LocalTraceIdentifier, SingleSignaturesIdentifier, TraceIdentifier,
+    },
     CallTrace, CallTraceArena, DecodedCallData, DecodedCallLog, DecodedCallTrace,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
@@ -269,7 +271,7 @@ impl CallTraceDecoder {
                 return_data: None,
                 contract: None,
                 func: Some(func),
-            }
+            };
         }
 
         // Set label
@@ -305,7 +307,7 @@ impl CallTraceDecoder {
                 }
             };
             let [func, ..] = &functions[..] else {
-                return DecodedCallTrace { label, return_data: None, contract, func: None }
+                return DecodedCallTrace { label, return_data: None, contract, func: None };
             };
 
             DecodedCallTrace {
@@ -380,30 +382,30 @@ impl CallTraceDecoder {
                 Some(decoded.iter().map(format_token).collect())
             }
             "deriveKey" => Some(vec!["<pk>".to_string()]),
-            "parseJson" |
-            "parseJsonUint" |
-            "parseJsonUintArray" |
-            "parseJsonInt" |
-            "parseJsonIntArray" |
-            "parseJsonString" |
-            "parseJsonStringArray" |
-            "parseJsonAddress" |
-            "parseJsonAddressArray" |
-            "parseJsonBool" |
-            "parseJsonBoolArray" |
-            "parseJsonBytes" |
-            "parseJsonBytesArray" |
-            "parseJsonBytes32" |
-            "parseJsonBytes32Array" |
-            "writeJson" |
-            "keyExists" |
-            "serializeBool" |
-            "serializeUint" |
-            "serializeInt" |
-            "serializeAddress" |
-            "serializeBytes32" |
-            "serializeString" |
-            "serializeBytes" => {
+            "parseJson"
+            | "parseJsonUint"
+            | "parseJsonUintArray"
+            | "parseJsonInt"
+            | "parseJsonIntArray"
+            | "parseJsonString"
+            | "parseJsonStringArray"
+            | "parseJsonAddress"
+            | "parseJsonAddressArray"
+            | "parseJsonBool"
+            | "parseJsonBoolArray"
+            | "parseJsonBytes"
+            | "parseJsonBytesArray"
+            | "parseJsonBytes32"
+            | "parseJsonBytes32Array"
+            | "writeJson"
+            | "keyExists"
+            | "serializeBool"
+            | "serializeUint"
+            | "serializeInt"
+            | "serializeAddress"
+            | "serializeBytes32"
+            | "serializeString"
+            | "serializeBytes" => {
                 if self.verbosity >= 5 {
                     None
                 } else {
@@ -430,7 +432,7 @@ impl CallTraceDecoder {
                 if let Some(decoded) =
                     funcs.iter().find_map(|func| self.decode_cheatcode_outputs(func))
                 {
-                    return Some(decoded)
+                    return Some(decoded);
                 }
             }
 
@@ -440,12 +442,12 @@ impl CallTraceDecoder {
                 // Functions coming from an external database do not have any outputs specified,
                 // and will lead to returning an empty list of values.
                 if values.is_empty() {
-                    return None
+                    return None;
                 }
 
                 return Some(
                     values.iter().map(|value| self.apply_label(value)).format(", ").to_string(),
-                )
+                );
             }
 
             None
