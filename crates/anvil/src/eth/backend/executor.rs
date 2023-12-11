@@ -328,6 +328,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
                 .get_traces()
                 .clone()
                 .into_nodes(),
+            nonce,
         };
 
         Some(TransactionExecutionOutcome::Executed(tx))

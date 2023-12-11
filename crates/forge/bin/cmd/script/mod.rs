@@ -678,7 +678,6 @@ impl ScriptConfig {
     /// If not, warns the user.
     async fn check_shanghai_support(&self) -> Result<()> {
         let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
-
             let provider = ethers_providers::Provider::<Http>::try_from(rpc).ok()?;
             let id = provider.get_chainid().await.ok()?;
             let id_u64: u64 = id.try_into().ok()?;

@@ -13,11 +13,11 @@ use anvil_core::eth::{
     receipt::TypedReceipt,
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
     revm::primitives::Env,
     traces::{GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig},
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use parking_lot::RwLock;
 use reth_rpc_types::{
     trace::{

@@ -70,8 +70,8 @@ use anvil_core::{
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{types::transaction::eip712::TypedData, utils::rlp};
-use foundry_common::provider::alloy::ProviderBuilder;
 use foundry_common::{
+    provider::alloy::ProviderBuilder,
     types::{ToAlloy, ToEthers},
 };
 use foundry_evm::{

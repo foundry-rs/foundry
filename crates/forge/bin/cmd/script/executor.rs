@@ -174,7 +174,7 @@ impl ScriptArgs {
                                         return Some(AdditionalContract {
                                             opcode: node.trace.kind,
                                             address: node.trace.address,
-                                            init_code: node.trace.data.to_vec(),
+                                            init_code: node.trace.data.clone(),
                                         });
                                     }
                                     None
