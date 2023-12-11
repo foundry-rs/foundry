@@ -244,7 +244,7 @@ test_repro!(6501, false, None, |res| {
     assert_eq!(test.status, TestStatus::Success);
     assert_eq!(test.decoded_logs, ["a".to_string(), "1".to_string(), "b 2".to_string()]);
 
-    let (kind, mut traces) = test.traces[1].clone();
+    let (kind, traces) = test.traces[1].clone();
     let nodes = traces.into_nodes();
     assert_eq!(kind, TraceKind::Execution);
 
