@@ -19,7 +19,6 @@ use foundry_evm_core::{
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
-use tracing::field;
 
 mod precompiles;
 
@@ -265,7 +264,7 @@ impl CallTraceDecoder {
 
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
         // Decode precompile
-        if let Some((label, func)) = precompiles::decode(&trace, 1) {
+        if let Some((label, func)) = precompiles::decode(trace, 1) {
             return DecodedCallTrace {
                 label: Some(label),
                 return_data: None,
@@ -312,8 +311,8 @@ impl CallTraceDecoder {
 
             DecodedCallTrace {
                 label,
-                func: Some(self.decode_function_input(&trace, func)),
-                return_data: self.decode_function_output(&trace, functions),
+                func: Some(self.decode_function_input(trace, func)),
+                return_data: self.decode_function_output(trace, functions),
                 contract,
             }
         } else {
@@ -382,30 +381,30 @@ impl CallTraceDecoder {
                 Some(decoded.iter().map(format_token).collect())
             }
             "deriveKey" => Some(vec!["<pk>".to_string()]),
-            "parseJson"
-            | "parseJsonUint"
-            | "parseJsonUintArray"
-            | "parseJsonInt"
-            | "parseJsonIntArray"
-            | "parseJsonString"
-            | "parseJsonStringArray"
-            | "parseJsonAddress"
-            | "parseJsonAddressArray"
-            | "parseJsonBool"
-            | "parseJsonBoolArray"
-            | "parseJsonBytes"
-            | "parseJsonBytesArray"
-            | "parseJsonBytes32"
-            | "parseJsonBytes32Array"
-            | "writeJson"
-            | "keyExists"
-            | "serializeBool"
-            | "serializeUint"
-            | "serializeInt"
-            | "serializeAddress"
-            | "serializeBytes32"
-            | "serializeString"
-            | "serializeBytes" => {
+            "parseJson" |
+            "parseJsonUint" |
+            "parseJsonUintArray" |
+            "parseJsonInt" |
+            "parseJsonIntArray" |
+            "parseJsonString" |
+            "parseJsonStringArray" |
+            "parseJsonAddress" |
+            "parseJsonAddressArray" |
+            "parseJsonBool" |
+            "parseJsonBoolArray" |
+            "parseJsonBytes" |
+            "parseJsonBytesArray" |
+            "parseJsonBytes32" |
+            "parseJsonBytes32Array" |
+            "writeJson" |
+            "keyExists" |
+            "serializeBool" |
+            "serializeUint" |
+            "serializeInt" |
+            "serializeAddress" |
+            "serializeBytes32" |
+            "serializeString" |
+            "serializeBytes" => {
                 if self.verbosity >= 5 {
                     None
                 } else {
