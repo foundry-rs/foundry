@@ -18,7 +18,7 @@ mod eip1186;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_proof() {
-    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, _handle) = spawn(NodeConfig::test()).await;
 
     let acc: Address = "0xaaaf5374fce5edbc8e2a8697c15331677e6ebaaa".parse().unwrap();
 
@@ -70,7 +70,7 @@ async fn can_get_proof() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_random_account_proofs() {
-    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, _handle) = spawn(NodeConfig::test()).await;
 
     for acc in std::iter::repeat_with(Address::random).take(10) {
         let _ = api

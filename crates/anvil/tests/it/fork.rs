@@ -46,9 +46,9 @@ impl LocalFork {
 
     /// Spawns two nodes where one is a fork of the other
     pub async fn setup(origin: NodeConfig, fork: NodeConfig) -> Self {
-        let (origin_api, origin_handle) = spawn(origin).await;
+        let (origin_api, _engine_api, origin_handle) = spawn(origin).await;
 
-        let (fork_api, fork_handle) =
+        let (fork_api, _engine_api, fork_handle) =
             spawn(fork.with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
         Self { origin_api, origin_handle, fork_api, fork_handle }
     }
@@ -63,7 +63,7 @@ pub fn fork_config() -> NodeConfig {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_spawn_fork() {
-    let (api, _handle) = spawn(fork_config()).await;
+    let (api, _engine_api, _handle) = spawn(fork_config()).await;
     assert!(api.is_fork());
 
     let head = api.block_number().unwrap();
@@ -72,7 +72,7 @@ async fn test_spawn_fork() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_get_balance() {
-    let (api, handle) = spawn(fork_config()).await;
+    let (api, _engine_api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
     for _ in 0..10 {
         let addr = Address::random();
@@ -85,7 +85,7 @@ async fn test_fork_eth_get_balance() {
 // <https://github.com/foundry-rs/foundry/issues/4082>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_get_balance_after_mine() {
-    let (api, handle) = spawn(fork_config()).await;
+    let (api, _engine_api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
     let info = api.anvil_node_info().await.unwrap();
     let number = info.fork_config.fork_block_number.unwrap();
@@ -109,7 +109,7 @@ async fn test_fork_eth_get_balance_after_mine() {
 // <https://github.com/foundry-rs/foundry/issues/4082>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_get_code_after_mine() {
-    let (api, handle) = spawn(fork_config()).await;
+    let (api, _engine_api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
     let info = api.anvil_node_info().await.unwrap();
     let number = info.fork_config.fork_block_number.unwrap();
@@ -128,7 +128,7 @@ async fn test_fork_eth_get_code_after_mine() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_get_code() {
-    let (api, handle) = spawn(fork_config()).await;
+    let (api, _engine_api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
     for _ in 0..10 {
         let addr = Address::random();
@@ -152,7 +152,7 @@ async fn test_fork_eth_get_code() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_get_nonce() {
-    let (api, handle) = spawn(fork_config()).await;
+    let (api, _engine_api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
     for _ in 0..10 {
@@ -170,7 +170,7 @@ async fn test_fork_eth_get_nonce() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_fee_history() {
-    let (api, handle) = spawn(fork_config()).await;
+    let (api, _engine_api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
     let count = 10u64;
@@ -180,7 +180,7 @@ async fn test_fork_eth_fee_history() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_reset() {
-    let (api, handle) = spawn(fork_config()).await;
+    let (api, _engine_api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
@@ -228,7 +228,7 @@ async fn test_fork_reset() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_reset_setup() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let dead_addr: Address = "000000000000000000000000000000000000dEaD".parse().unwrap();
@@ -255,7 +255,7 @@ async fn test_fork_reset_setup() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_snapshotting() {
-    let (api, handle) = spawn(fork_config()).await;
+    let (api, _engine_api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
     let snapshot = api.evm_snapshot().await.unwrap();
@@ -291,7 +291,7 @@ async fn test_fork_snapshotting() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_snapshotting_repeated() {
-    let (api, handle) = spawn(fork_config()).await;
+    let (api, _engine_api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
     let snapshot = api.evm_snapshot().await.unwrap();
@@ -339,7 +339,7 @@ async fn test_fork_snapshotting_repeated() {
 /// a cache file.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_separate_states() {
-    let (api, handle) = spawn(fork_config().with_fork_block_number(Some(14723772u64))).await;
+    let (api, _engine_api, handle) = spawn(fork_config().with_fork_block_number(Some(14723772u64))).await;
     let provider = handle.http_provider();
 
     let addr: Address = "000000000000000000000000000000000000dEaD".parse().unwrap();
@@ -368,7 +368,7 @@ async fn test_separate_states() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_greeter_on_fork() {
-    let (_api, handle) = spawn(fork_config().with_fork_block_number(Some(14723772u64))).await;
+    let (_api, _engine_api, handle) = spawn(fork_config().with_fork_block_number(Some(14723772u64))).await;
     let provider = handle.http_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
@@ -392,7 +392,7 @@ async fn can_deploy_greeter_on_fork() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_reset_properly() {
-    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let (origin_api, _engine_api, origin_handle) = spawn(NodeConfig::test()).await;
     let account = origin_handle.dev_accounts().next().unwrap();
     let origin_provider = origin_handle.http_provider();
     let origin_nonce = 1u64.into();
@@ -400,7 +400,7 @@ async fn can_reset_properly() {
 
     assert_eq!(origin_nonce, origin_provider.get_transaction_count(account, None).await.unwrap());
 
-    let (fork_api, fork_handle) =
+    let (fork_api, _engine_api, fork_handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
 
     let fork_provider = fork_handle.http_provider();
@@ -431,7 +431,7 @@ async fn can_reset_properly() {
 async fn test_fork_timestamp() {
     let start = std::time::Instant::now();
 
-    let (api, handle) = spawn(fork_config()).await;
+    let (api, _engine_api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
     let block = provider.get_block(BLOCK_NUMBER).await.unwrap().unwrap();
@@ -491,7 +491,7 @@ async fn test_fork_timestamp() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_set_empty_code() {
-    let (api, _handle) = spawn(fork_config()).await;
+    let (api, _engine_api, _handle) = spawn(fork_config()).await;
     let addr = "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984".parse().unwrap();
     let code = api.get_code(addr, None).await.unwrap();
     assert!(!code.as_ref().is_empty());
@@ -502,7 +502,7 @@ async fn test_fork_set_empty_code() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_can_send_tx() {
-    let (api, handle) =
+    let (api, _engine_api, handle) =
         spawn(fork_config().with_blocktime(Some(std::time::Duration::from_millis(800)))).await;
 
     let wallet = LocalWallet::new(&mut rand::thread_rng());
@@ -525,7 +525,7 @@ async fn test_fork_can_send_tx() {
 // <https://github.com/foundry-rs/foundry/issues/1920>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_nft_set_approve_all() {
-    let (api, handle) = spawn(
+    let (api, _engine_api, handle) = spawn(
         fork_config()
             .with_fork_block_number(Some(14812197u64))
             .with_blocktime(Some(Duration::from_secs(5)))
@@ -573,7 +573,7 @@ async fn test_fork_nft_set_approve_all() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_with_custom_chain_id() {
     // spawn a forked node with some random chainId
-    let (api, handle) = spawn(
+    let (api, _engine_api, handle) = spawn(
         fork_config()
             .with_fork_block_number(Some(14812197u64))
             .with_blocktime(Some(Duration::from_secs(5)))
@@ -597,7 +597,7 @@ async fn test_fork_with_custom_chain_id() {
 // <https://github.com/foundry-rs/foundry/issues/1920>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_can_send_opensea_tx() {
-    let (api, handle) = spawn(
+    let (api, _engine_api, handle) = spawn(
         fork_config()
             .with_fork_block_number(Some(14983338u64))
             .with_blocktime(Some(Duration::from_millis(5000))),
@@ -627,7 +627,7 @@ async fn test_fork_can_send_opensea_tx() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_base_fee() {
-    let (api, handle) = spawn(fork_config()).await;
+    let (api, _engine_api, handle) = spawn(fork_config()).await;
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
@@ -645,7 +645,7 @@ async fn test_fork_base_fee() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_init_base_fee() {
-    let (api, handle) = spawn(fork_config().with_fork_block_number(Some(13184859u64))).await;
+    let (api, _engine_api, handle) = spawn(fork_config().with_fork_block_number(Some(13184859u64))).await;
 
     let provider = handle.http_provider();
 
@@ -665,7 +665,7 @@ async fn test_fork_init_base_fee() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reset_fork_on_new_blocks() {
-    let (api, handle) = spawn(
+    let (api, _engine_api, handle) = spawn(
         NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint())).silent(),
     )
     .await;
@@ -703,7 +703,7 @@ async fn test_fork_call() {
     let res0 =
         provider.call(&tx, Some(BlockNumber::Number(block_number.into()).into())).await.unwrap();
 
-    let (api, _) = spawn(fork_config().with_fork_block_number(Some(block_number))).await;
+    let (api, _engine_api, _) = spawn(fork_config().with_fork_block_number(Some(block_number))).await;
 
     let res1 = api
         .call(
@@ -719,7 +719,7 @@ async fn test_fork_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_block_timestamp() {
-    let (api, _) = spawn(fork_config()).await;
+    let (api, _engine_api, _) = spawn(fork_config()).await;
 
     let initial_block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
     api.anvil_mine(Some(1.into()), None).await.unwrap();
@@ -730,7 +730,7 @@ async fn test_fork_block_timestamp() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_snapshot_block_timestamp() {
-    let (api, _) = spawn(fork_config()).await;
+    let (api, _engine_api, _) = spawn(fork_config()).await;
 
     let snapshot_id = api.evm_snapshot().await.unwrap();
     api.anvil_mine(Some(1.into()), None).await.unwrap();
@@ -745,7 +745,7 @@ async fn test_fork_snapshot_block_timestamp() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_uncles_fetch() {
-    let (api, handle) = spawn(fork_config()).await;
+    let (api, _engine_api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
     // Block on ETH mainnet with 2 uncles
@@ -783,7 +783,7 @@ async fn test_fork_uncles_fetch() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_block_transaction_count() {
-    let (api, handle) = spawn(fork_config()).await;
+    let (api, _engine_api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
@@ -835,7 +835,7 @@ async fn test_fork_block_transaction_count() {
 // <https://github.com/foundry-rs/foundry/issues/2931>
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_in_fork() {
-    let (api, handle) = spawn(fork_config().with_fork_block_number(Some(15347924u64))).await;
+    let (api, _engine_api, handle) = spawn(fork_config().with_fork_block_number(Some(15347924u64))).await;
     let provider = handle.http_provider();
 
     let token_holder: Address = "0x2f0b23f53734252bda2277357e97e1517d6b042a".parse().unwrap();
@@ -867,7 +867,7 @@ async fn can_impersonate_in_fork() {
 // <https://etherscan.io/block/14608400>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_total_difficulty_fork() {
-    let (api, handle) = spawn(fork_config()).await;
+    let (api, _engine_api, handle) = spawn(fork_config()).await;
 
     let total_difficulty: U256 = 46_673_965_560_973_856_260_636u128.into();
     let difficulty: U256 = 13_680_435_288_526_144u128.into();
@@ -890,7 +890,7 @@ async fn test_total_difficulty_fork() {
 // <https://etherscan.io/block/14608400>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_transaction_receipt() {
-    let (api, _) = spawn(fork_config()).await;
+    let (api, _engine_api, _) = spawn(fork_config()).await;
 
     // A transaction from the forked block (14608400)
     let receipt = api
@@ -914,7 +914,7 @@ async fn test_transaction_receipt() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_override_fork_chain_id() {
     let chain_id_override = 5u64;
-    let (_api, handle) = spawn(
+    let (_api, _engine_api, handle) = spawn(
         fork_config()
             .with_fork_block_number(Some(16506610u64))
             .with_chain_id(Some(chain_id_override)),
@@ -949,7 +949,7 @@ async fn can_override_fork_chain_id() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_reset_moonbeam() {
     crate::init_tracing();
-    let (api, handle) = spawn(
+    let (api, _engine_api, handle) = spawn(
         fork_config()
             .with_eth_rpc_url(Some("https://rpc.api.moonbeam.network".to_string()))
             .with_fork_block_number(None::<u64>),

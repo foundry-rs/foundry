@@ -136,7 +136,7 @@ contract DeployScript is Script {
 
     let node_config =
         NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint())).silent();
-    let (_api, handle) = spawn(node_config).await;
+    let (_api, _engine_api, handle) = spawn(node_config).await;
     let dev = handle.dev_accounts().next().unwrap();
     cmd.set_current_dir(prj.root());
 
@@ -189,7 +189,7 @@ contract DeployScript is Script {
 
     let node_config =
         NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint())).silent();
-    let (_api, handle) = spawn(node_config).await;
+    let (_api, _engine_api, handle) = spawn(node_config).await;
     let private_key =
         "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
     cmd.set_current_dir(prj.root());
@@ -295,7 +295,7 @@ contract DeployScript is Script {
 
     let node_config =
         NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint())).silent();
-    let (_api, handle) = spawn(node_config).await;
+    let (_api, _engine_api, handle) = spawn(node_config).await;
     let private_key =
         "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
     cmd.set_current_dir(prj.root());
@@ -376,7 +376,7 @@ contract RunScript is Script {
 });
 
 forgetest_async!(can_deploy_script_without_lib, |prj, cmd| {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
@@ -390,7 +390,7 @@ forgetest_async!(can_deploy_script_without_lib, |prj, cmd| {
 });
 
 forgetest_async!(can_deploy_script_with_lib, |prj, cmd| {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
@@ -407,7 +407,7 @@ forgetest_async!(
     #[serial_test::serial]
     can_deploy_script_private_key,
     |prj, cmd| {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
@@ -430,7 +430,7 @@ forgetest_async!(
     #[serial_test::serial]
     can_deploy_unlocked,
     |prj, cmd| {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
@@ -446,7 +446,7 @@ forgetest_async!(
     #[serial_test::serial]
     can_deploy_script_remember_key,
     |prj, cmd| {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
@@ -469,7 +469,7 @@ forgetest_async!(
     #[serial_test::serial]
     can_deploy_script_remember_key_and_resume,
     |prj, cmd| {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
@@ -496,7 +496,7 @@ forgetest_async!(
 );
 
 forgetest_async!(can_resume_script, |prj, cmd| {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
@@ -514,7 +514,7 @@ forgetest_async!(can_resume_script, |prj, cmd| {
 });
 
 forgetest_async!(can_deploy_broadcast_wrap, |prj, cmd| {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
@@ -529,7 +529,7 @@ forgetest_async!(can_deploy_broadcast_wrap, |prj, cmd| {
 });
 
 forgetest_async!(panic_no_deployer_set, |prj, cmd| {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
@@ -541,7 +541,7 @@ forgetest_async!(panic_no_deployer_set, |prj, cmd| {
 });
 
 forgetest_async!(can_deploy_no_arg_broadcast, |prj, cmd| {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
@@ -556,7 +556,7 @@ forgetest_async!(can_deploy_no_arg_broadcast, |prj, cmd| {
 });
 
 forgetest_async!(can_deploy_with_create2, |prj, cmd| {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     // Prepare CREATE2 Deployer
@@ -586,7 +586,7 @@ forgetest_async!(
     #[serial_test::serial]
     can_deploy_and_simulate_25_txes_concurrently,
     |prj, cmd| {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
@@ -604,7 +604,7 @@ forgetest_async!(
     #[serial_test::serial]
     can_deploy_and_simulate_mixed_broadcast_modes,
     |prj, cmd| {
-        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
@@ -619,7 +619,7 @@ forgetest_async!(
 );
 
 forgetest_async!(deploy_with_setup, |prj, cmd| {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
@@ -633,7 +633,7 @@ forgetest_async!(deploy_with_setup, |prj, cmd| {
 });
 
 forgetest_async!(fail_broadcast_staticcall, |prj, cmd| {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
@@ -647,7 +647,7 @@ forgetest_async!(
     #[serial_test::serial]
     check_broadcast_log,
     |prj, cmd| {
-        let (api, handle) = spawn(NodeConfig::test()).await;
+        let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         // Prepare CREATE2 Deployer
@@ -720,7 +720,7 @@ forgetest_async!(
 );
 
 forgetest_async!(test_default_sender_balance, |prj, cmd| {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     // Expect the default sender to have uint256.max balance.
@@ -730,7 +730,7 @@ forgetest_async!(test_default_sender_balance, |prj, cmd| {
 });
 
 forgetest_async!(test_custom_sender_balance, |prj, cmd| {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     // Expect the sender to have its starting balance.
@@ -756,7 +756,7 @@ forgetest_async!(can_execute_script_with_arguments, |prj, cmd| {
     cmd.assert_non_empty_stdout();
     cmd.forge_fuse();
 
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let script = prj            .add_script(
                 "Counter.s.sol",
                 r#"
@@ -836,7 +836,7 @@ forgetest_async!(can_execute_script_with_arguments_nested_deploy, |prj, cmd| {
     cmd.assert_non_empty_stdout();
     cmd.forge_fuse();
 
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let script = prj
         .add_script(
             "Counter.s.sol",
@@ -1077,7 +1077,7 @@ interface Interface {}
 });
 
 forgetest_async!(assert_can_resume_with_additional_contracts, |prj, cmd| {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester

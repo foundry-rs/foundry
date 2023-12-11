@@ -13,7 +13,7 @@ const GAS_TRANSFER: u64 = 21_000u64;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_basefee_full_block() {
-    let (_api, handle) = spawn(
+    let (_api, _engine_api, handle) = spawn(
         NodeConfig::test().with_base_fee(Some(INITIAL_BASE_FEE)).with_gas_limit(Some(GAS_TRANSFER)),
     )
     .await;
@@ -34,7 +34,7 @@ async fn test_basefee_full_block() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_basefee_half_block() {
-    let (_api, handle) = spawn(
+    let (_api, _engine_api, handle) = spawn(
         NodeConfig::test()
             .with_base_fee(Some(INITIAL_BASE_FEE))
             .with_gas_limit(Some(GAS_TRANSFER * 2)),
@@ -53,7 +53,7 @@ async fn test_basefee_half_block() {
 }
 #[tokio::test(flavor = "multi_thread")]
 async fn test_basefee_empty_block() {
-    let (api, handle) = spawn(NodeConfig::test().with_base_fee(Some(INITIAL_BASE_FEE))).await;
+    let (api, _engine_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(INITIAL_BASE_FEE))).await;
 
     let provider = handle.http_provider();
     let tx = TransactionRequest::new().to(Address::random()).value(1337u64);
@@ -74,7 +74,7 @@ async fn test_basefee_empty_block() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_respect_base_fee() {
     let base_fee = 50u64;
-    let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
+    let (_api, _engine_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
     let provider = handle.http_provider();
     let mut tx = TypedTransaction::default();
     tx.set_value(100u64);
@@ -94,7 +94,7 @@ async fn test_respect_base_fee() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tip_above_fee_cap() {
     let base_fee = 50u64;
-    let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
+    let (_api, _engine_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
     let provider = handle.http_provider();
     let tx = TypedTransaction::Eip1559(
         Eip1559TransactionRequest::new()

@@ -270,7 +270,7 @@ impl NodeArgs {
         let dump_interval =
             self.state_interval.map(Duration::from_secs).unwrap_or(DEFAULT_DUMP_INTERVAL);
 
-        let (api, mut handle) = crate::spawn(self.into_node_config()).await;
+        let (api, _, mut handle) = crate::spawn(self.into_node_config()).await;
 
         // sets the signal handler to gracefully shutdown.
         let mut fork = api.get_fork();

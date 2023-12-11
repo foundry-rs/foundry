@@ -1,6 +1,7 @@
 //! tests for custom anvil endpoints
 use crate::{abi::*, fork::fork_config};
 use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
+use anvil::engine::api;
 use anvil_core::{
     eth::EthRequest,
     types::{AnvilMetadata, ForkedNetwork, Forking, NodeEnvironment, NodeForkConfig, NodeInfo},
@@ -22,8 +23,16 @@ use std::{
 };
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_engine_api() {
+    //TODO
+    let (_api, engine_api, _handle) = spawn(NodeConfig::test()).await;
+
+    engine_api.execute().await; // prints hello world
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_set_gas_price() {
-    let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
+    let (api, _engine_api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
     let provider = handle.http_provider();
 
     let gas_price = 1337u64.into();
@@ -33,7 +42,7 @@ async fn can_set_gas_price() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_block_gas_limit() {
-    let (api, _) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
+    let (api, _engine_api, _) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
 
     let block_gas_limit = 1337u64.into();
     assert!(api.evm_set_block_gas_limit(block_gas_limit).unwrap());
@@ -46,7 +55,7 @@ async fn can_set_block_gas_limit() {
 // Ref <https://github.com/foundry-rs/foundry/issues/2341>
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_storage() {
-    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, _handle) = spawn(NodeConfig::test()).await;
     let s = r#"{"jsonrpc": "2.0", "method": "hardhat_setStorageAt", "id": 1, "params": ["0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56", "0xa6eef7e35abe7026729641147f7915573c7e97b47efa546f5f6e3230263bcb49", "0x0000000000000000000000000000000000000000000000000000000000003039"]}"#;
     let req = serde_json::from_str::<EthRequest>(s).unwrap();
     let (addr, slot, val) = match req.clone() {
@@ -63,7 +72,7 @@ async fn can_set_storage() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_account() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let impersonate = Address::random();
@@ -100,7 +109,7 @@ async fn can_impersonate_account() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_auto_impersonate_account() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let impersonate = Address::random();
@@ -140,7 +149,7 @@ async fn can_auto_impersonate_account() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_contract() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
@@ -184,7 +193,7 @@ async fn can_impersonate_contract() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_gnosis_safe() {
-    let (api, handle) = spawn(fork_config()).await;
+    let (api, _engine_api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
     // <https://help.gnosis-safe.io/en/articles/4971293-i-don-t-remember-my-safe-address-where-can-i-find-it>
@@ -214,7 +223,7 @@ async fn can_impersonate_gnosis_safe() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_multiple_account() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let impersonate0 = Address::random();
@@ -261,7 +270,7 @@ async fn can_impersonate_multiple_account() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_mine_manually() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let start_num = provider.get_block_number().await.unwrap();
@@ -275,7 +284,7 @@ async fn can_mine_manually() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_set_next_timestamp() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
@@ -302,7 +311,7 @@ async fn test_set_next_timestamp() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_evm_set_time() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
@@ -326,7 +335,7 @@ async fn test_evm_set_time() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_evm_set_time_in_past() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
@@ -346,7 +355,7 @@ async fn test_evm_set_time_in_past() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_timestamp_interval() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     api.evm_mine(None).await.unwrap();
@@ -396,7 +405,7 @@ async fn test_timestamp_interval() {
 // <https://github.com/foundry-rs/foundry/issues/2341>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_set_storage_bsc_fork() {
-    let (api, handle) =
+    let (api, _engine_api, handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
     let provider = Arc::new(handle.http_provider());
 
@@ -423,7 +432,7 @@ async fn test_can_set_storage_bsc_fork() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_node_info() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
 
     let node_info = api.anvil_node_info().await.unwrap();
 
@@ -456,7 +465,7 @@ async fn can_get_node_info() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_metadata() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
 
     let metadata = api.anvil_metadata().await.unwrap();
 
@@ -481,7 +490,7 @@ async fn can_get_metadata() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_metadata_on_fork() {
-    let (api, handle) =
+    let (api, _engine_api, handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
     let provider = Arc::new(handle.http_provider());
 
@@ -510,7 +519,7 @@ async fn can_get_metadata_on_fork() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn metadata_changes_on_reset() {
-    let (api, _) =
+    let (api, _engine_api, _) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
 
     let metadata = api.anvil_metadata().await.unwrap();
@@ -526,7 +535,7 @@ async fn metadata_changes_on_reset() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transaction_receipt() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     // set the base fee
@@ -557,7 +566,7 @@ async fn test_get_transaction_receipt() {
 // test can set chain id
 #[tokio::test(flavor = "multi_thread")]
 async fn test_set_chain_id() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
     let chain_id = provider.get_chainid().await.unwrap();
     assert_eq!(chain_id, U256::from(31337));
@@ -572,7 +581,7 @@ async fn test_set_chain_id() {
 // <https://github.com/foundry-rs/foundry/issues/6096>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_revert_next_block_timestamp() {
-    let (api, _handle) = spawn(fork_config()).await;
+    let (api, _engine_api, _handle) = spawn(fork_config()).await;
 
     // Mine a new block, and check the new block gas limit
     api.mine_one().await;
@@ -593,7 +602,7 @@ async fn test_fork_revert_next_block_timestamp() {
 // to its correct value (block number, etc.)
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_revert_call_latest_block_timestamp() {
-    let (api, handle) = spawn(fork_config()).await;
+    let (api, _engine_api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
     // Mine a new block, and check the new block gas limit

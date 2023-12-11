@@ -5,7 +5,7 @@ use ethers::{prelude::Middleware, types::U256};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_block_number_ws() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let block_num = api.block_number().unwrap();
     assert_eq!(block_num, U256::zero());
 
@@ -17,7 +17,7 @@ async fn can_get_block_number_ws() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_dev_get_balance_ws() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider();
 
     let genesis_balance = handle.genesis_balance();

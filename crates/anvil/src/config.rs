@@ -115,6 +115,8 @@ pub struct NodeConfig {
     pub no_mining: bool,
     /// port to use for the server
     pub port: u16,
+    /// engine API config
+    pub engine_config: EngineConfig,
     /// maximum number of transactions in a block
     pub max_transactions: usize,
     /// don't print anything on startup
@@ -391,6 +393,7 @@ impl Default for NodeConfig {
             enable_auto_impersonate: false,
             no_storage_caching: false,
             server_config: Default::default(),
+            engine_config: Default::default(),
             host: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
             transaction_order: Default::default(),
             config_out: None,
@@ -1176,6 +1179,18 @@ impl AccountGenerator {
         }
         wallets
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EngineConfig {
+    pub port: u16,
+    pub jwt_secret: Option<String>,
+}
+
+// === impl EngineConfig ===
+
+impl EngineConfig {
+    // TODO: implement
 }
 
 /// Returns the path to anvil dir `~/.foundry/anvil`
