@@ -58,7 +58,7 @@ impl CoverageReport {
 
     /// Add the source maps
     pub fn add_source_maps(&mut self, source_maps: HashMap<ContractId, (Vec<SourceElement>, Vec<SourceElement>)>) {
-        self.source_maps.extend(source_maps.into_iter());
+        self.source_maps.extend(source_maps);
 
     }
 
@@ -127,7 +127,7 @@ impl CoverageReport {
         let e = self.bytecode_hits
             .entry(contract_id.clone())
             .or_insert_with( || HitMap::new(hit_map.bytecode.clone()));
-        e.merge(&hit_map)
+        e.merge(hit_map)
         .context(format!(
             "contract_id {:?}, hash {}, hash {}",
             contract_id, 
@@ -226,7 +226,7 @@ impl HitMap {
             println!("consistent_bytecode: {}, {}, {}, {}", ok, len1.0, len2.0, len);
             return ok;
         }
-        return true;
+        true
     }
 
 }

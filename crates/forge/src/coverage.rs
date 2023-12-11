@@ -183,7 +183,7 @@ impl BytecodeReporter {
     }
 }
 
-impl<'a> CoverageReporter for BytecodeReporter {
+impl CoverageReporter for BytecodeReporter {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
         use std::fmt::Write;
         let no_source_elements = Vec::new();
@@ -211,8 +211,8 @@ impl<'a> CoverageReporter for BytecodeReporter {
                 let end = source_element.offset + source_element.length;
 
                 if let Some(source_path) = source_path {
-                    let (sline,spos) =  line_number_cache.get_position(&source_path, start)?;
-                    let (eline,epos) =  line_number_cache.get_position(&source_path, end)?;
+                    let (sline,spos) =  line_number_cache.get_position(source_path, start)?;
+                    let (eline,epos) =  line_number_cache.get_position(source_path, end)?;
                     writeln!(formatted, "{} {:40} // {}: {}:{}-{}:{} ({}-{})", hits, code, source_path,sline, spos, eline, epos, start, end )?;
                 } else if let Some(source_id) = source_id {
                     writeln!(formatted, "{} {:40} // SRCID{}: ({}-{})", hits, code, source_id, start, end )?;
