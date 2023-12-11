@@ -135,7 +135,7 @@ impl ToAlloy for ethers_core::types::Transaction {
             blob_versioned_hashes: Vec::new(),
             access_list: self.access_list.map(|a| a.0.into_iter().map(ToAlloy::to_alloy).collect()),
             transaction_type: self.transaction_type.map(|t| t.to_alloy()),
-            other: Default::default()
+            other: Default::default(),
         }
     }
 }

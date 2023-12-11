@@ -9,7 +9,8 @@ use crate::{
             validate::TransactionValidator,
         },
         error::{
-            decode_revert_reason, BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
+            decode_revert_reason, BlockchainError, FeeHistoryError, InvalidTransactionError,
+            Result, ToRpcResponseResult,
         },
         fees::{FeeDetails, FeeHistoryCache},
         macros::node_info,

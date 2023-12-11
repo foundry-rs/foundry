@@ -2050,7 +2050,10 @@ impl Backend {
             other: Default::default(),
         };
 
-        inner.other.insert("deposit_nonce".to_string(), serde_json::to_value(deposit_nonce).expect("Infallible"));
+        inner.other.insert(
+            "deposit_nonce".to_string(),
+            serde_json::to_value(deposit_nonce).expect("Infallible"),
+        );
 
         Some(MinedTransactionReceipt { inner, out: info.out.map(|o| o.0.into()) })
     }
