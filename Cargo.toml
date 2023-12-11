@@ -123,7 +123,9 @@ foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 
+# block explorer & verification bindings
 foundry-block-explorers = { version = "0.1.1", default-features = false }
+# solc & compilation utilities
 foundry-compilers = { version = "0.1.1", default-features = false }
 
 ## revm
@@ -216,6 +218,6 @@ alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy/", branch = "onbje
 alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy/", branch = "onbjerg/alloy-temp-provider-trait" }
 
 revm = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
+revm-primitives = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 revm-interpreter = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
 revm-precompile = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }
-revm-primitives = { git = "https://github.com/bluealloy/revm", branch = "reth_freeze" }

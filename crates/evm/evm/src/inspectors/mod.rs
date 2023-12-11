@@ -3,7 +3,7 @@
 pub use foundry_cheatcodes::{self as cheatcodes, Cheatcodes, CheatsConfig};
 pub use foundry_evm_coverage::CoverageCollector;
 pub use foundry_evm_fuzz::Fuzzer;
-pub use foundry_evm_traces::Tracer;
+pub use foundry_evm_traces::{StackSnapshotType, TracingInspector, TracingInspectorConfig};
 
 mod access_list;
 pub use access_list::AccessListTracer;

@@ -47,7 +47,7 @@ use alloy_rpc_types::{
     TransactionReceipt,
     TxpoolContent,
     TxpoolInspect,
-    // trace::{geth::{DefaultFrame, GethDebugTracingOptions, GethTrace},
+    // trace::{geth::{DefaultFrame, GethDefaultTracingOptions, GethTrace},
     // parity::LocalizedTransactionTrace},
     TxpoolInspectSummary,
     TxpoolStatus,
@@ -69,11 +69,7 @@ use anvil_core::{
     },
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use ethers::{
-    prelude::DefaultFrame,
-    types::{transaction::eip712::TypedData, GethDebugTracingOptions, GethTrace, Trace},
-    utils::rlp,
-};
+use ethers::{types::transaction::eip712::TypedData, utils::rlp};
 use foundry_common::{
     provider::alloy::ProviderBuilder,
     types::{ToAlloy, ToEthers},
@@ -88,6 +84,10 @@ use foundry_evm::{
 };
 use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
+use reth_rpc_types::trace::{
+    geth::{DefaultFrame, GethDefaultTracingOptions, GethTrace},
+    parity::LocalizedTransactionTrace,
+};
 use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
@@ -1456,13 +1456,9 @@ impl EthApi {
     pub async fn debug_trace_transaction(
         &self,
         tx_hash: B256,
-        opts: GethDebugTracingOptions,
+        opts: GethDefaultTracingOptions,
     ) -> Result<GethTrace> {
         node_info!("debug_traceTransaction");
-        if opts.tracer.is_some() {
-            return Err(RpcError::invalid_params("non-default tracer not supported yet").into());
-        }
-
         self.backend.debug_trace_transaction(tx_hash, opts).await
     }
 
@@ -1473,12 +1469,9 @@ impl EthApi {
         &self,
         request: CallRequest,
         block_number: Option<BlockId>,
-        opts: GethDebugTracingOptions,
+        opts: GethDefaultTracingOptions,
     ) -> Result<DefaultFrame> {
         node_info!("debug_traceCall");
-        if opts.tracer.is_some() {
-            return Err(RpcError::invalid_params("non-default tracer not supported yet").into());
-        }
         let block_request = self.block_request(block_number).await?;
         let fees = FeeDetails::new(
             request.gas_price.map(|g| g.to_ethers()),
@@ -1495,7 +1488,7 @@ impl EthApi {
     /// Returns traces for the transaction hash via parity's tracing endpoint
     ///
     /// Handler for RPC call: `trace_transaction`
-    pub async fn trace_transaction(&self, tx_hash: B256) -> Result<Vec<Trace>> {
+    pub async fn trace_transaction(&self, tx_hash: B256) -> Result<Vec<LocalizedTransactionTrace>> {
         node_info!("trace_transaction");
         self.backend.trace_transaction(tx_hash).await
     }
@@ -1503,7 +1496,7 @@ impl EthApi {
     /// Returns traces for the transaction hash via parity's tracing endpoint
     ///
     /// Handler for RPC call: `trace_block`
-    pub async fn trace_block(&self, block: BlockNumber) -> Result<Vec<Trace>> {
+    pub async fn trace_block(&self, block: BlockNumber) -> Result<Vec<LocalizedTransactionTrace>> {
         node_info!("trace_block");
         self.backend.trace_block(block).await
     }

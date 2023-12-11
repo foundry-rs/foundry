@@ -8,7 +8,8 @@ use alloy_rpc_types::{
     state::StateOverride,
     BlockId, BlockNumberOrTag as BlockNumber, CallRequest, Filter,
 };
-use ethers_core::types::{transaction::eip712::TypedData, GethDebugTracingOptions};
+use ethers_core::types::transaction::eip712::TypedData;
+use reth_rpc_types::trace::geth::GethDefaultTracingOptions;
 
 pub mod block;
 pub mod proof;
@@ -261,7 +262,7 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "debug_traceTransaction"))]
     DebugTraceTransaction(
         B256,
-        #[cfg_attr(feature = "serde", serde(default))] GethDebugTracingOptions,
+        #[cfg_attr(feature = "serde", serde(default))] GethDefaultTracingOptions,
     ),
 
     /// geth's `debug_traceCall`  endpoint
@@ -269,7 +270,7 @@ pub enum EthRequest {
     DebugTraceCall(
         CallRequest,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
-        #[cfg_attr(feature = "serde", serde(default))] GethDebugTracingOptions,
+        #[cfg_attr(feature = "serde", serde(default))] GethDefaultTracingOptions,
     ),
 
     /// Trace transaction endpoint for parity's `trace_transaction`

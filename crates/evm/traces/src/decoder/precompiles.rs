@@ -1,4 +1,4 @@
-use crate::{CallTrace, TraceCallData};
+use crate::{CallTrace, DecodedCallData};
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::{abi, sol, SolCall};
 use itertools::Itertools;
@@ -36,20 +36,20 @@ macro_rules! tri {
     ($e:expr) => {
         match $e {
             Ok(x) => x,
-            Err(_) => return false,
+            Err(_) => return None,
         }
     };
 }
 
-/// Tries to decode a precompile call. Returns `true` if successful.
-pub(super) fn decode(trace: &mut CallTrace, _chain_id: u64) -> bool {
+/// Tries to decode a precompile call. Returns `Some` if successful.
+pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<(String, DecodedCallData)> {
     let [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, x @ 0x01..=0x0a] =
         trace.address.0 .0
     else {
-        return false
+        return None
     };
 
-    let TraceCallData::Raw(data) = &trace.data else { return false };
+    let data = &trace.data;
 
     let (signature, args) = match x {
         0x01 => {
@@ -75,11 +75,7 @@ pub(super) fn decode(trace: &mut CallTrace, _chain_id: u64) -> bool {
     };
 
     // TODO: Other chain precompiles
-
-    trace.data = TraceCallData::Decoded { signature: signature.to_string(), args };
-    trace.label = Some("PRECOMPILES".into());
-
-    true
+    Some(("PRECOMPILES".into(), DecodedCallData { signature: signature.to_string(), args }))
 }
 
 // Note: we use the ABI decoder, but this is not necessarily ABI-encoded data. It's just a

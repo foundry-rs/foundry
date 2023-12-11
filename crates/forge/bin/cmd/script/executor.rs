@@ -12,7 +12,6 @@ use forge::{
     executors::ExecutorBuilder,
     inspectors::{cheatcodes::BroadcastableTransactions, CheatsConfig},
     traces::{CallTraceDecoder, Traces},
-    utils::CallKind,
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
@@ -170,13 +169,13 @@ impl ScriptArgs {
                             .traces
                             .iter()
                             .flat_map(|(_, traces)| {
-                                traces.arena.iter().filter_map(|node| {
-                                    if matches!(node.kind(), CallKind::Create | CallKind::Create2) {
+                                traces.nodes().iter().filter_map(|node| {
+                                    if node.trace.kind.is_any_create() {
                                         return Some(AdditionalContract {
-                                            opcode: node.kind(),
+                                            opcode: node.trace.kind,
                                             address: node.trace.address,
-                                            init_code: node.trace.data.as_bytes().to_vec().into(),
-                                        })
+                                            init_code: node.trace.data.clone(),
+                                        });
                                     }
                                     None
                                 })
@@ -222,7 +221,7 @@ impl ScriptArgs {
             // type hint
             let res: Result<RunnerResult> = res;
 
-            let (tx, mut traces) = res?;
+            let (tx, traces) = res?;
 
             // Transaction will be `None`, if execution didn't pass.
             if tx.is_none() || script_config.evm_opts.verbosity > 3 {
@@ -233,9 +232,8 @@ impl ScriptArgs {
                     );
                 }
 
-                for (_kind, trace) in &mut traces {
-                    decoder.decode(trace).await;
-                    println!("{trace}");
+                for (_, trace) in &traces {
+                    println!("{}", render_trace_arena(trace, decoder).await?);
                 }
             }
 

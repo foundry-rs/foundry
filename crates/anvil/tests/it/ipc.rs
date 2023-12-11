@@ -1,8 +1,8 @@
 //! IPC tests
 
+use alloy_primitives::U256;
 use alloy_providers::provider::TempProvider;
 use anvil::{spawn, NodeConfig};
-use alloy_primitives::U256;
 use ethers::{core::rand, prelude::Middleware};
 use futures::StreamExt;
 

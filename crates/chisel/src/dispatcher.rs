@@ -15,7 +15,7 @@ use foundry_evm::{
     decode::decode_console_logs,
     traces::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
-        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
+        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
 use once_cell::sync::Lazy;
@@ -983,11 +983,10 @@ impl ChiselDispatcher {
         }
 
         println!("{}", Paint::green("Traces:"));
-        for (kind, trace) in &mut result.traces {
+        for (kind, trace) in &result.traces {
             // Display all Setup + Execution traces.
             if matches!(kind, TraceKind::Setup | TraceKind::Execution) {
-                decoder.decode(trace).await;
-                println!("{trace}");
+                println!("{}", render_trace_arena(trace, decoder).await?);
             }
         }
 

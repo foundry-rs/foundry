@@ -296,7 +296,7 @@ mod tests {
 
         let err = env(key, &DynSolType::Uint(256)).unwrap_err().to_string();
         assert!(!err.contains(value));
-        assert_eq!(err, "failed parsing $parse_env_uint as type `uint256`: parser error:\n$parse_env_uint\n ^\nexpected at least one digit");
+        assert_eq!(err, "failed parsing $parse_env_uint as type `uint256`: parser error:\n$parse_env_uint\n^\nexpected at least one digit");
         env::remove_var(key);
     }
 }

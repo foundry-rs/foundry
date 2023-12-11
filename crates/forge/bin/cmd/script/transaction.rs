@@ -10,7 +10,10 @@ use foundry_common::{
     types::{ToAlloy, ToEthers},
     SELECTOR_LEN,
 };
-use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder, utils::CallKind};
+use foundry_evm::{
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    traces::{CallKind, CallTraceDecoder},
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

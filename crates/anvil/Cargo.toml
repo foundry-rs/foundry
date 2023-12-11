@@ -39,6 +39,8 @@ alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types.workspace = true
 alloy-providers.workspace = true
 alloy-transport.workspace = true
+reth-rpc-types = { git = "https://github.com/paradigmxyz/reth/", branch = "main" }
+
 
 # axum related
 axum.workspace = true

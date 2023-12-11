@@ -42,6 +42,7 @@ mod summary;
 use summary::TestSummaryReporter;
 
 pub use filter::FilterArgs;
+use forge::traces::render_trace_arena;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
@@ -236,6 +237,8 @@ impl TestArgs {
 
         if should_debug {
             let tests = outcome.clone().into_tests();
+            // todo(onbjerg): why do we bother decoding everything and having multiple decoders if
+            // we are only going to use the first one? (see `DebuggerArgs` below)
             let mut decoders = Vec::new();
             for test in tests {
                 let mut result = test.result;
@@ -261,31 +264,9 @@ impl TestArgs {
                         EtherscanIdentifier::new(&config, remote_chain_id)?;
 
                     // Decode the traces
-                    for (kind, trace) in &mut result.traces {
+                    for (_, trace) in &mut result.traces {
                         decoder.identify(trace, &mut local_identifier);
                         decoder.identify(trace, &mut etherscan_identifier);
-
-                        let should_include = match kind {
-                            // At verbosity level 3, we only display traces for failed tests
-                            // At verbosity level 4, we also display the setup trace for failed
-                            // tests At verbosity level 5, we display
-                            // all traces for all tests
-                            TraceKind::Setup => {
-                                (verbosity >= 5) ||
-                                    (verbosity == 4 && result.status == TestStatus::Failure)
-                            }
-                            TraceKind::Execution => {
-                                verbosity > 3 ||
-                                    (verbosity == 3 && result.status == TestStatus::Failure)
-                            }
-                            _ => false,
-                        };
-
-                        // We decode the trace if we either need to build a gas report or we need
-                        // to print it
-                        if should_include || self.gas_report {
-                            decoder.decode(trace).await;
-                        }
                     }
                 }
 
@@ -702,7 +683,7 @@ async fn test(
 
             // Decode the traces
             let mut decoded_traces = Vec::with_capacity(result.traces.len());
-            for (kind, trace) in &mut result.traces {
+            for (kind, trace) in &result.traces {
                 decoder.identify(trace, &mut local_identifier);
                 decoder.identify(trace, &mut etherscan_identifier);
 
@@ -721,13 +702,8 @@ async fn test(
                     TraceKind::Deployment => false,
                 };
 
-                // Decode the trace if we either need to build a gas report or we need to print it
-                if should_include || gas_reporting {
-                    decoder.decode(trace).await;
-                }
-
                 if should_include {
-                    decoded_traces.push(trace.to_string());
+                    decoded_traces.push(render_trace_arena(trace, &decoder).await?);
                 }
             }
 
@@ -737,7 +713,7 @@ async fn test(
             }
 
             if gas_reporting {
-                gas_report.analyze(&result.traces);
+                gas_report.analyze(&result.traces, &decoder).await;
             }
         }
         let block_outcome =

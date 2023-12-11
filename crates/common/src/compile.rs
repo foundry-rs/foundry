@@ -150,10 +150,10 @@ impl ProjectCompiler {
 
                 let dev_functions =
                     artifact.abi.as_ref().map(|abi| abi.functions()).into_iter().flatten().filter(
-                        |&func| {
+                        |func| {
                             func.name.is_test() ||
-                                func.name == "IS_TEST" ||
-                                func.name == "IS_SCRIPT"
+                                func.name.eq("IS_TEST") ||
+                                func.name.eq("IS_SCRIPT")
                         },
                     );
 
