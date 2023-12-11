@@ -92,7 +92,7 @@ impl BindArgs {
         let artifacts = self.try_load_config_emit_warnings()?.out;
 
         if !self.overwrite && self.bindings_exist(&artifacts) {
-            println!("Bindings found. Checking for consistency.");
+            sh_println!("Bindings found, checking for consistency")?;
             return self.check_existing_bindings(&artifacts)
         }
 
@@ -103,10 +103,7 @@ impl BindArgs {
 
         self.generate_bindings(&artifacts)?;
 
-        println!(
-            "Bindings have been output to {}",
-            self.bindings_root(&artifacts).to_str().unwrap()
-        );
+        sh_println!("Bindings have been output to {}", self.bindings_root(&artifacts).display())?;
         Ok(())
     }
 

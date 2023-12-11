@@ -193,7 +193,7 @@ impl ScriptArgs {
                                     .to_ethers(),
                             );
                         } else {
-                            println!("Gas limit was set in script to {:}", tx.gas.unwrap());
+                            sh_println!("Gas limit was set in script to {}", tx.gas.unwrap())?;
                         }
 
                         let tx = TransactionWithMetadata::new(

@@ -1,7 +1,7 @@
 //! Support for compiling [foundry_compilers::Project]
 
-use crate::{compact_to_contract, glob::GlobMatcher, term, term::SpinnerReporter, TestFunctionExt};
-use comfy_table::{presets::ASCII_MARKDOWN, *};
+use crate::{compact_to_contract, glob::GlobMatcher, term::SpinnerReporter, TestFunctionExt};
+use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Table};
 use eyre::Result;
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
@@ -372,113 +372,6 @@ pub struct ContractInfo {
     pub size: usize,
     /// A development contract is either a Script or a Test contract.
     pub is_dev_contract: bool,
-}
-
-/// Compiles the provided [`Project`] and does not throw if there's any compiler error
-/// Doesn't print anything to stdout, thus is "suppressed".
-pub fn try_suppress_compile(project: &Project) -> Result<ProjectCompileOutput> {
-    Ok(foundry_compilers::report::with_scoped(
-        &foundry_compilers::report::Report::new(NoReporter::default()),
-        || project.compile(),
-    )?)
-}
-
-/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
-/// compilation was successful or if there was a cache hit.
-/// Doesn't print anything to stdout, thus is "suppressed".
-pub fn suppress_compile(project: &Project) -> Result<ProjectCompileOutput> {
-    let output = try_suppress_compile(project)?;
-
-    if output.has_compiler_errors() {
-        eyre::bail!(output.to_string())
-    }
-
-    Ok(output)
-}
-
-/// Depending on whether the `skip` is empty this will [`suppress_compile_sparse`] or
-/// [`suppress_compile`] and throw if there's any compiler error
-pub fn suppress_compile_with_filter(
-    project: &Project,
-    skip: Vec<SkipBuildFilter>,
-) -> Result<ProjectCompileOutput> {
-    if skip.is_empty() {
-        suppress_compile(project)
-    } else {
-        suppress_compile_sparse(project, SkipBuildFilters(skip))
-    }
-}
-
-/// Depending on whether the `skip` is empty this will [`suppress_compile_sparse`] or
-/// [`suppress_compile`] and does not throw if there's any compiler error
-pub fn suppress_compile_with_filter_json(
-    project: &Project,
-    skip: Vec<SkipBuildFilter>,
-) -> Result<ProjectCompileOutput> {
-    if skip.is_empty() {
-        try_suppress_compile(project)
-    } else {
-        try_suppress_compile_sparse(project, SkipBuildFilters(skip))
-    }
-}
-
-/// Compiles the provided [`Project`],
-/// Doesn't print anything to stdout, thus is "suppressed".
-///
-/// See [`Project::compile_sparse`]
-pub fn try_suppress_compile_sparse<F: FileFilter + 'static>(
-    project: &Project,
-    filter: F,
-) -> Result<ProjectCompileOutput> {
-    Ok(foundry_compilers::report::with_scoped(
-        &foundry_compilers::report::Report::new(NoReporter::default()),
-        || project.compile_sparse(filter),
-    )?)
-}
-
-/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
-/// compilation was successful or if there was a cache hit.
-/// Doesn't print anything to stdout, thus is "suppressed".
-///
-/// See [`Project::compile_sparse`]
-pub fn suppress_compile_sparse<F: FileFilter + 'static>(
-    project: &Project,
-    filter: F,
-) -> Result<ProjectCompileOutput> {
-    let output = try_suppress_compile_sparse(project, filter)?;
-
-    if output.has_compiler_errors() {
-        eyre::bail!(output.to_string())
-    }
-
-    Ok(output)
-}
-
-/// Compile a set of files not necessarily included in the `project`'s source dir
-///
-/// If `silent` no solc related output will be emitted to stdout
-pub fn compile_files(
-    project: &Project,
-    files: Vec<PathBuf>,
-    silent: bool,
-) -> Result<ProjectCompileOutput> {
-    let output = if silent {
-        foundry_compilers::report::with_scoped(
-            &foundry_compilers::report::Report::new(NoReporter::default()),
-            || project.compile_files(files),
-        )
-    } else {
-        term::with_spinner_reporter(|| project.compile_files(files))
-    }?;
-
-    if output.has_compiler_errors() {
-        eyre::bail!(output.to_string())
-    }
-    if !silent {
-        println!("{output}");
-    }
-
-    Ok(output)
 }
 
 /// Compiles target file path.

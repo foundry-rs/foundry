@@ -106,6 +106,6 @@ impl TestSummaryReporter {
             }
         }
         // Print the summary table
-        println!("\n{}", self.table);
+        let _ = sh_println!("\n{}", self.table);
     }
 }

@@ -21,7 +21,7 @@ use foundry_common::{
     compact_to_contract,
     compile::{ContractSources, ProjectCompiler},
     evm::EvmArgs,
-    get_contract_name, get_file_name,
+    get_contract_name, get_file_name, Shell,
 };
 use foundry_config::{
     figment,
@@ -337,18 +337,16 @@ impl TestArgs {
         if runner.matching_test_function_count(filter) == 0 {
             let filter_str = filter.to_string();
             if filter_str.is_empty() {
-                println!(
-                    "\nNo tests found in project! \
-                     Forge looks for functions that starts with `test`."
-                );
+                sh_err!("No tests found in project!")?;
+                sh_note!("Forge looks for functions that starts with `test`")?;
             } else {
-                println!("\nNo tests match the provided pattern:\n{filter_str}");
+                sh_err!("\nNo tests match the provided pattern:\n{filter_str}")?;
                 // Try to suggest a test when there's no match
                 if let Some(test_pattern) = &filter.args().test_pattern {
                     let test_name = test_pattern.as_str();
                     let candidates = runner.get_tests(filter);
                     if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
-                        println!("\nDid you mean `{suggestion}`?");
+                        sh_note!("\nDid you mean `{suggestion}`?")?;
                     }
                 }
             }
@@ -356,7 +354,7 @@ impl TestArgs {
 
         if self.json {
             let results = runner.test_collect(filter, test_options).await;
-            println!("{}", serde_json::to_string(&results)?);
+            Shell::get().print_json(&results)?;
             return Ok(TestOutcome::new(results, self.allow_failure))
         }
 
@@ -390,13 +388,13 @@ impl TestArgs {
             results.insert(contract_name.clone(), suite_result.clone());
 
             let mut tests = suite_result.test_results.clone();
-            println!();
+            let _ = sh_println!();
             for warning in suite_result.warnings.iter() {
-                eprintln!("{} {warning}", Paint::yellow("Warning:").bold());
+                let _ = sh_warn!("{warning}");
             }
             if !tests.is_empty() {
                 let term = if tests.len() > 1 { "tests" } else { "test" };
-                println!("Running {} {term} for {contract_name}", tests.len());
+                let _ = sh_println!("Running {} {term} for {contract_name}", tests.len());
             }
             for (name, result) in &mut tests {
                 short_test_result(name, result);
@@ -411,11 +409,11 @@ impl TestArgs {
                     // We only decode logs from Hardhat and DS-style console events
                     let console_logs = decode_console_logs(&result.logs);
                     if !console_logs.is_empty() {
-                        println!("Logs:");
+                        let _ = sh_println!("Logs:");
                         for log in console_logs {
-                            println!("  {log}");
+                            let _ = sh_println!("  {log}");
                         }
-                        println!();
+                        let _ = sh_println!();
                     }
                 }
 
@@ -469,8 +467,10 @@ impl TestArgs {
                 }
 
                 if !decoded_traces.is_empty() {
-                    println!("Traces:");
-                    decoded_traces.into_iter().for_each(|trace| println!("{trace}"));
+                    let _ = sh_println!("Traces:");
+                    for trace in &decoded_traces {
+                        let _ = sh_println!("{trace}");
+                    }
                 }
 
                 if self.gas_report {
@@ -486,7 +486,7 @@ impl TestArgs {
             total_failed += block_outcome.failures().count();
             total_skipped += block_outcome.skips().count();
 
-            println!("{}", block_outcome.summary());
+            let _ = sh_println!("{}", block_outcome.summary());
 
             if self.summary {
                 suite_results.push(block_outcome.clone());
@@ -494,13 +494,13 @@ impl TestArgs {
         }
 
         if self.gas_report {
-            println!("{}", gas_report.finalize());
+            let _ = sh_println!("{}", gas_report.finalize());
         }
 
         let num_test_suites = results.len();
 
         if num_test_suites > 0 {
-            println!(
+            let _ = sh_println!(
                 "{}",
                 format_aggregated_summary(
                     num_test_suites,
@@ -512,7 +512,7 @@ impl TestArgs {
 
             if self.summary {
                 let mut summary_table = TestSummaryReporter::new(self.detailed);
-                println!("\n\nTest Summary:");
+                let _ = sh_println!("\n\nTest Summary:");
                 summary_table.print_summary(suite_results);
             }
         }

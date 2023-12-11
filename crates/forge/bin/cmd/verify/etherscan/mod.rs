@@ -72,8 +72,8 @@ impl VerificationProvider for EtherscanVerificationProvider {
         let retry: Retry = args.retry.into();
         let resp = retry
             .run_async(|| async {
-                println!(
-                    "\nSubmitting verification for [{}] {}.",
+                let _ = sh_println!(
+                    "\nSubmitting verification for [{}] {}",
                     verify_args.contract_name, verify_args.address
                 );
                 let resp = etherscan
@@ -101,7 +101,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     }
 
                     warn!("Failed verify submission: {:?}", resp);
-                    eprintln!(
+                    let _ = sh_err!(
                         "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
                         resp.message, resp.result
                     );

@@ -170,7 +170,7 @@ impl SelectorsSubcommands {
                 }
             }
             SelectorsSubcommands::List { contract, project_paths } => {
-                println!("Listing selectors for contracts in the project...");
+                sh_println!("Listing selectors for contracts in the project...")?;
                 let build_args = CoreBuildArgs {
                     project_paths: project_paths.clone(),
                     compiler: CompilerArgs {
@@ -224,7 +224,7 @@ impl SelectorsSubcommands {
                         continue
                     }
 
-                    println!("{contract}");
+                    sh_println!("{contract}")?;
 
                     let mut table = Table::new();
 
@@ -248,10 +248,10 @@ impl SelectorsSubcommands {
                         table.add_row(["Error", &sig, &hex::encode_prefixed(selector)]);
                     }
 
-                    println!("{table}");
+                    sh_println!("{table}")?;
 
                     if artifacts.peek().is_some() {
-                        println!()
+                        sh_println!()?;
                     }
                 }
             }

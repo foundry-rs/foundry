@@ -139,7 +139,7 @@ impl InspectArgs {
                         );
                     }
                 }
-                println!("{}", serde_json::to_string_pretty(&out)?);
+                Shell::get().print_json(&out)?;
             }
             ContractArtifactField::Events => {
                 let mut out = serde_json::Map::new();
@@ -153,7 +153,7 @@ impl InspectArgs {
                         );
                     }
                 }
-                println!("{}", serde_json::to_string_pretty(&out)?);
+                Shell::get().print_json(&out)?;
             }
         };
 
