@@ -1,6 +1,6 @@
 use crate::{
     identifier::{AddressIdentity, SingleSignaturesIdentifier, TraceIdentifier},
-    utils, CallTrace, CallTraceArena, DecodedCallData, DecodedCallLog, DecodedCallTrace,
+    CallTrace, CallTraceArena, DecodedCallData, DecodedCallLog, DecodedCallTrace,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Event, Function, JsonAbi as Abi};
