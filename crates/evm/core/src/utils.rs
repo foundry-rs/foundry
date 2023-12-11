@@ -13,6 +13,7 @@ use revm::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+// TODO(onbjerg): Remove this and use `CallKind` from the tracer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 #[derive(Default)]
