@@ -124,10 +124,24 @@ impl DependencyInstallOpts {
         let libs = git.root.join(install_lib_dir);
 
         if dependencies.is_empty() && !self.no_git {
-            p_println!(!self.quiet => "Updating dependencies in {}", libs.display());
-            // recursively fetch all submodules (without fetching latest)
-            git.submodule_update(false, false, false, true, Some(&libs))?;
+            // Use the root of the git repository to look for submodules.
+            let root = Git::root_of(git.root)?;
+            match git.has_submodules(Some(&root)) {
+                Ok(true) => {
+                    p_println!(!quiet => "Updating dependencies in {}", libs.display());
+                    // recursively fetch all submodules (without fetching latest)
+                    git.submodule_update(false, false, false, true, Some(&libs))?;
+                }
+
+                Err(err) => {
+                    warn!(?err, "Failed to check for submodules");
+                }
+                _ => {
+                    // no submodules, nothing to do
+                }
+            }
         }
+
         fs::create_dir_all(&libs)?;
 
         let installer = Installer { git, no_commit };

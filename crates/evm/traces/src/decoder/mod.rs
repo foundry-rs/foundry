@@ -7,7 +7,7 @@ use alloy_json_abi::{Event, Function, JsonAbi as Abi};
 use alloy_primitives::{Address, Log, Selector, B256};
 use foundry_common::{abi::get_indexed_event, fmt::format_token, SELECTOR_LEN};
 use foundry_evm_core::{
-    abi::{Console, HardhatConsole, Vm},
+    abi::{Console, HardhatConsole, Vm, HARDHAT_CONSOLE_SELECTOR_PATCHES},
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
         TEST_CONTRACT_ADDRESS,
@@ -17,6 +17,7 @@ use foundry_evm_core::{
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
+use tracing::field;
 
 mod precompiles;
 
@@ -41,6 +42,15 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Add known functions to the decoder.
+    #[inline]
+    pub fn with_functions(mut self, functions: impl IntoIterator<Item = Function>) -> Self {
+        for function in functions {
+            self.decoder.functions.entry(function.selector()).or_default().push(function);
+        }
+        self
+    }
+
     /// Add known events to the decoder.
     #[inline]
     pub fn with_events(mut self, events: impl IntoIterator<Item = Event>) -> Self {
@@ -52,6 +62,12 @@ impl CallTraceDecoderBuilder {
                 .push(event);
         }
         self
+    }
+
+    #[inline]
+    pub fn with_local_identifier_abis(self, identifier: &LocalTraceIdentifier<'_>) -> Self {
+        self.with_events(identifier.events().cloned())
+            .with_functions(identifier.functions().cloned())
     }
 
     /// Sets the verbosity level of the decoder.
@@ -117,6 +133,23 @@ impl CallTraceDecoder {
     }
 
     fn init() -> Self {
+        /// All functions from the Hardhat console ABI.
+        ///
+        /// See [`HARDHAT_CONSOLE_SELECTOR_PATCHES`] for more details.
+        fn hh_funcs() -> impl Iterator<Item = (Selector, Function)> {
+            let functions = HardhatConsole::abi::functions();
+            let mut functions: Vec<_> =
+                functions.into_values().flatten().map(|func| (func.selector(), func)).collect();
+            let len = functions.len();
+            // `functions` is the list of all patched functions; duplicate the unpatched ones
+            for (unpatched, patched) in HARDHAT_CONSOLE_SELECTOR_PATCHES.iter() {
+                if let Some((_, func)) = functions[..len].iter().find(|(sel, _)| sel == patched) {
+                    functions.push((unpatched.into(), func.clone()));
+                }
+            }
+            functions.into_iter()
+        }
+
         Self {
             contracts: Default::default(),
 
@@ -129,11 +162,14 @@ impl CallTraceDecoder {
             ]
             .into(),
 
-            functions: HardhatConsole::abi::functions()
-                .into_values()
-                .chain(Vm::abi::functions().into_values())
-                .flatten()
-                .map(|func| (func.selector(), vec![func]))
+            functions: hh_funcs()
+                .chain(
+                    Vm::abi::functions()
+                        .into_values()
+                        .flatten()
+                        .map(|func| (func.selector(), func)),
+                )
+                .map(|(selector, func)| (selector, vec![func]))
                 .collect(),
 
             events: Console::abi::events()
@@ -283,7 +319,6 @@ impl CallTraceDecoder {
             let signature =
                 if cdata.is_empty() && has_receive { "receive()" } else { "fallback()" }.into();
             let args = if cdata.is_empty() { Vec::new() } else { vec![cdata.to_string()] };
-
             DecodedCallTrace {
                 label,
                 return_data: if !trace.success {

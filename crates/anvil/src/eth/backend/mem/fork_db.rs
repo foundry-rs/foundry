@@ -8,7 +8,7 @@ use crate::{
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
-    backend::{DatabaseResult, StateSnapshot},
+    backend::{DatabaseResult, RevertSnapshotAction, StateSnapshot},
     fork::{database::ForkDbSnapshot, BlockchainDb},
     revm::Database,
 };
@@ -63,8 +63,8 @@ impl Db for ForkedDatabase {
         self.insert_snapshot()
     }
 
-    fn revert(&mut self, id: U256) -> bool {
-        self.revert_snapshot(id)
+    fn revert(&mut self, id: U256, action: RevertSnapshotAction) -> bool {
+        self.revert_snapshot(id, action)
     }
 
     fn current_state(&self) -> StateDb {

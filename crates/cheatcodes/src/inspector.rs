@@ -505,6 +505,60 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         data.journaled_state.depth(),
                     );
                 }
+                // Record account accesses via the EXT family of opcodes
+                opcode::EXTCODECOPY |
+                opcode::EXTCODESIZE |
+                opcode::EXTCODEHASH |
+                opcode::BALANCE => {
+                    let kind = match interpreter.current_opcode() {
+                        opcode::EXTCODECOPY => crate::Vm::AccountAccessKind::Extcodecopy,
+                        opcode::EXTCODESIZE => crate::Vm::AccountAccessKind::Extcodesize,
+                        opcode::EXTCODEHASH => crate::Vm::AccountAccessKind::Extcodehash,
+                        opcode::BALANCE => crate::Vm::AccountAccessKind::Balance,
+                        _ => unreachable!(),
+                    };
+                    let address = Address::from_word(B256::from(try_or_continue!(interpreter
+                        .stack()
+                        .peek(0))));
+                    let balance;
+                    let initialized;
+                    if let Ok((acc, _)) = data.journaled_state.load_account(address, data.db) {
+                        initialized = acc.info.exists();
+                        balance = acc.info.balance;
+                    } else {
+                        initialized = false;
+                        balance = U256::ZERO;
+                    }
+                    let account_access = crate::Vm::AccountAccess {
+                        chainInfo: crate::Vm::ChainInfo {
+                            forkId: data.db.active_fork_id().unwrap_or_default(),
+                            chainId: U256::from(data.env.cfg.chain_id),
+                        },
+                        accessor: interpreter.contract().address,
+                        account: address,
+                        kind,
+                        initialized,
+                        oldBalance: balance,
+                        newBalance: balance,
+                        value: U256::ZERO,
+                        data: vec![],
+                        reverted: false,
+                        deployedCode: vec![],
+                        storageAccesses: vec![],
+                    };
+                    let access = AccountAccess {
+                        access: account_access,
+                        // use current depth; EXT* opcodes are not creating new contexts
+                        depth: data.journaled_state.depth(),
+                    };
+                    // Record the EXT* call as an account access at the current depth
+                    // (future storage accesses will be recorded in a new "Resume" context)
+                    if let Some(last) = recorded_account_diffs_stack.last_mut() {
+                        last.push(access);
+                    } else {
+                        recorded_account_diffs_stack.push(vec![access]);
+                    }
+                }
                 _ => (),
             }
         }
@@ -1102,9 +1156,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         let gas = Gas::new(call.gas_limit);
 
-        // allow cheatcodes from the address of the new contract
-        let address = self.allow_cheatcodes_on_create(data, call);
-
         // Apply our prank
         if let Some(prank) = &self.prank {
             if data.journaled_state.depth() >= prank.depth && call.caller == prank.prank_caller {
@@ -1171,6 +1222,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
+        // allow cheatcodes from the address of the new contract
+        // Compute the address *after* any possible broadcast updates, so it's based on the updated
+        // call inputs
+        let address = self.allow_cheatcodes_on_create(data, call);
         // If `recordAccountAccesses` has been called, record the create
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // Record the create context as an account access and create a new vector to record all

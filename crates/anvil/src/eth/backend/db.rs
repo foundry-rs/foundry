@@ -6,7 +6,7 @@ use alloy_rpc_types::BlockId;
 use anvil_core::eth::trie::KeccakHasher;
 use foundry_common::errors::FsPathError;
 use foundry_evm::{
-    backend::{DatabaseError, DatabaseResult, MemDb, StateSnapshot},
+    backend::{DatabaseError, DatabaseResult, MemDb, RevertSnapshotAction, StateSnapshot},
     fork::BlockchainDb,
     hashbrown::HashMap,
     revm::{
@@ -168,7 +168,7 @@ pub trait Db:
     /// Reverts a snapshot
     ///
     /// Returns `true` if the snapshot was reverted
-    fn revert(&mut self, snapshot: U256) -> bool;
+    fn revert(&mut self, snapshot: U256, action: RevertSnapshotAction) -> bool;
 
     /// Returns the state root if possible to compute
     fn maybe_state_root(&self) -> Option<B256> {
@@ -204,7 +204,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
         U256::ZERO
     }
 
-    fn revert(&mut self, _snapshot: U256) -> bool {
+    fn revert(&mut self, _snapshot: U256, _action: RevertSnapshotAction) -> bool {
         false
     }
 

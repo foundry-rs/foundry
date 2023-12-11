@@ -23,7 +23,7 @@ use forge::{
 };
 use foundry_cli::opts::MultiWallet;
 use foundry_common::{
-    abi::encode_function_args,
+    abi::{encode_function_args, get_func},
     contracts::get_contract_name,
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
@@ -220,6 +220,7 @@ impl ScriptArgs {
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_labels(result.labeled_addresses.clone())
             .with_verbosity(verbosity)
+            .with_local_identifier_abis(&local_identifier)
             .with_signature_identifier(SignaturesIdentifier::new(
                 Config::foundry_cache_dir(),
                 script_config.config.offline,
@@ -444,7 +445,7 @@ impl ScriptArgs {
     ///
     /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
     fn get_method_and_calldata(&self, abi: &Abi) -> Result<(Function, Bytes)> {
-        let (func, data) = if let Ok(func) = Function::parse(&self.sig) {
+        let (func, data) = if let Ok(func) = get_func(&self.sig) {
             (
                 abi.functions().find(|&abi_func| abi_func.selector() == func.selector()).wrap_err(
                     format!("Function `{}` is not implemented in your script.", self.sig),

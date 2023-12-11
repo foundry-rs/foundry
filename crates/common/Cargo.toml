@@ -34,7 +34,6 @@ alloy-sol-types.workspace = true
 tower.workspace = true
 
 async-trait = "0.1"
-auto_impl = "1.1.0"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 comfy-table = "7"
 dunce = "1"

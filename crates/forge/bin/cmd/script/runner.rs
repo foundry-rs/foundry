@@ -70,6 +70,13 @@ impl ScriptRunner {
             .map(|traces| (TraceKind::Deployment, traces))
             .collect();
 
+        let sender_nonce = self.executor.get_nonce(CALLER)?;
+        let address = CALLER.create(sender_nonce);
+
+        // Set the contracts initial balance before deployment, so it is available during the
+        // construction
+        self.executor.set_balance(address, self.initial_balance)?;
+
         // Deploy an instance of the contract
         let DeployResult {
             address,
@@ -83,7 +90,6 @@ impl ScriptRunner {
             .map_err(|err| eyre::eyre!("Failed to deploy script:\n{}", err))?;
 
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));
-        self.executor.set_balance(address, self.initial_balance)?;
 
         // Optionally call the `setUp` function
         let (success, gas_used, labeled_addresses, transactions, debug, script_wallets) = if !setup
@@ -308,7 +314,7 @@ impl ScriptRunner {
                     vec![(TraceKind::Execution, traces)]
                 })
                 .unwrap_or_default(),
-            debug: vec![debug].into_iter().collect(),
+            debug: debug.map(|d| vec![d]),
             labeled_addresses: labels,
             transactions,
             address: None,

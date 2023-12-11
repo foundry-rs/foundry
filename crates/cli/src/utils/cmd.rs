@@ -10,7 +10,7 @@ use foundry_compilers::{
     Artifact, ProjectCompileOutput,
 };
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain, Config, NamedChain};
-use foundry_debugger::DebuggerArgs;
+use foundry_debugger::Debugger;
 use foundry_evm::{
     debug::DebugArena,
     executors::{DeployResult, EvmError, ExecutionErr, RawCallResult},
@@ -170,7 +170,11 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
             NamedChain::Arbitrum |
                 NamedChain::ArbitrumTestnet |
                 NamedChain::ArbitrumGoerli |
-                NamedChain::ArbitrumSepolia
+                NamedChain::ArbitrumSepolia |
+                NamedChain::Moonbeam |
+                NamedChain::Moonriver |
+                NamedChain::Moonbase |
+                NamedChain::MoonbeamDev
         )
     }
     false
@@ -400,13 +404,12 @@ pub async fn handle_traces(
 
     if debug {
         let sources = etherscan_identifier.get_compiled_contracts().await?;
-        let debugger = DebuggerArgs {
-            debug: vec![result.debug],
-            decoder: &decoder,
-            sources,
-            breakpoints: Default::default(),
-        };
-        debugger.run()?;
+        let mut debugger = Debugger::builder()
+            .debug_arena(&result.debug)
+            .decoder(&decoder)
+            .sources(sources)
+            .build();
+        debugger.try_run()?;
     } else {
         print_traces(&mut result, &decoder, verbose).await?;
     }

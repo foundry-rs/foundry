@@ -680,6 +680,31 @@ impl TestCommand {
         output
     }
 
+    /// Returns a new [Command] that is inside the current project dir
+    pub fn cmd_in_current_dir(&self, program: &str) -> Command {
+        let mut cmd = Command::new(program);
+        cmd.current_dir(self.project.root());
+        cmd
+    }
+
+    /// Runs `git add .` inside the project's dir
+    #[track_caller]
+    pub fn git_add(&self) -> Result<()> {
+        let mut cmd = self.cmd_in_current_dir("git");
+        cmd.arg("add").arg(".");
+        let output = cmd.output()?;
+        self.ensure_success(&output)
+    }
+
+    /// Runs `git commit .` inside the project's dir
+    #[track_caller]
+    pub fn git_commit(&self, msg: &str) -> Result<()> {
+        let mut cmd = self.cmd_in_current_dir("git");
+        cmd.arg("commit").arg("-m").arg(msg);
+        let output = cmd.output()?;
+        self.ensure_success(&output)
+    }
+
     /// Executes the command and returns the `(stdout, stderr)` of the output as lossy `String`s.
     ///
     /// Expects the command to be successful.
@@ -873,6 +898,9 @@ stderr:
 /// terminal is tty, the path argument can be wrapped in [tty_fixture_path()]
 pub trait OutputExt {
     /// Ensure the command wrote the expected data to `stdout`.
+    fn stdout_matches_content(&self, expected: &str);
+
+    /// Ensure the command wrote the expected data to `stdout`.
     fn stdout_matches_path(&self, expected_path: impl AsRef<Path>);
 
     /// Ensure the command wrote the expected data to `stderr`.
@@ -907,10 +935,15 @@ fn normalize_output(s: &str) -> String {
 
 impl OutputExt for Output {
     #[track_caller]
+    fn stdout_matches_content(&self, expected: &str) {
+        let out = lossy_string(&self.stdout);
+        pretty_assertions::assert_eq!(normalize_output(&out), normalize_output(expected));
+    }
+
+    #[track_caller]
     fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) {
         let expected = fs::read_to_string(expected_path).unwrap();
-        let out = lossy_string(&self.stdout);
-        pretty_assertions::assert_eq!(normalize_output(&out), normalize_output(&expected));
+        self.stdout_matches_content(&expected);
     }
 
     #[track_caller]

@@ -1,5 +1,5 @@
 use super::{AddressIdentity, TraceIdentifier};
-use alloy_json_abi::Event;
+use alloy_json_abi::{Event, Function};
 use alloy_primitives::Address;
 use foundry_common::contracts::{diff_score, ContractsByArtifact};
 use ordered_float::OrderedFloat;
@@ -13,6 +13,11 @@ pub struct LocalTraceIdentifier<'a> {
 impl<'a> LocalTraceIdentifier<'a> {
     pub fn new(known_contracts: &'a ContractsByArtifact) -> Self {
         Self { known_contracts }
+    }
+
+    /// Get all the functions of the local contracts.
+    pub fn functions(&self) -> impl Iterator<Item = &Function> {
+        self.known_contracts.iter().flat_map(|(_, (abi, _))| abi.functions())
     }
 
     /// Get all the events of the local contracts.

@@ -895,6 +895,23 @@ forgetest!(can_install_and_remove, |prj, cmd| {
     remove(&mut cmd, "lib/forge-std");
 });
 
+// test to check we can run `forge install` in an empty dir <https://github.com/foundry-rs/foundry/issues/6519>
+forgetest!(can_install_empty, |prj, cmd| {
+    // create
+    cmd.git_init();
+    cmd.forge_fuse().args(["install"]);
+    cmd.assert_empty_stdout();
+
+    // create initial commit
+    fs::write(prj.root().join("README.md"), "Initial commit").unwrap();
+
+    cmd.git_add().unwrap();
+    cmd.git_commit("Initial commit").unwrap();
+
+    cmd.forge_fuse().args(["install"]);
+    cmd.assert_empty_stdout();
+});
+
 // test to check that package can be reinstalled after manually removing the directory
 forgetest!(can_reinstall_after_manual_remove, |prj, cmd| {
     cmd.git_init();

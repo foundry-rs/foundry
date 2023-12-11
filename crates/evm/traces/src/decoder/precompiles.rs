@@ -74,7 +74,6 @@ pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<(String, Decod
         0x00 | 0x0b.. => unreachable!(),
     };
 
-    // TODO: Other chain precompiles
     Some(("PRECOMPILES".into(), DecodedCallData { signature: signature.to_string(), args }))
 }
 

@@ -1,9 +1,9 @@
-//! Test setup
+//! Test config.
 
 use crate::test_helpers::{COMPILED, EVM_OPTS, PROJECT};
 use forge::{
     result::{SuiteResult, TestStatus},
-    MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
+    MultiContractRunner, MultiContractRunnerBuilder, TestOptions, TestOptionsBuilder,
 };
 use foundry_config::{
     fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig,
@@ -20,7 +20,7 @@ use futures::future::join_all;
 use itertools::Itertools;
 use std::{collections::BTreeMap, path::Path};
 
-/// How to execute a a test run
+/// How to execute a test run.
 pub struct TestConfig {
     pub runner: MultiContractRunner,
     pub should_fail: bool,
@@ -58,7 +58,7 @@ impl TestConfig {
 
     /// Executes the test runner
     pub async fn test(&mut self) -> BTreeMap<String, SuiteResult> {
-        self.runner.test(&self.filter, None, self.opts.clone()).await
+        self.runner.test_collect(&self.filter, self.opts.clone()).await
     }
 
     pub async fn run(&mut self) {
@@ -110,9 +110,10 @@ impl TestConfig {
     }
 }
 
+/// Returns the [`TestOptions`] used by the tests.
 pub fn test_opts() -> TestOptions {
-    TestOptions {
-        fuzz: FuzzConfig {
+    TestOptionsBuilder::default()
+        .fuzz(FuzzConfig {
             runs: 256,
             max_test_rejects: 65536,
             seed: None,
@@ -123,8 +124,8 @@ pub fn test_opts() -> TestOptions {
                 max_fuzz_dictionary_addresses: 10_000,
                 max_fuzz_dictionary_values: 10_000,
             },
-        },
-        invariant: InvariantConfig {
+        })
+        .invariant(InvariantConfig {
             runs: 256,
             depth: 15,
             fail_on_revert: false,
@@ -137,10 +138,10 @@ pub fn test_opts() -> TestOptions {
                 max_fuzz_dictionary_values: 10_000,
             },
             shrink_sequence: true,
-        },
-        inline_fuzz: Default::default(),
-        inline_invariant: Default::default(),
-    }
+            shrink_run_limit: 2usize.pow(18u32),
+        })
+        .build(&COMPILED, &PROJECT.paths.root)
+        .expect("Config loaded")
 }
 
 pub fn manifest_root() -> &'static Path {
@@ -176,6 +177,7 @@ pub async fn runner_with_config(mut config: Config) -> MultiContractRunner {
     let env = opts.evm_env().await.expect("could not instantiate fork environment");
     let output = COMPILED.clone();
     base_runner()
+        .with_test_options(test_opts())
         .with_cheats_config(CheatsConfig::new(&config, opts.clone()))
         .sender(config.sender)
         .build(root, output, env, opts.clone())

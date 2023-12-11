@@ -7,6 +7,7 @@ use serde_json::Value;
 use std::{collections::BTreeMap, path::Path};
 
 /// Convenient struct to hold in-line per-test configurations
+#[derive(Debug)]
 pub struct NatSpec {
     /// The parent contract of the natspec
     pub contract: String,

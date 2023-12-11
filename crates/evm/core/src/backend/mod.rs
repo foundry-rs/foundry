@@ -35,7 +35,7 @@ mod in_memory_db;
 pub use in_memory_db::{EmptyDBWrapper, FoundryEvmInMemoryDB, MemDb};
 
 mod snapshot;
-pub use snapshot::{BackendSnapshot, StateSnapshot};
+pub use snapshot::{BackendSnapshot, RevertSnapshotAction, StateSnapshot};
 
 // A `revm::Database` that is used in forking mode
 type ForkDB = CacheDB<SharedBackend>;
@@ -76,13 +76,25 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// since the snapshots was created. This way we can show logs that were emitted between
     /// snapshot and its revert.
     /// This will also revert any changes in the `Env` and replace it with the captured `Env` of
-    /// `Self::snapshot`
+    /// `Self::snapshot`.
+    ///
+    /// Depending on [RevertSnapshotAction] it will keep the snapshot alive or delete it.
     fn revert(
         &mut self,
         id: U256,
         journaled_state: &JournaledState,
         env: &mut Env,
+        action: RevertSnapshotAction,
     ) -> Option<JournaledState>;
+
+    /// Deletes the snapshot with the given `id`
+    ///
+    /// Returns `true` if the snapshot was successfully deleted, `false` if no snapshot for that id
+    /// exists.
+    fn delete_snapshot(&mut self, id: U256) -> bool;
+
+    /// Deletes all snapshots.
+    fn delete_snapshots(&mut self);
 
     /// Creates and also selects a new fork
     ///
@@ -771,6 +783,13 @@ impl Backend {
         self.inner.precompiles().contains(addr)
     }
 
+    /// Sets the initial journaled state to use when initializing forks
+    #[inline]
+    fn set_init_journaled_state(&mut self, journaled_state: JournaledState) {
+        trace!("recording fork init journaled_state");
+        self.fork_init_journaled_state = journaled_state;
+    }
+
     /// Cleans up already loaded accounts that would be initialized without the correct data from
     /// the fork.
     ///
@@ -794,10 +813,21 @@ impl Backend {
             let mut journaled_state = self.fork_init_journaled_state.clone();
             for loaded_account in loaded_accounts.iter().copied() {
                 trace!(?loaded_account, "replacing account on init");
-                let fork_account = Database::basic(&mut fork.db, loaded_account)?
-                    .ok_or(DatabaseError::MissingAccount(loaded_account))?;
                 let init_account =
                     journaled_state.state.get_mut(&loaded_account).expect("exists; qed");
+
+                // here's an edge case where we need to check if this account has been created, in
+                // which case we don't need to replace it with the account from the fork because the
+                // created account takes precedence: for example contract creation in setups
+                if init_account.is_created() {
+                    trace!(?loaded_account, "skipping created account");
+                    continue
+                }
+
+                // otherwise we need to replace the account's info with the one from the fork's
+                // database
+                let fork_account = Database::basic(&mut fork.db, loaded_account)?
+                    .ok_or(DatabaseError::MissingAccount(loaded_account))?;
                 init_account.info = fork_account;
             }
             fork.journaled_state = journaled_state;
@@ -901,11 +931,14 @@ impl DatabaseExt for Backend {
         id: U256,
         current_state: &JournaledState,
         current: &mut Env,
+        action: RevertSnapshotAction,
     ) -> Option<JournaledState> {
         trace!(?id, "revert snapshot");
         if let Some(mut snapshot) = self.inner.snapshots.remove_at(id) {
             // Re-insert snapshot to persist it
-            self.inner.snapshots.insert_at(snapshot.clone(), id);
+            if action.is_keep() {
+                self.inner.snapshots.insert_at(snapshot.clone(), id);
+            }
             // need to check whether there's a global failure which means an error occurred either
             // during the snapshot or even before
             if self.is_global_failure(current_state) {
@@ -950,6 +983,14 @@ impl DatabaseExt for Backend {
             warn!(target: "backend", "No snapshot to revert for {}", id);
             None
         }
+    }
+
+    fn delete_snapshot(&mut self, id: U256) -> bool {
+        self.inner.snapshots.remove_at(id).is_some()
+    }
+
+    fn delete_snapshots(&mut self) {
+        self.inner.snapshots.clear()
     }
 
     fn create_fork(&mut self, mut create_fork: CreateFork) -> eyre::Result<LocalForkId> {
@@ -1044,8 +1085,8 @@ impl DatabaseExt for Backend {
             // different forks. Since the `JournaledState` is valid for all forks until the
             // first fork is selected, we need to update it for all forks and use it as init state
             // for all future forks
-            trace!("recording fork init journaled_state");
-            self.fork_init_journaled_state = active_journaled_state.clone();
+
+            self.set_init_journaled_state(active_journaled_state.clone());
             self.prepare_init_journal_state()?;
 
             // Make sure that the next created fork has a depth of 0.

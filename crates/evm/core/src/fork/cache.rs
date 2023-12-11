@@ -14,7 +14,6 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-
 use url::Url;
 
 pub type StorageInfo = Map<U256, U256>;
@@ -154,10 +153,10 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
     where
         D: Deserializer<'de>,
     {
-        /// A backwards compatible representation of [revm::CfgEnv]
+        /// A backwards compatible representation of [revm::primitives::CfgEnv]
         ///
         /// This prevents deserialization errors of cache files caused by breaking changes to the
-        /// default [revm::CfgEnv], for example enabling an optional feature.
+        /// default [revm::primitives::CfgEnv], for example enabling an optional feature.
         /// By hand rolling deserialize impl we can prevent cache file issues
         struct CfgEnvBackwardsCompat {
             inner: revm::primitives::CfgEnv,
@@ -172,27 +171,12 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
 
                 // we check for breaking changes here
                 if let Some(obj) = value.as_object_mut() {
-                    // additional field `disable_eip3607` enabled by the `optional_eip3607` feature
-                    let key = "disable_eip3607";
-                    if !obj.contains_key(key) {
-                        obj.insert(key.to_string(), true.into());
-                    }
-                    // additional field `disable_block_gas_limit` enabled by the
-                    // `optional_block_gas_limit` feature
-                    let key = "disable_block_gas_limit";
-                    if !obj.contains_key(key) {
-                        // keep default value
-                        obj.insert(key.to_string(), false.into());
-                    }
-                    let key = "disable_base_fee";
-                    if !obj.contains_key(key) {
-                        // keep default value
-                        obj.insert(key.to_string(), false.into());
-                    }
-                    let key = "optimism";
-                    if !obj.contains_key(key) {
-                        // keep default value
-                        obj.insert(key.to_string(), false.into());
+                    let default_value =
+                        serde_json::to_value(revm::primitives::CfgEnv::default()).unwrap();
+                    for (key, value) in default_value.as_object().unwrap() {
+                        if !obj.contains_key(key) {
+                            obj.insert(key.to_string(), value.clone());
+                        }
                     }
                 }
 
@@ -202,11 +186,44 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
             }
         }
 
+        /// A backwards compatible representation of [revm::primitives::BlockEnv]
+        ///
+        /// This prevents deserialization errors of cache files caused by breaking changes to the
+        /// default [revm::primitives::BlockEnv], for example enabling an optional feature.
+        /// By hand rolling deserialize impl we can prevent cache file issues
+        struct BlockEnvBackwardsCompat {
+            inner: revm::primitives::BlockEnv,
+        }
+
+        impl<'de> Deserialize<'de> for BlockEnvBackwardsCompat {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let mut value = serde_json::Value::deserialize(deserializer)?;
+
+                // we check for any missing fields here
+                if let Some(obj) = value.as_object_mut() {
+                    let default_value =
+                        serde_json::to_value(revm::primitives::BlockEnv::default()).unwrap();
+                    for (key, value) in default_value.as_object().unwrap() {
+                        if !obj.contains_key(key) {
+                            obj.insert(key.to_string(), value.clone());
+                        }
+                    }
+                }
+
+                let cfg_env: revm::primitives::BlockEnv =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(Self { inner: cfg_env })
+            }
+        }
+
         // custom deserialize impl to not break existing cache files
         #[derive(Deserialize)]
         struct Meta {
             cfg_env: CfgEnvBackwardsCompat,
-            block_env: revm::primitives::BlockEnv,
+            block_env: BlockEnvBackwardsCompat,
             /// all the hosts used to connect to
             #[serde(alias = "host")]
             hosts: Hosts,
@@ -222,7 +239,7 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
         let Meta { cfg_env, block_env, hosts } = Meta::deserialize(deserializer)?;
         Ok(Self {
             cfg_env: cfg_env.inner,
-            block_env,
+            block_env: block_env.inner,
             hosts: match hosts {
                 Hosts::Multi(hosts) => hosts,
                 Hosts::Single(host) => BTreeSet::from([host]),
@@ -530,6 +547,63 @@ mod tests {
         assert_eq!(cache.data.accounts.read().len(), 1);
         assert_eq!(cache.data.storage.read().len(), 1);
         assert_eq!(cache.data.block_hashes.read().len(), 5);
+
+        let _s = serde_json::to_string(&cache).unwrap();
+    }
+
+    #[test]
+    fn can_deserialize_cache_post_4844() {
+        let s = r#"{
+    "meta": {
+        "cfg_env": {
+            "chain_id": 1,
+            "spec_id": "LATEST",
+            "perf_analyse_created_bytecodes": "Analyse",
+            "limit_contract_code_size": 18446744073709551615,
+            "memory_limit": 134217728,
+            "disable_block_gas_limit": false,
+            "disable_eip3607": true,
+            "disable_base_fee": false,
+            "optimism": false
+        },
+        "block_env": {
+            "number": "0x11c99bc",
+            "coinbase": "0x4838b106fce9647bdf1e7877bf73ce8b0bad5f97",
+            "timestamp": "0x65627003",
+            "gas_limit": "0x1c9c380",
+            "basefee": "0x64288ff1f",
+            "difficulty": "0xc6b1a299886016dea3865689f8393b9bf4d8f4fe8c0ad25f0058b3569297c057",
+            "prevrandao": "0xc6b1a299886016dea3865689f8393b9bf4d8f4fe8c0ad25f0058b3569297c057",
+            "blob_excess_gas_and_price": {
+                "excess_blob_gas": 0,
+                "blob_gasprice": 1
+            }
+        },
+        "hosts": [
+            "eth-mainnet.alchemyapi.io"
+        ]
+    },
+    "accounts": {
+        "0x4838b106fce9647bdf1e7877bf73ce8b0bad5f97": {
+            "balance": "0x8e0c373cfcdfd0eb",
+            "nonce": 128912,
+            "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+            "code": {
+                "bytecode": "0x000000000000000000000000000000000000000000000000000000000000000000",
+                "state": {
+                    "Checked": {
+                        "len": 0
+                    }
+                }
+            }
+        }
+    },
+    "storage": {},
+    "block_hashes": {}
+}"#;
+
+        let cache: JsonBlockCacheData = serde_json::from_str(s).unwrap();
+        assert_eq!(cache.data.accounts.read().len(), 1);
 
         let _s = serde_json::to_string(&cache).unwrap();
     }
