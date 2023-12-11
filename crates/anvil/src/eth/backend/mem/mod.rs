@@ -419,7 +419,7 @@ impl Backend {
                     timestamp: fork_block.header.timestamp,
                     gas_limit: fork_block.header.gas_limit,
                     difficulty: fork_block.header.difficulty,
-                    prevrandao: Some(fork_block.header.mix_hash),
+                    prevrandao: fork_block.header.mix_hash,
                     // Keep previous `coinbase` and `basefee` value
                     coinbase: env.block.coinbase,
                     basefee: env.block.basefee,
@@ -700,7 +700,7 @@ impl Backend {
                 timestamp: block.header.timestamp,
                 difficulty: block.header.difficulty,
                 // ensures prevrandao is set
-                prevrandao: Some(block.header.mix_hash),
+                prevrandao: block.header.mix_hash,
                 gas_limit: block.header.gas_limit,
                 // Keep previous `coinbase` and `basefee` value
                 coinbase: env.block.coinbase,
@@ -1580,7 +1580,7 @@ impl Backend {
                 logs_bloom: Bloom::from_slice(logs_bloom.as_bytes()),
                 timestamp: U256::from(timestamp),
                 difficulty: difficulty.to_alloy(),
-                mix_hash: mix_hash.to_alloy(),
+                mix_hash: Some(mix_hash.to_alloy()),
                 nonce: Some(B64::from_slice(nonce.as_bytes())),
                 base_fee_per_gas: base_fee_per_gas.map(|f| f.to_alloy()),
                 withdrawals_root: None,

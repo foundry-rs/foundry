@@ -63,7 +63,7 @@ pub async fn environment<P: TempProvider>(
             timestamp: block.header.timestamp,
             coinbase: block.header.miner,
             difficulty: block.header.difficulty,
-            prevrandao: Some(block.header.mix_hash),
+            prevrandao: block.header.mix_hash,
             basefee: block.header.base_fee_per_gas.unwrap_or_default(),
             gas_limit: block.header.gas_limit,
             ..Default::default()

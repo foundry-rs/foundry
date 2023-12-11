@@ -1213,7 +1213,7 @@ impl DatabaseExt for Backend {
         env.block.timestamp = block.header.timestamp;
         env.block.coinbase = block.header.miner;
         env.block.difficulty = block.header.difficulty;
-        env.block.prevrandao = Some(block.header.mix_hash);
+        env.block.prevrandao = block.header.mix_hash;
         env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
         env.block.gas_limit = block.header.gas_limit;
         env.block.number = block.header.number.map(|n| n.to()).unwrap_or(fork_block.to());
