@@ -7,7 +7,7 @@ mod ganache;
 mod gas;
 mod genesis;
 mod geth;
-// mod ipc;
+mod ipc;
 mod logs;
 mod optimism;
 mod proof;
