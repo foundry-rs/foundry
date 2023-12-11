@@ -6,7 +6,6 @@
 
 #[macro_use]
 extern crate tracing;
-
 use alloy_primitives::{Log, U256};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
@@ -30,8 +29,6 @@ pub use reth_revm_inspectors::tracing::{
     CallTraceArena, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType, TracingInspector,
     TracingInspectorConfig,
 };
-
-pub mod utils;
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 

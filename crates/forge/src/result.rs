@@ -1,4 +1,4 @@
-//! test outcomes
+//! Test outcomes.
 
 use alloy_primitives::Address;
 use ethers_core::types::Log;

@@ -55,7 +55,7 @@ pub mod empty_params {
 /// A module that deserializes either a BlockNumberOrTag, or a simple number.
 pub mod lenient_block_number {
     use alloy_rpc_types::BlockNumberOrTag;
-    use serde::{Deserializer, Deserialize};
+    use serde::{Deserialize, Deserializer};
     /// Following the spec the block parameter is either:
     ///
     /// > HEX String - an integer block number
@@ -69,8 +69,8 @@ pub mod lenient_block_number {
     ///
     /// <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1898.md>
     ///
-    /// EIP-1898 does not all calls that use `BlockNumber` like `eth_getBlockByNumber` and doesn't list
-    /// raw integers as supported.
+    /// EIP-1898 does not all calls that use `BlockNumber` like `eth_getBlockByNumber` and doesn't
+    /// list raw integers as supported.
     ///
     /// However, there are dev node implementations that support integers, such as ganache: <https://github.com/foundry-rs/foundry/issues/1868>
     ///

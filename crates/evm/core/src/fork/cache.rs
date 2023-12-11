@@ -189,6 +189,11 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
                         // keep default value
                         obj.insert(key.to_string(), false.into());
                     }
+                    let key = "optimism";
+                    if !obj.contains_key(key) {
+                        // keep default value
+                        obj.insert(key.to_string(), false.into());
+                    }
                 }
 
                 let cfg_env: revm::primitives::CfgEnv =
@@ -405,21 +410,10 @@ impl Serialize for JsonBlockCacheData {
     {
         let mut map = serializer.serialize_map(Some(4))?;
 
-        let meta = self.meta.read();
-        map.serialize_entry("meta", &*meta)?;
-        drop(meta);
-
-        let accounts = self.data.accounts.read();
-        map.serialize_entry("accounts", &*accounts)?;
-        drop(accounts);
-
-        let storage = self.data.storage.read();
-        map.serialize_entry("storage", &*storage)?;
-        drop(storage);
-
-        let block_hashes = self.data.block_hashes.read();
-        map.serialize_entry("block_hashes", &*block_hashes)?;
-        drop(block_hashes);
+        map.serialize_entry("meta", &*self.meta.read())?;
+        map.serialize_entry("accounts", &*self.data.accounts.read())?;
+        map.serialize_entry("storage", &*self.data.storage.read())?;
+        map.serialize_entry("block_hashes", &*self.data.block_hashes.read())?;
 
         map.end()
     }

@@ -14,9 +14,12 @@ use forge::{
     traces::{CallTraceDecoder, Traces},
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
-use foundry_common::{provider::ethers::RpcUrl, shell};
+use foundry_common::{
+    provider::ethers::RpcUrl,
+    shell,
+    types::{ToAlloy, ToEthers},
+};
 use foundry_compilers::artifacts::CompactContractBytecode;
-use foundry_utils::types::ToEthers;
 use futures::future::join_all;
 use parking_lot::RwLock;
 use std::{collections::VecDeque, sync::Arc};
@@ -52,7 +55,7 @@ impl ScriptArgs {
         let mut runner = self.prepare_runner(script_config, sender, SimulationStage::Local).await;
         let (address, mut result) = runner.setup(
             predeploy_libraries,
-            bytecode.0.into(),
+            bytecode,
             needs_setup(&abi),
             script_config.sender_nonce,
             self.broadcast,
@@ -64,7 +67,7 @@ impl ScriptArgs {
 
         // Only call the method if `setUp()` succeeded.
         if result.success {
-            let script_result = runner.script(address, calldata.0.into())?;
+            let script_result = runner.script(address, calldata)?;
 
             result.success &= script_result.success;
             result.gas_used = script_result.gas_used;
@@ -153,7 +156,7 @@ impl ScriptArgs {
                                 "Transaction doesn't have a `from` address at execution time",
                             ).to_alloy(),
                             tx.to.clone(),
-                            tx.data.clone().map(|b| b.0.into()),
+                            tx.data.clone().map(|b| b.to_alloy()),
                             tx.value.map(|v| v.to_alloy()),
                         )
                         .expect("Internal EVM error");

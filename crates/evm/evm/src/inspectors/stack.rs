@@ -10,8 +10,7 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
     interpreter::{
-        return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, SharedMemory,
-        Stack,
+        return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Stack,
     },
     primitives::{BlockEnv, Env},
     EVMData, Inspector,
@@ -192,7 +191,7 @@ pub struct InspectorData {
     pub coverage: Option<HitMaps>,
     pub cheatcodes: Option<Cheatcodes>,
     pub script_wallets: Vec<LocalWallet>,
-    pub chisel_state: Option<(Stack, SharedMemory, InstructionResult)>,
+    pub chisel_state: Option<(Stack, Vec<u8>, InstructionResult)>,
 }
 
 /// An inspector that calls multiple inspectors in sequence.

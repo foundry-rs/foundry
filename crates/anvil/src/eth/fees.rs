@@ -4,8 +4,8 @@ use crate::eth::{
 };
 use anvil_core::eth::transaction::TypedTransaction;
 use ethers::types::{H256, U256};
+use foundry_common::types::ToAlloy;
 use foundry_evm::revm::primitives::SpecId;
-use foundry_utils::types::ToAlloy;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use std::{
@@ -257,6 +257,7 @@ impl FeeHistoryService {
                             .max_priority_fee_per_gas
                             .min(t.max_fee_per_gas.saturating_sub(base_fee))
                             .as_u64(),
+                        Some(TypedTransaction::Deposit(_)) => 0,
                         None => 0,
                     };
 

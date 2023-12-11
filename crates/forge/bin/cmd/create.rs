@@ -18,9 +18,13 @@ use foundry_cli::{
     opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
-use foundry_common::{compile, fmt::parse_tokens, provider::ethers::estimate_eip1559_fees};
+use foundry_common::{
+    compile,
+    fmt::parse_tokens,
+    provider::ethers::estimate_eip1559_fees,
+    types::{ToAlloy, ToEthers},
+};
 use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalized};
-use foundry_utils::types::{ToAlloy, ToEthers};
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc};
 
@@ -58,6 +62,13 @@ pub struct CreateArgs {
     /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
     #[clap(long, requires = "from")]
     unlocked: bool,
+
+    /// Prints the standard json compiler input if `--verify` is provided.
+    ///
+    /// The standard json compiler input can be used to manually submit contract verification in
+    /// the browser.
+    #[clap(long, requires = "verify")]
+    show_standard_json_input: bool,
 
     #[clap(flatten)]
     opts: CoreBuildArgs,
@@ -180,7 +191,7 @@ impl CreateArgs {
             libraries: vec![],
             root: None,
             verifier: self.verifier.clone(),
-            show_standard_json_input: false,
+            show_standard_json_input: self.show_standard_json_input,
         };
         verify.verification_provider()?.preflight_check(verify).await?;
         Ok(())
@@ -201,7 +212,7 @@ impl CreateArgs {
             panic!("no bytecode found in bin object for {}", self.contract.name)
         });
         let provider = Arc::new(provider);
-        let factory = ContractFactory::new(abi.clone(), bin.clone().0.into(), provider.clone());
+        let factory = ContractFactory::new(abi.clone(), bin.clone(), provider.clone());
 
         let is_args_empty = args.is_empty();
         let deployer =
@@ -212,8 +223,8 @@ impl CreateArgs {
                     e
                 }
             })?;
-        let is_legacy = self.tx.legacy
-            || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
+        let is_legacy = self.tx.legacy ||
+            Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
         let mut deployer = if is_legacy { deployer.legacy() } else { deployer };
 
         // set tx value if specified
@@ -319,7 +330,7 @@ impl CreateArgs {
             libraries: vec![],
             root: None,
             verifier: self.verifier,
-            show_standard_json_input: false,
+            show_standard_json_input: self.show_standard_json_input,
         };
         println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier);
         verify.run().await
@@ -553,8 +564,11 @@ where
         // create the tx object. Since we're deploying a contract, `to` is `None`
         // We default to EIP1559 transactions, but the sender can convert it back
         // to a legacy one.
-        let tx =
-            Eip1559TransactionRequest { to: None, data: Some(data.0.into()), ..Default::default() };
+        let tx = Eip1559TransactionRequest {
+            to: None,
+            data: Some(data.to_ethers()),
+            ..Default::default()
+        };
 
         let tx = tx.into();
 

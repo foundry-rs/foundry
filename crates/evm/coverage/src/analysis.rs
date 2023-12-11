@@ -528,7 +528,7 @@ impl SourceAnalyzer {
             //
             // The missing contracts are:
             //   1. libraries used in ancestors of this contracts
-            //   2. libraries used in libaries (i.e libs indirectly used by this contract)
+            //   2. libraries used in libraries (i.e libs indirectly used by this contract)
             //
             // We want to find out all the above contracts and libraries related to this contract.
 

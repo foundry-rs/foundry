@@ -209,10 +209,10 @@ impl TestArgs {
             filter.args_mut().test_pattern = self.debug.clone();
             let num_filtered = runner.matching_test_function_count(&filter);
             if num_filtered != 1 {
-                return Err(
-                        eyre::eyre!("{num_filtered} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
-                        \n
-                        Use --match-contract and --match-path to further limit the search."));
+                eyre::bail!(
+                    "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n\n\
+                     Use --match-contract and --match-path to further limit the search."
+                );
             }
             let test_funcs = runner.get_matching_test_functions(&filter);
             // if we debug a fuzz test, we should not collect data on the first run
@@ -422,7 +422,7 @@ impl Test {
 }
 
 /// Represents the bundled results of all tests
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TestOutcome {
     /// Whether failures are allowed
     pub allow_failure: bool,

@@ -45,7 +45,7 @@ impl InspectArgs {
 
         // Map field to ContractOutputSelection
         let mut cos = build.compiler.extra_output;
-        if !field.is_default() && !cos.iter().any(|selected| field.eq(selected)) {
+        if !field.is_default() && !cos.iter().any(|selected| field == *selected) {
             cos.push(field.into());
         }
 
@@ -183,6 +183,7 @@ impl InspectArgs {
                 let mut out = serde_json::Map::new();
                 if let Some(abi) = &artifact.abi {
                     let abi = &abi;
+
                     // print the signature of all events including anonymous
                     for ev in abi.events.iter().flat_map(|(_, events)| events) {
                         let types = ev.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
@@ -202,7 +203,7 @@ impl InspectArgs {
 
 pub fn print_abi(abi: &JsonAbi, pretty: bool) -> Result<()> {
     let s = if pretty {
-        foundry_utils::abi::abi_to_solidity(abi, "")?
+        foundry_cli::utils::abi_to_solidity(abi, "")?
     } else {
         serde_json::to_string_pretty(&abi)?
     };

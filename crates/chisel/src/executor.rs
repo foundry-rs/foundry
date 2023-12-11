@@ -10,12 +10,12 @@ use alloy_json_abi::EventParam;
 use alloy_primitives::{hex, Address, U256};
 use core::fmt::Debug;
 use eyre::{Result, WrapErr};
+use foundry_common::types::ToEthers;
 use foundry_compilers::Artifact;
 use foundry_evm::{
     backend::Backend, decode::decode_console_logs, executors::ExecutorBuilder,
     inspectors::CheatsConfig,
 };
-use foundry_utils::types::ToEthers;
 use solang_parser::pt::{self, CodeLocation};
 use std::str::FromStr;
 use yansi::Paint;
@@ -107,7 +107,7 @@ impl SessionSource {
                 let mut runner = self.prepare_runner(final_pc).await;
 
                 // Return [ChiselResult] or bubble up error
-                runner.run(bytecode.into_owned().0.into())
+                runner.run(bytecode.into_owned())
             } else {
                 // Return a default result if no statements are present.
                 Ok((Address::ZERO, ChiselResult::default()))
@@ -223,11 +223,10 @@ impl SessionSource {
         // the file compiled correctly, thus the last stack item must be the memory offset of
         // the `bytes memory inspectoor` value
         let mut offset = stack.data().last().unwrap().to_ethers().as_usize();
-        let mem = memory.context_memory();
-        let mem_offset = &mem[offset..offset + 32];
+        let mem_offset = &memory[offset..offset + 32];
         let len = U256::try_from_be_slice(mem_offset).unwrap().to::<usize>();
         offset += 32;
-        let data = &mem[offset..offset + len];
+        let data = &memory[offset..offset + len];
         // `tokens` is guaranteed to have the same length as the provided types
         let token =
             DynSolType::abi_decode(&ty, data).wrap_err("Could not decode inspected values")?;

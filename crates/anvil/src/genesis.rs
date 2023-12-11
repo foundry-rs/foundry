@@ -1,10 +1,7 @@
 //! Bindings for geth's `genesis.json` format
 use crate::revm::primitives::AccountInfo;
-use ethers::{
-    signers::LocalWallet,
-    types::serde_helpers::*,
-};
 use alloy_primitives::{Address, Bytes, B256, U256};
+use ethers::{signers::LocalWallet, types::serde_helpers::*};
 use foundry_common::errors::FsPathError;
 use foundry_evm::revm::primitives::{Bytecode, Env, KECCAK_EMPTY, U256 as rU256};
 use serde::{Deserialize, Serialize};
@@ -58,10 +55,7 @@ pub struct Genesis {
     pub gas_used: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_hash: Option<B256>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_fee_per_gas: Option<U256>,
 }
 

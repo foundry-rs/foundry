@@ -4,15 +4,15 @@ use crate::{
     genesis::Genesis,
     AccountGenerator, Hardfork, NodeConfig, CHAIN_ID,
 };
+use alloy_primitives::U256;
 use anvil_server::ServerConfig;
 use clap::Parser;
-use foundry_utils::types::ToAlloy;
 use core::fmt;
 use ethers::{
     signers::coins_bip39::{English, Mnemonic},
     utils::WEI_IN_ETHER,
 };
-use alloy_primitives::U256;
+use foundry_common::types::ToAlloy;
 use foundry_config::{Chain, Config};
 use futures::FutureExt;
 use rand::{rngs::StdRng, SeedableRng};
@@ -232,6 +232,7 @@ impl NodeArgs {
             .set_pruned_history(self.prune_history)
             .with_init_state(self.load_state.or_else(|| self.state.and_then(|s| s.state)))
             .with_transaction_block_keeper(self.transaction_block_keeper)
+            .with_optimism(self.evm_opts.optimism)
     }
 
     fn account_generator(&self) -> AccountGenerator {
@@ -502,6 +503,10 @@ pub struct AnvilEvmArgs {
     /// Enable autoImpersonate on startup
     #[clap(long, visible_alias = "auto-impersonate")]
     pub auto_impersonate: bool,
+
+    /// Run an Optimism chain
+    #[clap(long, visible_alias = "optimism")]
+    pub optimism: bool,
 }
 
 /// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section

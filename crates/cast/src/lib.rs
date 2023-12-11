@@ -15,9 +15,13 @@ use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
 use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::Client;
-use foundry_common::{abi::encode_function_args, fmt::*, TransactionReceiptWithRevertReason};
+use foundry_common::{
+    abi::encode_function_args,
+    fmt::*,
+    types::{ToAlloy, ToEthers},
+    TransactionReceiptWithRevertReason,
+};
 use foundry_config::Chain;
-use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
 use std::{
@@ -118,7 +122,7 @@ where
                         if let Some(NameOrAddress::Address(addr)) = tx.to() {
                             if let Ok(code) = self.provider.get_code(*addr, block).await {
                                 if code.is_empty() {
-                                    eyre::bail!("contract {addr:?} does not exist")
+                                    eyre::bail!("contract {addr:?} does not have any code")
                                 }
                             }
                         }
@@ -1630,7 +1634,7 @@ impl SimpleCast {
             .iter()
             .zip(contract_names)
             .map(|(contract_abi, name)| {
-                let source = foundry_utils::abi::abi_to_solidity(contract_abi, &name)?;
+                let source = foundry_cli::utils::abi_to_solidity(contract_abi, &name)?;
                 Ok(InterfaceSource {
                     name,
                     json_abi: serde_json::to_string_pretty(contract_abi)?,

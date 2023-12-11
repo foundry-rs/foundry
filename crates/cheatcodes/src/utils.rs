@@ -15,8 +15,8 @@ use ethers_signers::{
     },
     LocalWallet, MnemonicBuilder, Signer,
 };
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
-use foundry_utils::types::{ToAlloy, ToEthers};
 
 /// The BIP32 default derivation path prefix.
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -135,7 +135,7 @@ impl Cheatcode for computeCreate2Address_1Call {
 }
 
 /// Using a given private key, return its public ETH address, its public key affine x and y
-/// coodinates, and its private key (see the 'Wallet' struct)
+/// coordinates, and its private key (see the 'Wallet' struct)
 ///
 /// If 'label' is set to 'Some()', assign that label to the associated ETH address in state
 fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes) -> Result {

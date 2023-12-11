@@ -9,8 +9,7 @@ use crate::{
 use alloy_primitives::{b256, keccak256, Address, B256, U256, U64};
 use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
 use ethers::utils::GenesisAccount;
-use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
-use foundry_utils::types::ToAlloy;
+use foundry_common::{is_known_system_sender, types::ToAlloy, SYSTEM_TRANSACTION_TYPE};
 use revm::{
     db::{CacheDB, DatabaseRef},
     inspectors::NoOpInspector,
@@ -21,13 +20,7 @@ use revm::{
     },
     Database, DatabaseCommit, Inspector, JournaledState, EVM,
 };
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-};
+use std::collections::{HashMap, HashSet};
 
 mod diagnostic;
 pub use diagnostic::RevertDiagnostic;
@@ -563,11 +556,12 @@ impl Backend {
     ///
     /// This returns whether there was a reverted snapshot that recorded an error
     pub fn has_snapshot_failure(&self) -> bool {
-        self.inner.has_snapshot_failure.load(Ordering::Relaxed)
+        self.inner.has_snapshot_failure
     }
 
-    pub fn set_snapshot_failure(&self, has_snapshot_failure: bool) {
-        self.inner.has_snapshot_failure.store(has_snapshot_failure, Ordering::Relaxed);
+    /// Sets the snapshot failure flag.
+    pub fn set_snapshot_failure(&mut self, has_snapshot_failure: bool) {
+        self.inner.has_snapshot_failure = has_snapshot_failure
     }
 
     /// Checks if the test contract associated with this backend failed, See
@@ -777,8 +771,8 @@ impl Backend {
         self.inner.precompiles().contains(addr)
     }
 
-    /// Ths will clean up already loaded accounts that would be initialized without the correct data
-    /// from the fork
+    /// Cleans up already loaded accounts that would be initialized without the correct data from
+    /// the fork.
     ///
     /// It can happen that an account is loaded before the first fork is selected, like
     /// `getNonce(addr)`, which will load an empty account by default.
@@ -867,9 +861,9 @@ impl Backend {
                     continue;
                 }
 
-                if tx.hash.eq(&tx_hash) {
+                if tx.hash == tx_hash {
                     // found the target transaction
-                    return Ok(Some(tx));
+                    return Ok(Some(tx))
                 }
                 trace!(tx=?tx.hash, "committing transaction");
 
@@ -915,7 +909,7 @@ impl DatabaseExt for Backend {
             // need to check whether there's a global failure which means an error occurred either
             // during the snapshot or even before
             if self.is_global_failure(current_state) {
-                self.inner.has_snapshot_failure.store(true, Ordering::Relaxed);
+                self.set_snapshot_failure(true);
             }
 
             // merge additional logs
@@ -958,11 +952,22 @@ impl DatabaseExt for Backend {
         }
     }
 
-    fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<LocalForkId> {
+    fn create_fork(&mut self, mut create_fork: CreateFork) -> eyre::Result<LocalForkId> {
         trace!("create fork");
-        let (fork_id, fork, _) = self.forks.create_fork(fork)?;
-        let fork_db = ForkDB::new(fork);
+        let (fork_id, fork, _) = self.forks.create_fork(create_fork.clone())?;
 
+        // Check for an edge case where the fork_id already exists, which would mess with the
+        // internal mappings. This can happen when two forks are created with the same
+        // endpoint and block number <https://github.com/foundry-rs/foundry/issues/5935>
+        // This is a hacky solution but a simple fix to ensure URLs are unique
+        if self.inner.contains_fork(&fork_id) {
+            // ensure URL is unique
+            create_fork.url.push('/');
+            debug!(?fork_id, "fork id already exists. making unique");
+            return self.create_fork(create_fork)
+        }
+
+        let fork_db = ForkDB::new(fork);
         let (id, _) =
             self.inner.insert_new_fork(fork_id, fork_db, self.fork_init_journaled_state.clone());
         Ok(id)
@@ -1505,7 +1510,7 @@ pub struct BackendInner {
     /// reverted we get the _current_ `revm::JournaledState` which contains the state that we can
     /// check if the `_failed` variable is set,
     /// additionally
-    pub has_snapshot_failure: Arc<AtomicBool>,
+    pub has_snapshot_failure: bool,
     /// Tracks the address of a Test contract
     ///
     /// This address can be used to inspect the state of the contract when a test is being
@@ -1530,6 +1535,11 @@ pub struct BackendInner {
 // === impl BackendInner ===
 
 impl BackendInner {
+    /// Returns `true` if the given [ForkId] already exists.
+    fn contains_fork(&self, id: &ForkId) -> bool {
+        self.created_forks.contains_key(id)
+    }
+
     pub fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId> {
         self.issued_local_fork_ids
             .get(&id)
@@ -1719,7 +1729,7 @@ impl Default for BackendInner {
             created_forks: Default::default(),
             forks: vec![],
             snapshots: Default::default(),
-            has_snapshot_failure: Arc::new(AtomicBool::new(false)),
+            has_snapshot_failure: false,
             test_contract_address: None,
             caller: None,
             next_fork_id: Default::default(),

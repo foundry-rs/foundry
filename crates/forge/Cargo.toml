@@ -24,7 +24,6 @@ foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["full"] }
 foundry-config.workspace = true
 foundry-evm.workspace = true
-foundry-utils.workspace = true
 
 ethers-contract.workspace = true
 ethers-core.workspace = true
@@ -71,7 +70,9 @@ solang-parser.workspace = true
 strum = { version = "0.25", features = ["derive"] }
 thiserror = "1"
 tokio = { version = "1", features = ["time"] }
-watchexec = "2"
+watchexec = "=2.3.0"
+watchexec-events = "=1.0.0"
+watchexec-signals = "=1.0.0"
 
 # doc server
 axum = { workspace = true, features = ["ws"] }
@@ -85,6 +86,7 @@ foundry-test-utils.workspace = true
 
 criterion = "0.5"
 globset = "0.4"
+paste = "1.0"
 path-slash = "0.2"
 pretty_assertions.workspace = true
 serial_test = "2"

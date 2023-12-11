@@ -11,10 +11,13 @@ use alloy_primitives::{Address, TxHash};
 use ethers_core::types::{transaction::eip2718::TypedTransaction, TransactionReceipt};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_cli::utils::now;
-use foundry_common::{fs, shell, SELECTOR_LEN};
+use foundry_common::{
+    fs, shell,
+    types::{ToAlloy, ToEthers},
+    SELECTOR_LEN,
+};
 use foundry_compilers::{artifacts::Libraries, ArtifactId};
 use foundry_config::Config;
-use foundry_utils::types::{ToAlloy, ToEthers};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
@@ -244,6 +247,20 @@ impl ScriptSequence {
         cache.push(format!("{filename}-latest.json"));
 
         Ok((broadcast, cache))
+    }
+
+    /// Checks that there is an Etherscan key for the chain id of this sequence.
+    pub fn verify_preflight_check(&self, config: &Config, verify: &VerifyBundle) -> Result<()> {
+        if config.get_etherscan_api_key(Some(self.chain.into())).is_none() &&
+            verify.verifier.verifier == VerificationProviderType::Etherscan
+        {
+            eyre::bail!(
+                "Etherscan API key wasn't found for chain id {}. On-chain execution aborted",
+                self.chain
+            )
+        }
+
+        Ok(())
     }
 
     /// Given the broadcast log, it matches transactions with receipts, and tries to verify any

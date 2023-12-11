@@ -16,44 +16,48 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EvmOpts {
+    /// The EVM environment configuration.
     #[serde(flatten)]
     pub env: Env,
 
-    /// Fetch state over a remote instead of starting from empty state
+    /// Fetch state over a remote instead of starting from empty state.
     #[serde(rename = "eth_rpc_url")]
     pub fork_url: Option<RpcUrl>,
 
-    /// pins the block number for the state fork
+    /// Pins the block number for the state fork.
     pub fork_block_number: Option<u64>,
 
-    /// The number of retries
+    /// The number of retries.
     pub fork_retries: Option<u32>,
 
-    /// initial retry backoff
+    /// Initial retry backoff.
     pub fork_retry_backoff: Option<u64>,
 
-    /// The available compute units per second
+    /// The available compute units per second.
+    ///
+    /// See also <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     pub compute_units_per_second: Option<u64>,
 
-    /// Disables rate limiting entirely.
+    /// Disables RPC rate limiting entirely.
     pub no_rpc_rate_limit: bool,
 
     /// Disables storage caching entirely.
     pub no_storage_caching: bool,
 
-    /// the initial balance of each deployed test contract
+    /// The initial balance of each deployed test contract.
     pub initial_balance: U256,
 
-    /// the address which will be executing all tests
+    /// The address which will be executing all tests.
     pub sender: Address,
 
-    /// enables the FFI cheatcode
+    /// Enables the FFI cheatcode.
     pub ffi: bool,
 
-    /// Verbosity mode of EVM output as number of occurrences
+    /// Verbosity mode of EVM output as number of occurrences.
     pub verbosity: u8,
 
-    /// The memory limit of the EVM in bytes.
+    /// The memory limit per EVM execution in bytes.
+    /// If this limit is exceeded, a `MemoryLimitOOG` result is thrown.
     pub memory_limit: u64,
 }
 

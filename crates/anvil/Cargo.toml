@@ -26,11 +26,12 @@ anvil-server = { path = "server" }
 foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
-foundry-utils.workspace = true
 
 # evm support
 bytes = "1.4.0"
-ethers = { workspace = true, features = ["rustls", "ws", "ipc"] }
+# needed as documented in https://github.com/foundry-rs/foundry/pull/6358
+k256 = "=0.13.1"
+ethers = { workspace = true, features = ["rustls", "ws", "ipc", "optimism"] }
 trie-db = "0.23"
 hash-db = "0.15"
 memory-db = "0.29"
@@ -80,6 +81,7 @@ ethereum-forkid = "0.12"
 
 [dev-dependencies]
 ethers = { workspace = true, features = ["abigen"] }
+ethers-core = { workspace = true, features = ["optimism"] }
 ethers-solc = { workspace = true, features = ["project-util", "full"] }
 pretty_assertions = "1.3.0"
 tokio = { version = "1", features = ["full"] }

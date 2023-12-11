@@ -1,3 +1,5 @@
+//! The Forge test runner.
+
 use crate::{
     result::{SuiteResult, TestKind, TestResult, TestSetup, TestStatus},
     TestFilter, TestOptions,
@@ -183,7 +185,7 @@ impl<'a> ContractRunner<'a> {
         let needs_setup = setup_fns.len() == 1 && setup_fns[0].name == "setUp";
 
         // There is a single miss-cased `setUp` function, so we add a warning
-        for setup_fn in setup_fns.iter() {
+        for &setup_fn in setup_fns.iter() {
             if setup_fn.name != "setUp" {
                 warnings.push(format!(
                     "Found invalid setup function \"{}\" did you mean \"setUp()\"?",
@@ -387,8 +389,10 @@ impl<'a> ContractRunner<'a> {
         // Record test execution time
         debug!(
             duration = ?start.elapsed(),
-            %success,
-            %gas
+            gas,
+            reverted,
+            should_fail,
+            success,
         );
 
         TestResult {
@@ -554,7 +558,7 @@ impl<'a> ContractRunner<'a> {
         // Run fuzz test
         let start = Instant::now();
         let fuzzed_executor =
-            FuzzedExecutor::new(&self.executor, runner.clone(), self.sender, fuzz_config);
+            FuzzedExecutor::new(self.executor.clone(), runner.clone(), self.sender, fuzz_config);
         let state = fuzzed_executor.build_fuzz_state();
         let mut result = fuzzed_executor.fuzz(func, address, should_fail, self.errors);
 
@@ -594,7 +598,7 @@ impl<'a> ContractRunner<'a> {
             };
             // rerun the last relevant test with traces
             let debug_result = FuzzedExecutor::new(
-                &debug_executor,
+                debug_executor,
                 runner,
                 self.sender,
                 fuzz_config,

@@ -16,6 +16,7 @@ sol! {
 
 /// Foundry cheatcodes interface.
 #[derive(Debug, Cheatcode)] // Keep this list small to avoid unnecessary bloat.
+#[sol(abi)]
 interface Vm {
     //  ======== Types ========
 
@@ -34,6 +35,24 @@ interface Vm {
         Prank,
         /// A recurrent prank triggered by a `vm.startPrank()` call is currently active.
         RecurrentPrank,
+    }
+
+    /// The kind of account access that occurred.
+    enum AccountAccessKind {
+        /// The account was called.
+        Call,
+        /// The account was called via delegatecall.
+        DelegateCall,
+        /// The account was called via callcode.
+        CallCode,
+        /// The account was called via staticcall.
+        StaticCall,
+        /// The account was created.
+        Create,
+        /// The account was selfdestructed.
+        SelfDestruct,
+        /// Synthetic access indicating the current context has resumed after a previous sub-context (AccountAccess).
+        Resume,
     }
 
     /// An Ethereum log. Returned by `getRecordedLogs`.
@@ -134,6 +153,66 @@ interface Vm {
         bytes stderr;
     }
 
+    /// Information on the chain and fork.
+    struct ChainInfo {
+        /// The fork identifier. Set to zero if no fork is active.
+        uint256 forkId;
+        /// The chain ID of the current fork.
+        uint256 chainId;
+    }
+
+    /// The result of a `stopAndReturnStateDiff` call.
+    struct AccountAccess {
+        /// The chain and fork the access occurred.
+        ChainInfo chainInfo;
+        /// The kind of account access that determines what the account is.
+        /// If kind is Call, DelegateCall, StaticCall or CallCode, then the account is the callee.
+        /// If kind is Create, then the account is the newly created account.
+        /// If kind is SelfDestruct, then the account is the selfdestruct recipient.
+        /// If kind is a Resume, then account represents a account context that has resumed.
+        AccountAccessKind kind;
+        /// The account that was accessed.
+        /// It's either the account created, callee or a selfdestruct recipient for CREATE, CALL or SELFDESTRUCT.
+        address account;
+        /// What accessed the account.
+        address accessor;
+        /// If the account was initialized or empty prior to the access.
+        /// An account is considered initialized if it has code, a
+        /// non-zero nonce, or a non-zero balance.
+        bool initialized;
+        /// The previous balance of the accessed account.
+        uint256 oldBalance;
+        /// The potential new balance of the accessed account.
+        /// That is, all balance changes are recorded here, even if reverts occurred.
+        uint256 newBalance;
+        /// Code of the account deployed by CREATE.
+        bytes deployedCode;
+        /// Value passed along with the account access
+        uint256 value;
+        /// Input data provided to the CREATE or CALL
+        bytes data;
+        /// If this access reverted in either the current or parent context.
+        bool reverted;
+        /// An ordered list of storage accesses made during an account access operation.
+        StorageAccess[] storageAccesses;
+    }
+
+    /// The storage accessed during an `AccountAccess`.
+    struct StorageAccess {
+        /// The account whose storage was accessed.
+        address account;
+        /// The slot that was accessed.
+        bytes32 slot;
+        /// If the access was a write.
+        bool isWrite;
+        /// The previous value of the slot.
+        bytes32 previousValue;
+        /// The new value of the slot.
+        bytes32 newValue;
+        /// If the access was reverted.
+        bool reverted;
+    }
+
     // ======== EVM ========
 
     /// Gets the address for a given private key.
@@ -165,6 +244,15 @@ interface Vm {
     /// Gets all accessed reads and write slot from a `vm.record` session, for a given address.
     #[cheatcode(group = Evm, safety = Safe)]
     function accesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
+
+    /// Record all account accesses as part of CREATE, CALL or SELFDESTRUCT opcodes in order,
+    /// along with the context of the calls
+    #[cheatcode(group = Evm, safety = Safe)]
+    function startStateDiffRecording() external;
+
+    /// Returns an ordered array of all account accesses from a `vm.startStateDiffRecording` session.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function stopAndReturnStateDiff() external returns (AccountAccess[] memory accesses);
 
     // -------- Recording Map Writes --------
 

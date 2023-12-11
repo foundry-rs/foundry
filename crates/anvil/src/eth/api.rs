@@ -45,7 +45,6 @@ use alloy_rpc_types::{
     Log,
     Transaction,
     TransactionReceipt,
-    TransactionRequest as AlloyTransactionRequest,
     TxpoolContent,
     TxpoolInspect,
     // trace::{geth::{DefaultFrame, GethDefaultTracingOptions, GethTrace},
@@ -59,8 +58,8 @@ use anvil_core::{
         block::BlockInfo,
         transaction::{
             call_to_internal_tx_request, to_alloy_proof, to_ethers_access_list,
-            to_internal_tx_request, EthTransactionRequest, LegacyTransaction, PendingTransaction,
-            TransactionKind, TypedTransaction, TypedTransactionRequest,
+            EthTransactionRequest, LegacyTransaction, PendingTransaction, TransactionKind,
+            TypedTransaction, TypedTransactionRequest,
         },
         EthRequest,
     },
@@ -72,6 +71,9 @@ use anvil_core::{
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{types::transaction::eip712::TypedData, utils::rlp};
 use foundry_common::provider::alloy::ProviderBuilder;
+use foundry_common::{
+    types::{ToAlloy, ToEthers},
+};
 use foundry_evm::{
     backend::DatabaseError,
     revm::{
@@ -80,7 +82,6 @@ use foundry_evm::{
         primitives::BlockEnv,
     },
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
 use reth_rpc_types::trace::{
@@ -429,10 +430,23 @@ impl EthApi {
         from: &Address,
         request: TypedTransactionRequest,
     ) -> Result<TypedTransaction> {
-        for signer in self.signers.iter() {
-            if signer.accounts().contains(&from.to_ethers()) {
-                let signature = signer.sign_transaction(request.clone(), &from.to_ethers())?;
-                return build_typed_transaction(request, signature);
+        match request {
+            TypedTransactionRequest::Deposit(_) => {
+                const NIL_SIGNATURE: ethers::types::Signature = ethers::types::Signature {
+                    r: ethers::types::U256::zero(),
+                    s: ethers::types::U256::zero(),
+                    v: 0,
+                };
+                return build_typed_transaction(request, NIL_SIGNATURE)
+            }
+            _ => {
+                for signer in self.signers.iter() {
+                    if signer.accounts().contains(&from.to_ethers()) {
+                        let signature =
+                            signer.sign_transaction(request.clone(), &from.to_ethers())?;
+                        return build_typed_transaction(request, signature)
+                    }
+                }
             }
         }
         Err(BlockchainError::NoSignerAvailable)
@@ -849,16 +863,23 @@ impl EthApi {
     /// Signs a transaction
     ///
     /// Handler for ETH RPC call: `eth_signTransaction`
-    pub async fn sign_transaction(&self, request: AlloyTransactionRequest) -> Result<String> {
+    pub async fn sign_transaction(&self, request: EthTransactionRequest) -> Result<String> {
         node_info!("eth_signTransaction");
 
-        let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
-        })?;
+        let from = request
+            .from
+            .map(Ok)
+            .unwrap_or_else(|| {
+                self.accounts()?
+                    .first()
+                    .cloned()
+                    .ok_or(BlockchainError::NoSignerAvailable)
+                    .map(|a| a.to_ethers())
+            })?
+            .to_alloy();
 
         let (nonce, _) = self.request_nonce(&request, from).await?;
 
-        let request = to_internal_tx_request(&request);
         let request = self.build_typed_tx_request(request, nonce)?;
 
         let signer = self.get_signer(from).ok_or(BlockchainError::NoSignerAvailable)?;
@@ -869,17 +890,23 @@ impl EthApi {
     /// Sends a transaction
     ///
     /// Handler for ETH RPC call: `eth_sendTransaction`
-    pub async fn send_transaction(&self, request: AlloyTransactionRequest) -> Result<TxHash> {
+    pub async fn send_transaction(&self, request: EthTransactionRequest) -> Result<TxHash> {
         node_info!("eth_sendTransaction");
 
-        let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
-        })?;
+        let from = request
+            .from
+            .map(Ok)
+            .unwrap_or_else(|| {
+                self.accounts()?
+                    .first()
+                    .cloned()
+                    .ok_or(BlockchainError::NoSignerAvailable)
+                    .map(|a| a.to_ethers())
+            })?
+            .to_alloy();
 
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
-        let request = to_internal_tx_request(&request);
         let request = self.build_typed_tx_request(request, nonce)?;
-
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
             let bypass_signature = self.backend.cheats().bypass_signature();
@@ -1263,7 +1290,7 @@ impl EthApi {
                 return fork
                     .fee_history(block_count, BlockNumber::Number(number), &reward_percentiles)
                     .await
-                    .map_err(|_| BlockchainError::DataUnavailable);
+                    .map_err(BlockchainError::AlloyForkProvider);
             }
         }
 
@@ -1290,7 +1317,7 @@ impl EthApi {
             oldest_block: U256::from(lowest),
             base_fee_per_gas: Vec::new(),
             gas_used_ratio: Vec::new(),
-            reward: Default::default(),
+            reward: Some(Default::default()),
         };
 
         let mut rewards = Vec::new();
@@ -1694,7 +1721,7 @@ impl EthApi {
         Ok(())
     }
 
-    /// Create a bufer that represents all state on the chain, which can be loaded to separate
+    /// Create a buffer that represents all state on the chain, which can be loaded to separate
     /// process by calling `anvil_loadState`
     ///
     /// Handler for RPC call: `anvil_dumpState`
@@ -1738,7 +1765,7 @@ impl EthApi {
             },
             environment: NodeEnvironment {
                 base_fee: self.backend.base_fee(),
-                chain_id: self.backend.chain_id(),
+                chain_id: self.backend.chain_id().to::<u64>(),
                 gas_limit: self.backend.gas_limit(),
                 gas_price: self.backend.gas_price(),
             },
@@ -1762,19 +1789,20 @@ impl EthApi {
     pub async fn anvil_metadata(&self) -> Result<AnvilMetadata> {
         node_info!("anvil_metadata");
         let fork_config = self.backend.get_fork();
-        let chain_id_uint = U256::from(self.backend.chain_id().to::<u64>());
-        let latest_block_number_uint = U64::from(self.backend.best_number().to::<u64>());
+        let snapshots = self.backend.list_snapshots();
+
         Ok(AnvilMetadata {
             client_version: CLIENT_VERSION,
-            chain_id: chain_id_uint,
+            chain_id: self.backend.chain_id().to::<u64>(),
             latest_block_hash: self.backend.best_hash(),
-            latest_block_number: latest_block_number_uint,
+            latest_block_number: self.backend.best_number().to::<u64>(),
             instance_id: *self.instance_id.read(),
             forked_network: fork_config.map(|cfg| ForkedNetwork {
-                chain_id: U256::from(cfg.chain_id()),
-                fork_block_number: U64::from(cfg.block_number()),
+                chain_id: cfg.chain_id(),
+                fork_block_number: cfg.block_number(),
                 fork_block_hash: cfg.block_hash(),
             }),
+            snapshots,
         })
     }
 
@@ -1967,15 +1995,13 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_sendUnsignedTransaction`
     pub async fn eth_send_unsigned_transaction(
         &self,
-        request: AlloyTransactionRequest,
+        request: EthTransactionRequest,
     ) -> Result<TxHash> {
         node_info!("eth_sendUnsignedTransaction");
         // either use the impersonated account of the request's `from` field
-        let from = request.from.ok_or(BlockchainError::NoSignerAvailable)?;
+        let from = request.from.ok_or(BlockchainError::NoSignerAvailable)?.to_alloy();
 
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
-
-        let request = to_internal_tx_request(&request);
 
         let request = self.build_typed_tx_request(request, nonce)?;
 
@@ -2505,6 +2531,10 @@ impl EthApi {
                 }
                 TypedTransactionRequest::EIP1559(m)
             }
+            Some(TypedTransactionRequest::Deposit(mut m)) => {
+                m.gas_limit = gas_limit.to_ethers();
+                TypedTransactionRequest::Deposit(m)
+            }
             _ => return Err(BlockchainError::FailedToDecodeTransaction),
         };
         Ok(request)
@@ -2548,12 +2578,12 @@ impl EthApi {
     /// This will also check the tx pool for pending transactions from the sender.
     async fn request_nonce(
         &self,
-        request: &AlloyTransactionRequest,
+        request: &EthTransactionRequest,
         from: Address,
     ) -> Result<(U256, U256)> {
         let highest_nonce =
             self.get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending))).await?;
-        let nonce = request.nonce.map(U256::from).unwrap_or(highest_nonce);
+        let nonce = request.nonce.map(|n| n.to_alloy()).unwrap_or(highest_nonce);
 
         Ok((nonce, highest_nonce))
     }
@@ -2584,6 +2614,7 @@ impl EthApi {
         match &tx {
             TypedTransaction::EIP2930(_) => self.backend.ensure_eip2930_active(),
             TypedTransaction::EIP1559(_) => self.backend.ensure_eip1559_active(),
+            TypedTransaction::Deposit(_) => self.backend.ensure_op_deposits_active(),
             TypedTransaction::Legacy(_) => Ok(()),
         }
     }
@@ -2669,6 +2700,10 @@ fn determine_base_gas_by_kind(request: EthTransactionRequest) -> U256 {
                 TransactionKind::Create => MIN_CREATE_GAS,
             },
             TypedTransactionRequest::EIP2930(req) => match req.kind {
+                TransactionKind::Call(_) => MIN_TRANSACTION_GAS,
+                TransactionKind::Create => MIN_CREATE_GAS,
+            },
+            TypedTransactionRequest::Deposit(req) => match req.kind {
                 TransactionKind::Call(_) => MIN_TRANSACTION_GAS,
                 TransactionKind::Create => MIN_CREATE_GAS,
             },

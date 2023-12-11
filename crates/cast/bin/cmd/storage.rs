@@ -15,13 +15,13 @@ use foundry_common::{
     abi::find_source,
     compile::{compile, etherscan_project, suppress_compile},
     provider::ethers::RetryProvider,
+    types::{ToAlloy, ToEthers},
 };
 use foundry_compilers::{artifacts::StorageLayout, ConfigurableContractArtifact, Project, Solc};
 use foundry_config::{
     figment::{self, value::Dict, Metadata, Profile},
     impl_figment_convert_cast, Config,
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use futures::future::join_all;
 use semver::Version;
 use std::str::FromStr;
@@ -91,8 +91,7 @@ impl StorageArgs {
 
         // No slot was provided
         // Get deployed bytecode at given address
-        let address_code: alloy_primitives::Bytes =
-            provider.get_code(address.clone(), block).await?.0.into();
+        let address_code = provider.get_code(address.clone(), block).await?.to_alloy();
         if address_code.is_empty() {
             eyre::bail!("Provided address has no deployed code and thus no storage");
         }

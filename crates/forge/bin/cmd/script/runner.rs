@@ -79,7 +79,7 @@ impl ScriptRunner {
             ..
         } = self
             .executor
-            .deploy(CALLER, code.0.into(), U256::ZERO, None)
+            .deploy(CALLER, code, U256::ZERO, None)
             .map_err(|err| eyre::eyre!("Failed to deploy script:\n{}", err))?;
 
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));
@@ -217,7 +217,7 @@ impl ScriptRunner {
         } else if to.is_none() {
             let (address, gas_used, logs, traces, debug) = match self.executor.deploy(
                 from,
-                calldata.expect("No data for create transaction").0.into(),
+                calldata.expect("No data for create transaction"),
                 value.unwrap_or(U256::ZERO),
                 None,
             ) {

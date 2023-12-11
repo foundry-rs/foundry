@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Unlicense
+// SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
@@ -968,8 +968,8 @@ contract EnvTest is DSTest {
         }
     }
 
-    function testEnvWithDefaulBytesEmptyArrKey() public {
-        string memory key = "_foundryCheatcodeEnvWithDefaulBytesEmptyArrTestKey";
+    function testEnvWithDefaultBytesEmptyArrKey() public {
+        string memory key = "_foundryCheatcodeEnvWithDefaultBytesEmptyArrTestKey";
         string memory value = "";
         bytes[] memory expected = new bytes[](0);
         bytes[] memory defaultValues = new bytes[](0);
@@ -980,13 +980,13 @@ contract EnvTest is DSTest {
         for (uint256 i = 0; i < expected.length; ++i) {
             require(
                 keccak256(abi.encodePacked((output[i]))) == keccak256(abi.encodePacked((expected[i]))),
-                "envWithDefaulBytesEmptyArrKey failed"
+                "envWithDefaultBytesEmptyArrKey failed"
             );
         }
     }
 
-    function testEnvWithDefaulBytesEmptyArrDefault() public {
-        string memory key = "_foundryCheatcodeEnvWithDefaulBytesEmptyArrTestDefault";
+    function testEnvWithDefaultBytesEmptyArrDefault() public {
+        string memory key = "_foundryCheatcodeEnvWithDefaultBytesEmptyArrTestDefault";
         string memory value = "";
         bytes[] memory expected = new bytes[](0);
         bytes[] memory defaultValues = new bytes[](0);
@@ -996,7 +996,7 @@ contract EnvTest is DSTest {
         for (uint256 i = 0; i < expected.length; ++i) {
             require(
                 keccak256(abi.encodePacked((output[i]))) == keccak256(abi.encodePacked((expected[i]))),
-                "envWithDefaulBytesEmptyArrDefault failed"
+                "envWithDefaultBytesEmptyArrDefault failed"
             );
         }
     }

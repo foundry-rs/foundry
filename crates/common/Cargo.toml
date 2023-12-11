@@ -13,8 +13,6 @@ repository.workspace = true
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 foundry-compilers.workspace = true
 foundry-config.workspace = true
-foundry-macros.workspace = true
-foundry-utils.workspace = true
 
 ethers-core.workspace = true
 ethers-middleware.workspace = true
@@ -23,9 +21,17 @@ ethers-providers = { workspace = true, features = ["ws", "ipc"] }
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-rpc-types.workspace = true
 alloy-providers.workspace = true
 alloy-transport.workspace = true
 alloy-transport-http.workspace = true
+alloy-transport-ws.workspace = true
+alloy-transport-ipc.workspace = true
+alloy-json-rpc.workspace = true
+alloy-pubsub.workspace = true
+alloy-sol-types.workspace = true
+
+tower.workspace = true
 
 async-trait = "0.1"
 auto_impl = "1.1.0"
@@ -33,9 +39,11 @@ clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 comfy-table = "7"
 dunce = "1"
 eyre.workspace = true
+glob = "0.3"
 globset = "0.4"
 hex.workspace = true
 once_cell = "1"
+rand.workspace = true
 regex = "1"
 reqwest = { version = "0.11", default-features = false }
 semver = "1"
@@ -50,4 +58,6 @@ walkdir = "2"
 yansi = "0.5"
 
 [dev-dependencies]
+foundry-macros.workspace = true
+pretty_assertions.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

@@ -8,7 +8,7 @@ use crate::{
 };
 use anvil_core::eth::{
     block::{Block, BlockInfo, Header, PartialHeader},
-    receipt::{EIP1559Receipt, EIP2930Receipt, EIP658Receipt, Log, TypedReceipt},
+    receipt::{DepositReceipt, EIP1559Receipt, EIP2930Receipt, EIP658Receipt, Log, TypedReceipt},
     transaction::{PendingTransaction, TransactionInfo, TypedTransaction},
     trie,
 };
@@ -17,6 +17,7 @@ use ethers::{
     types::{Bloom, H256, U256},
     utils::rlp,
 };
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
     backend::DatabaseError,
     inspectors::{TracingInspector, TracingInspectorConfig},
@@ -28,7 +29,6 @@ use foundry_evm::{
     traces::CallTraceNode,
     utils::{eval_to_instruction_result, halt_to_instruction_result},
 };
-use foundry_utils::types::{ToAlloy, ToEthers};
 use std::sync::Arc;
 
 /// Represents an executed transaction (transacted on the DB)
@@ -39,6 +39,7 @@ pub struct ExecutedTransaction {
     gas_used: u64,
     logs: Vec<Log>,
     traces: Vec<CallTraceNode>,
+    nonce: u64,
 }
 
 // == impl ExecutedTransaction ==
@@ -67,6 +68,12 @@ impl ExecutedTransaction {
                 logs,
             }),
             TypedTransaction::EIP1559(_) => TypedReceipt::EIP1559(EIP1559Receipt {
+                status_code,
+                gas_used: used_gas,
+                logs_bloom: bloom,
+                logs,
+            }),
+            TypedTransaction::Deposit(_) => TypedReceipt::Deposit(DepositReceipt {
                 status_code,
                 gas_used: used_gas,
                 logs_bloom: bloom,
@@ -172,6 +179,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                     Some(Output::Create(b, _)) => Some(ethers::types::Bytes(b.0)),
                     _ => None,
                 },
+                nonce: tx.nonce,
             };
 
             transaction_infos.push(info);
@@ -249,6 +257,8 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             warn!(target: "backend", "Skipping invalid tx execution [{:?}] {}", transaction.hash(), err);
             return Some(TransactionExecutionOutcome::Invalid(transaction, err))
         }
+
+        let nonce = account.nonce;
 
         let mut evm = revm::EVM::new();
         evm.env = env;

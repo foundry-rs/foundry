@@ -1,10 +1,10 @@
+use alloy_json_abi::JsonAbi;
 use alloy_primitives::U256;
 use ethers_core::types::TransactionReceipt;
 use ethers_providers::Middleware;
 use eyre::{ContextCompat, Result};
-use foundry_common::units::format_units;
+use foundry_common::{types::ToAlloy, units::format_units};
 use foundry_config::{Chain, Config};
-use foundry_utils::types::ToAlloy;
 use std::{
     ffi::OsStr,
     future::Future,
@@ -73,6 +73,12 @@ pub fn subscriber() {
         .with(ErrorLayer::default())
         .with(tracing_subscriber::fmt::layer())
         .init()
+}
+
+pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
+    let s = abi.to_sol(name);
+    let s = forge_fmt::format(&s)?;
+    Ok(s)
 }
 
 /// Returns a [RetryProvider](foundry_common::RetryProvider) instantiated using [Config]'s RPC URL

@@ -6,7 +6,7 @@ use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
 use alloy_rpc_types::{
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     state::StateOverride,
-    BlockId, BlockNumberOrTag as BlockNumber, CallRequest, Filter, TransactionRequest,
+    BlockId, BlockNumberOrTag as BlockNumber, CallRequest, Filter,
 };
 use ethers_core::types::transaction::eip712::TypedData;
 use reth_rpc_types::trace::geth::GethDefaultTracingOptions;
@@ -25,6 +25,7 @@ pub mod serde_helpers;
 
 #[cfg(feature = "serde")]
 use self::serde_helpers::*;
+use self::transaction::EthTransactionRequest;
 
 #[cfg(feature = "serde")]
 use foundry_common::serde_helpers::{
@@ -145,7 +146,7 @@ pub enum EthRequest {
     EthSign(Address, Bytes),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_signTransaction"))]
-    EthSignTransaction(Box<TransactionRequest>),
+    EthSignTransaction(Box<EthTransactionRequest>),
 
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).
     #[cfg_attr(feature = "serde", serde(rename = "eth_signTypedData"))]
@@ -160,7 +161,7 @@ pub enum EthRequest {
     EthSignTypedDataV4(Address, TypedData),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_sendTransaction", with = "sequence"))]
-    EthSendTransaction(Box<TransactionRequest>),
+    EthSendTransaction(Box<EthTransactionRequest>),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_sendRawTransaction", with = "sequence"))]
     EthSendRawTransaction(Bytes),
@@ -588,7 +589,7 @@ pub enum EthRequest {
         feature = "serde",
         serde(rename = "eth_sendUnsignedTransaction", with = "sequence")
     )]
-    EthSendUnsignedTransaction(Box<TransactionRequest>),
+    EthSendUnsignedTransaction(Box<EthTransactionRequest>),
 
     /// Turn on call traces for transactions that are returned to the user when they execute a
     /// transaction (instead of just txhash/receipt)

@@ -4,6 +4,7 @@ use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{Block, BlockNumberOrTag};
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
+
 use revm::primitives::{BlockEnv, CfgEnv, Env, TxEnv};
 
 /// Initializes a REVM block environment based on a forked

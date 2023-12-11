@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Unlicense
+// SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
@@ -451,7 +451,7 @@ contract ExpectCallMixedTest is DSTest {
     function testExpectMatchPartialAndFull() public {
         Contract target = new Contract();
         vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector), 2);
-        // Even if a partial match is speciifed, you should still be able to look for full matches
+        // Even if a partial match is specified, you should still be able to look for full matches
         // as one does not override the other.
         vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
         this.exposed_expectMatchPartialAndFull(target);
@@ -465,7 +465,7 @@ contract ExpectCallMixedTest is DSTest {
     function testExpectMatchPartialAndFullFlipped() public {
         Contract target = new Contract();
         vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector));
-        // Even if a partial match is speciifed, you should still be able to look for full matches
+        // Even if a partial match is specified, you should still be able to look for full matches
         // as one does not override the other.
         vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 2);
         this.exposed_expectMatchPartialAndFullFlipped(target);

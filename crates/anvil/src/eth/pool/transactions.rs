@@ -1,7 +1,7 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
 use alloy_primitives::{Address, TxHash, U256};
 use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
-use foundry_utils::types::ToAlloy;
+use foundry_common::types::ToAlloy;
 use parking_lot::RwLock;
 use std::{
     cmp::Ordering,

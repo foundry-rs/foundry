@@ -23,10 +23,14 @@ use ethers::{
     signers::Signer,
     types::{Address, U256},
 };
-use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
-use foundry_common::provider::ethers::{ProviderBuilder as EthersProviderBuilder, RetryProvider as EthersRetryProvider};
+use foundry_common::{
+    provider::{
+        alloy::{ProviderBuilder, RetryProvider},
+        ethers::{ProviderBuilder as EthersProviderBuilder, RetryProvider as EthersRetryProvider},
+    },
+    types::ToEthers,
+};
 use foundry_evm::revm;
-use foundry_utils::types::ToEthers;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
 use std::{
@@ -277,7 +281,9 @@ impl NodeHandle {
     }
 
     pub fn ethers_http_provider(&self) -> EthersRetryProvider {
-        EthersProviderBuilder::new(&self.http_endpoint()).build().expect("failed to build ethers HTTP provider")
+        EthersProviderBuilder::new(&self.http_endpoint())
+            .build()
+            .expect("failed to build ethers HTTP provider")
     }
 
     /// Constructs a [`RetryProvider`] for this handle's WS endpoint.
@@ -286,7 +292,9 @@ impl NodeHandle {
     }
 
     pub fn ethers_ws_provider(&self) -> EthersRetryProvider {
-        EthersProviderBuilder::new(&self.ws_endpoint()).build().expect("failed to build ethers WS provider")
+        EthersProviderBuilder::new(&self.ws_endpoint())
+            .build()
+            .expect("failed to build ethers WS provider")
     }
 
     /// Constructs a [`RetryProvider`] for this handle's IPC endpoint, if any.
@@ -386,18 +394,17 @@ impl Future for NodeHandle {
     }
 }
 
-#[allow(unused)]
 #[doc(hidden)]
 pub fn init_tracing() -> LoggingManager {
     use tracing_subscriber::prelude::*;
 
     let manager = LoggingManager::default();
     // check whether `RUST_LOG` is explicitly set
-    if std::env::var("RUST_LOG").is_ok() {
+    let _ = if std::env::var("RUST_LOG").is_ok() {
         tracing_subscriber::Registry::default()
             .with(tracing_subscriber::EnvFilter::from_default_env())
             .with(tracing_subscriber::fmt::layer())
-            .init();
+            .try_init()
     } else {
         tracing_subscriber::Registry::default()
             .with(NodeLogLayer::new(manager.clone()))
@@ -407,8 +414,8 @@ pub fn init_tracing() -> LoggingManager {
                     .with_target(false)
                     .with_level(false),
             )
-            .init();
-    }
+            .try_init()
+    };
 
     manager
 }

@@ -20,7 +20,7 @@ pub use deployments::{Deployment, Deployments, DEPLOYMENTS_ID};
 pub struct PreprocessorId(&'static str);
 
 /// Preprocessor output.
-/// Wraps all exisiting preprocessor outputs
+/// Wraps all existing preprocessor outputs
 /// in a single abstraction.
 #[derive(Debug, Clone)]
 pub enum PreprocessorOutput {
