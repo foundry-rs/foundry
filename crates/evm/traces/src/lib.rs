@@ -151,7 +151,7 @@ pub async fn render_trace(
     decoder: &CallTraceDecoder,
 ) -> Result<(String, Option<String>), std::fmt::Error> {
     let mut s = String::new();
-    write!(&mut s, "[{}]", trace.gas_used)?;
+    write!(&mut s, "[{}] ", trace.gas_used)?;
     let address = trace.address.to_checksum(None);
 
     let decoded = decoder.decode_function(trace).await;
