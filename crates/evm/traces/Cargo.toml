@@ -21,7 +21,7 @@ alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
 alloy-sol-types.workspace = true
-reth-revm-inspectors = { git = "https://github.com/paradigmxyz/reth/", branch = "onbjerg/trace-builder" }
+reth-revm-inspectors = { git = "https://github.com/paradigmxyz/reth/", branch = "main" }
 
 eyre = "0.6"
 futures = "0.3"
