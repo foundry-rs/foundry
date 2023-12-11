@@ -168,8 +168,8 @@ impl CallTraceDecoder {
             .map(|node| {
                 (
                     &node.trace.address,
-                    if node.trace.kind == crate::CallKind::Create {
-                        Some(node.trace.data.as_ref())
+                    if node.trace.kind.is_any_create() {
+                        Some(node.trace.output.as_ref())
                     } else {
                         None
                     },
