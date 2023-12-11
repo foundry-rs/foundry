@@ -226,7 +226,6 @@ impl CallTraceDecoder {
     }
 
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
-        // todo: avoid decoding creates
         // Decode precompile
         if let Some((label, func)) = precompiles::decode(&trace, 1) {
             return DecodedCallTrace {
