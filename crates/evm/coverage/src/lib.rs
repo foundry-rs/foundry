@@ -16,7 +16,7 @@ use std::{
     ops::{AddAssign, Deref, DerefMut},
 };
 
-use eyre::{Result, Context};
+use eyre::{Context, Result};
 
 pub mod analysis;
 pub mod anchors;
@@ -57,9 +57,11 @@ impl CoverageReport {
     }
 
     /// Add the source maps
-    pub fn add_source_maps(&mut self, source_maps: HashMap<ContractId, (Vec<SourceElement>, Vec<SourceElement>)>) {
+    pub fn add_source_maps(
+        &mut self,
+        source_maps: HashMap<ContractId, (Vec<SourceElement>, Vec<SourceElement>)>,
+    ) {
         self.source_maps.extend(source_maps);
-
     }
 
     /// Add coverage items to this report
@@ -124,13 +126,13 @@ impl CoverageReport {
     /// added to the map (see [add_source]).
     pub fn add_hit_map(&mut self, contract_id: &ContractId, hit_map: &HitMap) -> Result<()> {
         // Add bytecode level hits
-        let e = self.bytecode_hits
+        let e = self
+            .bytecode_hits
             .entry(contract_id.clone())
-            .or_insert_with( || HitMap::new(hit_map.bytecode.clone()));
-        e.merge(hit_map)
-        .context(format!(
+            .or_insert_with(|| HitMap::new(hit_map.bytecode.clone()));
+        e.merge(hit_map).context(format!(
             "contract_id {:?}, hash {}, hash {}",
-            contract_id, 
+            contract_id,
             e.bytecode.clone(),
             hit_map.bytecode.clone(),
         ))?;
@@ -203,13 +205,13 @@ impl HitMap {
     }
 
     /// Merge another hitmap into this, assuming the bytecode is consistent
-    pub fn merge(&mut self, other: &HitMap) -> Result<(),eyre::Report> {
+    pub fn merge(&mut self, other: &HitMap) -> Result<(), eyre::Report> {
         // why does this check fail for some codebases ?
         //
         // if !self.consistent_bytecode(self, other) {
         //     return Err(eyre::eyre!("can't merge hits for inconsistent bytecode".to_owned()));
         // }
-        for (pc,hits) in &other.hits {
+        for (pc, hits) in &other.hits {
             *self.hits.entry(*pc).or_default() += hits;
         }
         Ok(())
@@ -220,7 +222,7 @@ impl HitMap {
         // recorded hits
         let len1 = hm1.hits.last_key_value();
         let len2 = hm2.hits.last_key_value();
-        if let (Some(len1), Some(len2)) = (len1,len2) {
+        if let (Some(len1), Some(len2)) = (len1, len2) {
             let len = std::cmp::max(len1.0, len2.0);
             let ok = hm1.bytecode.0[..*len] == hm2.bytecode.0[..*len];
             println!("consistent_bytecode: {}, {}, {}, {}", ok, len1.0, len2.0, len);
@@ -228,7 +230,6 @@ impl HitMap {
         }
         true
     }
-
 }
 
 /// A unique identifier for a contract
