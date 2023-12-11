@@ -1006,7 +1006,7 @@ latest block number: {latest_block}"
             timestamp: block.header.timestamp,
             difficulty: block.header.difficulty,
             // ensures prevrandao is set
-            prevrandao: Some(block.header.mix_hash),
+            prevrandao: Some(block.header.mix_hash.unwrap_or_default()),
             gas_limit,
             // Keep previous `coinbase` and `basefee` value
             coinbase: env.block.coinbase,
