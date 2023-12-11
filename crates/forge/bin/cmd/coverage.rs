@@ -301,7 +301,7 @@ impl CoverageArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, evm_opts.clone()))
-            .with_test_options(TestOptions { fuzz: config.fuzz, ..Default::default() })
+            .with_test_options(TestOptions { fuzz: config.fuzz, invariant: config.invariant, ..Default::default() })
             .set_coverage(true)
             .build(root.clone(), output, env, evm_opts)?;
 
@@ -310,7 +310,7 @@ impl CoverageArgs {
         let filter = self.filter;
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let handle =
-            tokio::task::spawn(async move { runner.test(&filter, tx, Default::default()).await });
+            tokio::task::spawn(async move { runner.test(&filter, tx, runner.test_options.clone()).await });
 
         // Add hit data to the coverage report
         let data = rx
