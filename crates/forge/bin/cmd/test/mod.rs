@@ -151,8 +151,8 @@ impl TestArgs {
         let mut project = config.project()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
-            config.auto_detect_remappings
+        if install::install_missing_dependencies(&mut config, self.build_args().silent)
+            && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
@@ -450,8 +450,8 @@ impl TestArgs {
                 }
 
                 if !decoded_traces.is_empty() {
-                    println!("Traces:");
-                    decoded_traces.into_iter().for_each(|trace| println!("{trace}"));
+                    shell::println("Traces:")?;
+                    decoded_traces.into_iter().try_for_each(|trace| shell::println(trace))?;
                 }
 
                 if self.gas_report {
@@ -467,7 +467,7 @@ impl TestArgs {
             total_failed += block_outcome.failures().count();
             total_skipped += block_outcome.skips().count();
 
-            println!("{}", block_outcome.summary());
+            shell::println(block_outcome.summary())?;
 
             if self.summary {
                 suite_results.push(block_outcome.clone());
@@ -475,25 +475,22 @@ impl TestArgs {
         }
 
         if self.gas_report {
-            println!("{}", gas_report.finalize());
+            shell::println(gas_report.finalize())?;
         }
 
         let num_test_suites = results.len();
 
         if num_test_suites > 0 {
-            println!(
-                "{}",
-                format_aggregated_summary(
-                    num_test_suites,
-                    total_passed,
-                    total_failed,
-                    total_skipped
-                )
-            );
+            shell::println(format_aggregated_summary(
+                num_test_suites,
+                total_passed,
+                total_failed,
+                total_skipped,
+            ))?;
 
             if self.summary {
                 let mut summary_table = TestSummaryReporter::new(self.detailed);
-                println!("\n\nTest Summary:");
+                shell::println("\n\nTest Summary:")?;
                 summary_table.print_summary(suite_results);
             }
         }
@@ -639,8 +636,8 @@ impl TestOutcome {
             std::process::exit(1);
         }
 
-        println!();
-        println!("Failing tests:");
+        shell::println("")?;
+        shell::println("Failing tests:")?;
         for (suite_name, suite) in self.results.iter() {
             let failures = suite.failures().count();
             if failures == 0 {
@@ -648,18 +645,18 @@ impl TestOutcome {
             }
 
             let term = if failures > 1 { "tests" } else { "test" };
-            println!("Encountered {failures} failing {term} in {suite_name}");
+            shell::println(format!("Encountered {failures} failing {term} in {suite_name}"))?;
             for (name, result) in suite.failures() {
                 short_test_result(name, result);
             }
-            println!();
+            shell::println("")?;
         }
         let successes = self.successes().count();
-        println!(
+        shell::println(format!(
             "Encountered a total of {} failing tests, {} tests succeeded",
             Paint::red(failures.to_string()),
             Paint::green(successes.to_string())
-        );
+        ))?;
 
         std::process::exit(1);
     }
@@ -685,7 +682,7 @@ impl TestOutcome {
 }
 
 fn short_test_result(name: &str, result: &TestResult) {
-    println!("{result} {name} {}", result.kind.report());
+    shell::println(format!("{result} {name} {}", result.kind.report())).unwrap();
 }
 
 /// Formats the aggregated summary of all test suites into a string (for printing).

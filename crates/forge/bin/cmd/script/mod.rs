@@ -304,7 +304,7 @@ impl ScriptArgs {
                 } || !result.success;
 
                 if should_include {
-                    shell::println(format!("{}", render_trace_arena(trace, decoder).await?))?;
+                    shell::println(render_trace_arena(trace, decoder).await?)?;
                 }
             }
             shell::println(String::new())?;
@@ -560,9 +560,9 @@ impl ScriptArgs {
         }
 
         // Only prompt if we're broadcasting and we've not disabled interactivity.
-        if prompt_user &&
-            !self.non_interactive &&
-            !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()?
+        if prompt_user
+            && !self.non_interactive
+            && !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()?
         {
             eyre::bail!("User canceled the script.");
         }
