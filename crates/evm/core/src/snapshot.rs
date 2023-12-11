@@ -39,6 +39,11 @@ impl<T> Snapshots<T> {
         snapshot
     }
 
+    /// Removes all snapshots
+    pub fn clear(&mut self) {
+        self.snapshots.clear();
+    }
+
     /// Removes the snapshot with the given `id`.
     ///
     /// Does not remove snapshots after it.
