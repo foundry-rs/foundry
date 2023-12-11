@@ -1631,13 +1631,11 @@ impl<'a, W: Write> Formatter<'a, W> {
                     // import statements are followed by a new line, so if there are more than one
                     // we have a group
                     if self.blank_lines(current_loc.end(), next_loc.start()) > 1 {
-                        import_groups.push(current_group);
-                        current_group = Vec::new();
+                        import_groups.push(std::mem::take(&mut current_group));
                     }
                 }
             } else if !current_group.is_empty() {
-                import_groups.push(current_group);
-                current_group = Vec::new();
+                import_groups.push(std::mem::take(&mut current_group));
             }
         }
 
@@ -1665,10 +1663,6 @@ impl<'a, W: Write> Formatter<'a, W> {
                 {
                     renames.sort_by_cached_key(|(og_ident, _)| og_ident.name.clone());
                 }
-            }
-
-            if group.len() == 1 {
-                continue;
             }
 
             import_directives.sort_by_cached_key(|item| match item {
