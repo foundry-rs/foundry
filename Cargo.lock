@@ -2726,6 +2726,8 @@ dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-sol-types",
+ "anstream",
+ "anstyle",
  "async-trait",
  "clap",
  "comfy-table",
@@ -2739,7 +2741,6 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-macros",
- "fwdansi",
  "glob",
  "globset",
  "once_cell",
@@ -2751,7 +2752,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "termcolor",
  "terminal_size",
  "thiserror",
  "tokio",
@@ -3160,16 +3160,6 @@ dependencies = [
  "pin-project-lite",
  "pin-utils",
  "slab",
-]
-
-[[package]]
-name = "fwdansi"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08c1f5787fe85505d1f7777268db5103d80a7a374d2316a7ce262e57baf8f208"
-dependencies = [
- "memchr",
- "termcolor",
 ]
 
 [[package]]

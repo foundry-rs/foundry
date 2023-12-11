@@ -253,7 +253,7 @@ impl ScriptArgs {
     async fn build_runners(&self, script_config: &ScriptConfig) -> HashMap<RpcUrl, ScriptRunner> {
         let sender = script_config.evm_opts.sender;
 
-        if !shell::Shell::get().verbosity().is_quiet() {
+        if !shell::verbosity().is_quiet() {
             let n = script_config.total_rpcs.len();
             let s = if n != 1 { "s" } else { "" };
             let _ = sh_eprintln!("\n## Setting up {n} EVM{s}");

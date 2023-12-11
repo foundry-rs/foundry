@@ -65,7 +65,7 @@ impl ProjectCompiler {
             verify: None,
             print_names: None,
             print_sizes: None,
-            quiet: Some(crate::Shell::get().verbosity().is_quiet()),
+            quiet: Some(crate::shell::verbosity().is_quiet()),
             filters: Vec::new(),
             files: Vec::new(),
         }

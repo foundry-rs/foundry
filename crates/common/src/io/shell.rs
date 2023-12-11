@@ -2,33 +2,28 @@
 //!
 //! Originally from [cargo](https://github.com/rust-lang/cargo/blob/35814255a1dbaeca9219fae81d37a8190050092c/src/cargo/core/shell.rs).
 
+use super::style::*;
+use anstream::AutoStream;
+use anstyle::Style;
 use clap::ValueEnum;
 use eyre::Result;
 use std::{
     fmt,
     io::{prelude::*, IsTerminal},
     ops::DerefMut,
-    sync::atomic::{AtomicBool, Ordering},
-};
-use termcolor::{
-    Color::{self, Cyan, Green, Red, Yellow},
-    ColorSpec, StandardStream, WriteColor,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex, OnceLock, PoisonError,
+    },
 };
 
+/// Returns the currently set verbosity.
+pub fn verbosity() -> Verbosity {
+    Shell::get().verbosity()
+}
+
 /// The global shell instance.
-///
-/// # Safety
-///
-/// This instance is only ever initialized in `main`, and its fields are as follows:
-/// - `output`
-///   - `Stream`'s fields are not modified, and the underlying streams can only be the standard ones
-///     which lock on write
-///   - `Write` is not thread safe, but it's only used in tests (as of writing, not even there)
-/// - `verbosity` cannot modified after initialization
-/// - `needs_clear` is an atomic boolean
-///
-/// In general this is probably fine.
-static mut GLOBAL_SHELL: Option<Shell> = None;
+static GLOBAL_SHELL: OnceLock<Mutex<Shell>> = OnceLock::new();
 
 /// Terminal width.
 pub enum TtyWidth {
@@ -126,13 +121,13 @@ impl fmt::Debug for Shell {
 enum ShellOut {
     /// Color-enabled stdio, with information on whether color should be used.
     Stream {
-        stdout: StandardStream,
-        stderr: StandardStream,
+        stdout: AutoStream<std::io::Stdout>,
+        stderr: AutoStream<std::io::Stderr>,
         stderr_tty: bool,
         color_choice: ColorChoice,
     },
-    /// A plain write object without color support.
-    Write(Box<dyn Write + Send + Sync + 'static>),
+    /// A write object that ignores all output.
+    Empty(std::io::Empty),
 }
 
 /// Whether messages should use color output.
@@ -167,8 +162,8 @@ impl Shell {
     pub fn new_with(color: ColorChoice, verbosity: Verbosity) -> Self {
         Self {
             output: ShellOut::Stream {
-                stdout: StandardStream::stdout(color.to_termcolor_color_choice(Stream::Stdout)),
-                stderr: StandardStream::stderr(color.to_termcolor_color_choice(Stream::Stderr)),
+                stdout: AutoStream::new(std::io::stdout(), color.to_anstream_color_choice()),
+                stderr: AutoStream::new(std::io::stderr(), color.to_anstream_color_choice()),
                 color_choice: color,
                 stderr_tty: std::io::stderr().is_terminal(),
             },
@@ -177,53 +172,51 @@ impl Shell {
         }
     }
 
-    /// Creates a shell from a plain writable object, with no color, and max verbosity.
-    ///
-    /// Not thread safe, so not exposed outside of tests.
+    /// Creates a shell that ignores all output.
     #[inline]
-    pub fn from_write(out: Box<dyn Write + Send + Sync + 'static>) -> Self {
-        let needs_clear = AtomicBool::new(false);
-        Self { output: ShellOut::Write(out), verbosity: Verbosity::Verbose, needs_clear }
+    pub fn empty() -> Self {
+        Self {
+            output: ShellOut::Empty(std::io::empty()),
+            verbosity: Verbosity::Quiet,
+            needs_clear: AtomicBool::new(false),
+        }
     }
 
     /// Get a static reference to the global shell.
     #[inline]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn get() -> impl DerefMut<Target = Self> + 'static {
-        // SAFETY: See [GLOBAL_SHELL]
-        match unsafe { &mut GLOBAL_SHELL } {
-            Some(shell) => shell,
-            // This shouldn't happen outside of tests
-            none => {
-                if cfg!(test) {
-                    none.insert(Self::new())
-                } else {
-                    // use `expect` to get `#[cold]`
-                    none.as_mut().expect("attempted to get global shell before it was set")
-                }
+        #[inline(never)]
+        #[cold]
+        #[cfg_attr(debug_assertions, track_caller)]
+        fn shell_get_fail() -> Mutex<Shell> {
+            if cfg!(test) {
+                Mutex::new(Shell::new())
+            } else {
+                panic!("attempted to get global shell before it was set");
             }
         }
+
+        GLOBAL_SHELL.get_or_init(shell_get_fail).lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Set the global shell.
     ///
-    /// # Safety
+    /// # Panics
     ///
-    /// See [GLOBAL_SHELL].
+    /// Panics if the global shell has already been set.
     #[inline]
     #[track_caller]
-    pub unsafe fn set(self) {
-        let shell = unsafe { &mut GLOBAL_SHELL };
-        if shell.is_none() {
-            *shell = Some(self);
-        } else {
+    pub fn set(self) {
+        if GLOBAL_SHELL.get().is_some() {
             panic!("attempted to set global shell twice");
         }
+        GLOBAL_SHELL.get_or_init(|| Mutex::new(self));
     }
 
     /// Sets whether the next print should clear the current line and returns the previous value.
     #[inline]
-    pub fn set_needs_clear(&mut self, needs_clear: bool) -> bool {
+    pub fn set_needs_clear(&self, needs_clear: bool) -> bool {
         self.needs_clear.swap(needs_clear, Ordering::Relaxed)
     }
 
@@ -262,7 +255,7 @@ impl Shell {
     pub fn color_choice(&self) -> ColorChoice {
         match self.output {
             ShellOut::Stream { color_choice, .. } => color_choice,
-            ShellOut::Write(_) => ColorChoice::Never,
+            ShellOut::Empty(_) => ColorChoice::Never,
         }
     }
 
@@ -271,7 +264,7 @@ impl Shell {
     pub fn is_err_tty(&self) -> bool {
         match self.output {
             ShellOut::Stream { stderr_tty, .. } => stderr_tty,
-            ShellOut::Write(_) => false,
+            ShellOut::Empty(_) => false,
         }
     }
 
@@ -279,8 +272,8 @@ impl Shell {
     #[inline]
     pub fn err_supports_color(&self) -> bool {
         match &self.output {
-            ShellOut::Stream { stderr, .. } => stderr.supports_color(),
-            ShellOut::Write(_) => false,
+            ShellOut::Stream { stderr, .. } => supports_color(stderr.current_choice()),
+            ShellOut::Empty(_) => false,
         }
     }
 
@@ -288,8 +281,8 @@ impl Shell {
     #[inline]
     pub fn out_supports_color(&self) -> bool {
         match &self.output {
-            ShellOut::Stream { stdout, .. } => stdout.supports_color(),
-            ShellOut::Write(_) => false,
+            ShellOut::Stream { stdout, .. } => supports_color(stdout.current_choice()),
+            ShellOut::Empty(_) => false,
         }
     }
 
@@ -325,18 +318,18 @@ impl Shell {
         T: fmt::Display,
         U: fmt::Display,
     {
-        self.print(&status, Some(&message), Green, true)
+        self.print(&status, Some(&message), &HEADER, true)
     }
 
     /// Shortcut to right-align and color cyan a status without a message.
     #[inline]
     pub fn status_header(&mut self, status: impl fmt::Display) -> Result<()> {
-        self.print(&status, None, Cyan, true)
+        self.print(&status, None, &NOTE, true)
     }
 
     /// Shortcut to right-align a status message.
     #[inline]
-    pub fn status_with_color<T, U>(&mut self, status: T, message: U, color: Color) -> Result<()>
+    pub fn status_with_color<T, U>(&mut self, status: T, message: U, color: &Style) -> Result<()>
     where
         T: fmt::Display,
         U: fmt::Display,
@@ -366,7 +359,7 @@ impl Shell {
     #[inline]
     pub fn error(&mut self, message: impl fmt::Display) -> Result<()> {
         self.maybe_err_erase_line();
-        self.output.message_stderr(&"error", Some(&message), Red, false)
+        self.output.message_stderr(&"error", Some(&message), &ERROR, false)
     }
 
     /// Prints an amber 'warning' message. Use the [`sh_warn!`] macro instead.
@@ -374,21 +367,21 @@ impl Shell {
     pub fn warn(&mut self, message: impl fmt::Display) -> Result<()> {
         match self.verbosity {
             Verbosity::Quiet => Ok(()),
-            _ => self.print(&"warning", Some(&message), Yellow, false),
+            _ => self.print(&"warning", Some(&message), &WARN, false),
         }
     }
 
     /// Prints a cyan 'note' message. Use the [`sh_note!`] macro instead.
     #[inline]
     pub fn note(&mut self, message: impl fmt::Display) -> Result<()> {
-        self.print(&"note", Some(&message), Cyan, false)
+        self.print(&"note", Some(&message), &NOTE, false)
     }
 
     /// Write a styled fragment.
     ///
     /// Caller is responsible for deciding whether [`Shell::verbosity`] is affects output.
     #[inline]
-    pub fn write_stdout(&mut self, fragment: impl fmt::Display, color: &ColorSpec) -> Result<()> {
+    pub fn write_stdout(&mut self, fragment: impl fmt::Display, color: &Style) -> Result<()> {
         self.output.write_stdout(fragment, color)
     }
 
@@ -397,14 +390,14 @@ impl Shell {
     /// **Note**: `verbosity` is ignored.
     #[inline]
     pub fn print_out(&mut self, fragment: impl fmt::Display) -> Result<()> {
-        self.write_stdout(fragment, &ColorSpec::new())
+        self.write_stdout(fragment, &Style::new())
     }
 
     /// Write a styled fragment
     ///
     /// Caller is responsible for deciding whether [`Shell::verbosity`] is affects output.
     #[inline]
-    pub fn write_stderr(&mut self, fragment: impl fmt::Display, color: &ColorSpec) -> Result<()> {
+    pub fn write_stderr(&mut self, fragment: impl fmt::Display, color: &Style) -> Result<()> {
         self.output.write_stderr(fragment, color)
     }
 
@@ -416,7 +409,7 @@ impl Shell {
         if self.verbosity == Verbosity::Quiet {
             Ok(())
         } else {
-            self.write_stderr(fragment, &ColorSpec::new())
+            self.write_stderr(fragment, &Style::new())
         }
     }
 
@@ -424,11 +417,6 @@ impl Shell {
     #[inline]
     pub fn print_ansi_stderr(&mut self, message: &[u8]) -> Result<()> {
         self.maybe_err_erase_line();
-        #[cfg(windows)]
-        if let ShellOut::Stream { stderr, .. } = &self.output {
-            ::fwdansi::write_ansi(stderr, message)?;
-            return Ok(())
-        }
         self.err().write_all(message)?;
         Ok(())
     }
@@ -437,11 +425,6 @@ impl Shell {
     #[inline]
     pub fn print_ansi_stdout(&mut self, message: &[u8]) -> Result<()> {
         self.maybe_err_erase_line();
-        #[cfg(windows)]
-        if let ShellOut::Stream { stdout, .. } = &self.output {
-            ::fwdansi::write_ansi(stdout, message)?;
-            return Ok(())
-        }
         self.out().write_all(message)?;
         Ok(())
     }
@@ -462,7 +445,7 @@ impl Shell {
         &mut self,
         status: &dyn fmt::Display,
         message: Option<&dyn fmt::Display>,
-        color: Color,
+        color: &Style,
         justified: bool,
     ) -> Result<()> {
         match self.verbosity {
@@ -483,122 +466,84 @@ impl ShellOut {
         &mut self,
         status: &dyn fmt::Display,
         message: Option<&dyn fmt::Display>,
-        color: Color,
+        style: &Style,
         justified: bool,
     ) -> Result<()> {
-        match self {
-            Self::Stream { stderr, .. } => {
-                stderr.reset()?;
-                stderr.set_color(ColorSpec::new().set_bold(true).set_fg(Some(color)))?;
-                if justified {
-                    write!(stderr, "{status:>12}")
-                } else {
-                    write!(stderr, "{status}")?;
-                    stderr.set_color(ColorSpec::new().set_bold(true))?;
-                    write!(stderr, ":")
-                }?;
-                stderr.reset()?;
+        let style = style.render();
+        let bold = (anstyle::Style::new() | anstyle::Effects::BOLD).render();
+        let reset = anstyle::Reset.render();
 
-                stderr.write_all(b" ")?;
-                if let Some(message) = message {
-                    writeln!(stderr, "{message}")?;
-                }
-            }
-
-            Self::Write(w) => {
-                if justified { write!(w, "{status:>12}") } else { write!(w, "{status}:") }?;
-                w.write_all(b" ")?;
-                if let Some(message) = message {
-                    writeln!(w, "{message}")?;
-                }
-            }
+        let mut buffer = Vec::new();
+        if justified {
+            write!(&mut buffer, "{style}{status:>12}{reset}")?;
+        } else {
+            write!(&mut buffer, "{style}{status}{reset}{bold}:{reset}")?;
         }
+        match message {
+            Some(message) => writeln!(buffer, " {message}")?,
+            None => write!(buffer, " ")?,
+        }
+        self.stderr().write_all(&buffer)?;
         Ok(())
     }
 
     /// Write a styled fragment
-    fn write_stdout(&mut self, fragment: impl fmt::Display, color: &ColorSpec) -> Result<()> {
-        match self {
-            Self::Stream { stdout, .. } => {
-                stdout.reset()?;
-                stdout.set_color(color)?;
-                write!(stdout, "{fragment}")?;
-                stdout.reset()?;
-            }
+    fn write_stdout(&mut self, fragment: impl fmt::Display, style: &Style) -> Result<()> {
+        let style = style.render();
+        let reset = anstyle::Reset.render();
 
-            Self::Write(w) => {
-                write!(w, "{fragment}")?;
-            }
-        }
+        let mut buffer = Vec::new();
+        write!(buffer, "{style}{fragment}{reset}")?;
+        self.stdout().write_all(&buffer)?;
         Ok(())
     }
 
     /// Write a styled fragment
-    fn write_stderr(&mut self, fragment: impl fmt::Display, color: &ColorSpec) -> Result<()> {
-        match self {
-            Self::Stream { stderr, .. } => {
-                stderr.reset()?;
-                stderr.set_color(color)?;
-                write!(stderr, "{fragment}")?;
-                stderr.reset()?;
-            }
+    fn write_stderr(&mut self, fragment: impl fmt::Display, style: &Style) -> Result<()> {
+        let style = style.render();
+        let reset = anstyle::Reset.render();
 
-            Self::Write(w) => {
-                write!(w, "{fragment}")?;
-            }
-        }
+        let mut buffer = Vec::new();
+        write!(buffer, "{style}{fragment}{reset}")?;
+        self.stderr().write_all(&buffer)?;
         Ok(())
     }
 
-    /// Gets stdout as a `io::Write`.
+    /// Gets stdout as a [`io::Write`](Write) trait object.
     #[inline]
     fn stdout(&mut self) -> &mut dyn Write {
         match self {
             Self::Stream { stdout, .. } => stdout,
-
-            Self::Write(w) => w,
+            Self::Empty(e) => e,
         }
     }
 
-    /// Gets stderr as a `io::Write`.
+    /// Gets stderr as a [`io::Write`](Write) trait object.
     #[inline]
     fn stderr(&mut self) -> &mut dyn Write {
         match self {
             Self::Stream { stderr, .. } => stderr,
-
-            Self::Write(w) => w,
+            Self::Empty(e) => e,
         }
     }
 }
 
 impl ColorChoice {
-    /// Converts our color choice to termcolor's version.
-    fn to_termcolor_color_choice(self, stream: Stream) -> termcolor::ColorChoice {
+    /// Converts our color choice to [`anstream`]'s version.
+    fn to_anstream_color_choice(self) -> anstream::ColorChoice {
         match self {
-            ColorChoice::Always => termcolor::ColorChoice::Always,
-            ColorChoice::Never => termcolor::ColorChoice::Never,
-            ColorChoice::Auto => {
-                if stream.is_terminal() {
-                    termcolor::ColorChoice::Auto
-                } else {
-                    termcolor::ColorChoice::Never
-                }
-            }
+            Self::Always => anstream::ColorChoice::Always,
+            Self::Never => anstream::ColorChoice::Never,
+            Self::Auto => anstream::ColorChoice::Auto,
         }
     }
 }
 
-#[derive(Clone, Copy)]
-enum Stream {
-    Stdout,
-    Stderr,
-}
-
-impl Stream {
-    fn is_terminal(self) -> bool {
-        match self {
-            Self::Stdout => std::io::stdout().is_terminal(),
-            Self::Stderr => std::io::stderr().is_terminal(),
-        }
+fn supports_color(choice: anstream::ColorChoice) -> bool {
+    match choice {
+        anstream::ColorChoice::Always |
+        anstream::ColorChoice::AlwaysAnsi |
+        anstream::ColorChoice::Auto => true,
+        anstream::ColorChoice::Never => false,
     }
 }

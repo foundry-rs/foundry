@@ -49,8 +49,7 @@ async fn run() -> Result<()> {
     utils::enable_paint();
 
     let opts = Opts::parse();
-    // SAFETY: See [foundry_common::Shell::set].
-    unsafe { opts.shell.shell().set() };
+    opts.shell.shell().set();
     match opts.sub {
         // Constants
         Subcommands::MaxInt { r#type } => {

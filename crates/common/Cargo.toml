@@ -24,10 +24,11 @@ alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitr
 alloy-sol-types.workspace = true
 
 # cli
+anstream = "0.6"
+anstyle = "1.0"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 comfy-table = "7.1"
 tempfile = "3"
-termcolor = "1"
 terminal_size = "0.3"
 tracing = "0.1"
 yansi = "0.5"
@@ -51,9 +52,6 @@ thiserror = "1"
 tokio = "1"
 url = "2"
 walkdir = "2"
-
-[target.'cfg(windows)'.dependencies]
-fwdansi = "1"
 
 [dev-dependencies]
 foundry-macros.workspace = true

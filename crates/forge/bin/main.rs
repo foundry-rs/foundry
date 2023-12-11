@@ -29,8 +29,7 @@ fn run() -> Result<()> {
     utils::enable_paint();
 
     let opts = Opts::parse();
-    // SAFETY: See [foundry_common::Shell::set].
-    unsafe { opts.shell.shell().set() };
+    opts.shell.shell().set();
     match opts.sub {
         Subcommands::Test(cmd) => {
             if cmd.is_watch() {
