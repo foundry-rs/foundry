@@ -130,7 +130,11 @@ pub async fn render_trace_arena(
                     }
                 }
             } else {
-                writeln!(s, "{}", node.trace.output)?;
+                match &return_data {
+                    None if node.trace.output.is_empty() => writeln!(s, "()")?,
+                    None => writeln!(s, "{}", node.trace.output)?,
+                    Some(val) => writeln!(s, "{val}")?,
+                }
             }
 
             Ok(())
