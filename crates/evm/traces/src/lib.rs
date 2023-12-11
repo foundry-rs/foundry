@@ -7,7 +7,7 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::U256;
+use alloy_primitives::{Log, U256};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use futures::{future::BoxFuture, FutureExt};
@@ -46,6 +46,17 @@ pub struct DecodedCallTrace {
     pub label: Option<String>,
     pub return_data: Option<String>,
     pub func: Option<DecodedCallData>,
+    pub contract: Option<String>,
+}
+
+pub enum DecodedCallLog<'a> {
+    /// A raw log.
+    Raw(&'a Log),
+    /// A decoded log.
+    ///
+    /// The first member of the tuple is the event name, and the second is a vector of decoded
+    /// parameters.
+    Decoded(String, Vec<(String, String)>),
 }
 
 const PIPE: &str = "  │ ";
@@ -74,7 +85,7 @@ pub async fn render_trace_arena(
 
             // Display trace header
             let (trace, return_data) = render_trace(&node.trace, decoder).await?;
-            writeln!(s, "{}", trace)?;
+            writeln!(s, "{left}{}", trace)?;
 
             // Display logs and subcalls
             let left_prefix = format!("{child}{BRANCH}");
@@ -82,18 +93,17 @@ pub async fn render_trace_arena(
             for child in &node.ordering {
                 match child {
                     LogCallOrder::Log(index) => {
-                        /*let log = node.logs[*index].to_string();
+                        let log = render_trace_log(&node.logs[*index], decoder).await?;
+
                         // Prepend our tree structure symbols to each line of the displayed log
                         log.lines().enumerate().try_for_each(|(i, line)| {
-                            // todo: render log/decode log
                             writeln!(
                                 s,
                                 "{}{}",
                                 if i == 0 { &left_prefix } else { &right_prefix },
                                 line
                             )
-                        })?;*/
-                        // todo
+                        })?;
                     }
                     LogCallOrder::Call(index) => {
                         inner(
@@ -199,6 +209,41 @@ pub async fn render_trace(
     Ok((s, decoded.return_data))
 }
 
+/// Render a trace log.
+async fn render_trace_log(
+    log: &Log,
+    decoder: &CallTraceDecoder,
+) -> Result<String, std::fmt::Error> {
+    let mut s = String::new();
+    let decoded = decoder.decode_event(log).await;
+
+    match decoded {
+        DecodedCallLog::Raw(log) => {
+            for (i, topic) in log.topics().iter().enumerate() {
+                writeln!(
+                    s,
+                    "{:>13}: {}",
+                    if i == 0 { "emit topic 0".to_string() } else { format!("topic {i}") },
+                    Paint::cyan(format!("{topic:?}"))
+                )?;
+            }
+
+            write!(s, "          data: {}", Paint::cyan(hex::encode_prefixed(&log.data)))?;
+        }
+        DecodedCallLog::Decoded(name, params) => {
+            let params = params
+                .iter()
+                .map(|(name, value)| format!("{name}: {value}"))
+                .collect::<Vec<String>>()
+                .join(", ");
+
+            write!(s, "emit {}({params})", Paint::cyan(name.clone()))?;
+        }
+    }
+
+    Ok(s)
+}
+
 /// Specifies the kind of trace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TraceKind {
@@ -266,37 +311,4 @@ pub fn load_contracts(
             None
         })
         .collect()
-}
-
-/// creates the memory data in 32byte chunks
-/// see <https://github.com/ethereum/go-ethereum/blob/366d2169fbc0e0f803b68c042b77b6b480836dbc/eth/tracers/logger/logger.go#L450-L452>
-fn convert_memory(data: &[u8]) -> Vec<String> {
-    let mut memory = Vec::with_capacity((data.len() + 31) / 32);
-    for idx in (0..data.len()).step_by(32) {
-        let len = std::cmp::min(idx + 32, data.len());
-        memory.push(hex::encode(&data[idx..len]));
-    }
-    memory
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn can_convert_memory() {
-        let mut data = vec![0u8; 32];
-        assert_eq!(
-            convert_memory(&data),
-            vec!["0000000000000000000000000000000000000000000000000000000000000000".to_string()]
-        );
-        data.extend(data.clone());
-        assert_eq!(
-            convert_memory(&data),
-            vec![
-                "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
-                "0000000000000000000000000000000000000000000000000000000000000000".to_string()
-            ]
-        );
-    }
 }

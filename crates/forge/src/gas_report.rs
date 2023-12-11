@@ -1,7 +1,7 @@
 use crate::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
     hashbrown::HashSet,
-    traces::{CallTraceArena, TraceKind},
+    traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData, TraceKind},
 };
 use alloy_primitives::U256;
 use comfy_table::{presets::ASCII_MARKDOWN, *};
@@ -44,23 +44,25 @@ impl GasReport {
     }
 
     /// Analyzes the given traces and generates a gas report.
-    pub fn analyze(&mut self, traces: &[(TraceKind, CallTraceArena)]) {
-        traces.iter().for_each(|(_, trace)| {
-            self.analyze_node(0, trace);
-        });
+    pub async fn analyze(
+        &mut self,
+        traces: &[(TraceKind, CallTraceArena)],
+        decoder: &CallTraceDecoder,
+    ) {
+        for node in traces.iter().flat_map(|(_, arena)| arena.nodes()) {
+            self.analyze_node(node, decoder).await;
+        }
     }
 
-    fn analyze_node(&mut self, node_index: usize, arena: &CallTraceArena) {
-        // todo
-        /*
-        let node = &arena.arena[node_index];
+    async fn analyze_node(&mut self, node: &CallTraceNode, decoder: &CallTraceDecoder) {
         let trace = &node.trace;
+        let decoded = decoder.decode_function(&node.trace).await;
 
         if trace.address == CHEATCODE_ADDRESS || trace.address == HARDHAT_CONSOLE_ADDRESS {
             return
         }
 
-        if let Some(name) = &trace.contract {
+        if let Some(name) = &decoded.contract {
             let contract_name = name.rsplit(':').next().unwrap_or(name.as_str());
             // If the user listed the contract in 'gas_reports' (the foundry.toml field) a
             // report for the contract is generated even if it's listed in the ignore
@@ -78,36 +80,26 @@ impl GasReport {
             if self.should_report(contract_name) {
                 let contract_info = self.contracts.entry(name.to_string()).or_default();
 
-                match &trace.data {
-                    TraceCallData::Raw(bytes) => {
-                        if trace.created() {
-                            contract_info.gas = U256::from(trace.gas_cost);
-                            contract_info.size = U256::from(bytes.len());
-                        }
-                    }
-                    TraceCallData::Decoded { signature, .. } => {
-                        let name = signature.split('(').next().unwrap();
-                        // ignore any test/setup functions
-                        let should_include =
-                            !(name.is_test() || name.is_invariant_test() || name.is_setup());
-                        if should_include {
-                            let gas_info = contract_info
-                                .functions
-                                .entry(name.into())
-                                .or_default()
-                                .entry(signature.clone())
-                                .or_default();
-                            gas_info.calls.push(U256::from(trace.gas_cost));
-                        }
+                if trace.kind.is_any_create() {
+                    contract_info.gas = U256::from(trace.gas_used);
+                    contract_info.size = U256::from(trace.data.len());
+                } else if let Some(DecodedCallData { signature, .. }) = decoded.func {
+                    let name = signature.split('(').next().unwrap();
+                    // ignore any test/setup functions
+                    let should_include =
+                        !(name.is_test() || name.is_invariant_test() || name.is_setup());
+                    if should_include {
+                        let gas_info = contract_info
+                            .functions
+                            .entry(name.to_string())
+                            .or_default()
+                            .entry(signature.clone())
+                            .or_default();
+                        gas_info.calls.push(U256::from(trace.gas_used));
                     }
                 }
             }
         }
-
-        node.children.iter().for_each(|index| {
-            self.analyze_node(*index, arena);
-        });
-        */
     }
 
     /// Finalizes the gas report by calculating the min, max, mean, and median for each function.

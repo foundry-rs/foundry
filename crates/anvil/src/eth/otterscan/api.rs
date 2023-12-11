@@ -9,7 +9,6 @@ use crate::eth::{
 };
 use alloy_primitives::{Address, Bytes, B256, U256, U64};
 use alloy_rpc_types::{Block, BlockId, BlockNumberOrTag as BlockNumber, Transaction};
-use foundry_utils::types::ToAlloy;
 use itertools::Itertools;
 use reth_rpc_types::trace::parity::{
     Action, CallAction, CreateAction, CreateOutput, RewardAction, TraceOutput,

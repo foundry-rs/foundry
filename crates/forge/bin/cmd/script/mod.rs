@@ -20,7 +20,6 @@ use forge::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
-    utils::CallKind,
 };
 use foundry_cli::opts::MultiWallet;
 use foundry_common::{

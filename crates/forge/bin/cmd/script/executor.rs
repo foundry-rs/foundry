@@ -12,7 +12,6 @@ use forge::{
     executors::ExecutorBuilder,
     inspectors::{cheatcodes::BroadcastableTransactions, CheatsConfig},
     traces::{CallTraceDecoder, Traces},
-    utils::CallKind,
 };
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{provider::ethers::RpcUrl, shell};
@@ -219,7 +218,7 @@ impl ScriptArgs {
             // type hint
             let res: Result<RunnerResult> = res;
 
-            let (tx, mut traces) = res?;
+            let (tx, traces) = res?;
 
             // Transaction will be `None`, if execution didn't pass.
             if tx.is_none() || script_config.evm_opts.verbosity > 3 {

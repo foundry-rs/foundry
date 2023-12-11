@@ -1,6 +1,6 @@
 use crate::{
     identifier::{AddressIdentity, SingleSignaturesIdentifier, TraceIdentifier},
-    utils, CallTrace, CallTraceArena, DecodedCallData, DecodedCallTrace,
+    utils, CallTrace, CallTraceArena, DecodedCallData, DecodedCallLog, DecodedCallTrace,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Event, Function, JsonAbi as Abi};
@@ -234,25 +234,26 @@ impl CallTraceDecoder {
         // todo: avoid decoding creates
         // Decode precompile
         if let Some((label, func)) = precompiles::decode(&trace, 1) {
-            return DecodedCallTrace { label: Some(label), return_data: None, func: Some(func) }
+            return DecodedCallTrace {
+                label: Some(label),
+                return_data: None,
+                contract: None,
+                func: Some(func),
+            }
         }
 
         // Set label
         let label = self.labels.get(&trace.address).cloned();
 
         // Set contract name
-        // todo
-        /*if trace.contract.is_none() {
-            if let Some(contract) = self.contracts.get(&trace.address) {
-                trace.contract = Some(contract.clone());
-            }
-        }*/
+        let contract = self.contracts.get(&trace.address).cloned();
 
         let cdata = &trace.data;
         if trace.address == DEFAULT_CREATE2_DEPLOYER {
             return DecodedCallTrace {
                 label,
                 return_data: None,
+                contract,
                 func: Some(DecodedCallData { signature: "create2".to_string(), args: vec![] }),
             };
         }
@@ -274,13 +275,14 @@ impl CallTraceDecoder {
                 }
             };
             let [func, ..] = &functions[..] else {
-                return DecodedCallTrace { label, return_data: None, func: None }
+                return DecodedCallTrace { label, return_data: None, contract, func: None }
             };
 
             DecodedCallTrace {
                 label,
                 func: Some(self.decode_function_input(&trace, func)),
                 return_data: self.decode_function_output(&trace, functions),
+                contract,
             }
         } else {
             let has_receive = self.receive_contracts.contains(&trace.address);
@@ -299,6 +301,7 @@ impl CallTraceDecoder {
                 } else {
                     None
                 },
+                contract,
                 func: Some(DecodedCallData { signature, args }),
             }
         }
@@ -435,26 +438,25 @@ impl CallTraceDecoder {
     }
 
     /// Decodes an event.
-    async fn decode_event(&self, log: &Log) {
-        /*let TraceLog::Raw(raw_log) = log else { return };
-        let &[t0, ..] = raw_log.topics() else { return };
+    pub async fn decode_event<'a>(&self, log: &'a Log) -> DecodedCallLog<'a> {
+        let &[t0, ..] = log.topics() else { return DecodedCallLog::Raw(log) };
 
         let mut events = Vec::new();
-        let events = match self.events.get(&(t0, raw_log.topics().len() - 1)) {
+        let events = match self.events.get(&(t0, log.topics().len() - 1)) {
             Some(es) => es,
             None => {
                 if let Some(identifier) = &self.signature_identifier {
                     if let Some(event) = identifier.write().await.identify_event(&t0[..]).await {
-                        events.push(get_indexed_event(event, raw_log));
+                        events.push(get_indexed_event(event, log));
                     }
                 }
                 &events
             }
         };
         for event in events {
-            if let Ok(decoded) = event.decode_log(raw_log, false) {
+            if let Ok(decoded) = event.decode_log(log, false) {
                 let params = reconstruct_params(event, &decoded);
-                *log = TraceLog::Decoded(
+                return DecodedCallLog::Decoded(
                     event.name.clone(),
                     params
                         .into_iter()
@@ -466,10 +468,10 @@ impl CallTraceDecoder {
                         })
                         .collect(),
                 );
-                break
             }
-        }*/
-        // todo
+        }
+
+        DecodedCallLog::Raw(log)
     }
 
     fn apply_label(&self, value: &DynSolValue) -> String {

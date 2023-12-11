@@ -13,9 +13,8 @@ use anvil_core::eth::{
     receipt::TypedReceipt,
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
-use ethers::{prelude::Trace, types::ActionType};
 use foundry_evm::{
-    revm::{interpreter::InstructionResult, primitives::Env},
+    revm::primitives::Env,
     traces::{GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig},
 };
 use foundry_utils::types::{ToAlloy, ToEthers};

@@ -15,7 +15,7 @@ use foundry_evm::{
     decode::decode_console_logs,
     traces::{
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
-        render_trace, render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
+        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
 use once_cell::sync::Lazy;

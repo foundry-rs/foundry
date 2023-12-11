@@ -264,7 +264,7 @@ impl TestArgs {
                         EtherscanIdentifier::new(&config, remote_chain_id)?;
 
                     // Decode the traces
-                    for (kind, trace) in &mut result.traces {
+                    for (_, trace) in &mut result.traces {
                         decoder.identify(trace, &mut local_identifier);
                         decoder.identify(trace, &mut etherscan_identifier);
                     }
@@ -713,7 +713,7 @@ async fn test(
             }
 
             if gas_reporting {
-                gas_report.analyze(&result.traces);
+                gas_report.analyze(&result.traces, &decoder).await;
             }
         }
         let block_outcome =
