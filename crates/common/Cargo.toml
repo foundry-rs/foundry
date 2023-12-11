@@ -25,7 +25,13 @@ alloy-rpc-types.workspace = true
 alloy-providers.workspace = true
 alloy-transport.workspace = true
 alloy-transport-http.workspace = true
+alloy-transport-ws.workspace = true
+alloy-transport-ipc.workspace = true
+alloy-json-rpc.workspace = true
+alloy-pubsub.workspace = true
 alloy-sol-types.workspace = true
+
+tower.workspace = true
 
 async-trait = "0.1"
 auto_impl = "1.1.0"
