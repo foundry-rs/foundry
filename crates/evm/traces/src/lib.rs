@@ -32,13 +32,13 @@ pub use reth_revm_inspectors::tracing::{
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct DecodedCallData {
     pub signature: String,
     pub args: Vec<String>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct DecodedCallTrace {
     pub label: Option<String>,
     pub return_data: Option<String>,
@@ -46,6 +46,7 @@ pub struct DecodedCallTrace {
     pub contract: Option<String>,
 }
 
+#[derive(Debug)]
 pub enum DecodedCallLog<'a> {
     /// A raw log.
     Raw(&'a Log),
