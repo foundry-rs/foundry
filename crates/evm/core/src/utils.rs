@@ -3,6 +3,7 @@ use alloy_primitives::{Address, FixedBytes, B256};
 use alloy_rpc_types::{Block, Transaction};
 use ethers::types::{ActionType, CallType, Chain, H256, U256};
 use eyre::ContextCompat;
+use foundry_common::types::ToAlloy;
 pub use foundry_compilers::utils::RuntimeOrHandle;
 pub use revm::primitives::State as StateChangeset;
 
@@ -160,12 +161,11 @@ pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::En
             Chain::ArbitrumTestnet => {
                 // on arbitrum `block.number` is the L1 block which is included in the
                 // `l1BlockNumber` field
-                // todo(onbjerg): not supported by new alloy rpc types
-                /*if let Some(l1_block_number) = block.other.get("l1BlockNumber").cloned() {
-                if let Ok(l1_block_number) = serde_json::from_value::<U256>(l1_block_number) {
-                    env.block.number = l1_block_number.to_alloy();
+                if let Some(l1_block_number) = block.other.get("l1BlockNumber").cloned() {
+                    if let Ok(l1_block_number) = serde_json::from_value::<U256>(l1_block_number) {
+                        env.block.number = l1_block_number.to_alloy();
+                    }
                 }
-                }*/
             }
             _ => {}
         }
