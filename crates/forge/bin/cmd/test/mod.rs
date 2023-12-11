@@ -151,8 +151,8 @@ impl TestArgs {
         let mut project = config.project()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
-            config.auto_detect_remappings
+        if install::install_missing_dependencies(&mut config, self.build_args().silent)
+            && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
@@ -451,7 +451,7 @@ impl TestArgs {
 
                 if !decoded_traces.is_empty() {
                     shell::println("Traces:")?;
-                    decoded_traces.into_iter().try_for_each(|trace| shell::println(trace))?;
+                    decoded_traces.into_iter().try_for_each(shell::println)?;
                 }
 
                 if self.gas_report {
