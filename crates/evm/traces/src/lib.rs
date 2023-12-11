@@ -32,7 +32,7 @@ pub use reth_revm_inspectors::tracing::{
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Eq, PartialEq)]
 pub struct DecodedCallData {
     pub signature: String,
     pub args: Vec<String>,
@@ -308,7 +308,7 @@ pub fn load_contracts(
         .iter()
         .filter_map(|(addr, name)| {
             if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(name) {
-                return Some((*addr, (name.clone(), abi.clone())))
+                return Some((*addr, (name.clone(), abi.clone())));
             }
             None
         })
