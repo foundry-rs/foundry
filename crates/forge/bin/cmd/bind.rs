@@ -86,7 +86,7 @@ impl BindArgs {
         if !self.skip_build {
             // run `forge build`
             let project = self.build_args.project()?;
-            compile::compile(&project, false, false)?;
+            let _ = ProjectCompiler::new().compile(&project)?;
         }
 
         let artifacts = self.try_load_config_emit_warnings()?.out;

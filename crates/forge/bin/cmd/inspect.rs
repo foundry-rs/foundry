@@ -1,9 +1,8 @@
-use alloy_json_abi::JsonAbi;
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
 use eyre::Result;
 use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
-use foundry_common::compile;
+use foundry_common::{compile::ProjectCompiler, Shell};
 use foundry_compilers::{
     artifacts::{
         output_selection::{
@@ -15,7 +14,6 @@ use foundry_compilers::{
     info::ContractInfo,
     utils::canonicalize,
 };
-use serde_json::{to_value, Value};
 use std::fmt;
 
 /// CLI arguments for `forge inspect`.
@@ -84,13 +82,11 @@ impl InspectArgs {
                     .abi
                     .as_ref()
                     .ok_or_else(|| eyre::eyre!("Failed to fetch lossless ABI"))?;
-                let abi_json = &abi.abi_value;
                 if pretty {
-                    let abi_json: RawAbi = serde_json::from_value(abi_json.clone())?;
-                    let source: String = foundry_utils::abi::abi_to_solidity(&abi_json, "")?;
+                    let source = foundry_cli::utils::abi_to_solidity(abi, "")?;
                     Shell::get().write_stdout(source, &Default::default())
                 } else {
-                    Shell::get().print_json(abi_json)
+                    Shell::get().print_json(abi)
                 }?;
             }
             ContractArtifactField::Bytecode => {
@@ -163,16 +159,6 @@ impl InspectArgs {
 
         Ok(())
     }
-}
-
-pub fn print_abi(abi: &JsonAbi, pretty: bool) -> Result<()> {
-    let s = if pretty {
-        foundry_cli::utils::abi_to_solidity(abi, "")?
-    } else {
-        serde_json::to_string_pretty(&abi)?
-    };
-    println!("{s}");
-    Ok(())
 }
 
 pub fn print_storage_layout(storage_layout: Option<&StorageLayout>, pretty: bool) -> Result<()> {

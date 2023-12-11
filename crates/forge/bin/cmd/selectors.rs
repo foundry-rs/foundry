@@ -182,7 +182,7 @@ impl SelectorsSubcommands {
 
                 // compile the project to get the artifacts/abis
                 let project = build_args.project()?;
-                let outcome = compile::suppress_compile(&project)?;
+                let outcome = ProjectCompiler::new().quiet(true).compile(&project)?;
                 let artifacts = if let Some(contract) = contract {
                     let found_artifact = outcome.find_first(&contract);
                     let artifact = found_artifact

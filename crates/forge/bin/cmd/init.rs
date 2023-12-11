@@ -59,13 +59,13 @@ impl InitArgs {
         // if a template is provided, then this command initializes a git repo,
         // fetches the template repo, and resets the git history to the head of the fetched
         // repo with no other history
-        if let Some(template) = template {
+        if let Some(template) = &template {
             let template = if template.contains("://") {
                 template.clone()
             } else {
                 "https://github.com/".to_string() + &template
             };
-            p_println!(!quiet => "Initializing {} from {}...", root.display(), template);
+            sh_status!("Initializing" => "{} from {template}", root_rel.display())?;
             // initialize the git repository
             git.init()?;
 

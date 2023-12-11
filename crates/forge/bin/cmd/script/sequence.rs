@@ -12,7 +12,7 @@ use ethers_core::types::{transaction::eip2718::TypedTransaction, TransactionRece
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_cli::utils::now;
 use foundry_common::{
-    fs, shell,
+    fs,
     types::{ToAlloy, ToEthers},
     SELECTOR_LEN,
 };
@@ -24,7 +24,6 @@ use std::{
     io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
-use yansi::Paint;
 
 pub const DRY_RUN_DIR: &str = "dry-run";
 

@@ -23,7 +23,7 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    handler::install()?;
+    handler::install();
     utils::load_dotenv();
     utils::subscriber();
     utils::enable_paint();
@@ -40,14 +40,7 @@ fn run() -> Result<()> {
                 outcome.ensure_ok()
             }
         }
-        Subcommands::Script(cmd) => {
-            // install the shell before executing the command
-            foundry_common::shell::set_shell(foundry_common::shell::Shell::from_args(
-                cmd.opts.args.silent,
-                cmd.json,
-            ))?;
-            utils::block_on(cmd.run_script())
-        }
+        Subcommands::Script(cmd) => utils::block_on(cmd.run_script()),
         Subcommands::Coverage(cmd) => utils::block_on(cmd.run()),
         Subcommands::Bind(cmd) => cmd.run(),
         Subcommands::Build(cmd) => {

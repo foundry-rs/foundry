@@ -1,5 +1,7 @@
 //! Support for handling/identifying selectors.
 
+#![allow(missing_docs)]
+
 use crate::abi::abi_decode_calldata;
 use alloy_json_abi::JsonAbi;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};

@@ -5,6 +5,8 @@
 #![warn(unreachable_pub, unused_crate_dependencies, rust_2018_idioms)]
 
 #[macro_use]
+extern crate foundry_common;
+#[macro_use]
 extern crate tracing;
 
 pub mod executors;

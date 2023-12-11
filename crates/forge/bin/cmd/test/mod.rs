@@ -19,9 +19,9 @@ use foundry_cli::{
 };
 use foundry_common::{
     compact_to_contract,
-    compile::{self, ContractSources, ProjectCompiler},
+    compile::{ContractSources, ProjectCompiler},
     evm::EvmArgs,
-    get_contract_name, get_file_name, shell,
+    get_contract_name, get_file_name,
 };
 use foundry_config::{
     figment,
@@ -155,13 +155,10 @@ impl TestArgs {
             project = config.project()?;
         }
 
-        let compiler = ProjectCompiler::default();
-        let output = match (config.sparse_mode, self.opts.silent | self.json) {
-            (false, false) => compiler.compile(&project),
-            (true, false) => compiler.compile_sparse(&project, filter.clone()),
-            (false, true) => compile::suppress_compile(&project),
-            (true, true) => compile::suppress_compile_sparse(&project, filter.clone()),
-        }?;
+        let output = ProjectCompiler::new()
+            .quiet_if(self.json)
+            .sparse(config.sparse_mode)
+            .compile_sparse(&project, filter.clone())?;
         // Create test options from general project settings
         // and compiler output
         let project_root = &project.paths.root;

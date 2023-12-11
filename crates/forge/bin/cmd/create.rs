@@ -19,7 +19,6 @@ use foundry_cli::{
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
 use foundry_common::{
-    compile,
     compile::ProjectCompiler,
     estimate_eip1559_fees,
     fmt::parse_tokens,

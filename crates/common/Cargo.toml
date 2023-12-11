@@ -32,8 +32,7 @@ terminal_size = "0.3"
 tracing = "0.1"
 yansi = "0.5"
 
-#  misc
-auto_impl = "1.1.0"
+# misc
 async-trait = "0.1"
 dunce = "1"
 eyre.workspace = true
@@ -52,7 +51,6 @@ thiserror = "1"
 tokio = "1"
 url = "2"
 walkdir = "2"
-
 
 [target.'cfg(windows)'.dependencies]
 fwdansi = "1"

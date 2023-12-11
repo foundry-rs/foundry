@@ -560,7 +560,7 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
         S: AsRef<OsStr>,
     {
         self.cmd()
-            .stderr(self.stderr())
+            .stderr(Self::stderr())
             .args(["submodule", "update", "--progress", "--init"])
             .args(self.shallow.then_some("--depth=1"))
             .args(force.then_some("--force"))
@@ -574,7 +574,7 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
 
     pub fn submodule_foreach(self, recursive: bool, cmd: impl AsRef<OsStr>) -> Result<()> {
         self.cmd()
-            .stderr(self.stderr())
+            .stderr(Self::stderr())
             .args(["submodule", "foreach"])
             .args(recursive.then_some("--recursive"))
             .arg(cmd)
@@ -583,7 +583,7 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
     }
 
     pub fn submodule_init(self) -> Result<()> {
-        self.cmd().stderr(self.stderr()).args(["submodule", "init"]).exec().map(drop)
+        self.cmd().stderr(Self::stderr()).args(["submodule", "init"]).exec().map(drop)
     }
 
     pub fn cmd(self) -> Command {

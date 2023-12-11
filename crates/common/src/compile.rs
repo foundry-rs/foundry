@@ -170,9 +170,7 @@ impl ProjectCompiler {
     /// use foundry_common::compile::ProjectCompiler;
     /// let config = foundry_config::Config::load();
     /// let prj = config.project().unwrap();
-    /// ProjectCompiler::default()
-    ///     .compile_with(&config.project().unwrap(), |prj| Ok(prj.compile()?))
-    ///     .unwrap();
+    /// ProjectCompiler::default().compile_with(&prj, |prj| Ok(prj.compile()?)).unwrap();
     /// ```
     #[instrument(target = "forge::compile", skip_all)]
     pub fn compile_with<F>(self, project: &Project, f: F) -> Result<ProjectCompileOutput>
@@ -374,29 +372,6 @@ pub struct ContractInfo {
     pub size: usize,
     /// A development contract is either a Script or a Test contract.
     pub is_dev_contract: bool,
-}
-
-/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
-/// compilation was successful or if there was a cache hit.
-pub fn compile(
-    project: &Project,
-    print_names: bool,
-    print_sizes: bool,
-) -> Result<ProjectCompileOutput> {
-    ProjectCompiler::new(print_names, print_sizes).compile(project)
-}
-
-/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
-/// compilation was successful or if there was a cache hit.
-///
-/// Takes a list of [`SkipBuildFilter`] for files to exclude from the build.
-pub fn compile_with_filter(
-    project: &Project,
-    print_names: bool,
-    print_sizes: bool,
-    skip: Vec<SkipBuildFilter>,
-) -> Result<ProjectCompileOutput> {
-    ProjectCompiler::with_filter(print_names, print_sizes, skip).compile(project)
 }
 
 /// Compiles the provided [`Project`] and does not throw if there's any compiler error

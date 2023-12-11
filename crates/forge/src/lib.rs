@@ -1,4 +1,6 @@
 #[macro_use]
+extern crate foundry_common;
+#[macro_use]
 extern crate tracing;
 
 use alloy_primitives::B256;
@@ -10,11 +12,6 @@ use foundry_config::{
 
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use std::path::Path;
-
-#[macro_use]
-extern crate foundry_common;
-#[macro_use]
-extern crate tracing;
 
 pub mod coverage;
 

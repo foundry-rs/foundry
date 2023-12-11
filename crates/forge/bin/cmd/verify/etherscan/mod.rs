@@ -1,7 +1,7 @@
 use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
 use crate::cmd::retry::RETRY_CHECK_ON_VERIFY;
 use alloy_json_abi::Function;
-use eyre::{eyre, Context, Result};
+use eyre::{bail, eyre, Context, Result};
 use foundry_block_explorers::{
     errors::EtherscanError,
     utils::lookup_compiler_version,

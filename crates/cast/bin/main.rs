@@ -43,7 +43,7 @@ async fn main() {
 }
 
 async fn run() -> Result<()> {
-    handler::install()?;
+    handler::install();
     utils::load_dotenv();
     utils::subscriber();
     utils::enable_paint();

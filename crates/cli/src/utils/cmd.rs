@@ -1,7 +1,7 @@
 use alloy_json_abi::JsonAbi as Abi;
 use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
-use foundry_common::{cli_warn, fs, TestFunctionExt};
+use foundry_common::{fs, TestFunctionExt};
 use foundry_compilers::{
     artifacts::{CompactBytecode, CompactDeployedBytecode},
     cache::{CacheEntry, SolFilesCache},
@@ -9,9 +9,7 @@ use foundry_compilers::{
     utils::read_json_file,
     Artifact, ProjectCompileOutput,
 };
-use foundry_config::{
-    error::ExtractConfigError, figment::Figment, Chain as ConfigChain, Chain, Config, NamedChain,
-};
+use foundry_config::{error::ExtractConfigError, figment::Figment, Chain, Config, NamedChain};
 use foundry_debugger::Debugger;
 use foundry_evm::{
     debug::DebugArena,

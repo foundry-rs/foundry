@@ -7,10 +7,7 @@ use alloy_primitives::{Address, B256, U256};
 use clap::{Parser, Subcommand, ValueHint};
 use ethers_core::types::{BlockId, NameOrAddress};
 use eyre::Result;
-use foundry_cli::{
-    opts::{EtherscanOpts, RpcOpts, ShellOptions},
-    utils::parse_u256,
-};
+use foundry_cli::opts::{EtherscanOpts, RpcOpts, ShellOptions};
 use std::{path::PathBuf, str::FromStr};
 
 const VERSION_MESSAGE: &str = concat!(

@@ -27,7 +27,6 @@ use foundry_compilers::{
 use foundry_config::{Config, SolcReq};
 use semver::Version;
 use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel};
-use yansi::Paint;
 
 /// A map, keyed by contract ID, to a tuple of the deployment source map and the runtime source map.
 type SourceMaps = HashMap<ContractId, (SourceMap, SourceMap)>;

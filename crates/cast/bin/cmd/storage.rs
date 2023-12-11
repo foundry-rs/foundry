@@ -13,7 +13,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     abi::find_source,
-    compile::{compile, etherscan_project, suppress_compile},
+    compile::{etherscan_project, ProjectCompiler},
     types::{ToAlloy, ToEthers},
     RetryProvider,
 };

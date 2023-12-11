@@ -9,10 +9,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
 };
-use foundry_common::{
-    cli_warn,
-    types::{ToAlloy, ToEthers},
-};
+use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_config::{Chain, Config};
 use std::str::FromStr;
 

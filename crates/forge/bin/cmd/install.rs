@@ -14,7 +14,6 @@ use std::{
     path::{Path, PathBuf},
     str,
 };
-use yansi::Paint;
 
 static DEPENDENCY_VERSION_TAG_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^v?\d+(\.\d+)*$").unwrap());

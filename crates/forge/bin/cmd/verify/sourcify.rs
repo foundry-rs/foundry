@@ -33,7 +33,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
         let resp = retry
             .run_async(|| {
                 async {
-                    sh_println!(
+                    let _ = sh_println!(
                         "\nSubmitting verification for [{}] {}",
                         args.contract.name,
                         args.address,

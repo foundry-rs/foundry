@@ -1,6 +1,5 @@
 //! Bootstrap [axum] RPC servers
 
-#![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 #![warn(missing_docs, unused_crate_dependencies)]
 #![allow(clippy::disallowed_macros)]
 

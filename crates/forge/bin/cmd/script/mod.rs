@@ -29,7 +29,6 @@ use foundry_common::{
     errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
     fmt::{format_token, format_token_raw},
-    shell,
     types::{ToAlloy, ToEthers},
     ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
@@ -680,7 +679,7 @@ impl ScriptConfig {
             sh_warn!(
                 "\
 EIP-3855 is not supported in one or more of the RPCs used.
-Unsupported Chain IDs: {ids}.
+Unsupported Chain IDs: {}.
 Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
 For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
                 iter.filter(|(supported, _)| !supported)

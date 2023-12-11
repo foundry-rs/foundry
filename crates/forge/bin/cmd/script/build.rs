@@ -5,7 +5,7 @@ use forge::link::{link_with_nonce_or_address, PostLinkInput, ResolvedDependency}
 use foundry_cli::utils::get_cached_entry_by_name;
 use foundry_common::{
     compact_to_contract,
-    compile::{self, ContractSources},
+    compile::{self, ContractSources, ProjectCompiler},
     fs,
 };
 use foundry_compilers::{
