@@ -262,7 +262,10 @@ impl ContractFilter for MutationProjectPathsAwareFilter {
     fn matches_path(&self, path: impl AsRef<str>) -> bool {
         let path = path.as_ref();
         // we don't want to test files that belong to a library
-        self.args_filter.matches_path(path) && !self.paths.has_library_ancestor(Path::new(path))
+        self.args_filter.matches_path(path) && 
+            !self.paths.has_library_ancestor(Path::new(path)) &&
+            !Path::new(path).starts_with(&self.paths.tests)
+        
     }
 }
 
