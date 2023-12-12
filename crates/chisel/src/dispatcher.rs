@@ -327,7 +327,7 @@ impl ChiselDispatcher {
                     {
                         endpoint.clone()
                     } else {
-                        RpcEndpoint::Env(arg.to_string())
+                        RpcEndpoint::Env(arg.to_string()).into()
                     };
                     let fork_url = match endpoint.resolve() {
                         Ok(fork_url) => fork_url,
