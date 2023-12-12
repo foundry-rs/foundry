@@ -9,7 +9,6 @@ mod genesis;
 mod geth;
 mod ipc;
 mod logs;
-mod optimism;
 mod proof;
 mod pubsub;
 // mod revert; // TODO uncomment <https://github.com/gakonst/ethers-rs/issues/2186>

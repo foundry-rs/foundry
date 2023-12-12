@@ -1,24 +1,24 @@
 //! tests for `eth_getProof`
 
-use crate::proof::eip1186::verify_proof;
 use anvil::{spawn, NodeConfig};
-use anvil_core::eth::{
-    proof::{AccountProof, BasicAccount},
-    trie::ExtensionLayout,
-};
 use ethers::{
     abi::ethereum_types::BigEndianHash,
     types::{Address, H256, U256},
-    utils::{keccak256, rlp},
 };
-use foundry_common::types::ToEthers;
+
+use anvil_core::eth::proof::{AccountProof, BasicAccount};
+use foundry_utils::types::ToEthers;
+
+use crate::proof::eip1186::verify_proof;
+use anvil_core::eth::trie::ExtensionLayout;
+use ethers::utils::{keccak256, rlp};
 use foundry_evm::revm::primitives::KECCAK_EMPTY;
 
 mod eip1186;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_proof() {
-    let (api, _engine_api, _handle) = spawn(NodeConfig::test()).await;
+    let (api, _handle) = spawn(NodeConfig::test()).await;
 
     let acc: Address = "0xaaaf5374fce5edbc8e2a8697c15331677e6ebaaa".parse().unwrap();
 
@@ -39,11 +39,7 @@ async fn can_get_proof() {
     let rlp_account = rlp::encode(&account);
 
     let root: H256 = api.state_root().await.unwrap();
-    let acc_proof: Vec<Vec<u8>> = proof
-        .account_proof
-        .into_iter()
-        .map(|node| rlp::decode::<Vec<u8>>(&node).unwrap())
-        .collect();
+    let acc_proof: Vec<Vec<u8>> = proof.account_proof.into_iter().map(|b| b.to_vec()).collect();
 
     verify_proof::<ExtensionLayout>(
         &root.0,
@@ -56,13 +52,11 @@ async fn can_get_proof() {
     assert_eq!(proof.storage_proof.len(), 1);
     let expected_value = rlp::encode(&value);
     let proof = proof.storage_proof[0].clone();
-    let storage_proof: Vec<Vec<u8>> =
-        proof.proof.into_iter().map(|node| rlp::decode::<Vec<u8>>(&node).unwrap()).collect();
-    let key = H256::from(keccak256(proof.key.as_bytes()));
+    let storage_proof: Vec<Vec<u8>> = proof.proof.into_iter().map(|b| b.to_vec()).collect();
     verify_proof::<ExtensionLayout>(
         &account.storage_root.0,
         &storage_proof,
-        key.as_bytes(),
+        proof.key.as_bytes(),
         Some(expected_value.as_ref()),
     )
     .unwrap();
@@ -70,7 +64,7 @@ async fn can_get_proof() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_random_account_proofs() {
-    let (api, _engine_api, _handle) = spawn(NodeConfig::test()).await;
+    let (api, _handle) = spawn(NodeConfig::test()).await;
 
     for acc in std::iter::repeat_with(Address::random).take(10) {
         let _ = api

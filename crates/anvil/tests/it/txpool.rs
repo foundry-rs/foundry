@@ -8,7 +8,7 @@ use ethers::{
 
 #[tokio::test(flavor = "multi_thread")]
 async fn geth_txpool() {
-    let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
     api.anvil_set_auto_mine(false).await.unwrap();
 

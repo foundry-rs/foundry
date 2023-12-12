@@ -19,12 +19,12 @@ fn ipc_config() -> NodeConfig {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_block_number_ipc() {
-    let (api, _engine_api, handle) = spawn(ipc_config()).await;
+    let (api, handle) = spawn(ipc_config()).await;
 
     let block_num = api.block_number().unwrap();
     assert_eq!(block_num, U256::zero());
 
-    let provider = handle.ipc_provider().unwrap();
+    let provider = handle.ipc_provider().await.unwrap();
 
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num, block_num.as_u64().into());
@@ -32,9 +32,9 @@ async fn can_get_block_number_ipc() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sub_new_heads_ipc() {
-    let (api, _engine_api, handle) = spawn(ipc_config()).await;
+    let (api, handle) = spawn(ipc_config()).await;
 
-    let provider = handle.ipc_provider().unwrap();
+    let provider = handle.ipc_provider().await.unwrap();
 
     let blocks = provider.subscribe_blocks().await.unwrap();
 

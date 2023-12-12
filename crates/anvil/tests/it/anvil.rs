@@ -5,7 +5,7 @@ use ethers::{prelude::Middleware, types::Address};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_change_mining_mode() {
-    let (api, _engine_api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     assert!(api.anvil_get_auto_mine().unwrap());
@@ -34,7 +34,7 @@ async fn test_can_change_mining_mode() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_default_dev_keys() {
-    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let dev_accounts = handle.dev_accounts().collect::<Vec<_>>();
@@ -44,7 +44,7 @@ async fn can_get_default_dev_keys() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_empty_code() {
-    let (api,_engine_api, _handle) = spawn(NodeConfig::test()).await;
+    let (api, _handle) = spawn(NodeConfig::test()).await;
     let addr = Address::random();
     api.anvil_set_code(addr, Vec::new().into()).await.unwrap();
     let code = api.get_code(addr, None).await.unwrap();
@@ -54,7 +54,7 @@ async fn can_set_empty_code() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_set_genesis_timestamp() {
     let genesis_timestamp = 1000u64;
-    let (_api, _engine_api, handle) =
+    let (_api, handle) =
         spawn(NodeConfig::test().with_genesis_timestamp(genesis_timestamp.into())).await;
     let provider = handle.http_provider();
 
@@ -63,7 +63,7 @@ async fn test_can_set_genesis_timestamp() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_use_default_genesis_timestamp() {
-    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     assert_ne!(0u64, provider.get_block(0).await.unwrap().unwrap().timestamp.as_u64());

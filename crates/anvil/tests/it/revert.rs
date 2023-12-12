@@ -30,8 +30,8 @@ contract Contract {
     let contract = compiled.remove_first("Contract").unwrap();
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
-    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider();
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider().await;
 
     let wallet = handle.dev_wallets().next().unwrap();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
@@ -74,8 +74,8 @@ contract Contract {
     let contract = compiled.remove_first("Contract").unwrap();
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
-    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider();
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider().await;
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
@@ -106,8 +106,8 @@ async fn test_solc_revert_example() {
     let contract = compiled.remove_first("VendingMachine").unwrap();
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
-    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider();
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider().await;
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
@@ -160,8 +160,8 @@ contract Contract {
     let contract = compiled.remove_first("Contract").unwrap();
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
-    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.ws_provider();
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider().await;
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
@@ -206,9 +206,9 @@ contract Contract {
     let contract = compiled.remove_first("Contract").unwrap();
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
-    let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
+    let (_api, handle) = spawn(NodeConfig::test()).await;
 
-    let provider = handle.ws_provider();
+    let provider = handle.ws_provider().await;
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
 
