@@ -170,7 +170,7 @@ impl ProjectCompiler {
     /// use foundry_common::compile::ProjectCompiler;
     /// let config = foundry_config::Config::load();
     /// let prj = config.project().unwrap();
-    /// ProjectCompiler::default().compile_with(&prj, |prj| Ok(prj.compile()?)).unwrap();
+    /// ProjectCompiler::new().compile_with(&prj, || Ok(prj.compile()?)).unwrap();
     /// ```
     #[instrument(target = "forge::compile", skip_all)]
     pub fn compile_with<F>(self, project: &Project, f: F) -> Result<ProjectCompileOutput>
