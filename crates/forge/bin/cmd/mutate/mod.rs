@@ -5,8 +5,7 @@ use super::{
 use crate::cmd::{
     mutate::summary::{
         MutantTestResult, MutationTestOutcome, MutationTestSuiteResult, MutationTestSummaryReporter,
-    },
-    test::{test},
+    }
 };
 use clap::Parser;
 use eyre::{eyre, Result};
@@ -21,13 +20,13 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
-    compile::{self, ProjectCompiler},
+    compile::ProjectCompiler,
     evm::EvmArgs,
-    shell::{self, println}, term::MutatorSpinnerReporter
+    shell::{self}, term::MutatorSpinnerReporter
 };
 use foundry_compilers::{
     project_util::{copy_dir, TempProject},
-    report, Project, ProjectCompileOutput, TestFileFilter,
+    Project, ProjectCompileOutput,
 };
 use foundry_config::{
     figment,
@@ -38,19 +37,16 @@ use foundry_config::{
     get_available_profiles, Config,
 };
 use foundry_evm::opts::EvmOpts;
-use foundry_evm_mutator::{Mutant, Mutator, MutatorConfigBuilder};
+use foundry_evm_mutator::{Mutant, MutatorConfigBuilder};
 use futures::future::try_join_all;
 use itertools::Itertools;
 use std::{
     collections::BTreeMap,
     fs,
-    path::{Path, PathBuf},
-    str::FromStr,
+    path::{PathBuf},
     sync::mpsc::channel,
     time::{Duration, Instant},
 };
-use tempfile::TempDir;
-
 
 mod filter;
 pub use filter::*;

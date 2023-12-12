@@ -10,7 +10,7 @@ use gambit::{run_mutate, MutateParams};
 use itertools::Itertools;
 use std::{
     collections::{BTreeMap, HashMap},
-    path::{PathBuf, Path}, str::FromStr,
+    path::{PathBuf}
 };
 
 mod filter;

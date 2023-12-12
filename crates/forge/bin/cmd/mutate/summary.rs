@@ -278,7 +278,7 @@ impl MutationTestSummaryReporter {
         Self { table, is_detailed }
     }
 
-    pub fn print_summary(&mut self, mut mutation_test_outcome: &MutationTestOutcome) {
+    pub fn print_summary(&mut self, mutation_test_outcome: &MutationTestOutcome) {
 
         let mut total_killed: f64 = 0.0;
         let mut total_survived: f64 = 0.0;
