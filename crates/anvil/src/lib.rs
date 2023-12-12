@@ -97,7 +97,7 @@ pub mod cmd;
 /// handle.await.unwrap();
 /// # }
 /// ```
-pub async fn spawn(mut config: NodeConfig) -> (EthApi, EngineApi, NodeHandle) {
+pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     let logger = if config.enable_tracing { init_tracing() } else { Default::default() };
     logger.set_enabled(!config.silent);
 
@@ -216,11 +216,13 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, EngineApi, NodeHandle) {
         addresses,
         _signal: Some(signal),
         task_manager,
+        eth_api: api.clone(),
+        engine_api: Some(engine_api.clone()),
     };
 
     handle.print(fork.as_ref());
 
-    (api, engine_api, handle)
+    (api, handle)
 }
 
 type IpcTask = JoinHandle<io::Result<()>>;
@@ -238,6 +240,9 @@ pub struct NodeHandle {
     pub servers: Vec<JoinHandle<Result<(), NodeError>>>,
     /// Join handles (one per socket) for the Anvil EngineAPI server.
     pub engine_servers: Vec<JoinHandle<Result<(), NodeError>>>,
+
+    pub eth_api: EthApi,
+    pub engine_api: Option<EngineApi>,
     // The future that joins the ipc server, if any
     ipc_task: Option<IpcTask>,
     /// A signal that fires the shutdown, fired on drop.

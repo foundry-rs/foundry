@@ -1,18 +1,17 @@
-use crate::eth::backend::fork::ClientFork;
+use crate::eth::{backend::fork::ClientFork, EthApi};
 
 pub const HELLO_WORLD: &str = "hello world";
 
 #[derive(Clone)]
 pub struct EngineApi {
-
+    pub eth_api: EthApi
 }
 
 impl EngineApi {
     /// Creates a new instance
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
-    ) -> Self {
-        Self{}
+    pub fn new(eth_api: EthApi) -> Self {
+        Self { eth_api }
     }
 
     pub async fn execute(&self) {

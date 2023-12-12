@@ -152,6 +152,8 @@ alloy-chains = "0.1.4"
 alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
 
+reth-rpc-types = { git = "https://github.com/paradigmxyz/reth", rev = "main" }
+
 ## misc
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 color-eyre = "0.6"
