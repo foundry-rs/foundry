@@ -41,7 +41,6 @@ impl Inspector {
 
     /// Enables steps recording for `Tracer`.
     pub fn with_steps_tracing(self) -> Self {
-        // todo deprecate?
         self.with_tracing()
     }
 }

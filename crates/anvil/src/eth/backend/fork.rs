@@ -4,17 +4,21 @@ use crate::eth::{backend::db::Db, error::BlockchainError};
 use alloy_primitives::{Address, Bytes, StorageKey, StorageValue, B256, U256, U64};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{
-    trace::{GethDebugTracingOptions, GethTrace, LocalizedTransactionTrace as Trace},
+    trace::{GethDebugTracingOptions, GethTrace},
     AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
     CallRequest, EIP1186AccountProofResponse, FeeHistory, Filter, Log, Transaction,
     TransactionReceipt,
 };
 use alloy_transport::TransportError;
-use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
+use foundry_common::{
+    provider::alloy::{ProviderBuilder, RetryProvider},
+    types::ToReth,
+};
 use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
 };
+use reth_rpc_types::trace::parity::LocalizedTransactionTrace as Trace;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
 
@@ -361,7 +365,13 @@ impl ClientFork {
             return Ok(traces);
         }
 
-        let traces = self.provider().trace_transaction(hash).await?;
+        let traces = self
+            .provider()
+            .trace_transaction(hash)
+            .await?
+            .into_iter()
+            .map(ToReth::to_reth)
+            .collect::<Vec<_>>();
 
         let mut storage = self.storage_write();
         storage.transaction_traces.insert(hash, traces.clone());
@@ -391,7 +401,13 @@ impl ClientFork {
             return Ok(traces);
         }
 
-        let traces = self.provider().trace_block(number.into()).await?;
+        let traces = self
+            .provider()
+            .trace_block(number.into())
+            .await?
+            .into_iter()
+            .map(ToReth::to_reth)
+            .collect::<Vec<_>>();
 
         let mut storage = self.storage_write();
         storage.block_traces.insert(number, traces.clone());
@@ -525,11 +541,7 @@ impl ClientFork {
         block: Block,
         index: usize,
     ) -> Result<Option<Block>, TransportError> {
-        let block_hash = block
-            .header
-            .hash
-            // TODO: Nicer way to make a custom error from a TransportError
-            .expect("Missing block hash");
+        let block_hash = block.header.hash.expect("Missing block hash");
         let block_number = block.header.number.expect("Missing block number");
         if let Some(uncles) = self.storage_read().uncles.get(&block_hash) {
             return Ok(uncles.get(index).cloned());

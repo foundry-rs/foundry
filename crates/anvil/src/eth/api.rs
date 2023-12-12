@@ -31,27 +31,10 @@ use crate::{
 };
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256, U64};
 use alloy_rpc_types::{
-    state::StateOverride,
-    AccessList,
-    AccessListWithGasUsed,
-    Block,
-    BlockId,
-    BlockNumberOrTag as BlockNumber,
-    BlockTransactions,
-    CallRequest,
-    EIP1186AccountProofResponse,
-    FeeHistory,
-    Filter,
-    FilteredParams,
-    Log,
-    Transaction,
-    TransactionReceipt,
-    TxpoolContent,
-    TxpoolInspect,
-    // trace::{geth::{DefaultFrame, GethDefaultTracingOptions, GethTrace},
-    // parity::LocalizedTransactionTrace},
-    TxpoolInspectSummary,
-    TxpoolStatus,
+    state::StateOverride, AccessList, AccessListWithGasUsed, Block, BlockId,
+    BlockNumberOrTag as BlockNumber, BlockTransactions, CallRequest, EIP1186AccountProofResponse,
+    FeeHistory, Filter, FilteredParams, Log, Transaction, TransactionReceipt, TxpoolContent,
+    TxpoolInspect, TxpoolInspectSummary, TxpoolStatus,
 };
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
@@ -1015,9 +998,9 @@ impl EthApi {
         }
 
         let fees = FeeDetails::new(
-            request.gas_price.map(|g| g.to_ethers()),
-            request.max_fee_per_gas.map(|g| g.to_ethers()),
-            request.max_priority_fee_per_gas.map(|g| g.to_ethers()),
+            request.gas_price.map(ToEthers::to_ethers),
+            request.max_fee_per_gas.map(ToEthers::to_ethers),
+            request.max_priority_fee_per_gas.map(ToEthers::to_ethers),
         )?
         .or_zero_fees();
         let request = call_to_internal_tx_request(&request);
@@ -1475,9 +1458,9 @@ impl EthApi {
         node_info!("debug_traceCall");
         let block_request = self.block_request(block_number).await?;
         let fees = FeeDetails::new(
-            request.gas_price.map(|g| g.to_ethers()),
-            request.max_fee_per_gas.map(|g| g.to_ethers()),
-            request.max_priority_fee_per_gas.map(|g| g.to_ethers()),
+            request.gas_price.map(ToEthers::to_ethers),
+            request.max_fee_per_gas.map(ToEthers::to_ethers),
+            request.max_priority_fee_per_gas.map(ToEthers::to_ethers),
         )?
         .or_zero_fees();
 
@@ -2044,7 +2027,7 @@ impl EthApi {
 
         fn convert(tx: Arc<PoolTransaction>) -> TxpoolInspectSummary {
             let tx = &tx.pending_transaction.transaction;
-            let to = tx.to().copied().map(|t| t.to_alloy());
+            let to = tx.to().copied().map(ToAlloy::to_alloy);
             let gas_price = tx.gas_price().to_alloy();
             let value = tx.value().to_alloy();
             let gas = tx.gas_limit().to_alloy();
@@ -2499,7 +2482,7 @@ impl EthApi {
 
         let gas_limit = request
             .gas
-            .map(|g| g.to_alloy())
+            .map(ToAlloy::to_alloy)
             .map(Ok)
             .unwrap_or_else(|| self.current_gas_limit())?;
 
@@ -2583,7 +2566,7 @@ impl EthApi {
     ) -> Result<(U256, U256)> {
         let highest_nonce =
             self.get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending))).await?;
-        let nonce = request.nonce.map(|n| n.to_alloy()).unwrap_or(highest_nonce);
+        let nonce = request.nonce.map(ToAlloy::to_alloy).unwrap_or(highest_nonce);
 
         Ok((nonce, highest_nonce))
     }
