@@ -31,7 +31,7 @@ use crate::{
 };
 use alloy_primitives::{Address, Bloom, Bytes, TxHash, B256, B64, U128, U256, U64, U8};
 use alloy_rpc_types::{
-    state::StateOverride, AccessList, Block as AlloyBlock, BlockId,
+    state::StateOverride, trace::GethDebugTracingOptions, AccessList, Block as AlloyBlock, BlockId,
     BlockNumberOrTag as BlockNumber, BlockTransactions, Filter, FilteredParams,
     Header as AlloyHeader, Log, Transaction, TransactionReceipt,
 };
@@ -56,7 +56,7 @@ use ethers::{
     utils::{keccak256, rlp},
 };
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-use foundry_common::types::{ToAlloy, ToEthers};
+use foundry_common::types::{ToAlloy, ToEthers, ToReth};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
@@ -1872,15 +1872,19 @@ impl Backend {
     pub async fn debug_trace_transaction(
         &self,
         hash: B256,
-        opts: GethDefaultTracingOptions,
+        opts: GethDebugTracingOptions,
     ) -> Result<GethTrace, BlockchainError> {
         if let Some(traces) = self.mined_geth_trace_transaction(hash, opts.clone()) {
             return Ok(GethTrace::Default(traces));
         }
 
-        // if let Some(fork) = self.get_fork() {
-        //     return Ok(fork.debug_trace_transaction(hash, opts).await.map_err(|_|
-        // BlockchainError::DataUnavailable)?) }
+        if let Some(fork) = self.get_fork() {
+            return fork
+                .debug_trace_transaction(hash, opts)
+                .await
+                .map(|t| t.to_reth())
+                .map_err(|_| BlockchainError::DataUnavailable)
+        }
 
         Ok(GethTrace::Default(Default::default()))
     }
@@ -1888,9 +1892,14 @@ impl Backend {
     fn mined_geth_trace_transaction(
         &self,
         hash: B256,
-        opts: GethDefaultTracingOptions,
+        opts: GethDebugTracingOptions,
     ) -> Option<DefaultFrame> {
-        self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.geth_trace(opts))
+        self.blockchain
+            .storage
+            .read()
+            .transactions
+            .get(&hash)
+            .map(|tx| tx.geth_trace(opts.config.to_reth()))
     }
 
     /// Returns the traces for the given block
