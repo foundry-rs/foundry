@@ -56,7 +56,7 @@ impl MutatorConfigBuilder {
                 _ => None,
             })
             .collect::<Vec<(ArtifactId, Abi, Bytes)>>();
-
+        
         let solc = self.solc.to_str().ok_or(eyre!("failed to decode solc root"))?;
         let solc_allow_paths: Vec<String> = self
             .solc_allow_paths

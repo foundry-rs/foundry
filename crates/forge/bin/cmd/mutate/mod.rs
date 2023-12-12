@@ -49,6 +49,8 @@ use std::{
     sync::mpsc::channel,
     time::{Duration, Instant},
 };
+use tempfile::TempDir;
+
 
 mod filter;
 pub use filter::*;
@@ -193,7 +195,7 @@ impl MutateTestArgs {
         trace!(?elapsed, "finished running gambit");
         drop(spinner);
 
-
+        // this is bad
         let mutants_len_iterator: Vec<&Mutant> = mutants_output.iter()
             .flat_map(|(_, v)| v)
             .collect();
@@ -234,39 +236,75 @@ impl MutateTestArgs {
             BTreeMap::new();
 
         let mut progress_bar_index = 0;
+        // @TODO if FAIL FAST if a mutant survives then throw ERROR
+        
+        let mutation_project_root = project.root().to_owned().clone();
+        for (contract_out_dir, contract_mutants) in mutants_output.into_iter() {
+            let mut mutant_test_statuses: Vec<(Duration, MutantTestStatus)> = Vec::with_capacity(contract_mutants.len());
+            let contract_mutants_start = Instant::now();
 
-        for (out_dir, mutants) in mutants_output.into_iter() {
-            let mut mutant_test_results = vec![];
-            let start = Instant::now();
-            let (temp_project, config) = setup_mutant_dir(&project.root())?;
-            for mutant in mutants.iter() {
-                let result = test_mutant(
-                    test_filter.clone(),
-                    &temp_project,
-                    &config,
-                    &evm_opts,
-                    mutant.clone()
-                )
-                .await?;
-                let mutant_survived = result.survived();
-                mutant_test_results.push(result);
-                progress_bar_index += 1;
-                update_progress!(progress_bar, progress_bar_index);
+            // a file can have hundreds of mutants depending on design
+            // we chunk there to prevent I/O exhaustion as we use
+            // try_join_all which launches all the futures and polls
+            let mut contract_mutants_iterator = contract_mutants.chunks(6);
+            
+            while let Some(mutant_chunks) = contract_mutants_iterator.next() {
+                let mutant_data_iterator = mutant_chunks.iter().map(
+                    |mutant| (
+                        mutation_project_root.clone(),
+                        mutant.source.filename_as_str(),
+                        mutant.as_source_string().expect("Failed to read a file")
+                    )
+                );
 
-                // if fail_fast is enabled then we exit on the
-                // first mutant we encounter that survived
-                if self.fail_fast && mutant_survived {
-                    break;
+                // we compile the projects here
+                let mutant_project_and_compile_output = try_join_all(
+                    mutant_data_iterator
+                    .map(
+                        |(root, file_name, mutant_contents)| tokio::task::spawn_blocking(
+                            || setup_and_compile_mutant(root, file_name, mutant_contents )
+                        )
+                    )
+                ).await?;
+
+                let mut mutant_project_and_compile_output_iterator = mutant_project_and_compile_output.into_iter();
+                // We run the tests serially because each mutant project could have a lot tests and 
+                // running the test is parallelized. 
+                // So not have huge resource consumption we run tests serially.
+                // Also, running tests is pretty fast
+                while let Some(Ok((temp_project, mutant_compile_output, mutant_config))) = mutant_project_and_compile_output_iterator.next() {
+                    let (duration, mutant_test_status) =  test_mutant(
+                        test_filter.clone(),
+                        temp_project,
+                        mutant_config,
+                        mutant_compile_output,
+                        &evm_opts
+                    ).await?;
+                    
+                    let mutant_survived = mutant_test_status == MutantTestStatus::Survived;
+
+                    mutant_test_statuses.push((duration, mutant_test_status));
+                    if self.fail_fast && mutant_survived {
+                        break;
+                    }
+
+                    progress_bar_index += 1;
+                    update_progress!(progress_bar, progress_bar_index);
                 }
             }
-            let duration = start.elapsed();
-            // out_dir is of the format
-            let contract_name = out_dir.split(std::path::MAIN_SEPARATOR_STR)
+
+            let mutant_test_results: Vec<_> =  mutant_test_statuses.into_iter().enumerate().map(|(index, (duration, status))| {
+                let mutant = contract_mutants.get(index).expect("this should not throw");
+                MutantTestResult::new(duration, mutant.clone(), status)
+            }).collect();
+
+            let contract_name = contract_out_dir.split(std::path::MAIN_SEPARATOR_STR)
                 .nth(1)
                 .ok_or(eyre!("Failed to parse contract name"))?;
+
             mutant_test_suite_results.insert(
                 contract_name.to_string(),
-                MutationTestSuiteResult::new(duration, mutant_test_results),
+                MutationTestSuiteResult::new(contract_mutants_start.elapsed(), mutant_test_results),
             );
         }
 
@@ -419,47 +457,61 @@ impl Provider for MutateTestArgs {
     }
 }
 
-pub fn setup_mutant_dir(mutation_project_root: &Path) -> Result<(TempProject, Config)> {
-    info!("Setting up temp mutant project dir");
-    let project = TempProject::dapptools()?;
+// pub fn setup_mutant_dir(mutation_project_root: &Path) -> Result<(TempProject, Config)> {
+//     info!("Setting up temp mutant project dir");
+
+//     // we do not support hardhat style testing
+//     let project = TempProject::dapptools()?;
+
+//     // copy project source code to temp dir
+//     copy_dir(mutation_project_root, &project.root())?;
+
+//     let temp_project_root = project.root();
+//     // load config for this temp project
+//     let mut config = Config::load_with_root(&temp_project_root);
+//     // appends the root dir to the config folder variables
+//     // it's important
+//     config = config.canonic_at(&project.root());
+//     // override fuzz and invariant runs
+//     config.fuzz.runs = 0;
+//     config.invariant.runs = 0;
+
+//     Ok((project, config))
+// }
+
+/// Creates a temp project from source project and compiles the project
+pub fn setup_and_compile_mutant(
+    mutation_project_root: PathBuf,
+    mutant_file: String,
+    mutant_contents: String 
+) -> Result<(TempProject, ProjectCompileOutput, Config)> {
+    let start = Instant::now();
+
+    // we do not support hardhat style testing
+    let temp_project = TempProject::dapptools()?;
+    let temp_project_root = temp_project.root();
 
     // copy project source code to temp dir
-    copy_dir(mutation_project_root, &project.root())?;
+    copy_dir(mutation_project_root, temp_project_root)?;
 
-    let temp_project_root = project.root();
     // load config for this temp project
-    let mut config = Config::load_with_root(&temp_project_root);
+    let mut config = Config::load_with_root(temp_project_root);
     // appends the root dir to the config folder variables
     // it's important
-    config = config.canonic_at(&project.root());
+    config = config.canonic_at(temp_project_root);
     // override fuzz and invariant runs
     config.fuzz.runs = 0;
     config.invariant.runs = 0;
 
-    Ok((project, config))
-}
-
-pub async fn test_mutant(
-    filter: ProjectPathsAwareFilter,
-    temp_project: &TempProject,
-    config: &Config,
-    evm_opts: &EvmOpts,
-    mutant: Mutant
-) -> Result<MutantTestResult> {
-    info!("Testing Mutants");
-
-    let start = Instant::now();
-    // get mutant source
-    let mutant_contents = mutant.as_source_string().map_err(|err| eyre!("{:?}", err))?;
-    // setup file source root
-    let mutant_filename = mutant.source.filename_as_str();
-    let file_source_root = temp_project.root().join(mutant_filename);
+    let mutant_file_path= temp_project_root.join(mutant_file);
     // Write Mutant contents to file in temp_directory
-    fs::write(&file_source_root.clone().as_path(), mutant_contents)?;
+    fs::write(&mutant_file_path.as_path(), mutant_contents)?;
 
-    // let project = config.project()?;
-    let env = evm_opts.evm_env().await?;
-
+    debug!(
+        duration = ?start.elapsed(),
+        "compilation times",
+    );
+    
     // @TODO compile_sparse should be the preferred approach it makes the compilation step
     // quite fast and skips output for generated files. But it doesn't re-compile files that inherit the "dirty" file
     // At the moment there is a bug in the implementation.
@@ -469,9 +521,26 @@ pub async fn test_mutant(
     //     path.starts_with(&file_source_root) || path.ends_with(".t.sol")
     // }
     // )?;
-    let project = config.project()?;
-    let output = project.compile()?;
-    let project_root = &project.root();
+    let compile_output = config.project()?.compile().map_err(|_| eyre!("compilation failed"))?;
+
+    Ok((temp_project, compile_output, config))
+}
+
+/// Runs mutation test for a mutation temp project.
+/// returns on the first failed test suite
+pub async fn test_mutant(
+    filter: ProjectPathsAwareFilter,
+    temp_project: TempProject,
+    config: Config,
+    output: ProjectCompileOutput,
+    evm_opts: &EvmOpts,
+) -> Result<(Duration, MutantTestStatus)> {
+    trace!(target: "forge::mutate", "testing mutant");
+
+    let start = Instant::now();
+    let env = evm_opts.evm_env().await?;
+
+    let project_root = temp_project.root();
     let toml = config.get_config_path();
     let profiles = get_available_profiles(toml)?;
 
@@ -509,10 +578,9 @@ pub async fn test_mutant(
         }
     }
 
-    // @TODO if FAIL FAST if a mutant survives then throw ERROR
     let _results = handle.await?;
 
-    trace!(target: "forge::mutate", "received results");
+    trace!(target: "forge::mutate", "received mutant test results");
 
-    Ok(MutantTestResult::new(start.elapsed(), mutant, status))
+    Ok((start.elapsed(), status))
 }

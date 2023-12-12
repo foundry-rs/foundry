@@ -79,6 +79,9 @@ hyper.workspace = true
 tower-http = { workspace = true, features = ["fs"] }
 opener = "0.6"
 
+# temp file
+tempfile = { version = "3.8.0" }
+
 [dev-dependencies]
 anvil.workspace = true
 foundry-test-utils.workspace = true
