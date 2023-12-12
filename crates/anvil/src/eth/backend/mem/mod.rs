@@ -31,20 +31,9 @@ use crate::{
 };
 use alloy_primitives::{Address, Bloom, Bytes, TxHash, B256, B64, U128, U256, U64, U8};
 use alloy_rpc_types::{
-    state::StateOverride,
-    // trace::{geth::{DefaultFrame, GethDefaultTracingOptions, GethTrace},
-    // parity::LocalizedTransactionTrace},
-    AccessList,
-    Block as AlloyBlock,
-    BlockId,
-    BlockNumberOrTag as BlockNumber,
-    BlockTransactions,
-    Filter,
-    FilteredParams,
-    Header as AlloyHeader,
-    Log,
-    Transaction,
-    TransactionReceipt,
+    state::StateOverride, AccessList, Block as AlloyBlock, BlockId,
+    BlockNumberOrTag as BlockNumber, BlockTransactions, Filter, FilteredParams,
+    Header as AlloyHeader, Log, Transaction, TransactionReceipt,
 };
 use anvil_core::{
     eth::{
@@ -369,7 +358,7 @@ impl Backend {
     pub fn precompiles(&self) -> Vec<Address> {
         get_precompiles_for(self.env.read().cfg.spec_id)
             .into_iter()
-            .map(|a| a.to_alloy())
+            .map(ToAlloy::to_alloy)
             .collect_vec()
     }
 
@@ -1280,7 +1269,7 @@ impl Backend {
             for log in logs.into_iter() {
                 let mut log = Log {
                     address: log.address.to_alloy(),
-                    topics: log.topics.into_iter().map(|t| t.to_alloy()).collect(),
+                    topics: log.topics.into_iter().map(ToAlloy::to_alloy).collect(),
                     data: log.data.0.into(),
                     block_hash: None,
                     block_number: None,
@@ -1845,9 +1834,9 @@ impl Backend {
             return Ok(traces);
         }
 
-        // if let Some(fork) = self.get_fork() {
-        //     return Ok(fork.trace_transaction(hash).await?)
-        // }
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.trace_transaction(hash).await?)
+        }
 
         Ok(vec![])
     }
@@ -1914,11 +1903,11 @@ impl Backend {
             return Ok(traces);
         }
 
-        // if let Some(fork) = self.get_fork() {
-        //     if fork.predates_fork(number) {
-        //         return Ok(fork.trace_block(number).await.map_err(|_|
-        // BlockchainError::DataUnavailable)?)     }
-        // }
+        if let Some(fork) = self.get_fork() {
+            if fork.predates_fork(number) {
+                return fork.trace_block(number).await.map_err(|_| BlockchainError::DataUnavailable)
+            }
+        }
 
         Ok(vec![])
     }
