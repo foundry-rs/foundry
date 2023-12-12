@@ -60,9 +60,6 @@ pub use summary::*;
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(MutateTestArgs, opts, evm_opts);
 
-// @TODO
-// figure parallelizing the mutant testing
-
 
 /// CLI arguments for `forge mutate`.
 #[derive(Debug, Clone, Parser)]
@@ -181,10 +178,6 @@ impl MutateTestArgs {
             }
         }
 
-        // @NOTE/@TODO This step is quite slow and expensive run time wise
-        // This is because Gambit writes to disk multiple files and also general several mutants
-        // per line "caught"
-        // Improvements can be done to improve gambit performance
         let now = Instant::now();
         // init spinner
         let spinner = MutatorSpinnerReporter::spawn("Generating Mutants...".into());
@@ -236,9 +229,8 @@ impl MutateTestArgs {
             BTreeMap::new();
 
         let mut progress_bar_index = 0;
-        // @TODO if FAIL FAST if a mutant survives then throw ERROR
         
-        let mutation_project_root = project.root().to_owned().clone();
+        let mutation_project_root = project.root();
         for (contract_out_dir, contract_mutants) in mutants_output.into_iter() {
             let mut mutant_test_statuses: Vec<(Duration, MutantTestStatus)> = Vec::with_capacity(contract_mutants.len());
             let contract_mutants_start = Instant::now();
@@ -270,7 +262,7 @@ impl MutateTestArgs {
                 let mut mutant_project_and_compile_output_iterator = mutant_project_and_compile_output.into_iter();
                 // We run the tests serially because each mutant project could have a lot tests and 
                 // running the test is parallelized. 
-                // So not have huge resource consumption we run tests serially.
+                // So not to have huge resource consumption we run tests serially.
                 // Also, running tests is pretty fast
                 while let Some(Ok((temp_project, mutant_compile_output, mutant_config))) = mutant_project_and_compile_output_iterator.next() {
                     let (duration, mutant_test_status) =  test_mutant(
@@ -456,28 +448,6 @@ impl Provider for MutateTestArgs {
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
-
-// pub fn setup_mutant_dir(mutation_project_root: &Path) -> Result<(TempProject, Config)> {
-//     info!("Setting up temp mutant project dir");
-
-//     // we do not support hardhat style testing
-//     let project = TempProject::dapptools()?;
-
-//     // copy project source code to temp dir
-//     copy_dir(mutation_project_root, &project.root())?;
-
-//     let temp_project_root = project.root();
-//     // load config for this temp project
-//     let mut config = Config::load_with_root(&temp_project_root);
-//     // appends the root dir to the config folder variables
-//     // it's important
-//     config = config.canonic_at(&project.root());
-//     // override fuzz and invariant runs
-//     config.fuzz.runs = 0;
-//     config.invariant.runs = 0;
-
-//     Ok((project, config))
-// }
 
 /// Creates a temp project from source project and compiles the project
 pub fn setup_and_compile_mutant(
