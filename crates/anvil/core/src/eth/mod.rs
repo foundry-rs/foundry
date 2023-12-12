@@ -6,6 +6,7 @@ use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
 use alloy_rpc_types::{
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     state::StateOverride,
+    trace::GethDebugTracingOptions,
     BlockId, BlockNumberOrTag as BlockNumber, CallRequest, Filter,
 };
 use ethers_core::types::transaction::eip712::TypedData;
@@ -262,7 +263,7 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "debug_traceTransaction"))]
     DebugTraceTransaction(
         B256,
-        #[cfg_attr(feature = "serde", serde(default))] GethDefaultTracingOptions,
+        #[cfg_attr(feature = "serde", serde(default))] GethDebugTracingOptions,
     ),
 
     /// geth's `debug_traceCall`  endpoint

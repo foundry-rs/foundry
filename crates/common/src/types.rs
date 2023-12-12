@@ -322,6 +322,179 @@ impl ToReth for alloy_rpc_types::trace::parity::RewardType {
     }
 }
 
+impl ToReth for alloy_rpc_types::trace::geth::GethDefaultTracingOptions {
+    type To = reth_rpc_types::trace::geth::GethDefaultTracingOptions;
+
+    fn to_reth(self) -> Self::To {
+        reth_rpc_types::trace::geth::GethDefaultTracingOptions {
+            disable_memory: self.disable_memory,
+            disable_stack: self.disable_stack,
+            disable_storage: self.disable_storage,
+            debug: self.debug,
+            disable_return_data: self.disable_return_data,
+            enable_return_data: self.enable_return_data,
+            enable_memory: self.enable_memory,
+            limit: self.limit,
+        }
+    }
+}
+
+impl ToReth for alloy_rpc_types::trace::geth::GethTrace {
+    type To = reth_rpc_types::trace::geth::GethTrace;
+
+    fn to_reth(self) -> Self::To {
+        use alloy_rpc_types::trace::geth::GethTrace as AlloyGethTrace;
+        use reth_rpc_types::trace::geth::GethTrace as RethGethTrace;
+        match self {
+            AlloyGethTrace::CallTracer(call_tracer) => {
+                RethGethTrace::CallTracer(call_tracer.to_reth())
+            }
+            AlloyGethTrace::FourByteTracer(fb_tracer) => {
+                RethGethTrace::FourByteTracer(fb_tracer.to_reth())
+            }
+            AlloyGethTrace::Default(df_frame) => RethGethTrace::Default(df_frame.to_reth()),
+            AlloyGethTrace::JS(js_val) => RethGethTrace::JS(js_val),
+            AlloyGethTrace::NoopTracer(noop) => RethGethTrace::NoopTracer(noop.to_reth()),
+            AlloyGethTrace::PreStateTracer(pre_state) => {
+                RethGethTrace::PreStateTracer(pre_state.to_reth())
+            }
+        }
+    }
+}
+
+impl ToReth for alloy_rpc_types::trace::geth::AccountState {
+    type To = reth_rpc_types::trace::geth::AccountState;
+
+    fn to_reth(self) -> Self::To {
+        reth_rpc_types::trace::geth::AccountState {
+            balance: self.balance,
+            nonce: self.nonce,
+            code: self.code,
+            storage: self.storage,
+        }
+    }
+}
+
+impl ToReth for alloy_rpc_types::trace::geth::PreStateMode {
+    type To = reth_rpc_types::trace::geth::PreStateMode;
+
+    fn to_reth(self) -> Self::To {
+        reth_rpc_types::trace::geth::PreStateMode(
+            self.0.into_iter().map(|(k, v)| (k, v.to_reth())).collect(),
+        )
+    }
+}
+
+impl ToReth for alloy_rpc_types::trace::geth::DiffMode {
+    type To = reth_rpc_types::trace::geth::DiffMode;
+
+    fn to_reth(self) -> Self::To {
+        reth_rpc_types::trace::geth::DiffMode {
+            pre: self.pre.into_iter().map(|(k, v)| (k, v.to_reth())).collect(),
+            post: self.post.into_iter().map(|(k, v)| (k, v.to_reth())).collect(),
+        }
+    }
+}
+
+impl ToReth for alloy_rpc_types::trace::geth::PreStateFrame {
+    type To = reth_rpc_types::trace::geth::PreStateFrame;
+
+    fn to_reth(self) -> Self::To {
+        use alloy_rpc_types::trace::geth::PreStateFrame as AlloyPreStateFrame;
+        use reth_rpc_types::trace::geth::PreStateFrame as RethPreStateFrame;
+
+        match self {
+            AlloyPreStateFrame::Default(pre_state_mode) => {
+                RethPreStateFrame::Default(pre_state_mode.to_reth())
+            }
+            AlloyPreStateFrame::Diff(diff) => RethPreStateFrame::Diff(diff.to_reth()),
+        }
+    }
+}
+
+impl ToReth for alloy_rpc_types::trace::geth::NoopFrame {
+    type To = reth_rpc_types::trace::geth::NoopFrame;
+
+    fn to_reth(self) -> Self::To {
+        reth_rpc_types::trace::geth::NoopFrame::default()
+    }
+}
+
+impl ToReth for alloy_rpc_types::trace::geth::DefaultFrame {
+    type To = reth_rpc_types::trace::geth::DefaultFrame;
+
+    fn to_reth(self) -> Self::To {
+        reth_rpc_types::trace::geth::DefaultFrame {
+            gas: self.gas,
+            failed: self.failed,
+            return_value: self.return_value,
+            struct_logs: self.struct_logs.into_iter().map(ToReth::to_reth).collect(),
+        }
+    }
+}
+
+impl ToReth for alloy_rpc_types::trace::geth::StructLog {
+    type To = reth_rpc_types::trace::geth::StructLog;
+
+    fn to_reth(self) -> Self::To {
+        reth_rpc_types::trace::geth::StructLog {
+            depth: self.depth,
+            error: self.error,
+            gas: self.gas,
+            gas_cost: self.gas_cost,
+            memory: self.memory,
+            op: self.op,
+            pc: self.pc,
+            stack: self.stack,
+            storage: self.storage,
+            refund_counter: self.refund_counter,
+            memory_size: self.memory_size,
+            return_data: self.return_data,
+        }
+    }
+}
+
+impl ToReth for alloy_rpc_types::trace::geth::FourByteFrame {
+    type To = reth_rpc_types::trace::geth::FourByteFrame;
+
+    fn to_reth(self) -> Self::To {
+        reth_rpc_types::trace::geth::FourByteFrame(self.0)
+    }
+}
+
+impl ToReth for alloy_rpc_types::trace::geth::CallFrame {
+    type To = reth_rpc_types::trace::geth::CallFrame;
+
+    fn to_reth(self) -> Self::To {
+        reth_rpc_types::trace::geth::CallFrame {
+            from: self.from,
+            to: self.to,
+            input: self.input,
+            output: self.output,
+            gas: self.gas,
+            gas_used: self.gas_used,
+            error: self.error,
+            revert_reason: self.revert_reason,
+            calls: self.calls.into_iter().map(ToReth::to_reth).collect(),
+            logs: self.logs.into_iter().map(ToReth::to_reth).collect(),
+            value: self.value,
+            typ: self.typ,
+        }
+    }
+}
+
+impl ToReth for alloy_rpc_types::trace::geth::CallLogFrame {
+    type To = reth_rpc_types::trace::geth::CallLogFrame;
+
+    fn to_reth(self) -> Self::To {
+        reth_rpc_types::trace::geth::CallLogFrame {
+            address: self.address,
+            topics: self.topics,
+            data: self.data,
+        }
+    }
+}
+
 /// Converts from a [TransactionRequest] to a [CallRequest].
 pub fn to_call_request_from_tx_request(tx: TransactionRequest) -> CallRequest {
     CallRequest {

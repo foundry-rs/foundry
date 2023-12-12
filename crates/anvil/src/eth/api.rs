@@ -31,10 +31,10 @@ use crate::{
 };
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256, U64};
 use alloy_rpc_types::{
-    state::StateOverride, AccessList, AccessListWithGasUsed, Block, BlockId,
-    BlockNumberOrTag as BlockNumber, BlockTransactions, CallRequest, EIP1186AccountProofResponse,
-    FeeHistory, Filter, FilteredParams, Log, Transaction, TransactionReceipt, TxpoolContent,
-    TxpoolInspect, TxpoolInspectSummary, TxpoolStatus,
+    state::StateOverride, trace::GethDebugTracingOptions, AccessList, AccessListWithGasUsed, Block,
+    BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions, CallRequest,
+    EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Log, Transaction,
+    TransactionReceipt, TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus,
 };
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
@@ -1440,7 +1440,7 @@ impl EthApi {
     pub async fn debug_trace_transaction(
         &self,
         tx_hash: B256,
-        opts: GethDefaultTracingOptions,
+        opts: GethDebugTracingOptions,
     ) -> Result<GethTrace> {
         node_info!("debug_traceTransaction");
         self.backend.debug_trace_transaction(tx_hash, opts).await
