@@ -1,7 +1,6 @@
 //! IPC tests
 
 use alloy_primitives::U256;
-use alloy_providers::provider::TempProvider;
 use anvil::{spawn, NodeConfig};
 use ethers::{core::rand, prelude::Middleware};
 use futures::StreamExt;
@@ -26,10 +25,10 @@ async fn can_get_block_number_ipc() {
     let block_num = api.block_number().unwrap();
     assert_eq!(block_num, U256::ZERO);
 
-    let provider = handle.ipc_provider().unwrap();
+    let provider = handle.ethers_ipc_provider().unwrap();
 
     let num = provider.get_block_number().await.unwrap();
-    assert_eq!(num, block_num.to::<u64>());
+    assert_eq!(num.as_u64(), block_num.to::<u64>());
 }
 
 #[tokio::test(flavor = "multi_thread")]
