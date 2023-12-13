@@ -166,9 +166,9 @@ impl CallArgs {
                         Err(evm_err) => TraceResult::try_from(evm_err)?,
                     };
 
-                    handle_traces(trace, &config, chain, labels, verbose, debug).await?;
+                    handle_traces(trace, &config, chain, labels, verbose).await?;
 
-                    return Ok(())
+                    return Ok(());
                 }
 
                 // fill the builder after the conditional so we dont move values
@@ -200,9 +200,9 @@ impl CallArgs {
                         tx.value().copied().unwrap_or_default().to_alloy(),
                     )?);
 
-                    handle_traces(trace, &config, chain, labels, verbose, debug).await?;
+                    handle_traces(trace, &config, chain, labels, verbose).await?;
 
-                    return Ok(())
+                    return Ok(());
                 }
             }
         };
