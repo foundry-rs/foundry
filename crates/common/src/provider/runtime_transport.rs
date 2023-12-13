@@ -295,8 +295,8 @@ impl RuntimeTransport {
     /// URL scheme. When sending the request, retries will be automatically handled depending
     /// on the parameters set on the [RuntimeTransport].
     /// For sending the actual request, this action is delegated down to the
-    /// underlying transport through Tower's call. See tower's [tower::Service] trait for more
-    /// information.
+    /// underlying transport through Tower's [tower::Service::call]. See tower's [tower::Service]
+    /// trait for more information.
     pub fn request(&self, req: RequestPacket) -> TransportFut<'static> {
         let this = self.clone();
         Box::pin(async move {
