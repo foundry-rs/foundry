@@ -123,7 +123,7 @@ foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 
-foundry-block-explorers = { version = "0.1.1", default-features = false }
+foundry-block-explorers = { version = "0.1.2", default-features = false }
 foundry-compilers = { version = "0.1.1", default-features = false }
 
 ## revm
@@ -148,7 +148,7 @@ alloy-json-abi = "0.5.0"
 alloy-sol-types = "0.5.0"
 syn-solidity = "0.5.0"
 
-alloy-chains = "0.1.4"
+alloy-chains = "0.1.5"
 alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
 

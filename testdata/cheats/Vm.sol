@@ -7,7 +7,7 @@ pragma solidity ^0.8.4;
 interface Vm {
     error CheatcodeError(string message);
     enum CallerMode { None, Broadcast, RecurrentBroadcast, Prank, RecurrentPrank }
-    enum AccountAccessKind { Call, DelegateCall, CallCode, StaticCall, Create, SelfDestruct, Resume }
+    enum AccountAccessKind { Call, DelegateCall, CallCode, StaticCall, Create, SelfDestruct, Resume, Balance, Extcodesize, Extcodecopy, Extcodehash }
     struct Log { bytes32[] topics; bytes data; address emitter; }
     struct Rpc { string key; string url; }
     struct EthGetLogs { address emitter; bytes32[] topics; bytes data; bytes32 blockHash; uint64 blockNumber; bytes32 transactionHash; uint64 transactionIndex; uint256 logIndex; bool removed; }
@@ -48,6 +48,8 @@ interface Vm {
     function createWallet(uint256 privateKey) external returns (Wallet memory wallet);
     function createWallet(uint256 privateKey, string calldata walletLabel) external returns (Wallet memory wallet);
     function deal(address account, uint256 newBalance) external;
+    function deleteSnapshot(uint256 snapshotId) external returns (bool success);
+    function deleteSnapshots() external;
     function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256 privateKey);
     function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index) external pure returns (uint256 privateKey);
     function deriveKey(string calldata mnemonic, uint32 index, string calldata language) external pure returns (uint256 privateKey);
@@ -172,6 +174,7 @@ interface Vm {
     function resetNonce(address account) external;
     function resumeGasMetering() external;
     function revertTo(uint256 snapshotId) external returns (bool success);
+    function revertToAndDelete(uint256 snapshotId) external returns (bool success);
     function revokePersistent(address account) external;
     function revokePersistent(address[] calldata accounts) external;
     function roll(uint256 newHeight) external;

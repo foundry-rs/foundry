@@ -4,8 +4,6 @@ Thanks for your interest in improving Foundry!
 
 There are multiple opportunities to contribute at any level. It doesn't matter if you are just getting started with Rust or are the most weathered expert, we can use your help.
 
-**No contribution is too small and all contributions are valued.**
-
 This document will help you get started. **Do not let the document intimidate you**.
 It should be considered as a guide to help you navigate the process.
 
@@ -32,6 +30,11 @@ There are fundamentally four ways an individual can contribute:
 
 **Anybody can participate in any stage of contribution**. We urge you to participate in the discussion
 around bugs and participate in reviewing PRs.
+
+### Contributions Related to Spelling and Grammar
+
+At this time, we will not be accepting contributions that only fix spelling or grammatical errors in documentation, code or
+elsewhere.
 
 ### Asking for help
 

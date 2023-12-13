@@ -10,6 +10,7 @@ mod cmd;
 mod config;
 mod coverage;
 mod create;
+mod debug;
 mod doc;
 mod multi_script;
 mod script;

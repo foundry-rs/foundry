@@ -2,7 +2,7 @@
 //!
 //! Interactive Solidity TUI debugger.
 
-#![warn(unused_crate_dependencies)]
+#![warn(unused_crate_dependencies, unreachable_pub)]
 
 #[macro_use]
 extern crate tracing;
