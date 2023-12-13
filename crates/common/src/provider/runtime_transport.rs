@@ -1,6 +1,6 @@
 //! Runtime transport that connects on first request, which can take either of an HTTP,
 //! WebSocket, or IPC transport and supports retries based on CUPS logic.
-use super::policy::{RateLimitRetryPolicy, RetryPolicy};
+use super::retry::{RateLimitRetryPolicy, RetryPolicy};
 use crate::{ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
@@ -101,6 +101,7 @@ pub struct RuntimeTransport {
 }
 
 /// A builder for [RuntimeTransport].
+#[derive(Debug)]
 pub struct RuntimeTransportBuilder {
     url: Url,
     headers: Vec<String>,
