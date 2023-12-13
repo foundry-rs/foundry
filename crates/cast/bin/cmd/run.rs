@@ -151,7 +151,7 @@ impl RunArgs {
                         continue;
                     }
                     if tx.hash == tx_hash {
-                        break
+                        break;
                     }
 
                     configure_tx_env(&mut env, &tx.clone().to_alloy());
@@ -205,7 +205,7 @@ impl RunArgs {
             }
         };
 
-        handle_traces(result, &config, chain, self.label, self.verbose, self.debug).await?;
+        handle_traces(result, &config, chain, self.label, self.debug).await?;
 
         Ok(())
     }
