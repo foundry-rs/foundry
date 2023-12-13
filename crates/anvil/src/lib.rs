@@ -189,7 +189,7 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     }
 
     // TODO test code for engine API
-    let engine_api = EngineApi::new();
+    let engine_api = EngineApi::new(api.clone());
     let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
     let engine_sock_addr = SocketAddr::new(ip_addr.to_owned(), config.engine_config.port);
     let engine_srv = server::serve_engine(engine_sock_addr, engine_api.clone(), server_config.clone());

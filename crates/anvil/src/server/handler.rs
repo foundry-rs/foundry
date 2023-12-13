@@ -163,8 +163,8 @@ impl PubSubEngineRpcHandler {
 
     /// Invoked for an ethereum pubsub rpc call
     async fn on_pub_sub(&self, pubsub: EthPubSub, cx: PubSubContext<Self>) -> ResponseResult {
-        // ResponseResult::Success(serde_json::Value::from(1))
-        ResponseResult::Error(serde_json::Value::from("Not implemented"))
+        // ResponseResult::Error(RpcError::internal_error_with("Not implemented").into())
+        ResponseResult::Success(serde_json::Value::from(1))
     }
 }
 

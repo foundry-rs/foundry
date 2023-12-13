@@ -22,6 +22,15 @@ use std::{
 };
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_engine_api() {
+    //TODO
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    // handle.engine_api.execute().await; // prints hello world
+    handle.engine_api.unwrap().execute().await; // prints hello world
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_set_gas_price() {
     let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
     let provider = handle.http_provider();
