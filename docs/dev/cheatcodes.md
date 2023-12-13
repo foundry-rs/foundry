@@ -109,7 +109,7 @@ called in the [`Cheatcodes` inspector](#cheatcode-inspector) implementation.
 Generates the raw Rust bindings for the cheatcodes, as well as lets us specify custom attributes
 individually for each item, such as functions and structs, or for entire interfaces.
 
-The way bindings are generated and extra information can be found the [`sol!`] documentation.
+The way bindings are generated and extra information can be found in the [`sol!`] documentation.
 
 We leverage this macro to apply the [`Cheatcode` derive macro](#cheatcode-derive-macro) on the `Vm` interface.
 
@@ -127,7 +127,7 @@ The latter is what fails compilation when adding a new cheatcode, and is fixed b
 [`Cheatcode` trait](#cheatcode-trait) to the newly-generated function call struct(s).
 
 The `Cheatcode` derive macro also parses the `#[cheatcode(...)]` attributes on functions, which are
-used to specify additional properties the JSON interface.
+used to specify additional properties of the JSON interface.
 
 These are all the attributes that can be specified on cheatcode functions:
 - `#[cheatcode(group = <ident>)]`: The group that the cheatcode belongs to. Required.
