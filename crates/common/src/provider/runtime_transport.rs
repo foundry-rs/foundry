@@ -195,33 +195,6 @@ impl ::core::fmt::Display for RuntimeTransport {
 }
 
 impl RuntimeTransport {
-    /// Create a new [RuntimeTransport].
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        url: Url,
-        headers: Vec<String>,
-        jwt: Option<String>,
-        timeout: std::time::Duration,
-        max_rate_limit_retries: u32,
-        max_timeout_retries: u32,
-        compute_units_per_second: u64,
-        initial_backoff: u64,
-    ) -> Self {
-        Self {
-            inner: Arc::new(RwLock::new(None)),
-            url,
-            headers,
-            jwt,
-            timeout,
-            max_rate_limit_retries,
-            max_timeout_retries,
-            requests_enqueued: Arc::new(AtomicU32::new(0)),
-            policy: RateLimitRetryPolicy,
-            initial_backoff,
-            compute_units_per_second,
-        }
-    }
-
     /// Connects the underlying transport, depending on the URL scheme.
     pub async fn connect(&self) -> Result<InnerTransport, RuntimeTransportError> {
         match self.url.scheme() {
