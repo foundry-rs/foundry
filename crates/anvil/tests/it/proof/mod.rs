@@ -1,17 +1,17 @@
 //! tests for `eth_getProof`
 
+use crate::proof::eip1186::verify_proof;
 use anvil::{spawn, NodeConfig};
+use anvil_core::eth::{
+    proof::{AccountProof, BasicAccount},
+    trie::ExtensionLayout,
+};
 use ethers::{
     abi::ethereum_types::BigEndianHash,
     types::{Address, H256, U256},
+    utils::{keccak256, rlp},
 };
-
-use anvil_core::eth::proof::{AccountProof, BasicAccount};
-use foundry_utils::types::ToEthers;
-
-use crate::proof::eip1186::verify_proof;
-use anvil_core::eth::trie::ExtensionLayout;
-use ethers::utils::{keccak256, rlp};
+use foundry_common::types::ToEthers;
 use foundry_evm::revm::primitives::KECCAK_EMPTY;
 
 mod eip1186;
@@ -39,7 +39,11 @@ async fn can_get_proof() {
     let rlp_account = rlp::encode(&account);
 
     let root: H256 = api.state_root().await.unwrap();
-    let acc_proof: Vec<Vec<u8>> = proof.account_proof.into_iter().map(|b| b.to_vec()).collect();
+    let acc_proof: Vec<Vec<u8>> = proof
+        .account_proof
+        .into_iter()
+        .map(|node| rlp::decode::<Vec<u8>>(&node).unwrap())
+        .collect();
 
     verify_proof::<ExtensionLayout>(
         &root.0,
@@ -52,11 +56,13 @@ async fn can_get_proof() {
     assert_eq!(proof.storage_proof.len(), 1);
     let expected_value = rlp::encode(&value);
     let proof = proof.storage_proof[0].clone();
-    let storage_proof: Vec<Vec<u8>> = proof.proof.into_iter().map(|b| b.to_vec()).collect();
+    let storage_proof: Vec<Vec<u8>> =
+        proof.proof.into_iter().map(|node| rlp::decode::<Vec<u8>>(&node).unwrap()).collect();
+    let key = H256::from(keccak256(proof.key.as_bytes()));
     verify_proof::<ExtensionLayout>(
         &account.storage_root.0,
         &storage_proof,
-        proof.key.as_bytes(),
+        key.as_bytes(),
         Some(expected_value.as_ref()),
     )
     .unwrap();

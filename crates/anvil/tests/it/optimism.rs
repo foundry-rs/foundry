@@ -15,7 +15,7 @@ use std::str::FromStr;
 #[tokio::test(flavor = "multi_thread")]
 async fn test_deposits_not_supported_if_optimism_disabled() {
     // optimism disabled by default
-    let (_, _engine_api, handle) = spawn(NodeConfig::test()).await;
+    let (_, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let from_addr: Address = "cf7f9e66af820a19257a2108375b180b0ec49167".parse().unwrap();
@@ -50,7 +50,7 @@ async fn test_deposits_not_supported_if_optimism_disabled() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_send_value_deposit_transaction() {
     // enable the Optimism flag
-    let (api, _engine_api, handle) =
+    let (api, handle) =
         spawn(NodeConfig::test().with_optimism(true).with_hardfork(Some(Hardfork::Paris))).await;
     let provider = handle.http_provider();
 
@@ -96,7 +96,7 @@ async fn test_send_value_deposit_transaction() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_send_value_raw_deposit_transaction() {
     // enable the Optimism flag
-    let (api, _engine_api, handle) =
+    let (api, handle) =
         spawn(NodeConfig::test().with_optimism(true).with_hardfork(Some(Hardfork::Paris))).await;
     let provider = handle.http_provider();
 
