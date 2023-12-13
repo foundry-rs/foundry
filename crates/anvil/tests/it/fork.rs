@@ -283,8 +283,6 @@ async fn test_fork_snapshotting() {
     assert_eq!(block_number, provider.get_block_number().await.unwrap());
 }
 
-<<<<<<< HEAD
-=======
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_snapshotting_repeated() {
     let (api, handle) = spawn(fork_config()).await;
@@ -380,7 +378,6 @@ async fn test_fork_snapshotting_blocks() {
     assert_eq!(block_number_after, block_number + 1);
 }
 
->>>>>>> master
 /// tests that the remote state and local state are kept separate.
 /// changes don't make into the read only Database that holds the remote state, which is flushed to
 /// a cache file.
