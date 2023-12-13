@@ -1,7 +1,7 @@
 //! Runtime transport that connects on first request, which can take either of an HTTP,
 //! WebSocket, or IPC transport and supports retries based on CUPS logic.
-use crate::{ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
 use super::policy::{RateLimitRetryPolicy, RetryPolicy};
+use crate::{ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
 use alloy_transport::{
@@ -179,7 +179,7 @@ impl RuntimeTransportBuilder {
             jwt: self.jwt,
             timeout: self.timeout,
             requests_enqueued: Arc::new(AtomicU32::new(0)),
-            policy: RateLimitRetryPolicy::default(),
+            policy: RateLimitRetryPolicy,
             max_rate_limit_retries: self.max_rate_limit_retries,
             max_timeout_retries: self.max_timeout_retries,
             initial_backoff: self.initial_backoff,
@@ -196,6 +196,7 @@ impl ::core::fmt::Display for RuntimeTransport {
 
 impl RuntimeTransport {
     /// Create a new [RuntimeTransport].
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         url: Url,
         headers: Vec<String>,
@@ -215,7 +216,7 @@ impl RuntimeTransport {
             max_rate_limit_retries,
             max_timeout_retries,
             requests_enqueued: Arc::new(AtomicU32::new(0)),
-            policy: RateLimitRetryPolicy::default(),
+            policy: RateLimitRetryPolicy,
             initial_backoff,
             compute_units_per_second,
         }
@@ -342,9 +343,10 @@ impl RuntimeTransport {
 
                     // try to extract the requested backoff from the error or compute the next
                     // backoff based on retry count
-                    let mut next_backoff = this.policy.backoff_hint(&err).unwrap_or_else(|| {
-                        std::time::Duration::from_millis(this.initial_backoff as u64)
-                    });
+                    let mut next_backoff = this
+                        .policy
+                        .backoff_hint(&err)
+                        .unwrap_or_else(|| std::time::Duration::from_millis(this.initial_backoff));
 
                     // requests are usually weighted and can vary from 10 CU to several 100 CU,
                     // cheaper requests are more common some example alchemy
