@@ -171,6 +171,14 @@ impl Visitor for Parser {
         Ok(())
     }
 
+    fn visit_enum(&mut self, enumerable: &mut EnumDefinition) -> ParserResult<()> {
+        self.add_element_to_parent(ParseSource::Enum(enumerable.clone()), enumerable.loc)
+    }
+
+    fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> ParserResult<()> {
+        self.add_element_to_parent(ParseSource::Variable(var.clone()), var.loc)
+    }
+
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> ParserResult<()> {
         // If the function parameter doesn't have a name, try to set it with
         // `@custom:name` tag if any was provided
@@ -195,8 +203,8 @@ impl Visitor for Parser {
         self.add_element_to_parent(ParseSource::Function(func.clone()), func.loc)
     }
 
-    fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> ParserResult<()> {
-        self.add_element_to_parent(ParseSource::Variable(var.clone()), var.loc)
+    fn visit_struct(&mut self, structure: &mut StructDefinition) -> ParserResult<()> {
+        self.add_element_to_parent(ParseSource::Struct(structure.clone()), structure.loc)
     }
 
     fn visit_event(&mut self, event: &mut EventDefinition) -> ParserResult<()> {
@@ -205,14 +213,6 @@ impl Visitor for Parser {
 
     fn visit_error(&mut self, error: &mut ErrorDefinition) -> ParserResult<()> {
         self.add_element_to_parent(ParseSource::Error(error.clone()), error.loc)
-    }
-
-    fn visit_struct(&mut self, structure: &mut StructDefinition) -> ParserResult<()> {
-        self.add_element_to_parent(ParseSource::Struct(structure.clone()), structure.loc)
-    }
-
-    fn visit_enum(&mut self, enumerable: &mut EnumDefinition) -> ParserResult<()> {
-        self.add_element_to_parent(ParseSource::Enum(enumerable.clone()), enumerable.loc)
     }
 
     fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> ParserResult<()> {

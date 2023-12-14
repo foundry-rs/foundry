@@ -68,6 +68,10 @@ pub struct VerifyArgs {
     #[clap(short, long)]
     pub force: bool,
 
+    /// Do not check if the contract is already verified before verifying.
+    #[clap(long)]
+    pub skip_is_verified_check: bool,
+
     /// Wait for verification result after submission.
     #[clap(long)]
     pub watch: bool,

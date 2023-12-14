@@ -6,7 +6,7 @@ use alloy_sol_types::SolValue;
 use ethers_core::utils::{Genesis, GenesisAccount};
 use ethers_signers::Signer;
 use foundry_common::{fs::read_json_file, types::ToAlloy};
-use foundry_evm_core::backend::DatabaseExt;
+use foundry_evm_core::backend::{DatabaseExt, RevertSnapshotAction};
 use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     EVMData,
@@ -327,9 +327,12 @@ impl Cheatcode for snapshotCall {
 impl Cheatcode for revertToCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { snapshotId } = self;
-        let result = if let Some(journaled_state) =
-            ccx.data.db.revert(*snapshotId, &ccx.data.journaled_state, ccx.data.env)
-        {
+        let result = if let Some(journaled_state) = ccx.data.db.revert(
+            *snapshotId,
+            &ccx.data.journaled_state,
+            ccx.data.env,
+            RevertSnapshotAction::RevertKeep,
+        ) {
             // we reset the evm's journaled_state to the state of the snapshot previous state
             ccx.data.journaled_state = journaled_state;
             true
@@ -337,6 +340,40 @@ impl Cheatcode for revertToCall {
             false
         };
         Ok(result.abi_encode())
+    }
+}
+
+impl Cheatcode for revertToAndDeleteCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { snapshotId } = self;
+        let result = if let Some(journaled_state) = ccx.data.db.revert(
+            *snapshotId,
+            &ccx.data.journaled_state,
+            ccx.data.env,
+            RevertSnapshotAction::RevertRemove,
+        ) {
+            // we reset the evm's journaled_state to the state of the snapshot previous state
+            ccx.data.journaled_state = journaled_state;
+            true
+        } else {
+            false
+        };
+        Ok(result.abi_encode())
+    }
+}
+
+impl Cheatcode for deleteSnapshotCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { snapshotId } = self;
+        let result = ccx.data.db.delete_snapshot(*snapshotId);
+        Ok(result.abi_encode())
+    }
+}
+impl Cheatcode for deleteSnapshotsCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self {} = self;
+        ccx.data.db.delete_snapshots();
+        Ok(Default::default())
     }
 }
 

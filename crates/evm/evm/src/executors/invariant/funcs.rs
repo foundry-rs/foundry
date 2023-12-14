@@ -19,6 +19,7 @@ pub fn assert_invariants(
     calldata: &[BasicTxDetails],
     invariant_failures: &mut InvariantFailures,
     shrink_sequence: bool,
+    shrink_run_limit: usize,
 ) -> Option<RawCallResult> {
     let mut inner_sequence = vec![];
 
@@ -56,6 +57,7 @@ pub fn assert_invariants(
                 call_result,
                 &inner_sequence,
                 shrink_sequence,
+                shrink_run_limit,
             ));
             return None
         }

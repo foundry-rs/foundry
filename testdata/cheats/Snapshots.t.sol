@@ -32,6 +32,53 @@ contract SnapshotTest is DSTest {
         assertEq(store.slot1, 20, "snapshot revert for slot 1 unsuccessful");
     }
 
+    function testSnapshotRevertDelete() public {
+        uint256 snapshot = vm.snapshot();
+        store.slot0 = 300;
+        store.slot1 = 400;
+
+        assertEq(store.slot0, 300);
+        assertEq(store.slot1, 400);
+
+        vm.revertToAndDelete(snapshot);
+        assertEq(store.slot0, 10, "snapshot revert for slot 0 unsuccessful");
+        assertEq(store.slot1, 20, "snapshot revert for slot 1 unsuccessful");
+        // nothing to revert to anymore
+        assert(!vm.revertTo(snapshot));
+    }
+
+    function testSnapshotDelete() public {
+        uint256 snapshot = vm.snapshot();
+        store.slot0 = 300;
+        store.slot1 = 400;
+
+        vm.deleteSnapshot(snapshot);
+        // nothing to revert to anymore
+        assert(!vm.revertTo(snapshot));
+    }
+
+    function testSnapshotDeleteAll() public {
+        uint256 snapshot = vm.snapshot();
+        store.slot0 = 300;
+        store.slot1 = 400;
+
+        vm.deleteSnapshots();
+        // nothing to revert to anymore
+        assert(!vm.revertTo(snapshot));
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/6411>
+    function testSnapshotsMany() public {
+        uint256 preState;
+        for (uint256 c = 0; c < 10; c++) {
+            for (uint256 cc = 0; cc < 10; cc++) {
+                preState = vm.snapshot();
+                vm.revertToAndDelete(preState);
+                assert(!vm.revertTo(preState));
+            }
+        }
+    }
+
     // tests that snapshots can also revert changes to `block`
     function testBlockValues() public {
         uint256 num = block.number;

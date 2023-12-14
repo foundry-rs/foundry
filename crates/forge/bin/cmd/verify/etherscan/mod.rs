@@ -57,7 +57,9 @@ impl VerificationProvider for EtherscanVerificationProvider {
     async fn verify(&mut self, args: VerifyArgs) -> Result<()> {
         let (etherscan, verify_args) = self.prepare_request(&args).await?;
 
-        if self.is_contract_verified(&etherscan, &verify_args).await? {
+        if !args.skip_is_verified_check &&
+            self.is_contract_verified(&etherscan, &verify_args).await?
+        {
             println!(
                 "\nContract [{}] {:?} is already verified. Skipping verification.",
                 verify_args.contract_name,
@@ -89,7 +91,10 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 trace!(target: "forge::verify", ?resp, "Received verification response");
 
                 if resp.status == "0" {
-                    if resp.result == "Contract source code already verified" {
+                    if resp.result == "Contract source code already verified"
+                        // specific for blockscout response
+                        || resp.result == "Smart-contract already verified."
+                    {
                         return Ok(None)
                     }
 

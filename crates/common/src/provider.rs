@@ -79,7 +79,7 @@ impl ProviderBuilder {
         // invalid url: non-prefixed URL scheme is not allowed, so we prepend the default http
         // prefix
         let storage;
-        if url_str.starts_with("localhost:") {
+        if url_str.starts_with("localhost:") || url_str.starts_with("127.0.0.1:") {
             storage = format!("http://{url_str}");
             url_str = storage.as_str();
         }

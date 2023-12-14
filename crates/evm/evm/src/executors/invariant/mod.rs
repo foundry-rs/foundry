@@ -125,6 +125,7 @@ impl<'a> InvariantExecutor<'a> {
             &[],
             &mut failures.borrow_mut(),
             self.config.shrink_sequence,
+            self.config.shrink_run_limit,
         ));
 
         if last_call_results.borrow().is_none() {
@@ -203,6 +204,7 @@ impl<'a> InvariantExecutor<'a> {
                         state_changeset,
                         self.config.fail_on_revert,
                         self.config.shrink_sequence,
+                        self.config.shrink_run_limit,
                     );
 
                 if !can_continue || current_run == self.config.depth - 1 {
@@ -730,6 +732,7 @@ fn can_continue(
     state_changeset: StateChangeset,
     fail_on_revert: bool,
     shrink_sequence: bool,
+    shrink_run_limit: usize,
 ) -> RichInvariantResults {
     let mut call_results = None;
 
@@ -741,8 +744,14 @@ fn can_continue(
 
     // Assert invariants IFF the call did not revert and the handlers did not fail.
     if !call_result.reverted && !handlers_failed {
-        call_results =
-            assert_invariants(invariant_contract, executor, calldata, failures, shrink_sequence);
+        call_results = assert_invariants(
+            invariant_contract,
+            executor,
+            calldata,
+            failures,
+            shrink_sequence,
+            shrink_run_limit,
+        );
         if call_results.is_none() {
             return RichInvariantResults::new(false, None)
         }
@@ -758,6 +767,7 @@ fn can_continue(
                 call_result,
                 &[],
                 shrink_sequence,
+                shrink_run_limit,
             );
 
             failures.revert_reason = Some(error.revert_reason.clone());

@@ -179,7 +179,7 @@ enum ForkTask {
 }
 
 /// The type that manages connections in the background
-#[must_use = "MultiForkHandler does nothing unless polled."]
+#[must_use = "futures do nothing unless polled"]
 pub struct MultiForkHandler {
     /// Incoming requests from the `MultiFork`.
     incoming: Fuse<Receiver<Request>>,

@@ -1,4 +1,4 @@
-//! Tests for reproducing issues
+//! Filesystem tests.
 
 use crate::{config::*, test_helpers::PROJECT};
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};

@@ -284,14 +284,20 @@ pub fn compile_with_filter(
     ProjectCompiler::with_filter(print_names, print_sizes, skip).compile(project)
 }
 
+/// Compiles the provided [`Project`] and does not throw if there's any compiler error
+/// Doesn't print anything to stdout, thus is "suppressed".
+pub fn try_suppress_compile(project: &Project) -> Result<ProjectCompileOutput> {
+    Ok(foundry_compilers::report::with_scoped(
+        &foundry_compilers::report::Report::new(NoReporter::default()),
+        || project.compile(),
+    )?)
+}
+
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
 /// Doesn't print anything to stdout, thus is "suppressed".
 pub fn suppress_compile(project: &Project) -> Result<ProjectCompileOutput> {
-    let output = foundry_compilers::report::with_scoped(
-        &foundry_compilers::report::Report::new(NoReporter::default()),
-        || project.compile(),
-    )?;
+    let output = try_suppress_compile(project)?;
 
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
@@ -301,7 +307,7 @@ pub fn suppress_compile(project: &Project) -> Result<ProjectCompileOutput> {
 }
 
 /// Depending on whether the `skip` is empty this will [`suppress_compile_sparse`] or
-/// [`suppress_compile`]
+/// [`suppress_compile`] and throw if there's any compiler error
 pub fn suppress_compile_with_filter(
     project: &Project,
     skip: Vec<SkipBuildFilter>,
@@ -313,6 +319,33 @@ pub fn suppress_compile_with_filter(
     }
 }
 
+/// Depending on whether the `skip` is empty this will [`suppress_compile_sparse`] or
+/// [`suppress_compile`] and does not throw if there's any compiler error
+pub fn suppress_compile_with_filter_json(
+    project: &Project,
+    skip: Vec<SkipBuildFilter>,
+) -> Result<ProjectCompileOutput> {
+    if skip.is_empty() {
+        try_suppress_compile(project)
+    } else {
+        try_suppress_compile_sparse(project, SkipBuildFilters(skip))
+    }
+}
+
+/// Compiles the provided [`Project`],
+/// Doesn't print anything to stdout, thus is "suppressed".
+///
+/// See [`Project::compile_sparse`]
+pub fn try_suppress_compile_sparse<F: FileFilter + 'static>(
+    project: &Project,
+    filter: F,
+) -> Result<ProjectCompileOutput> {
+    Ok(foundry_compilers::report::with_scoped(
+        &foundry_compilers::report::Report::new(NoReporter::default()),
+        || project.compile_sparse(filter),
+    )?)
+}
+
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
 /// Doesn't print anything to stdout, thus is "suppressed".
@@ -322,10 +355,7 @@ pub fn suppress_compile_sparse<F: FileFilter + 'static>(
     project: &Project,
     filter: F,
 ) -> Result<ProjectCompileOutput> {
-    let output = foundry_compilers::report::with_scoped(
-        &foundry_compilers::report::Report::new(NoReporter::default()),
-        || project.compile_sparse(filter),
-    )?;
+    let output = try_suppress_compile_sparse(project, filter)?;
 
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
@@ -423,7 +453,12 @@ pub async fn compile_from_source(
         .map(|(aid, art)| {
             (aid, art.source_file().expect("no source file").id, art.into_contract_bytecode())
         })
-        .expect("there should be a contract with bytecode");
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "Unable to find bytecode in compiled output for contract: {}",
+                metadata.contract_name
+            )
+        })?;
     let bytecode = compact_to_contract(contract)?;
 
     root.close()?;

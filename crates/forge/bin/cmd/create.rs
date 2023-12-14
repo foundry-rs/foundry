@@ -172,7 +172,7 @@ impl CreateArgs {
     ) -> Result<()> {
         // NOTE: this does not represent the same `VerifyArgs` that would be sent after deployment,
         // since we don't know the address yet.
-        let verify = verify::VerifyArgs {
+        let mut verify = verify::VerifyArgs {
             address: Default::default(),
             contract: self.contract.clone(),
             compiler_version: None,
@@ -185,6 +185,7 @@ impl CreateArgs {
             },
             flatten: false,
             force: false,
+            skip_is_verified_check: true,
             watch: true,
             retry: self.retry,
             libraries: vec![],
@@ -192,6 +193,13 @@ impl CreateArgs {
             verifier: self.verifier.clone(),
             show_standard_json_input: self.show_standard_json_input,
         };
+
+        // Check config for Etherscan API Keys to avoid preflight check failing if no
+        // ETHERSCAN_API_KEY value set.
+        let config = verify.load_config_emit_warnings();
+        verify.etherscan.key =
+            config.get_etherscan_config_with_chain(Some(chain.into()))?.map(|c| c.key);
+
         verify.verification_provider()?.preflight_check(verify).await?;
         Ok(())
     }
@@ -324,6 +332,7 @@ impl CreateArgs {
             etherscan: EtherscanOpts { key: self.eth.etherscan.key, chain: Some(chain.into()) },
             flatten: false,
             force: false,
+            skip_is_verified_check: false,
             watch: true,
             retry: self.retry,
             libraries: vec![],
@@ -370,7 +379,7 @@ pub type ContractFactory<M> = DeploymentTxFactory<Arc<M>, M>;
 ///
 /// Currently, we recommend using the [`ContractDeployer`] type alias.
 #[derive(Debug)]
-#[must_use = "DeploymentTx does nothing unless you `send` it"]
+#[must_use = "ContractDeploymentTx does nothing unless you `send` it"]
 pub struct ContractDeploymentTx<B, M, C> {
     /// the actual deployer, exposed for overriding the defaults
     pub deployer: Deployer<B, M>,

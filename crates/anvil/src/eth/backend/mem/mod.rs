@@ -58,7 +58,7 @@ use ethers::{
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_common::types::{ToAlloy, ToEthers};
 use foundry_evm::{
-    backend::{DatabaseError, DatabaseResult},
+    backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::decode_revert,
     inspectors::AccessListTracer,
@@ -398,11 +398,12 @@ impl Backend {
                     timestamp: fork_block.timestamp.to_alloy(),
                     gas_limit: fork_block.gas_limit.to_alloy(),
                     difficulty: fork_block.difficulty.to_alloy(),
-                    prevrandao: fork_block.mix_hash.map(|h| h.to_alloy()),
+                    // ensures prevrandao is set
+                    prevrandao: Some(fork_block.mix_hash.map(|h| h.to_alloy()).unwrap_or_default()),
                     // Keep previous `coinbase` and `basefee` value
                     coinbase: env.block.coinbase,
                     basefee: env.block.basefee,
-                    ..Default::default()
+                    ..env.block.clone()
                 };
 
                 self.time.reset((env.block.timestamp.to_ethers()).as_u64());
@@ -686,7 +687,7 @@ impl Backend {
                 ..Default::default()
             };
         }
-        Ok(self.db.write().await.revert(id))
+        Ok(self.db.write().await.revert(id, RevertSnapshotAction::RevertRemove))
     }
 
     pub fn list_snapshots(&self) -> BTreeMap<U256, (u64, H256)> {

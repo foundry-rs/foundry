@@ -310,12 +310,10 @@ impl CoverageArgs {
         let filter = self.filter;
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let handle =
-            tokio::task::spawn(
-                async move { runner.test(filter, Some(tx), Default::default()).await },
-            );
+            tokio::task::spawn(async move { runner.test(&filter, tx, Default::default()).await });
 
         // Add hit data to the coverage report
-        for (artifact_id, hits) in rx
+        let data = rx
             .into_iter()
             .flat_map(|(_, suite)| suite.test_results.into_values())
             .filter_map(|mut result| result.coverage.take())
@@ -323,8 +321,8 @@ impl CoverageArgs {
                 hit_maps.0.into_values().filter_map(|map| {
                     Some((known_contracts.find_by_code(map.bytecode.as_ref())?.0, map))
                 })
-            })
-        {
+            });
+        for (artifact_id, hits) in data {
             // TODO: Note down failing tests
             if let Some(source_id) = report.get_source_id(
                 artifact_id.version.clone(),
@@ -344,7 +342,12 @@ impl CoverageArgs {
         }
 
         // Reattach the thread
-        let _ = handle.await;
+        if let Err(e) = handle.await {
+            match e.try_into_panic() {
+                Ok(payload) => std::panic::resume_unwind(payload),
+                Err(e) => return Err(e.into()),
+            }
+        }
 
         // Output final report
         for report_kind in self.report {

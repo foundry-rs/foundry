@@ -64,43 +64,97 @@ impl DebugArena {
     /// - An enum denoting the type of call this is
     ///
     /// This makes it easy to pretty print the execution steps.
-    pub fn flatten(&self, entry: usize) -> Vec<(Address, Vec<DebugStep>, CallKind)> {
+    pub fn flatten(&self, entry: usize) -> Vec<DebugNodeFlat> {
+        let mut flattened = Vec::new();
+        self.flatten_to(entry, &mut flattened);
+        flattened
+    }
+
+    /// Recursively traverses the tree of debug nodes and flattens it into the given list.
+    ///
+    /// See [`flatten`](Self::flatten) for more information.
+    pub fn flatten_to(&self, entry: usize, out: &mut Vec<DebugNodeFlat>) {
         let node = &self.arena[entry];
 
-        let mut flattened = vec![];
         if !node.steps.is_empty() {
-            flattened.push((node.address, node.steps.clone(), node.kind));
+            out.push(node.flat());
         }
-        flattened.extend(node.children.iter().flat_map(|child| self.flatten(*child)));
 
-        flattened
+        for child in &node.children {
+            self.flatten_to(*child, out);
+        }
     }
 }
 
-/// A node in the arena
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+/// A node in the arena.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DebugNode {
-    /// Parent node index in the arena
+    /// Parent node index in the arena.
     pub parent: Option<usize>,
-    /// Children node indexes in the arena
+    /// Children node indexes in the arena.
     pub children: Vec<usize>,
-    /// Location in parent
+    /// Location in parent.
     pub location: usize,
     /// Execution context.
     ///
     /// Note that this is the address of the *code*, not necessarily the address of the storage.
     pub address: Address,
-    /// The kind of call this is
+    /// The kind of call this is.
     pub kind: CallKind,
-    /// Depth
+    /// Depth of the call.
     pub depth: usize,
-    /// The debug steps
+    /// The debug steps.
     pub steps: Vec<DebugStep>,
 }
 
+impl From<DebugNode> for DebugNodeFlat {
+    #[inline]
+    fn from(node: DebugNode) -> Self {
+        node.into_flat()
+    }
+}
+
+impl From<&DebugNode> for DebugNodeFlat {
+    #[inline]
+    fn from(node: &DebugNode) -> Self {
+        node.flat()
+    }
+}
+
 impl DebugNode {
+    /// Creates a new debug node.
     pub fn new(address: Address, depth: usize, steps: Vec<DebugStep>) -> Self {
         Self { address, depth, steps, ..Default::default() }
+    }
+
+    /// Flattens this node into a [`DebugNodeFlat`].
+    pub fn flat(&self) -> DebugNodeFlat {
+        DebugNodeFlat { address: self.address, kind: self.kind, steps: self.steps.clone() }
+    }
+
+    /// Flattens this node into a [`DebugNodeFlat`].
+    pub fn into_flat(self) -> DebugNodeFlat {
+        DebugNodeFlat { address: self.address, kind: self.kind, steps: self.steps }
+    }
+}
+
+/// Flattened [`DebugNode`] from an arena.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct DebugNodeFlat {
+    /// Execution context.
+    ///
+    /// Note that this is the address of the *code*, not necessarily the address of the storage.
+    pub address: Address,
+    /// The kind of call this is.
+    pub kind: CallKind,
+    /// The debug steps.
+    pub steps: Vec<DebugStep>,
+}
+
+impl DebugNodeFlat {
+    /// Creates a new debug node flat.
+    pub fn new(address: Address, kind: CallKind, steps: Vec<DebugStep>) -> Self {
+        Self { address, kind, steps }
     }
 }
 

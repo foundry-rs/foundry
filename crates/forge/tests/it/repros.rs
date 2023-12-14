@@ -5,6 +5,11 @@ use alloy_primitives::{address, Address};
 use ethers_core::abi::{Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
 use forge::result::TestStatus;
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
+use foundry_evm::{
+    constants::HARDHAT_CONSOLE_ADDRESS,
+    traces::{CallTraceDecoder, TraceCallData, TraceKind},
+    utils::CallKind,
+};
 use foundry_test_utils::Filter;
 
 /// Creates a test that runs `testdata/repros/Issue{issue}.t.sol`.
@@ -32,13 +37,24 @@ macro_rules! test_repro {
             }
         }
     };
+    ($issue_number:literal; |$config:ident| $e:expr $(,)?) => {
+        paste::paste! {
+            #[tokio::test(flavor = "multi_thread")]
+            async fn [< issue_ $issue_number >]() {
+                let mut $config = repro_config($issue_number, false, None).await;
+                $e
+                $config.run().await;
+            }
+        }
+    };
 }
 
 async fn repro_config(issue: usize, should_fail: bool, sender: Option<Address>) -> TestConfig {
     let filter = Filter::path(&format!(".*repros/Issue{issue}.t.sol"));
 
     let mut config = Config::with_root(PROJECT.root());
-    config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
+    config.fs_permissions =
+        FsPermissions::new(vec![PathPermission::read("./fixtures"), PathPermission::read("out")]);
     if let Some(sender) = sender {
         config.sender = sender;
     }
@@ -179,8 +195,14 @@ test_repro!(5808);
 // <https://github.com/foundry-rs/foundry/issues/5935>
 test_repro!(5935);
 
+// <https://github.com/foundry-rs/foundry/issues/5948>
+test_repro!(5948);
+
 // https://github.com/foundry-rs/foundry/issues/6006
 test_repro!(6006);
+
+// https://github.com/foundry-rs/foundry/issues/6032
+test_repro!(6032);
 
 // https://github.com/foundry-rs/foundry/issues/6070
 test_repro!(6070);
@@ -195,6 +217,9 @@ test_repro!(6170, false, None, |res| {
     assert_eq!(test.status, TestStatus::Failure);
     assert_eq!(test.reason, Some("log != expected log".to_string()));
 });
+
+// <https://github.com/foundry-rs/foundry/issues/6293>
+test_repro!(6293);
 
 // https://github.com/foundry-rs/foundry/issues/6180
 test_repro!(6180);
@@ -211,3 +236,52 @@ test_repro!(6355, false, None, |res| {
 
 // https://github.com/foundry-rs/foundry/issues/6437
 test_repro!(6437);
+
+// Test we decode Hardhat console logs AND traces correctly.
+// https://github.com/foundry-rs/foundry/issues/6501
+test_repro!(6501, false, None, |res| {
+    let mut res = res.remove("repros/Issue6501.t.sol:Issue6501Test").unwrap();
+    let test = res.test_results.remove("test_hhLogs()").unwrap();
+    assert_eq!(test.status, TestStatus::Success);
+    assert_eq!(test.decoded_logs, ["a".to_string(), "1".to_string(), "b 2".to_string()]);
+
+    let (kind, mut traces) = test.traces[1].clone();
+    assert_eq!(kind, TraceKind::Execution);
+
+    let test_call = traces.arena.first().unwrap();
+    assert_eq!(test_call.idx, 0);
+    assert_eq!(test_call.children, [1, 2, 3]);
+    assert_eq!(test_call.trace.depth, 0);
+    assert!(test_call.trace.success);
+
+    CallTraceDecoder::new().decode(&mut traces).await;
+
+    let expected = [
+        ("log(string)", vec!["\"a\""]),
+        ("log(uint256)", vec!["1"]),
+        ("log(string,uint256)", vec!["\"b\"", "2"]),
+    ];
+    for (node, expected) in traces.arena[1..=3].iter().zip(expected) {
+        let trace = &node.trace;
+        assert_eq!(trace.kind, CallKind::StaticCall);
+        assert_eq!(trace.address, HARDHAT_CONSOLE_ADDRESS);
+        assert_eq!(trace.label, Some("console".into()));
+        assert_eq!(trace.depth, 1);
+        assert!(trace.success);
+        assert_eq!(
+            trace.data,
+            TraceCallData::Decoded {
+                signature: expected.0.into(),
+                args: expected.1.into_iter().map(ToOwned::to_owned).collect(),
+            }
+        );
+    }
+});
+
+// https://github.com/foundry-rs/foundry/issues/6554
+test_repro!(6554; |config| {
+    let mut cheats_config = config.runner.cheats_config.as_ref().clone();
+    let path = cheats_config.root.join("out/Issue6554.t.sol");
+    cheats_config.fs_permissions.add(PathPermission::read_write(path));
+    config.runner.cheats_config = std::sync::Arc::new(cheats_config);
+});
