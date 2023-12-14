@@ -221,9 +221,9 @@ impl RuntimeTransport {
             let inner_mut = inner.as_mut().expect("We should have an inner transport.");
 
             match inner_mut {
-                InnerTransport::Http(http) => http.call(req.clone()),
-                InnerTransport::Ws(ws) => ws.call(req.clone()),
-                InnerTransport::Ipc(ipc) => ipc.call(req.clone()),
+                InnerTransport::Http(http) => http.call(req),
+                InnerTransport::Ws(ws) => ws.call(req),
+                InnerTransport::Ipc(ipc) => ipc.call(req),
             }
             .await
         })
