@@ -22,6 +22,7 @@ alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
 alloy-rpc-types.workspace = true
+alloy-rpc-client.workspace = true
 alloy-providers.workspace = true
 alloy-transport.workspace = true
 alloy-transport-http.workspace = true

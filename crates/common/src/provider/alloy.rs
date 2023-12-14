@@ -5,6 +5,7 @@ use crate::{
 };
 use alloy_primitives::U256;
 use alloy_providers::provider::{Provider, TempProvider};
+use alloy_rpc_client::ClientBuilder;
 use alloy_transport::BoxTransport;
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use eyre::{Result, WrapErr};
@@ -16,6 +17,8 @@ use std::{
     time::Duration,
 };
 use url::ParseError;
+
+use super::tower::RetryBackoffLayer;
 
 /// Helper type alias for a retry provider
 pub type RetryProvider = Provider<BoxTransport>;
@@ -227,17 +230,21 @@ impl ProviderBuilder {
         } = self;
         let url = url?;
 
-        // todo: provider polling interval
-        let transport_builder = RuntimeTransportBuilder::new(url.clone())
-            .with_max_rate_limit_retries(max_retry)
-            .with_max_timeout_retries(timeout_retry)
-            .with_cups(compute_units_per_second)
-            .with_initial_backoff(initial_backoff)
+        let retry_layer = RetryBackoffLayer::new(
+            max_retry,
+            timeout_retry,
+            initial_backoff,
+            compute_units_per_second,
+        );
+        let transport = RuntimeTransportBuilder::new(url.clone())
             .with_timeout(timeout)
             .with_headers(headers)
-            .with_jwt(jwt);
+            .with_jwt(jwt)
+            .build();
+        let client = ClientBuilder::default().layer(retry_layer).transport(transport, false);
 
-        Ok(Provider::new(transport_builder.build().boxed()))
+        // todo: provider polling interval
+        Ok(Provider::new_with_client(client.boxed()))
     }
 }
 
