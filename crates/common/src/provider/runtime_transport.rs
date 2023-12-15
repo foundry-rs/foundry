@@ -1,5 +1,6 @@
 //! Runtime transport that connects on first request, which can take either of an HTTP,
-//! WebSocket, or IPC transport.
+//! WebSocket, or IPC transport and supports retries based on CUPS logic.
+use crate::REQUEST_TIMEOUT;
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
 use alloy_transport::{
@@ -64,6 +65,7 @@ pub enum RuntimeTransportError {
 /// A runtime transport is a custom [alloy_transport::Transport] that only connects when the *first*
 /// request is made. When the first request is made, it will connect to the runtime using either an
 /// HTTP WebSocket, or IPC transport depending on the URL used.
+/// It also supports retries for rate-limiting and timeout-related errors.
 #[derive(Clone, Debug, Error)]
 pub struct RuntimeTransport {
     /// The inner actual transport used.
@@ -79,6 +81,7 @@ pub struct RuntimeTransport {
 }
 
 /// A builder for [RuntimeTransport].
+#[derive(Debug)]
 pub struct RuntimeTransportBuilder {
     url: Url,
     headers: Vec<String>,
@@ -89,7 +92,7 @@ pub struct RuntimeTransportBuilder {
 impl RuntimeTransportBuilder {
     /// Create a new builder with the given URL.
     pub fn new(url: Url) -> Self {
-        Self { url, headers: vec![], jwt: None, timeout: std::time::Duration::from_secs(30) }
+        Self { url, headers: vec![], jwt: None, timeout: REQUEST_TIMEOUT }
     }
 
     /// Set the URL for the transport.
@@ -130,16 +133,6 @@ impl ::core::fmt::Display for RuntimeTransport {
 }
 
 impl RuntimeTransport {
-    /// Create a new [RuntimeTransport].
-    pub fn new(
-        url: Url,
-        headers: Vec<String>,
-        jwt: Option<String>,
-        timeout: std::time::Duration,
-    ) -> Self {
-        Self { inner: Arc::new(RwLock::new(None)), url, headers, jwt, timeout }
-    }
-
     /// Connects the underlying transport, depending on the URL scheme.
     pub async fn connect(&self) -> Result<InnerTransport, RuntimeTransportError> {
         match self.url.scheme() {
@@ -210,9 +203,11 @@ impl RuntimeTransport {
 
     /// Sends a request using the underlying transport.
     /// If this is the first request, it will connect to the appropiate transport depending on the
-    /// URL scheme. For sending the actual request, this action is delegated down to the
-    /// underlying transport through Tower's call. See tower's [tower::Service] trait for more
-    /// information.
+    /// URL scheme. When sending the request, retries will be automatically handled depending
+    /// on the parameters set on the [RuntimeTransport].
+    /// For sending the actual request, this action is delegated down to the
+    /// underlying transport through Tower's [tower::Service::call]. See tower's [tower::Service]
+    /// trait for more information.
     pub fn request(&self, req: RequestPacket) -> TransportFut<'static> {
         let this = self.clone();
         Box::pin(async move {
@@ -226,10 +221,11 @@ impl RuntimeTransport {
             let inner_mut = inner.as_mut().expect("We should have an inner transport.");
 
             match inner_mut {
-                InnerTransport::Http(http) => http.call(req).await,
-                InnerTransport::Ws(ws) => ws.call(req).await,
-                InnerTransport::Ipc(ipc) => ipc.call(req).await,
+                InnerTransport::Http(http) => http.call(req),
+                InnerTransport::Ws(ws) => ws.call(req),
+                InnerTransport::Ipc(ipc) => ipc.call(req),
             }
+            .await
         })
     }
 

@@ -1,10 +1,11 @@
 //! Commonly used helpers to construct `Provider`s
 
 use crate::{
-    alloy_runtime_transport::RuntimeTransportBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
+    provider::runtime_transport::RuntimeTransportBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
 };
 use alloy_primitives::U256;
 use alloy_providers::provider::{Provider, TempProvider};
+use alloy_rpc_client::ClientBuilder;
 use alloy_transport::BoxTransport;
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use eyre::{Result, WrapErr};
@@ -16,6 +17,8 @@ use std::{
     time::Duration,
 };
 use url::ParseError;
+
+use super::tower::RetryBackoffLayer;
 
 /// Helper type alias for a retry provider
 pub type RetryProvider = Provider<BoxTransport>;
@@ -217,24 +220,31 @@ impl ProviderBuilder {
         let ProviderBuilder {
             url,
             chain: _,
-            max_retry: _,
-            timeout_retry: _,
-            initial_backoff: _,
+            max_retry,
+            timeout_retry,
+            initial_backoff,
             timeout,
-            compute_units_per_second: _,
+            compute_units_per_second,
             jwt,
             headers,
         } = self;
         let url = url?;
 
-        // todo: port alchemy compute units logic?
-        // todo: provider polling interval
-        let transport_builder = RuntimeTransportBuilder::new(url.clone())
+        let retry_layer = RetryBackoffLayer::new(
+            max_retry,
+            timeout_retry,
+            initial_backoff,
+            compute_units_per_second,
+        );
+        let transport = RuntimeTransportBuilder::new(url.clone())
             .with_timeout(timeout)
             .with_headers(headers)
-            .with_jwt(jwt);
+            .with_jwt(jwt)
+            .build();
+        let client = ClientBuilder::default().layer(retry_layer).transport(transport, false);
 
-        Ok(Provider::new(transport_builder.build().boxed()))
+        // todo: provider polling interval
+        Ok(Provider::new_with_client(client.boxed()))
     }
 }
 
