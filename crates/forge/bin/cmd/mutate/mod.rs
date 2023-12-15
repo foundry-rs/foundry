@@ -487,7 +487,10 @@ pub fn setup_and_compile_mutant(
     //     path.starts_with(&file_source_root) || path.ends_with(".t.sol")
     // }
     // )?;
-    let compile_output = config.project()?.compile().map_err(|_| eyre!("compilation failed"))?;
+    let mut project = config.project()?;
+    project.set_solc_jobs(4);
+    
+    let compile_output = project.compile().map_err(|_| eyre!("compilation failed"))?;
 
     Ok((temp_project, compile_output, config))
 }
