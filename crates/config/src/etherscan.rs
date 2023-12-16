@@ -194,7 +194,9 @@ impl EtherscanConfig {
                 Ok(ResolvedEtherscanConfig { api_url, browser_url: None, key, chain: None })
             }
             (None, None) => {
-                let msg = alias.map(|a| format!(" for Etherscan config `{a}`")).unwrap_or_default();
+                let msg = alias
+                    .map(|a| format!(" for Etherscan config with unknown alias `{a}`"))
+                    .unwrap_or_default();
                 Err(EtherscanConfigError::MissingUrlOrChain(msg))
             }
         }

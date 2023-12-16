@@ -115,8 +115,7 @@ impl<'a> ContractRunner<'a> {
             }
         }
 
-        let sender_nonce = self.executor.get_nonce(self.sender)?;
-        let address = self.sender.create(sender_nonce);
+        let address = self.sender.create(self.executor.get_nonce(self.sender)?);
 
         // Set the contracts initial balance before deployment, so it is available during
         // construction

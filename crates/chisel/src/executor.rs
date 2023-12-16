@@ -450,7 +450,7 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
         alloy_json_abi::Event { name: event_name, inputs, anonymous: event_definition.anonymous };
 
     Ok(format!(
-        "Type: {}\n├ Name: {}\n└ Signature: {:?}",
+        "Type: {}\n├ Name: {}\n├ Signature: {:?}\n└ Selector: {:?}",
         Paint::red("event"),
         SolidityHelper::highlight(&format!(
             "{}({})",
@@ -472,6 +472,7 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
                 .join(", ")
         )),
         Paint::cyan(event.signature()),
+        Paint::cyan(event.selector()),
     ))
 }
 
