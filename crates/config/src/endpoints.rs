@@ -12,7 +12,7 @@ use std::{
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RpcEndpoints {
-    endpoints: BTreeMap<String, RpcEndpointType>,
+    endpoints: BTreeMap<String, RpcEndpointConfig>,
 }
 
 // === impl RpcEndpoints ===
@@ -26,10 +26,11 @@ impl RpcEndpoints {
             endpoints: endpoints
                 .into_iter()
                 .map(|(name, e)| match e.into() {
-                    RpcEndpointType::String(e) => (name.into(), RpcEndpointType::String(e)),
-                    RpcEndpointType::Config(config) => {
-                        (name.into(), RpcEndpointType::Config(config))
-                    }
+                    RpcEndpointType::String(url) => (
+                        name.into(),
+                        RpcEndpointConfig { endpoint: url.into(), ..Default::default() },
+                    ),
+                    RpcEndpointType::Config(config) => (name.into(), config),
                 })
                 .collect(),
         }
@@ -49,7 +50,7 @@ impl RpcEndpoints {
 }
 
 impl Deref for RpcEndpoints {
-    type Target = BTreeMap<String, RpcEndpointType>;
+    type Target = BTreeMap<String, RpcEndpointConfig>;
 
     fn deref(&self) -> &Self::Target {
         &self.endpoints
@@ -57,7 +58,8 @@ impl Deref for RpcEndpoints {
 }
 
 /// RPC endpoint wrapper type
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(untagged)]
 pub enum RpcEndpointType {
     String(RpcEndpoint),
     Config(RpcEndpointConfig),
@@ -109,35 +111,6 @@ impl TryFrom<RpcEndpointType> for String {
         match value {
             RpcEndpointType::String(url) => url.resolve(),
             RpcEndpointType::Config(config) => config.endpoint.resolve(),
-        }
-    }
-}
-
-impl Serialize for RpcEndpointType {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            RpcEndpointType::String(url) => url.serialize(serializer),
-            RpcEndpointType::Config(config) => config.serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for RpcEndpointType {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let mut value = serde_json::Value::deserialize(deserializer)?;
-
-        if let Some(_obj) = value.as_object_mut() {
-            let config = RpcEndpointConfig::deserialize(value).map_err(serde::de::Error::custom)?;
-            return Ok(RpcEndpointType::Config(config));
-        } else {
-            let endpoint = RpcEndpoint::deserialize(value).map_err(serde::de::Error::custom)?;
-            return Ok(RpcEndpointType::String(endpoint));
         }
     }
 }
@@ -238,6 +211,12 @@ impl Into<RpcEndpointType> for RpcEndpoint {
     }
 }
 
+impl Into<RpcEndpointConfig> for RpcEndpoint {
+    fn into(self) -> RpcEndpointConfig {
+        RpcEndpointConfig { endpoint: self, ..Default::default() }
+    }
+}
+
 /// Rpc endpoint configuration variant
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RpcEndpointConfig {
@@ -254,6 +233,13 @@ pub struct RpcEndpointConfig {
     ///
     /// See also <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     pub compute_units_per_second: Option<u64>,
+}
+
+impl RpcEndpointConfig {
+    /// Returns the url this type holds, see [RpcEndpoints::resolve()]
+    pub fn resolve(self) -> Result<String, UnresolvedEnvVarError> {
+        self.endpoint.resolve()
+    }
 }
 
 impl fmt::Display for RpcEndpointConfig {
@@ -283,14 +269,20 @@ impl Serialize for RpcEndpointConfig {
     where
         S: Serializer,
     {
-        let mut map = serializer.serialize_map(Some(4))?;
-
-        map.serialize_entry("endpoint", &self.endpoint)?;
-        map.serialize_entry("retries", &self.retries)?;
-        map.serialize_entry("retry_backoff", &self.retry_backoff)?;
-        map.serialize_entry("compute_units_per_second", &self.compute_units_per_second)?;
-
-        map.end()
+        // use RpcEndpoint directly if all the other fields are None
+        if self.retries.is_none()
+            && self.retry_backoff.is_none()
+            && self.compute_units_per_second.is_none()
+        {
+            return self.endpoint.serialize(serializer);
+        } else {
+            let mut map = serializer.serialize_map(None)?;
+            map.serialize_entry("endpoint", &self.endpoint)?;
+            map.serialize_entry("retries", &self.retries)?;
+            map.serialize_entry("retry_backoff", &self.retry_backoff)?;
+            map.serialize_entry("compute_units_per_second", &self.compute_units_per_second)?;
+            map.end()
+        }
     }
 }
 
@@ -299,7 +291,6 @@ impl<'de> Deserialize<'de> for RpcEndpointConfig {
     where
         D: Deserializer<'de>,
     {
-        // deserialize as a RpcEndpointConfig value
         let value = serde_json::Value::deserialize(deserializer)?;
         let config = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
         Ok(config)
@@ -309,6 +300,17 @@ impl<'de> Deserialize<'de> for RpcEndpointConfig {
 impl Into<RpcEndpointType> for RpcEndpointConfig {
     fn into(self) -> RpcEndpointType {
         RpcEndpointType::Config(self)
+    }
+}
+
+impl Default for RpcEndpointConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: RpcEndpoint::Url("http://localhost:8545".to_string()),
+            retries: None,
+            retry_backoff: None,
+            compute_units_per_second: None,
+        }
     }
 }
 

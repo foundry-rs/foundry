@@ -2515,7 +2515,7 @@ mod tests {
     use super::*;
     use crate::{
         cache::{CachedChains, CachedEndpoints},
-        endpoints::RpcEndpoint,
+        endpoints::{RpcEndpoint, RpcEndpointConfig, RpcEndpointType},
         etherscan::ResolvedEtherscanConfigs,
         fs_permissions::PathPermission,
     };
@@ -3083,6 +3083,40 @@ mod tests {
             assert_eq!(
                 "https://polygon-mumbai.g.alchemy.com/v2/123455",
                 config.get_rpc_url().unwrap().unwrap()
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_resolve_rpc_config() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [rpc_endpoints]
+                optimism = "https://example.com/"
+                mainnet = { url = "${_CONFIG_MAINNET}", retries = 3, retry_backoff = 1000, compute_units_per_second = 1000 }
+            "#,
+            )?;
+            jail.set_env("_CONFIG_MAINNET", "https://eth-mainnet.alchemyapi.io/v2/123455");
+
+            let config = Config::load();
+            assert_eq!(
+                RpcEndpoints::new([
+                    ("optimism", RpcEndpointType::String(RpcEndpoint::Url("https://example.com/".to_string()))),
+                    (
+                        "mainnet",
+                        RpcEndpointType::Config(RpcEndpointConfig {
+                            endpoint: RpcEndpoint::Url("https://eth-mainnet.alchemyapi.io/v2/123455".to_string()),
+                            retries: Some(3),
+                            retry_backoff: Some(1000),
+                            compute_units_per_second: Some(1000),
+                        })
+                    ),
+                ]),
+                config.rpc_endpoints
             );
 
             Ok(())
