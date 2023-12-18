@@ -134,12 +134,12 @@ impl ToAlloy for ethers_core::types::Transaction {
                 .map(|f| U128::from(f.as_u128())),
             max_fee_per_blob_gas: None,
             input: self.input.0.into(),
-            signature: Some(Signature {
+            signature: Signature {
                 r: self.r.to_alloy(),
                 s: self.s.to_alloy(),
                 v: U256::from(self.v.as_u64()),
                 y_parity: None,
-            }),
+            },
             chain_id: self.chain_id.map(|c| U64::from(c.as_u64())),
             blob_versioned_hashes: Vec::new(),
             access_list: self.access_list.map(|a| a.0.into_iter().map(ToAlloy::to_alloy).collect()),

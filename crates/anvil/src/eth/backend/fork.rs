@@ -433,17 +433,15 @@ impl ClientFork {
     }
 
     pub async fn block_by_hash(&self, hash: B256) -> Result<Option<Block>, TransportError> {
-        if let Some(block) = self.storage_read().blocks.get(&hash).cloned() {
-            return Ok(Some(self.convert_to_tx_only_block(block)));
+        if let Some(mut block) = self.storage_read().blocks.get(&hash).cloned() {
+            block.transactions.convert_to_hashes();
+            return Ok(Some(block));
         }
 
-        let block = self
-            .fetch_full_block(hash)
-            .await?
-            .map(Into::into)
-            .map(|b| self.convert_to_tx_only_block(b));
-
-        Ok(block)
+        Ok(self.fetch_full_block(hash).await?.map(|mut b| {
+            b.transactions.convert_to_hashes();
+            b
+        }))
     }
 
     pub async fn block_by_hash_full(&self, hash: B256) -> Result<Option<Block>, TransportError> {

@@ -251,12 +251,12 @@ where
                 entry.get_mut().push(listener);
             }
             Entry::Vacant(entry) => {
-                trace!(target: "backendhandler", "preparing block hash request, number={}", number);
+                trace!(target: "backendhandler", number, "preparing block hash request");
                 entry.insert(vec![listener]);
                 let provider = self.provider.clone();
                 let fut = Box::pin(async move {
                     let block = provider
-                        .get_block_by_number(number, false)
+                        .get_block_by_number(number.into(), false)
                         .await
                         .wrap_err("failed to get block");
 
