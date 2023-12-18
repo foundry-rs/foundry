@@ -3090,6 +3090,33 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_rpc_aliases() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+               [profile.default]
+               [etherscan]
+               arbitrum_alias = { key = "${TEST_RESOLVE_RPC_ALIAS_ARBISCAN}" }
+               [rpc_endpoints]
+               arbitrum_alias = "https://arb-mainnet.g.alchemy.com/v2/${TEST_RESOLVE_RPC_ALIAS_ARB_ONE}"
+            "#,
+            )?;
+
+            jail.set_env("TEST_RESOLVE_RPC_ALIAS_ARB_ONE", "123455");
+            jail.set_env("TEST_RESOLVE_RPC_ALIAS_ARBISCAN", "123455");
+
+            let config = Config::load();
+
+            let config = config.get_etherscan_config_with_chain(Some(NamedChain::Arbitrum.into()));
+            assert!(config.is_err());
+            assert_eq!(config.unwrap_err().to_string(), "At least one of `url` or `chain` must be present for Etherscan config with unknown alias `arbitrum_alias`");
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_resolve_endpoints() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(

@@ -192,7 +192,7 @@ async fn can_impersonate_gnosis_safe() {
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.ethers_http_provider();
 
-    // <https://help.gnosis-safe.io/en/articles/4971293-i-don-t-remember-my-safe-address-where-can-i-find-it>
+    // <https://help.safe.global/en/articles/40824-i-don-t-remember-my-safe-address-where-can-i-find-it>
     let safe: Address = "0xA063Cb7CFd8E57c30c788A0572CBbf2129ae56B6".parse().unwrap();
 
     let code = provider.get_code(safe, None).await.unwrap();
