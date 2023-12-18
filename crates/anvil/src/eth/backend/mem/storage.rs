@@ -12,8 +12,7 @@ use alloy_rpc_types::{
         geth::{DefaultFrame, GethDefaultTracingOptions},
         parity::LocalizedTransactionTrace,
     },
-    transaction::TransactionInfo,
-    BlockId, BlockNumberOrTag, TransactionInfo, TransactionReceipt,
+    BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo, TransactionReceipt,
 };
 use anvil_core::eth::{
     block::{Block, PartialHeader},
@@ -421,7 +420,7 @@ impl MinedTransaction {
         GethTraceBuilder::new(self.info.traces.clone(), TracingInspectorConfig::default_geth())
             .geth_traces(
                 self.receipt.gas_used().as_u64(),
-                Bytes::from(self.info.out.clone().unwrap_or_default().to_vec()),
+                self.info.out.clone().unwrap_or_default(),
                 opts,
             )
     }

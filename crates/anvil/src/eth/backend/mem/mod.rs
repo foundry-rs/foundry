@@ -955,7 +955,7 @@ impl Backend {
                     block_hash: block_hash.to_alloy(),
                     block_number: block_number.to::<u64>(),
                 };
-                storage.transactions.insert(mined_tx.info.hash, mined_tx);
+                storage.transactions.insert(mined_tx.info.transaction_hash.to_alloy(), mined_tx);
             }
 
             // remove old transactions that exceed the transaction block keeper
