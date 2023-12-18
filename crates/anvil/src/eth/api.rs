@@ -449,7 +449,7 @@ impl EthApi {
             }
             _ => {
                 let number = self.backend.ensure_block_number(block_number).await?;
-                BlockRequest::Number(U64::from(number))
+                BlockRequest::Number(number)
             }
         };
         Ok(block_request)
@@ -591,11 +591,11 @@ impl EthApi {
         let block_request = self.block_request(block_number).await?;
 
         // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = &block_request {
+        if let &BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
-                if fork.predates_fork(number.to::<u64>()) {
+                if fork.predates_fork(number) {
                     return fork
-                        .get_balance(address, number.to::<u64>())
+                        .get_balance(address, number)
                         .await
                         .map_err(|_| BlockchainError::DataUnavailable);
                 }
@@ -618,14 +618,14 @@ impl EthApi {
         let block_request = self.block_request(block_number).await?;
 
         // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = &block_request {
+        if let &BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
-                if fork.predates_fork(number.to::<u64>()) {
+                if fork.predates_fork(number) {
                     return Ok(B256::from(
                         fork.storage_at(
                             address,
                             B256::from(index),
-                            Some(BlockNumber::Number(number.to::<u64>())),
+                            Some(BlockNumber::Number(number)),
                         )
                         .await
                         .map_err(|_| BlockchainError::DataUnavailable)?,
@@ -757,11 +757,11 @@ impl EthApi {
         node_info!("eth_getCode");
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = &block_request {
+        if let &BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
-                if fork.predates_fork(number.to::<u64>()) {
+                if fork.predates_fork(number) {
                     return fork
-                        .get_code(address, number.to::<u64>())
+                        .get_code(address, number)
                         .await
                         .map_err(|_| BlockchainError::DataUnavailable);
                 }
@@ -783,13 +783,13 @@ impl EthApi {
         node_info!("eth_getProof");
         let block_request = self.block_request(block_number).await?;
 
-        if let BlockRequest::Number(number) = &block_request {
+        // If we're in forking mode, or still on the forked block (no blocks mined yet) then we can
+        // delegate the call.
+        if let &BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
-                // if we're in forking mode, or still on the forked block (no blocks mined yet) then
-                // we can delegate the call
-                if fork.predates_fork_inclusive(number.to::<u64>()) {
+                if fork.predates_fork_inclusive(number) {
                     return fork
-                        .get_proof(address, keys, Some((*number).into()))
+                        .get_proof(address, keys, Some(number.into()))
                         .await
                         .map_err(|_| BlockchainError::DataUnavailable);
                 }
@@ -981,16 +981,16 @@ impl EthApi {
         node_info!("eth_call");
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = &block_request {
+        if let &BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
-                if fork.predates_fork(number.to::<u64>()) {
+                if fork.predates_fork(number) {
                     if overrides.is_some() {
                         return Err(BlockchainError::StateOverrideError(
                             "not available on past forked blocks".to_string(),
                         ));
                     }
                     return fork
-                        .call(&request, Some(number.to::<u64>().into()))
+                        .call(&request, Some(number.into()))
                         .await
                         .map_err(|_| BlockchainError::DataUnavailable);
                 }
@@ -1037,11 +1037,11 @@ impl EthApi {
         node_info!("eth_createAccessList");
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = &block_request {
+        if let &BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
-                if fork.predates_fork(number.to::<u64>()) {
+                if fork.predates_fork(number) {
                     return fork
-                        .create_access_list(&request, Some(number.to::<u64>().into()))
+                        .create_access_list(&request, Some(number.into()))
                         .await
                         .map_err(|_| BlockchainError::DataUnavailable);
                 }
@@ -1255,7 +1255,7 @@ impl EthApi {
         node_info!("eth_feeHistory");
         // max number of blocks in the requested range
 
-        let current = self.backend.best_number().to::<u64>();
+        let current = self.backend.best_number();
         let slots_in_an_epoch = 32u64;
 
         let number = match newest_block {
@@ -1279,19 +1279,14 @@ impl EthApi {
         }
 
         const MAX_BLOCK_COUNT: u64 = 1024u64;
-        let range_limit = U256::from(MAX_BLOCK_COUNT);
-        let block_count = if block_count > range_limit {
-            range_limit.to::<u64>()
-        } else {
-            block_count.to::<u64>()
-        };
+        let block_count = block_count.to::<u64>().max(MAX_BLOCK_COUNT);
 
         // highest and lowest block num in the requested range
         let highest = number;
         let lowest = highest.saturating_sub(block_count.saturating_sub(1));
 
         // only support ranges that are in cache range
-        if lowest < self.backend.best_number().to::<u64>().saturating_sub(self.fee_history_limit) {
+        if lowest < self.backend.best_number().saturating_sub(self.fee_history_limit) {
             return Err(FeeHistoryError::InvalidBlockRange.into());
         }
 
@@ -1739,7 +1734,7 @@ impl EthApi {
         let tx_order = self.transaction_order.read();
 
         Ok(NodeInfo {
-            current_block_number: self.backend.best_number(),
+            current_block_number: U64::from(self.backend.best_number()),
             current_block_timestamp: env.block.timestamp.try_into().unwrap_or(u64::MAX),
             current_block_hash: self.backend.best_hash(),
             hard_fork: env.cfg.spec_id,
@@ -1779,7 +1774,7 @@ impl EthApi {
             client_version: CLIENT_VERSION,
             chain_id: self.backend.chain_id().to::<u64>(),
             latest_block_hash: self.backend.best_hash(),
-            latest_block_number: self.backend.best_number().to::<u64>(),
+            latest_block_number: self.backend.best_number(),
             instance_id: *self.instance_id.read(),
             forked_network: fork_config.map(|cfg| ForkedNetwork {
                 chain_id: cfg.chain_id(),
@@ -1893,7 +1888,7 @@ impl EthApi {
 
         let mut blocks = Vec::with_capacity(mined_blocks as usize);
 
-        let latest = self.backend.best_number().to::<u64>();
+        let latest = self.backend.best_number();
         for offset in (0..mined_blocks).rev() {
             let block_num = latest - offset;
             if let Some(mut block) =
@@ -2154,11 +2149,11 @@ impl EthApi {
     ) -> Result<U256> {
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = &block_request {
+        if let &BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
-                if fork.predates_fork(number.to::<u64>()) {
+                if fork.predates_fork(number) {
                     return fork
-                        .estimate_gas(&request, Some((*number).into()))
+                        .estimate_gas(&request, Some(number.into()))
                         .await
                         .map_err(|_| BlockchainError::DataUnavailable);
                 }
@@ -2388,6 +2383,7 @@ impl EthApi {
         self.backend.chain_id().to::<u64>()
     }
 
+    /// Returns the configured fork, if any.
     pub fn get_fork(&self) -> Option<ClientFork> {
         self.backend.get_fork()
     }
@@ -2536,11 +2532,11 @@ impl EthApi {
     ) -> Result<U256> {
         let block_request = self.block_request(block_number).await?;
 
-        if let BlockRequest::Number(number) = &block_request {
+        if let &BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
-                if fork.predates_fork_inclusive(number.to::<u64>()) {
+                if fork.predates_fork_inclusive(number) {
                     return fork
-                        .get_nonce(address, (*number).to::<u64>())
+                        .get_nonce(address, number)
                         .await
                         .map_err(|_| BlockchainError::DataUnavailable);
                 }

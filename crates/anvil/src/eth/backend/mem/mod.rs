@@ -67,8 +67,8 @@ use foundry_evm::{
         db::CacheDB,
         interpreter::InstructionResult,
         primitives::{
-            Account, BlockEnv, CreateScheme, EVMError, Env, ExecutionResult, InvalidHeader, Output,
-            SpecId, TransactTo, TxEnv, KECCAK_EMPTY,
+            BlockEnv, CreateScheme, EVMError, Env, ExecutionResult, InvalidHeader, Output, SpecId,
+            TransactTo, TxEnv, KECCAK_EMPTY,
         },
     },
     traces::{TracingInspector, TracingInspectorConfig},
@@ -105,21 +105,20 @@ pub const MIN_TRANSACTION_GAS: U256 = U256::from_limbs([21_000, 0, 0, 0]);
 // Gas per transaction creating a contract.
 pub const MIN_CREATE_GAS: U256 = U256::from_limbs([53_000, 0, 0, 0]);
 
-// TODO: This is the same as foundry_evm::utils::StateChangeset but with ethers H160
-pub type State = foundry_evm::hashbrown::HashMap<Address, Account>;
+pub type State = foundry_evm::utils::StateChangeset;
 
 /// A block request, which includes the Pool Transactions if it's Pending
 #[derive(Debug)]
 pub enum BlockRequest {
     Pending(Vec<Arc<PoolTransaction>>),
-    Number(U64),
+    Number(u64),
 }
 
 impl BlockRequest {
     pub fn block_number(&self) -> BlockNumber {
-        match self {
+        match *self {
             BlockRequest::Pending(_) => BlockNumber::Pending,
-            BlockRequest::Number(n) => BlockNumber::Number(n.to::<u64>()),
+            BlockRequest::Number(n) => BlockNumber::Number(n),
         }
     }
 }
@@ -479,9 +478,8 @@ impl Backend {
     }
 
     /// Returns the current best number of the chain
-    pub fn best_number(&self) -> U64 {
-        let num: u64 = self.env.read().block.number.try_into().unwrap_or(u64::MAX);
-        U64::from(num)
+    pub fn best_number(&self) -> u64 {
+        self.env.read().block.number.try_into().unwrap_or(u64::MAX)
     }
 
     /// Sets the block number
@@ -644,7 +642,7 @@ impl Backend {
     ///
     /// Returns the id of the snapshot created
     pub async fn create_snapshot(&self) -> U256 {
-        let num = self.best_number().to::<u64>();
+        let num = self.best_number();
         let hash = self.best_hash();
         let id = self.db.write().await.snapshot();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
@@ -658,7 +656,7 @@ impl Backend {
         if let Some((num, hash)) = block {
             let best_block_hash = {
                 // revert the storage that's newer than the snapshot
-                let current_height = self.best_number().to::<u64>();
+                let current_height = self.best_number();
                 let mut storage = self.blockchain.storage.write();
 
                 for n in ((num + 1)..=current_height).rev() {
@@ -1350,7 +1348,7 @@ impl Backend {
         if let Some(hash) = filter.get_block_hash() {
             self.logs_for_block(filter, hash).await
         } else {
-            let best = self.best_number().to::<u64>();
+            let best = self.best_number();
             let to_block =
                 self.convert_block_number(filter.block_option.get_to_block().copied()).min(best);
             let from_block =
@@ -1596,7 +1594,7 @@ impl Backend {
         &self,
         block_id: Option<T>,
     ) -> Result<u64, BlockchainError> {
-        let current = self.best_number().to::<u64>();
+        let current = self.best_number();
         let slots_in_an_epoch = 32u64;
         let requested =
             match block_id.map(Into::into).unwrap_or(BlockId::Number(BlockNumber::Latest)) {
@@ -1609,7 +1607,7 @@ impl Backend {
                     .ok_or(BlockchainError::BlockNotFound)?
                     .to::<u64>(),
                 BlockId::Number(num) => match num {
-                    BlockNumber::Latest | BlockNumber::Pending => self.best_number().to::<u64>(),
+                    BlockNumber::Latest | BlockNumber::Pending => self.best_number(),
                     BlockNumber::Earliest => U64::ZERO.to::<u64>(),
                     BlockNumber::Number(num) => num,
                     BlockNumber::Safe => {
@@ -1629,7 +1627,7 @@ impl Backend {
     }
 
     pub fn convert_block_number(&self, block: Option<BlockNumber>) -> u64 {
-        let current = self.best_number().to::<u64>();
+        let current = self.best_number();
         let slots_in_an_epoch = 32u64;
         match block.unwrap_or(BlockNumber::Latest) {
             BlockNumber::Latest | BlockNumber::Pending => current,
@@ -1669,7 +1667,7 @@ impl Backend {
                     .await;
                 return Ok(result);
             }
-            Some(BlockRequest::Number(bn)) => Some(BlockNumber::Number(bn.to::<u64>())),
+            Some(BlockRequest::Number(bn)) => Some(BlockNumber::Number(bn)),
             None => None,
         };
         let block_number: U256 = U256::from(self.convert_block_number(block_number));
