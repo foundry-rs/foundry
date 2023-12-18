@@ -31,9 +31,13 @@ use crate::{
 };
 use alloy_primitives::{Address, Bloom, Bytes, TxHash, B256, B64, U128, U256, U64, U8};
 use alloy_rpc_types::{
-    state::StateOverride, trace::GethDebugTracingOptions, AccessList, Block as AlloyBlock, BlockId,
-    BlockNumberOrTag as BlockNumber, Filter, FilteredParams, Header as AlloyHeader, Log,
-    Transaction, TransactionReceipt,
+    state::StateOverride,
+    trace::{
+        DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace,
+        LocalizedTransactionTrace,
+    },
+    AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, Filter,
+    FilteredParams, Header as AlloyHeader, Log, Transaction, TransactionReceipt,
 };
 use anvil_core::{
     eth::{
@@ -78,10 +82,6 @@ use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
-use reth_rpc_types::trace::{
-    geth::{DefaultFrame, GethDefaultTracingOptions, GethTrace},
-    parity::LocalizedTransactionTrace,
-};
 use std::{
     collections::{BTreeMap, HashMap},
     io::{Read, Write},
@@ -955,7 +955,7 @@ impl Backend {
                     block_hash: block_hash.to_alloy(),
                     block_number: block_number.to::<u64>(),
                 };
-                storage.transactions.insert(mined_tx.info.transaction_hash.to_alloy(), mined_tx);
+                storage.transactions.insert(mined_tx.info.hash, mined_tx);
             }
 
             // remove old transactions that exceed the transaction block keeper

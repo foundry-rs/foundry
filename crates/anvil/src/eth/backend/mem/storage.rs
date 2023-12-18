@@ -7,7 +7,14 @@ use crate::eth::{
     pool::transactions::PoolTransaction,
 };
 use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
-use alloy_rpc_types::{BlockId, BlockNumberOrTag as BlockNumber, TransactionReceipt};
+use alloy_rpc_types::{
+    trace::{
+        geth::{DefaultFrame, GethDefaultTracingOptions},
+        parity::LocalizedTransactionTrace,
+    },
+    transaction::TransactionInfo,
+    BlockId, BlockNumberOrTag, TransactionInfo, TransactionReceipt,
+};
 use anvil_core::eth::{
     block::{Block, PartialHeader},
     receipt::TypedReceipt,
@@ -19,13 +26,6 @@ use foundry_evm::{
     traces::{GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig},
 };
 use parking_lot::RwLock;
-use reth_rpc_types::{
-    trace::{
-        geth::{DefaultFrame, GethDefaultTracingOptions},
-        parity::LocalizedTransactionTrace,
-    },
-    transaction::TransactionInfo as RethTransactionInfo,
-};
 use std::{
     collections::{HashMap, VecDeque},
     fmt,
@@ -302,22 +302,22 @@ impl BlockchainStorage {
 // === impl BlockchainStorage ===
 
 impl BlockchainStorage {
-    /// Returns the hash for [BlockNumber]
-    pub fn hash(&self, number: BlockNumber) -> Option<B256> {
+    /// Returns the hash for [BlockNumberOrTag]
+    pub fn hash(&self, number: BlockNumberOrTag) -> Option<B256> {
         let slots_in_an_epoch = U64::from(32u64);
         match number {
-            BlockNumber::Latest => Some(self.best_hash),
-            BlockNumber::Earliest => Some(self.genesis_hash),
-            BlockNumber::Pending => None,
-            BlockNumber::Number(num) => self.hashes.get(&U64::from(num)).copied(),
-            BlockNumber::Safe => {
+            BlockNumberOrTag::Latest => Some(self.best_hash),
+            BlockNumberOrTag::Earliest => Some(self.genesis_hash),
+            BlockNumberOrTag::Pending => None,
+            BlockNumberOrTag::Number(num) => self.hashes.get(&U64::from(num)).copied(),
+            BlockNumberOrTag::Safe => {
                 if self.best_number > (slots_in_an_epoch) {
                     self.hashes.get(&(self.best_number - (slots_in_an_epoch))).copied()
                 } else {
                     Some(self.genesis_hash) // treat the genesis block as safe "by definition"
                 }
             }
-            BlockNumber::Finalized => {
+            BlockNumberOrTag::Finalized => {
                 if self.best_number > (slots_in_an_epoch * U64::from(2)) {
                     self.hashes
                         .get(&(self.best_number - (slots_in_an_epoch * U64::from(2))))

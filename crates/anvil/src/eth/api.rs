@@ -31,10 +31,15 @@ use crate::{
 };
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256, U64};
 use alloy_rpc_types::{
-    state::StateOverride, trace::GethDebugTracingOptions, AccessList, AccessListWithGasUsed, Block,
-    BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions, CallRequest,
-    EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Log, Transaction,
-    TransactionReceipt, TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus,
+    state::StateOverride,
+    trace::{
+        DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace,
+        LocalizedTransactionTrace,
+    },
+    AccessList, AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber,
+    BlockTransactions, CallRequest, EIP1186AccountProofResponse, FeeHistory, Filter,
+    FilteredParams, Log, Transaction, TransactionReceipt, TxpoolContent, TxpoolInspect,
+    TxpoolInspectSummary, TxpoolStatus,
 };
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
@@ -68,10 +73,6 @@ use foundry_evm::{
 };
 use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
-use reth_rpc_types::trace::{
-    geth::{DefaultFrame, GethDefaultTracingOptions, GethTrace},
-    parity::LocalizedTransactionTrace,
-};
 use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`

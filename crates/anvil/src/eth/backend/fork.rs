@@ -4,7 +4,7 @@ use crate::eth::{backend::db::Db, error::BlockchainError};
 use alloy_primitives::{Address, Bytes, StorageKey, StorageValue, B256, U256, U64};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::{
-    trace::{GethDebugTracingOptions, GethTrace},
+    trace::{GethDebugTracingOptions, GethTrace, LocalizedTransactionTrace as Trace},
     AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
     CallRequest, EIP1186AccountProofResponse, FeeHistory, Filter, Log, Transaction,
     TransactionReceipt,
@@ -18,7 +18,6 @@ use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
 };
-use reth_rpc_types::trace::parity::LocalizedTransactionTrace as Trace;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
 

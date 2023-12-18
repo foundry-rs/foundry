@@ -8,11 +8,11 @@ use crate::eth::{
     EthApi,
 };
 use alloy_primitives::{Address, Bytes, B256, U256, U64};
-use alloy_rpc_types::{Block, BlockId, BlockNumberOrTag as BlockNumber, Transaction};
-use itertools::Itertools;
-use reth_rpc_types::trace::parity::{
-    Action, CallAction, CreateAction, CreateOutput, RewardAction, TraceOutput,
+use alloy_rpc_types::{
+    trace::parity::{Action, CallAction, CreateAction, CreateOutput, RewardAction, TraceOutput},
+    Block, BlockId, BlockNumberOrTag as BlockNumber, Transaction,
 };
+use itertools::Itertools;
 
 impl EthApi {
     /// Otterscan currently requires this endpoint, even though it's not part of the ots_*
