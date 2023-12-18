@@ -296,7 +296,7 @@ impl ScriptArgs {
                         deployments.clone(),
                         &self.sig,
                         script_config.target_contract(),
-                        &script_config.config.broadcast,
+                        &script_config.config,
                         self.broadcast,
                     )?;
 
