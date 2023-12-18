@@ -15,7 +15,7 @@ use crate::{
     mem::in_memory_db::MemDb,
     FeeManager, Hardfork,
 };
-use alloy_primitives::U256;
+use alloy_primitives::{hex, U256};
 use alloy_providers::provider::TempProvider;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_transport::TransportError;
@@ -27,7 +27,7 @@ use ethers::{
         coins_bip39::{English, Mnemonic},
         MnemonicBuilder, Signer,
     },
-    utils::{format_ether, hex, to_checksum, WEI_IN_ETHER},
+    utils::WEI_IN_ETHER,
 };
 use foundry_common::{
     provider::alloy::ProviderBuilder,
@@ -195,13 +195,10 @@ Available Accounts
 ==================
 "#
         );
-        let balance = format_ether(self.genesis_balance.to_ethers());
+        let balance = alloy_primitives::utils::format_ether(self.genesis_balance);
         for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
-            let _ = write!(
-                config_string,
-                "\n({idx}) {:?} ({balance} ETH)",
-                to_checksum(&wallet.address(), None)
-            );
+            write!(config_string, "\n({idx}) {} ({balance} ETH)", wallet.address().to_alloy())
+                .unwrap();
         }
 
         let _ = write!(

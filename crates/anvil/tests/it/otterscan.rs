@@ -479,10 +479,10 @@ async fn can_call_ots_get_block_transactions() {
 
         result.receipts.iter().enumerate().for_each(|(i, receipt)| {
             let expected = hashes.pop_front();
-            assert_eq!(Some(expected), Some(receipt.transaction_hash.map(|h| h.to_ethers())));
+            assert_eq!(expected, receipt.transaction_hash.map(|h| h.to_ethers()));
             assert_eq!(
-                Some(expected.map(|h| h.to_alloy())),
-                Some(result.clone().fullblock.block.clone().transactions.iter().nth(i))
+                expected.map(|h| h.to_alloy()),
+                result.fullblock.block.transactions.hashes().nth(i).copied(),
             );
         });
     }

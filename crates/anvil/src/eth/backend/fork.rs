@@ -455,21 +455,20 @@ impl ClientFork {
         &self,
         block_number: u64,
     ) -> Result<Option<Block>, TransportError> {
-        if let Some(block) = self
+        if let Some(mut block) = self
             .storage_read()
             .hashes
             .get(&block_number)
-            .copied()
-            .and_then(|hash| self.storage_read().blocks.get(&hash).cloned())
+            .and_then(|hash| self.storage_read().blocks.get(hash).cloned())
         {
-            return Ok(Some(self.convert_to_tx_only_block(block)));
+            block.transactions.convert_to_hashes();
+            return Ok(Some(block));
         }
 
-        let block = self
-            .fetch_full_block(block_number)
-            .await?
-            .map(Into::into)
-            .map(|b| self.convert_to_tx_only_block(b));
+        let mut block = self.fetch_full_block(block_number).await?;
+        if let Some(block) = &mut block {
+            block.transactions.convert_to_hashes();
+        }
         Ok(block)
     }
 
@@ -549,7 +548,7 @@ impl ClientFork {
         for (uncle_idx, _) in block.uncles.iter().enumerate() {
             let uncle = match self
                 .provider()
-                .get_uncle(block_number.to::<u64>(), U64::from(uncle_idx))
+                .get_uncle(block_number.to::<u64>().into(), U64::from(uncle_idx))
                 .await?
             {
                 Some(u) => u,
@@ -571,19 +570,12 @@ impl ClientFork {
             BlockTransactions::Uncle => 0,
         };
         let mut transactions = Vec::with_capacity(block_txs_len);
-        for tx in block.transactions.iter() {
-            if let Some(tx) = storage.transactions.get(&tx).cloned() {
+        for tx in block.transactions.hashes() {
+            if let Some(tx) = storage.transactions.get(tx).cloned() {
                 transactions.push(tx);
             }
         }
         block.into_full_block(transactions)
-    }
-
-    /// Converts a full block into a block with only its tx hashes.
-    fn convert_to_tx_only_block(&self, mut block: Block) -> Block {
-        let hashes = block.transactions.iter().collect();
-        block.transactions = BlockTransactions::Hashes(hashes);
-        block
     }
 }
 

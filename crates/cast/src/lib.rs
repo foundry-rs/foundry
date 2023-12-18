@@ -1,19 +1,19 @@
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::ContractObject;
-use alloy_primitives::{Address, I256, U256};
+use alloy_primitives::{
+    utils::{keccak256, ParseUnits, Unit},
+    Address, I256, U256,
+};
 use alloy_rlp::Decodable;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
     types::{transaction::eip2718::TypedTransaction, *},
-    utils::{
-        format_bytes32_string, format_units, keccak256, parse_bytes32_string, parse_units, rlp,
-        Units,
-    },
+    utils::rlp,
 };
 use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
 use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
-use eyre::{Context, ContextCompat, Result};
+use eyre::{Context, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
     abi::{encode_function_args, get_func},
@@ -1079,13 +1079,9 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_fixed_point(value: &str, decimals: &str) -> Result<String> {
-        // first try u32 as Units assumes a string can only be "ether", "gwei"... and not a number
-        let units = match decimals.parse::<u32>() {
-            Ok(d) => Units::Other(d),
-            Err(_) => Units::try_from(decimals)?,
-        };
-        let n: NumberWithBase = parse_units(value, units.as_num())?.into();
-        Ok(format!("{n}"))
+        let units: Unit = decimals.parse()?;
+        let n = ParseUnits::parse_units(value, units)?;
+        Ok(n.to_string())
     }
 
     /// Converts integers with specified decimals into fixed point numbers
@@ -1238,35 +1234,9 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_unit(value: &str, unit: &str) -> Result<String> {
-        let value = DynSolType::coerce_str(&DynSolType::Uint(256), value)?
-            .as_uint()
-            .wrap_err("Could not convert to uint")?
-            .0;
-
-        Ok(match unit {
-            "eth" | "ether" => foundry_common::units::format_units(value, 18)?
-                .trim_end_matches(".000000000000000000")
-                .to_string(),
-            "milli" | "milliether" => foundry_common::units::format_units(value, 15)?
-                .trim_end_matches(".000000000000000")
-                .to_string(),
-            "micro" | "microether" => foundry_common::units::format_units(value, 12)?
-                .trim_end_matches(".000000000000")
-                .to_string(),
-            "gwei" | "nano" | "nanoether" => foundry_common::units::format_units(value, 9)?
-                .trim_end_matches(".000000000")
-                .to_string(),
-            "mwei" | "mega" | "megaether" => foundry_common::units::format_units(value, 6)?
-                .trim_end_matches(".000000")
-                .to_string(),
-            "kwei" | "kilo" | "kiloether" => {
-                foundry_common::units::format_units(value, 3)?.trim_end_matches(".000").to_string()
-            }
-            "wei" => {
-                foundry_common::units::format_units(value, 0)?.trim_end_matches(".0").to_string()
-            }
-            _ => eyre::bail!("invalid unit: \"{}\"", unit),
-        })
+        let unit: alloy_primitives::utils::Unit = unit.parse().wrap_err("could not parse units")?;
+        let parsed = alloy_primitives::utils::ParseUnits::parse_units(value, unit)?;
+        Ok(parsed.to_string())
     }
 
     /// Converts wei into an eth amount
@@ -1284,11 +1254,8 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_wei(value: &str, unit: &str) -> Result<String> {
-        let value = NumberWithBase::parse_int(value, None)?.number().to_ethers();
-        Ok(match unit {
-            "gwei" => format_units(value, 9),
-            _ => format_units(value, 18),
-        }?)
+        let value = NumberWithBase::parse_int(value, None)?.number();
+        Ok(ParseUnits::U256(value).format_units(unit.parse()?))
     }
 
     /// Converts an eth amount into wei
@@ -1305,11 +1272,7 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_wei(value: &str, unit: &str) -> Result<String> {
-        let wei = match unit {
-            "gwei" => parse_units(value, 9),
-            _ => parse_units(value, 18),
-        }?;
-        Ok(wei.to_string())
+        Ok(ParseUnits::parse_units(value, unit.parse()?)?.to_string())
     }
 
     /// Decodes rlp encoded list with hex data
@@ -1423,21 +1386,20 @@ impl SimpleCast {
 
     /// Encodes string into bytes32 value
     pub fn format_bytes32_string(s: &str) -> Result<String> {
-        let formatted = format_bytes32_string(s)?;
-        Ok(hex::encode_prefixed(formatted))
+        let str_bytes: &[u8] = s.as_bytes();
+        eyre::ensure!(str_bytes.len() <= 32, "bytes32 strings must not exceed 32 bytes in length");
+
+        let mut bytes32: [u8; 32] = [0u8; 32];
+        bytes32[..str_bytes.len()].copy_from_slice(str_bytes);
+        Ok(hex::encode_prefixed(bytes32))
     }
 
     /// Decodes string from bytes32 value
     pub fn parse_bytes32_string(s: &str) -> Result<String> {
         let bytes = hex::decode(s)?;
-        if bytes.len() != 32 {
-            eyre::bail!("expected 64 byte hex-string, got {}", strip_0x(s));
-        }
-
-        let mut buffer = [0u8; 32];
-        buffer.copy_from_slice(&bytes);
-
-        Ok(parse_bytes32_string(&buffer)?.to_owned())
+        eyre::ensure!(bytes.len() == 32, "expected 32 byte hex-string");
+        let len = bytes.iter().take_while(|x| **x != 0).count();
+        Ok(std::str::from_utf8(&bytes[..len])?.into())
     }
 
     /// Decodes checksummed address from bytes32 value
@@ -1739,14 +1701,10 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn keccak(data: &str) -> Result<String> {
-        let hash = match data.as_bytes() {
-            // 0x prefix => read as hex data
-            [b'0', b'x', rest @ ..] => keccak256(hex::decode(rest)?),
-            // No 0x prefix => read as text
-            _ => keccak256(data),
-        };
-
-        Ok(format!("{:?}", H256(hash)))
+        // Hex-decode if data starts with 0x.
+        let hash =
+            if data.starts_with("0x") { keccak256(hex::decode(data)?) } else { keccak256(data) };
+        Ok(hash.to_string())
     }
 
     /// Performs the left shift operation (<<) on a number

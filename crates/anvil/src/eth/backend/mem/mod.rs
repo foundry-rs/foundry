@@ -32,8 +32,8 @@ use crate::{
 use alloy_primitives::{Address, Bloom, Bytes, TxHash, B256, B64, U128, U256, U64, U8};
 use alloy_rpc_types::{
     state::StateOverride, trace::GethDebugTracingOptions, AccessList, Block as AlloyBlock, BlockId,
-    BlockNumberOrTag as BlockNumber, BlockTransactions, Filter, FilteredParams,
-    Header as AlloyHeader, Log, Transaction, TransactionReceipt,
+    BlockNumberOrTag as BlockNumber, Filter, FilteredParams, Header as AlloyHeader, Log,
+    Transaction, TransactionReceipt,
 };
 use anvil_core::{
     eth::{
@@ -1514,7 +1514,10 @@ impl Backend {
     }
 
     pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<AlloyBlock> {
-        Some(convert_to_tx_only_block(self.convert_block(self.get_block(number)?)))
+        let block = self.get_block(number)?;
+        let mut block = self.convert_block(block);
+        block.transactions.convert_to_hashes();
+        Some(block)
     }
 
     pub fn get_full_block(&self, id: impl Into<BlockId>) -> Option<AlloyBlock> {
@@ -1952,8 +1955,8 @@ impl Backend {
         let block = self.mined_block_by_hash(hash)?;
         let mut receipts = Vec::new();
         let storage = self.blockchain.storage.read();
-        for tx in block.transactions.iter() {
-            let receipt = storage.transactions.get(&tx)?.receipt.clone();
+        for tx in block.transactions.hashes() {
+            let receipt = storage.transactions.get(tx)?.receipt.clone();
             receipts.push(receipt);
         }
         Some(receipts)
@@ -2282,13 +2285,6 @@ fn get_pool_transactions_nonce(
         );
     }
     None
-}
-
-/// Converts a full block into a block with only its tx hashes.
-fn convert_to_tx_only_block(mut block: AlloyBlock) -> AlloyBlock {
-    let hashes = block.transactions.iter().collect();
-    block.transactions = BlockTransactions::Hashes(hashes);
-    block
 }
 
 #[async_trait::async_trait]
