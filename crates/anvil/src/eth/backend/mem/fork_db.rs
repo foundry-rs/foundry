@@ -50,8 +50,8 @@ impl Db for ForkedDatabase {
                     SerializableAccountRecord {
                         nonce: v.info.nonce,
                         balance: v.info.balance,
-                        code: code.bytes()[..code.len()].to_vec().into(),
-                        storage: v.storage.into_iter().map(|kv| (kv.0, kv.1)).collect(),
+                        code: code.original_bytes(),
+                        storage: v.storage.into_iter().collect(),
                     },
                 ))
             })

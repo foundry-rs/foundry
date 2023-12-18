@@ -942,19 +942,14 @@ impl NodeConfig {
             } else if self.hardfork.is_none() {
                 // auto adjust hardfork if not specified
                 // but only if we're forking mainnet
-                let chain_id = U256::from(
-                    provider
-                        .get_chain_id()
-                        .await
-                        .expect("Failed to fetch network chain id")
-                        .to::<u64>(),
-                );
-                if chain_id.to_ethers() == ethers::types::Chain::Mainnet.into() {
+                let chain_id =
+                    provider.get_chain_id().await.expect("Failed to fetch network chain ID");
+                if chain_id.to::<u64>() == 1 {
                     let hardfork: Hardfork = fork_block_number.into();
                     env.cfg.spec_id = hardfork.into();
                     self.hardfork = Some(hardfork);
                 }
-                Some(chain_id)
+                Some(U256::from(chain_id))
             } else {
                 None
             };
@@ -962,10 +957,9 @@ impl NodeConfig {
             (fork_block_number, chain_id)
         } else {
             // pick the last block number but also ensure it's not pending anymore
-            (
-                find_latest_fork_block(&provider).await.expect("Failed to get fork block number"),
-                None,
-            )
+            let bn =
+                find_latest_fork_block(&provider).await.expect("Failed to get fork block number");
+            (bn, None)
         };
 
         let block = provider
