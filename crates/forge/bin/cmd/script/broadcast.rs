@@ -2,7 +2,7 @@ use super::{
     multi::MultiChainSequence, providers::ProvidersManager, receipts::clear_pendings,
     sequence::ScriptSequence, transaction::TransactionWithMetadata, verify::VerifyBundle, *,
 };
-use ethers_core::{types::TxHash, utils::format_units};
+use alloy_primitives::{utils::format_units, TxHash};
 use ethers_providers::{JsonRpcClient, Middleware, Provider};
 use ethers_signers::Signer;
 use eyre::{bail, ContextCompat, Result, WrapErr};
@@ -153,17 +153,13 @@ impl ScriptArgs {
 
                     if sequential_broadcast {
                         let tx_hash = tx_hash.await?;
-                        deployment_sequence.add_pending(index, tx_hash.to_alloy());
+                        deployment_sequence.add_pending(index, tx_hash);
 
                         update_progress!(pb, (index + already_broadcasted));
                         index += 1;
 
-                        clear_pendings(
-                            provider.clone(),
-                            deployment_sequence,
-                            Some(vec![tx_hash.to_alloy()]),
-                        )
-                        .await?;
+                        clear_pendings(provider.clone(), deployment_sequence, Some(vec![tx_hash]))
+                            .await?;
                     } else {
                         pending_transactions.push(tx_hash);
                     }
@@ -174,7 +170,7 @@ impl ScriptArgs {
 
                     while let Some(tx_hash) = buffer.next().await {
                         let tx_hash = tx_hash?;
-                        deployment_sequence.add_pending(index, tx_hash.to_alloy());
+                        deployment_sequence.add_pending(index, tx_hash);
 
                         update_progress!(pb, (index + already_broadcasted));
                         index += 1;
@@ -205,9 +201,9 @@ impl ScriptArgs {
                 (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used.mul(gas_price))
             },
         );
-        let paid = format_units(total_paid.to_ethers(), 18).unwrap_or_else(|_| "N/A".to_string());
+        let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
         let avg_gas_price =
-            format_units(total_gas_price.to_ethers() / deployment_sequence.receipts.len(), 9)
+            format_units(total_gas_price / U256::from(deployment_sequence.receipts.len()), 9)
                 .unwrap_or_else(|_| "N/A".to_string());
         shell::println(format!(
             "Total Paid: {} ETH ({} gas * avg {} gwei)",
@@ -259,7 +255,7 @@ impl ScriptArgs {
                 // Submit the transaction
                 let pending = provider.send_transaction(tx, None).await?;
 
-                Ok(pending.tx_hash())
+                Ok(pending.tx_hash().to_alloy())
             }
             SendTransactionKind::Raw(signer) => self.broadcast(provider, signer, tx).await,
         }
@@ -553,7 +549,7 @@ impl ScriptArgs {
 
                 shell::println(format!(
                     "\nEstimated gas price: {} gwei",
-                    format_units(per_gas.to_ethers(), 9)
+                    format_units(per_gas, 9)
                         .unwrap_or_else(|_| "[Could not calculate]".to_string())
                         .trim_end_matches('0')
                         .trim_end_matches('.')
@@ -561,7 +557,7 @@ impl ScriptArgs {
                 shell::println(format!("\nEstimated total gas used for script: {total_gas}"))?;
                 shell::println(format!(
                     "\nEstimated amount required: {} ETH",
-                    format_units(total_gas.saturating_mul(per_gas).to_ethers(), 18)
+                    format_units(total_gas.saturating_mul(per_gas), 18)
                         .unwrap_or_else(|_| "[Could not calculate]".to_string())
                         .trim_end_matches('0')
                 ))?;
@@ -602,7 +598,7 @@ impl ScriptArgs {
         // Submit the raw transaction
         let pending = provider.send_raw_transaction(legacy_or_1559.rlp_signed(&signature)).await?;
 
-        Ok(pending.tx_hash())
+        Ok(pending.tx_hash().to_alloy())
     }
 
     async fn estimate_gas<T>(&self, tx: &mut TypedTransaction, provider: &Provider<T>) -> Result<()>

@@ -29,7 +29,6 @@ pub mod term;
 pub mod traits;
 pub mod transactions;
 pub mod types;
-pub mod units;
 
 pub use constants::*;
 pub use contracts::*;

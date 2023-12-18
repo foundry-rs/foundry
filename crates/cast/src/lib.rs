@@ -13,7 +13,7 @@ use ethers_core::{
 };
 use ethers_providers::{Middleware, PendingTransaction, PubsubClient};
 use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
-use eyre::{Context, Result};
+use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
     abi::{encode_function_args, get_func},
@@ -1079,7 +1079,12 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_fixed_point(value: &str, decimals: &str) -> Result<String> {
-        let units: Unit = decimals.parse()?;
+        // TODO: https://github.com/alloy-rs/core/pull/461
+        let units: Unit = if let Ok(x) = decimals.parse() {
+            Unit::new(x).ok_or_else(|| eyre::eyre!("invalid unit"))?
+        } else {
+            decimals.parse()?
+        };
         let n = ParseUnits::parse_units(value, units)?;
         Ok(n.to_string())
     }
@@ -1234,8 +1239,12 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_unit(value: &str, unit: &str) -> Result<String> {
+        let value = DynSolType::coerce_str(&DynSolType::Uint(256), value)?
+            .as_uint()
+            .wrap_err("could not convert to uint")?
+            .0;
         let unit: alloy_primitives::utils::Unit = unit.parse().wrap_err("could not parse units")?;
-        let parsed = alloy_primitives::utils::ParseUnits::parse_units(value, unit)?;
+        let parsed = alloy_primitives::utils::ParseUnits::parse_units(&value.to_string(), unit)?;
         Ok(parsed.to_string())
     }
 
@@ -1250,7 +1259,7 @@ impl SimpleCast {
     /// assert_eq!(Cast::from_wei("12340000005", "gwei")?, "12.340000005");
     /// assert_eq!(Cast::from_wei("10", "ether")?, "0.000000000000000010");
     /// assert_eq!(Cast::from_wei("100", "eth")?, "0.000000000000000100");
-    /// assert_eq!(Cast::from_wei("17", "")?, "0.000000000000000017");
+    /// assert_eq!(Cast::from_wei("17", "ether")?, "0.000000000000000017");
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_wei(value: &str, unit: &str) -> Result<String> {

@@ -1,9 +1,9 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::U256;
+use alloy_primitives::{utils::format_units, U256};
 use ethers_core::types::TransactionReceipt;
 use ethers_providers::Middleware;
 use eyre::{ContextCompat, Result};
-use foundry_common::{types::ToAlloy, units::format_units};
+use foundry_common::types::ToAlloy;
 use foundry_config::{Chain, Config};
 use std::{
     ffi::OsStr,
