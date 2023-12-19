@@ -2527,6 +2527,7 @@ dependencies = [
  "ethers-middleware",
  "ethers-providers",
  "ethers-signers",
+ "evm-disassembler",
  "eyre",
  "forge-doc",
  "forge-fmt",

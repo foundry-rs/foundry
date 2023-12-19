@@ -4,8 +4,8 @@ use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, Result};
 use forge::{
     coverage::{
-        analysis::SourceAnalyzer, anchors::find_anchors, ContractId, CoverageReport,
-        CoverageReporter, DebugReporter, ItemAnchor, LcovReporter, SummaryReporter,
+        analysis::SourceAnalyzer, anchors::find_anchors, BytecodeReporter, ContractId,
+        CoverageReport, CoverageReporter, DebugReporter, ItemAnchor, LcovReporter, SummaryReporter,
     },
     inspectors::CheatsConfig,
     opts::EvmOpts,
@@ -161,6 +161,8 @@ impl CoverageArgs {
         let mut versioned_asts: HashMap<Version, HashMap<usize, Ast>> = HashMap::new();
         let mut versioned_sources: HashMap<Version, HashMap<usize, String>> = HashMap::new();
         for (path, mut source_file, version) in sources.into_sources_with_version() {
+            report.add_source(version.clone(), source_file.id as usize, path.clone());
+
             // Filter out dependencies
             if project_paths.has_library_ancestor(std::path::Path::new(&path)) {
                 continue
@@ -180,7 +182,6 @@ impl CoverageArgs {
                     fs::read_to_string(&file)
                         .wrap_err("Could not read source code for analysis")?,
                 );
-                report.add_source(version, source_file.id as usize, path);
             }
         }
 
@@ -279,6 +280,8 @@ impl CoverageArgs {
             report.add_anchors(anchors);
         }
 
+        report.add_source_maps(source_maps);
+
         Ok(report)
     }
 
@@ -342,7 +345,7 @@ impl CoverageArgs {
                         contract_name: artifact_id.name.clone(),
                     },
                     &hits,
-                );
+                )?;
             }
         }
 
@@ -367,6 +370,12 @@ impl CoverageArgs {
                             .report(&report)
                     }
                 }
+                CoverageReportKind::Bytecode => {
+                    let destdir = root.join("bytecode-coverage");
+                    fs::create_dir_all(&destdir)?;
+                    BytecodeReporter::new(root.clone(), destdir).report(&report)?;
+                    Ok(())
+                }
                 CoverageReportKind::Debug => DebugReporter.report(&report),
             }?;
         }
@@ -385,6 +394,7 @@ pub enum CoverageReportKind {
     Summary,
     Lcov,
     Debug,
+    Bytecode,
 }
 
 /// Helper function that will link references in unlinked bytecode to the 0 address.
