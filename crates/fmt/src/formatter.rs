@@ -236,6 +236,10 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Returns number of blank lines in source between two byte indexes
     fn blank_lines(&self, start: usize, end: usize) -> usize {
+        // because of sorting import statements, start can be greater than end
+        if start > end {
+            return 0
+        }
         self.source[start..end].trim_comments().matches('\n').count()
     }
 
@@ -949,7 +953,10 @@ impl<'a, W: Write> Formatter<'a, W> {
             (None, None) => return Ok(()),
         }
         .start();
+
         let mut last_loc: Option<Loc> = None;
+        let mut visited_locs: Vec<Loc> = Vec::new();
+
         let mut needs_space = false;
         while let Some(mut line_item) = pop_next(self, &mut items) {
             let loc = line_item.as_ref().either(|c| c.loc, |i| i.loc());
@@ -979,7 +986,19 @@ impl<'a, W: Write> Formatter<'a, W> {
                 Either::Right(item) => {
                     if !ignore_whitespace {
                         self.write_whitespace_separator(true)?;
-                        if let Some(last_loc) = last_loc {
+                        if let Some(mut last_loc) = last_loc {
+                            // here's an edge case when we reordered items so the last_loc isn't
+                            // necessarily the item that directly precedes the current item because
+                            // the order might have changed, so we need to find the last item that
+                            // is before the current item by checking the recorded locations
+                            if let Some(last_item) = visited_locs
+                                .iter()
+                                .rev()
+                                .find(|prev_item| prev_item.start() > last_loc.end())
+                            {
+                                last_loc = *last_item;
+                            }
+
                             if needs_space || self.blank_lines(last_loc.end(), loc.start()) > 1 {
                                 writeln!(self.buf())?;
                             }
@@ -997,6 +1016,8 @@ impl<'a, W: Write> Formatter<'a, W> {
             }
 
             last_loc = Some(loc);
+            visited_locs.push(loc);
+
             last_byte_written = loc.end();
             if let Some(comment) = line_item.as_ref().left() {
                 if comment.is_line() {
@@ -1593,6 +1614,69 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
         Ok(())
     }
+
+    /// Sorts grouped import statement alphabetically.
+    fn sort_imports(&self, source_unit: &mut SourceUnit) {
+        // first we need to find the grouped import statements
+        // A group is defined as a set of import statements that are separated by a blank line
+        let mut import_groups = Vec::new();
+        let mut current_group = Vec::new();
+        let mut source_unit_parts = source_unit.0.iter().enumerate().peekable();
+        while let Some((i, part)) = source_unit_parts.next() {
+            if let SourceUnitPart::ImportDirective(_) = part {
+                current_group.push(i);
+                let current_loc = part.loc();
+                if let Some((_, next_part)) = source_unit_parts.peek() {
+                    let next_loc = next_part.loc();
+                    // import statements are followed by a new line, so if there are more than one
+                    // we have a group
+                    if self.blank_lines(current_loc.end(), next_loc.start()) > 1 {
+                        import_groups.push(std::mem::take(&mut current_group));
+                    }
+                }
+            } else if !current_group.is_empty() {
+                import_groups.push(std::mem::take(&mut current_group));
+            }
+        }
+
+        if !current_group.is_empty() {
+            import_groups.push(current_group);
+        }
+
+        if import_groups.is_empty() {
+            // nothing to sort
+            return
+        }
+
+        // order all groups alphabetically
+        for group in import_groups.iter() {
+            // SAFETY: group is not empty
+            let first = group[0];
+            let last = group.last().copied().expect("group is not empty");
+            let import_directives = &mut source_unit.0[first..=last];
+
+            // sort rename style imports alphabetically based on the actual import and not the
+            // rename
+            for source_unit_part in import_directives.iter_mut() {
+                if let SourceUnitPart::ImportDirective(Import::Rename(_, renames, _)) =
+                    source_unit_part
+                {
+                    renames.sort_by_cached_key(|(og_ident, _)| og_ident.name.clone());
+                }
+            }
+
+            import_directives.sort_by_cached_key(|item| match item {
+                SourceUnitPart::ImportDirective(import) => match import {
+                    Import::Plain(path, _) => path.to_string(),
+                    Import::GlobalSymbol(path, _, _) => path.to_string(),
+                    Import::Rename(path, _, _) => path.to_string(),
+                },
+                _ => {
+                    unreachable!("import group contains non-import statement")
+                }
+            });
+        }
+    }
 }
 
 // Traverse the Solidity Parse Tree and write to the code formatter
@@ -1619,6 +1703,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     #[instrument(name = "SU", skip_all)]
     fn visit_source_unit(&mut self, source_unit: &mut SourceUnit) -> Result<()> {
+        if self.config.sort_imports {
+            self.sort_imports(source_unit);
+        }
         // TODO: do we need to put pragma and import directives at the top of the file?
         // source_unit.0.sort_by_key(|item| match item {
         //     SourceUnitPart::PragmaDirective(_, _, _) => 0,

@@ -404,7 +404,7 @@ For example, if you have `@openzeppelin` imports, you would
 
 ## Github Actions CI
 
-We recommend using the [Github Actions CI setup](https://book.getfoundry.sh/config/continous-integration.html) from the [📖 Foundry Book](https://book.getfoundry.sh/index.html).
+We recommend using the [Github Actions CI setup](https://book.getfoundry.sh/config/continuous-integration) from the [📖 Foundry Book](https://book.getfoundry.sh/index.html).
 
 ## Future Features
 

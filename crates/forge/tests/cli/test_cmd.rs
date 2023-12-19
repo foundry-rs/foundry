@@ -368,6 +368,7 @@ forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
     cmd.assert_err();
 });
 
+// <https://github.com/foundry-rs/foundry/issues/6531>
 forgetest_init!(repro_6531, |prj, cmd| {
     prj.wipe_contracts();
 
@@ -400,4 +401,34 @@ contract USDCCallingTest is Test {
     .replace("<url>", &endpoint);
 
     cmd.args(["test", "-vvvv"]).unchecked_output().stdout_matches_content(&expected);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/6579>
+forgetest_init!(include_custom_types_in_traces, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "Contract.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+error PoolNotInitialized();
+event MyEvent(uint256 a);
+
+contract CustomTypesTest is Test {
+    function testErr() public pure {
+       revert PoolNotInitialized();
+    }
+    function testEvent() public {
+       emit MyEvent(100);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "-vvvv"]).unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/include_custom_types_in_traces.stdout"),
+    );
 });
