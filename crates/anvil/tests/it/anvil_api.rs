@@ -5,6 +5,7 @@ use anvil_core::{
     eth::EthRequest,
     types::{AnvilMetadata, ForkedNetwork, Forking, NodeEnvironment, NodeForkConfig, NodeInfo},
 };
+use anvil_core::{engine::EngineRequest}
 use ethers::{
     abi::{ethereum_types::BigEndianHash, AbiDecode},
     prelude::{Middleware, SignerMiddleware},
@@ -37,8 +38,17 @@ async fn test_engine_api() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
     // handle.engine_api.execute().await; // prints hello world
-    handle.engine_api.unwrap().execute().await; // prints hello world
+    handle.engine_api.unwrap().execute(EngineRequest::HelloWorld()).await; // prints hello world
 }
+
+// #[tokio::test(flavor = "multi_thread")]
+// async fn test_get_payload_v3() {
+//     //TODO
+//     let (_api, handle) = spawn(NodeConfig::test()).await;
+
+//     // handle.engine_api.execute().await; // prints hello world
+//     handle.engine_api.unwrap().execute(EngineRequest::GetPayloadV3()).await; // prints hello world
+// }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_block_gas_limit() {

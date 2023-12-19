@@ -26,6 +26,7 @@ anvil-server = { path = "server" }
 foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
+reth-rpc-types.workspace = true
 
 # evm support
 bytes = "1.4.0"
@@ -42,8 +43,6 @@ axum.workspace = true
 hyper.workspace = true
 tower.workspace = true
 
-reth = "0.1.0"
-#reth-rpc-engine-api = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
 
 # tracing
 tracing.workspace = true

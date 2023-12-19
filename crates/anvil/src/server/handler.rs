@@ -5,10 +5,10 @@ use crate::{
     EthApi,
 };
 use crate::engine::EngineApi;
-use anvil_core::eth::{
+use anvil_core::{eth::{
     subscription::{SubscriptionId, SubscriptionKind},
     EthPubSub, EthRequest, EthRpcCall,
-};
+}, engine::EngineRequest};
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use anvil_server::{PubSubContext, PubSubRpcHandler, RpcHandler};
 use ethers::types::FilteredParams;
@@ -140,10 +140,10 @@ impl HttpEngineRpcHandler {
 
 #[async_trait::async_trait]
 impl RpcHandler for HttpEngineRpcHandler {
-    type Request = EthRequest;
+    type Request = EngineRequest;
 
     async fn on_request(&self, request: Self::Request) -> ResponseResult {
-        self.api.execute().await;
+        self.api.execute(request).await;
         ResponseResult::Success(serde_json::Value::from(1))
     }
 }
