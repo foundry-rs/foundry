@@ -321,26 +321,44 @@ fn format_token(token: DynSolValue) -> String {
         DynSolValue::Address(a) => {
             format!("Type: {}\n└ Data: {}", Paint::red("address"), Paint::cyan(a.to_string()))
         }
-        DynSolValue::FixedBytes(b, _) => {
+        DynSolValue::FixedBytes(b, byte_len) => {
             format!(
                 "Type: {}\n└ Data: {}",
-                Paint::red(format!("bytes{}", b.len())),
+                Paint::red(format!("bytes{byte_len}")),
                 Paint::cyan(hex::encode_prefixed(b))
             )
         }
-        DynSolValue::Int(i, _) => {
+        DynSolValue::Int(i, bit_len) => {
             format!(
-                "Type: {}\n├ Hex: {}\n└ Decimal: {}",
-                Paint::red("int"),
-                Paint::cyan(format!("0x{i:x}")),
+                "Type: {}\n├ Hex: {}\n├ Hex (full word): {}\n└ Decimal: {}",
+                Paint::red(format!("int{}", bit_len)),
+                Paint::cyan(format!(
+                    "0x{}",
+                    format!("{i:x}")
+                        .char_indices()
+                        .skip(64 - bit_len / 4)
+                        .take(bit_len / 4)
+                        .map(|(_, c)| c)
+                        .collect::<String>()
+                )),
+                Paint::cyan(format!("{i:#x}")),
                 Paint::cyan(i)
             )
         }
-        DynSolValue::Uint(i, _) => {
+        DynSolValue::Uint(i, bit_len) => {
             format!(
-                "Type: {}\n├ Hex: {}\n└ Decimal: {}",
-                Paint::red("uint"),
-                Paint::cyan(format!("0x{i:x}")),
+                "Type: {}\n├ Hex: {}\n├ Hex (full word): {}\n└ Decimal: {}",
+                Paint::red(format!("uint{}", bit_len)),
+                Paint::cyan(format!(
+                    "0x{}",
+                    format!("{i:x}")
+                        .char_indices()
+                        .skip(64 - bit_len / 4)
+                        .take(bit_len / 4)
+                        .map(|(_, c)| c)
+                        .collect::<String>()
+                )),
+                Paint::cyan(format!("{i:#x}")),
                 Paint::cyan(i)
             )
         }
@@ -450,7 +468,7 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
         alloy_json_abi::Event { name: event_name, inputs, anonymous: event_definition.anonymous };
 
     Ok(format!(
-        "Type: {}\n├ Name: {}\n└ Signature: {:?}",
+        "Type: {}\n├ Name: {}\n├ Signature: {:?}\n└ Selector: {:?}",
         Paint::red("event"),
         SolidityHelper::highlight(&format!(
             "{}({})",
@@ -472,6 +490,7 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
                 .join(", ")
         )),
         Paint::cyan(event.signature()),
+        Paint::cyan(event.selector()),
     ))
 }
 
