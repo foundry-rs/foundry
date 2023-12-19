@@ -328,6 +328,7 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "rand 0.8.5",
+ "reth",
  "serde",
  "serde_json",
  "serde_repr",
@@ -5685,6 +5686,12 @@ dependencies = [
  "webpki-roots",
  "winreg",
 ]
+
+[[package]]
+name = "reth"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4cc4e22275376eda920bf6800519531166cbd9fd6b019e694e7cf72895c612f"
 
 [[package]]
 name = "revm"
