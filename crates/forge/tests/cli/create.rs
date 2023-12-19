@@ -135,7 +135,7 @@ forgetest_async!(
     |prj, cmd| {
         foundry_test_utils::util::initialize(prj.root());
 
-        let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
+        let (_api, handle) = spawn(NodeConfig::test()).await;
         let rpc = handle.http_endpoint();
         let wallet = handle.dev_wallets().next().unwrap();
         let pk = hex::encode(wallet.signer().to_bytes());
@@ -172,7 +172,7 @@ forgetest_async!(
     |prj, cmd| {
         foundry_test_utils::util::initialize(prj.root());
 
-        let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
+        let (_api, handle) = spawn(NodeConfig::test()).await;
         let rpc = handle.http_endpoint();
         let dev = handle.dev_accounts().next().unwrap();
 
@@ -209,7 +209,7 @@ forgetest_async!(
     |prj, cmd| {
         foundry_test_utils::util::initialize(prj.root());
 
-        let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
+        let (_api, handle) = spawn(NodeConfig::test()).await;
         let rpc = handle.http_endpoint();
         let wallet = handle.dev_wallets().next().unwrap();
         let pk = hex::encode(wallet.signer().to_bytes());
@@ -288,7 +288,7 @@ forgetest_async!(
     |prj, cmd| {
         foundry_test_utils::util::initialize(prj.root());
 
-        let (_api, _engine_api, handle) = spawn(NodeConfig::test()).await;
+        let (_api, handle) = spawn(NodeConfig::test()).await;
         let rpc = handle.http_endpoint();
         let wallet = handle.dev_wallets().next().unwrap();
         let pk = hex::encode(wallet.signer().to_bytes());
