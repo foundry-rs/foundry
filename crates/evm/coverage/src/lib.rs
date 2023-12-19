@@ -206,11 +206,6 @@ impl HitMap {
 
     /// Merge another hitmap into this, assuming the bytecode is consistent
     pub fn merge(&mut self, other: &HitMap) -> Result<(), eyre::Report> {
-        // why does this check fail for some codebases ?
-        //
-        // if !self.consistent_bytecode(self, other) {
-        //     return Err(eyre::eyre!("can't merge hits for inconsistent bytecode".to_owned()));
-        // }
         for (pc, hits) in &other.hits {
             *self.hits.entry(*pc).or_default() += hits;
         }

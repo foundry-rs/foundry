@@ -2,10 +2,10 @@
 
 use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Row, Table};
 use evm_disassembler::disassemble_bytes;
+use foundry_common::fs;
 pub use foundry_evm::coverage::*;
 use std::{
     collections::{hash_map, HashMap},
-    fs,
     io::Write,
     path::PathBuf,
 };
@@ -191,6 +191,7 @@ impl BytecodeReporter {
 impl CoverageReporter for BytecodeReporter {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
         use std::fmt::Write;
+
         let no_source_elements = Vec::new();
         let mut line_number_cache = LineNumberCache::new(self.root.clone());
 
@@ -244,7 +245,7 @@ impl CoverageReporter for BytecodeReporter {
     }
 }
 
-// Cache line number offsets for source files
+/// Cache line number offsets for source files
 struct LineNumberCache {
     root: PathBuf,
     line_offsets: HashMap<String, Vec<usize>>,
