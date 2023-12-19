@@ -1,6 +1,6 @@
 use super::{
     receipts,
-    sequence::{ScriptSequence, DRY_RUN_DIR},
+    sequence::{sig_to_file_name, ScriptSequence, SensitiveScriptSequence, DRY_RUN_DIR},
     verify::VerifyBundle,
     ScriptArgs,
 };
@@ -22,8 +22,23 @@ use std::{
 #[derive(Deserialize, Serialize, Clone, Default)]
 pub struct MultiChainSequence {
     pub deployments: Vec<ScriptSequence>,
+    #[serde(skip)]
     pub path: PathBuf,
+    #[serde(skip)]
+    pub sensitive_path: PathBuf,
     pub timestamp: u64,
+}
+
+/// Sensitive values from script sequences.
+#[derive(Deserialize, Serialize, Clone, Default)]
+pub struct SensitiveMultiChainSequence {
+    pub deployments: Vec<SensitiveScriptSequence>,
+}
+
+fn to_sensitive(sequence: &mut MultiChainSequence) -> SensitiveMultiChainSequence {
+    SensitiveMultiChainSequence {
+        deployments: sequence.deployments.iter_mut().map(|sequence| sequence.into()).collect(),
+    }
 }
 
 impl Drop for MultiChainSequence {
@@ -38,26 +53,38 @@ impl MultiChainSequence {
         deployments: Vec<ScriptSequence>,
         sig: &str,
         target: &ArtifactId,
-        log_folder: &Path,
+        config: &Config,
         broadcasted: bool,
     ) -> Result<Self> {
-        let path =
-            MultiChainSequence::get_path(&log_folder.join("multi"), sig, target, broadcasted)?;
+        let (path, sensitive_path) = MultiChainSequence::get_paths(
+            &config.broadcast,
+            &config.cache_path,
+            sig,
+            target,
+            broadcasted,
+        )?;
 
-        Ok(MultiChainSequence { deployments, path, timestamp: now().as_secs() })
+        Ok(MultiChainSequence { deployments, path, sensitive_path, timestamp: now().as_secs() })
     }
 
-    /// Saves to ./broadcast/multi/contract_filename[-timestamp]/sig.json
-    pub fn get_path(
-        out: &Path,
+    /// Gets paths in the formats
+    /// ./broadcast/multi/contract_filename[-timestamp]/sig.json and
+    /// ./cache/multi/contract_filename[-timestamp]/sig.json
+    pub fn get_paths(
+        broadcast: &Path,
+        cache: &Path,
         sig: &str,
         target: &ArtifactId,
         broadcasted: bool,
-    ) -> Result<PathBuf> {
-        let mut out = out.to_path_buf();
+    ) -> Result<(PathBuf, PathBuf)> {
+        let mut broadcast = broadcast.to_path_buf();
+        let mut cache = cache.to_path_buf();
+        let mut common = PathBuf::new();
+
+        common.push("multi");
 
         if !broadcasted {
-            out.push(DRY_RUN_DIR);
+            common.push(DRY_RUN_DIR);
         }
 
         let target_fname = target
@@ -65,29 +92,55 @@ impl MultiChainSequence {
             .file_name()
             .wrap_err_with(|| format!("No filename for {:?}", target.source))?
             .to_string_lossy();
-        out.push(format!("{target_fname}-latest"));
 
-        fs::create_dir_all(&out)?;
+        common.push(format!("{target_fname}-latest"));
 
-        let filename = sig
-            .split_once('(')
-            .wrap_err_with(|| format!("Failed to compute file name: Signature {sig} is invalid."))?
-            .0;
-        out.push(format!("{filename}.json"));
+        broadcast.push(common.clone());
+        cache.push(common);
 
-        Ok(out)
+        fs::create_dir_all(&broadcast)?;
+        fs::create_dir_all(&cache)?;
+
+        let filename = format!("{}.json", sig_to_file_name(sig));
+
+        broadcast.push(filename.clone());
+        cache.push(filename);
+
+        Ok((broadcast, cache))
     }
 
     /// Loads the sequences for the multi chain deployment.
-    pub fn load(log_folder: &Path, sig: &str, target: &ArtifactId) -> Result<Self> {
-        let path = MultiChainSequence::get_path(&log_folder.join("multi"), sig, target, true)?;
-        foundry_compilers::utils::read_json_file(path).wrap_err("Multi-chain deployment not found.")
+    pub fn load(config: &Config, sig: &str, target: &ArtifactId) -> Result<Self> {
+        let (path, sensitive_path) = MultiChainSequence::get_paths(
+            &config.broadcast,
+            &config.cache_path,
+            sig,
+            target,
+            true,
+        )?;
+        let mut sequence: MultiChainSequence = foundry_compilers::utils::read_json_file(&path)
+            .wrap_err("Multi-chain deployment not found.")?;
+        let sensitive_sequence: SensitiveMultiChainSequence =
+            foundry_compilers::utils::read_json_file(&sensitive_path)
+                .wrap_err("Multi-chain deployment sensitive details not found.")?;
+
+        sequence.deployments.iter_mut().enumerate().for_each(|(i, sequence)| {
+            sequence.fill_sensitive(&sensitive_sequence.deployments[i]);
+        });
+
+        sequence.path = path;
+        sequence.sensitive_path = sensitive_path;
+
+        Ok(sequence)
     }
 
     /// Saves the transactions as file if it's a standalone deployment.
     pub fn save(&mut self) -> Result<()> {
         self.timestamp = now().as_secs();
 
+        let sensitive_sequence: SensitiveMultiChainSequence = to_sensitive(self);
+
+        // broadcast writes
         //../Contract-latest/run.json
         let mut writer = BufWriter::new(fs::create_file(&self.path)?);
         serde_json::to_writer_pretty(&mut writer, &self)?;
@@ -99,7 +152,20 @@ impl MultiChainSequence {
         fs::create_dir_all(file.parent().unwrap())?;
         fs::copy(&self.path, &file)?;
 
+        // cache writes
+        //../Contract-latest/run.json
+        let mut writer = BufWriter::new(fs::create_file(&self.sensitive_path)?);
+        serde_json::to_writer_pretty(&mut writer, &sensitive_sequence)?;
+        writer.flush()?;
+
+        //../Contract-[timestamp]/run.json
+        let path = self.sensitive_path.to_string_lossy();
+        let file = PathBuf::from(&path.replace("-latest", &format!("-{}", self.timestamp)));
+        fs::create_dir_all(file.parent().unwrap())?;
+        fs::copy(&self.sensitive_path, &file)?;
+
         println!("\nTransactions saved to: {}\n", self.path.display());
+        println!("Sensitive details saved to: {}\n", self.sensitive_path.display());
 
         Ok(())
     }

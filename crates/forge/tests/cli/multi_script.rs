@@ -61,3 +61,18 @@ forgetest_async!(can_not_change_fork_during_broadcast, |prj, cmd| {
         .args(&[&handle1.http_endpoint(), &handle2.http_endpoint()])
         .broadcast(ScriptOutcome::ErrorSelectForkOnBroadcast);
 });
+
+forgetest_async!(can_resume_multi_chain_script, |prj, cmd| {
+    let (_, handle1) = spawn(NodeConfig::test()).await;
+    let (_, handle2) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+
+    tester
+        .add_sig("MultiChainBroadcastNoLink", "deploy(string memory,string memory)")
+        .args(&[&handle1.http_endpoint(), &handle2.http_endpoint()])
+        .broadcast(ScriptOutcome::MissingWallet)
+        .load_private_keys(&[0, 1])
+        .await
+        .arg("--multi")
+        .resume(ScriptOutcome::OkBroadcast);
+});
