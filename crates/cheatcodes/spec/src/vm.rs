@@ -57,10 +57,10 @@ interface Vm {
         Balance,
         /// The account's codesize was read.
         Extcodesize,
-        /// The account's code was copied.
-        Extcodecopy,
         /// The account's codehash was read.
         Extcodehash,
+        /// The account's code was copied.
+        Extcodecopy,
     }
 
     /// An Ethereum log. Returned by `getRecordedLogs`.

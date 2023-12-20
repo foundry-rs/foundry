@@ -75,12 +75,12 @@
           "description": "The account's codesize was read."
         },
         {
-          "name": "Extcodecopy",
-          "description": "The account's code was copied."
-        },
-        {
           "name": "Extcodehash",
           "description": "The account's codehash was read."
+        },
+        {
+          "name": "Extcodecopy",
+          "description": "The account's code was copied."
         }
       ]
     }
