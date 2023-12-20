@@ -228,6 +228,7 @@ test_directories! {
     MappingType,
     EmitStatement,
     Repros,
+    BlockComments,
 }
 
 test_dir!(SortedImports, TestConfig::skip_compare_ast_eq());
