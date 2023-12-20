@@ -13,7 +13,7 @@ use std::{
 /// Overloaded functions are referenced by including the exact function arguments in the `part`
 /// section of the placeholder.
 static RE_INLINE_LINK: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?m)(\{(?P<xref>xref-)?(?P<identifier>[a-zA-Z_][0-9a-zA-Z_]*)(-(?P<part>[a-zA-Z_][0-9a-zA-Z_-]*))?}(\[?P<link>(.*?)\])?)").unwrap()
+    Regex::new(r"(?m)(\{(?P<xref>xref-)?(?P<identifier>[a-zA-Z_][0-9a-zA-Z_]*)(-(?P<part>[a-zA-Z_][0-9a-zA-Z_-]*))?}(\[(?P<link>(.*?))\])?)").unwrap()
 });
 
 /// [InferInlineHyperlinks] preprocessor id.
@@ -55,7 +55,7 @@ impl Preprocessor for InferInlineHyperlinks {
                 for child_idx in 0..item_children_len {
                     let mut comments = {
                         let item = document.content.get_mut(idx).unwrap();
-                        
+
                         std::mem::take(&mut item.children[child_idx].comments)
                     };
                     Self::inline_doc_links(&documents, &target_path, &mut comments, &document);
@@ -305,5 +305,10 @@ mod tests {
         let link = InlineLink::capture(s).unwrap();
         assert_eq!(link.ref_name(), "_safeMint");
         assert_eq!(link.as_str(), "{xref-ERC721-_safeMint-address-uint256-}");
+
+        let s = "{xref-ERC721-_safeMint-address-uint256-}[`Named link`]";
+        let link = InlineLink::capture(s).unwrap();
+        assert_eq!(link.link, Some("`Named link`"));
+        assert_eq!(link.markdown_link_display_value(), "`Named link`");
     }
 }
