@@ -285,3 +285,6 @@ test_repro!(6554; |config| {
     cheats_config.fs_permissions.add(PathPermission::read_write(path));
     config.runner.cheats_config = std::sync::Arc::new(cheats_config);
 });
+
+// https://github.com/foundry-rs/foundry/issues/6634
+test_repro!(6634);

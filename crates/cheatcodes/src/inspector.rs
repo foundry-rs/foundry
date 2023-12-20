@@ -1228,6 +1228,51 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let address = self.allow_cheatcodes_on_create(data, call);
         // If `recordAccountAccesses` has been called, record the create
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
+            let mut create_accessor = call.caller;
+            let mut create_call_depth = data.journaled_state.depth();
+
+            let mut base_depth = 1;
+            if let Some(prank) = &self.prank {
+                base_depth = prank.depth;
+            } else if let Some(broadcast) = &self.broadcast {
+                base_depth = broadcast.depth;
+            }
+
+            // If the create scheme is Create2 and the depth equals the broadcast/prank/default
+            // depth, then record an additional call to the create2 factory.
+            if data.journaled_state.depth() == base_depth {
+                match call.scheme {
+                    CreateScheme::Create => {}
+                    CreateScheme::Create2 { salt } => {
+                        create_accessor = DEFAULT_CREATE2_DEPLOYER;
+                        create_call_depth += 1;
+
+                        let calldata =
+                            [&salt.to_be_bytes::<32>()[..], &call.init_code[..]].concat();
+                        recorded_account_diffs_stack.push(vec![AccountAccess {
+                            access: crate::Vm::AccountAccess {
+                                chainInfo: crate::Vm::ChainInfo {
+                                    forkId: data.db.active_fork_id().unwrap_or_default(),
+                                    chainId: U256::from(data.env.cfg.chain_id),
+                                },
+                                accessor: call.caller,
+                                account: DEFAULT_CREATE2_DEPLOYER,
+                                kind: crate::Vm::AccountAccessKind::Call,
+                                initialized: true,
+                                oldBalance: U256::ZERO, // updated on create_end
+                                newBalance: U256::ZERO, // updated on create_end
+                                value: call.value,
+                                data: calldata,
+                                reverted: false,
+                                deployedCode: vec![],    // updated on create_end
+                                storageAccesses: vec![], // updated on create_end
+                            },
+                            depth: data.journaled_state.depth(),
+                        }])
+                    }
+                }
+            }
+
             // Record the create context as an account access and create a new vector to record all
             // subsequent account accesses
             recorded_account_diffs_stack.push(vec![AccountAccess {
@@ -1236,7 +1281,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         forkId: data.db.active_fork_id().unwrap_or_default(),
                         chainId: U256::from(data.env.cfg.chain_id),
                     },
-                    accessor: call.caller,
+                    accessor: create_accessor,
                     account: address,
                     kind: crate::Vm::AccountAccessKind::Create,
                     initialized: true,
@@ -1248,7 +1293,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     deployedCode: vec![],    // updated on create_end
                     storageAccesses: vec![], // updated on create_end
                 },
-                depth: data.journaled_state.depth(),
+                depth: create_call_depth,
             }]);
         }
 
