@@ -1002,9 +1002,10 @@ impl<'a, W: Write> Formatter<'a, W> {
                                 last_loc = *last_item;
                             }
 
-                            // The blank lines check is susceptible to block comments because the
-                            // block docs can contain multiple lines, but the function def should be
-                            // follow directly after the block comment
+                            // The blank lines check is susceptible additional trailing new lines
+                            // because the block docs can contain
+                            // multiple lines, but the function def should follow directly after the
+                            // block comment
                             let is_last_doc_comment = matches!(
                                 last_comment,
                                 Some(CommentWithMetadata { ty: CommentType::DocBlock, .. })
