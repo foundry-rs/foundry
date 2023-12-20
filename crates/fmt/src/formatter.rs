@@ -2038,31 +2038,27 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let enum_name = enumeration.name.safe_unwrap_mut();
         let mut name =
             self.visit_to_chunk(enum_name.loc.start(), Some(enum_name.loc.end()), enum_name)?;
-        name.content = format!("enum {}", name.content);
-        self.write_chunk(&name)?;
-
+        name.content = format!("enum {} ", name.content);
         if enumeration.values.is_empty() {
+            self.write_chunk(&name)?;
             self.write_empty_brackets()?;
         } else {
-            self.surrounded(
-                SurroundingChunk::new(
-                    "{",
-                    Some(enumeration.values.first_mut().unwrap().safe_unwrap().loc.start()),
-                    None,
-                ),
-                SurroundingChunk::new("}", None, Some(enumeration.loc.end())),
-                |fmt, _multiline| {
-                    let values = fmt.items_to_chunks(
-                        Some(enumeration.loc.end()),
-                        enumeration.values.iter_mut().map(|ident| {
-                            let ident = ident.safe_unwrap_mut();
-                            (ident.loc, ident)
-                        }),
-                    )?;
-                    fmt.write_chunks_separated(&values, ",", true)?;
-                    Ok(())
-                },
-            )?;
+            name.content.push('{');
+            self.write_chunk(&name)?;
+
+            self.indented(1, |fmt| {
+                let values = fmt.items_to_chunks(
+                    Some(enumeration.loc.end()),
+                    enumeration.values.iter_mut().map(|ident| {
+                        let ident = ident.safe_unwrap_mut();
+                        (ident.loc, ident)
+                    }),
+                )?;
+                fmt.write_chunks_separated(&values, ",", true)?;
+                writeln!(fmt.buf())?;
+                Ok(())
+            })?;
+            write_chunk!(self, "}}")?;
         }
 
         Ok(())

@@ -229,6 +229,7 @@ test_directories! {
     EmitStatement,
     Repros,
     BlockComments,
+    EnumVariants,
 }
 
 test_dir!(SortedImports, TestConfig::skip_compare_ast_eq());
