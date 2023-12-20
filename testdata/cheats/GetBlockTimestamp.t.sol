@@ -13,10 +13,9 @@ contract GetBlockTimestampTest is DSTest {
     }
 
     function testGetTimestampWithWarp() public {
-        uint256 timestamp = vm.getBlockTimestamp();
-        assertEq(timestamp, 1, "timestamp should be 1");
+        assertEq(vm.getBlockTimestamp(), 1, "timestamp should be 1");
         vm.warp(10);
-        assertEq(block.timestamp, 10, "warp failed");
+        assertEq(vm.getBlockTimestamp(), 10, "warp failed");
     }
 
     function testGetTimestampWithWarpFuzzed(uint128 jump) public {
