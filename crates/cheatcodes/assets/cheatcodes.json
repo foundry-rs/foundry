@@ -2177,9 +2177,9 @@
       "func": {
         "id": "getBlockNumber",
         "description": "Gets the current `block.number`",
-        "declaration": "function getBlockNumber() external returns (uint256 height);",
+        "declaration": "function getBlockNumber() external view returns (uint256 height);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getBlockNumber()",
         "selector": "0x42cbb15c",
         "selectorBytes": [
@@ -2191,15 +2191,15 @@
       },
       "group": "evm",
       "status": "stable",
-      "safety": "unsafe"
+      "safety": "safe"
     },
     {
       "func": {
         "id": "getBlockTimestamp",
         "description": "Gets the current `block.timestamp`",
-        "declaration": "function getBlockTimestamp() external returns (uint256 timestamp);",
+        "declaration": "function getBlockTimestamp() external view returns (uint256 timestamp);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getBlockTimestamp()",
         "selector": "0x796b89b9",
         "selectorBytes": [
@@ -2211,7 +2211,7 @@
       },
       "group": "evm",
       "status": "stable",
-      "safety": "unsafe"
+      "safety": "safe"
     },
     {
       "func": {

@@ -318,8 +318,8 @@ interface Vm {
     function roll(uint256 newHeight) external;
 
     /// Gets the current `block.number`
-    #[cheatcode(group = Evm, safety = Unsafe)]
-    function getBlockNumber() external returns (uint256 height);
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getBlockNumber() external view returns (uint256 height);
 
     /// Sets `tx.gasprice`.
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -330,8 +330,8 @@ interface Vm {
     function warp(uint256 newTimestamp) external;
 
     /// Gets the current `block.timestamp`
-    #[cheatcode(group = Evm, safety = Unsafe)]
-    function getBlockTimestamp() external returns (uint256 timestamp);
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getBlockTimestamp() external view returns (uint256 timestamp);
 
     // -------- Account State --------
 
