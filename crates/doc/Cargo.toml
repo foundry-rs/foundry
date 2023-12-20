@@ -31,3 +31,4 @@ solang-parser.workspace = true
 thiserror = "1"
 toml.workspace = true
 tracing.workspace = true
+regex = "1.10.2"

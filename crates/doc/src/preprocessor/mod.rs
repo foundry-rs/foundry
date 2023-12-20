@@ -10,7 +10,7 @@ mod inheritdoc;
 pub use inheritdoc::{Inheritdoc, INHERITDOC_ID};
 
 mod infer_hyperlinks;
-pub use infer_hyperlinks::{InferHyperlinks, INFER_HYPERLINKS_ID};
+pub use infer_hyperlinks::{InferInlineHyperlinks, INFER_INLINE_HYPERLINKS_ID};
 
 mod git_source;
 pub use git_source::{GitSource, GIT_SOURCE_ID};

@@ -2589,6 +2589,7 @@ dependencies = [
  "mdbook",
  "once_cell",
  "rayon",
+ "regex",
  "serde",
  "serde_json",
  "solang-parser",

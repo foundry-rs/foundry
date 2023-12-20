@@ -8,7 +8,7 @@ use crate::{
 use forge_fmt::solang_ext::SafeUnwrap;
 use itertools::Itertools;
 use solang_parser::pt::{Base, FunctionDefinition};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The result of [Asdoc::as_doc] method.
 pub type AsDocResult = Result<String, std::fmt::Error>;
@@ -127,9 +127,8 @@ impl AsDoc for Document {
                         if !contract.base.is_empty() {
                             writer.write_bold("Inherits:")?;
 
-                            // Where all the source files are written to
                             // we need this to find the _relative_ paths
-                            let src_target_dir = self.out_target_dir.join("src");
+                            let src_target_dir = self.target_src_dir();
 
                             let mut bases = vec![];
                             let linked =
@@ -273,53 +272,41 @@ impl AsDoc for Document {
 }
 
 impl Document {
+    /// Where all the source files are written to
+    fn target_src_dir(&self) -> PathBuf {
+        self.out_target_dir.join("src")
+    }
 
     /// Writes a function to the buffer.
-    fn write_function(&self, writer: &mut BufWriter, func: &FunctionDefinition, comments: &Comments, code: &str) -> Result<(), std::fmt::Error> {
-        let func_name = func
-            .name
-            .as_ref()
-            .map_or(func.ty.to_string(), |n| n.name.to_owned());
-        let comments = comments.merge_inheritdoc(
-            &func_name,
-            read_context!(self, INHERITDOC_ID, Inheritdoc),
-        );
+    fn write_function(
+        &self,
+        writer: &mut BufWriter,
+        func: &FunctionDefinition,
+        comments: &Comments,
+        code: &str,
+    ) -> Result<(), std::fmt::Error> {
+        let func_name = func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.to_owned());
+        let comments =
+            comments.merge_inheritdoc(&func_name, read_context!(self, INHERITDOC_ID, Inheritdoc));
 
         // Write function name
         writer.write_heading(&func_name)?;
+
         writer.writeln()?;
 
         // Write function docs
-        writer.writeln_doc(
-            comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]),
-        )?;
+        writer.writeln_doc(comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]))?;
 
         // Write function header
         writer.write_code(code)?;
 
         // Write function parameter comments in a table
-        let params = func
-            .params
-            .iter()
-            .filter_map(|p| p.1.as_ref())
-            .collect::<Vec<_>>();
-        writer.try_write_param_table(
-            CommentTag::Param,
-            &params,
-            &comments,
-        )?;
+        let params = func.params.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
+        writer.try_write_param_table(CommentTag::Param, &params, &comments)?;
 
         // Write function parameter comments in a table
-        let returns = func
-            .returns
-            .iter()
-            .filter_map(|p| p.1.as_ref())
-            .collect::<Vec<_>>();
-        writer.try_write_param_table(
-            CommentTag::Return,
-            &returns,
-            &comments,
-        )?;
+        let returns = func.returns.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
+        writer.try_write_param_table(CommentTag::Return, &returns, &comments)?;
 
         writer.writeln()?;
         Ok(())
