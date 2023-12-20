@@ -7,7 +7,7 @@ use crate::{
 };
 use forge_fmt::solang_ext::SafeUnwrap;
 use itertools::Itertools;
-use solang_parser::pt::Base;
+use solang_parser::pt::{Base, FunctionDefinition};
 use std::path::Path;
 
 /// The result of [Asdoc::as_doc] method.
@@ -179,56 +179,10 @@ impl AsDoc for Document {
 
                         if let Some(funcs) = item.functions() {
                             writer.write_subtitle("Functions")?;
-                            funcs.into_iter().try_for_each(|(func, comments, code)| {
-                                let func_name = func
-                                    .name
-                                    .as_ref()
-                                    .map_or(func.ty.to_string(), |n| n.name.to_owned());
-                                let comments = comments.merge_inheritdoc(
-                                    &func_name,
-                                    read_context!(self, INHERITDOC_ID, Inheritdoc),
-                                );
 
-                                // Write function name
-                                writer.write_heading(&func_name)?;
-                                writer.writeln()?;
-
-                                // Write function docs
-                                writer.writeln_doc(
-                                    comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]),
-                                )?;
-
-                                // Write function header
-                                writer.write_code(code)?;
-
-                                // Write function parameter comments in a table
-                                let params = func
-                                    .params
-                                    .iter()
-                                    .filter_map(|p| p.1.as_ref())
-                                    .collect::<Vec<_>>();
-                                writer.try_write_param_table(
-                                    CommentTag::Param,
-                                    &params,
-                                    &comments,
-                                )?;
-
-                                // Write function parameter comments in a table
-                                let returns = func
-                                    .returns
-                                    .iter()
-                                    .filter_map(|p| p.1.as_ref())
-                                    .collect::<Vec<_>>();
-                                writer.try_write_param_table(
-                                    CommentTag::Return,
-                                    &returns,
-                                    &comments,
-                                )?;
-
-                                writer.writeln()?;
-
-                                Ok::<(), std::fmt::Error>(())
-                            })?;
+                            for (func, comments, code) in funcs.iter() {
+                                self.write_function(&mut writer, func, comments, code)?;
+                            }
                         }
 
                         if let Some(events) = item.events() {
@@ -315,5 +269,59 @@ impl AsDoc for Document {
         };
 
         Ok(writer.finish())
+    }
+}
+
+impl Document {
+
+    /// Writes a function to the buffer.
+    fn write_function(&self, writer: &mut BufWriter, func: &FunctionDefinition, comments: &Comments, code: &str) -> Result<(), std::fmt::Error> {
+        let func_name = func
+            .name
+            .as_ref()
+            .map_or(func.ty.to_string(), |n| n.name.to_owned());
+        let comments = comments.merge_inheritdoc(
+            &func_name,
+            read_context!(self, INHERITDOC_ID, Inheritdoc),
+        );
+
+        // Write function name
+        writer.write_heading(&func_name)?;
+        writer.writeln()?;
+
+        // Write function docs
+        writer.writeln_doc(
+            comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]),
+        )?;
+
+        // Write function header
+        writer.write_code(code)?;
+
+        // Write function parameter comments in a table
+        let params = func
+            .params
+            .iter()
+            .filter_map(|p| p.1.as_ref())
+            .collect::<Vec<_>>();
+        writer.try_write_param_table(
+            CommentTag::Param,
+            &params,
+            &comments,
+        )?;
+
+        // Write function parameter comments in a table
+        let returns = func
+            .returns
+            .iter()
+            .filter_map(|p| p.1.as_ref())
+            .collect::<Vec<_>>();
+        writer.try_write_param_table(
+            CommentTag::Return,
+            &returns,
+            &comments,
+        )?;
+
+        writer.writeln()?;
+        Ok(())
     }
 }
