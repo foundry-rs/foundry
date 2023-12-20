@@ -2175,18 +2175,18 @@
     },
     {
       "func": {
-        "id": "getBlockHeight",
-        "description": "",
-        "declaration": "function getBlockHeight() external returns (uint256 height);",
+        "id": "getBlockNumber",
+        "description": "Gets the current `block.number`",
+        "declaration": "function getBlockNumber() external returns (uint256 height);",
         "visibility": "external",
         "mutability": "",
-        "signature": "getBlockHeight()",
-        "selector": "0x7bb96acb",
+        "signature": "getBlockNumber()",
+        "selector": "0x42cbb15c",
         "selectorBytes": [
-          123,
-          185,
-          106,
-          203
+          66,
+          203,
+          177,
+          92
         ]
       },
       "group": "evm",
@@ -2196,7 +2196,7 @@
     {
       "func": {
         "id": "getBlockTimestamp",
-        "description": "",
+        "description": "Gets the current `block.timestamp`",
         "declaration": "function getBlockTimestamp() external returns (uint256 timestamp);",
         "visibility": "external",
         "mutability": "",
