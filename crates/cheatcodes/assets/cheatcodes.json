@@ -2175,6 +2175,46 @@
     },
     {
       "func": {
+        "id": "getBlockHeight",
+        "description": "",
+        "declaration": "function getBlockHeight() external returns (uint256 height);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "getBlockHeight()",
+        "selector": "0x7bb96acb",
+        "selectorBytes": [
+          123,
+          185,
+          106,
+          203
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "getBlockTimestamp",
+        "description": "",
+        "declaration": "function getBlockTimestamp() external returns (uint256 timestamp);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "getBlockTimestamp()",
+        "selector": "0x796b89b9",
+        "selectorBytes": [
+          121,
+          107,
+          137,
+          185
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "getCode",
         "description": "Gets the creation bytecode from an artifact file. Takes in the relative path to the json file.",
         "declaration": "function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);",
