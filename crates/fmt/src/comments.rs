@@ -152,6 +152,10 @@ impl CommentWithMetadata {
         matches!(self.ty, CommentType::Line | CommentType::DocLine)
     }
 
+    pub fn is_doc_block(&self) -> bool {
+        matches!(self.ty, CommentType::DocBlock)
+    }
+
     pub fn is_prefix(&self) -> bool {
         matches!(self.position, CommentPosition::Prefix)
     }

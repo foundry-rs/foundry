@@ -957,7 +957,10 @@ impl<'a, W: Write> Formatter<'a, W> {
         let mut last_loc: Option<Loc> = None;
         let mut visited_locs: Vec<Loc> = Vec::new();
 
+        // marker for whether the next item needs additional space
         let mut needs_space = false;
+        let mut last_comment = None;
+
         while let Some(mut line_item) = pop_next(self, &mut items) {
             let loc = line_item.as_ref().either(|c| c.loc, |i| i.loc());
             let (unwritten_whitespace_loc, unwritten_whitespace) =
@@ -999,7 +1002,18 @@ impl<'a, W: Write> Formatter<'a, W> {
                                 last_loc = *last_item;
                             }
 
-                            if needs_space || self.blank_lines(last_loc.end(), loc.start()) > 1 {
+                            // The blank lines check is susceptible to block comments because the
+                            // block docs can contain multiple lines, but the function def should be
+                            // follow directly after the block comment
+                            let is_last_doc_comment = matches!(
+                                last_comment,
+                                Some(CommentWithMetadata { ty: CommentType::DocBlock, .. })
+                            );
+
+                            if needs_space ||
+                                (!is_last_doc_comment &&
+                                    self.blank_lines(last_loc.end(), loc.start()) > 1)
+                            {
                                 writeln!(self.buf())?;
                             }
                         }
@@ -1018,12 +1032,15 @@ impl<'a, W: Write> Formatter<'a, W> {
             last_loc = Some(loc);
             visited_locs.push(loc);
 
+            last_comment = None;
+
             last_byte_written = loc.end();
-            if let Some(comment) = line_item.as_ref().left() {
+            if let Some(comment) = line_item.left() {
                 if comment.is_line() {
                     last_byte_written =
                         self.find_next_line(last_byte_written).unwrap_or(last_byte_written);
                 }
+                last_comment = Some(comment);
             }
         }
 
