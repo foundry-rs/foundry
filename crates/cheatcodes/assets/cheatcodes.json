@@ -1737,7 +1737,7 @@
       "func": {
         "id": "eth_getLogs",
         "description": "Gets all the logs according to specified filter.",
-        "declaration": "function eth_getLogs(uint256 fromBlock, uint256 toBlock, address addr, bytes32[] memory topics) external returns (EthGetLogs[] memory logs);",
+        "declaration": "function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] memory topics) external returns (EthGetLogs[] memory logs);",
         "visibility": "external",
         "mutability": "",
         "signature": "eth_getLogs(uint256,uint256,address,bytes32[])",
@@ -4397,7 +4397,7 @@
       "func": {
         "id": "stopAndReturnStateDiff",
         "description": "Returns an ordered array of all account accesses from a `vm.startStateDiffRecording` session.",
-        "declaration": "function stopAndReturnStateDiff() external returns (AccountAccess[] memory accesses);",
+        "declaration": "function stopAndReturnStateDiff() external returns (AccountAccess[] memory accountAccesses);",
         "visibility": "external",
         "mutability": "",
         "signature": "stopAndReturnStateDiff()",

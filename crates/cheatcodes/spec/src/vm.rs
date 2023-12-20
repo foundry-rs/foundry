@@ -260,7 +260,7 @@ interface Vm {
 
     /// Returns an ordered array of all account accesses from a `vm.startStateDiffRecording` session.
     #[cheatcode(group = Evm, safety = Safe)]
-    function stopAndReturnStateDiff() external returns (AccountAccess[] memory accesses);
+    function stopAndReturnStateDiff() external returns (AccountAccess[] memory accountAccesses);
 
     // -------- Recording Map Writes --------
 
@@ -508,7 +508,7 @@ interface Vm {
 
     /// Gets all the logs according to specified filter.
     #[cheatcode(group = Evm, safety = Safe)]
-    function eth_getLogs(uint256 fromBlock, uint256 toBlock, address addr, bytes32[] memory topics)
+    function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] memory topics)
         external
         returns (EthGetLogs[] memory logs);
 
