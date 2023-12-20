@@ -1,6 +1,8 @@
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use forge_doc::{ContractInheritance, Deployments, DocBuilder, GitSource, Inheritdoc};
+use forge_doc::{
+    ContractInheritance, Deployments, DocBuilder, GitSource, InferInlineHyperlinks, Inheritdoc,
+};
 use foundry_cli::opts::GH_REPO_PREFIX_REGEX;
 use foundry_config::{find_project_root_path, load_config_with_root};
 use std::{path::PathBuf, process::Command};
@@ -98,6 +100,7 @@ impl DocArgs {
         .with_fmt(config.fmt)
         .with_preprocessor(ContractInheritance { include_libraries: self.include_libraries })
         .with_preprocessor(Inheritdoc::default())
+        .with_preprocessor(InferInlineHyperlinks::default())
         .with_preprocessor(GitSource {
             root: root.clone(),
             commit,
