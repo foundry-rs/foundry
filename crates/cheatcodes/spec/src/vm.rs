@@ -57,10 +57,10 @@ interface Vm {
         Balance,
         /// The account's codesize was read.
         Extcodesize,
-        /// The account's code was copied.
-        Extcodecopy,
         /// The account's codehash was read.
         Extcodehash,
+        /// The account's code was copied.
+        Extcodecopy,
     }
 
     /// An Ethereum log. Returned by `getRecordedLogs`.
@@ -352,7 +352,7 @@ interface Vm {
     function store(address target, bytes32 slot, bytes32 value) external;
 
     /// Marks the slots of an account and the account address as cold.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
     function cool(address target) external;
 
     // -------- Call Manipulation --------
