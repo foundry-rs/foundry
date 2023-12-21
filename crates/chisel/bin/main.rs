@@ -10,6 +10,7 @@ use chisel::{
 use clap::Parser;
 use eyre::Context;
 use foundry_cli::{
+    handler,
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
@@ -82,6 +83,8 @@ pub enum ChiselParserSub {
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
+    handler::install()?;
+    utils::subscriber();
     #[cfg(windows)]
     if !Paint::enable_windows_ascii() {
         Paint::disable()
