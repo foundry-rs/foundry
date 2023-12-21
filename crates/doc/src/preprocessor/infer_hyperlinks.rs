@@ -98,9 +98,19 @@ impl InferInlineHyperlinks {
                     // TODO: handle overloaded functions
                     // functions can be overloaded so we need to keep track of how many matches we
                     // have so we can match the correct one
-                    let fun_name = &fun.name.safe_unwrap().name;
-                    if fun_name == link.ref_name() {
-                        return Some(InlineLinkTarget::borrowed(fun_name, target_path.to_path_buf()))
+                    if let Some(id) = &fun.name {
+                        // Note: constructors don't have a name
+                        if id.name == link.ref_name() {
+                            return Some(InlineLinkTarget::borrowed(
+                                &id.name,
+                                target_path.to_path_buf(),
+                            ))
+                        }
+                    } else if link.ref_name() == "constructor" {
+                        return Some(InlineLinkTarget::borrowed(
+                            "constructor",
+                            target_path.to_path_buf(),
+                        ))
                     }
                 }
                 ParseSource::Variable(_) => {}
